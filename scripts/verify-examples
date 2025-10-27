@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""
+Verify that test examples match their templates.
+
+This ensures that test files haven't been corrupted by previous test runs.
+Run this before committing changes or if tests are behaving unexpectedly.
+"""
+
+from pathlib import Path
+import sys
+
+
+def verify_test_integrity():
+    """Verify all test examples match their templates."""
+
+    print("="*70)
+    print("TEST FILE INTEGRITY CHECK")
+    print("="*70)
+    print()
+
+    templates_dir = Path(".templates")
+    examples_dir = Path("test_examples")
+
+    if not templates_dir.exists():
+        print("✗ ERROR: .templates/ directory not found")
+        print("  Run this script from the project root")
+        return False
+
+    if not examples_dir.exists():
+        print("✗ ERROR: test_examples/ directory not found")
+        return False
+
+    # Get all template files
+    template_files = sorted(templates_dir.glob("*.py"))
+
+    if not template_files:
+        print("✗ ERROR: No template files found in .templates/")
+        return False
+
+    print(f"Checking {len(template_files)} test files...\n")
+
+    all_match = True
+    mismatches = []
+
+    for template_path in template_files:
+        example_path = examples_dir / template_path.name
+
+        # Read template
+        with open(template_path, 'r') as f:
+            template_content = f.read()
+
+        # Check if example exists
+        if not example_path.exists():
+            print(f"✗ {template_path.name}")
+            print(f"  Missing in test_examples/")
+            all_match = False
+            mismatches.append(template_path.name)
+            continue
+
+        # Read example
+        with open(example_path, 'r') as f:
+            example_content = f.read()
+
+        # Compare
+        if template_content == example_content:
+            print(f"✓ {template_path.name}")
+        else:
+            print(f"✗ {template_path.name}")
+            print(f"  Content differs from template")
+            all_match = False
+            mismatches.append(template_path.name)
+
+            # Show differences
+            template_lines = template_content.split('\n')
+            example_lines = example_content.split('\n')
+
+            if len(template_lines) != len(example_lines):
+                print(f"  Template: {len(template_lines)} lines")
+                print(f"  Example:  {len(example_lines)} lines")
+
+            # Find first difference
+            for i, (t_line, e_line) in enumerate(zip(template_lines, example_lines), 1):
+                if t_line != e_line:
+                    print(f"  First difference at line {i}:")
+                    print(f"    Template: {t_line[:60]}")
+                    print(f"    Example:  {e_line[:60]}")
+                    break
+
+    print()
+    print("="*70)
+
+    if all_match:
+        print("✓ ALL TEST FILES MATCH TEMPLATES")
+        print()
+        print("Test files are pristine and ready for use.")
+        return True
+    else:
+        print("✗ SOME TEST FILES DIFFER FROM TEMPLATES")
+        print()
+        print("Mismatched files:")
+        for filename in mismatches:
+            print(f"  - {filename}")
+        print()
+        print("To fix, run:")
+        print("  just reset-examples")
+        return False
+
+
+if __name__ == "__main__":
+    success = verify_test_integrity()
+    sys.exit(0 if success else 1)

@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""
+Analyze Python file(s) or directory for duplicate code and apply refactorings.
+
+Usage:
+    python3 dry.py <input> <output>
+    python3 dry.py my_file.py output_file.py
+    python3 dry.py src/ output/
+    python3 dry.py . cleaned/
+"""
+
+import sys
+import os
+import shutil
+from pathlib import Path
+from typing import Dict, Set
+from dry_detector.unification.refactor_engine import (
+    UnificationRefactorEngine,
+    RefactoringProposal,
+    filter_overlapping_proposals
+)
+
+
+def create_path_mapping(input_path: str, output_path: str, analyzed_files: Set[str]) -> Dict[str, str]:
+    """Create mapping from input file paths to output file paths."""
+    input_path = os.path.abspath(input_path)
+    output_path = os.path.abspath(output_path)
+    mapping = {}
+
+    is_input_file = os.path.isfile(input_path)
+
+    if is_input_file:
+        # Single file: map input file to output file
+        mapping[input_path] = output_path
+    else:
+        # Directory: map each file in input to corresponding file in output
+        for file_path in analyzed_files:
+            abs_file_path = os.path.abspath(file_path)
+            # Get relative path from input directory
+            rel_path = os.path.relpath(abs_file_path, input_path)
+            # Map to output directory
+            output_file_path = os.path.join(output_path, rel_path)
+            mapping[abs_file_path] = output_file_path
+
+    return mapping
+
+
+def copy_to_output(input_path: str, output_path: str) -> None:
+    """Copy input file(s) to output location."""
+    # Get absolute paths for comparison
+    abs_input = os.path.abspath(input_path)
+    abs_output = os.path.abspath(output_path)
+
+    # Skip copy if input and output are the same (in-place modification)
+    if abs_input == abs_output:
+        return
+
+    if os.path.isfile(input_path):
+        # Single file - copy to output file
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        shutil.copy2(input_path, output_path)
+    else:
+        # Directory - copy entire directory structure
+        if os.path.exists(output_path):
+            # Remove existing output directory
+            shutil.rmtree(output_path)
+        shutil.copytree(input_path, output_path)
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python3 dry.py <input> <output>")
+        print("\nExamples:")
+        print("  python3 dry.py my_file.py cleaned.py      # Refactor single file")
+        print("  python3 dry.py src/ output/               # Refactor directory")
+        print("  python3 dry.py . cleaned/                 # Refactor current directory")
+        print("\nNote: Input files are copied to output location before refactoring.")
+        print("      To modify files in place, use the same path for input and output.")
+        sys.exit(1)
+
+    input_path = sys.argv[1]
+    output_path = sys.argv[2]
+
+    # Check if input exists
+    if not os.path.exists(input_path):
+        print(f"Error: '{input_path}' does not exist")
+        sys.exit(1)
+
+    # Determine if it's a file or directory
+    is_file = os.path.isfile(input_path)
+    is_dir = os.path.isdir(input_path)
+
+    if not is_file and not is_dir:
+        print(f"Error: '{input_path}' is neither a file nor a directory")
+        sys.exit(1)
+
+    # Check input file extension for single files
+    if is_file:
+        if not input_path.endswith('.py'):
+            print(f"Warning: '{input_path}' is not a Python file (.py)")
+            response = input("Analyze anyway? (y/N): ").strip().lower()
+            if response != 'y':
+                return
+
+    # Copy input to output
+    abs_input = os.path.abspath(input_path)
+    abs_output = os.path.abspath(output_path)
+
+    if abs_input == abs_output:
+        print(f"Modifying in place: {input_path}")
+    else:
+        print(f"Copying {input_path} -> {output_path}")
+        copy_to_output(input_path, output_path)
+    print()
+
+    # Create engine
+    engine = UnificationRefactorEngine(
+        max_parameters=5,
+        min_lines=4,
+        parameterize_constants=True
+    )
+
+    # Use fixed-point iteration to apply refactorings
+    # This applies one refactoring at a time, re-analyzing after each application
+    # to prevent line number misalignment bugs
+    print("=" * 70)
+    print("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
+    print("=" * 70)
+    print()
+    print("This will apply refactorings one at a time until no more are found.")
+    print("Extracted functions will be placed at the end of files.")
+    print()
+
+    response = input("Proceed? (y/N): ").strip().lower()
+
+    if response != 'y':
+        print("Aborted.")
+        return
+
+    print()
+
+    # Apply refactorings to fixed point
+    if is_file:
+        # Single file
+        print(f"Refactoring file: {output_path}")
+        final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
+            output_path,
+            max_iterations=10
+        )
+
+        # Write final result
+        with open(output_path, 'w') as f:
+            f.write(final_code)
+
+        if num_applied > 0:
+            print(f"\n✓ Applied {num_applied} refactoring(s):")
+            for i, desc in enumerate(descriptions, 1):
+                print(f"  {i}. {desc}")
+        else:
+            print("\nNo refactorings found!")
+    else:
+        # Directory
+        print(f"Refactoring directory: {output_path}")
+        results = engine.refactor_directory_to_fixed_point(
+            output_path,
+            output_path,  # In-place since we already copied
+            max_iterations=10
+        )
+
+        if results:
+            total_refactorings = sum(count for count, _ in results.values())
+            print(f"\n✓ Applied {total_refactorings} refactoring(s) across {len(results)} file(s):")
+            for file_path, (count, descriptions) in sorted(results.items()):
+                print(f"\n  {file_path}: {count} refactoring(s)")
+                for desc in descriptions[:3]:  # Show first 3
+                    print(f"    - {desc}")
+                if len(descriptions) > 3:
+                    print(f"    ... and {len(descriptions) - 3} more")
+        else:
+            print("\nNo refactorings found!")
+
+
+if __name__ == "__main__":
+    main()

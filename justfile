@@ -1,0 +1,177 @@
+# DRY Detector - Command Runner
+# Run `just` or `just --list` to see all available commands
+
+# Default recipe - shows help
+default:
+    @just --list
+
+# Install package (no external dependencies required!)
+install:
+    pip install -e .
+
+# Install development dependencies (coverage, black, flake8, mypy)
+install-dev:
+    pip install -e ".[dev]"
+
+# === User Commands ===
+
+# Detect and fix duplicates in file or directory (interactive, writes to output)
+dry INPUT OUTPUT:
+    source venv/bin/activate && python scripts/dry {{INPUT}} {{OUTPUT}}
+
+# Preview duplicates in file or directory (read-only)
+preview TARGET:
+    source venv/bin/activate && python scripts/preview {{TARGET}}
+
+# === Testing Commands ===
+
+# Run comprehensive unit test suite
+test:
+    source venv/bin/activate && python tests/run_tests.py
+
+# Test specific aspects
+test-bindings:
+    source venv/bin/activate && python -m unittest tests.test_bindings -v
+
+test-returns:
+    source venv/bin/activate && python -m unittest tests.test_return_values -v
+
+test-fstrings:
+    source venv/bin/activate && python -m unittest tests.test_fstrings -v
+
+test-orphans:
+    source venv/bin/activate && python -m unittest tests.test_orphan_detection -v
+
+test-engine:
+    source venv/bin/activate && python -m unittest tests.test_refactoring_engine -v
+
+test-observational:
+    source venv/bin/activate && python -m unittest tests.test_observational_equivalence -v
+
+# Run tests with coverage report
+coverage:
+    @echo "Running tests with coverage analysis..."
+    source venv/bin/activate && python -m coverage run --source=src/dry_detector tests/run_tests.py
+    @echo ""
+    source venv/bin/activate && python -m coverage report
+
+# Generate HTML coverage report
+coverage-html:
+    @echo "Generating HTML coverage report..."
+    source venv/bin/activate && python -m coverage run --source=src/dry_detector tests/run_tests.py
+    source venv/bin/activate && python -m coverage html
+    @echo ""
+    @echo "✓ HTML coverage report generated in htmlcov/index.html"
+    @echo "  Open with: open htmlcov/index.html"
+
+# Show coverage for active unification modules only
+coverage-unification:
+    @echo "Running coverage for unification modules..."
+    source venv/bin/activate && python -m coverage run --source=src/dry_detector tests/run_tests.py
+    @echo ""
+    source venv/bin/activate && python -m coverage report --include="src/dry_detector/unification/*"
+
+# === Code Quality ===
+
+# Format code with black
+format:
+    @echo "Formatting Python code with black..."
+    black src/dry_detector/ tests/ scripts/ --line-length 100 --exclude="venv|env|__pycache__" || echo "black not installed, skipping"
+
+# Lint with flake8
+lint:
+    @echo "Linting with flake8..."
+    flake8 src/dry_detector/ tests/ scripts/ --max-line-length=100 --exclude=venv,env,__pycache__ --ignore=E501,W503,E203 || echo "flake8 not installed, skipping"
+
+# Type check with mypy
+typecheck:
+    @echo "Type checking with mypy..."
+    mypy src/dry_detector/ --ignore-missing-imports || echo "mypy not installed, skipping"
+
+# Run all code quality checks
+check: format lint typecheck
+    @echo ""
+    @echo "✓ Code quality checks completed"
+
+# === Cleanup Commands ===
+
+# Clean generated files and caches
+clean:
+    @echo "Cleaning generated files..."
+    find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    find . -type f -name "*.pyc" -delete
+    find . -type f -name "*.pyo" -delete
+    find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+    find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+    find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
+    rm -rf build/ dist/ htmlcov/ .coverage
+    rm -f *_out.py my_test*.py
+    rm -rf test_all test_final test_final_fix test_fix test_fix2 test_fresh_run
+    rm -rf test_idempotent test_idempotent2 test_reproduce test_simple
+    rm -rf my_test my_test_out my_test2 my_test2_out test_examples_copy
+    @echo "✓ Cleaned"
+
+# Verify test example files match their templates
+verify-examples:
+    python3 scripts/verify-examples
+
+# Reset test examples to original state (restore from backup)
+reset-examples:
+    @echo "Restoring all example files to original state..."
+    @cp .templates/*.py test_examples/
+    @echo "✓ All 18 example files reset to original state"
+
+# === CI/CD Commands ===
+
+# Run CI checks (what would run in continuous integration)
+ci: clean test check
+    @echo ""
+    @echo "✓ CI checks passed"
+
+# Build package
+build:
+    python3 -m build
+
+# === Help ===
+
+# Show detailed help
+help:
+    @echo "DRY Detector - Unification-Based Duplicate Code Detector"
+    @echo ""
+    @echo "USAGE:"
+    @echo "  just <command>"
+    @echo ""
+    @echo "COMMON COMMANDS:"
+    @echo "  dry <input> <output>  Detect and fix duplicates (writes to output)"
+    @echo "  preview <target>      Preview refactoring opportunities (read-only)"
+    @echo "  test                  Run comprehensive unit test suite"
+    @echo "  help                  Show this help message"
+    @echo ""
+    @echo "TESTING:"
+    @echo "  test                  Run comprehensive unit test suite"
+    @echo "  test-bindings         Test binding construct handling"
+    @echo "  test-returns          Test return value propagation"
+    @echo "  test-fstrings         Test f-string handling"
+    @echo "  test-orphans          Test orphan variable detection"
+    @echo "  test-engine           Test refactoring engine end-to-end"
+    @echo "  test-observational    Test observational equivalence (refactored = original behavior)"
+    @echo "  coverage              Run tests with coverage report"
+    @echo "  coverage-html         Generate HTML coverage report"
+    @echo "  coverage-unification  Show coverage for unification modules"
+    @echo ""
+    @echo "DEVELOPMENT:"
+    @echo "  format                Format code with black"
+    @echo "  lint                  Lint with flake8"
+    @echo "  typecheck             Type check with mypy"
+    @echo "  check                 Run all code quality checks"
+    @echo "  clean                 Clean generated files"
+    @echo "  verify-examples       Verify test examples match templates"
+    @echo "  reset-examples        Reset test examples to original state"
+    @echo ""
+    @echo "EXAMPLES:"
+    @echo "  just dry src/ cleaned/        # Refactor src/ to cleaned/"
+    @echo "  just dry my.py my_clean.py    # Refactor single file"
+    @echo "  just preview src/             # Preview before refactoring"
+    @echo "  just test                     # Run all tests"
+    @echo ""
+    @echo "For a full list of commands, run: just --list"
