@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""
+Preview duplicate code detection on file(s) or directory.
+
+This is read-only - it won't modify any files.
+
+Usage:
+    python3 preview.py <file_or_directory>
+    python3 preview.py my_file.py
+    python3 preview.py src/
+    python3 preview.py .
+"""
+
+import sys
+import os
+import ast
+from pathlib import Path
+from dry_detector.unification.refactor_engine import (
+    UnificationRefactorEngine,
+    RefactoringProposal,
+    filter_overlapping_proposals
+)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python3 preview.py <file_or_directory>")
+        print("\nExamples:")
+        print("  python3 preview.py my_file.py          # Preview single file")
+        print("  python3 preview.py src/                # Preview directory")
+        print("  python3 preview.py .                   # Preview current directory")
+        print("\nThis is read-only - no files will be modified.")
+        sys.exit(1)
+
+    target = sys.argv[1]
+
+    # Check if target exists
+    if not os.path.exists(target):
+        print(f"Error: '{target}' does not exist")
+        sys.exit(1)
+
+    # Determine if it's a file or directory
+    is_file = os.path.isfile(target)
+    is_dir = os.path.isdir(target)
+
+    if not is_file and not is_dir:
+        print(f"Error: '{target}' is neither a file nor a directory")
+        sys.exit(1)
+
+    # Create engine
+    engine = UnificationRefactorEngine(
+        max_parameters=5,
+        min_lines=4,
+        parameterize_constants=True
+    )
+
+    # Analyze based on type
+    if is_file:
+        if not target.endswith('.py'):
+            print(f"Note: '{target}' is not a Python file (.py)")
+            print()
+
+        print(f"Analyzing file: {target}")
+        all_proposals = engine.analyze_file(target)
+    else:
+        print(f"Analyzing directory: {target}")
+        all_proposals = engine.analyze_directory(target, recursive=True)
+
+    print(f"\nFound {len(all_proposals)} refactoring opportunities")
+
+    if not all_proposals:
+        print("No duplicates found!")
+        return
+
+    # Filter overlapping proposals
+    proposals = filter_overlapping_proposals(all_proposals)
+
+    if len(proposals) < len(all_proposals):
+        print(f"Filtered to {len(proposals)} non-overlapping proposals")
+        print(f"(Removed {len(all_proposals) - len(proposals)} overlapping proposals)")
+
+    print("\n" + "="*70)
+    print("REFACTORING OPPORTUNITIES")
+    print("="*70)
+
+    for i, prop in enumerate(proposals[:10], 1):  # Show first 10
+        print(f"\n{i}. {prop.description}")
+        print(f"   Parameters: {prop.parameters_count}")
+
+        # Show which files are affected
+        files_affected = set()
+        for item in prop.replacements:
+            if len(item) == 3:
+                files_affected.add(item[2])
+            else:
+                files_affected.add(prop.file_path)
+
+        if len(files_affected) > 1:
+            print(f"   Type: Cross-file ({len(files_affected)} files)")
+            for f in sorted(files_affected):
+                print(f"      - {f}")
+        else:
+            print(f"   Type: Same file ({prop.file_path})")
+
+        # Show extracted function preview
+        print(f"\n   Extracted function preview:")
+        try:
+            func_code = ast.unparse(prop.extracted_function)
+            lines = func_code.split('\n')
+            for line in lines[:8]:
+                print(f"      {line}")
+            if len(lines) > 8:
+                print(f"      ... ({len(lines) - 8} more lines)")
+        except ValueError as e:
+            # Can happen with complex f-string transformations
+            print(f"      (Preview unavailable: {e})")
+            print(f"      Function name: {prop.extracted_function.name}")
+
+    if len(proposals) > 10:
+        print(f"\n... and {len(proposals) - 10} more proposals")
+
+    print("\n" + "="*70)
+    print("\nTo apply these refactorings, run:")
+    if is_file:
+        print(f"  python3 analyze.py {target}")
+    else:
+        print(f"  python3 analyze.py {target}")
+    print()
+
+
+if __name__ == "__main__":
+    main()
