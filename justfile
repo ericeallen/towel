@@ -51,14 +51,14 @@ test-observational:
 # Run tests with coverage report
 coverage:
     @echo "Running tests with coverage analysis..."
-    source venv/bin/activate && python -m coverage run --source=src/dry_detector tests/run_tests.py
+    source venv/bin/activate && python -m coverage run --source=src/towel tests/run_tests.py
     @echo ""
     source venv/bin/activate && python -m coverage report
 
 # Generate HTML coverage report
 coverage-html:
     @echo "Generating HTML coverage report..."
-    source venv/bin/activate && python -m coverage run --source=src/dry_detector tests/run_tests.py
+    source venv/bin/activate && python -m coverage run --source=src/towel tests/run_tests.py
     source venv/bin/activate && python -m coverage html
     @echo ""
     @echo "✓ HTML coverage report generated in htmlcov/index.html"
@@ -67,26 +67,26 @@ coverage-html:
 # Show coverage for active unification modules only
 coverage-unification:
     @echo "Running coverage for unification modules..."
-    source venv/bin/activate && python -m coverage run --source=src/dry_detector tests/run_tests.py
+    source venv/bin/activate && python -m coverage run --source=src/towel tests/run_tests.py
     @echo ""
-    source venv/bin/activate && python -m coverage report --include="src/dry_detector/unification/*"
+    source venv/bin/activate && python -m coverage report --include="src/towel/unification/*"
 
 # === Code Quality ===
 
 # Format code with black
 format:
     @echo "Formatting Python code with black..."
-    black src/dry_detector/ tests/ scripts/ --line-length 100 --exclude="venv|env|__pycache__" || echo "black not installed, skipping"
+    black src/towel/ tests/ scripts/ --line-length 100 --exclude="venv|env|__pycache__" || echo "black not installed, skipping"
 
 # Lint with flake8
 lint:
     @echo "Linting with flake8..."
-    flake8 src/dry_detector/ tests/ scripts/ --max-line-length=100 --exclude=venv,env,__pycache__ --ignore=E501,W503,E203 || echo "flake8 not installed, skipping"
+    flake8 src/towel/ tests/ scripts/ --max-line-length=100 --exclude=venv,env,__pycache__ --ignore=E501,W503,E203 || echo "flake8 not installed, skipping"
 
 # Type check with mypy
 typecheck:
     @echo "Type checking with mypy..."
-    mypy src/dry_detector/ --ignore-missing-imports || echo "mypy not installed, skipping"
+    mypy src/towel/ --ignore-missing-imports || echo "mypy not installed, skipping"
 
 # Run all code quality checks
 check: format lint typecheck
