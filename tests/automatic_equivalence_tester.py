@@ -12,6 +12,8 @@ files behave identically to their original versions by:
 import ast
 import inspect
 import re
+import tempfile
+import os
 from typing import List, Tuple, Dict, Any, Optional, Set
 from pathlib import Path
 
@@ -21,6 +23,54 @@ from tests.test_observational_equivalence import (
     FunctionExecutionResult
 )
 from tests.edge_case_values import EdgeCaseValues
+
+
+# Global test file paths created once and reused
+_TEST_FILES = None
+
+
+def get_test_files():
+    """
+    Get or create temporary test files for filename parameters.
+
+    Returns a list of file paths that can be safely opened and read.
+    """
+    global _TEST_FILES
+
+    if _TEST_FILES is None:
+        _TEST_FILES = []
+
+        # Create an empty file
+        f1 = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+        f1.close()
+        _TEST_FILES.append(f1.name)
+
+        # Create a file with a single line
+        f2 = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+        f2.write("test line\n")
+        f2.close()
+        _TEST_FILES.append(f2.name)
+
+        # Create a file with multiple lines
+        f3 = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+        f3.write("line 1\nline 2\nline 3\n")
+        f3.close()
+        _TEST_FILES.append(f3.name)
+
+    return _TEST_FILES
+
+
+def cleanup_test_files():
+    """Clean up temporary test files."""
+    global _TEST_FILES
+
+    if _TEST_FILES is not None:
+        for filepath in _TEST_FILES:
+            try:
+                os.unlink(filepath)
+            except:
+                pass
+        _TEST_FILES = None
 
 
 def extract_function_names_from_proposal(description: str) -> List[str]:
@@ -207,6 +257,14 @@ def generate_test_values_for_type(
     # Heuristics based on parameter name
     name_lower = param_name.lower()
 
+    # Check for filename/file/path parameters - use real test files
+    # Match: filename, file_path, filepath, path, file1, file2, outer_file, etc.
+    if any(keyword in name_lower for keyword in ['filename', 'file_path', 'filepath', 'path']) or \
+       name_lower.startswith('file') or name_lower.endswith('file') or '_file' in name_lower:
+        # Use real temporary files that can be safely opened
+        test_files = get_test_files()
+        return test_files
+
     # Check for plural names that suggest lists of structured data
     if name_lower in ['pairs', 'tuples', 'entries']:
         return [
@@ -300,7 +358,7 @@ def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tu
 
     # Test 2-N: Vary one parameter at a time
     for param_idx, (param_name, values) in enumerate(params):
-        for value in values[:2]:  # Test up to 2 values per parameter (reduced for performance)
+        for value in values:  # Test ALL values per parameter for comprehensive edge-case coverage
             args = []
             for i, (_, param_values) in enumerate(params):
                 if i == param_idx:
@@ -326,7 +384,7 @@ def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tu
             # If not hashable, just add it
             unique_cases.append(case)
 
-    return unique_cases[:5]  # Limit to 5 test cases per function (reduced for performance)
+    return unique_cases  # Return ALL test cases for maximum edge-case coverage
 
 
 def test_all_refactored_functions(

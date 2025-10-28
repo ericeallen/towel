@@ -36,7 +36,7 @@ def run_all_tests():
 def main():
     """Main entry point."""
     print("=" * 70)
-    print("DRY DETECTOR - COMPREHENSIVE TEST SUITE")
+    print("TOWEL - COMPREHENSIVE TEST SUITE")
     print("=" * 70)
     print()
 

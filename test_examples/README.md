@@ -1,6 +1,6 @@
 # Test Examples - Comprehensive Test Suite
 
-This directory contains comprehensive test examples designed to stress test the DRY Detector's unification-based refactoring engine.
+This directory contains comprehensive test examples designed to stress test Towel's unification-based refactoring engine.
 
 ## Overview
 

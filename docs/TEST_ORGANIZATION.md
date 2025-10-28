@@ -2,7 +2,7 @@
 
 ## What We Accomplished
 
-Completely reorganized and expanded the test suite for the DRY Detector with comprehensive coverage of edge cases, especially for binding constructs.
+Completely reorganized and expanded the test suite for Towel with comprehensive coverage of edge cases, especially for binding constructs.
 
 ## New Test Structure
 

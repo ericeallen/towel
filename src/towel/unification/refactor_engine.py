@@ -727,7 +727,20 @@ class UnificationRefactorEngine:
 
                 replacement_code = ast.unparse(replacement_node)
                 indent = self._get_indent(lines[start_line - 1])
-                replacement_lines = [indent + line + '\n' for line in replacement_code.split('\n')]
+
+                # Split code and indent properly: first line gets indent, subsequent lines keep their relative indentation
+                code_lines = replacement_code.split('\n')
+                replacement_lines = []
+                for i, line in enumerate(code_lines):
+                    if i == 0:
+                        # First line gets the base indent
+                        replacement_lines.append(indent + line + '\n')
+                    else:
+                        # Subsequent lines maintain their relative indentation from ast.unparse
+                        if line.strip():  # Only indent non-empty lines
+                            replacement_lines.append(line + '\n')
+                        else:
+                            replacement_lines.append('\n')
 
                 # Check if we need to preserve blank lines after the replacement
                 # to maintain PEP 8 spacing between functions
@@ -786,7 +799,34 @@ class UnificationRefactorEngine:
                 lines[insert_line:insert_line] = lines_to_insert
             else:
                 # Add import statement to other files
-                module_name = Path(proposal.file_path).stem
+                # Calculate the correct module path for importing
+                from_path = Path(proposal.file_path)
+                to_path = Path(file_path)
+
+                # For files in the same directory, just use the stem
+                if from_path.parent == to_path.parent:
+                    module_name = from_path.stem
+                else:
+                    # For nested directories, calculate relative import path
+                    # Find common parent and build relative path
+                    try:
+                        # Get relative path from importing file to target file
+                        common_parent = Path(*[p for p in from_path.parts[:-1] if p in to_path.parts[:-1]])
+                        if common_parent == Path('.'):
+                            # No common parent - use absolute-style import with directory structure
+                            module_parts = list(from_path.parent.parts) + [from_path.stem]
+                            module_name = '.'.join(module_parts)
+                        else:
+                            # Has common parent - use relative path from common root
+                            module_parts = list(from_path.parent.parts) + [from_path.stem]
+                            # Find where common parent ends
+                            common_depth = len([p for p in common_parent.parts])
+                            module_parts = module_parts[common_depth:]
+                            module_name = '.'.join(module_parts) if module_parts else from_path.stem
+                    except (ValueError, IndexError):
+                        # Fallback to stem if relative path calculation fails
+                        module_name = from_path.stem
+
                 func_name = proposal.extracted_function.name
                 import_line = f"from {module_name} import {func_name}\n"
 

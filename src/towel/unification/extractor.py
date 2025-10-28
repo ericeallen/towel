@@ -52,13 +52,16 @@ class HygienicExtractor:
         # Determine parameters
         # 1. Parameters from unification (substituted expressions)
         # 2. Free variables (referenced but not bound in block)
-        param_names_unified = list(substitution.param_expressions.keys())
+        param_names_unified_original = list(substitution.param_expressions.keys())
 
         # Ensure parameter names don't shadow enclosing names
         param_names_unified = [
             self._ensure_unique_name(p, enclosing_names)
-            for p in param_names_unified
+            for p in param_names_unified_original
         ]
+
+        # Create mapping from renamed to original names
+        rename_mapping = dict(zip(param_names_unified, param_names_unified_original))
 
         # Add free variables as parameters (they're already unique)
         param_names_free = sorted(free_variables)
@@ -74,7 +77,8 @@ class HygienicExtractor:
         body = self._substitute_parameters(
             copy.deepcopy(template_block),
             substitution,
-            param_names_unified
+            param_names_unified,
+            rename_mapping
         )
 
         # Create function arguments
@@ -155,20 +159,7 @@ class HygienicExtractor:
                         break
             else:
                 # This is a free variable - use the name directly
-                # BUT: Check if this free variable has an augmented assignment mapping
-                # (different variable names in different blocks)
-                var_name = param_name
-                if hasattr(substitution, 'aug_assign_mappings'):
-                    # Check if any of the removed augmented assignment params
-                    # had this free variable name in block1 (template)
-                    for removed_param, block_mappings in substitution.aug_assign_mappings.items():
-                        if 0 in block_mappings and block_mappings[0] == param_name:
-                            # This free variable corresponds to an aug-assign param
-                            # Use the mapped variable name for this block
-                            if block_idx in block_mappings:
-                                var_name = block_mappings[block_idx]
-                                break
-                args_list[param_idx] = ast.Name(id=var_name, ctx=ast.Load())
+                args_list[param_idx] = ast.Name(id=param_name, ctx=ast.Load())
 
         # Create function call
         call = ast.Call(
@@ -190,7 +181,8 @@ class HygienicExtractor:
         self,
         nodes: List[ast.AST],
         substitution: Substitution,
-        param_names: List[str]
+        param_names: List[str],
+        rename_mapping: Dict[str, str]
     ) -> List[ast.AST]:
         """
         Substitute unified expressions with parameter names.
@@ -198,20 +190,40 @@ class HygienicExtractor:
         Args:
             nodes: AST nodes to transform
             substitution: Substitution mapping
-            param_names: Parameter names in order
+            param_names: Parameter names in order (renamed)
+            rename_mapping: Mapping from renamed to original parameter names
 
         Returns:
             Transformed AST nodes
         """
         # Create a transformer that replaces expressions with parameter names
         class ParameterSubstituter(ast.NodeTransformer):
-            def __init__(self, subst: Substitution, param_names: List[str]):
+            def __init__(self, subst: Substitution, param_names: List[str], rename_mapping: Dict[str, str]):
                 self.subst = subst
                 self.param_names = param_names
+                self.rename_mapping = rename_mapping
                 # Use block 0 as the template
                 self.block_idx = 0
                 # Track if we're inside a JoinedStr to avoid breaking f-string structure
                 self.in_joinedstr = False
+                # Track variables that are equivalent to parameters
+                # Maps variable names to parameter names
+                self.var_to_param: Dict[str, str] = {}
+
+                # CRITICAL: Initialize var_to_param with variables that are parameterized
+                # For each parameter, if its expression in block 0 is a simple variable name,
+                # then that variable should be substituted with the parameter throughout
+                for param_name in param_names:
+                    # Get the original parameter name (before renaming)
+                    original_param_name = rename_mapping.get(param_name, param_name)
+                    if original_param_name in subst.param_expressions:
+                        # This is a unified parameter - check if it's a simple variable reference
+                        for block_idx, expr in subst.param_expressions[original_param_name]:
+                            if block_idx == self.block_idx and isinstance(expr, ast.Name):
+                                # This parameter represents a variable in our block
+                                # Map the original variable name to the RENAMED parameter name
+                                self.var_to_param[expr.id] = param_name
+                                break
 
             def visit_JoinedStr(self, node):
                 # JoinedStr (f-string) can only have Constant or FormattedValue as direct children
@@ -283,48 +295,47 @@ class HygienicExtractor:
 
             def visit_Assign(self, node):
                 """
-                Special handling for assignments to avoid replacing binding occurrences.
+                Special handling for assignments to handle both new bindings and reassignments.
 
-                In 'x = expr', the 'x' is a BINDING occurrence (in most cases).
-                However, we still want to transform the value expression.
+                For 'var = expr':
+                - If var is being assigned to a parameter (var = __param_N), track this mapping
+                - If var is in var_to_param (it was previously bound to a parameter), substitute it
+                - Otherwise, keep the target unchanged (new binding)
                 """
-                # Don't transform the targets (they're bindings)
-                new_targets = node.targets
-
-                # Transform the value expression
+                # Transform the value expression first
                 new_value = self.visit(node.value)
+
+                # Check if we're assigning a parameter to a variable (e.g., result = __param_0)
+                # If so, track that this variable is now equivalent to the parameter
+                if isinstance(new_value, ast.Name) and new_value.id in self.param_names:
+                    # Record that these target variables are equivalent to this parameter
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            self.var_to_param[target.id] = new_value.id
+
+                # Transform targets: substitute if the variable is mapped to a parameter
+                new_targets = []
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in self.var_to_param:
+                        # This is a reassignment of a variable that's equivalent to a parameter
+                        # Substitute the target with the parameter name
+                        param_name = self.var_to_param[target.id]
+                        new_targets.append(ast.Name(id=param_name, ctx=ast.Store()))
+                    else:
+                        # New binding or complex target (e.g., tuple unpacking) - keep as is
+                        new_targets.append(target)
 
                 return ast.Assign(targets=new_targets, value=new_value)
 
-            def visit_AugAssign(self, node):
-                """
-                Special handling for augmented assignments (+=, -=, etc.).
-
-                In 'x += expr', the 'x' is BOTH a use and a binding occurrence!
-                The semantics are: x = x + expr
-                So we need to transform the target as a Load (for the read),
-                but the actual AugAssign node handles the Store.
-
-                This is critical: if 'x' is a parameter, we need to rename it
-                because the variable is being read.
-                """
-                # Transform the target - but we need to check if it should be parameterized
-                # For AugAssign, the target is used (read) even though it has Store context
-                new_target = node.target
-
-                # If the target is a Name that should be parameterized, we need to rename it
-                if isinstance(node.target, ast.Name):
-                    param_name = self.subst.get_param_for_expr(self.block_idx, node.target)
-                    if param_name and param_name in self.param_names:
-                        # Replace with parameter name (but keep Store context for AugAssign)
-                        new_target = ast.Name(id=param_name, ctx=ast.Store())
-
-                # Transform the value expression
-                new_value = self.visit(node.value)
-
-                return ast.AugAssign(target=new_target, op=node.op, value=new_value)
-
             def visit(self, node):
+                # First, check if this is a variable that's equivalent to a parameter
+                # (e.g., result is equivalent to __param_0)
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                    if node.id in self.var_to_param:
+                        # This variable is equivalent to a parameter - substitute it
+                        param_name = self.var_to_param[node.id]
+                        return ast.Name(id=param_name, ctx=ast.Load())
+
                 # Check if this expression should be replaced with a parameter
                 param_name = self.subst.get_param_for_expr(self.block_idx, node)
 
@@ -368,7 +379,7 @@ class HygienicExtractor:
                 # Otherwise, recursively visit children
                 return self.generic_visit(node)
 
-        substituter = ParameterSubstituter(substitution, param_names)
+        substituter = ParameterSubstituter(substitution, param_names, rename_mapping)
         return [substituter.visit(node) for node in nodes]
 
     def _ensure_unique_name(self, name: str, enclosing_names: Set[str]) -> str:
