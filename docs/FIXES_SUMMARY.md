@@ -61,7 +61,7 @@ def bar():
 
 ### 1. Builtin Tracking
 
-**File**: `dry_detector/unification/builtins.py` (NEW)
+**File**: `towel/unification/builtins.py` (NEW)
 
 Tracks all Python builtins that should never be parameterized:
 - Functions: `print`, `range`, `len`, `int`, `str`, etc.
@@ -70,7 +70,7 @@ Tracks all Python builtins that should never be parameterized:
 
 ### 2. Free Variable Filtering
 
-**File**: `dry_detector/unification/scope_analyzer.py`
+**File**: `towel/unification/scope_analyzer.py`
 
 Updated `get_free_variables()` to:
 - Recognize loop variables as bindings (not free variables)
@@ -79,7 +79,7 @@ Updated `get_free_variables()` to:
 
 ### 3. Alpha-Renaming
 
-**File**: `dry_detector/unification/unifier.py`
+**File**: `towel/unification/unifier.py`
 
 Implemented proper alpha-equivalence for bound variables:
 - Track mappings: `(block_idx, var_name) -> canonical_name`
@@ -95,7 +95,7 @@ Implemented proper alpha-equivalence for bound variables:
 ```bash
 # Test the fixes
 python3 -c "
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 import ast
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)

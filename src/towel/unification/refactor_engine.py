@@ -465,17 +465,104 @@ class UnificationRefactorEngine:
         # Compute free variables (variables used but not defined in block)
         free_vars = scope_analyzer.get_free_variables(pair.block1_nodes)
 
+        # Find all variables used in augmented assignments in the block
+        # These variables MUST be passed as parameters even if they appear in substitution
+        # because augmented assignments (total += x) READ the variable before writing it
+        class AugAssignFinder(ast.NodeVisitor):
+            def __init__(self):
+                self.aug_assign_targets = set()
+
+            def visit_AugAssign(self, node):
+                if isinstance(node.target, ast.Name):
+                    self.aug_assign_targets.add(node.target.id)
+                self.generic_visit(node)
+
+            def visit_FunctionDef(self, node):
+                # Don't descend into nested functions
+                pass
+
+            def visit_AsyncFunctionDef(self, node):
+                # Don't descend into nested async functions
+                pass
+
+        aug_finder = AugAssignFinder()
+        for node in pair.block1_nodes:
+            aug_finder.visit(node)
+        aug_assign_vars = aug_finder.aug_assign_targets
+
+        # CRITICAL: Handle augmented assignment variables specially
+        # If a variable is used in an augmented assignment (total += x), we need to:
+        # 1. Remove it from substitution (so it doesn't get replaced in the function body)
+        # 2. Add it to free_vars (so it gets passed as a parameter)
+        # 3. Save the mapping of variable names across blocks (for generating correct calls)
+        #
+        # The tricky part: the variable may have different names in different blocks
+        # (e.g., 'total' in block1, 'result' in block2), but we need a single parameter.
+        # We use the block1 (template) name for the parameter, and map block2's name
+        # when generating the call.
+        aug_assign_param_mappings = {}  # Maps param names to variable names per block
+        params_to_remove = []
+        for param_name, exprs in substitution.param_expressions.items():
+            # Check if ANY expression in this param is an augmented assignment variable
+            for block_idx, expr in exprs:
+                if isinstance(expr, ast.Name) and (expr.id in aug_assign_vars if block_idx == 0 else True):
+                    # Track the mapping BEFORE we remove it
+                    if param_name not in aug_assign_param_mappings:
+                        aug_assign_param_mappings[param_name] = {}
+                    aug_assign_param_mappings[param_name][block_idx] = expr.id
+
+            # If this param has an aug-assign variable in block1, mark for removal
+            if 0 in aug_assign_param_mappings.get(param_name, {}):
+                params_to_remove.append(param_name)
+
+        # Store the mappings in the substitution object for later use
+        if not hasattr(substitution, 'aug_assign_mappings'):
+            substitution.aug_assign_mappings = {}
+        substitution.aug_assign_mappings = aug_assign_param_mappings
+
+        # Remove the augmented assignment parameters from substitution
+        for param_name in params_to_remove:
+            del substitution.param_expressions[param_name]
+
+        # Add the block1 variable names to free_vars (these become the parameter names)
+        for param_name, block_mappings in aug_assign_param_mappings.items():
+            if 0 in block_mappings:
+                free_vars.add(block_mappings[0])
+
         # Remove variables that have been parameterized from free_vars
         # If a variable was parameterized (e.g., 'user' -> '__param_5'),
         # it's no longer free - it's been replaced by a parameter
+        # EXCEPT: variables in augmented assignments MUST remain free variables
+        # because they need to be passed in (they're READ before being written)
         parameterized_vars = set()
         for param_name, exprs in substitution.param_expressions.items():
             for block_idx, expr in exprs:
                 # Only check the first block (template block)
                 if block_idx == 0 and isinstance(expr, ast.Name):
-                    parameterized_vars.add(expr.id)
+                    # Don't add to parameterized_vars if it's an augmented assignment target
+                    if expr.id not in aug_assign_vars:
+                        parameterized_vars.add(expr.id)
 
         free_vars = free_vars - parameterized_vars
+
+        # CRITICAL: Check if any free variables are declared global or nonlocal
+        # If a free variable is global/nonlocal, we cannot parameterize it
+        # because you cannot have a parameter that is also declared global/nonlocal
+        # This would create: SyntaxError: name 'x' is parameter and global
+        func1_scope_id = None
+        for node, scope in scope_analyzer.node_scopes.items():
+            if isinstance(node, ast.FunctionDef) and node.name == pair.function1_name:
+                func1_scope_id = scope.scope_id
+                break
+
+        if func1_scope_id is not None:
+            # Check if any free variables are global or nonlocal in this scope
+            global_vars = scope_analyzer.global_vars.get(func1_scope_id, set())
+            nonlocal_vars = scope_analyzer.nonlocal_vars.get(func1_scope_id, set())
+
+            if free_vars & (global_vars | nonlocal_vars):
+                # Cannot extract - would require making global/nonlocal variables into parameters
+                return None
 
         # Extract function
         try:

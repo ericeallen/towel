@@ -9,7 +9,7 @@ All test output goes to temporary directories that are automatically cleaned up.
 import unittest
 import ast
 from pathlib import Path
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import (
     temporary_test_directory,
     copy_example_to_temp,

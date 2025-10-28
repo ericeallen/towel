@@ -155,7 +155,20 @@ class HygienicExtractor:
                         break
             else:
                 # This is a free variable - use the name directly
-                args_list[param_idx] = ast.Name(id=param_name, ctx=ast.Load())
+                # BUT: Check if this free variable has an augmented assignment mapping
+                # (different variable names in different blocks)
+                var_name = param_name
+                if hasattr(substitution, 'aug_assign_mappings'):
+                    # Check if any of the removed augmented assignment params
+                    # had this free variable name in block1 (template)
+                    for removed_param, block_mappings in substitution.aug_assign_mappings.items():
+                        if 0 in block_mappings and block_mappings[0] == param_name:
+                            # This free variable corresponds to an aug-assign param
+                            # Use the mapped variable name for this block
+                            if block_idx in block_mappings:
+                                var_name = block_mappings[block_idx]
+                                break
+                args_list[param_idx] = ast.Name(id=var_name, ctx=ast.Load())
 
         # Create function call
         call = ast.Call(
@@ -282,6 +295,34 @@ class HygienicExtractor:
                 new_value = self.visit(node.value)
 
                 return ast.Assign(targets=new_targets, value=new_value)
+
+            def visit_AugAssign(self, node):
+                """
+                Special handling for augmented assignments (+=, -=, etc.).
+
+                In 'x += expr', the 'x' is BOTH a use and a binding occurrence!
+                The semantics are: x = x + expr
+                So we need to transform the target as a Load (for the read),
+                but the actual AugAssign node handles the Store.
+
+                This is critical: if 'x' is a parameter, we need to rename it
+                because the variable is being read.
+                """
+                # Transform the target - but we need to check if it should be parameterized
+                # For AugAssign, the target is used (read) even though it has Store context
+                new_target = node.target
+
+                # If the target is a Name that should be parameterized, we need to rename it
+                if isinstance(node.target, ast.Name):
+                    param_name = self.subst.get_param_for_expr(self.block_idx, node.target)
+                    if param_name and param_name in self.param_names:
+                        # Replace with parameter name (but keep Store context for AugAssign)
+                        new_target = ast.Name(id=param_name, ctx=ast.Store())
+
+                # Transform the value expression
+                new_value = self.visit(node.value)
+
+                return ast.AugAssign(target=new_target, op=node.op, value=new_value)
 
             def visit(self, node):
                 # Check if this expression should be replaced with a parameter

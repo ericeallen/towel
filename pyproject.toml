@@ -3,11 +3,11 @@ requires = ["setuptools>=65.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dry-detector"
-version = "0.2.0"
-description = "Find and refactor repeated code in Python projects using unification-based analysis"
+name = "towel"
+version = "1.0.0"
+description = "A Python tool that DRYs your code - finds and refactors repeated code using unification-based analysis"
 authors = [
-    {name = "Claude Code Contributors"}
+    {name = "Eric Allen"}
 ]
 readme = "README.md"
 requires-python = ">=3.7"
@@ -39,8 +39,8 @@ dev = [
 ]
 
 [project.scripts]
-dry = "dry_detector.unification.refactor_engine:main"
-preview = "dry_detector.unification.refactor_engine:preview_main"
+dry = "towel.unification.refactor_engine:main"
+preview = "towel.unification.refactor_engine:preview_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -59,7 +59,7 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 
 [tool.coverage.run]
-source = ["src/dry_detector"]
+source = ["src/towel"]
 omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

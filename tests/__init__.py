@@ -1,3 +1,3 @@
 """
-Test suite for DRY Detector (Unification-based duplicate code detector).
+Test suite for Towel (Unification-based duplicate code detector).
 """

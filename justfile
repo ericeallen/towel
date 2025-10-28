@@ -1,4 +1,4 @@
-# DRY Detector - Command Runner
+# Towel - Command Runner
 # Run `just` or `just --list` to see all available commands
 
 # Default recipe - shows help

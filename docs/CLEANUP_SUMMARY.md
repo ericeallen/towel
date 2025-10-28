@@ -83,7 +83,7 @@ Removed all legacy test files, debug scripts, and obsolete backward compatibilit
 - `preview.py` - Preview tool (read-only)
 
 ### Core Implementation
-- `dry_detector/` - All implementation code
+- `towel/` - All implementation code
   - `unification/` - Unification algorithm
   - `refactoring/` - Refactoring engine (if still used)
 

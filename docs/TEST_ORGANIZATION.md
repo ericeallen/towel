@@ -155,7 +155,7 @@ Created comprehensive documentation:
 
 All legacy test files and debug scripts have been removed. The codebase now contains only:
 - Modern unit tests in `tests/` directory
-- Current implementation in `dry_detector/`
+- Current implementation in `towel/`
 - User-facing tools: `dry.py` and `preview.py`
 
 ## Files Created

@@ -165,7 +165,7 @@ replacements: List[Tuple[Tuple[int, int], ast.AST, str]]
 ## Usage
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 

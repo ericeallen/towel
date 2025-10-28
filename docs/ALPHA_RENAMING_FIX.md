@@ -197,18 +197,18 @@ def bar():
 
 ## Files Modified
 
-1. **`dry_detector/unification/builtins.py`** (NEW)
+1. **`towel/unification/builtins.py`** (NEW)
    - Tracks Python builtin names
    - Provides filtering utilities
 
-2. **`dry_detector/unification/scope_analyzer.py`**
+2. **`towel/unification/scope_analyzer.py`**
    - Import `filter_builtins`
    - Updated `get_free_variables()` to:
      - Track loop variables as bindings
      - Track comprehension variables
      - Filter out builtins
 
-3. **`dry_detector/unification/unifier.py`**
+3. **`towel/unification/unifier.py`**
    - Added `alpha_renamings` dict to track bound variable mappings
    - Implemented `_unify_for_loop()` with alpha-renaming
    - Updated Name comparison to use alpha-renaming
@@ -226,7 +226,7 @@ def bar():
 ```bash
 # Test on the example
 python3 -c "
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 proposals = engine.analyze_file('my_test/my_test.py')

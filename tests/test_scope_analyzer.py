@@ -7,7 +7,7 @@ Covers advanced Python features like position-only args, keyword-only args,
 
 import unittest
 import ast
-from dry_detector.unification.scope_analyzer import ScopeAnalyzer
+from towel.unification.scope_analyzer import ScopeAnalyzer
 
 
 class TestScopeAnalyzerEdgeCases(unittest.TestCase):

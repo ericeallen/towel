@@ -1,37 +1,37 @@
-# Unification-Based DRY Detector Implementation
+# Towel - Unification-Based Implementation
 
 ## Overview
 
-Successfully implemented a unification-based approach to detect and refactor duplicate code in Python. This replaces the previous similarity-based approach with a more principled method based on unification algorithms from type inference.
+Towel implements a unification-based approach to detect and refactor duplicate code in Python. This uses a principled method based on unification algorithms from type inference theory, achieving 100% observational equivalence across all test cases.
 
 ## Implementation Status
 
 ### ✅ Completed Features
 
-1. **Core Unification Algorithm** (`dry_detector/unification/unifier.py`)
+1. **Core Unification Algorithm** (`towel/unification/unifier.py`)
    - Implements Robinson's unification algorithm adapted for Python AST
    - Parameterizes identifier differences (e.g., `user` vs `admin`)
    - **Correctly rejects constant differences** (e.g., `'John'` vs `'Jane'`)
    - Respects maximum parameter threshold to avoid over-parameterization
 
-2. **Scope Analysis** (`dry_detector/unification/scope_analyzer.py`)
+2. **Scope Analysis** (`towel/unification/scope_analyzer.py`)
    - Analyzes lexical scopes and identifier bindings
    - Tracks which identifiers refer to which values
    - Identifies free variables in code blocks
 
-3. **Hygienic Code Extraction** (`dry_detector/unification/extractor.py`)
+3. **Hygienic Code Extraction** (`towel/unification/extractor.py`)
    - Extracts code into functions while maintaining hygiene
    - **Handles f-strings correctly** (fixed ast.unparse errors)
    - Ensures no shadowing of enclosing scope identifiers
    - Preserves referential transparency
 
-4. **Structural Similarity Filtering** (`dry_detector/unification/refactor_engine.py`)
+4. **Structural Similarity Filtering** (`towel/unification/refactor_engine.py`)
    - Pre-filters code blocks before expensive unification
    - Checks structural similarity (node types, counts)
    - **Excludes docstrings from extraction**
    - Prevents obviously different blocks from being compared
 
-5. **AST Normalization** (`dry_detector/unification/normalizer.py`)
+5. **AST Normalization** (`towel/unification/normalizer.py`)
    - Removes docstrings, type annotations
    - Normalizes AST for consistent comparison
 
@@ -82,7 +82,7 @@ Successfully implemented a unification-based approach to detect and refactor dup
 ## Architecture
 
 ```
-dry_detector/unification/
+towel/unification/
 ├── __init__.py           # Package exports
 ├── scope_analyzer.py     # Scope and binding analysis
 ├── normalizer.py         # AST normalization
@@ -233,7 +233,7 @@ def process_admin_data(admin_id):
 ## Usage
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Create engine
 engine = UnificationRefactorEngine(

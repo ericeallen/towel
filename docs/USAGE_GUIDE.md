@@ -1,13 +1,13 @@
-# DRY Detector - Usage Guide
+# Towel - Usage Guide
 
 ## Quick Start
 
-There are three ways to use the unification-based DRY detector:
+There are three ways to use Towel, the unification-based code refactoring tool:
 
 ### 1. Analyze a Single File
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
@@ -24,7 +24,7 @@ if proposals:
 ### 2. Analyze Multiple Files (for cross-file duplicates)
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
@@ -45,7 +45,7 @@ if proposals:
 ### 3. Analyze an Entire Directory
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 

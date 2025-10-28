@@ -8,10 +8,10 @@ import unittest
 import ast
 import tempfile
 import os
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
-from dry_detector.unification.unifier import Unifier
-from dry_detector.unification.extractor import HygienicExtractor
-from dry_detector.unification.scope_analyzer import ScopeAnalyzer
+from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.unifier import Unifier
+from towel.unification.extractor import HygienicExtractor
+from towel.unification.scope_analyzer import ScopeAnalyzer
 
 
 class TestExtractorErrorPaths(unittest.TestCase):
@@ -29,7 +29,7 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        from dry_detector.unification.unifier import Substitution
+        from towel.unification.unifier import Substitution
         subst = Substitution()
 
         # Try to extract with too many free variables
