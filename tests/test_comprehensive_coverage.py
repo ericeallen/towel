@@ -12,10 +12,10 @@ import ast
 import tempfile
 import os
 from pathlib import Path
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
-from dry_detector.unification.unifier import Unifier
-from dry_detector.unification.extractor import HygienicExtractor
-from dry_detector.unification.scope_analyzer import ScopeAnalyzer
+from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.unifier import Unifier
+from towel.unification.extractor import HygienicExtractor
+from towel.unification.scope_analyzer import ScopeAnalyzer
 from tests.test_helpers import assert_file_not_modified
 
 
@@ -197,7 +197,7 @@ def bar():
         foo_func = tree.body[1]
         bar_func = tree.body[2]
 
-        from dry_detector.unification.unifier import Unifier, Substitution
+        from towel.unification.unifier import Unifier, Substitution
         unifier = Unifier(max_parameters=5)
 
         blocks = [foo_func.body, bar_func.body]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive test runner for DRY Detector.
+Comprehensive test runner for Towel.
 
 Runs all unit tests and integration tests.
 """

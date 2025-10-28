@@ -5,7 +5,7 @@
 If you analyze files **separately**, you get duplicate definitions:
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
@@ -21,7 +21,7 @@ proposals2 = engine.analyze_file("example3_file2.py")
 Analyze files **together** using `analyze_files()`:
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 

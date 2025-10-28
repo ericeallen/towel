@@ -1,6 +1,6 @@
-# DRY Detector - Complete Documentation
+# Towel - Complete Documentation
 
-**Version 0.2.0** - Unification-Based Duplicate Code Detection and Refactoring
+**Version 1.0.0** - Unification-Based Duplicate Code Detection and Refactoring
 
 ---
 
@@ -137,10 +137,10 @@ The refactoring engine accepts these parameters:
 
 ### Overview
 
-DRY Detector uses **unification** from type inference theory to detect and refactor duplicate code.
+Towel uses **unification** from type inference theory to detect and refactor duplicate code.
 
 ```
-src/dry_detector/
+src/towel/
 └── unification/           # Unification-based refactoring system (91% coverage)
     ├── refactor_engine.py # Main refactoring engine (89%)
     ├── unifier.py         # Robinson-style unification algorithm (88%)
@@ -267,7 +267,7 @@ test_examples/
 ```
 dry-detector/
 ├── src/                      # Source code (src layout)
-│   └── dry_detector/
+│   └── towel/
 │       └── unification/
 ├── scripts/                  # Executable scripts
 │   ├── dry                   # Main refactoring tool
@@ -321,7 +321,7 @@ just reset-examples
 2. Import test infrastructure:
    ```python
    import unittest
-   from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+   from towel.unification.refactor_engine import UnificationRefactorEngine
    ```
 3. Create test class inheriting from `unittest.TestCase`
 4. Run tests: `just test`
@@ -376,7 +376,7 @@ The extractor:
 
 #### Import Errors After Restructuring
 
-**Problem**: `ModuleNotFoundError: No module named 'dry_detector'`
+**Problem**: `ModuleNotFoundError: No module named 'towel'`
 
 **Solution**: Reinstall package:
 ```bash

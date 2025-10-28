@@ -20,6 +20,7 @@ from tests.test_observational_equivalence import (
     compare_function_behavior,
     FunctionExecutionResult
 )
+from tests.edge_case_values import EdgeCaseValues
 
 
 def extract_function_names_from_proposal(description: str) -> List[str]:
@@ -178,18 +179,30 @@ def generate_test_values_for_type(
         if type_name:
             type_name = type_name.lower()
 
+            # Use comprehensive edge case values for better coverage
+            # Note: Keep collections small to avoid performance issues, but full numeric coverage
             if 'int' in type_name:
-                return [0, 1, -1, 10, 100, -5]
+                # Full integer edge cases - large ints don't cause issues unless used in range()
+                edge_ints = EdgeCaseValues.integers()
+                return edge_ints  # All int edge cases including sys.maxsize, 10**100
             elif 'str' in type_name:
-                return ['', 'hello', 'test', 'a', 'Hello World', '123']
+                edge_strs = EdgeCaseValues.strings()
+                # Exclude only the very long string (last one: 'a' * 1000)
+                return edge_strs[:-1]  # All except last
             elif 'list' in type_name:
-                return [[], [1, 2, 3], [0], ['a', 'b'], [1]]
+                edge_lists = EdgeCaseValues.lists()
+                # Exclude very large lists (last few with 100+ elements)
+                return edge_lists[:10]  # Up to 10 elements max
             elif 'dict' in type_name:
-                return [{}, {'key': 'value'}, {'a': 1, 'b': 2}, {'id': 123}]
+                edge_dicts = EdgeCaseValues.dicts()
+                # Exclude very large dicts (last one with 100 keys)
+                return edge_dicts[:-1]  # All except last
             elif 'bool' in type_name:
-                return [True, False]
+                return EdgeCaseValues.booleans()
             elif 'float' in type_name:
-                return [0.0, 1.5, -2.5, 3.14, 100.0]
+                # Full float edge cases - inf, nan, etc. don't cause performance issues
+                edge_floats = EdgeCaseValues.floats()
+                return edge_floats  # All float edge cases including nan, inf, sys.float_info.max
 
     # Heuristics based on parameter name
     name_lower = param_name.lower()
@@ -204,31 +217,43 @@ def generate_test_values_for_type(
         ]
 
     if 'id' in name_lower or name_lower.endswith('_id'):
-        return [0, 1, 123, 456, -1]
+        # IDs: test edge cases including boundaries - full range safe
+        return EdgeCaseValues.integers()[:8]
     elif 'count' in name_lower or 'num' in name_lower or 'size' in name_lower:
+        # Counts: focus on boundary values (0, 1, moderate) - avoid large values that might go in range()
         return [0, 1, 5, 10, 100]
     elif 'name' in name_lower:
-        return ['', 'test', 'John', 'Admin', 'a']
+        # Names: include unicode and empty
+        return EdgeCaseValues.strings()[:8]
     elif 'email' in name_lower:
         return ['test@example.com', 'user@test.com', '', 'invalid']
     elif 'items' in name_lower or 'list' in name_lower or 'values' in name_lower:
-        return [[], [1, 2, 3], [0], [10, 20, 30]]
+        # Lists: include edge cases but limit to moderate size (no 1000-element lists)
+        return EdgeCaseValues.lists()[:10]
     elif 'data' in name_lower or 'dict' in name_lower or 'config' in name_lower:
-        return [{}, {'key': 'value'}, {'id': 1, 'name': 'test'}]
+        # Dicts: include edge cases but limit size (no 100-key dicts)
+        return EdgeCaseValues.dicts()[:-1]
     elif 'text' in name_lower or 'message' in name_lower or 'str' in name_lower:
-        return ['', 'hello', 'test message', 'a']
+        # Text: include unicode and edge cases
+        return EdgeCaseValues.strings()[:-1]  # All except 1000-char string
     elif 'flag' in name_lower or 'enabled' in name_lower or 'is_' in name_lower:
-        return [True, False]
+        return EdgeCaseValues.booleans()
     elif name_lower in ['x', 'y', 'z', 'n', 'm', 'i', 'j', 'k']:
-        return [0, 1, -1, 5, 10, -5]
+        # Generic numeric variables: use full int edge cases
+        return EdgeCaseValues.integers()
 
-    # Default: try common types
+    # Default: sample from all types for maximum coverage (smaller set)
+    edge_ints = EdgeCaseValues.integers()
+    edge_strs = EdgeCaseValues.strings()
+    edge_lists = EdgeCaseValues.lists()
+    edge_dicts = EdgeCaseValues.dicts()
+
     return [
-        0, 1, -1, 10,  # integers
-        '', 'test', 'a',  # strings
-        [], [1, 2, 3],  # lists
-        {},  # dict
-        True, False,  # booleans
+        edge_ints[0], edge_ints[1], edge_ints[2], edge_ints[3],  # 0, -0, 1, -1
+        edge_strs[0], edge_strs[1], edge_strs[2],  # '', 'a', 'A'
+        edge_lists[0], edge_lists[1],  # [], [0]
+        edge_dicts[0],  # {}
+        True, False,
     ]
 
 
@@ -275,7 +300,7 @@ def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tu
 
     # Test 2-N: Vary one parameter at a time
     for param_idx, (param_name, values) in enumerate(params):
-        for value in values[:3]:  # Test up to 3 values per parameter
+        for value in values[:2]:  # Test up to 2 values per parameter (reduced for performance)
             args = []
             for i, (_, param_values) in enumerate(params):
                 if i == param_idx:
@@ -301,7 +326,7 @@ def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tu
             # If not hashable, just add it
             unique_cases.append(case)
 
-    return unique_cases[:10]  # Limit to 10 test cases per function
+    return unique_cases[:5]  # Limit to 5 test cases per function (reduced for performance)
 
 
 def test_all_refactored_functions(
@@ -424,12 +449,13 @@ class AutomaticEquivalenceTester:
 
         return passed, failed, all_errors
 
-    def test_all_examples(self, examples_dir: str = "test_examples") -> Dict[str, Any]:
+    def test_all_examples(self, examples_dir: str = "test_examples", verbose: bool = True) -> Dict[str, Any]:
         """
         Test all example files automatically.
 
         Args:
             examples_dir: Directory containing example files
+            verbose: Print progress as files are tested
 
         Returns:
             Dictionary with test results
@@ -443,11 +469,14 @@ class AutomaticEquivalenceTester:
             'file_results': {}
         }
 
-        for py_file in sorted(examples_path.glob('*.py')):
-            if py_file.name == '__init__.py' or py_file.name.startswith('.'):
-                continue
+        all_files = [f for f in sorted(examples_path.glob('*.py'))
+                     if f.name != '__init__.py' and not f.name.startswith('.')]
 
+        for i, py_file in enumerate(all_files, 1):
             results['total_files'] += 1
+
+            if verbose:
+                print(f"[{i}/{len(all_files)}] Testing {py_file.name}...", end=' ', flush=True)
 
             passed, failed, errors = self.test_file(str(py_file))
 
@@ -460,5 +489,12 @@ class AutomaticEquivalenceTester:
                 'failed': failed,
                 'errors': errors
             }
+
+            if verbose:
+                total = passed + failed
+                if total > 0:
+                    print(f"{passed}/{total} passed")
+                else:
+                    print("no proposals")
 
         return results

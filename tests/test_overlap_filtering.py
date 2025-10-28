@@ -7,7 +7,7 @@ which would break the code by modifying the same lines multiple times.
 
 import unittest
 import ast
-from dry_detector.unification.refactor_engine import (
+from towel.unification.refactor_engine import (
     RefactoringProposal,
     get_affected_lines,
     filter_overlapping_proposals

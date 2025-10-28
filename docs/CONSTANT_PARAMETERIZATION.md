@@ -59,7 +59,7 @@ def bar():
 Constant parameterization is **enabled by default** but can be disabled:
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Enable constant parameterization (default)
 engine = UnificationRefactorEngine(
@@ -236,7 +236,7 @@ EOF
 
 # Run analyzer
 python3 -c "
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(parameterize_constants=True)
 proposals = engine.analyze_file('/tmp/test_const.py')
@@ -251,16 +251,16 @@ for p in proposals:
 
 ### Modified Files
 
-1. **`dry_detector/unification/unifier.py`**
+1. **`towel/unification/unifier.py`**
    - Added `parameterize_constants` parameter to `Unifier.__init__()`
    - Modified constant handling in `_unify_nodes()` to parameterize differing constants
    - Added `_unify_for_loop()` for special handling of loop constructs
 
-2. **`dry_detector/unification/refactor_engine.py`**
+2. **`towel/unification/refactor_engine.py`**
    - Added `parameterize_constants` parameter to `UnificationRefactorEngine.__init__()`
    - Passes option through to `Unifier`
 
-3. **`dry_detector/unification/extractor.py`**
+3. **`towel/unification/extractor.py`**
    - Updated parameter substitution logic to handle constant replacement
    - Fixed f-string handling to preserve structure while replacing constants
 

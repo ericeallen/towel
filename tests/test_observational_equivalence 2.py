@@ -13,7 +13,7 @@ import sys
 import io
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from contextlib import redirect_stdout, redirect_stderr
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import get_test_example_path, assert_file_not_modified
 
 
@@ -171,7 +171,7 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
     """Automatically test observational equivalence for ALL example files."""
 
     def setUp(self):
-        from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+        from towel.unification.refactor_engine import UnificationRefactorEngine
         from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 
         self.engine = UnificationRefactorEngine(
@@ -476,7 +476,7 @@ def calculate_b(y):
         original_content = example_path.read_text()
 
         # Get refactoring proposals
-        from dry_detector.unification.refactor_engine import filter_overlapping_proposals
+        from towel.unification.refactor_engine import filter_overlapping_proposals
         proposals = self.engine.analyze_file(str(example_path))
         filtered_proposals = filter_overlapping_proposals(proposals)
 

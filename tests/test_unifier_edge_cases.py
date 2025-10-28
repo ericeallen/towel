@@ -7,7 +7,7 @@ and various AST node type combinations.
 
 import unittest
 import ast
-from dry_detector.unification.unifier import Unifier
+from towel.unification.unifier import Unifier
 
 
 class TestUnifierEdgeCases(unittest.TestCase):

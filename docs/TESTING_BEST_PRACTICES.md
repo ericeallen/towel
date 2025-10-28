@@ -138,7 +138,7 @@ See `test_with_temp_files.py` for a comprehensive example that demonstrates all 
 
 ```python
 from test_helpers import temporary_test_files, verify_file_unchanged
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 def test_directory_refactoring():
     """Test with temporary copies."""

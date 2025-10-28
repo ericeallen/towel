@@ -12,7 +12,7 @@ All tests read from test_examples in read-only mode.
 """
 import unittest
 import ast
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import (
     get_test_example_path,
     assert_file_not_modified

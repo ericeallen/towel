@@ -53,7 +53,7 @@ The framework now includes **automatic comprehensive testing** that tests ALL re
 
 ```python
 from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Create tester
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
@@ -333,4 +333,4 @@ When adding new refactoring capabilities:
 
 ---
 
-**Note**: This testing framework is essential for ensuring the DRY Detector produces correct, semantically equivalent code. It has already proven valuable by finding bugs that would have been difficult to catch otherwise.
+**Note**: This testing framework is essential for ensuring Towel produces correct, semantically equivalent code. It has already proven valuable by finding bugs that would have been difficult to catch otherwise.

@@ -15,7 +15,7 @@ import sys
 import os
 import ast
 from pathlib import Path
-from dry_detector.unification.refactor_engine import (
+from towel.unification.refactor_engine import (
     UnificationRefactorEngine,
     RefactoringProposal,
     filter_overlapping_proposals

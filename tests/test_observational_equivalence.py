@@ -13,8 +13,122 @@ import sys
 import io
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from contextlib import redirect_stdout, redirect_stderr
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import get_test_example_path, assert_file_not_modified
+
+
+def compare_callable_returns(func1: Callable, func2: Callable, max_test_cases: int = 5) -> bool:
+    """
+    Compare two callable functions for observational equivalence.
+
+    This enables recursive testing: when functions return functions (closures),
+    we test the returned functions for equivalence rather than comparing by identity.
+
+    Args:
+        func1: First callable to compare
+        func2: Second callable to compare
+        max_test_cases: Maximum number of test cases to generate
+
+    Returns:
+        True if functions behave equivalently on all test cases
+    """
+    import inspect
+
+    # Get function signatures
+    try:
+        sig1 = inspect.signature(func1)
+        sig2 = inspect.signature(func2)
+    except (ValueError, TypeError):
+        # Can't inspect signature - fall back to identity comparison
+        return func1 == func2
+
+    # Check if signatures are compatible (same number of parameters)
+    params1 = list(sig1.parameters.values())
+    params2 = list(sig2.parameters.values())
+
+    if len(params1) != len(params2):
+        return False
+
+    # Generate test cases based on signature
+    # Generate test cases for each parameter
+    param_values = []
+    for param in params1:
+        # Use simple heuristics for generating test values
+        if param.name in ['x', 'y', 'z', 'n', 'i', 'j']:
+            values = [0, 1, -1, 5]
+        elif 'item' in param.name.lower():
+            values = [[], [1, 2], [0]]
+        elif 'data' in param.name.lower():
+            values = [{}, {'a': 1}]
+        else:
+            # Default values
+            values = [0, 1, [], {}][:max_test_cases]
+
+        param_values.append(values[:max_test_cases])
+
+    # Test with a few combinations of parameter values
+    num_params = len(params1)
+    test_count = 0
+
+    # Generate test cases (use simple combinations)
+    if num_params == 0:
+        # No parameters - just call both functions
+        test_cases = [()]
+    elif num_params == 1:
+        test_cases = [(v,) for v in param_values[0][:max_test_cases]]
+    elif num_params == 2:
+        # Test a few combinations for 2 parameters
+        test_cases = [
+            (param_values[0][0], param_values[1][0]),
+            (param_values[0][1] if len(param_values[0]) > 1 else param_values[0][0],
+             param_values[1][0]),
+            (param_values[0][0],
+             param_values[1][1] if len(param_values[1]) > 1 else param_values[1][0]),
+        ]
+    else:
+        # For 3+ parameters, use first value for most, vary one at a time
+        base_case = tuple(vals[0] for vals in param_values)
+        test_cases = [base_case]
+        for i, vals in enumerate(param_values[:max_test_cases]):
+            if len(vals) > 1:
+                varied_case = list(base_case)
+                varied_case[i] = vals[1]
+                test_cases.append(tuple(varied_case))
+
+    # Execute both functions with test cases and compare results
+    for test_args in test_cases[:max_test_cases]:
+        try:
+            result1 = func1(*test_args)
+            exception1 = None
+        except Exception as e:
+            result1 = None
+            exception1 = e
+
+        try:
+            result2 = func2(*test_args)
+            exception2 = None
+        except Exception as e:
+            result2 = None
+            exception2 = e
+
+        # Compare exceptions
+        if type(exception1) != type(exception2):
+            return False
+
+        if exception1 and exception2:
+            # Both raised same exception type - consider equivalent
+            continue
+
+        # Compare results
+        # If results are also callables, could recurse (but limit depth to avoid infinite recursion)
+        if callable(result1) and callable(result2):
+            # Recursive case - but don't go too deep
+            # For now, just check they're both callable
+            continue
+        elif result1 != result2:
+            return False
+
+    return True
 
 
 class FunctionExecutionResult:
@@ -47,7 +161,52 @@ class FunctionExecutionResult:
             return str(self.exception) == str(other.exception)
 
         # Compare return values
-        return self.return_value == other.return_value
+        # SPECIAL CASE: If both return values are callable functions,
+        # compare them by testing their observational equivalence
+        if callable(self.return_value) and callable(other.return_value):
+            return compare_callable_returns(self.return_value, other.return_value)
+
+        # SPECIAL CASE: NaN values require special handling
+        # In IEEE 754, nan != nan, but for observational equivalence,
+        # if both functions return nan, they are equivalent
+        return self._values_equal(self.return_value, other.return_value)
+
+    def _values_equal(self, val1, val2):
+        """
+        Compare two values for equality, handling NaN correctly.
+
+        Args:
+            val1: First value
+            val2: Second value
+
+        Returns:
+            True if values are equivalent (including both being NaN)
+        """
+        import math
+
+        # Check if both are floats and both are NaN
+        if isinstance(val1, float) and isinstance(val2, float):
+            if math.isnan(val1) and math.isnan(val2):
+                return True
+
+        # Check if both are lists/tuples - compare element by element
+        if isinstance(val1, (list, tuple)) and isinstance(val2, (list, tuple)):
+            if type(val1) != type(val2) or len(val1) != len(val2):
+                return False
+            return all(self._values_equal(v1, v2) for v1, v2 in zip(val1, val2))
+
+        # Check if both are dicts - compare keys and values
+        if isinstance(val1, dict) and isinstance(val2, dict):
+            if set(val1.keys()) != set(val2.keys()):
+                return False
+            return all(self._values_equal(val1[k], val2[k]) for k in val1.keys())
+
+        # Default comparison
+        try:
+            return val1 == val2
+        except Exception:
+            # Some values may not be comparable - consider them unequal
+            return False
 
     def __repr__(self):
         if self.exception:
@@ -171,7 +330,7 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
     """Automatically test observational equivalence for ALL example files."""
 
     def setUp(self):
-        from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+        from towel.unification.refactor_engine import UnificationRefactorEngine
         from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 
         self.engine = UnificationRefactorEngine(

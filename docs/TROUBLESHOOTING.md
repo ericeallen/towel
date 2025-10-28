@@ -7,7 +7,7 @@
 **Error:**
 ```
 IndexError: list index out of range
-  File "dry_detector/unification/refactor_engine.py", line 649
+  File "towel/unification/refactor_engine.py", line 649
     indent = self._get_indent(lines[start_line - 1])
 ```
 
@@ -213,8 +213,8 @@ just analyze src/
 
 1. **Ensure using the unification-based engine:**
    ```python
-   from dry_detector.unification.refactor_engine import UnificationRefactorEngine
-   # Not: from dry_detector.refactoring.engine import RefactoringEngine
+   from towel.unification.refactor_engine import UnificationRefactorEngine
+   # Not: from towel.refactoring.engine import RefactoringEngine
    ```
 
 2. **Reset files:**

@@ -1,6 +1,6 @@
-# DRY Detector Test Suite
+# Towel Test Suite
 
-Comprehensive unit tests for the DRY (Don't Repeat Yourself) Detector.
+Comprehensive unit tests for Towel, the DRY (Don't Repeat Yourself) code refactoring tool.
 
 ## Running Tests
 

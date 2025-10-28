@@ -3,7 +3,7 @@
 ## TL;DR
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
@@ -23,7 +23,7 @@ for proposal in proposals:
 ### 1. Using analyze_directory() - RECOMMENDED
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
@@ -51,7 +51,7 @@ python3 simple_example.py
 
 ```python
 from pathlib import Path
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Find files manually
 files = [str(f) for f in Path("src").rglob("*.py")]
@@ -64,7 +64,7 @@ proposals = engine.analyze_files(files)
 
 ```python
 #!/usr/bin/env python3
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 def refactor_directory(directory):
     """Analyze and refactor all Python files in a directory."""
@@ -223,7 +223,7 @@ Apply refactorings? (y/N):
 ### Example: Preview without applying
 
 ```python
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 import ast
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)

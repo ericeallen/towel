@@ -162,16 +162,16 @@ This feature now enables detection of:
 
 ## Files Modified
 
-1. `dry_detector/unification/unifier.py`
+1. `towel/unification/unifier.py`
    - Added `parameterize_constants` parameter
    - Modified constant handling to parameterize when enabled
    - Added `_unify_for_loop()` for loop handling
 
-2. `dry_detector/unification/refactor_engine.py`
+2. `towel/unification/refactor_engine.py`
    - Added `parameterize_constants` parameter
    - Passes option to Unifier
 
-3. `dry_detector/unification/extractor.py`
+3. `towel/unification/extractor.py`
    - Fixed constant substitution logic
    - Improved f-string handling
 
@@ -185,7 +185,7 @@ This feature now enables detection of:
 Run the test:
 ```bash
 python3 -c "
-from dry_detector.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(parameterize_constants=True)
 proposals = engine.analyze_file('my_test/my_test.py')

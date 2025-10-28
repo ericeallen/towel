@@ -7,7 +7,7 @@ are properly rejected.
 
 import unittest
 import ast
-from dry_detector.unification.orphan_detector import (
+from towel.unification.orphan_detector import (
     get_bound_variables,
     get_used_variables,
     has_orphaned_variables
