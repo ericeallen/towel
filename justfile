@@ -25,9 +25,30 @@ preview TARGET:
 
 # === Testing Commands ===
 
-# Run comprehensive unit test suite
+# Run ALL tests (unit tests + single-file + cross-file observational equivalence)
 test:
+    @echo "Running comprehensive test suite..."
+    @echo ""
     source venv/bin/activate && python tests/run_tests.py
+    @echo ""
+    @echo "Running cross-file observational equivalence tests..."
+    @echo ""
+    source venv/bin/activate && python -c "from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester; from src.towel.unification.refactor_engine import UnificationRefactorEngine; engine = UnificationRefactorEngine(max_parameters=5, min_lines=4); tester = CrossFileEquivalenceTester(engine); results = tester.test_all_projects('test_examples_crossfile', verbose=True); print('\\n=== Cross-File Test Results ==='); print(f'Projects tested: {results[\"total_projects\"]}'); print(f'Total proposals: {results[\"total_proposals_tested\"]}'); print(f'Passed: {results[\"total_passed\"]}'); print(f'Failed: {results[\"total_failed\"]}'); success_rate = 100 * results['total_passed'] / results['total_proposals_tested'] if results['total_proposals_tested'] > 0 else 0; print(f'Success rate: {success_rate:.1f}%')"
+
+# Run unit tests only
+test-unit:
+    source venv/bin/activate && python tests/run_tests.py
+
+# Run cross-file observational equivalence tests only
+test-crossfile:
+    @echo "Running cross-file observational equivalence tests..."
+    @echo ""
+    source venv/bin/activate && python -c "from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester; from src.towel.unification.refactor_engine import UnificationRefactorEngine; engine = UnificationRefactorEngine(max_parameters=5, min_lines=4); tester = CrossFileEquivalenceTester(engine); results = tester.test_all_projects('test_examples_crossfile', verbose=True); print('\\n=== Cross-File Test Results ==='); print(f'Projects tested: {results[\"total_projects\"]}'); print(f'Total proposals: {results[\"total_proposals_tested\"]}'); print(f'Passed: {results[\"total_passed\"]}'); print(f'Failed: {results[\"total_failed\"]}'); success_rate = 100 * results['total_passed'] / results['total_proposals_tested'] if results['total_proposals_tested'] > 0 else 0; print(f'Success rate: {success_rate:.1f}%')"
+
+# Test observational equivalence for a single file
+test-file FILENAME:
+    @echo "Testing observational equivalence for {{FILENAME}}..."
+    source venv/bin/activate && python -c "from tests.automatic_equivalence_tester import AutomaticEquivalenceTester; from src.towel.unification.refactor_engine import UnificationRefactorEngine; engine = UnificationRefactorEngine(max_parameters=5, min_lines=4); tester = AutomaticEquivalenceTester(engine); passed, failed, errors = tester.test_file('{{FILENAME}}'); print(f'Result: {passed}/{passed+failed} passed ({100*passed/(passed+failed) if passed+failed > 0 else 0:.1f}%)'); [print(f'  {error}') for error in errors[:5]] if errors else None"
 
 # Test specific aspects
 test-bindings:
@@ -47,6 +68,47 @@ test-engine:
 
 test-observational:
     source venv/bin/activate && python -m unittest tests.test_observational_equivalence -v
+
+# Run regression tests
+test-regression:
+    source venv/bin/activate && python -m unittest tests.test_regression -v
+
+# DANGER: Regenerate regression test baseline (OVERWRITES EXPECTED OUTPUT!)
+regenerate-baseline:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                                                              ║"
+    echo "║                      *** DANGER ***                          ║"
+    echo "║                                                              ║"
+    echo "║  THIS WILL OVERWRITE ALL BASELINE EXPECTED OUTPUT FILES!     ║"
+    echo "║                                                              ║"
+    echo "║  This command should ONLY be run when:                       ║"
+    echo "║    1. You have made INTENTIONAL changes to the engine        ║"
+    echo "║    2. You have VERIFIED the new output is CORRECT            ║"
+    echo "║    3. All observational equivalence tests are PASSING        ║"
+    echo "║                                                              ║"
+    echo "║  The following will be COMPLETELY OVERWRITTEN:               ║"
+    echo "║    - test_examples_expected_output/                          ║"
+    echo "║    - test_examples_crossfile_expected_output/                ║"
+    echo "║                                                              ║"
+    echo "║  If you regenerate incorrectly, you will lose the ability    ║"
+    echo "║  to detect regressions in refactoring output!                ║"
+    echo "║                                                              ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    read -p "Type YES in all caps to continue (default: NO): " response
+    if [ "$response" != "YES" ]; then
+        echo "Aborted. Baseline was NOT regenerated."
+        exit 1
+    fi
+    echo ""
+    echo "Regenerating baseline..."
+    source venv/bin/activate && python tests/generate_baseline.py --confirm
+    echo ""
+    echo "✓ Baseline regenerated successfully"
+    echo "⚠️  Remember to commit the updated baseline files to git!"
 
 # Run tests with coverage report
 coverage:
@@ -136,7 +198,7 @@ build:
 
 # Show detailed help
 help:
-    @echo "DRY Detector - Unification-Based Duplicate Code Detector"
+    @echo "Towel - Unification-Based Duplicate Code Detector"
     @echo ""
     @echo "USAGE:"
     @echo "  just <command>"
@@ -144,17 +206,22 @@ help:
     @echo "COMMON COMMANDS:"
     @echo "  dry <input> <output>  Detect and fix duplicates (writes to output)"
     @echo "  preview <target>      Preview refactoring opportunities (read-only)"
-    @echo "  test                  Run comprehensive unit test suite"
+    @echo "  test                  Run ALL tests (unit + single-file + cross-file)"
     @echo "  help                  Show this help message"
     @echo ""
     @echo "TESTING:"
-    @echo "  test                  Run comprehensive unit test suite"
+    @echo "  test                  Run ALL tests (unit + single-file + cross-file observational equivalence)"
+    @echo "  test-unit             Run unit tests only"
+    @echo "  test-regression       Run regression tests (detect output changes)"
+    @echo "  test-crossfile        Run cross-file observational equivalence tests only"
+    @echo "  test-file <file>      Test observational equivalence for a single file"
     @echo "  test-bindings         Test binding construct handling"
     @echo "  test-returns          Test return value propagation"
     @echo "  test-fstrings         Test f-string handling"
     @echo "  test-orphans          Test orphan variable detection"
     @echo "  test-engine           Test refactoring engine end-to-end"
     @echo "  test-observational    Test observational equivalence (refactored = original behavior)"
+    @echo "  regenerate-baseline   ⚠️  DANGER: Regenerate regression baseline (asks for confirmation)"
     @echo "  coverage              Run tests with coverage report"
     @echo "  coverage-html         Generate HTML coverage report"
     @echo "  coverage-unification  Show coverage for unification modules"

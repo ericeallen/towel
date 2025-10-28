@@ -1,4 +1,4 @@
-# DRY Detector - Runtime Dependencies
+# Towel - Runtime Dependencies
 #
 # Zero external runtime dependencies required!
 # The unification-based refactoring system uses only Python stdlib.

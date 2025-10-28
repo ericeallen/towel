@@ -1,4 +1,4 @@
-# DRY Detector - Development Dependencies
+# Towel - Development Dependencies
 #
 # Install with: pip install -r requirements-dev.txt
 

@@ -11,6 +11,7 @@ import unittest
 import ast
 import sys
 import io
+import copy
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from contextlib import redirect_stdout, redirect_stderr
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -299,20 +300,29 @@ def compare_function_behavior(
     differences = []
 
     for i, (args, kwargs) in enumerate(test_cases):
+        # IMPORTANT: Deep copy args/kwargs to prevent mutable argument pollution
+        # If the original function mutates an argument (e.g., list.append()),
+        # the refactored function must see the ORIGINAL unmutated state, not the
+        # state after the original function modified it.
+        original_args = copy.deepcopy(args)
+        original_kwargs = copy.deepcopy(kwargs)
+        refactored_args = copy.deepcopy(args)
+        refactored_kwargs = copy.deepcopy(kwargs)
+
         # Execute original
         original_result = execute_function(
             original_code,
             function_name,
-            args,
-            kwargs
+            original_args,
+            original_kwargs
         )
 
         # Execute refactored
         refactored_result = execute_function(
             refactored_code,
             function_name,
-            args,
-            kwargs
+            refactored_args,
+            refactored_kwargs
         )
 
         # Compare results
