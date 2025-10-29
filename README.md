@@ -2,21 +2,19 @@
 
 **A Python tool that DRYs your code.**
 
-Towel automatically detects and refactors violations of the DRY (Don't Repeat Yourself) principle in Python codebases using unification algorithms from type inference.
+Towel automatically detects and refactors violations of the DRY (Don't Repeat Yourself) principle in Python codebases using unification algorithms from automated theorem proving.
 
-## ✅ Production Ready
-
-**100% observational equivalence achieved!**
+## Testing Status
 
 - **Unit Tests**: 125/125 passing (100%)
-- **Observational Equivalence**: 175/175 passing (100%)
-- **Files at 100%**: 18/18 example files
+- **Observational Equivalence**: 175/175 refactoring proposals pass automated behavioral equivalence testing
+- **Test Coverage**: 18 example files with comprehensive edge cases
 
-All refactorings are verified to behave identically to the original code through comprehensive automatic testing.
+All refactorings are verified to behave identically to the original code through automated observational equivalence testing.
 
 ## Quick Start
 
-**Zero dependencies required!** The tool uses only Python stdlib.
+The tool uses only Python stdlib with zero external dependencies.
 
 ### Using Just (Recommended)
 
@@ -57,7 +55,9 @@ python3 dry.py <input> <output>
 ## Features
 
 - **Zero External Dependencies**: Uses only Python standard library
-- **Unification-Based Analysis**: Advanced algorithm from type inference theory
+- **Unification-Based Analysis**: Advanced algorithm from automated theorem proving
+- **Hygienic Code Generation**: Generates functions with hygienically renamed parameters to avoid name conflicts. The generated parameter names like `__param_0` are intentionally generic and can be renamed to more meaningful names using an LLM coding assistant for better readability.
+- **Referential Transparency**: Preserves referential transparency and maintains program semantics through careful scope analysis
 - **Safe Refactoring**:
   - Alpha-renaming for loop variables (treats `i` and `j` as equivalent)
   - Return value propagation (detects returns anywhere in block)
@@ -70,10 +70,10 @@ python3 dry.py <input> <output>
   - Max parameter limits (prevents over-parameterization)
 - **Cross-File Support**: Automatically handles duplicates spanning multiple files
 - **Comprehensive Testing**:
-  - **100% observational equivalence** (175/175 proposals pass)
-  - **125 unit tests passing** (100%)
-  - **Automatic observational equivalence testing** (verifies refactored code behaves identically to original)
-  - Tests **175 refactoring proposals across 18 example files** automatically
+  - 175/175 refactoring proposals pass observational equivalence testing
+  - 125 unit tests passing (100%)
+  - Automatic observational equivalence testing verifies refactored code behaves identically to original
+  - Tests 175 refactoring proposals across 18 example files automatically
   - Intelligent test input generation based on AST analysis
   - Recursive testing of returned functions (closures)
   - See `tests/OBSERVATIONAL_EQUIVALENCE.md` for details
@@ -83,7 +83,7 @@ python3 dry.py <input> <output>
 ### For Users
 
 ```bash
-# Clone and install (no dependencies!)
+# Clone and install (zero external dependencies)
 git clone <repo>
 cd towel
 pip install -e .
@@ -154,7 +154,7 @@ just coverage-unification
 
 ## How It Works
 
-The tool uses **unification** from type inference theory to detect and parameterize duplicates:
+The tool uses **unification** from automated theorem proving to detect and parameterize duplicates:
 
 1. **Parsing**: Parses Python files into ASTs using the `ast` module
 2. **Block Extraction**: Extracts all contiguous code blocks from functions

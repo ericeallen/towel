@@ -26,7 +26,7 @@
 git clone <repo-url>
 cd dry-detector
 
-# Install (no dependencies required!)
+# Install (zero external dependencies)
 pip install -e .
 
 # Or install with development tools
@@ -54,7 +54,7 @@ just dry input/ output/
 ### Requirements
 
 - Python 3.7+
-- **Zero external runtime dependencies** - uses only Python stdlib!
+- **Zero external runtime dependencies** - uses only Python stdlib
 
 ### For Users
 
@@ -137,7 +137,7 @@ The refactoring engine accepts these parameters:
 
 ### Overview
 
-Towel uses **unification** from type inference theory to detect and refactor duplicate code.
+Towel uses **unification** from automated theorem proving to detect and refactor duplicate code.
 
 ```
 src/towel/
