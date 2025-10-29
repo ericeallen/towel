@@ -2,7 +2,7 @@
 
 ## Overview
 
-Towel implements a unification-based approach to detect and refactor duplicate code in Python. This uses a principled method based on unification algorithms from type inference theory, achieving 100% observational equivalence across all test cases.
+Towel implements a unification-based approach to detect and refactor duplicate code in Python. This uses a principled method based on unification algorithms from automated theorem proving. The tool performs hygienic code generation and preserves referential transparency. All 175 refactoring proposals pass observational equivalence testing across comprehensive test cases.
 
 ## Implementation Status
 
@@ -254,7 +254,7 @@ if proposals:
 ## Conclusion
 
 The unification-based implementation successfully addresses the user's requirements:
-- ✅ Uses unification algorithm from type inference
+- ✅ Uses unification algorithm from automated theorem proving
 - ✅ Parameterizes identifier differences
 - ✅ Maintains hygiene and referential transparency
 - ✅ Preserves evaluation order

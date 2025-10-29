@@ -1,7 +1,7 @@
 """
 Unification algorithm for finding parameterizable differences in AST nodes.
 
-This is based on Robinson's unification algorithm from type inference,
+This is based on Robinson's unification algorithm from automated theorem proving,
 adapted for AST comparison.
 """
 

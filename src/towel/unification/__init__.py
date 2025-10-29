@@ -2,7 +2,7 @@
 Unification-based code refactoring.
 
 This module implements a principled approach to detecting and extracting
-duplicate code using unification from type inference.
+duplicate code using unification from automated theorem proving.
 """
 
 from .refactor_engine import UnificationRefactorEngine
