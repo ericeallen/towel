@@ -19,6 +19,7 @@ from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier, Substitution
 from .extractor import HygienicExtractor, is_value_producing, get_enclosing_names
 from .orphan_detector import has_orphaned_variables
+from .assign_analyzer import analyze_assignments
 
 
 @dataclass
@@ -135,7 +136,9 @@ class UnificationRefactorEngine:
             # Recursively find all .py files
             for py_file in directory_path.rglob("*.py"):
                 # Skip common directories to ignore
-                if any(part.startswith('.') or part in ['__pycache__', 'venv', 'env', 'node_modules']
+                skip_dirs = ['__pycache__', 'venv', 'env', 'node_modules',
+                             'test_examples_skip', 'test_examples_expected_output']
+                if any(part.startswith('.') or part in skip_dirs
                        for part in py_file.parts):
                     continue
                 python_files.append(str(py_file))
@@ -240,6 +243,36 @@ class UnificationRefactorEngine:
         body = body[start_idx:]
         blocks = []
 
+        # Analyze assignments to identify reassignments
+        from .assign_analyzer import analyze_assignments
+        reassignments = analyze_assignments(function)
+
+        # Find all FunctionDef nodes and the names they define
+        func_defs_by_name = {}
+        for idx, stmt in enumerate(body):
+            if isinstance(stmt, ast.FunctionDef):
+                func_defs_by_name[stmt.name] = (idx, stmt)
+
+        # Helper to get names used in a block
+        def get_names_used(stmts):
+            names = set()
+            for stmt in stmts:
+                for node in ast.walk(stmt):
+                    if isinstance(node, ast.Name):
+                        names.add(node.id)
+            return names
+
+        # Helper to get the variable name from an assignment or augmented assignment
+        def get_assigned_name(stmt):
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                target = stmt.targets[0]
+                if isinstance(target, ast.Name):
+                    return target.id
+            elif isinstance(stmt, ast.AugAssign):
+                if isinstance(stmt.target, ast.Name):
+                    return stmt.target.id
+            return None
+
         # Extract all contiguous subsequences of minimum length
         # Start with longer sequences (more code savings)
         for length in range(len(body), 0, -1):
@@ -250,12 +283,62 @@ class UnificationRefactorEngine:
                 if not block:
                     continue
 
-                start_line = block[0].lineno
-                end_line = block[-1].end_lineno if hasattr(block[-1], 'end_lineno') else block[-1].lineno
+                # Skip blocks that contain reassignments to variables
+                # that were initialized before the block starts
+                if start > 0:
+                    # Collect all variables that are reassigned in the block
+                    reassigned_vars = set()
+                    for stmt in block:
+                        is_reassignment = (
+                            isinstance(stmt, ast.AugAssign) or
+                            (isinstance(stmt, ast.Assign) and reassignments.get(id(stmt), False))
+                        )
+                        if is_reassignment:
+                            var_name = get_assigned_name(stmt)
+                            if var_name:
+                                reassigned_vars.add(var_name)
+
+                    # Collect all variables that were initialized before the block
+                    # (i.e., assigned but not reassigned)
+                    initialized_vars = set()
+                    for prev_stmt in body[:start]:
+                        if isinstance(prev_stmt, ast.Assign):
+                            if not reassignments.get(id(prev_stmt), False):
+                                # This is an initialization
+                                var_name = get_assigned_name(prev_stmt)
+                                if var_name:
+                                    initialized_vars.add(var_name)
+
+                    # If any reassigned variable was initialized before the block,
+                    # skip this block (it depends on that initialization)
+                    if reassigned_vars & initialized_vars:
+                        continue
+
+                # Check if this block uses any names defined by FunctionDefs before it
+                # If so, prepend those FunctionDefs to the block
+                names_used = get_names_used(block)
+                required_funcdefs = []
+
+                for name in names_used:
+                    if name in func_defs_by_name:
+                        func_idx, func_def = func_defs_by_name[name]
+                        # Only include if the FunctionDef is before the block
+                        if func_idx < start:
+                            required_funcdefs.append((func_idx, func_def))
+
+                # Sort by index to maintain order and deduplicate
+                required_funcdefs.sort(key=lambda x: x[0])
+                required_funcdefs = [fd for _, fd in required_funcdefs]
+
+                # Prepend required FunctionDefs to the block
+                full_block = required_funcdefs + list(block)
+
+                start_line = full_block[0].lineno
+                end_line = full_block[-1].end_lineno if hasattr(full_block[-1], 'end_lineno') else full_block[-1].lineno
                 line_count = end_line - start_line + 1
 
                 if line_count >= self.min_lines:
-                    blocks.append(((start_line, end_line), block))
+                    blocks.append(((start_line, end_line), full_block))
 
         return blocks
 
@@ -447,12 +530,24 @@ class UnificationRefactorEngine:
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
             return None
 
+        # Analyze both functions for reassignments BEFORE unification
+        # This is critical so the unifier knows which assignments are reassignments
+        # and can treat their LHS as non-binding occurrences
+        reassignments1 = {}
+        reassignments2 = {}
+        if func1:
+            reassignments1 = analyze_assignments(func1)
+        if func2:
+            reassignments2 = analyze_assignments(func2)
+
+        reassignments_list = [reassignments1, reassignments2]
+
         # Attempt unification
         blocks = [pair.block1_nodes, pair.block2_nodes]
         hygienic_renames = [{}, {}]
 
         try:
-            substitution = self.unifier.unify_blocks(blocks, hygienic_renames)
+            substitution = self.unifier.unify_blocks(blocks, hygienic_renames, reassignments_list)
         except Exception as e:
             return None
 
@@ -463,7 +558,41 @@ class UnificationRefactorEngine:
         enclosing_names = set(root_scope.bindings.keys())
 
         # Compute free variables (variables used but not defined in block)
-        free_vars = scope_analyzer.get_free_variables(pair.block1_nodes)
+        # CRITICAL: We need to compute free variables for ALL blocks, not just block1
+        # If different blocks use different names for the same free variable
+        # (e.g., 'result' in block1, 'output' in block2), we need to track this
+        free_vars_by_block = []
+        for i, (func_name, block_nodes) in enumerate([
+            (pair.function1_name, pair.block1_nodes),
+            (pair.function2_name, pair.block2_nodes)
+        ]):
+            free_vars_by_block.append(scope_analyzer.get_free_variables(block_nodes))
+
+        # Use block1's free variables as the canonical set
+        free_vars = free_vars_by_block[0]
+
+        # Check if there are free variables with different names across blocks
+        # This can happen when the same logical variable has different names
+        # (e.g., 'result' in one function, 'output' in another)
+        free_var_mappings = {}  # Maps canonical param name to variable name per block
+
+        # For each free variable in block1, check if there's a corresponding one in block2
+        # They correspond if they're used in the same syntactic positions
+        # A simple heuristic: if blocks have different free variable sets, map them by position
+        free_vars_list1 = sorted(free_vars_by_block[0])
+        free_vars_list2 = sorted(free_vars_by_block[1])
+
+        if len(free_vars_list1) == len(free_vars_list2) and free_vars_list1 != free_vars_list2:
+            # Different names for same number of free vars - they likely correspond
+            for var1, var2 in zip(free_vars_list1, free_vars_list2):
+                if var1 != var2:
+                    # Use block1's name as canonical
+                    free_var_mappings[var1] = {0: var1, 1: var2}
+
+        # Store free variable mappings in substitution for use in call site generation
+        if not hasattr(substitution, 'free_var_mappings'):
+            substitution.free_var_mappings = {}
+        substitution.free_var_mappings = free_var_mappings
 
         # Find all variables used in augmented assignments in the block
         # These variables MUST be passed as parameters even if they appear in substitution
@@ -485,10 +614,16 @@ class UnificationRefactorEngine:
                 # Don't descend into nested async functions
                 pass
 
-        aug_finder = AugAssignFinder()
-        for node in pair.block1_nodes:
-            aug_finder.visit(node)
-        aug_assign_vars = aug_finder.aug_assign_targets
+        # Compute augmented assignment variables for each block
+        aug_assign_vars_by_block = []
+        for block_nodes in [pair.block1_nodes, pair.block2_nodes]:
+            aug_finder = AugAssignFinder()
+            for node in block_nodes:
+                aug_finder.visit(node)
+            aug_assign_vars_by_block.append(aug_finder.aug_assign_targets)
+
+        # Use block1's aug_assign_vars as the canonical set (for backward compatibility)
+        aug_assign_vars = aug_assign_vars_by_block[0]
 
         # CRITICAL: Handle augmented assignment variables specially
         # If a variable is used in an augmented assignment (total += x), we need to:
@@ -502,10 +637,12 @@ class UnificationRefactorEngine:
         # when generating the call.
         aug_assign_param_mappings = {}  # Maps param names to variable names per block
         params_to_remove = []
+
         for param_name, exprs in substitution.param_expressions.items():
             # Check if ANY expression in this param is an augmented assignment variable
             for block_idx, expr in exprs:
-                if isinstance(expr, ast.Name) and (expr.id in aug_assign_vars if block_idx == 0 else True):
+                # Check if this expression is an augmented assignment variable in THIS block
+                if isinstance(expr, ast.Name) and expr.id in aug_assign_vars_by_block[block_idx]:
                     # Track the mapping BEFORE we remove it
                     if param_name not in aug_assign_param_mappings:
                         aug_assign_param_mappings[param_name] = {}
@@ -516,9 +653,20 @@ class UnificationRefactorEngine:
                 params_to_remove.append(param_name)
 
         # Store the mappings in the substitution object for later use
+        # CRITICAL: Convert the mappings to use block 0's variable name as the key,
+        # not the parameter name, because the parameter will be removed and we'll
+        # need to look it up by the free variable name (which is block 0's var name)
         if not hasattr(substitution, 'aug_assign_mappings'):
             substitution.aug_assign_mappings = {}
-        substitution.aug_assign_mappings = aug_assign_param_mappings
+
+        converted_mappings = {}
+        for param_name, block_mappings in aug_assign_param_mappings.items():
+            if 0 in block_mappings:
+                # Use block 0's variable name as the key
+                block0_var_name = block_mappings[0]
+                converted_mappings[block0_var_name] = block_mappings
+
+        substitution.aug_assign_mappings = converted_mappings
 
         # Remove the augmented assignment parameters from substitution
         for param_name in params_to_remove:
@@ -564,7 +712,7 @@ class UnificationRefactorEngine:
                 # Cannot extract - would require making global/nonlocal variables into parameters
                 return None
 
-        # Extract function
+        # Extract function (reassignment info already in substitution from unification)
         try:
             func_def, param_order = self.extractor.extract_function(
                 template_block=pair.block1_nodes,
@@ -572,7 +720,8 @@ class UnificationRefactorEngine:
                 free_variables=free_vars,
                 enclosing_names=enclosing_names,
                 is_value_producing=value_prod1,
-                function_name="extracted_func"
+                function_name="extracted_func",
+                reassignments=reassignments1
             )
         except Exception as e:
             return None
