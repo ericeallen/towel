@@ -435,7 +435,8 @@ class Unifier:
     def unify_blocks(
         self,
         blocks: List[List[ast.AST]],
-        hygienic_renames: List[Dict[str, str]]
+        hygienic_renames: List[Dict[str, str]],
+        reassignments_list: Optional[List[Dict[int, bool]]] = None
     ) -> Optional[Substitution]:
         """
         Unify multiple code blocks.
@@ -444,6 +445,9 @@ class Unifier:
             blocks: List of code blocks (each is a list of AST statements)
             hygienic_renames: For each block, a mapping from original names
                              to hygienically renamed names
+            reassignments_list: For each block, a dict mapping Assign node id() to
+                              is_reassignment boolean. This helps distinguish fresh
+                              bindings from reassignments.
 
         Returns:
             Substitution mapping expressions to parameters, or None if unification fails
@@ -457,6 +461,9 @@ class Unifier:
 
         # Store blocks for context analysis
         self.current_blocks = blocks
+
+        # Store reassignments for use during unification
+        self.reassignments_list = reassignments_list if reassignments_list else [{} for _ in blocks]
 
         # Collect all constant positions for consistency checking
         self._collect_constant_positions(blocks)
@@ -590,6 +597,13 @@ class Unifier:
         # The parameter names should NOT be parameterized
         if isinstance(first_node, ast.Lambda):
             return self._unify_lambda(nodes, subst, block_indices)
+
+        # Special handling for FunctionDef: function names are bindings (alpha-renaming)
+        # def helper(x): return x * 2 and def processor(x): return x * 2
+        # are equivalent if they differ only in function name (alpha-equivalent)
+        # The function name is in scope within the body (to support recursion)
+        if isinstance(first_node, ast.FunctionDef):
+            return self._unify_functiondef(nodes, subst, block_indices)
 
         # Special handling for f-strings (JoinedStr)
         # F-string literal parts (Constant nodes) must NEVER be parameterized
@@ -920,6 +934,254 @@ class Unifier:
                     if key in old_mappings:
                         self.alpha_renamings[key] = old_mappings[key]
                     else:
+                        self.alpha_renamings.pop(key, None)
+
+    def _unify_functiondef(
+        self,
+        nodes: List[ast.FunctionDef],
+        subst: Substitution,
+        block_indices: List[int]
+    ) -> bool:
+        """
+        Unify FunctionDef nodes with alpha-renaming support for function names.
+
+        Nested function definitions are binding constructs where the function name
+        is bound in the enclosing scope. If they differ (like 'helper' vs 'processor'),
+        they're alpha-equivalent, not parameterizable.
+
+        The function name is also in scope within the function body (to support recursion).
+
+        Args:
+            nodes: List of FunctionDef nodes
+            subst: Current substitution
+            block_indices: Block indices
+
+        Returns:
+            True if unification succeeded
+        """
+        # Get function names
+        func_names = [n.name for n in nodes]
+
+        # Check if all function names are the same
+        if len(set(func_names)) == 1:
+            # Same function name - just unify normally
+            # Unify decorators
+            if not self._unify_lists([n.decorator_list for n in nodes], subst, block_indices):
+                return False
+            # Unify arguments (with parameter alpha-renaming)
+            if not self._unify_arguments([n.args for n in nodes], subst, block_indices):
+                return False
+            # Unify body
+            if not self._unify_lists([n.body for n in nodes], subst, block_indices):
+                return False
+            # Unify return type annotation if present
+            return_annotations = [n.returns for n in nodes]
+            if return_annotations[0] is not None:
+                if not all(ra is not None for ra in return_annotations):
+                    return False
+                if not self._unify_nodes(return_annotations, subst, block_indices):
+                    return False
+            elif any(ra is not None for ra in return_annotations):
+                return False
+            return True
+
+        # Different function names - establish alpha-equivalence
+        # Use the first block's function name as canonical
+        canonical_name = func_names[0]
+
+        # Establish alpha-renaming mappings for all blocks
+        # NOTE: We don't clean these up because function names are scoped
+        # to all subsequent statements in the same block, not just the function body.
+        # The alpha-renaming needs to persist so that calls to helper() vs processor()
+        # in later statements are correctly recognized as equivalent.
+        for idx, block_idx in enumerate(block_indices):
+            func_name = func_names[idx]
+            key = (block_idx, func_name)
+            # Map this block's function name to the canonical name
+            self.alpha_renamings[key] = canonical_name
+
+        # Unify decorators
+        if not self._unify_lists([n.decorator_list for n in nodes], subst, block_indices):
+            return False
+
+        # Unify arguments (with parameter alpha-renaming handled recursively)
+        if not self._unify_arguments([n.args for n in nodes], subst, block_indices):
+            return False
+
+        # Unify body (with alpha-renaming in effect)
+        if not self._unify_lists([n.body for n in nodes], subst, block_indices):
+            return False
+
+        # Unify return type annotation if present
+        return_annotations = [n.returns for n in nodes]
+        if return_annotations[0] is not None:
+            if not all(ra is not None for ra in return_annotations):
+                return False
+            if not self._unify_nodes(return_annotations, subst, block_indices):
+                return False
+        elif any(ra is not None for ra in return_annotations):
+            return False
+
+        return True
+
+    def _unify_arguments(
+        self,
+        args_nodes: List[ast.arguments],
+        subst: Substitution,
+        block_indices: List[int]
+    ) -> bool:
+        """
+        Unify function arguments with alpha-renaming support for parameter names.
+
+        Function parameters are bindings and can differ (like 'x' vs 'y').
+        They're alpha-equivalent, not parameterizable.
+
+        Args:
+            args_nodes: List of ast.arguments nodes
+            subst: Current substitution
+            block_indices: Block indices
+
+        Returns:
+            True if unification succeeded
+        """
+        # Check all have the same number of each parameter type
+        posonlyargs_counts = [len(a.posonlyargs) for a in args_nodes]
+        args_counts = [len(a.args) for a in args_nodes]
+        kwonlyargs_counts = [len(a.kwonlyargs) for a in args_nodes]
+        has_vararg = [a.vararg is not None for a in args_nodes]
+        has_kwarg = [a.kwarg is not None for a in args_nodes]
+
+        if (len(set(posonlyargs_counts)) > 1 or
+            len(set(args_counts)) > 1 or
+            len(set(kwonlyargs_counts)) > 1 or
+            len(set(has_vararg)) > 1 or
+            len(set(has_kwarg)) > 1):
+            # Different parameter structure - can't unify
+            return False
+
+        # Establish alpha-renaming for all parameters
+        # Save old mappings
+        old_mappings = {}
+
+        try:
+            # Handle positional-only args (Python 3.8+)
+            for pos in range(posonlyargs_counts[0]):
+                param_names = [args_nodes[i].posonlyargs[pos].arg for i in range(len(args_nodes))]
+                canonical_name = param_names[0]
+                for idx, block_idx in enumerate(block_indices):
+                    param_name = param_names[idx]
+                    key = (block_idx, param_name)
+                    if key in self.alpha_renamings:
+                        old_mappings[key] = self.alpha_renamings[key]
+                    self.alpha_renamings[key] = canonical_name
+
+            # Handle regular positional args
+            for pos in range(args_counts[0]):
+                param_names = [args_nodes[i].args[pos].arg for i in range(len(args_nodes))]
+                canonical_name = param_names[0]
+                for idx, block_idx in enumerate(block_indices):
+                    param_name = param_names[idx]
+                    key = (block_idx, param_name)
+                    if key in self.alpha_renamings:
+                        old_mappings[key] = self.alpha_renamings[key]
+                    self.alpha_renamings[key] = canonical_name
+
+            # Handle keyword-only args
+            for pos in range(kwonlyargs_counts[0]):
+                param_names = [args_nodes[i].kwonlyargs[pos].arg for i in range(len(args_nodes))]
+                canonical_name = param_names[0]
+                for idx, block_idx in enumerate(block_indices):
+                    param_name = param_names[idx]
+                    key = (block_idx, param_name)
+                    if key in self.alpha_renamings:
+                        old_mappings[key] = self.alpha_renamings[key]
+                    self.alpha_renamings[key] = canonical_name
+
+            # Handle *args
+            if has_vararg[0]:
+                vararg_names = [args_nodes[i].vararg.arg for i in range(len(args_nodes))]
+                canonical_name = vararg_names[0]
+                for idx, block_idx in enumerate(block_indices):
+                    vararg_name = vararg_names[idx]
+                    key = (block_idx, vararg_name)
+                    if key in self.alpha_renamings:
+                        old_mappings[key] = self.alpha_renamings[key]
+                    self.alpha_renamings[key] = canonical_name
+
+            # Handle **kwargs
+            if has_kwarg[0]:
+                kwarg_names = [args_nodes[i].kwarg.arg for i in range(len(args_nodes))]
+                canonical_name = kwarg_names[0]
+                for idx, block_idx in enumerate(block_indices):
+                    kwarg_name = kwarg_names[idx]
+                    key = (block_idx, kwarg_name)
+                    if key in self.alpha_renamings:
+                        old_mappings[key] = self.alpha_renamings[key]
+                    self.alpha_renamings[key] = canonical_name
+
+            # Unify default values for positional args
+            for pos in range(len(args_nodes[0].defaults)):
+                defaults_at_pos = [a.defaults[pos] for a in args_nodes]
+                if defaults_at_pos[0] is None:
+                    if not all(d is None for d in defaults_at_pos):
+                        return False
+                else:
+                    if not all(d is not None for d in defaults_at_pos):
+                        return False
+                    if not self._unify_nodes(defaults_at_pos, subst, block_indices):
+                        return False
+
+            # Unify default values for keyword-only args
+            for pos in range(len(args_nodes[0].kw_defaults)):
+                kw_defaults_at_pos = [a.kw_defaults[pos] for a in args_nodes]
+                if kw_defaults_at_pos[0] is None:
+                    if not all(kd is None for kd in kw_defaults_at_pos):
+                        return False
+                else:
+                    if not all(kd is not None for kd in kw_defaults_at_pos):
+                        return False
+                    if not self._unify_nodes(kw_defaults_at_pos, subst, block_indices):
+                        return False
+
+            # TODO: Unify type annotations if present
+            # For now, we skip type annotation unification
+
+            return True
+
+        finally:
+            # Restore old mappings
+            for key in old_mappings:
+                self.alpha_renamings[key] = old_mappings[key]
+            # Remove new mappings
+            for pos in range(posonlyargs_counts[0]):
+                for idx, block_idx in enumerate(block_indices):
+                    param_name = args_nodes[idx].posonlyargs[pos].arg
+                    key = (block_idx, param_name)
+                    if key not in old_mappings:
+                        self.alpha_renamings.pop(key, None)
+            for pos in range(args_counts[0]):
+                for idx, block_idx in enumerate(block_indices):
+                    param_name = args_nodes[idx].args[pos].arg
+                    key = (block_idx, param_name)
+                    if key not in old_mappings:
+                        self.alpha_renamings.pop(key, None)
+            for pos in range(kwonlyargs_counts[0]):
+                for idx, block_idx in enumerate(block_indices):
+                    param_name = args_nodes[idx].kwonlyargs[pos].arg
+                    key = (block_idx, param_name)
+                    if key not in old_mappings:
+                        self.alpha_renamings.pop(key, None)
+            if has_vararg[0]:
+                for idx, block_idx in enumerate(block_indices):
+                    vararg_name = args_nodes[idx].vararg.arg
+                    key = (block_idx, vararg_name)
+                    if key not in old_mappings:
+                        self.alpha_renamings.pop(key, None)
+            if has_kwarg[0]:
+                for idx, block_idx in enumerate(block_indices):
+                    kwarg_name = args_nodes[idx].kwarg.arg
+                    key = (block_idx, kwarg_name)
+                    if key not in old_mappings:
                         self.alpha_renamings.pop(key, None)
 
     def _unify_joined_str(
