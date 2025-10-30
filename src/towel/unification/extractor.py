@@ -159,7 +159,13 @@ class HygienicExtractor:
                         break
             else:
                 # This is a free variable - use the name directly
-                args_list[param_idx] = ast.Name(id=param_name, ctx=ast.Load())
+                # But check if the name varies across blocks (augmented assignments)
+                var_name = param_name
+                if hasattr(substitution, 'aug_assign_mappings') and param_name in substitution.aug_assign_mappings:
+                    mappings = substitution.aug_assign_mappings[param_name]
+                    if block_idx in mappings:
+                        var_name = mappings[block_idx]
+                args_list[param_idx] = ast.Name(id=var_name, ctx=ast.Load())
 
         # Create function call
         call = ast.Call(

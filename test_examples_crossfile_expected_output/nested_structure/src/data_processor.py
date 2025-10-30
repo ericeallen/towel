@@ -1,7 +1,7 @@
 """
 Data processing module.
 """
-from lib.report_generator import __extracted_func_349
+from lib.report_generator import __extracted_func_430
 
 
 def calculate_statistics(values):
@@ -14,7 +14,7 @@ def calculate_statistics(values):
     count = len(values)
     mean = total / count
 
-    return __extracted_func_349(count, mean, total)
+    return __extracted_func_430(count, mean, total)
 
 
 def process_data(data_list):

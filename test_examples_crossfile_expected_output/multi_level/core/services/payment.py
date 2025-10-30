@@ -1,7 +1,7 @@
 """
 Payment service.
 """
-from api.checkout import __extracted_func_344
+from api.checkout import __extracted_func_425
 
 
 def validate_payment_amount(amount, currency):
@@ -13,7 +13,7 @@ def validate_payment_amount(amount, currency):
         return False
     if len(currency) != 3:
         return False
-    return __extracted_func_344(amount, currency)
+    return __extracted_func_425(amount, currency)
 
 
 def process_payment(user_id, amount, currency):
