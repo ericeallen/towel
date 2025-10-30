@@ -132,6 +132,44 @@ def higher_order_function_b(data, threshold):
     return transformed
 
 
+def higher_order_function_c(data, threshold):
+    """Version C: Same as A but with identical usage (no parameter differences)."""
+    # Create higher-order functions
+    def make_validator(limit):
+        return lambda x: x > limit and x < limit * 10
+
+    def make_transformer(factor):
+        return lambda x: x * factor + threshold
+
+    # Use the functions with SAME arguments as version D
+    validator = make_validator(5)
+    transformer = make_transformer(2)
+
+    filtered = list(filter(validator, data))
+    transformed = list(map(transformer, filtered))
+
+    return transformed
+
+
+def higher_order_function_d(data, threshold):
+    """Version D: Same as C - identical nested function usage."""
+    # Create higher-order functions
+    def make_validator(limit):
+        return lambda x: x > limit and x < limit * 10
+
+    def make_transformer(factor):
+        return lambda x: x * factor + threshold
+
+    # Use the functions with SAME arguments as version C
+    validator = make_validator(5)
+    transformer = make_transformer(2)
+
+    filtered = list(filter(validator, data))
+    transformed = list(map(transformer, filtered))
+
+    return transformed
+
+
 def compose_functions_v1(data, f, g, h):
     """Version 1: Function composition."""
     # Compose functions
