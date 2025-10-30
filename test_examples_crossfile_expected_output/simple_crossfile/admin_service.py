@@ -11,7 +11,7 @@ def validate_admin_email(email):
     if '@' not in email:
         return False
     parts = email.split('@')
-    return __extracted_func_353(parts)
+    return __extracted_func_434(parts)
 
 
 def create_admin(name, email, permissions):
@@ -26,7 +26,7 @@ def create_admin(name, email, permissions):
     }
 
 
-def __extracted_func_353(parts):
+def __extracted_func_434(parts):
     if len(parts) != 2:
         return False
     if not parts[0] or not parts[1]:

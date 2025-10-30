@@ -12,7 +12,7 @@ def validate_checkout_amount(amount, currency):
         return False
     if len(currency) != 3:
         return False
-    return __extracted_func_344(amount, currency)
+    return __extracted_func_425(amount, currency)
 
 
 def checkout(cart_items, amount, currency):
@@ -28,7 +28,7 @@ def checkout(cart_items, amount, currency):
     }
 
 
-def __extracted_func_344(amount, currency):
+def __extracted_func_425(amount, currency):
     if currency not in ['USD', 'EUR', 'GBP']:
         return False
     if amount > 1000000:

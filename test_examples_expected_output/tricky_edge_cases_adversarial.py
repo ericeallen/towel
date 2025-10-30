@@ -13,13 +13,13 @@ These examples test really subtle scenarios that could expose bugs:
 def conditional_return_a(x, threshold):
     """Multiple return points."""
     result = x * 2
-    return __extracted_func_338(result, threshold)
+    return __extracted_func_419(result, threshold)
 
 
 def conditional_return_b(y, limit):
     """Similar multiple return pattern."""
     output = y * 2
-    return __extracted_func_338(output, limit)
+    return __extracted_func_419(output, limit)
 
 
 def early_return_a(items):
@@ -210,10 +210,10 @@ def set_operations_b(group1, group2):
     return len(output)
 
 
-def __extracted_func_338(__param_400, __param_401):
-    if __param_400 > __param_401:
-        return __param_400
-    result = __param_400 + 10
-    return __param_400
+def __extracted_func_419(__param_704, __param_705):
+    if __param_704 > __param_705:
+        return __param_704
+    result = __param_704 + 10
+    return __param_704
 
 

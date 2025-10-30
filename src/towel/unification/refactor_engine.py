@@ -516,9 +516,15 @@ class UnificationRefactorEngine:
                 params_to_remove.append(param_name)
 
         # Store the mappings in the substitution object for later use
+        # Create a reverse mapping from block1 variable names to block mappings
+        # This is needed because free variables use the block1 names as parameter names
         if not hasattr(substitution, 'aug_assign_mappings'):
             substitution.aug_assign_mappings = {}
-        substitution.aug_assign_mappings = aug_assign_param_mappings
+        # Map from block1 variable name to block mappings
+        for param_name, block_mappings in aug_assign_param_mappings.items():
+            if 0 in block_mappings:
+                block1_var_name = block_mappings[0]
+                substitution.aug_assign_mappings[block1_var_name] = block_mappings
 
         # Remove the augmented assignment parameters from substitution
         for param_name in params_to_remove:
