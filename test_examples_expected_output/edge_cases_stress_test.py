@@ -188,12 +188,12 @@ def mixed_comprehensions_v2(data, filters, mappers):
 
 def exception_heavy_processing_a(items, processor, logger, fallback):
     """Version A: Multiple exception types and handlers."""
-    return __extracted_func_64('strict', fallback, items, logger, processor)
+    return __extracted_func_41('strict', fallback, items, logger, processor)
 
 
 def exception_heavy_processing_b(items, processor, logger, fallback):
     """Version B: Different processing mode, same exception handling."""
-    return __extracted_func_64('lenient', fallback, items, logger, processor)
+    return __extracted_func_41('lenient', fallback, items, logger, processor)
 
 
 def state_machine_pattern_v1(events, states, transitions, handlers):
@@ -262,14 +262,14 @@ def state_machine_pattern_v2(events, states, transitions, handlers):
     return {"final_state": current_state, "history": history, "outputs": outputs}
 
 
-def __extracted_func_64(__param_70, fallback, items, logger, processor):
+def __extracted_func_41(__param_32, fallback, items, logger, processor):
     results = []
     errors = {'value': [], 'type': [], 'runtime': [], 'other': []}
     for i, item in enumerate(items):
         try:
             validated = processor.validate(item, strict=True)
             parsed = processor.parse(validated)
-            transformed = processor.transform(parsed, mode=__param_70)
+            transformed = processor.transform(parsed, mode=__param_32)
             normalized = processor.normalize(transformed)
             results.append(normalized)
         except ValueError as e:

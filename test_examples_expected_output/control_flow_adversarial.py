@@ -116,44 +116,44 @@ def while_with_break_a(n):
     """While loop with break condition."""
     count = 0
     total = 0
-    return __extracted_func_42(n, count, total)
+    while count < n:
+        count += 1
+        total += count
+        if total > 50:
+            break
+    return total
 
 
 def while_with_break_b(limit):
     """Similar while loop with break."""
     i = 0
     sum_val = 0
-    return __extracted_func_42(limit, i, sum_val)
+    while i < limit:
+        i += 1
+        sum_val += i
+        if sum_val > 50:
+            break
+    return sum_val
 
 
 def continue_and_accumulate_a(items):
     """Skip some items and accumulate others."""
     result = []
-    for item in items:
-        if item % 3 == 0:
-            continue
-        if item % 2 == 0:
-            result.append(item)
-    return result
+    return __extracted_func_26(items, result)
 
 
 def continue_and_accumulate_b(values):
     """Similar skip pattern."""
     output = []
-    for value in values:
-        if value % 3 == 0:
+    return __extracted_func_26(values, output)
+
+
+def __extracted_func_26(__param_17, __param_18):
+    for item in __param_17:
+        if item % 3 == 0:
             continue
-        if value % 2 == 0:
-            output.append(value)
-    return output
-
-
-def __extracted_func_42(__param_47, count, total):
-    while count < __param_47:
-        count += 1
-        total += count
-        if total > 50:
-            break
-    return total
+        if item % 2 == 0:
+            __param_18.append(item)
+    return __param_18
 
 

@@ -1,7 +1,7 @@
 """
 User service module.
 """
-from admin_service import __extracted_func_434
+from admin_service import __extracted_func_229
 
 
 def validate_user_email(email):
@@ -12,7 +12,7 @@ def validate_user_email(email):
     if '@' not in email:
         return False
     parts = email.split('@')
-    return __extracted_func_434(parts)
+    return __extracted_func_229(parts)
 
 
 def create_user(name, email):

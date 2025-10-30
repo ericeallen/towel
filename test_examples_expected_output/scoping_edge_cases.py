@@ -55,12 +55,12 @@ def with_lambda_b(items):
 
 def closure_a(multiplier):
     """Function that creates closure."""
-    return __extracted_func_326(multiplier)
+    return __extracted_func_205(multiplier)
 
 
 def closure_b(multiplier):
     """Function that creates closure (duplicate)."""
-    return __extracted_func_326(multiplier)
+    return __extracted_func_205(multiplier)
 
 
 def shadowing_a(x):
@@ -99,7 +99,7 @@ def builtin_override_b(items):
     return result
 
 
-def __extracted_func_326(multiplier):
+def __extracted_func_205(multiplier):
 
     def process(items):
         result = []
