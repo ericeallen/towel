@@ -305,31 +305,48 @@ class HygienicExtractor:
 
                 For 'var = expr':
                 - If var is being assigned to a parameter (var = __param_N), track this mapping
-                - If var is in var_to_param (it was previously bound to a parameter), substitute it
+                - If var is in var_to_param and being reassigned to the SAME parameter, substitute target
+                - If var is in var_to_param but being reassigned to a DIFFERENT value, keep target as-is
+                  and clear its mapping (creates new binding that shadows the parameter)
                 - Otherwise, keep the target unchanged (new binding)
                 """
                 # Transform the value expression first
                 new_value = self.visit(node.value)
 
+                # Transform targets
+                new_targets = []
+                vars_to_delete = []  # Track which variables to remove from var_to_param
+
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in self.var_to_param:
+                        # This variable is currently equivalent to a parameter
+                        param_name = self.var_to_param[target.id]
+
+                        # Check if we're reassigning the parameter to itself (e.g., __param_0 = __param_0)
+                        if isinstance(new_value, ast.Name) and new_value.id == param_name:
+                            # Substitute the target with the parameter name
+                            new_targets.append(ast.Name(id=param_name, ctx=ast.Store()))
+                        else:
+                            # We're assigning a DIFFERENT value, which creates a new binding
+                            # Keep the original variable name and remove from var_to_param
+                            new_targets.append(target)
+                            vars_to_delete.append(target.id)
+                    else:
+                        # New binding or complex target (e.g., tuple unpacking) - keep as is
+                        new_targets.append(target)
+
+                # Now update var_to_param for new parameter bindings
                 # Check if we're assigning a parameter to a variable (e.g., result = __param_0)
-                # If so, track that this variable is now equivalent to the parameter
                 if isinstance(new_value, ast.Name) and new_value.id in self.param_names:
                     # Record that these target variables are equivalent to this parameter
                     for target in node.targets:
                         if isinstance(target, ast.Name):
                             self.var_to_param[target.id] = new_value.id
 
-                # Transform targets: substitute if the variable is mapped to a parameter
-                new_targets = []
-                for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id in self.var_to_param:
-                        # This is a reassignment of a variable that's equivalent to a parameter
-                        # Substitute the target with the parameter name
-                        param_name = self.var_to_param[target.id]
-                        new_targets.append(ast.Name(id=param_name, ctx=ast.Store()))
-                    else:
-                        # New binding or complex target (e.g., tuple unpacking) - keep as is
-                        new_targets.append(target)
+                # Delete variables that are being reassigned to non-parameter values
+                for var_name in vars_to_delete:
+                    if var_name in self.var_to_param:
+                        del self.var_to_param[var_name]
 
                 return ast.Assign(targets=new_targets, value=new_value)
 

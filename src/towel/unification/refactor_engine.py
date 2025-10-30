@@ -19,6 +19,10 @@ from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier, Substitution
 from .extractor import HygienicExtractor, is_value_producing, get_enclosing_names
 from .orphan_detector import has_orphaned_variables
+from .assignment_analyzer import (
+    analyze_assignments,
+    has_reassignments_without_bindings
+)
 
 
 @dataclass
@@ -422,6 +426,30 @@ class UnificationRefactorEngine:
                 func1 = func
             if file_path == (pair.file_path2 or pair.file_path) and func.name == pair.function2_name:
                 func2 = func
+
+        # CRITICAL: Validate that blocks don't contain reassignments without initial bindings
+        # This prevents extracting code like "result = result + 10" when "result = x * 2"
+        # is outside the block. Such extractions are fundamentally unsound.
+        if func1 and func2:
+            # Analyze assignments in both functions
+            reassignments1 = analyze_assignments(func1)
+            reassignments2 = analyze_assignments(func2)
+
+            # Check if block1 contains reassignments without bindings
+            has_unsafe1, problematic_vars1 = has_reassignments_without_bindings(
+                func1, pair.block1_nodes, reassignments1
+            )
+            if has_unsafe1:
+                # Cannot safely extract this block - it reassigns variables bound outside the block
+                return None
+
+            # Check if block2 contains reassignments without bindings
+            has_unsafe2, problematic_vars2 = has_reassignments_without_bindings(
+                func2, pair.block2_nodes, reassignments2
+            )
+            if has_unsafe2:
+                # Cannot safely extract this block - it reassigns variables bound outside the block
+                return None
 
         # Check if both blocks are value-producing or both are not
         value_prod1 = is_value_producing(pair.block1_nodes)

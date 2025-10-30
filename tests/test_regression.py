@@ -96,10 +96,14 @@ class TestSingleFileRegression(unittest.TestCase):
         failed_files = []
         for filename, file_result in results['file_results'].items():
             if file_result['failed'] > 0:
+                # Add whitespace before each failed file for clarity
+                if failed_files:
+                    failed_files.append("")  # Blank line separator
                 failed_files.append(
                     f"  {filename}: {file_result['failed']}/{file_result['passed'] + file_result['failed']} failed"
                 )
-                for error in file_result['errors'][:3]:
+                # Show only first error example (rest is clutter)
+                for error in file_result['errors'][:1]:
                     failed_files.append(f"    - {error}")
 
         # Assert all tests passed

@@ -437,7 +437,7 @@ def test_all_refactored_functions(
         if not all_passed:
             all_errors.append(
                 f"Function '{func_name}' failed observational equivalence:\n" +
-                "\n".join(f"  {diff}" for diff in differences[:3])  # Limit to first 3 differences
+                "\n".join(f"  {diff}" for diff in differences[:1])  # Show only first difference
             )
 
     return len(all_errors) == 0, all_errors
