@@ -13,13 +13,19 @@ These examples test really subtle scenarios that could expose bugs:
 def conditional_return_a(x, threshold):
     """Multiple return points."""
     result = x * 2
-    return __extracted_func_419(result, threshold)
+    if result > threshold:
+        return result
+    result = result + 10
+    return result
 
 
 def conditional_return_b(y, limit):
     """Similar multiple return pattern."""
     output = y * 2
-    return __extracted_func_419(output, limit)
+    if output > limit:
+        return output
+    output = output + 10
+    return output
 
 
 def early_return_a(items):
@@ -77,19 +83,13 @@ def ternary_expression_b(a, b):
 def list_extend_vs_assign_a(items, extra):
     """Tests list modification semantics."""
     result = []
-    for item in items:
-        result.append(item)
-    result.extend(extra)
-    return len(result)
+    return __extracted_func_215(items, result, extra)
 
 
 def list_extend_vs_assign_b(values, additional):
     """Similar list modification."""
     output = []
-    for value in values:
-        output.append(value)
-    output.extend(additional)
-    return len(output)
+    return __extracted_func_215(values, output, additional)
 
 
 def dict_update_a(base, updates):
@@ -210,10 +210,10 @@ def set_operations_b(group1, group2):
     return len(output)
 
 
-def __extracted_func_419(__param_704, __param_705):
-    if __param_704 > __param_705:
-        return __param_704
-    result = __param_704 + 10
-    return __param_704
+def __extracted_func_215(__param_239, __param_240, __param_241):
+    for item in __param_239:
+        __param_240.append(item)
+    __param_240.extend(__param_241)
+    return len(__param_240)
 
 

@@ -144,7 +144,7 @@ def nested_scope_capture_v1(outer_data, processor):
     See nested_scope_capture_valid_v1/v2 below for a corrected version
     that CAN be refactored.
     """
-    return __extracted_func_298(outer_data, processor)
+    return __extracted_func_184(outer_data, processor)
 
 
 def nested_scope_capture_v2(outer_data, processor):
@@ -180,7 +180,7 @@ def nested_scope_capture_valid_v1(outer_data, processor):
     - No nested-scope variables are referenced in differing expressions
     - All differences can be parameterized at the outer scope level
     """
-    return __extracted_func_298(outer_data, processor)
+    return __extracted_func_184(outer_data, processor)
 
 
 def nested_scope_capture_valid_v2(outer_data, processor):
@@ -233,7 +233,7 @@ def modify_external_state_b(data, cache, metrics):
     return cache, metrics
 
 
-def __extracted_func_298(outer_data, processor):
+def __extracted_func_184(outer_data, processor):
     outer_var = 100
 
     def inner_process(data):

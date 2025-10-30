@@ -32,12 +32,12 @@ def process_with_temp_var_v2(data, result):
 
 def calculate_nested_scope_a(values, x, y):
     """Uses x and y as parameters - extracted function must avoid these."""
-    return __extracted_func_161(5, values, x, y)
+    return __extracted_func_102(5, values, x, y)
 
 
 def calculate_nested_scope_b(values, x, y):
     """Same outer variable names - extracted function needs hygienic naming."""
-    return __extracted_func_161(10, values, x, y)
+    return __extracted_func_102(10, values, x, y)
 
 
 def transform_with_shadowing_v1(data, temp, cache):
@@ -138,12 +138,12 @@ def nested_function_scope_v2(data, helper, processor):
     return results
 
 
-def __extracted_func_161(__param_187, values, x, y):
+def __extracted_func_102(__param_103, values, x, y):
     output = []
     for val in values:
         a = val + x
         b = a * y
-        c = b - __param_187
+        c = b - __param_103
         output.append(c)
     return output
 

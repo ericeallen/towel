@@ -343,6 +343,38 @@ class UnificationRefactorEngine:
             finder.visit(stmt)
         return finder.has_loop_return
 
+    def _get_used_names(self, node: ast.AST) -> Set[str]:
+        """
+        Get all variable names that are used (read from) in an AST node.
+
+        This collects all Name nodes with Load context.
+
+        Args:
+            node: AST node to analyze
+
+        Returns:
+            Set of variable names that are read in the node
+        """
+        used = set()
+
+        class NameCollector(ast.NodeVisitor):
+            def visit_Name(self, n):
+                if isinstance(n.ctx, ast.Load):
+                    used.add(n.id)
+                self.generic_visit(n)
+
+            def visit_FunctionDef(self, n):
+                # Don't descend into nested functions
+                pass
+
+            def visit_AsyncFunctionDef(self, n):
+                # Don't descend into nested async functions
+                pass
+
+        collector = NameCollector()
+        collector.visit(node)
+        return used
+
     def _find_block_pairs_multi_file(
         self,
         all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope]]
@@ -414,6 +446,14 @@ class UnificationRefactorEngine:
         Returns:
             Refactoring proposal or None
         """
+        # DEBUG logging
+        import os
+        if os.getenv('DEBUG_VALIDATION'):
+            print(f"\n=== _try_refactor_pair_multi_file called ===")
+            print(f"Functions: {pair.function1_name} and {pair.function2_name}")
+            print(f"Block1 range: {pair.block1_range}")
+            print(f"Block2 range: {pair.block2_range}")
+
         # Use stored context from pair
         scope_analyzer = pair.scope_analyzer1
         root_scope = pair.root_scope1
@@ -426,6 +466,14 @@ class UnificationRefactorEngine:
                 func1 = func
             if file_path == (pair.file_path2 or pair.file_path) and func.name == pair.function2_name:
                 func2 = func
+
+        # DEBUG logging
+        import os
+        if os.getenv('DEBUG_VALIDATION'):
+            print(f"\n=== Finding Functions ===")
+            print(f"Looking for: {pair.function1_name} and {pair.function2_name}")
+            print(f"Found func1: {func1 is not None}")
+            print(f"Found func2: {func2 is not None}")
 
         # CRITICAL: Validate that blocks don't contain reassignments without initial bindings
         # This prevents extracting code like "result = result + 10" when "result = x * 2"
@@ -450,6 +498,119 @@ class UnificationRefactorEngine:
             if has_unsafe2:
                 # Cannot safely extract this block - it reassigns variables bound outside the block
                 return None
+
+            # CRITICAL: Validate that blocks don't bind variables used after the block
+            # This prevents extracting partial lifetimes like:
+            #   result = 1          # Initial binding (extracted)
+            #   result += 2         # Reassignment (extracted)
+            #   return result       # Use after block (NOT extracted) - ERROR!
+            # The extracted function would create a LOCAL `result` that's never available outside
+            # This applies to BOTH value-producing and non-value-producing blocks
+            from .assignment_analyzer import _collect_bindings_and_reassignments
+
+            # Check block1
+            bound_in_block1 = set()
+            reassigned_in_block1 = set()
+            for node in pair.block1_nodes:
+                _collect_bindings_and_reassignments(
+                    node, reassignments1, bound_in_block1, reassigned_in_block1
+                )
+
+            # Find variables bound BEFORE the block starts
+            bound_before_block1 = set()
+            block_start_line = pair.block1_range[0]
+            for stmt in func1.body:
+                if hasattr(stmt, 'lineno') and stmt.lineno < block_start_line:
+                    # Collect bindings from statements before the block
+                    stmt_bound = set()
+                    stmt_reassigned = set()
+                    _collect_bindings_and_reassignments(
+                        stmt, reassignments1, stmt_bound, stmt_reassigned
+                    )
+                    bound_before_block1.update(stmt_bound)
+
+            # Variables that are bound in the block but DON'T exist before
+            # These are the "newly introduced" variables
+            initially_bound1 = bound_in_block1 - bound_before_block1
+
+            # DEBUG logging
+            import os
+            if os.getenv('DEBUG_VALIDATION'):
+                print(f"\n=== Block1 Validation Debug ===")
+                print(f"Function: {pair.function1_name}")
+                print(f"Block lines: {pair.block1_range}")
+                print(f"Bound in block: {bound_in_block1}")
+                print(f"Bound before block: {bound_before_block1}")
+                print(f"Newly bound in block: {initially_bound1}")
+
+            # Check if any initially bound variables are used after the block
+            if initially_bound1:
+                # Find the position of the block in the function
+                block_end_line = pair.block1_range[1]
+
+                if os.getenv('DEBUG_VALIDATION'):
+                    print(f"Block ends at line {block_end_line}")
+                    print(f"Checking statements after line {block_end_line}:")
+
+                # Check if any of these variables are used after the block
+                for stmt in func1.body:
+                    if hasattr(stmt, 'lineno'):
+                        if os.getenv('DEBUG_VALIDATION'):
+                            print(f"  Statement at line {stmt.lineno}: {stmt.__class__.__name__}")
+
+                        if stmt.lineno > block_end_line:
+                            # Check if stmt uses any of the initially bound variables
+                            uses = self._get_used_names(stmt)
+                            if os.getenv('DEBUG_VALIDATION'):
+                                print(f"    Uses: {uses}")
+
+                            if uses & initially_bound1:
+                                # Variable is bound in block but used after - unsafe!
+                                if os.getenv('DEBUG_VALIDATION'):
+                                    print(f"    REJECTED: Variable(s) {uses & initially_bound1} used after block!")
+                                return None
+
+            # Same check for block2
+            bound_in_block2 = set()
+            reassigned_in_block2 = set()
+            for node in pair.block2_nodes:
+                _collect_bindings_and_reassignments(
+                    node, reassignments2, bound_in_block2, reassigned_in_block2
+                )
+
+            # Find variables bound BEFORE block2 starts
+            bound_before_block2 = set()
+            block_start_line = pair.block2_range[0]
+            for stmt in func2.body:
+                if hasattr(stmt, 'lineno') and stmt.lineno < block_start_line:
+                    stmt_bound = set()
+                    stmt_reassigned = set()
+                    _collect_bindings_and_reassignments(
+                        stmt, reassignments2, stmt_bound, stmt_reassigned
+                    )
+                    bound_before_block2.update(stmt_bound)
+
+            # Variables that are bound in the block but DON'T exist before
+            initially_bound2 = bound_in_block2 - bound_before_block2
+
+            if initially_bound2:
+                block_end_line = pair.block2_range[1]
+
+                if os.getenv('DEBUG_VALIDATION'):
+                    print(f"\n=== Block2 Validation Debug ===")
+                    print(f"Function: {pair.function2_name}")
+                    print(f"Block lines: {pair.block2_range}")
+                    print(f"Bound in block: {bound_in_block2}")
+                    print(f"Bound before block: {bound_before_block2}")
+                    print(f"Newly bound in block: {initially_bound2}")
+
+                for stmt in func2.body:
+                    if hasattr(stmt, 'lineno') and stmt.lineno > block_end_line:
+                        uses = self._get_used_names(stmt)
+                        if uses & initially_bound2:
+                            if os.getenv('DEBUG_VALIDATION'):
+                                print(f"    REJECTED: Variable(s) {uses & initially_bound2} used after block!")
+                            return None
 
         # Check if both blocks are value-producing or both are not
         value_prod1 = is_value_producing(pair.block1_nodes)

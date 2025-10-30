@@ -102,20 +102,20 @@ def extend_and_return_b(target, values):
 def swap_contents_a(list1, list2):
     """Swaps contents of two lists."""
     temp = list1[:]
-    return __extracted_func_335(list1, list2, temp)
+    return __extracted_func_210(list1, list2, temp)
 
 
 def swap_contents_b(a, b):
     """Similar swap pattern."""
     backup = a[:]
-    return __extracted_func_335(a, b, backup)
+    return __extracted_func_210(a, b, backup)
 
 
-def __extracted_func_335(__param_391, __param_392, __param_393):
-    __param_391.clear()
-    __param_391.extend(__param_392)
-    __param_392.clear()
-    __param_392.extend(__param_393)
-    return len(__param_391) + len(__param_392)
+def __extracted_func_210(__param_209, __param_210, __param_211):
+    __param_209.clear()
+    __param_209.extend(__param_210)
+    __param_210.clear()
+    __param_210.extend(__param_211)
+    return len(__param_209) + len(__param_210)
 
 

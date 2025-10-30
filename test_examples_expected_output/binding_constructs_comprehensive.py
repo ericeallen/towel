@@ -97,12 +97,12 @@ def test_nested_with_b(outer_file, inner_file):
 
 def test_exception_handler_binding_a(data):
     """Exception variable binding."""
-    return __extracted_func_13(data)
+    return __extracted_func_9(data)
 
 
 def test_exception_handler_binding_b(data):
     """Duplicate exception variable binding."""
-    return __extracted_func_13(data)
+    return __extracted_func_9(data)
 
 
 def test_walrus_while_a(items):
@@ -125,7 +125,7 @@ def test_walrus_while_b(items):
     return results
 
 
-def __extracted_func_13(data):
+def __extracted_func_9(data):
     errors = []
     for item in data:
         try:

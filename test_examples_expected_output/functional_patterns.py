@@ -32,12 +32,36 @@ def apply_transformation_v2(data, multiplier):
 
 def reduce_with_lambda_a(values, initial, combiner):
     """Version A: Reduce with lambda."""
-    return __extracted_func_94(10, initial, values)
+    from functools import reduce
+
+    # Complex reduce operation
+    result = reduce(
+        lambda acc, x: acc + (x ** 2 if x > 10 else x),
+        values,
+        initial
+    )
+
+    # Post-process with lambda
+    normalized = list(map(lambda x: x / result if result != 0 else 0, values))
+
+    return {"reduced": result, "normalized": normalized}
 
 
 def reduce_with_lambda_b(values, initial, combiner):
     """Version B: Different threshold, same reduce pattern."""
-    return __extracted_func_94(20, initial, values)
+    from functools import reduce
+
+    # Same pattern, different threshold
+    result = reduce(
+        lambda acc, x: acc + (x ** 2 if x > 20 else x),
+        values,
+        initial
+    )
+
+    # Post-process with lambda
+    normalized = list(map(lambda x: x / result if result != 0 else 0, values))
+
+    return {"reduced": result, "normalized": normalized}
 
 
 def chain_functional_ops_v1(data, filter_func, map_func):
@@ -73,20 +97,7 @@ def chain_functional_ops_v2(data, filter_func, map_func):
 def higher_order_function_a(data, threshold):
     """Version A: Returns and uses functions."""
     # Create higher-order functions
-    def make_validator(limit):
-        return lambda x: x > limit and x < limit * 10
-
-    def make_transformer(factor):
-        return lambda x: x * factor + threshold
-
-    # Use the functions
-    validator = make_validator(5)
-    transformer = make_transformer(2)
-
-    filtered = list(filter(validator, data))
-    transformed = list(map(transformer, filtered))
-
-    return transformed
+    return __extracted_func_69(data, threshold)
 
 
 def higher_order_function_b(data, threshold):
@@ -100,6 +111,31 @@ def higher_order_function_b(data, threshold):
 
     # Use the functions
     validator = make_validator(10)
+    transformer = make_transformer(2)
+
+    filtered = list(filter(validator, data))
+    transformed = list(map(transformer, filtered))
+
+    return transformed
+
+
+def higher_order_function_c(data, threshold):
+    """Version C: Same as A but with identical usage (no parameter differences)."""
+    # Create higher-order functions
+    return __extracted_func_69(data, threshold)
+
+
+def higher_order_function_d(data, threshold):
+    """Version D: Same as C - identical nested function usage."""
+    # Create higher-order functions
+    def make_validator(limit):
+        return lambda x: x > limit and x < limit * 10
+
+    def make_transformer(factor):
+        return lambda x: x * factor + threshold
+
+    # Use the functions with SAME arguments as version C
+    validator = make_validator(5)
     transformer = make_transformer(2)
 
     filtered = list(filter(validator, data))
@@ -238,10 +274,17 @@ def generator_with_lambda_b(data, predicate):
     return []
 
 
-def __extracted_func_94(__param_133, initial, values):
-    from functools import reduce
-    result = reduce(lambda acc, x: acc + (x ** 2 if x > __param_133 else x), values, initial)
-    normalized = list(map(lambda x: x / result if result != 0 else 0, values))
-    return {'reduced': result, 'normalized': normalized}
+def __extracted_func_69(data, threshold):
+
+    def make_validator(limit):
+        return lambda x: x > limit and x < limit * 10
+
+    def make_transformer(factor):
+        return lambda x: x * factor + threshold
+    validator = make_validator(5)
+    transformer = make_transformer(2)
+    filtered = list(filter(validator, data))
+    transformed = list(map(transformer, filtered))
+    return transformed
 
 

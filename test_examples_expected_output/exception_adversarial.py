@@ -50,14 +50,26 @@ def process_with_cleanup_a(items):
     """Process with finally cleanup."""
     results = []
     count = 0
-    return __extracted_func_87(items, results, count)
+    try:
+        for item in items:
+            count += 1
+            results.append(item * 2)
+    finally:
+        results.append(count)
+    return results
 
 
 def process_with_cleanup_b(values):
     """Similar cleanup pattern."""
     output = []
     total = 0
-    return __extracted_func_87(values, output, total)
+    try:
+        for value in values:
+            total += 1
+            output.append(value * 2)
+    finally:
+        output.append(total)
+    return output
 
 
 def nested_exception_a(data):
@@ -162,15 +174,3 @@ def multiple_except_b(input_val):
     except TypeError:
         output = -3
     return output
-
-
-def __extracted_func_87(__param_115, __param_117, count):
-    try:
-        for item in __param_115:
-            count += 1
-            __param_117.append(item * 2)
-    finally:
-        __param_117.append(count)
-    return __param_117
-
-
