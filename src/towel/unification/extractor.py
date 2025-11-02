@@ -30,6 +30,7 @@ class HygienicExtractor:
         free_variables: Set[str],
         enclosing_names: Set[str],
         is_value_producing: bool,
+        return_variables: List[str] = None,
         function_name: str = "extracted_function"
     ) -> Tuple[ast.FunctionDef, Dict[str, int]]:
         """
@@ -41,11 +42,14 @@ class HygienicExtractor:
             free_variables: Free variables in the block
             enclosing_names: Names defined in enclosing scopes
             is_value_producing: Whether the block produces a value
+            return_variables: Variables to return from the extracted function (for value-producing extraction)
             function_name: Name for the extracted function
 
         Returns:
             Tuple of (function AST node, parameter order dict)
         """
+        if return_variables is None:
+            return_variables = []
         # Ensure function name doesn't shadow
         function_name = self._ensure_unique_name(function_name, enclosing_names)
 
@@ -81,6 +85,21 @@ class HygienicExtractor:
             rename_mapping
         )
 
+        # Add return statement for value-producing extraction
+        if return_variables:
+            if len(return_variables) == 1:
+                # Single return variable: return var
+                return_value = ast.Name(id=return_variables[0], ctx=ast.Load())
+            else:
+                # Multiple return variables: return (var1, var2, ...)
+                return_value = ast.Tuple(
+                    elts=[ast.Name(id=var, ctx=ast.Load()) for var in return_variables],
+                    ctx=ast.Load()
+                )
+
+            return_stmt = ast.Return(value=return_value)
+            body.append(return_stmt)
+
         # Create function arguments
         args = ast.arguments(
             posonlyargs=[],
@@ -111,7 +130,9 @@ class HygienicExtractor:
         substitution: Substitution,
         param_order: Dict[str, int],
         free_variables: Set[str],
-        is_value_producing: bool
+        is_value_producing: bool,
+        return_variables: List[str] = None,
+        hygienic_renames: List[Dict[str, str]] = None
     ) -> ast.AST:
         """
         Generate a call to the extracted function.
@@ -123,10 +144,28 @@ class HygienicExtractor:
             param_order: Parameter order from extract_function
             free_variables: Free variables
             is_value_producing: Whether this produces a value
+            return_variables: Variables that the extracted function returns
+            hygienic_renames: Hygienic renaming mapping for each block (original → canonical)
 
         Returns:
-            AST node representing the call (either Return or Expr)
+            AST node representing the call (either Return, Assign, or Expr)
         """
+        if return_variables is None:
+            return_variables = []
+        if hygienic_renames is None or not hygienic_renames:
+            # Fallback: if the substitution carries hygienic renames, use them
+            if hasattr(substitution, 'hygienic_renames') and substitution.hygienic_renames:
+                hygienic_renames = substitution.hygienic_renames
+            else:
+                hygienic_renames = []
+
+        # Build inverse mapping: canonical name → original name for this block
+        # hygienic_renames[block_idx] maps original → canonical, we need the reverse
+        inverse_renames = {}
+        if block_idx < len(hygienic_renames):
+            for original_name, canonical_name in hygienic_renames[block_idx].items():
+                inverse_renames[canonical_name] = original_name
+
         # Build arguments in correct order
         args_list = [None] * len(param_order)
 
@@ -158,9 +197,11 @@ class HygienicExtractor:
                             args_list[param_idx] = expr
                         break
             else:
-                # This is a free variable - use the name directly
-                # But check if the name varies across blocks (augmented assignments)
-                var_name = param_name
+                # This is a free variable - use the correct name for this block
+                # First check hygienic renames to find the original name for this block
+                var_name = inverse_renames.get(param_name, param_name)
+
+                # Also check if the name varies across blocks (augmented assignments)
                 if hasattr(substitution, 'aug_assign_mappings') and param_name in substitution.aug_assign_mappings:
                     mappings = substitution.aug_assign_mappings[param_name]
                     if block_idx in mappings:
@@ -174,10 +215,25 @@ class HygienicExtractor:
             keywords=[]
         )
 
-        # Wrap in Return if value-producing
-        if is_value_producing:
+        # Handle wrapping based on return_variables and is_value_producing
+        if return_variables:
+            # Value-producing extraction with return variables
+            # Create assignment statement: result = func(args) or result, other = func(args)
+            if len(return_variables) == 1:
+                # Single variable: result = func(args)
+                target = ast.Name(id=return_variables[0], ctx=ast.Store())
+            else:
+                # Multiple variables: result, other = func(args)
+                target = ast.Tuple(
+                    elts=[ast.Name(id=var, ctx=ast.Store()) for var in return_variables],
+                    ctx=ast.Store()
+                )
+            result = ast.Assign(targets=[target], value=call)
+        elif is_value_producing:
+            # Value-producing extraction without return variables (has explicit return statements)
             result = ast.Return(value=call)
         else:
+            # Non-value-producing extraction
             result = ast.Expr(value=call)
 
         ast.fix_missing_locations(result)
