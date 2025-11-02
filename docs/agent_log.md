@@ -48,3 +48,21 @@
 - Import hygiene: switched `src.towel...` to `towel...` in `nominal_unifier.py`.
 
 Next: run fast checks (syntax/import), then re-run focused tests around variable capture and f-strings to measure impact.
+
+## Checkpoint (2025-11-02)
+- Version: 1.0.0
+- Commit: 136501623533b762a51b6a199a6f8c510b26f355
+- Session: Nested comprehension fix and release checkpoint
+
+### Actions
+- Unifier: Added comprehension-aware alpha-renaming for ListComp/SetComp/DictComp/GeneratorExp and fixed nested comprehension unification.
+- Extractor: Preserved unified parameter names to match Substitution keys and mapped return assignment targets via inverse hygienic renames.
+- Tests: Added focused unit tests for nested comprehensions; updated expected outputs to reflect corrected behavior.
+- Ran full suite via `just test` and cross-file observational equivalence.
+
+### Test run summary
+- Unit/integration tests: 491 tests OK (2 skipped as documented)
+- Cross-file observational equivalence: 3/3 projects passed (100%)
+
+Notes:
+- This is a green baseline. Revert point available by checking out the commit above on main.
