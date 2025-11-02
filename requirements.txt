@@ -1,7 +1,0 @@
-# Towel - Runtime Dependencies
-#
-# Zero external runtime dependencies required!
-# The unification-based refactoring system uses only Python stdlib.
-#
-# For development dependencies (coverage, black, flake8, mypy),
-# see requirements-dev.txt or install with: pip install -e ".[dev]"

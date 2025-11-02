@@ -53,7 +53,7 @@ just dry input/ output/
 
 ### Requirements
 
-- Python 3.7+
+- Python 3.9+
 - **Zero external runtime dependencies** - uses only Python stdlib
 
 ### For Users
@@ -69,8 +69,8 @@ pip install -e .
 # Install with development tools (coverage, black, flake8, mypy)
 pip install -e ".[dev]"
 
-# Or from requirements
-pip install -r requirements-dev.txt
+# Optional: install only selected tools
+pip install black flake8 mypy coverage
 ```
 
 ---
@@ -278,9 +278,7 @@ dry-detector/
 │   ├── DOCUMENTATION.md      # This file
 │   └── *.md                  # Additional docs
 ├── test_examples/            # Test fixtures
-├── pyproject.toml            # Modern packaging (PEP 517/518)
-├── requirements.txt          # Runtime dependencies (zero!)
-├── requirements-dev.txt      # Development dependencies
+├── pyproject.toml            # Modern packaging (PEP 621/517/518)
 ├── justfile                  # Task runner
 ├── README.md                 # Project README
 └── .gitignore               # Git ignore rules
