@@ -88,28 +88,12 @@ def process_until_sentinel_b(values, stop_value):
 
 def nested_break_a(matrix):
     """Find first negative in 2D matrix."""
-    found = None
-    for row in matrix:
-        for val in row:
-            if val < 0:
-                found = val
-                break
-        if found is not None:
-            break
-    return found
+    return __extracted_func_45(matrix)
 
 
 def nested_break_b(grid):
     """Similar nested break pattern."""
-    result = None
-    for line in grid:
-        for item in line:
-            if item < 0:
-                result = item
-                break
-        if result is not None:
-            break
-    return result
+    return __extracted_func_45(grid)
 
 
 def while_with_break_a(n):
@@ -139,21 +123,34 @@ def while_with_break_b(limit):
 def continue_and_accumulate_a(items):
     """Skip some items and accumulate others."""
     result = []
-    return __extracted_func_26(items, result)
+    for item in items:
+        if item % 3 == 0:
+            continue
+        if item % 2 == 0:
+            result.append(item)
+    return result
 
 
 def continue_and_accumulate_b(values):
     """Similar skip pattern."""
     output = []
-    return __extracted_func_26(values, output)
-
-
-def __extracted_func_26(__param_17, __param_18):
-    for item in __param_17:
-        if item % 3 == 0:
+    for value in values:
+        if value % 3 == 0:
             continue
-        if item % 2 == 0:
-            __param_18.append(item)
-    return __param_18
+        if value % 2 == 0:
+            output.append(value)
+    return output
+
+
+def __extracted_func_45(__param_0):
+    found = None
+    for row in __param_0:
+        for val in row:
+            if val < 0:
+                found = val
+                break
+        if found is not None:
+            break
+    return found
 
 

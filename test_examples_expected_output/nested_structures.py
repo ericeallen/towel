@@ -58,12 +58,12 @@ def transform_with_comprehension_b(data, filter_func):
 
 def build_complex_structure_v1(items, metadata):
     """Version 1: Builds complex nested structure."""
-    return __extracted_func_144(2, items)
+    return __extracted_func_339(2, items)
 
 
 def build_complex_structure_v2(items, metadata):
     """Version 2: Different multiplier, same structure building."""
-    return __extracted_func_144(3, items)
+    return __extracted_func_339(3, items)
 
 
 def filter_nested_lists_a(matrix, threshold):
@@ -200,11 +200,11 @@ def chain_nested_operations_v2(data, processor):
     return result
 
 
-def __extracted_func_144(__param_155, items):
+def __extracted_func_339(__param_0, items):
     output = {'data': [], 'meta': {'total': 0, 'categories': {}}}
     for item in items:
         category = item['category']
-        value = item['value'] * __param_155
+        value = item['value'] * __param_0
         output['data'].append({'cat': category, 'val': value})
         output['meta']['total'] += value
         if category not in output['meta']['categories']:

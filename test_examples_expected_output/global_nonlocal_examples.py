@@ -59,12 +59,12 @@ def test_nonlocal_b():
 
 def test_nested_nonlocal_a():
     """Nested function with nonlocal."""
-    return __extracted_func_100()
+    return __extracted_func_268()
 
 
 def test_nested_nonlocal_b():
     """Duplicate nested nonlocal."""
-    return __extracted_func_100()
+    return __extracted_func_268()
 
 
 def test_global_and_local_a(items):
@@ -91,7 +91,7 @@ def test_global_and_local_b(items):
     return (counter, local_sum)
 
 
-def __extracted_func_100():
+def __extracted_func_268():
 
     def outer():
         count = 0

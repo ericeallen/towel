@@ -26,12 +26,12 @@ def process_user_score_v2(user, threshold):
 
 def calculate_discount_tier1(price, customer_level):
     """Tier 1: Complex boolean expression."""
-    return __extracted_func_20(5, 100, 10, 50, customer_level, price)
+    return __extracted_func_30(5, 100, 10, 50, customer_level, price)
 
 
 def calculate_discount_tier2(price, customer_level):
     """Tier 2: Different boolean expression, same structure."""
-    return __extracted_func_20(3, 200, 8, 75, customer_level, price)
+    return __extracted_func_30(3, 200, 8, 75, customer_level, price)
 
 
 def transform_data_format_a(data, processor):
@@ -70,9 +70,9 @@ def compute_metrics_fast(dataset, multiplier, offset):
     return {"total": total, "avg": average, "var": variance}
 
 
-def __extracted_func_20(__param_1, __param_2, __param_3, __param_4, customer_level, price):
+def __extracted_func_30(__param_0, __param_1, __param_2, __param_3, customer_level, price):
     base = price * 0.9
-    if customer_level > __param_1 and base > __param_2 or (customer_level > __param_3 and base > __param_4):
+    if customer_level > __param_0 and base > __param_1 or (customer_level > __param_2 and base > __param_3):
         final = base - 20
         print(f'Applied discount: {final}')
         return final

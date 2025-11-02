@@ -264,22 +264,22 @@ def cache_with_fallback_v2(key, cache, database, ttl):
 
 def aggregate_metrics_a(events, time_window, aggregator):
     """Version A: Time-series aggregation."""
-    return __extracted_func_178(2, events, time_window)
+    return __extracted_func_398(2, events, time_window)
 
 
 def aggregate_metrics_b(events, time_window, aggregator):
     """Version B: Different multiplier, same aggregation."""
-    return __extracted_func_178(3, events, time_window)
+    return __extracted_func_398(3, events, time_window)
 
 
-def __extracted_func_178(__param_194, events, time_window):
+def __extracted_func_398(__param_0, events, time_window):
     buckets = {}
     for event in events:
         timestamp = event['timestamp']
         bucket_key = timestamp // time_window * time_window
         if bucket_key not in buckets:
             buckets[bucket_key] = {'count': 0, 'sum': 0, 'values': []}
-        value = event['value'] * __param_194
+        value = event['value'] * __param_0
         buckets[bucket_key]['count'] += 1
         buckets[bucket_key]['sum'] += value
         buckets[bucket_key]['values'].append(value)

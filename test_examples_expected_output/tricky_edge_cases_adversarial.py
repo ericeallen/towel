@@ -83,13 +83,19 @@ def ternary_expression_b(a, b):
 def list_extend_vs_assign_a(items, extra):
     """Tests list modification semantics."""
     result = []
-    return __extracted_func_215(items, result, extra)
+    for item in items:
+        result.append(item)
+    result.extend(extra)
+    return len(result)
 
 
 def list_extend_vs_assign_b(values, additional):
     """Similar list modification."""
     output = []
-    return __extracted_func_215(values, output, additional)
+    for value in values:
+        output.append(value)
+    output.extend(additional)
+    return len(output)
 
 
 def dict_update_a(base, updates):
@@ -142,26 +148,12 @@ def chained_comparisons_b(y, min_val, max_val):
 
 def mixed_types_a(value):
     """Operations on mixed types."""
-    result = 0
-    if isinstance(value, int):
-        result = value * 2
-    elif isinstance(value, str):
-        result = len(value)
-    else:
-        result = -1
-    return result
+    return __extracted_func_553(value)
 
 
 def mixed_types_b(item):
     """Similar mixed type handling."""
-    output = 0
-    if isinstance(item, int):
-        output = item * 2
-    elif isinstance(item, str):
-        output = len(item)
-    else:
-        output = -1
-    return output
+    return __extracted_func_553(item)
 
 
 def slice_operations_a(items, start, end):
@@ -210,10 +202,14 @@ def set_operations_b(group1, group2):
     return len(output)
 
 
-def __extracted_func_215(__param_239, __param_240, __param_241):
-    for item in __param_239:
-        __param_240.append(item)
-    __param_240.extend(__param_241)
-    return len(__param_240)
+def __extracted_func_553(__param_0):
+    result = 0
+    if isinstance(__param_0, int):
+        result = __param_0 * 2
+    elif isinstance(__param_0, str):
+        result = len(__param_0)
+    else:
+        result = -1
+    return result
 
 

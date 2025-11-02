@@ -67,13 +67,13 @@ def update_model_fields_b(model, updates, validator):
 def query_database_v1(db, filters, mapper):
     """Version 1: Database query builder pattern."""
     # Method chaining query
-    return __extracted_func_113(18, db, mapper)
+    return __extracted_func_287(18, db, mapper)
 
 
 def query_database_v2(db, filters, mapper):
     """Version 2: Different age threshold, same pattern."""
     # Same query pattern, different threshold
-    return __extracted_func_113(21, db, mapper)
+    return __extracted_func_287(21, db, mapper)
 
 
 def process_stream_v1(stream, parser, handler):
@@ -208,8 +208,8 @@ def aggregate_results_b(results, aggregator, formatter):
     return formatted
 
 
-def __extracted_func_113(__param_124, db, mapper):
-    results = db.table('users').where('age', '>', __param_124).where('status', '=', 'active').order_by('created_at', 'desc').limit(100).get()
+def __extracted_func_287(__param_0, db, mapper):
+    results = db.table('users').where('age', '>', __param_0).where('status', '=', 'active').order_by('created_at', 'desc').limit(100).get()
     mapped = [mapper.to_dto(row) for row in results]
     validated = [item for item in mapped if item.is_valid()]
     return validated

@@ -632,6 +632,17 @@ class Unifier:
         if isinstance(first_node, ast.JoinedStr):
             return self._unify_joined_str(nodes, subst, block_indices)
 
+        # Special handling for comprehensions: targets are bindings and may differ
+        # Treat generator targets as alpha-equivalent like for-loop variables
+        if isinstance(first_node, ast.ListComp):
+            return self._unify_list_comp(nodes, subst, block_indices)
+        if isinstance(first_node, ast.SetComp):
+            return self._unify_set_comp(nodes, subst, block_indices)
+        if isinstance(first_node, ast.DictComp):
+            return self._unify_dict_comp(nodes, subst, block_indices)
+        if isinstance(first_node, ast.GeneratorExp):
+            return self._unify_generator_exp(nodes, subst, block_indices)
+
         # For each field in the node
         for field_name in first_node._fields:
             # Skip location fields
@@ -695,6 +706,187 @@ class Unifier:
                     return self._try_parameterize(nodes, subst, block_indices)
 
         return True
+
+    def _unify_list_comp(
+        self,
+        nodes: List[ast.ListComp],
+        subst: Substitution,
+        block_indices: List[int]
+    ) -> bool:
+        """
+        Unify ListComp nodes with alpha-renaming of generator targets.
+
+        For a list comprehension, variables bound in each generator's target are
+        bindings (like for-loop variables) and can differ across blocks. We
+        establish temporary alpha-renamings using the first block as canonical,
+        unify all generators under those mappings, then unify the element.
+        """
+        # All nodes must have same number of generators
+        gen_lists = [n.generators for n in nodes]
+        if not all(len(g) == len(gen_lists[0]) for g in gen_lists):
+            return False
+
+        # Save the current alpha-renamings so we can restore on exit
+        saved_alpha = dict(self.alpha_renamings)
+
+        try:
+            # Unify generators sequentially so inner generators can use earlier bindings
+            num_gens = len(gen_lists[0])
+            for gen_idx in range(num_gens):
+                comps = [g[gen_idx] for g in gen_lists]
+                if not self._unify_single_comprehension(comps, subst, block_indices):
+                    return False
+
+            # Unify the element under established alpha-renamings
+            return self._unify_nodes([n.elt for n in nodes], subst, block_indices)
+        finally:
+            # Restore previous mappings
+            self.alpha_renamings = saved_alpha
+
+    def _unify_set_comp(
+        self,
+        nodes: List[ast.SetComp],
+        subst: Substitution,
+        block_indices: List[int]
+    ) -> bool:
+        # Mirror ListComp logic
+        gen_lists = [n.generators for n in nodes]
+        if not all(len(g) == len(gen_lists[0]) for g in gen_lists):
+            return False
+
+        saved_alpha = dict(self.alpha_renamings)
+        try:
+            num_gens = len(gen_lists[0])
+            for gen_idx in range(num_gens):
+                comps = [g[gen_idx] for g in gen_lists]
+                if not self._unify_single_comprehension(comps, subst, block_indices):
+                    return False
+
+            return self._unify_nodes([n.elt for n in nodes], subst, block_indices)
+        finally:
+            self.alpha_renamings = saved_alpha
+
+    def _unify_dict_comp(
+        self,
+        nodes: List[ast.DictComp],
+        subst: Substitution,
+        block_indices: List[int]
+    ) -> bool:
+        # Mirror ListComp logic but unify key and value
+        gen_lists = [n.generators for n in nodes]
+        if not all(len(g) == len(gen_lists[0]) for g in gen_lists):
+            return False
+
+        saved_alpha = dict(self.alpha_renamings)
+        try:
+            num_gens = len(gen_lists[0])
+            for gen_idx in range(num_gens):
+                comps = [g[gen_idx] for g in gen_lists]
+                if not self._unify_single_comprehension(comps, subst, block_indices):
+                    return False
+
+            return (
+                self._unify_nodes([n.key for n in nodes], subst, block_indices) and
+                self._unify_nodes([n.value for n in nodes], subst, block_indices)
+            )
+        finally:
+            self.alpha_renamings = saved_alpha
+
+    def _unify_generator_exp(
+        self,
+        nodes: List[ast.GeneratorExp],
+        subst: Substitution,
+        block_indices: List[int]
+    ) -> bool:
+        # Mirror ListComp logic
+        gen_lists = [n.generators for n in nodes]
+        if not all(len(g) == len(gen_lists[0]) for g in gen_lists):
+            return False
+
+        saved_alpha = dict(self.alpha_renamings)
+        try:
+            num_gens = len(gen_lists[0])
+            for gen_idx in range(num_gens):
+                comps = [g[gen_idx] for g in gen_lists]
+                if not self._unify_single_comprehension(comps, subst, block_indices):
+                    return False
+
+            return self._unify_nodes([n.elt for n in nodes], subst, block_indices)
+        finally:
+            self.alpha_renamings = saved_alpha
+
+    def _unify_single_comprehension(
+        self,
+        comps: List[ast.comprehension],
+        subst: Substitution,
+        block_indices: List[int]
+    ) -> bool:
+        """
+        Unify a single 'comprehension' node across blocks, establishing
+        alpha-renamings for its target (Name or Tuple of Names), then unifying
+        its iterator and if-clauses under those mappings.
+        """
+        # All must be comprehension nodes
+        if not all(isinstance(c, ast.comprehension) for c in comps):
+            return False
+
+        # is_async flags must match
+        async_flags = [c.is_async for c in comps]
+        if len(set(async_flags)) != 1:
+            return False
+
+        # Handle targets as bindings
+        targets = [c.target for c in comps]
+
+        # Simple Name targets
+        if all(isinstance(t, ast.Name) for t in targets):
+            names = [t.id for t in targets]
+            canonical = names[0]
+            # Establish alpha-renaming for the duration of the entire comprehension
+            for idx, block_idx in enumerate(block_indices):
+                key = (block_idx, names[idx])
+                self.alpha_renamings[key] = canonical
+
+            # Unify iterator and ifs under alpha-renaming
+            if not self._unify_nodes([c.iter for c in comps], subst, block_indices):
+                return False
+            if not self._unify_lists([c.ifs for c in comps], subst, block_indices):
+                return False
+            return True
+
+        # Tuple targets with simple names
+        if all(isinstance(t, ast.Tuple) for t in targets):
+            # All tuples must be flat and same length with Name elts
+            lengths = [len(t.elts) for t in targets]
+            if len(set(lengths)) != 1:
+                return False
+            if not all(all(isinstance(e, ast.Name) for e in t.elts) for t in targets):
+                return False
+
+            tuple_names: List[List[str]] = []  # per position names
+            for pos in range(lengths[0]):
+                tuple_names.append([t.elts[pos].id for t in targets])
+
+            # Establish alpha-renaming per position to the first block's names
+            for pos, names_at_pos in enumerate(tuple_names):
+                canonical = names_at_pos[0]
+                for idx, block_idx in enumerate(block_indices):
+                    key = (block_idx, names_at_pos[idx])
+                    self.alpha_renamings[key] = canonical
+
+            # Unify iterator and ifs
+            if not self._unify_nodes([c.iter for c in comps], subst, block_indices):
+                return False
+            if not self._unify_lists([c.ifs for c in comps], subst, block_indices):
+                return False
+            return True
+
+        # Fallback: complex targets - unify structurally without alpha-renaming
+        return (
+            self._unify_nodes([c.target for c in comps], subst, block_indices) and
+            self._unify_nodes([c.iter for c in comps], subst, block_indices) and
+            self._unify_lists([c.ifs for c in comps], subst, block_indices)
+        )
 
     def _unify_for_loop(
         self,

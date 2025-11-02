@@ -56,16 +56,13 @@ class HygienicExtractor:
         # Determine parameters
         # 1. Parameters from unification (substituted expressions)
         # 2. Free variables (referenced but not bound in block)
-        param_names_unified_original = list(substitution.param_expressions.keys())
+        # IMPORTANT: Keep unified parameter names EXACT (e.g., '__param_0') to remain
+        # consistent with Substitution lookups and replacements. Renaming these would
+        # desynchronize the body substitutions from the function signature.
+        param_names_unified = list(substitution.param_expressions.keys())
 
-        # Ensure parameter names don't shadow enclosing names
-        param_names_unified = [
-            self._ensure_unique_name(p, enclosing_names)
-            for p in param_names_unified_original
-        ]
-
-        # Create mapping from renamed to original names
-        rename_mapping = dict(zip(param_names_unified, param_names_unified_original))
+        # Mapping from renamed to original names (identity since we don't rename)
+        rename_mapping = {name: name for name in param_names_unified}
 
         # Add free variables as parameters (they're already unique)
         param_names_free = sorted(free_variables)
@@ -215,17 +212,23 @@ class HygienicExtractor:
             keywords=[]
         )
 
-        # Handle wrapping based on return_variables and is_value_producing
+        # Map return variables to this block's original names when needed
+        mapped_return_vars = []
         if return_variables:
+            for var in return_variables:
+                mapped_return_vars.append(inverse_renames.get(var, var))
+
+        # Handle wrapping based on return variables and is_value_producing
+        if mapped_return_vars:
             # Value-producing extraction with return variables
             # Create assignment statement: result = func(args) or result, other = func(args)
-            if len(return_variables) == 1:
+            if len(mapped_return_vars) == 1:
                 # Single variable: result = func(args)
-                target = ast.Name(id=return_variables[0], ctx=ast.Store())
+                target = ast.Name(id=mapped_return_vars[0], ctx=ast.Store())
             else:
                 # Multiple variables: result, other = func(args)
                 target = ast.Tuple(
-                    elts=[ast.Name(id=var, ctx=ast.Store()) for var in return_variables],
+                    elts=[ast.Name(id=var, ctx=ast.Store()) for var in mapped_return_vars],
                     ctx=ast.Store()
                 )
             result = ast.Assign(targets=[target], value=call)
