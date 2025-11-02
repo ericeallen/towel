@@ -418,33 +418,12 @@ def fstring_b(a, b):
 
 def exceptions_a(x):
     """Test exception handling."""
-    result = x
-    try:
-        result = result / x
-    except ZeroDivisionError:
-        result = 0
-    except Exception as e:
-        result = -1
-    else:
-        result += 10
-    finally:
-        result += 1
-    return result
+    return __extracted_func_514(x)
+
 
 def exceptions_b(y):
     """Test exception handling."""
-    output = y
-    try:
-        output = output / y
-    except ZeroDivisionError:
-        output = 0
-    except Exception as e:
-        output = -1
-    else:
-        output += 10
-    finally:
-        output += 1
-    return output
+    return __extracted_func_514(y)
 
 # =============================================================================
 # 21. WITH STATEMENTS (CONTEXT MANAGERS)
@@ -502,8 +481,10 @@ def walrus_b(items):
 
 def chained_comp_a(x, y, z):
     """Test chained comparisons."""
-    return __extracted_func_213(1 if x < y < z else 0, 1 if x <= y <= z else 0, 1 if x == y == z else 0, x, y, z)
-
+    result = 1 if x < y < z else 0
+    result += 1 if x <= y <= z else 0
+    result += 1 if x == y == z else 0
+    return result
 
 def chained_comp_b(a, b, c):
     """Test chained comparisons."""
@@ -534,8 +515,10 @@ def short_circuit_b(a, b):
 
 def nested_a(data):
     """Test nested data structure access."""
-    return __extracted_func_213(data[0][0], data[1]['key'], data[2][0][1], x, y, z)
-
+    result = data[0][0]
+    result += data[1]["key"]
+    result += data[2][0][1]
+    return result
 
 def nested_b(items):
     """Test nested data structure access."""
@@ -639,10 +622,18 @@ def complex_expr_b(a, b, items):
     return output
 
 
-def __extracted_func_213(__param_231, __param_232, __param_233, x, y, z):
-    result = __param_231
-    result += __param_232
-    result += __param_233
+def __extracted_func_514(__param_0):
+    result = __param_0
+    try:
+        result = result / __param_0
+    except ZeroDivisionError:
+        result = 0
+    except Exception as e:
+        result = -1
+    else:
+        result += 10
+    finally:
+        result += 1
     return result
 
 

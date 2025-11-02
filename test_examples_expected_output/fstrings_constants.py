@@ -42,12 +42,12 @@ def format_number_b(value):
 
 def const_parameterization_a(item):
     """Test constant parameterization."""
-    return __extracted_func_52(100, 2, item)
+    return __extracted_func_125(100, 2, item)
 
 
 def const_parameterization_b(item):
     """Test constant parameterization (different constants)."""
-    return __extracted_func_52(200, 3, item)
+    return __extracted_func_125(200, 3, item)
 
 
 def string_const_a(name):
@@ -76,9 +76,9 @@ def mixed_fstring_b(x, y):
     return result
 
 
-def __extracted_func_52(__param_66, __param_67, item):
-    threshold = __param_66
-    multiplier = __param_67
+def __extracted_func_125(__param_0, __param_1, item):
+    threshold = __param_0
+    multiplier = __param_1
     if item > threshold:
         return item * multiplier
     return 0

@@ -100,30 +100,12 @@ def nested_exception_b(input_val):
 
 def exception_with_else_a(items):
     """Exception handling with else clause."""
-    results = []
-    error = None
-    try:
-        for item in items:
-            results.append(1 / item)
-    except ZeroDivisionError as e:
-        error = str(e)
-    else:
-        results.append(999)
-    return (results, error)
+    return __extracted_func_119(items)
 
 
 def exception_with_else_b(values):
     """Similar else clause pattern."""
-    output = []
-    err = None
-    try:
-        for value in values:
-            output.append(1 / value)
-    except ZeroDivisionError as e:
-        err = str(e)
-    else:
-        output.append(999)
-    return (output, err)
+    return __extracted_func_119(values)
 
 
 def reraise_exception_a(x):
@@ -174,3 +156,18 @@ def multiple_except_b(input_val):
     except TypeError:
         output = -3
     return output
+
+
+def __extracted_func_119(__param_0):
+    results = []
+    error = None
+    try:
+        for item in __param_0:
+            results.append(1 / item)
+    except ZeroDivisionError as e:
+        error = str(e)
+    else:
+        results.append(999)
+    return (results, error)
+
+

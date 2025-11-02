@@ -24,12 +24,12 @@ def early_return_b(x):
 
 def nested_return_a(x, y):
     """Return nested in multiple if statements."""
-    return __extracted_func_197(x, y)
+    return __extracted_func_427(x, y)
 
 
 def nested_return_b(x, y):
     """Return nested in multiple if statements (duplicate)."""
-    return __extracted_func_197(x, y)
+    return __extracted_func_427(x, y)
 
 
 def loop_with_return_a(items):
@@ -84,7 +84,7 @@ def no_return_b(x):
     # No return statement
 
 
-def __extracted_func_197(x, y):
+def __extracted_func_427(x, y):
     if x > 0:
         if y > 0:
             return x + y

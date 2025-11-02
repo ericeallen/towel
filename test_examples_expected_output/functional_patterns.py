@@ -97,7 +97,7 @@ def chain_functional_ops_v2(data, filter_func, map_func):
 def higher_order_function_a(data, threshold):
     """Version A: Returns and uses functions."""
     # Create higher-order functions
-    return __extracted_func_69(data, threshold)
+    return __extracted_func_156(data, threshold)
 
 
 def higher_order_function_b(data, threshold):
@@ -122,7 +122,7 @@ def higher_order_function_b(data, threshold):
 def higher_order_function_c(data, threshold):
     """Version C: Same as A but with identical usage (no parameter differences)."""
     # Create higher-order functions
-    return __extracted_func_69(data, threshold)
+    return __extracted_func_156(data, threshold)
 
 
 def higher_order_function_d(data, threshold):
@@ -274,7 +274,7 @@ def generator_with_lambda_b(data, predicate):
     return []
 
 
-def __extracted_func_69(data, threshold):
+def __extracted_func_156(data, threshold):
 
     def make_validator(limit):
         return lambda x: x > limit and x < limit * 10

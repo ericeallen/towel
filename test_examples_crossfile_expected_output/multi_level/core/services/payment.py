@@ -1,19 +1,13 @@
 """
 Payment service.
 """
-from api.checkout import __extracted_func_220
+from api.checkout import __extracted_func_557
 
 
 def validate_payment_amount(amount, currency):
     """Validate payment amount."""
     # Validation logic (DUPLICATE across multiple levels!)
-    if amount <= 0:
-        return False
-    if not currency:
-        return False
-    if len(currency) != 3:
-        return False
-    return __extracted_func_220(amount, currency)
+    return __extracted_func_557(amount, currency)
 
 
 def process_payment(user_id, amount, currency):

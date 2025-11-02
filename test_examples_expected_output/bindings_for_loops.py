@@ -25,12 +25,12 @@ def process_list_b(items):
 
 def nested_loops_a(matrix):
     """Nested loops with i, j."""
-    return __extracted_func_17(matrix)
+    return __extracted_func_24(matrix)
 
 
 def nested_loops_b(matrix):
     """Nested loops with x, y (should unify with i, j)."""
-    return __extracted_func_17(matrix)
+    return __extracted_func_24(matrix)
 
 
 def tuple_unpacking_a(pairs):
@@ -51,7 +51,7 @@ def tuple_unpacking_b(pairs):
     return result
 
 
-def __extracted_func_17(matrix):
+def __extracted_func_24(matrix):
     total = 0
     for i in range(len(matrix)):
         for j in range(len(matrix[i])):
