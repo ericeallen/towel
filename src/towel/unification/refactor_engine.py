@@ -52,6 +52,7 @@ class RefactoringProposal:
     replacements: List[Tuple[Tuple[int, int], ast.AST]]  # (line_range, replacement_node)
     description: str
     parameters_count: int
+    return_variables: List[str] = field(default_factory=list)  # Variables that extracted function returns
 
 
 class UnificationRefactorEngine:
@@ -193,30 +194,14 @@ class UnificationRefactorEngine:
 
         # Process each pair - try unification
         proposals = []
-        processed_ranges = set()  # Avoid overlapping refactorings: (file_path, line_range)
 
         for pair in block_pairs:
-            # Skip if this overlaps with an already-processed block
-            key1 = (pair.file_path, pair.block1_range)
-            key2 = (pair.file_path if pair.file_path == pair.file_path else pair.file_path, pair.block2_range)
-
-            # For cross-file pairs, need to track both files
-            if hasattr(pair, 'file_path2'):
-                key2 = (pair.file_path2, pair.block2_range)
-
-            if key1 in processed_ranges or key2 in processed_ranges:
-                continue
-
             proposal = self._try_refactor_pair_multi_file(pair, all_functions)
-
             if proposal:
                 proposals.append(proposal)
-                processed_ranges.add(key1)
-                processed_ranges.add(key2)
 
-        # Sort by code savings (prefer larger extractions)
-        proposals.sort(key=lambda p: sum(r[0][1] - r[0][0] for r in p.replacements), reverse=True)
-
+        # Prefer larger extractions and de-duplicate overlaps greedily
+        proposals = filter_overlapping_proposals(proposals)
         return proposals
 
     def _extract_code_blocks(
@@ -476,6 +461,11 @@ class UnificationRefactorEngine:
             print(f"Found func2: {func2 is not None}")
 
         # CRITICAL: Validate that blocks don't contain reassignments without initial bindings
+        # Initialize return_variables tracking
+        # This will be populated if we find variables that need to be returned
+        return_variables_block1 = set()
+        return_variables_block2 = set()
+
         # This prevents extracting code like "result = result + 10" when "result = x * 2"
         # is outside the block. Such extractions are fundamentally unsound.
         if func1 and func2:
@@ -529,6 +519,33 @@ class UnificationRefactorEngine:
                     )
                     bound_before_block1.update(stmt_bound)
 
+            # Treat function parameters as bound before the block
+            if isinstance(func1, ast.FunctionDef):
+                param_names1 = set()
+                for arg in func1.args.args:
+                    param_names1.add(arg.arg)
+                for arg in getattr(func1.args, 'posonlyargs', []) or []:
+                    param_names1.add(arg.arg)
+                for arg in func1.args.kwonlyargs:
+                    param_names1.add(arg.arg)
+                if func1.args.vararg:
+                    param_names1.add(func1.args.vararg.arg)
+                if func1.args.kwarg:
+                    param_names1.add(func1.args.kwarg.arg)
+                bound_before_block1.update(param_names1)
+
+            # Find variables bound AFTER the block ends
+            bound_after_block1 = set()
+            block_end_line = pair.block1_range[1]
+            for stmt in func1.body:
+                if hasattr(stmt, 'lineno') and stmt.lineno > block_end_line:
+                    stmt_bound = set()
+                    stmt_reassigned = set()
+                    _collect_bindings_and_reassignments(
+                        stmt, reassignments1, stmt_bound, stmt_reassigned
+                    )
+                    bound_after_block1.update(stmt_bound)
+
             # Variables that are bound in the block but DON'T exist before
             # These are the "newly introduced" variables
             initially_bound1 = bound_in_block1 - bound_before_block1
@@ -542,6 +559,10 @@ class UnificationRefactorEngine:
                 print(f"Bound in block: {bound_in_block1}")
                 print(f"Bound before block: {bound_before_block1}")
                 print(f"Newly bound in block: {initially_bound1}")
+
+            # Track variables that need to be returned from the extracted function
+            # These are variables initially bound in the block but used after the block
+            return_variables_block1 = set()
 
             # Check if any initially bound variables are used after the block
             if initially_bound1:
@@ -565,10 +586,14 @@ class UnificationRefactorEngine:
                                 print(f"    Uses: {uses}")
 
                             if uses & initially_bound1:
-                                # Variable is bound in block but used after - unsafe!
+                                # Variable is bound in block and used after
+                                # This is recoverable - we'll make the extracted function return these variables
+                                return_variables_block1.update(uses & initially_bound1)
                                 if os.getenv('DEBUG_VALIDATION'):
-                                    print(f"    REJECTED: Variable(s) {uses & initially_bound1} used after block!")
-                                return None
+                                    print(f"    RETURN NEEDED: Variable(s) {uses & initially_bound1} will be returned from extracted function")
+
+                if os.getenv('DEBUG_VALIDATION') and return_variables_block1:
+                    print(f"Block1 requires returning: {return_variables_block1}")
 
             # Same check for block2
             bound_in_block2 = set()
@@ -590,8 +615,38 @@ class UnificationRefactorEngine:
                     )
                     bound_before_block2.update(stmt_bound)
 
+            # Treat function parameters as bound before the block
+            if isinstance(func2, ast.FunctionDef):
+                param_names2 = set()
+                for arg in func2.args.args:
+                    param_names2.add(arg.arg)
+                for arg in getattr(func2.args, 'posonlyargs', []) or []:
+                    param_names2.add(arg.arg)
+                for arg in func2.args.kwonlyargs:
+                    param_names2.add(arg.arg)
+                if func2.args.vararg:
+                    param_names2.add(func2.args.vararg.arg)
+                if func2.args.kwarg:
+                    param_names2.add(func2.args.kwarg.arg)
+                bound_before_block2.update(param_names2)
+
+            # Find variables bound AFTER block2 ends
+            bound_after_block2 = set()
+            block_end_line = pair.block2_range[1]
+            for stmt in func2.body:
+                if hasattr(stmt, 'lineno') and stmt.lineno > block_end_line:
+                    stmt_bound = set()
+                    stmt_reassigned = set()
+                    _collect_bindings_and_reassignments(
+                        stmt, reassignments2, stmt_bound, stmt_reassigned
+                    )
+                    bound_after_block2.update(stmt_bound)
+
             # Variables that are bound in the block but DON'T exist before
             initially_bound2 = bound_in_block2 - bound_before_block2
+
+            # Track variables that need to be returned for block2
+            return_variables_block2 = set()
 
             if initially_bound2:
                 block_end_line = pair.block2_range[1]
@@ -608,53 +663,121 @@ class UnificationRefactorEngine:
                     if hasattr(stmt, 'lineno') and stmt.lineno > block_end_line:
                         uses = self._get_used_names(stmt)
                         if uses & initially_bound2:
+                            # Variable is bound in block and used after - will be returned
+                            return_variables_block2.update(uses & initially_bound2)
                             if os.getenv('DEBUG_VALIDATION'):
-                                print(f"    REJECTED: Variable(s) {uses & initially_bound2} used after block!")
-                            return None
+                                print(f"    RETURN NEEDED: Variable(s) {uses & initially_bound2} will be returned from extracted function")
+
+                if os.getenv('DEBUG_VALIDATION') and return_variables_block2:
+                    print(f"Block2 requires returning: {return_variables_block2}")
 
         # Check if both blocks are value-producing or both are not
-        value_prod1 = is_value_producing(pair.block1_nodes)
-        value_prod2 = is_value_producing(pair.block2_nodes)
+        # Blocks with return_variables are treated as value-producing because
+        # we will add return statements for those variables
+        value_prod1 = is_value_producing(pair.block1_nodes) or bool(return_variables_block1)
+        value_prod2 = is_value_producing(pair.block2_nodes) or bool(return_variables_block2)
 
-        # TODO: Need better control flow analysis
-        # For now, don't modify value_prod based on code after blocks
+        if os.getenv('DEBUG_VALIDATION'):
+            print(f"  Value-producing check: block1={value_prod1}, block2={value_prod2}")
+            if return_variables_block1:
+                print(f"  Block1 has return_variables: {return_variables_block1}")
+            if return_variables_block2:
+                print(f"  Block2 has return_variables: {return_variables_block2}")
 
         if value_prod1 != value_prod2:
+            if os.getenv('DEBUG_VALIDATION'):
+                print(f"  REJECTED: Value-producing mismatch")
             return None
 
-        # CRITICAL: If blocks are value-producing, ensure complete return coverage
-        # This prevents extracting partial control flow that returns None implicitly
-        # Example: extracting only "if x: return 1" without "return 2" after it
-        if value_prod1:  # If value-producing, check coverage
+        # CRITICAL: If blocks are NATURALLY value-producing (have return statements),
+        # ensure complete return coverage. This prevents extracting partial control flow.
+        # Skip this check for blocks that will have return statements ADDED for return_variables
+        if value_prod1 and not return_variables_block1:  # Naturally value-producing
             from .extractor import has_complete_return_coverage
             if not has_complete_return_coverage(pair.block1_nodes):
+                if os.getenv('DEBUG_VALIDATION'):
+                    print(f"  REJECTED: Block1 missing complete return coverage")
                 return None
             if not has_complete_return_coverage(pair.block2_nodes):
+                if os.getenv('DEBUG_VALIDATION'):
+                    print(f"  REJECTED: Block2 missing complete return coverage")
                 return None
+
+        # Heuristic: avoid extracting trivial single-line return blocks that just
+        # return a previously bound local name (e.g., `return result`). Prefer
+        # extracting the preceding computation that produces the value.
+        def _is_trivial_return_of_bound_name(block_nodes, bound_before_block, bound_in_block):
+            if len(block_nodes) != 1:
+                return False
+            stmt = block_nodes[0]
+            return (
+                isinstance(stmt, ast.Return)
+                and isinstance(stmt.value, ast.Name)
+                and stmt.value.id in bound_before_block
+                and stmt.value.id not in bound_in_block
+            )
+
+        if _is_trivial_return_of_bound_name(pair.block1_nodes, bound_before_block1, bound_in_block1) \
+           and _is_trivial_return_of_bound_name(pair.block2_nodes, bound_before_block2, bound_in_block2):
+            if os.getenv('DEBUG_VALIDATION'):
+                print("  REJECTED: Trivial single-line return blocks (prefer extracting computation)")
+            return None
 
         # Check structural similarity
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
+            if os.getenv('DEBUG_VALIDATION'):
+                print(f"  REJECTED: Not structurally similar")
             return None
 
         # Attempt unification
         blocks = [pair.block1_nodes, pair.block2_nodes]
         hygienic_renames = [{}, {}]
 
+        if os.getenv('DEBUG_VALIDATION'):
+            print(f"  Attempting unification...")
+
         try:
             substitution = self.unifier.unify_blocks(blocks, hygienic_renames)
         except Exception as e:
+            if os.getenv('DEBUG_VALIDATION'):
+                print(f"  REJECTED: Unification exception: {e}")
             return None
 
         if not substitution:
+            if os.getenv('DEBUG_VALIDATION'):
+                print(f"  REJECTED: Unification failed (no substitution)")
             return None
+
+        if os.getenv('DEBUG_VALIDATION'):
+            print(f"  ✓ Unification successful")
+            print(f"  Substitution: {substitution}")
 
         # Get enclosing names to avoid shadowing
         enclosing_names = set(root_scope.bindings.keys())
 
-        # Compute free variables (variables used but not defined in block)
-        free_vars = scope_analyzer.get_free_variables(pair.block1_nodes)
+        # Compute free variables for both blocks (variables used but not defined in each block)
+        # Use block1's free variables to derive parameters for the extracted function,
+        # but validate incomplete lifetimes independently for each block.
+        free_vars1 = scope_analyzer.get_free_variables(pair.block1_nodes)
+        free_vars2 = pair.scope_analyzer2.get_free_variables(pair.block2_nodes) if pair.scope_analyzer2 else set()
 
-        # Find all variables used in augmented assignments in the block
+        # CRITICAL VALIDATION: Reject proposals with incomplete variable lifetimes
+        # A free variable bound AFTER the block is problematic - we'd be using it before it's defined.
+        # However, free variables bound BEFORE the block are OK - they become parameters.
+        if free_vars1 & bound_after_block1:
+            incomplete_vars = free_vars1 & bound_after_block1
+            if os.getenv('DEBUG_VALIDATION'):
+                print(f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}")
+                print(f"    These variables would be used before they're defined")
+            return None
+
+        if free_vars2 & bound_after_block2:
+            incomplete_vars = free_vars2 & bound_after_block2
+            if os.getenv('DEBUG_VALIDATION'):
+                print(f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}")
+            return None
+
+        # Find all variables used in augmented assignments in block1
         # These variables MUST be passed as parameters even if they appear in substitution
         # because augmented assignments (total += x) READ the variable before writing it
         class AugAssignFinder(ast.NodeVisitor):
@@ -679,37 +802,23 @@ class UnificationRefactorEngine:
             aug_finder.visit(node)
         aug_assign_vars = aug_finder.aug_assign_targets
 
-        # CRITICAL: Handle augmented assignment variables specially
-        # If a variable is used in an augmented assignment (total += x), we need to:
-        # 1. Remove it from substitution (so it doesn't get replaced in the function body)
-        # 2. Add it to free_vars (so it gets passed as a parameter)
-        # 3. Save the mapping of variable names across blocks (for generating correct calls)
-        #
-        # The tricky part: the variable may have different names in different blocks
-        # (e.g., 'total' in block1, 'result' in block2), but we need a single parameter.
-        # We use the block1 (template) name for the parameter, and map block2's name
-        # when generating the call.
-        aug_assign_param_mappings = {}  # Maps param names to variable names per block
+        # Handle augmented assignment variables specially
+        # 1) Remove them from substitution so they remain as free variables/parameters
+        # 2) Record the name mapping per block for call generation later
+        aug_assign_param_mappings = {}
         params_to_remove = []
-        for param_name, exprs in substitution.param_expressions.items():
-            # Check if ANY expression in this param is an augmented assignment variable
+        for param_name, exprs in list(substitution.param_expressions.items()):
             for block_idx, expr in exprs:
-                if isinstance(expr, ast.Name) and (expr.id in aug_assign_vars if block_idx == 0 else True):
-                    # Track the mapping BEFORE we remove it
+                if block_idx == 0 and isinstance(expr, ast.Name) and expr.id in aug_assign_vars:
                     if param_name not in aug_assign_param_mappings:
                         aug_assign_param_mappings[param_name] = {}
                     aug_assign_param_mappings[param_name][block_idx] = expr.id
-
-            # If this param has an aug-assign variable in block1, mark for removal
             if 0 in aug_assign_param_mappings.get(param_name, {}):
                 params_to_remove.append(param_name)
 
         # Store the mappings in the substitution object for later use
-        # Create a reverse mapping from block1 variable names to block mappings
-        # This is needed because free variables use the block1 names as parameter names
         if not hasattr(substitution, 'aug_assign_mappings'):
             substitution.aug_assign_mappings = {}
-        # Map from block1 variable name to block mappings
         for param_name, block_mappings in aug_assign_param_mappings.items():
             if 0 in block_mappings:
                 block1_var_name = block_mappings[0]
@@ -719,16 +828,21 @@ class UnificationRefactorEngine:
         for param_name in params_to_remove:
             del substitution.param_expressions[param_name]
 
-        # Add the block1 variable names to free_vars (these become the parameter names)
-        for param_name, block_mappings in aug_assign_param_mappings.items():
-            if 0 in block_mappings:
-                free_vars.add(block_mappings[0])
+        # Never parameterize entire f-strings: if any parameter maps to a JoinedStr in
+        # the template block (block 0), remove it so the f-string structure is preserved
+        fstring_params = []
+        for param_name, exprs in substitution.param_expressions.items():
+            for block_idx, expr in exprs:
+                if block_idx == 0 and isinstance(expr, ast.JoinedStr):
+                    fstring_params.append(param_name)
+                    break
+        for param_name in fstring_params:
+            del substitution.param_expressions[param_name]
 
         # Remove variables that have been parameterized from free_vars
         # If a variable was parameterized (e.g., 'user' -> '__param_5'),
         # it's no longer free - it's been replaced by a parameter
         # EXCEPT: variables in augmented assignments MUST remain free variables
-        # because they need to be passed in (they're READ before being written)
         parameterized_vars = set()
         for param_name, exprs in substitution.param_expressions.items():
             for block_idx, expr in exprs:
@@ -738,7 +852,8 @@ class UnificationRefactorEngine:
                     if expr.id not in aug_assign_vars:
                         parameterized_vars.add(expr.id)
 
-        free_vars = free_vars - parameterized_vars
+        # Initialize working free_vars from block1's perspective (template block)
+        free_vars = set(free_vars1) - parameterized_vars
 
         # CRITICAL: Check if any free variables are declared global or nonlocal
         # If a free variable is global/nonlocal, we cannot parameterize it
@@ -767,6 +882,7 @@ class UnificationRefactorEngine:
                 free_variables=free_vars,
                 enclosing_names=enclosing_names,
                 is_value_producing=value_prod1,
+                return_variables=list(return_variables_block1),
                 function_name="extracted_func"
             )
         except Exception as e:
@@ -816,6 +932,12 @@ class UnificationRefactorEngine:
         # Generate replacement calls
         replacements = []
 
+        # Map block indices to their return variables
+        return_vars_by_block = {
+            0: list(return_variables_block1),
+            1: list(return_variables_block2)
+        }
+
         for block_idx, (block_range, file_path) in enumerate([
             (pair.block1_range, pair.file_path),
             (pair.block2_range, pair.file_path2 or pair.file_path)
@@ -827,7 +949,9 @@ class UnificationRefactorEngine:
                     substitution=substitution,
                     param_order=param_order,
                     free_variables=free_vars,
-                    is_value_producing=value_prod1
+                    is_value_producing=value_prod1,
+                    return_variables=return_vars_by_block[block_idx],
+                    hygienic_renames=hygienic_renames
                 )
                 # Store file_path with replacement for cross-file handling
                 replacements.append((block_range, call_node, file_path))
@@ -852,7 +976,8 @@ class UnificationRefactorEngine:
             extracted_function=func_def,
             replacements=replacements,  # Now includes file_path
             description=desc,
-            parameters_count=len(substitution.param_expressions)
+            parameters_count=len(substitution.param_expressions),
+            return_variables=list(return_variables_block1)
         )
 
         return proposal

@@ -10,19 +10,18 @@ authors = [
     {name = "Eric Allen"}
 ]
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 license = {text = "MIT"}
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -38,9 +37,7 @@ dev = [
     "mypy>=1.0.0",
 ]
 
-[project.scripts]
-dry = "towel.unification.refactor_engine:main"
-preview = "towel.unification.refactor_engine:preview_main"
+# No console_scripts exposed yet; scripts are provided under scripts/ for development
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -50,10 +47,10 @@ where = ["src"]
 
 [tool.black]
 line-length = 100
-target-version = ['py37', 'py38', 'py39', 'py310', 'py311']
+target-version = ['py39', 'py310', 'py311', 'py312', 'py313']
 
 [tool.mypy]
-python_version = "3.7"
+python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

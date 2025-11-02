@@ -455,11 +455,20 @@ class Unifier:
         if not all(len(b) == len(blocks[0]) for b in blocks):
             return None
 
+        # Reset per-unification state to avoid cross-pair contamination
+        # Alpha-renamings and parameter counters must start fresh for each call
+        self.alpha_renamings = {}
+        self.param_counter = 0
+
         # Store blocks for context analysis
         self.current_blocks = blocks
 
         # Collect all constant positions for consistency checking
         self._collect_constant_positions(blocks)
+
+        # Detect and map block-level bound variables for hygienic renaming
+        # This allows unification of blocks with structurally identical code but different variable names
+        self._setup_bound_variable_alpha_renamings(blocks)
 
         # Initialize substitution
         subst = Substitution()
@@ -475,6 +484,20 @@ class Unifier:
         # Check we haven't exceeded max parameters
         if len(subst.param_expressions) > self.max_parameters:
             return None
+
+        # Copy alpha-renamings to output hygienic_renames parameter
+        # This allows callers to access the renames that were applied
+        for (block_idx, var_name), canonical_name in self.alpha_renamings.items():
+            if block_idx < len(hygienic_renames):
+                hygienic_renames[block_idx][var_name] = canonical_name
+
+        # Also attach hygienic_renames to the substitution for downstream consumers
+        # so they don't need to thread the mapping through every call.
+        try:
+            subst.hygienic_renames = hygienic_renames
+        except Exception:
+            # Best-effort; continue even if attribute assignment is blocked
+            pass
 
         return subst
 
@@ -551,7 +574,19 @@ class Unifier:
             if len(set(canonical_names)) == 1:
                 return True  # All same name (possibly after alpha-renaming)
 
-            # Different names even after alpha-renaming - parameterize
+            # Different names even after alpha-renaming - track correspondence before parameterizing
+            # Use first ORIGINAL name (not canonical) for free variable correspondence
+            # This is important: we want to map admin→user, not admin→__temp_0
+            original_names = [n.id for n in nodes]
+            first_original_name = original_names[0]
+
+            for node, block_idx, original_name in zip(nodes, block_indices, original_names):
+                if original_name != first_original_name:
+                    # Record that this block's name maps to the first block's original name
+                    # This handles free variables with different names across blocks
+                    self.alpha_renamings[(block_idx, original_name)] = first_original_name
+
+            # Now parameterize
             return self._try_parameterize(nodes, subst, block_indices)
 
         # For compound nodes, recursively unify all fields
@@ -1259,6 +1294,12 @@ class Unifier:
         Returns:
             True if parameterization succeeded
         """
+        # F-strings (JoinedStr) must not be parameterized as a whole; only their
+        # internal expressions (FormattedValue.value) are eligible. Prevent turning
+        # entire f-strings into a single parameter to preserve structure.
+        if any(isinstance(expr, ast.JoinedStr) for expr in exprs):
+            return False
+
         # CRITICAL: Cannot parameterize statement nodes (only expression nodes)
         # Statements (If, For, FunctionDef, etc.) must have the same type to unify
         # Only expressions (Name, Constant, Call, etc.) can be parameterized
@@ -1373,6 +1414,126 @@ class Unifier:
             subst.add_mapping(idx, expr, param_name, bound_vars=common_bound_vars)
 
         return True
+
+    def _setup_bound_variable_alpha_renamings(self, blocks: List[List[ast.AST]]):
+        """
+        Setup alpha-renamings for block-level bound variables.
+
+        This allows unification of blocks with structurally identical code but different
+        bound variable names (e.g., 'result' vs 'output').
+
+        Strategy:
+        1. For each block, collect variables that are first bound (assigned) in that block
+        2. Match variables across blocks by their structural position (where they're first assigned)
+        3. Add alpha-renamings to map corresponding variables to canonical names
+
+        Example:
+            Block1: result = x + 1; result = result + 2; return result
+            Block2: output = y + 1; output = output + 2; return output
+
+            -> result and output both bound at position (0, 0)
+            -> Add mapping: result → temp, output → temp
+            -> Existing Name node handling will use these mappings
+        """
+        # Collect binding information for each block
+        binding_info = []
+        for block_idx, block in enumerate(blocks):
+            bindings = {}  # var_name → (stmt_idx, target_idx)
+            seen_vars = set()
+
+            for stmt_idx, stmt in enumerate(block):
+                # Get all assignment targets in this statement
+                targets = self._get_assignment_targets(stmt)
+
+                for target_idx, target in enumerate(targets):
+                    if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):
+                        var_name = target.id
+                        # Track first binding position
+                        if var_name not in seen_vars:
+                            bindings[var_name] = (stmt_idx, target_idx)
+                            seen_vars.add(var_name)
+
+            binding_info.append(bindings)
+
+        # Match variables across blocks by structural position
+        # position_to_vars maps (stmt_idx, target_idx) → list of (block_idx, var_name) pairs
+        position_to_vars = {}
+
+        for block_idx, bindings in enumerate(binding_info):
+            for var_name, position in bindings.items():
+                if position not in position_to_vars:
+                    position_to_vars[position] = []
+                position_to_vars[position].append((block_idx, var_name))
+
+        # Generate alpha-renamings for variables at same position
+        canonical_counter = 0
+        used_canonical_names = set()
+
+        for position, var_list in position_to_vars.items():
+            # Only create alpha-renaming if multiple blocks have a variable at this position
+            if len(var_list) < 2:
+                continue
+
+            # Check if variables at this position have different names
+            var_names = [var_name for _, var_name in var_list]
+            if len(set(var_names)) <= 1:
+                # All same name - no renaming needed
+                continue
+
+            # Generate canonical name
+            canonical_name = f"__temp_{canonical_counter}"
+            while canonical_name in used_canonical_names:
+                canonical_counter += 1
+                canonical_name = f"__temp_{canonical_counter}"
+            used_canonical_names.add(canonical_name)
+            canonical_counter += 1
+
+            # Add alpha-renamings for all blocks
+            for block_idx, var_name in var_list:
+                key = (block_idx, var_name)
+                self.alpha_renamings[key] = canonical_name
+
+    def _get_assignment_targets(self, stmt: ast.AST) -> List[ast.AST]:
+        """
+        Extract assignment targets from a statement.
+
+        Returns list of target AST nodes (may be Name, Tuple, List, etc.)
+        """
+        targets = []
+
+        if isinstance(stmt, ast.Assign):
+            # Regular assignment: x = 1 or x, y = 1, 2
+            for target in stmt.targets:
+                targets.extend(self._flatten_assignment_target(target))
+        elif isinstance(stmt, ast.AugAssign):
+            # Augmented assignment: x += 1
+            targets.append(stmt.target)
+        elif isinstance(stmt, ast.AnnAssign):
+            # Annotated assignment: x: int = 1
+            if stmt.target:
+                targets.append(stmt.target)
+
+        return targets
+
+    def _flatten_assignment_target(self, target: ast.AST) -> List[ast.AST]:
+        """
+        Flatten assignment target to individual names.
+
+        Examples:
+            x → [x]
+            (x, y) → [x, y]
+            [x, (y, z)] → [x, y, z]
+        """
+        if isinstance(target, ast.Name):
+            return [target]
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            result = []
+            for elt in target.elts:
+                result.extend(self._flatten_assignment_target(elt))
+            return result
+        else:
+            # Other complex targets (subscript, attribute, etc.) - don't extract names
+            return []
 
     def reset(self):
         """Reset the parameter counter."""

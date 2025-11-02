@@ -84,3 +84,6 @@ my_test2_out/
 
 # Logs
 *.log
+
+# Local Claude
+CLAUDE_local*.*

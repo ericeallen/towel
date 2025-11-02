@@ -129,9 +129,23 @@ def analyze_parameter_usage(func_def: ast.FunctionDef, param_name: str) -> Optio
         param_name: Name of the parameter to analyze
 
     Returns:
-        Usage pattern like 'tuple_unpacking', 'dict_access', 'list_iter', etc.
+        Usage pattern like 'tuple_unpacking', 'dict_access', 'list_iter', 'range_arg', etc.
     """
     for node in ast.walk(func_def):
+        # Check for range() usage: range(param) or range(x, param) or range(x, y, param)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == 'range':
+                # Check if param is used as any argument to range()
+                for arg in node.args:
+                    if isinstance(arg, ast.Name) and arg.id == param_name:
+                        return 'range_arg'
+
+            # Check for dictionary methods
+            if isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Name) and node.func.value.id == param_name:
+                    if node.func.attr in ['get', 'keys', 'values', 'items']:
+                        return 'dict_methods'
+
         # Check for tuple unpacking in for loops: for a, b in param:
         if isinstance(node, ast.For):
             if isinstance(node.target, ast.Tuple) and isinstance(node.iter, ast.Name):
@@ -140,16 +154,17 @@ def analyze_parameter_usage(func_def: ast.FunctionDef, param_name: str) -> Optio
                     num_elements = len(node.target.elts)
                     return f'tuple_unpacking_{num_elements}'
 
+            # Check for range(param) in for loop: for i in range(param):
+            if isinstance(node.iter, ast.Call):
+                if isinstance(node.iter.func, ast.Name) and node.iter.func.id == 'range':
+                    for arg in node.iter.args:
+                        if isinstance(arg, ast.Name) and arg.id == param_name:
+                            return 'range_arg'
+
         # Check for dictionary access: param['key'] or param.get('key')
         if isinstance(node, ast.Subscript):
             if isinstance(node.value, ast.Name) and node.value.id == param_name:
                 return 'dict_access'
-
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Attribute):
-                if isinstance(node.func.value, ast.Name) and node.func.value.id == param_name:
-                    if node.func.attr in ['get', 'keys', 'values', 'items']:
-                        return 'dict_methods'
 
         # Check for list/iterable iteration: for item in param:
         if isinstance(node, ast.For):
@@ -220,6 +235,20 @@ def generate_test_values_for_type(
                 [0],
                 ['a', 'b', 'c'],
                 [10, 20, 30, 40]
+            ]
+
+        elif usage_pattern == 'range_arg':
+            # Limited integers for range() to avoid hanging
+            # range() with huge values causes performance issues
+            return [
+                0,      # Empty range
+                1,      # Single element
+                2,      # Two elements
+                5,      # Small range
+                10,     # Medium range
+                100,    # Large but reasonable
+                -1,     # Negative (empty range when used as range(n))
+                -5,     # More negative tests
             ]
 
     # Try to infer type from annotation
