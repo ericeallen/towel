@@ -99,8 +99,8 @@ source venv/bin/activate
 # Install with dev dependencies
 pip install -e ".[dev]"
 
-# Or install from requirements
-pip install -r requirements-dev.txt
+# Alternatively, install the specific tools you need
+pip install black flake8 mypy coverage
 ```
 
 ## Usage
