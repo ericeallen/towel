@@ -95,7 +95,12 @@ class UnificationRefactorEngine:
         return self.analyze_files([file_path])
 
     def analyze_directory(
-        self, directory: str, recursive: bool = True
+        self,
+        directory: str,
+        recursive: bool = True,
+        *,
+        verbose: bool = False,
+        progress: str = "auto",
     ) -> List[RefactoringProposal]:
         """
         Analyze all Python files in a directory and find refactoring opportunities.
@@ -113,10 +118,11 @@ class UnificationRefactorEngine:
         if not python_files:
             return []
 
-        print(f"Found {len(python_files)} Python files in {directory}")
+        if verbose:
+            print(f"Found {len(python_files)} Python files in {directory}")
 
         # Analyze all files together
-        return self.analyze_files(python_files)
+        return self.analyze_files(python_files, verbose=verbose, progress=progress)
 
     def _find_python_files(self, directory: str, recursive: bool = True) -> List[str]:
         """
@@ -152,7 +158,13 @@ class UnificationRefactorEngine:
 
         return sorted(python_files)
 
-    def analyze_files(self, file_paths: List[str]) -> List[RefactoringProposal]:
+    def analyze_files(
+        self,
+        file_paths: List[str],
+        *,
+        verbose: bool = False,
+        progress: str = "auto",
+    ) -> List[RefactoringProposal]:
         """
         Analyze multiple Python files and find refactoring opportunities.
 
@@ -191,19 +203,69 @@ class UnificationRefactorEngine:
         if len(all_functions) < 2:
             return []
 
+        if verbose:
+            print(f"Parsed {len(all_functions)} top-level functions from {len(file_paths)} file(s)")
+
         # Find pairs of code blocks across all functions (including cross-file)
         block_pairs = self._find_block_pairs_multi_file(all_functions)
+
+        if verbose:
+            total_pairs = len(block_pairs)
+            print(f"Evaluating {total_pairs} candidate block pair(s)...")
 
         # Process each pair - try unification
         proposals = []
 
-        for pair in block_pairs:
-            proposal = self._try_refactor_pair_multi_file(pair, all_functions)
-            if proposal:
-                proposals.append(proposal)
+        # Choose progress style
+        use_tqdm = False
+        tqdm_iter = None
+        if verbose and progress in ("auto", "tqdm"):
+            try:
+                import importlib
+                _tqdm_mod = importlib.import_module('tqdm.auto')
+                _tqdm = getattr(_tqdm_mod, 'tqdm')
+                tqdm_iter = _tqdm(
+                    block_pairs,
+                    total=len(block_pairs),
+                    desc="Analyzing candidate pairs",
+                    unit="pair",
+                    leave=False,
+                )
+                use_tqdm = True
+            except Exception:
+                use_tqdm = False
+
+        if use_tqdm and tqdm_iter is not None:
+            for pair in tqdm_iter:
+                proposal = self._try_refactor_pair_multi_file(pair, all_functions)
+                if proposal:
+                    proposals.append(proposal)
+        else:
+            # Fallback: inline single-line bar using carriage returns (no extra deps)
+            use_inline_bar = verbose and progress in ("auto", "tqdm") and len(block_pairs) > 0
+            last_pct = -1
+            if use_inline_bar:
+                # Initial line
+                print("Analyzing candidate pairs:", end=" ", flush=True)
+            for idx, pair in enumerate(block_pairs, 1):
+                proposal = self._try_refactor_pair_multi_file(pair, all_functions)
+                if proposal:
+                    proposals.append(proposal)
+                if use_inline_bar:
+                    pct = int(100 * idx / len(block_pairs))
+                    if pct != last_pct:
+                        last_pct = pct
+                        bar_len = 24
+                        filled = (pct * bar_len) // 100
+                        bar = "#" * filled + "-" * (bar_len - filled)
+                        print(f"\rAnalyzing candidate pairs: [{bar}] {pct}%", end="", flush=True)
+            if use_inline_bar:
+                print()  # newline after bar
 
         # Prefer larger extractions and de-duplicate overlaps greedily
         proposals = filter_overlapping_proposals(proposals)
+        if verbose:
+            print(f"Found {len(proposals)} non-overlapping proposal(s)")
         return proposals
 
     def _extract_code_blocks(
