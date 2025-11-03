@@ -16,35 +16,37 @@ role (both are bound variables with identical usage patterns).
 """
 
 import ast
-from typing import Set, Dict, List, Tuple
+from typing import Set, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 
 
 class BindingKind(Enum):
     """Types of variable bindings in Python."""
-    ASSIGNMENT = "assignment"           # x = 1
-    AUG_ASSIGNMENT = "aug_assignment"   # x += 1 (requires x to exist)
-    FOR_LOOP = "for_loop"              # for x in iterable:
-    COMPREHENSION = "comprehension"     # [x for x in ...]
-    EXCEPTION = "exception"             # except E as e:
-    WITH_STMT = "with"                 # with ... as x:
-    FUNCTION_PARAM = "function_param"   # def f(x): or lambda x:
-    NAMED_EXPR = "named_expr"          # if (x := foo()):
-    MATCH_CASE = "match_case"          # case pattern as x:
-    IMPORT = "import"                   # import x, from y import x
-    FUNCTION_DEF = "function_def"       # def foo():
-    CLASS_DEF = "class_def"            # class Foo:
+
+    ASSIGNMENT = "assignment"  # x = 1
+    AUG_ASSIGNMENT = "aug_assignment"  # x += 1 (requires x to exist)
+    FOR_LOOP = "for_loop"  # for x in iterable:
+    COMPREHENSION = "comprehension"  # [x for x in ...]
+    EXCEPTION = "exception"  # except E as e:
+    WITH_STMT = "with"  # with ... as x:
+    FUNCTION_PARAM = "function_param"  # def f(x): or lambda x:
+    NAMED_EXPR = "named_expr"  # if (x := foo()):
+    MATCH_CASE = "match_case"  # case pattern as x:
+    IMPORT = "import"  # import x, from y import x
+    FUNCTION_DEF = "function_def"  # def foo():
+    CLASS_DEF = "class_def"  # class Foo:
 
 
 @dataclass
 class Binding:
     """Represents a variable binding."""
-    name: str                    # Variable name
-    kind: BindingKind           # Type of binding
-    node: ast.AST               # AST node where binding occurs
-    scope_node: ast.AST         # AST node defining the scope (function, class, module)
-    line_number: int            # Line number for debugging
+
+    name: str  # Variable name
+    kind: BindingKind  # Type of binding
+    node: ast.AST  # AST node where binding occurs
+    scope_node: Optional[ast.AST]  # AST node defining the scope (function, class, module)
+    line_number: int  # Line number for debugging
 
 
 class BindingDetector(ast.NodeVisitor):
@@ -63,19 +65,21 @@ class BindingDetector(ast.NodeVisitor):
         self.bindings: List[Binding] = []
         self.scope_stack: List[ast.AST] = []  # Track nested scopes
 
-    def _current_scope(self) -> ast.AST:
+    def _current_scope(self) -> Optional[ast.AST]:
         """Get the current scope node (function, class, or module)."""
         return self.scope_stack[-1] if self.scope_stack else None
 
     def _add_binding(self, name: str, kind: BindingKind, node: ast.AST):
         """Record a variable binding."""
-        self.bindings.append(Binding(
-            name=name,
-            kind=kind,
-            node=node,
-            scope_node=self._current_scope(),
-            line_number=getattr(node, 'lineno', -1)
-        ))
+        self.bindings.append(
+            Binding(
+                name=name,
+                kind=kind,
+                node=node,
+                scope_node=self._current_scope(),
+                line_number=getattr(node, "lineno", -1),
+            )
+        )
 
     def _extract_names_from_target(self, target: ast.AST, kind: BindingKind):
         """
@@ -205,8 +209,40 @@ class BindingDetector(ast.NodeVisitor):
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
         """Handle async function definitions: async def foo():"""
-        # Treat the same as regular function definitions
-        self.visit_FunctionDef(node)
+        # Mirror FunctionDef handling without calling visit_FunctionDef to satisfy type checker
+        self._add_binding(node.name, BindingKind.FUNCTION_DEF, node)
+
+        # Enter the function scope for processing parameters and body
+        self.scope_stack.append(node)
+
+        # Function parameters are bindings in the function scope
+        for arg in node.args.args:
+            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
+
+        # Handle vararg (*args) and kwarg (**kwargs)
+        if node.args.vararg:
+            self._add_binding(node.args.vararg.arg, BindingKind.FUNCTION_PARAM, node.args.vararg)
+        if node.args.kwarg:
+            self._add_binding(node.args.kwarg.arg, BindingKind.FUNCTION_PARAM, node.args.kwarg)
+
+        # Handle keyword-only arguments
+        for arg in node.args.kwonlyargs:
+            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
+
+        # Handle positional-only arguments (Python 3.8+)
+        for arg in node.args.posonlyargs:
+            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
+
+        # Visit function body
+        for stmt in node.body:
+            self.visit(stmt)
+
+        # Exit function scope
+        self.scope_stack.pop()
+
+        # Visit decorators (in the enclosing scope)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
 
     def visit_Lambda(self, node: ast.Lambda):
         """Handle lambda expressions: lambda x, y: x + y"""
@@ -270,7 +306,7 @@ class BindingDetector(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom):
         """Handle from-import statements: from x import y, from x import y as z"""
         for alias in node.names:
-            if alias.name == '*':
+            if alias.name == "*":
                 # from x import * - skip, as it's non-specific
                 continue
             name = alias.asname if alias.asname else alias.name

@@ -10,9 +10,7 @@ from typing import List, Set, Tuple
 
 
 def _apply_visitor_to_nodes(
-    result_set: Set[str],
-    visitor: ast.NodeVisitor,
-    nodes: List[ast.AST]
+    result_set: Set[str], visitor: ast.NodeVisitor, nodes: List[ast.AST]
 ) -> Set[str]:
     """
     Apply an AST visitor to a sequence of nodes and return the collected results.
@@ -49,6 +47,7 @@ def get_bound_variables(nodes: List[ast.AST]) -> Set[str]:
     - Function/class definitions
     - But NOT comprehension variables (they're local to the comprehension)
     """
+
     class BindingCollector(ast.NodeVisitor):
         def __init__(self):
             self.bindings = set()
@@ -116,6 +115,7 @@ def get_used_variables(nodes: List[ast.AST]) -> Set[str]:
     """
     Get all variables used (referenced) in a block of code.
     """
+
     class UsageCollector(ast.NodeVisitor):
         def __init__(self):
             self.uses = set()
@@ -130,8 +130,7 @@ def get_used_variables(nodes: List[ast.AST]) -> Set[str]:
 
 
 def has_orphaned_variables(
-    function_body: List[ast.AST],
-    extracted_block_range: Tuple[int, int]
+    function_body: List[ast.AST], extracted_block_range: Tuple[int, int]
 ) -> Tuple[bool, Set[str]]:
     """
     Check if extracting a block would create orphaned variable references.
@@ -149,8 +148,8 @@ def has_orphaned_variables(
     start_idx, end_idx = extracted_block_range
 
     # Get the extracted block and remaining code
-    extracted_block = function_body[start_idx:end_idx + 1]
-    remaining_code = function_body[end_idx + 1:]
+    extracted_block = function_body[start_idx : end_idx + 1]
+    remaining_code = function_body[end_idx + 1 :]
 
     if not remaining_code:
         # Nothing after the extracted block, so no orphans possible

@@ -55,12 +55,12 @@ def compare_callable_returns(func1: Callable, func2: Callable, max_test_cases: i
     param_values = []
     for param in params1:
         # Use simple heuristics for generating test values
-        if param.name in ['x', 'y', 'z', 'n', 'i', 'j']:
+        if param.name in ["x", "y", "z", "n", "i", "j"]:
             values = [0, 1, -1, 5]
-        elif 'item' in param.name.lower():
+        elif "item" in param.name.lower():
             values = [[], [1, 2], [0]]
-        elif 'data' in param.name.lower():
-            values = [{}, {'a': 1}]
+        elif "data" in param.name.lower():
+            values = [{}, {"a": 1}]
         else:
             # Default values
             values = [0, 1, [], {}][:max_test_cases]
@@ -81,10 +81,14 @@ def compare_callable_returns(func1: Callable, func2: Callable, max_test_cases: i
         # Test a few combinations for 2 parameters
         test_cases = [
             (param_values[0][0], param_values[1][0]),
-            (param_values[0][1] if len(param_values[0]) > 1 else param_values[0][0],
-             param_values[1][0]),
-            (param_values[0][0],
-             param_values[1][1] if len(param_values[1]) > 1 else param_values[1][0]),
+            (
+                param_values[0][1] if len(param_values[0]) > 1 else param_values[0][0],
+                param_values[1][0],
+            ),
+            (
+                param_values[0][0],
+                param_values[1][1] if len(param_values[1]) > 1 else param_values[1][0],
+            ),
         ]
     else:
         # For 3+ parameters, use first value for most, vary one at a time
@@ -220,7 +224,7 @@ def execute_function(
     function_name: str,
     args: Tuple = (),
     kwargs: Dict = None,
-    capture_output: bool = True
+    capture_output: bool = True,
 ) -> FunctionExecutionResult:
     """
     Execute a function from Python code and capture its result.
@@ -267,15 +271,11 @@ def execute_function(
             result = func(*args, **kwargs)
 
         return FunctionExecutionResult(
-            return_value=result,
-            stdout=stdout_capture.getvalue(),
-            stderr=stderr_capture.getvalue()
+            return_value=result, stdout=stdout_capture.getvalue(), stderr=stderr_capture.getvalue()
         )
     except Exception as e:
         return FunctionExecutionResult(
-            exception=e,
-            stdout=stdout_capture.getvalue(),
-            stderr=stderr_capture.getvalue()
+            exception=e, stdout=stdout_capture.getvalue(), stderr=stderr_capture.getvalue()
         )
 
 
@@ -283,7 +283,7 @@ def compare_function_behavior(
     original_code: str,
     refactored_code: str,
     function_name: str,
-    test_cases: List[Tuple[Tuple, Dict]]
+    test_cases: List[Tuple[Tuple, Dict]],
 ) -> Tuple[bool, List[str]]:
     """
     Compare behavior of a function in original vs refactored code.
@@ -311,18 +311,12 @@ def compare_function_behavior(
 
         # Execute original
         original_result = execute_function(
-            original_code,
-            function_name,
-            original_args,
-            original_kwargs
+            original_code, function_name, original_args, original_kwargs
         )
 
         # Execute refactored
         refactored_result = execute_function(
-            refactored_code,
-            function_name,
-            refactored_args,
-            refactored_kwargs
+            refactored_code, function_name, refactored_args, refactored_kwargs
         )
 
         # Compare results
@@ -344,9 +338,7 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
         from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 
         self.engine = UnificationRefactorEngine(
-            max_parameters=5,
-            min_lines=4,
-            parameterize_constants=True
+            max_parameters=5, min_lines=4, parameterize_constants=True
         )
         self.tester = AutomaticEquivalenceTester(self.engine)
 
@@ -366,7 +358,7 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
         """
         self.skipTest("Known issues: Variable capture bug affects many examples")
 
-        results = self.tester.test_all_examples('test_examples')
+        results = self.tester.test_all_examples("test_examples")
 
         # Print summary
         print(f"\n{'='*70}")
@@ -379,26 +371,26 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
         print(f"{'='*70}\n")
 
         # Show details for failed files
-        if results['total_failed'] > 0:
+        if results["total_failed"] > 0:
             print("FAILURES:\n")
-            for file_name, file_result in results['file_results'].items():
-                if file_result['failed'] > 0:
+            for file_name, file_result in results["file_results"].items():
+                if file_result["failed"] > 0:
                     print(f"{file_name}:")
                     print(f"  Passed: {file_result['passed']}, Failed: {file_result['failed']}")
-                    for error in file_result['errors'][:5]:  # Show first 5 errors
+                    for error in file_result["errors"][:5]:  # Show first 5 errors
                         print(f"  - {error}")
                     print()
 
         # Assert that all tests passed
-        if results['total_failed'] > 0:
+        if results["total_failed"] > 0:
             self.fail(
-                f"{results['total_failed']} proposals failed observational equivalence testing\n" +
-                "See output above for details"
+                f"{results['total_failed']} proposals failed observational equivalence testing\n"
+                + "See output above for details"
             )
 
     def test_automatic_single_file(self):
         """Test automatic equivalence testing on a single file."""
-        example_path = get_test_example_path('bindings_for_loops.py')
+        example_path = get_test_example_path("bindings_for_loops.py")
 
         passed, failed, errors = self.tester.test_file(str(example_path))
 
@@ -421,9 +413,7 @@ class TestObservationalEquivalence(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5,
-            min_lines=4,
-            parameterize_constants=True
+            max_parameters=5, min_lines=4, parameterize_constants=True
         )
 
     def test_example1_simple_observational_equivalence(self):
@@ -437,7 +427,7 @@ class TestObservationalEquivalence(unittest.TestCase):
         """
         self.skipTest("Known issue: Bug in variable capture - see test docstring")
 
-        example_path = get_test_example_path('example1_simple.py')
+        example_path = get_test_example_path("example1_simple.py")
         original_content = example_path.read_text()
 
         # Get refactoring proposals
@@ -455,30 +445,22 @@ class TestObservationalEquivalence(unittest.TestCase):
         ]
 
         all_passed, differences = compare_function_behavior(
-            original_content,
-            refactored_content,
-            'process_user_data',
-            test_cases
+            original_content, refactored_content, "process_user_data", test_cases
         )
 
         if not all_passed:
             self.fail(
-                f"Semantic equivalence failed for process_user_data:\n" +
-                "\n".join(differences)
+                f"Semantic equivalence failed for process_user_data:\n" + "\n".join(differences)
             )
 
         # Test process_admin_data function
         all_passed, differences = compare_function_behavior(
-            original_content,
-            refactored_content,
-            'process_admin_data',
-            test_cases
+            original_content, refactored_content, "process_admin_data", test_cases
         )
 
         if not all_passed:
             self.fail(
-                f"Semantic equivalence failed for process_admin_data:\n" +
-                "\n".join(differences)
+                f"Semantic equivalence failed for process_admin_data:\n" + "\n".join(differences)
             )
 
         # Verify original file wasn't modified
@@ -486,7 +468,7 @@ class TestObservationalEquivalence(unittest.TestCase):
 
     def test_return_values_observational_equivalence(self):
         """Test that refactored return value code behaves identically."""
-        example_path = get_test_example_path('return_values.py')
+        example_path = get_test_example_path("return_values.py")
         original_content = example_path.read_text()
 
         # Get refactoring proposals
@@ -505,18 +487,14 @@ class TestObservationalEquivalence(unittest.TestCase):
             ((10,), {}),
         ]
 
-        for func_name in ['early_return_a', 'early_return_b']:
+        for func_name in ["early_return_a", "early_return_b"]:
             all_passed, differences = compare_function_behavior(
-                original_content,
-                refactored_content,
-                func_name,
-                test_cases
+                original_content, refactored_content, func_name, test_cases
             )
 
             if not all_passed:
                 self.fail(
-                    f"Semantic equivalence failed for {func_name}:\n" +
-                    "\n".join(differences)
+                    f"Semantic equivalence failed for {func_name}:\n" + "\n".join(differences)
                 )
 
         # Verify original file wasn't modified
@@ -524,7 +502,7 @@ class TestObservationalEquivalence(unittest.TestCase):
 
     def test_bindings_for_loops_observational_equivalence(self):
         """Test that refactored for loop code behaves identically."""
-        example_path = get_test_example_path('bindings_for_loops.py')
+        example_path = get_test_example_path("bindings_for_loops.py")
         original_content = example_path.read_text()
 
         # Get refactoring proposals
@@ -543,23 +521,18 @@ class TestObservationalEquivalence(unittest.TestCase):
             (([10, 20, 30, 40],), {}),
         ]
 
-        for func_name in ['process_list_a', 'process_list_b']:
+        for func_name in ["process_list_a", "process_list_b"]:
             all_passed, differences = compare_function_behavior(
-                original_content,
-                refactored_content,
-                func_name,
-                test_cases
+                original_content, refactored_content, func_name, test_cases
             )
 
             if not all_passed:
                 self.fail(
-                    f"Semantic equivalence failed for {func_name}:\n" +
-                    "\n".join(differences)
+                    f"Semantic equivalence failed for {func_name}:\n" + "\n".join(differences)
                 )
 
         # Verify original file wasn't modified
         assert_file_not_modified(example_path, original_content)
-
 
     def test_simple_arithmetic_observational_equivalence(self):
         """
@@ -591,7 +564,8 @@ def calculate_b(y):
         # Apply refactoring
         import tempfile
         import os
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(original_code)
             temp_file = f.name
 
@@ -611,18 +585,14 @@ def calculate_b(y):
                 ((100,), {}),
             ]
 
-            for func_name in ['calculate_a', 'calculate_b']:
+            for func_name in ["calculate_a", "calculate_b"]:
                 all_passed, differences = compare_function_behavior(
-                    original_code,
-                    refactored_code,
-                    func_name,
-                    test_cases
+                    original_code, refactored_code, func_name, test_cases
                 )
 
                 if not all_passed:
                     self.fail(
-                        f"Semantic equivalence failed for {func_name}:\n" +
-                        "\n".join(differences)
+                        f"Semantic equivalence failed for {func_name}:\n" + "\n".join(differences)
                     )
         finally:
             os.unlink(temp_file)
@@ -637,21 +607,21 @@ def calculate_b(y):
         PREVIOUSLY: Sequential refactorings caused corruption (FIXED with fixed-point iteration)
         PREVIOUSLY: Function parameters treated as free variables (FIXED in scope analyzer)
         """
-        example_path = get_test_example_path('referential_transparency.py')
+        example_path = get_test_example_path("referential_transparency.py")
         original_content = example_path.read_text()
 
         # Use fixed-point iteration (the fixed approach)
         import tempfile
         import os
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(original_content)
             temp_file = f.name
 
         try:
             # Apply refactorings using fixed-point iteration
             refactored_content, num_applied, descriptions = self.engine.refactor_to_fixed_point(
-                temp_file,
-                max_iterations=10
+                temp_file, max_iterations=10
             )
 
             if num_applied == 0:
@@ -663,24 +633,21 @@ def calculate_b(y):
                 (([5], {}), {}),
             ]
 
-            for func_name in ['update_mutable_state_v1', 'update_mutable_state_v2']:
+            for func_name in ["update_mutable_state_v1", "update_mutable_state_v2"]:
                 all_passed, differences = compare_function_behavior(
-                    original_content,
-                    refactored_content,
-                    func_name,
-                    test_cases
+                    original_content, refactored_content, func_name, test_cases
                 )
 
                 if not all_passed:
                     # Print the refactored code for debugging
                     print("\n=== REFACTORED CODE (first 100 lines) ===")
-                    for i, line in enumerate(refactored_content.split('\n')[:100], 1):
+                    for i, line in enumerate(refactored_content.split("\n")[:100], 1):
                         print(f"{i:3}: {line}")
                     print("=" * 50)
 
                     self.fail(
-                        f"Observational equivalence failed for {func_name}:\n" +
-                        "\n".join(differences)
+                        f"Observational equivalence failed for {func_name}:\n"
+                        + "\n".join(differences)
                     )
         finally:
             os.unlink(temp_file)
@@ -698,7 +665,7 @@ class TestExecutionFramework(unittest.TestCase):
 def add(a, b):
     return a + b
 """
-        result = execute_function(code, 'add', (2, 3))
+        result = execute_function(code, "add", (2, 3))
         self.assertIsNone(result.exception)
         self.assertEqual(result.return_value, 5)
 
@@ -708,7 +675,7 @@ def add(a, b):
 def divide(a, b):
     return a / b
 """
-        result = execute_function(code, 'divide', (10, 0))
+        result = execute_function(code, "divide", (10, 0))
         self.assertIsNotNone(result.exception)
         self.assertEqual(result.exception_type, ZeroDivisionError)
 
@@ -718,7 +685,7 @@ def divide(a, b):
 def foo():
     return 42
 """
-        result = execute_function(code, 'bar', ())
+        result = execute_function(code, "bar", ())
         self.assertIsNotNone(result.exception)
         self.assertEqual(result.exception_type, NameError)
 
@@ -738,9 +705,7 @@ def multiply(a, b):
             ((-1, 4), {}),
         ]
 
-        all_passed, differences = compare_function_behavior(
-            code1, code2, 'multiply', test_cases
-        )
+        all_passed, differences = compare_function_behavior(code1, code2, "multiply", test_cases)
 
         self.assertTrue(all_passed)
         self.assertEqual(len(differences), 0)
@@ -759,9 +724,7 @@ def process(x):
             ((5,), {}),
         ]
 
-        all_passed, differences = compare_function_behavior(
-            code1, code2, 'process', test_cases
-        )
+        all_passed, differences = compare_function_behavior(code1, code2, "process", test_cases)
 
         self.assertFalse(all_passed)
         self.assertGreater(len(differences), 0)
@@ -790,7 +753,7 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
 
         This is the comprehensive automatic testing framework requested by the user.
         """
-        results = self.tester.test_all_examples('test_examples')
+        results = self.tester.test_all_examples("test_examples")
 
         # Report results
         print(f"\n{'=' * 70}")
@@ -801,8 +764,10 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
         print(f"Total passed: {results['total_passed']}")
         print(f"Total failed: {results['total_failed']}")
 
-        if results['total_failed'] > 0:
-            print(f"\n{results['total_failed']} proposals failed observational equivalence testing.")
+        if results["total_failed"] > 0:
+            print(
+                f"\n{results['total_failed']} proposals failed observational equivalence testing."
+            )
             print("This is expected due to the remaining known bug:")
             print("  - Variable capture bug - wrong variable names used in calls")
             print()
@@ -811,8 +776,8 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
 
             # Show summary of failures
             print(f"\nFiles with failures:")
-            for filename, file_result in sorted(results['file_results'].items()):
-                if file_result['failed'] > 0:
+            for filename, file_result in sorted(results["file_results"].items()):
+                if file_result["failed"] > 0:
                     print(f"  {filename}: {file_result['failed']} failed")
 
         # For now, we document the failures but don't fail the test since we know
@@ -821,14 +786,14 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
         #                 f"{results['total_failed']} proposals failed equivalence testing")
 
         # Instead, just assert that we tested a reasonable number of files
-        self.assertGreaterEqual(results['total_files'], 10,
-                               "Should test at least 10 example files")
-        self.assertGreaterEqual(results['total_proposals_tested'], 20,
-                               "Should test at least 20 proposals total")
+        self.assertGreaterEqual(results["total_files"], 10, "Should test at least 10 example files")
+        self.assertGreaterEqual(
+            results["total_proposals_tested"], 20, "Should test at least 20 proposals total"
+        )
 
     def test_automatic_single_file(self):
         """Test automatic equivalence testing on a single file."""
-        example_path = get_test_example_path('complex_expressions.py')
+        example_path = get_test_example_path("complex_expressions.py")
 
         if not example_path.exists():
             self.skipTest(f"Example file not found: {example_path}")
@@ -847,5 +812,5 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
         self.assertGreater(passed + failed, 0, "Should find at least one proposal to test")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

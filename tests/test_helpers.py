@@ -30,7 +30,7 @@ def temporary_test_directory():
     Yields:
         Path: Temporary directory path that will be cleaned up automatically
     """
-    temp_dir = tempfile.mkdtemp(prefix='towel_test_')
+    temp_dir = tempfile.mkdtemp(prefix="towel_test_")
     temp_path = Path(temp_dir)
     try:
         yield temp_path

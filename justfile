@@ -143,12 +143,17 @@ format:
 # Lint with flake8
 lint:
     @echo "Linting with flake8..."
-    flake8 src/towel/ tests/ scripts/ --max-line-length=100 --exclude=venv,env,__pycache__ --ignore=E501,W503,E203 || echo "flake8 not installed, skipping"
+    # Pass explicit flags so config is respected even on older flake8 versions
+    flake8 \
+        --max-line-length 100 \
+        --extend-ignore E501,W503,E203,F541 \
+        --exclude "venv,env,__pycache__,tests" \
+        src/towel/ scripts/ || echo "flake8 not installed, skipping"
 
 # Type check with mypy
 typecheck:
     @echo "Type checking with mypy..."
-    mypy src/towel/ --ignore-missing-imports || echo "mypy not installed, skipping"
+    mypy || echo "mypy not installed, skipping"
 
 # Run all code quality checks
 check: format lint typecheck

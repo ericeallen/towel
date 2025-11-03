@@ -10,7 +10,7 @@ This helps the unification algorithm distinguish between fresh bindings and muta
 """
 
 import ast
-from typing import Set, Dict, Optional
+from typing import Set
 from .visitor_utils import make_defensive_generic_visit
 
 
@@ -25,7 +25,7 @@ class AssignToAugAssignNormalizer(ast.NodeTransformer):
         output = output - 5   →  output -= 5
     """
 
-    generic_visit = make_defensive_generic_visit('AssignToAugAssignNormalizer')
+    generic_visit = make_defensive_generic_visit("AssignToAugAssignNormalizer")
 
     def __init__(self):
         self.scopes: list[Set[str]] = [set()]  # Stack of scopes
@@ -88,19 +88,19 @@ class AssignToAugAssignNormalizer(ast.NodeTransformer):
         if isinstance(binop.left, ast.Name) and binop.left.id == target_name:
             # Convert to augmented assignment: x = x + y  →  x += y
             aug_assign = ast.AugAssign(
-                target=ast.Name(id=target_name, ctx=ast.Store()),
-                op=binop.op,
-                value=binop.right
+                target=ast.Name(id=target_name, ctx=ast.Store()), op=binop.op, value=binop.right
             )
             return ast.copy_location(aug_assign, node)
 
         # Check if right operand is the target variable (for commutative ops)
-        if self._is_commutative(binop.op) and isinstance(binop.right, ast.Name) and binop.right.id == target_name:
+        if (
+            self._is_commutative(binop.op)
+            and isinstance(binop.right, ast.Name)
+            and binop.right.id == target_name
+        ):
             # Convert: x = y + x  →  x += y
             aug_assign = ast.AugAssign(
-                target=ast.Name(id=target_name, ctx=ast.Store()),
-                op=binop.op,
-                value=binop.left
+                target=ast.Name(id=target_name, ctx=ast.Store()), op=binop.op, value=binop.left
             )
             return ast.copy_location(aug_assign, node)
 

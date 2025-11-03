@@ -12,7 +12,7 @@ from src.towel.unification.binding_detector import (
     BindingKind,
     detect_bindings,
     get_bound_variables,
-    get_bindings_by_kind
+    get_bindings_by_kind,
 )
 
 
@@ -26,7 +26,7 @@ class TestBindingDetector(unittest.TestCase):
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'x')
+        self.assertEqual(bindings[0].name, "x")
         self.assertEqual(bindings[0].kind, BindingKind.ASSIGNMENT)
 
     def test_tuple_unpacking(self):
@@ -36,7 +36,7 @@ class TestBindingDetector(unittest.TestCase):
         bindings = detect_bindings(tree)
 
         names = {b.name for b in bindings}
-        self.assertEqual(names, {'x', 'y'})
+        self.assertEqual(names, {"x", "y"})
         self.assertTrue(all(b.kind == BindingKind.ASSIGNMENT for b in bindings))
 
     def test_nested_unpacking(self):
@@ -46,7 +46,7 @@ class TestBindingDetector(unittest.TestCase):
         bindings = detect_bindings(tree)
 
         names = {b.name for b in bindings}
-        self.assertEqual(names, {'x', 'y', 'z'})
+        self.assertEqual(names, {"x", "y", "z"})
 
     def test_starred_assignment(self):
         """Test starred assignment."""
@@ -55,7 +55,7 @@ class TestBindingDetector(unittest.TestCase):
         bindings = detect_bindings(tree)
 
         names = {b.name for b in bindings}
-        self.assertEqual(names, {'x', 'rest'})
+        self.assertEqual(names, {"x", "rest"})
 
     def test_for_loop(self):
         """Test for loop variable."""
@@ -67,7 +67,7 @@ for i in range(10):
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'i')
+        self.assertEqual(bindings[0].name, "i")
         self.assertEqual(bindings[0].kind, BindingKind.FOR_LOOP)
 
     def test_list_comprehension(self):
@@ -77,7 +77,7 @@ for i in range(10):
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'x')
+        self.assertEqual(bindings[0].name, "x")
         self.assertEqual(bindings[0].kind, BindingKind.COMPREHENSION)
 
     def test_dict_comprehension(self):
@@ -87,7 +87,7 @@ for i in range(10):
         bindings = detect_bindings(tree)
 
         names = {b.name for b in bindings}
-        self.assertEqual(names, {'k', 'v'})
+        self.assertEqual(names, {"k", "v"})
         self.assertTrue(all(b.kind == BindingKind.COMPREHENSION for b in bindings))
 
     def test_exception_handler(self):
@@ -102,7 +102,7 @@ except Exception as e:
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'e')
+        self.assertEqual(bindings[0].name, "e")
         self.assertEqual(bindings[0].kind, BindingKind.EXCEPTION)
 
     def test_with_statement(self):
@@ -115,7 +115,7 @@ with open('file.txt') as f:
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'f')
+        self.assertEqual(bindings[0].name, "f")
         self.assertEqual(bindings[0].kind, BindingKind.WITH_STMT)
 
     def test_function_definition(self):
@@ -128,16 +128,16 @@ def foo(x, y):
         bindings = detect_bindings(tree)
 
         names = {b.name for b in bindings}
-        self.assertEqual(names, {'foo', 'x', 'y'})
+        self.assertEqual(names, {"foo", "x", "y"})
 
         # Function name is FUNCTION_DEF, parameters are FUNCTION_PARAM
         func_defs = [b for b in bindings if b.kind == BindingKind.FUNCTION_DEF]
         params = [b for b in bindings if b.kind == BindingKind.FUNCTION_PARAM]
 
         self.assertEqual(len(func_defs), 1)
-        self.assertEqual(func_defs[0].name, 'foo')
+        self.assertEqual(func_defs[0].name, "foo")
         self.assertEqual(len(params), 2)
-        self.assertEqual({p.name for p in params}, {'x', 'y'})
+        self.assertEqual({p.name for p in params}, {"x", "y"})
 
     def test_lambda(self):
         """Test lambda parameters."""
@@ -146,7 +146,7 @@ def foo(x, y):
         bindings = detect_bindings(tree)
 
         names = {b.name for b in bindings}
-        self.assertEqual(names, {'x', 'y'})
+        self.assertEqual(names, {"x", "y"})
         self.assertTrue(all(b.kind == BindingKind.FUNCTION_PARAM for b in bindings))
 
     def test_named_expression(self):
@@ -156,7 +156,7 @@ def foo(x, y):
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'x')
+        self.assertEqual(bindings[0].name, "x")
         self.assertEqual(bindings[0].kind, BindingKind.NAMED_EXPR)
 
     def test_import(self):
@@ -166,7 +166,7 @@ def foo(x, y):
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'os')
+        self.assertEqual(bindings[0].name, "os")
         self.assertEqual(bindings[0].kind, BindingKind.IMPORT)
 
     def test_import_as(self):
@@ -176,7 +176,7 @@ def foo(x, y):
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'np')  # Should use alias
+        self.assertEqual(bindings[0].name, "np")  # Should use alias
         self.assertEqual(bindings[0].kind, BindingKind.IMPORT)
 
     def test_from_import(self):
@@ -186,7 +186,7 @@ def foo(x, y):
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'path')
+        self.assertEqual(bindings[0].name, "path")
         self.assertEqual(bindings[0].kind, BindingKind.IMPORT)
 
     def test_class_definition(self):
@@ -199,7 +199,7 @@ class Foo:
         bindings = detect_bindings(tree)
 
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0].name, 'Foo')
+        self.assertEqual(bindings[0].name, "Foo")
         self.assertEqual(bindings[0].kind, BindingKind.CLASS_DEF)
 
     def test_attribute_not_binding(self):
@@ -230,7 +230,7 @@ for i in range(10):
         tree = ast.parse(code)
         bound_vars = get_bound_variables(tree)
 
-        self.assertEqual(bound_vars, {'x', 'i', 'y'})
+        self.assertEqual(bound_vars, {"x", "i", "y"})
 
     def test_get_bindings_by_kind(self):
         """Test filtering bindings by kind."""
@@ -244,8 +244,8 @@ for i in range(10):
         assignments = get_bindings_by_kind(tree, BindingKind.ASSIGNMENT)
         loops = get_bindings_by_kind(tree, BindingKind.FOR_LOOP)
 
-        self.assertEqual({b.name for b in assignments}, {'x', 'y'})
-        self.assertEqual({b.name for b in loops}, {'i'})
+        self.assertEqual({b.name for b in assignments}, {"x", "y"})
+        self.assertEqual({b.name for b in loops}, {"i"})
 
     def test_complex_example(self):
         """Test a complex example with multiple binding types."""
@@ -266,8 +266,17 @@ class Handler:
 
         names = {b.name for b in bindings}
         # process_data, data, result, item, value, Handler, handle, self, x
-        expected = {'process_data', 'data', 'result', 'item', 'value',
-                   'Handler', 'handle', 'self', 'x'}
+        expected = {
+            "process_data",
+            "data",
+            "result",
+            "item",
+            "value",
+            "Handler",
+            "handle",
+            "self",
+            "x",
+        }
         self.assertEqual(names, expected)
 
 
@@ -276,5 +285,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

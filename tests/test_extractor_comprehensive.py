@@ -13,7 +13,7 @@ from src.towel.unification.extractor import (
     is_value_producing,
     has_complete_return_coverage,
     get_enclosing_names,
-    HygienicExtractor
+    HygienicExtractor,
 )
 from src.towel.unification.scope_analyzer import Scope, ScopeAnalyzer
 from src.towel.unification.unifier import Substitution
@@ -171,7 +171,9 @@ if condition:
 
         result = has_complete_return_coverage(tree.body)
 
-        self.assertFalse(result, "If with return only in if branch should not have complete coverage")
+        self.assertFalse(
+            result, "If with return only in if branch should not have complete coverage"
+        )
 
     def test_if_with_only_else_return(self):
         """Test if statement with return only in else branch."""
@@ -185,7 +187,9 @@ else:
 
         result = has_complete_return_coverage(tree.body)
 
-        self.assertFalse(result, "If with return only in else branch should not have complete coverage")
+        self.assertFalse(
+            result, "If with return only in else branch should not have complete coverage"
+        )
 
     def test_no_return(self):
         """Test block without return."""
@@ -217,32 +221,32 @@ class TestGetEnclosingNames(unittest.TestCase):
     def test_child_scope_sees_parent(self):
         """Test that child scope sees parent's bindings."""
         parent_scope = Scope(scope_id=0, parent=None)
-        parent_scope.add_binding('x', ast.Name(id='x'))
-        parent_scope.add_binding('y', ast.Name(id='y'))
+        parent_scope.add_binding("x", ast.Name(id="x"))
+        parent_scope.add_binding("y", ast.Name(id="y"))
 
         child_scope = Scope(scope_id=1, parent=parent_scope)
 
         names = get_enclosing_names(parent_scope, child_scope)
 
-        self.assertIn('x', names, "Should see x from parent")
-        self.assertIn('y', names, "Should see y from parent")
+        self.assertIn("x", names, "Should see x from parent")
+        self.assertIn("y", names, "Should see y from parent")
 
     def test_deeply_nested_scope(self):
         """Test deeply nested scopes."""
         root = Scope(scope_id=0, parent=None)
-        root.add_binding('a', ast.Name(id='a'))
+        root.add_binding("a", ast.Name(id="a"))
 
         level1 = Scope(scope_id=1, parent=root)
-        level1.add_binding('b', ast.Name(id='b'))
+        level1.add_binding("b", ast.Name(id="b"))
 
         level2 = Scope(scope_id=2, parent=level1)
-        level2.add_binding('c', ast.Name(id='c'))
+        level2.add_binding("c", ast.Name(id="c"))
 
         names = get_enclosing_names(root, level2)
 
-        self.assertIn('a', names, "Should see a from root")
-        self.assertIn('b', names, "Should see b from level1")
-        self.assertNotIn('c', names, "Should not see c from current scope")
+        self.assertIn("a", names, "Should see a from root")
+        self.assertIn("b", names, "Should see b from level1")
+        self.assertNotIn("c", names, "Should not see c from current scope")
 
 
 class TestHygienicExtractorEnsureUniqueName(unittest.TestCase):
@@ -254,38 +258,39 @@ class TestHygienicExtractorEnsureUniqueName(unittest.TestCase):
 
     def test_unique_name_no_conflict(self):
         """Test that unique name is returned as-is."""
-        enclosing_names = {'foo', 'bar'}
+        enclosing_names = {"foo", "bar"}
 
-        result = self.extractor._ensure_unique_name('baz', enclosing_names)
+        result = self.extractor._ensure_unique_name("baz", enclosing_names)
 
-        self.assertEqual(result, 'baz', "Unique name should be returned as-is")
+        self.assertEqual(result, "baz", "Unique name should be returned as-is")
 
     def test_shadowing_name_gets_suffix(self):
         """Test that shadowing name gets numeric suffix."""
-        enclosing_names = {'foo'}
+        enclosing_names = {"foo"}
 
-        result = self.extractor._ensure_unique_name('foo', enclosing_names)
+        result = self.extractor._ensure_unique_name("foo", enclosing_names)
 
-        self.assertNotEqual(result, 'foo', "Should not return shadowing name")
-        self.assertTrue(result.startswith('__foo_'), "Should add __ prefix and suffix")
+        self.assertNotEqual(result, "foo", "Should not return shadowing name")
+        self.assertTrue(result.startswith("__foo_"), "Should add __ prefix and suffix")
 
     def test_multiple_conflicts(self):
         """Test handling multiple conflicts."""
-        enclosing_names = {'foo', '__foo_1', '__foo_2'}
+        enclosing_names = {"foo", "__foo_1", "__foo_2"}
 
-        result = self.extractor._ensure_unique_name('foo', enclosing_names)
+        result = self.extractor._ensure_unique_name("foo", enclosing_names)
 
-        self.assertEqual(result, '__foo_3', "Should use next available number")
+        self.assertEqual(result, "__foo_3", "Should use next available number")
 
     def test_tracks_used_names(self):
         """Test that used names are tracked."""
         enclosing_names = set()
 
-        name1 = self.extractor._ensure_unique_name('foo', enclosing_names)
-        name2 = self.extractor._ensure_unique_name('foo', enclosing_names)
+        name1 = self.extractor._ensure_unique_name("foo", enclosing_names)
+        name2 = self.extractor._ensure_unique_name("foo", enclosing_names)
 
-        self.assertEqual(name1, 'foo')
-        self.assertNotEqual(name2, 'foo', "Second call should return different name")
+        self.assertEqual(name1, "foo")
+        self.assertNotEqual(name2, "foo", "Second call should return different name")
+
 
 class TestHygienicExtractorBasics(unittest.TestCase):
     """Test basic HygienicExtractor functionality."""
@@ -304,15 +309,11 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         enclosing_names = set()
 
         func_def, param_order = self.extractor.extract_function(
-            tree.body,
-            substitution,
-            free_variables,
-            enclosing_names,
-            is_value_producing=True
+            tree.body, substitution, free_variables, enclosing_names, is_value_producing=True
         )
 
         self.assertIsInstance(func_def, ast.FunctionDef, "Should return FunctionDef")
-        self.assertEqual(func_def.name, 'extracted_function', "Should have default name")
+        self.assertEqual(func_def.name, "extracted_function", "Should have default name")
 
     def test_extract_function_with_custom_name(self):
         """Test extraction with custom function name."""
@@ -329,10 +330,10 @@ class TestHygienicExtractorBasics(unittest.TestCase):
             free_variables,
             enclosing_names,
             is_value_producing=False,
-            function_name="my_function"
+            function_name="my_function",
         )
 
-        self.assertEqual(func_def.name, 'my_function', "Should use custom name")
+        self.assertEqual(func_def.name, "my_function", "Should use custom name")
 
     def test_extract_function_avoids_name_collision(self):
         """Test that function name avoids collision with enclosing names."""
@@ -341,18 +342,13 @@ class TestHygienicExtractorBasics(unittest.TestCase):
 
         substitution = Substitution()
         free_variables = set()
-        enclosing_names = {'extracted_function'}
+        enclosing_names = {"extracted_function"}
 
         func_def, param_order = self.extractor.extract_function(
-            tree.body,
-            substitution,
-            free_variables,
-            enclosing_names,
-            is_value_producing=False
+            tree.body, substitution, free_variables, enclosing_names, is_value_producing=False
         )
 
-        self.assertNotEqual(func_def.name, 'extracted_function',
-                           "Should avoid name collision")
+        self.assertNotEqual(func_def.name, "extracted_function", "Should avoid name collision")
 
     def test_extract_function_with_free_variables(self):
         """Test extraction with free variables."""
@@ -360,20 +356,16 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         tree = ast.parse(code)
 
         substitution = Substitution()
-        free_variables = {'x'}
+        free_variables = {"x"}
         enclosing_names = set()
 
         func_def, param_order = self.extractor.extract_function(
-            tree.body,
-            substitution,
-            free_variables,
-            enclosing_names,
-            is_value_producing=False
+            tree.body, substitution, free_variables, enclosing_names, is_value_producing=False
         )
 
         # Check that 'x' is a parameter
         param_names = [arg.arg for arg in func_def.args.args]
-        self.assertIn('x', param_names, "Free variable should be parameter")
+        self.assertIn("x", param_names, "Free variable should be parameter")
 
     def test_extract_function_empty_body(self):
         """Test extraction with empty body."""
@@ -386,7 +378,7 @@ class TestHygienicExtractorBasics(unittest.TestCase):
             substitution,
             free_variables,
             enclosing_names,
-            is_value_producing=False
+            is_value_producing=False,
         )
 
         # Empty body should get a pass statement
@@ -408,18 +400,13 @@ class TestGenerateCall(unittest.TestCase):
         free_variables = set()
 
         result = self.extractor.generate_call(
-            'my_function',
-            0,
-            substitution,
-            param_order,
-            free_variables,
-            is_value_producing=False
+            "my_function", 0, substitution, param_order, free_variables, is_value_producing=False
         )
 
         # Should be Expr wrapping a Call
         self.assertIsInstance(result, ast.Expr)
         self.assertIsInstance(result.value, ast.Call)
-        self.assertEqual(result.value.func.id, 'my_function')
+        self.assertEqual(result.value.func.id, "my_function")
 
     def test_generate_call_value_producing(self):
         """Test that value-producing calls are wrapped in Return."""
@@ -428,12 +415,7 @@ class TestGenerateCall(unittest.TestCase):
         free_variables = set()
 
         result = self.extractor.generate_call(
-            'my_function',
-            0,
-            substitution,
-            param_order,
-            free_variables,
-            is_value_producing=True
+            "my_function", 0, substitution, param_order, free_variables, is_value_producing=True
         )
 
         # Should be Return wrapping a Call
@@ -443,16 +425,11 @@ class TestGenerateCall(unittest.TestCase):
     def test_generate_call_with_free_variables(self):
         """Test generating call with free variables as arguments."""
         substitution = Substitution()
-        param_order = {'x': 0, 'y': 1}
-        free_variables = {'x', 'y'}
+        param_order = {"x": 0, "y": 1}
+        free_variables = {"x", "y"}
 
         result = self.extractor.generate_call(
-            'my_function',
-            0,
-            substitution,
-            param_order,
-            free_variables,
-            is_value_producing=False
+            "my_function", 0, substitution, param_order, free_variables, is_value_producing=False
         )
 
         call = result.value
@@ -470,30 +447,21 @@ class TestIntegration(unittest.TestCase):
         tree = ast.parse(code)
 
         substitution = Substitution()
-        free_variables = {'x'}
+        free_variables = {"x"}
         enclosing_names = set()
 
         # Extract function
         func_def, param_order = extractor.extract_function(
-            tree.body,
-            substitution,
-            free_variables,
-            enclosing_names,
-            is_value_producing=True
+            tree.body, substitution, free_variables, enclosing_names, is_value_producing=True
         )
 
         # Verify function has parameter
         param_names = [arg.arg for arg in func_def.args.args]
-        self.assertIn('x', param_names)
+        self.assertIn("x", param_names)
 
         # Generate call
         call = extractor.generate_call(
-            func_def.name,
-            0,
-            substitution,
-            param_order,
-            free_variables,
-            is_value_producing=True
+            func_def.name, 0, substitution, param_order, free_variables, is_value_producing=True
         )
 
         # Verify call structure
@@ -506,5 +474,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

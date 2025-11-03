@@ -18,7 +18,7 @@ def run_all_tests():
     # Discover tests in the tests directory
     loader = unittest.TestLoader()
     start_dir = Path(__file__).parent
-    suite = loader.discover(start_dir, pattern='test_*.py')
+    suite = loader.discover(start_dir, pattern="test_*.py")
 
     # Run tests with verbose output
     runner = unittest.TextTestRunner(verbosity=2)
@@ -53,5 +53,5 @@ def main():
     sys.exit(exit_code)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

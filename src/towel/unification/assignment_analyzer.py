@@ -236,9 +236,7 @@ class AssignmentAnalyzer(ast.NodeVisitor):
 
 
 def has_reassignments_without_bindings(
-    func: ast.FunctionDef,
-    block_nodes: list[ast.AST],
-    reassignments: Dict[int, bool]
+    func: ast.FunctionDef, block_nodes: list[ast.AST], reassignments: Dict[int, bool]
 ) -> tuple[bool, Set[str]]:
     """
     Check if a code block contains reassignments without initial bindings.
@@ -277,10 +275,7 @@ def has_reassignments_without_bindings(
 
     for node in block_nodes:
         _collect_bindings_and_reassignments(
-            node,
-            reassignments,
-            bound_in_block,
-            reassigned_in_block
+            node, reassignments, bound_in_block, reassigned_in_block
         )
 
     # Find variables that are reassigned but not initially bound in the block
@@ -290,10 +285,7 @@ def has_reassignments_without_bindings(
 
 
 def _collect_bindings_and_reassignments(
-    node: ast.AST,
-    reassignments: Dict[int, bool],
-    bound_vars: Set[str],
-    reassigned_vars: Set[str]
+    node: ast.AST, reassignments: Dict[int, bool], bound_vars: Set[str], reassigned_vars: Set[str]
 ):
     """
     Recursively collect variables bound and reassigned in a node.
@@ -304,6 +296,7 @@ def _collect_bindings_and_reassignments(
         bound_vars: Set to add initially-bound variables to
         reassigned_vars: Set to add reassigned variables to
     """
+
     class BindingCollector(ast.NodeVisitor):
         def visit_Assign(self, node):
             is_reassignment = reassignments.get(id(node), False)
@@ -334,6 +327,7 @@ def _collect_bindings_and_reassignments(
                     def visit_Name(self, n):
                         if isinstance(n.ctx, ast.Store):
                             bound_vars.add(n.id)
+
                 collector = NameCollector()
                 collector.visit(node.target)
 

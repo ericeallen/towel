@@ -10,8 +10,11 @@ Generates extracted functions while ensuring:
 
 import ast
 import copy
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, cast
 from .unifier import Substitution
+
+if TYPE_CHECKING:
+    from .scope_analyzer import Scope
 
 
 class HygienicExtractor:
@@ -30,8 +33,8 @@ class HygienicExtractor:
         free_variables: Set[str],
         enclosing_names: Set[str],
         is_value_producing: bool,
-        return_variables: List[str] = None,
-        function_name: str = "extracted_function"
+        return_variables: Optional[List[str]] = None,
+        function_name: str = "extracted_function",
     ) -> Tuple[ast.FunctionDef, Dict[str, int]]:
         """
         Extract code into a function.
@@ -75,15 +78,16 @@ class HygienicExtractor:
         param_order = {name: idx for idx, name in enumerate(all_param_names)}
 
         # Create function body by substituting unified parameters
-        body = self._substitute_parameters(
-            copy.deepcopy(template_block),
-            substitution,
-            param_names_unified,
-            rename_mapping
+        body_nodes = self._substitute_parameters(
+            copy.deepcopy(template_block), substitution, param_names_unified, rename_mapping
         )
+        # Substitute parameters returns generic AST nodes; for function body we expect statements
+        body: List[ast.stmt] = [cast(ast.stmt, n) for n in body_nodes]
 
         # Add return statement for value-producing extraction
         if return_variables:
+            # Prepare the return expression (expr type)
+            return_value: ast.expr
             if len(return_variables) == 1:
                 # Single return variable: return var
                 return_value = ast.Name(id=return_variables[0], ctx=ast.Load())
@@ -91,7 +95,7 @@ class HygienicExtractor:
                 # Multiple return variables: return (var1, var2, ...)
                 return_value = ast.Tuple(
                     elts=[ast.Name(id=var, ctx=ast.Load()) for var in return_variables],
-                    ctx=ast.Load()
+                    ctx=ast.Load(),
                 )
 
             return_stmt = ast.Return(value=return_value)
@@ -103,7 +107,7 @@ class HygienicExtractor:
             args=[ast.arg(arg=name) for name in all_param_names],
             kwonlyargs=[],
             kw_defaults=[],
-            defaults=[]
+            defaults=[],
         )
 
         # Create function definition
@@ -112,7 +116,7 @@ class HygienicExtractor:
             args=args,
             body=body if body else [ast.Pass()],
             decorator_list=[],
-            returns=None
+            returns=None,
         )
 
         # Fix missing locations
@@ -128,9 +132,9 @@ class HygienicExtractor:
         param_order: Dict[str, int],
         free_variables: Set[str],
         is_value_producing: bool,
-        return_variables: List[str] = None,
-        hygienic_renames: List[Dict[str, str]] = None
-    ) -> ast.AST:
+        return_variables: Optional[List[str]] = None,
+        hygienic_renames: Optional[List[Dict[str, str]]] = None,
+    ) -> ast.stmt:
         """
         Generate a call to the extracted function.
 
@@ -151,20 +155,21 @@ class HygienicExtractor:
             return_variables = []
         if hygienic_renames is None or not hygienic_renames:
             # Fallback: if the substitution carries hygienic renames, use them
-            if hasattr(substitution, 'hygienic_renames') and substitution.hygienic_renames:
+            if hasattr(substitution, "hygienic_renames") and substitution.hygienic_renames:
                 hygienic_renames = substitution.hygienic_renames
             else:
                 hygienic_renames = []
 
         # Build inverse mapping: canonical name → original name for this block
         # hygienic_renames[block_idx] maps original → canonical, we need the reverse
-        inverse_renames = {}
+        inverse_renames: Dict[str, str] = {}
         if block_idx < len(hygienic_renames):
             for original_name, canonical_name in hygienic_renames[block_idx].items():
                 inverse_renames[canonical_name] = original_name
 
         # Build arguments in correct order
-        args_list = [None] * len(param_order)
+        # Build argument list (exprs); initialize as optional then cast when filled
+        args_list: List[Optional[ast.expr]] = [None] * len(param_order)
 
         # Add unified parameters
         for param_name, param_idx in param_order.items():
@@ -184,14 +189,14 @@ class HygienicExtractor:
                                     args=[ast.arg(arg=var) for var in bound_vars],
                                     kwonlyargs=[],
                                     kw_defaults=[],
-                                    defaults=[]
+                                    defaults=[],
                                 ),
-                                body=expr
+                                body=cast(ast.expr, expr),
                             )
                             args_list[param_idx] = lambda_node
                         else:
                             # Regular parameter - use expression as-is
-                            args_list[param_idx] = expr
+                            args_list[param_idx] = cast(ast.expr, expr)
                         break
             else:
                 # This is a free variable - use the correct name for this block
@@ -199,7 +204,10 @@ class HygienicExtractor:
                 var_name = inverse_renames.get(param_name, param_name)
 
                 # Also check if the name varies across blocks (augmented assignments)
-                if hasattr(substitution, 'aug_assign_mappings') and param_name in substitution.aug_assign_mappings:
+                if (
+                    hasattr(substitution, "aug_assign_mappings")
+                    and param_name in substitution.aug_assign_mappings
+                ):
                     mappings = substitution.aug_assign_mappings[param_name]
                     if block_idx in mappings:
                         var_name = mappings[block_idx]
@@ -208,46 +216,47 @@ class HygienicExtractor:
         # Create function call
         call = ast.Call(
             func=ast.Name(id=function_name, ctx=ast.Load()),
-            args=args_list,
-            keywords=[]
+            args=[cast(ast.expr, a) for a in args_list],
+            keywords=[],
         )
 
         # Map return variables to this block's original names when needed
-        mapped_return_vars = []
+        mapped_return_vars: List[str] = []
         if return_variables:
             for var in return_variables:
                 mapped_return_vars.append(inverse_renames.get(var, var))
 
         # Handle wrapping based on return variables and is_value_producing
+        result_stmt: ast.stmt
         if mapped_return_vars:
             # Value-producing extraction with return variables
             # Create assignment statement: result = func(args) or result, other = func(args)
             if len(mapped_return_vars) == 1:
                 # Single variable: result = func(args)
-                target = ast.Name(id=mapped_return_vars[0], ctx=ast.Store())
+                assign_target: ast.expr = ast.Name(id=mapped_return_vars[0], ctx=ast.Store())
             else:
                 # Multiple variables: result, other = func(args)
-                target = ast.Tuple(
+                assign_target = ast.Tuple(
                     elts=[ast.Name(id=var, ctx=ast.Store()) for var in mapped_return_vars],
-                    ctx=ast.Store()
+                    ctx=ast.Store(),
                 )
-            result = ast.Assign(targets=[target], value=call)
+            result_stmt = ast.Assign(targets=[assign_target], value=call)
         elif is_value_producing:
             # Value-producing extraction without return variables (has explicit return statements)
-            result = ast.Return(value=call)
+            result_stmt = ast.Return(value=call)
         else:
             # Non-value-producing extraction
-            result = ast.Expr(value=call)
+            result_stmt = ast.Expr(value=call)
 
-        ast.fix_missing_locations(result)
-        return result
+        ast.fix_missing_locations(result_stmt)
+        return result_stmt
 
     def _substitute_parameters(
         self,
         nodes: List[ast.AST],
         substitution: Substitution,
         param_names: List[str],
-        rename_mapping: Dict[str, str]
+        rename_mapping: Dict[str, str],
     ) -> List[ast.AST]:
         """
         Substitute unified expressions with parameter names.
@@ -261,9 +270,12 @@ class HygienicExtractor:
         Returns:
             Transformed AST nodes
         """
+
         # Create a transformer that replaces expressions with parameter names
         class ParameterSubstituter(ast.NodeTransformer):
-            def __init__(self, subst: Substitution, param_names: List[str], rename_mapping: Dict[str, str]):
+            def __init__(
+                self, subst: Substitution, param_names: List[str], rename_mapping: Dict[str, str]
+            ):
                 self.subst = subst
                 self.param_names = param_names
                 self.rename_mapping = rename_mapping
@@ -304,7 +316,7 @@ class HygienicExtractor:
                         new_formatted = ast.FormattedValue(
                             value=self.visit(value.value),
                             conversion=value.conversion,
-                            format_spec=value.format_spec
+                            format_spec=value.format_spec,
                         )
                         new_values.append(new_formatted)
                     else:
@@ -329,12 +341,7 @@ class HygienicExtractor:
                 new_body = [self.visit(stmt) for stmt in node.body]
                 new_orelse = [self.visit(stmt) for stmt in node.orelse] if node.orelse else []
 
-                return ast.For(
-                    target=new_target,
-                    iter=new_iter,
-                    body=new_body,
-                    orelse=new_orelse
-                )
+                return ast.For(target=new_target, iter=new_iter, body=new_body, orelse=new_orelse)
 
             def visit_comprehension(self, node):
                 """
@@ -352,10 +359,7 @@ class HygienicExtractor:
                 new_ifs = [self.visit(cond) for cond in node.ifs]
 
                 return ast.comprehension(
-                    target=new_target,
-                    iter=new_iter,
-                    ifs=new_ifs,
-                    is_async=node.is_async
+                    target=new_target, iter=new_iter, ifs=new_ifs, is_async=node.is_async
                 )
 
             def visit_Assign(self, node):
@@ -451,7 +455,7 @@ class HygienicExtractor:
                         call = ast.Call(
                             func=ast.Name(id=param_name, ctx=ast.Load()),
                             args=[ast.Name(id=var, ctx=ast.Load()) for var in bound_vars],
-                            keywords=[]
+                            keywords=[],
                         )
                         return call
                     else:
@@ -489,10 +493,11 @@ class HygienicExtractor:
             counter += 1
 
 
-def contains_return(block: List[ast.AST]) -> bool:
+def contains_return(block: List[ast.stmt]) -> bool:
     """
     Check if a block contains any return statements (including nested ones).
     """
+
     class ReturnFinder(ast.NodeVisitor):
         def __init__(self):
             self.found_return = False
@@ -516,7 +521,7 @@ def contains_return(block: List[ast.AST]) -> bool:
     return False
 
 
-def is_value_producing(block: List[ast.AST]) -> bool:
+def is_value_producing(block: List[ast.stmt]) -> bool:
     """
     Check if a block of code produces a value.
 
@@ -539,7 +544,7 @@ def is_value_producing(block: List[ast.AST]) -> bool:
     return False
 
 
-def has_complete_return_coverage(block: List[ast.AST]) -> bool:
+def has_complete_return_coverage(block: List[ast.stmt]) -> bool:
     """
     Check if a value-producing block has complete return coverage.
 
@@ -584,7 +589,7 @@ def has_complete_return_coverage(block: List[ast.AST]) -> bool:
     return False
 
 
-def get_enclosing_names(scope_tree: 'Scope', current_scope: 'Scope') -> Set[str]:
+def get_enclosing_names(scope_tree: "Scope", current_scope: "Scope") -> Set[str]:
     """
     Get all names defined in scopes enclosing the current scope.
 
@@ -595,7 +600,7 @@ def get_enclosing_names(scope_tree: 'Scope', current_scope: 'Scope') -> Set[str]
     Returns:
         Set of names in enclosing scopes
     """
-    names = set()
+    names: Set[str] = set()
     scope = current_scope.parent
     while scope is not None:
         names.update(scope.bindings.keys())

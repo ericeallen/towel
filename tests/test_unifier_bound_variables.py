@@ -56,20 +56,27 @@ return output
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
-        self.assertIsNotNone(substitution, "Unification should succeed for structurally identical blocks")
+        self.assertIsNotNone(
+            substitution, "Unification should succeed for structurally identical blocks"
+        )
 
         # Check hygienic renames were applied
-        self.assertIn('result', hygienic_renames[0], "Block1's 'result' should be renamed")
-        self.assertIn('output', hygienic_renames[1], "Block2's 'output' should be renamed")
+        self.assertIn("result", hygienic_renames[0], "Block1's 'result' should be renamed")
+        self.assertIn("output", hygienic_renames[1], "Block2's 'output' should be renamed")
 
         # Both should map to the same canonical name
-        canonical_name = hygienic_renames[0]['result']
-        self.assertEqual(hygienic_renames[1]['output'], canonical_name,
-                        "Both bound variables should map to same canonical name")
+        canonical_name = hygienic_renames[0]["result"]
+        self.assertEqual(
+            hygienic_renames[1]["output"],
+            canonical_name,
+            "Both bound variables should map to same canonical name",
+        )
 
         # Canonical name should be 'temp' or '__temp' (with private prefix)
-        self.assertTrue(canonical_name.startswith('temp') or canonical_name.startswith('__temp'),
-                       f"Canonical name should start with 'temp' or '__temp', got: {canonical_name}")
+        self.assertTrue(
+            canonical_name.startswith("temp") or canonical_name.startswith("__temp"),
+            f"Canonical name should start with 'temp' or '__temp', got: {canonical_name}",
+        )
 
     def test_unify_multiple_bound_variables(self):
         """
@@ -101,23 +108,34 @@ return q
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
-        self.assertIsNotNone(substitution, "Unification should succeed for multiple bound variables")
+        self.assertIsNotNone(
+            substitution, "Unification should succeed for multiple bound variables"
+        )
 
         # Check both variables are renamed in each block
-        self.assertIn('a', hygienic_renames[0], "Block1's 'a' should be renamed")
-        self.assertIn('b', hygienic_renames[0], "Block1's 'b' should be renamed")
-        self.assertIn('p', hygienic_renames[1], "Block2's 'p' should be renamed")
-        self.assertIn('q', hygienic_renames[1], "Block2's 'q' should be renamed")
+        self.assertIn("a", hygienic_renames[0], "Block1's 'a' should be renamed")
+        self.assertIn("b", hygienic_renames[0], "Block1's 'b' should be renamed")
+        self.assertIn("p", hygienic_renames[1], "Block2's 'p' should be renamed")
+        self.assertIn("q", hygienic_renames[1], "Block2's 'q' should be renamed")
 
         # Corresponding variables should map to same canonical names
-        self.assertEqual(hygienic_renames[0]['a'], hygienic_renames[1]['p'],
-                        "'a' and 'p' should map to same canonical name")
-        self.assertEqual(hygienic_renames[0]['b'], hygienic_renames[1]['q'],
-                        "'b' and 'q' should map to same canonical name")
+        self.assertEqual(
+            hygienic_renames[0]["a"],
+            hygienic_renames[1]["p"],
+            "'a' and 'p' should map to same canonical name",
+        )
+        self.assertEqual(
+            hygienic_renames[0]["b"],
+            hygienic_renames[1]["q"],
+            "'b' and 'q' should map to same canonical name",
+        )
 
         # Canonical names should be different
-        self.assertNotEqual(hygienic_renames[0]['a'], hygienic_renames[0]['b'],
-                           "Different bound variables should have different canonical names")
+        self.assertNotEqual(
+            hygienic_renames[0]["a"],
+            hygienic_renames[0]["b"],
+            "Different bound variables should have different canonical names",
+        )
 
     def test_unify_bound_variable_reassignments(self):
         """
@@ -152,12 +170,15 @@ output = output * 2
         self.assertIsNotNone(substitution, "Unification should succeed with reassignments")
 
         # Check hygienic renames
-        self.assertIn('result', hygienic_renames[0], "Block1's 'result' should be renamed")
-        self.assertIn('output', hygienic_renames[1], "Block2's 'output' should be renamed")
+        self.assertIn("result", hygienic_renames[0], "Block1's 'result' should be renamed")
+        self.assertIn("output", hygienic_renames[1], "Block2's 'output' should be renamed")
 
         # Should map to same canonical name
-        self.assertEqual(hygienic_renames[0]['result'], hygienic_renames[1]['output'],
-                        "Reassigned variables should map to same canonical name")
+        self.assertEqual(
+            hygienic_renames[0]["result"],
+            hygienic_renames[1]["output"],
+            "Reassigned variables should map to same canonical name",
+        )
 
     def test_literals_a_b_unification(self):
         """
@@ -194,16 +215,18 @@ return output
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
-        self.assertIsNotNone(substitution,
-                            "literals_a and literals_b should unify successfully")
+        self.assertIsNotNone(substitution, "literals_a and literals_b should unify successfully")
 
         # Check hygienic renames
-        self.assertIn('result', hygienic_renames[0], "Block1's 'result' should be renamed")
-        self.assertIn('output', hygienic_renames[1], "Block2's 'output' should be renamed")
+        self.assertIn("result", hygienic_renames[0], "Block1's 'result' should be renamed")
+        self.assertIn("output", hygienic_renames[1], "Block2's 'output' should be renamed")
 
         # Should map to same canonical name
-        self.assertEqual(hygienic_renames[0]['result'], hygienic_renames[1]['output'],
-                        "Both variables should map to same canonical name")
+        self.assertEqual(
+            hygienic_renames[0]["result"],
+            hygienic_renames[1]["output"],
+            "Both variables should map to same canonical name",
+        )
 
     def test_no_false_positives_different_structure(self):
         """
@@ -232,8 +255,7 @@ return other
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should fail - different structure
-        self.assertIsNone(substitution,
-                         "Should NOT unify blocks with different structure")
+        self.assertIsNone(substitution, "Should NOT unify blocks with different structure")
 
     def test_preserve_identical_bound_variable_names(self):
         """
@@ -264,8 +286,9 @@ return result
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
-        self.assertIsNotNone(substitution,
-                            "Should still unify blocks with identical bound variable names")
+        self.assertIsNotNone(
+            substitution, "Should still unify blocks with identical bound variable names"
+        )
 
         # 'result' should NOT be in hygienic_renames (doesn't need renaming)
         # This preserves backwards compatibility
@@ -300,18 +323,17 @@ return output
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
-        self.assertIsNotNone(substitution,
-                            "Should unify with complex variable usage")
+        self.assertIsNotNone(substitution, "Should unify with complex variable usage")
 
         # Check renames for all bound variables
-        self.assertIn('result', hygienic_renames[0])
-        self.assertIn('temp', hygienic_renames[0])
-        self.assertIn('output', hygienic_renames[1])
-        self.assertIn('aux', hygienic_renames[1])
+        self.assertIn("result", hygienic_renames[0])
+        self.assertIn("temp", hygienic_renames[0])
+        self.assertIn("output", hygienic_renames[1])
+        self.assertIn("aux", hygienic_renames[1])
 
         # Corresponding variables should map to same names
-        self.assertEqual(hygienic_renames[0]['result'], hygienic_renames[1]['output'])
-        self.assertEqual(hygienic_renames[0]['temp'], hygienic_renames[1]['aux'])
+        self.assertEqual(hygienic_renames[0]["result"], hygienic_renames[1]["output"])
+        self.assertEqual(hygienic_renames[0]["temp"], hygienic_renames[1]["aux"])
 
 
 def main():
@@ -320,5 +342,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

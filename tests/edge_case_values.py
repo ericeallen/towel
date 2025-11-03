@@ -41,12 +41,12 @@ class EdgeCaseValues:
             -sys.maxsize - 1,
             # Large values (but not too large to cause issues)
             10**6,
-            -10**6,
+            -(10**6),
             10**9,
-            -10**9,
+            -(10**9),
             # Very large (bignum)
             10**100,
-            -10**100,
+            -(10**100),
         ]
 
     @staticmethod
@@ -67,9 +67,9 @@ class EdgeCaseValues:
             0.5,
             -0.5,
             # Special values
-            float('inf'),
-            float('-inf'),
-            float('nan'),
+            float("inf"),
+            float("-inf"),
+            float("nan"),
             # Very small (denormals/subnormals)
             sys.float_info.min,
             -sys.float_info.min,
@@ -96,34 +96,34 @@ class EdgeCaseValues:
         """
         return [
             # Empty
-            '',
+            "",
             # Single character
-            'a',
-            'A',
-            '0',
-            ' ',
-            '\n',
-            '\t',
+            "a",
+            "A",
+            "0",
+            " ",
+            "\n",
+            "\t",
             # Common strings
-            'test',
-            'hello',
-            'Hello World',
+            "test",
+            "hello",
+            "Hello World",
             # With escape sequences
-            'line1\nline2',
-            'tab\there',
-            'backslash\\test',
-            'quote\'test',
+            "line1\nline2",
+            "tab\there",
+            "backslash\\test",
+            "quote'test",
             'doublequote"test',
             # Unicode
-            '🎉',  # Emoji
-            'café',  # Accented
-            'Hello, 世界',  # Mixed scripts
-            '\u200b',  # Zero-width space
-            'RTL: \u202etext',  # Right-to-left override
+            "🎉",  # Emoji
+            "café",  # Accented
+            "Hello, 世界",  # Mixed scripts
+            "\u200b",  # Zero-width space
+            "RTL: \u202etext",  # Right-to-left override
             # Long string
-            'a' * 1000,
+            "a" * 1000,
             # Pathological cases
-            '\x00',  # Null byte (if handled correctly)
+            "\x00",  # Null byte (if handled correctly)
         ]
 
     @staticmethod
@@ -135,15 +135,15 @@ class EdgeCaseValues:
             List of bytes edge cases
         """
         return [
-            b'',
-            b'a',
-            b'test',
-            b'hello world',
-            b'\x00',  # Null byte
-            b'\xff',  # Max byte value
-            b'\x00\x01\x02',  # Sequential
+            b"",
+            b"a",
+            b"test",
+            b"hello world",
+            b"\x00",  # Null byte
+            b"\xff",  # Max byte value
+            b"\x00\x01\x02",  # Sequential
             bytes(range(256)),  # All possible bytes
-            b'a' * 1000,  # Long bytes
+            b"a" * 1000,  # Long bytes
         ]
 
     @staticmethod
@@ -160,15 +160,15 @@ class EdgeCaseValues:
             # Single element
             [0],
             [1],
-            ['a'],
+            ["a"],
             [None],
             # Multiple elements
             [1, 2, 3],
             [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-            ['a', 'b', 'c'],
+            ["a", "b", "c"],
             # Mixed types
-            [1, 'a', None, True],
-            [0, '', False, []],
+            [1, "a", None, True],
+            [0, "", False, []],
             # Nested
             [[]],
             [[1]],
@@ -195,24 +195,24 @@ class EdgeCaseValues:
             # Empty
             {},
             # Single entry
-            {'a': 1},
-            {0: 'zero'},
-            {'key': 'value'},
+            {"a": 1},
+            {0: "zero"},
+            {"key": "value"},
             # Multiple entries
-            {'a': 1, 'b': 2},
-            {'x': 10, 'y': 20, 'z': 30},
-            {0: 'a', 1: 'b', 2: 'c'},
+            {"a": 1, "b": 2},
+            {"x": 10, "y": 20, "z": 30},
+            {0: "a", 1: "b", 2: "c"},
             # Mixed key/value types
-            {'str': 1, 2: 'int', True: False},
+            {"str": 1, 2: "int", True: False},
             # Nested
-            {'outer': {'inner': 1}},
-            {'a': {}, 'b': {}},
-            {'nested': {'deeply': {'nested': 'value'}}},
+            {"outer": {"inner": 1}},
+            {"a": {}, "b": {}},
+            {"nested": {"deeply": {"nested": "value"}}},
             # With None
-            {'key': None},
-            {None: 'value'},  # None as key (valid in Python)
+            {"key": None},
+            {None: "value"},  # None as key (valid in Python)
             # Large
-            {f'key{i}': i for i in range(100)},
+            {f"key{i}": i for i in range(100)},
         ]
 
     @staticmethod
@@ -228,17 +228,17 @@ class EdgeCaseValues:
             (),
             # Single element (note the comma!)
             (1,),
-            ('a',),
+            ("a",),
             # Pairs (common in Python)
             (1, 2),
-            ('a', 'b'),
+            ("a", "b"),
             (0, 1),
             # Multiple elements
             (1, 2, 3),
             (1, 2, 3, 4, 5),
             # Mixed types
-            (1, 'a', None),
-            (0, '', False),
+            (1, "a", None),
+            (0, "", False),
             # Nested
             ((),),
             ((1,),),
@@ -260,12 +260,12 @@ class EdgeCaseValues:
             set(),
             # Single element
             {1},
-            {'a'},
+            {"a"},
             {0},
             # Multiple elements
             {1, 2, 3},
             {0, 1, 2, 3, 4},
-            {'a', 'b', 'c'},
+            {"a", "b", "c"},
             # Large
             set(range(100)),
         ]
@@ -303,32 +303,38 @@ class EdgeCaseValues:
         """
         type_str = str(type_hint).lower()
 
-        if 'int' in type_str:
+        if "int" in type_str:
             return cls.integers()
-        elif 'float' in type_str:
+        elif "float" in type_str:
             return cls.floats()
-        elif 'str' in type_str:
+        elif "str" in type_str:
             return cls.strings()
-        elif 'bytes' in type_str:
+        elif "bytes" in type_str:
             return cls.bytes_values()
-        elif 'list' in type_str:
+        elif "list" in type_str:
             return cls.lists()
-        elif 'dict' in type_str:
+        elif "dict" in type_str:
             return cls.dicts()
-        elif 'tuple' in type_str:
+        elif "tuple" in type_str:
             return cls.tuples()
-        elif 'set' in type_str:
+        elif "set" in type_str:
             return cls.sets()
-        elif 'bool' in type_str:
+        elif "bool" in type_str:
             return cls.booleans()
         else:
             # Default: mix of common types
             return [
-                0, 1, -1,
-                '', 'test',
-                [], [1, 2, 3],
-                {}, {'key': 'value'},
-                True, False,
+                0,
+                1,
+                -1,
+                "",
+                "test",
+                [],
+                [1, 2, 3],
+                {},
+                {"key": "value"},
+                True,
+                False,
                 None,
             ]
 
@@ -341,14 +347,14 @@ class EdgeCaseValues:
             Dict mapping type name to edge case values
         """
         return {
-            'int': cls.integers(),
-            'float': cls.floats(),
-            'str': cls.strings(),
-            'bytes': cls.bytes_values(),
-            'list': cls.lists(),
-            'dict': cls.dicts(),
-            'tuple': cls.tuples(),
-            'set': cls.sets(),
-            'bool': cls.booleans(),
-            'none': cls.none_values(),
+            "int": cls.integers(),
+            "float": cls.floats(),
+            "str": cls.strings(),
+            "bytes": cls.bytes_values(),
+            "list": cls.lists(),
+            "dict": cls.dicts(),
+            "tuple": cls.tuples(),
+            "set": cls.sets(),
+            "bool": cls.booleans(),
+            "none": cls.none_values(),
         }

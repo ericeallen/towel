@@ -11,7 +11,7 @@ import ast
 from src.towel.unification.ast_normalizer import (
     AssignToAugAssignNormalizer,
     normalize_assigns_to_augassigns,
-    normalize_code
+    normalize_code,
 )
 
 
@@ -486,7 +486,7 @@ def foo():
         self.assertIsNotNone(tree, "Normalized code should be valid Python")
 
         # Should be able to compile without errors
-        compiled = compile(normalized, '<string>', 'exec')
+        compiled = compile(normalized, "<string>", "exec")
         self.assertIsNotNone(compiled, "Normalized code should compile")
 
 
@@ -535,22 +535,22 @@ class TestIsInScope(unittest.TestCase):
     def test_variable_in_scope(self):
         """Test checking if variable is in scope."""
         normalizer = AssignToAugAssignNormalizer()
-        normalizer.scopes[-1].add('x')
+        normalizer.scopes[-1].add("x")
 
-        self.assertTrue(normalizer._is_in_scope('x'), "x should be in scope")
-        self.assertFalse(normalizer._is_in_scope('y'), "y should not be in scope")
+        self.assertTrue(normalizer._is_in_scope("x"), "x should be in scope")
+        self.assertFalse(normalizer._is_in_scope("y"), "y should not be in scope")
 
     def test_variable_in_nested_scope(self):
         """Test checking variable across nested scopes."""
         normalizer = AssignToAugAssignNormalizer()
-        normalizer.scopes[-1].add('x')
+        normalizer.scopes[-1].add("x")
         normalizer.scopes.append(set())
-        normalizer.scopes[-1].add('y')
+        normalizer.scopes[-1].add("y")
 
         # Both x and y should be visible
-        self.assertTrue(normalizer._is_in_scope('x'), "x should be visible from outer scope")
-        self.assertTrue(normalizer._is_in_scope('y'), "y should be in current scope")
-        self.assertFalse(normalizer._is_in_scope('z'), "z should not be in any scope")
+        self.assertTrue(normalizer._is_in_scope("x"), "x should be visible from outer scope")
+        self.assertTrue(normalizer._is_in_scope("y"), "y should be in current scope")
+        self.assertFalse(normalizer._is_in_scope("z"), "z should not be in any scope")
 
 
 class TestIntegration(unittest.TestCase):
@@ -603,5 +603,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

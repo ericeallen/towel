@@ -36,9 +36,9 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         Reads from test_examples (read-only) and verifies no files are modified.
         """
         # Capture original state of all Python files in test_examples
-        test_examples_dir = Path('test_examples')
+        test_examples_dir = Path("test_examples")
         original_contents = {}
-        for py_file in test_examples_dir.glob('*.py'):
+        for py_file in test_examples_dir.glob("*.py"):
             original_contents[py_file] = py_file.read_text()
 
         proposals = self.engine.analyze_directory("test_examples", recursive=False)
@@ -51,7 +51,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
 
     def test_analyze_file_with_syntax_error(self):
         """Test analyzing a file with syntax errors."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def broken(\n")  # Syntax error
             f.flush()
             temp_path = f.name
@@ -64,7 +64,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
 
     def test_analyze_files_with_no_functions(self):
         """Test analyzing files with no functions."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("# Just a comment\nx = 10\n")
             f.flush()
             temp_path = f.name
@@ -95,9 +95,9 @@ def process_b(x):
             file1 = os.path.join(tmpdir, "module1.py")
             file2 = os.path.join(tmpdir, "module2.py")
 
-            with open(file1, 'w') as f:
+            with open(file1, "w") as f:
                 f.write(code1)
-            with open(file2, 'w') as f:
+            with open(file2, "w") as f:
                 f.write(code2)
 
             # Analyze
@@ -135,7 +135,7 @@ def bar():
         with tempfile.TemporaryDirectory() as tmpdir:
             file1 = os.path.join(tmpdir, "file1.py")
 
-            with open(file1, 'w') as f:
+            with open(file1, "w") as f:
                 f.write(code1 + code2)
 
             proposals = self.engine.analyze_file(file1)
@@ -144,7 +144,7 @@ def bar():
 
     def test_empty_file_analysis(self):
         """Test analyzing an empty file."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("")
             f.flush()
             temp_path = f.name
@@ -157,7 +157,7 @@ def bar():
 
     def test_file_with_only_docstring(self):
         """Test analyzing a file with only a module docstring."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write('"""Module docstring."""\n')
             f.flush()
             temp_path = f.name
@@ -198,6 +198,7 @@ def bar():
         bar_func = tree.body[2]
 
         from towel.unification.unifier import Unifier, Substitution
+
         unifier = Unifier(max_parameters=5)
 
         blocks = [foo_func.body, bar_func.body]
@@ -205,7 +206,7 @@ def bar():
 
         if substitution:
             # param_0 already exists in enclosing scope
-            enclosing_names = {'param_0', 'foo', 'bar'}
+            enclosing_names = {"param_0", "foo", "bar"}
 
             func_def, param_order = self.extractor.extract_function(
                 template_block=foo_func.body,
@@ -213,14 +214,14 @@ def bar():
                 free_variables=set(),
                 enclosing_names=enclosing_names,
                 is_value_producing=True,
-                function_name="extracted_func"
+                function_name="extracted_func",
             )
 
             # Should rename to avoid conflict
             param_names = [arg.arg for arg in func_def.args.args]
             # Should not use param_0 since it conflicts
             for param in param_names:
-                self.assertNotEqual(param, 'param_0')
+                self.assertNotEqual(param, "param_0")
 
 
 class TestUnifierEdgeCases(unittest.TestCase):
@@ -320,5 +321,5 @@ assert y > 0
         self.assertIsNotNone(result)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

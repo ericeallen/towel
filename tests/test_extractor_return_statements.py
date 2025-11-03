@@ -58,11 +58,11 @@ result = result * 2
         substitution = Substitution()
 
         # x is a free variable
-        free_variables = {'x'}
+        free_variables = {"x"}
         enclosing_names = set()
 
         # result is a return variable
-        return_variables = ['result']
+        return_variables = ["result"]
 
         # Extract function
         func_def, param_order = self.extractor.extract_function(
@@ -72,7 +72,7 @@ result = result * 2
             enclosing_names=enclosing_names,
             is_value_producing=True,
             return_variables=return_variables,
-            function_name="extracted"
+            function_name="extracted",
         )
 
         # Verify function structure
@@ -88,7 +88,7 @@ result = result * 2
 
         # Verify return value is the return variable
         self.assertIsInstance(last_stmt.value, ast.Name)
-        self.assertEqual(last_stmt.value.id, 'result')
+        self.assertEqual(last_stmt.value.id, "result")
 
     def test_multiple_return_variables(self):
         """
@@ -111,9 +111,9 @@ b = y + 1
         block = ast.parse(code).body
 
         substitution = Substitution()
-        free_variables = {'x', 'y'}
+        free_variables = {"x", "y"}
         enclosing_names = set()
-        return_variables = ['a', 'b']
+        return_variables = ["a", "b"]
 
         func_def, param_order = self.extractor.extract_function(
             template_block=block,
@@ -122,7 +122,7 @@ b = y + 1
             enclosing_names=enclosing_names,
             is_value_producing=True,
             return_variables=return_variables,
-            function_name="extracted"
+            function_name="extracted",
         )
 
         # Verify body has return statement at the end
@@ -137,8 +137,8 @@ b = y + 1
         # Verify tuple contains both variables
         tuple_elts = last_stmt.value.elts
         self.assertEqual(len(tuple_elts), 2)
-        self.assertEqual(tuple_elts[0].id, 'a')
-        self.assertEqual(tuple_elts[1].id, 'b')
+        self.assertEqual(tuple_elts[0].id, "a")
+        self.assertEqual(tuple_elts[1].id, "b")
 
     def test_no_return_variables_backward_compatibility(self):
         """
@@ -152,7 +152,7 @@ print(x)
         block = ast.parse(code).body
 
         substitution = Substitution()
-        free_variables = {'x'}
+        free_variables = {"x"}
         enclosing_names = set()
         return_variables = []  # No return variables
 
@@ -163,7 +163,7 @@ print(x)
             enclosing_names=enclosing_names,
             is_value_producing=False,
             return_variables=return_variables,
-            function_name="extracted"
+            function_name="extracted",
         )
 
         # Verify body does NOT have return statement
@@ -184,11 +184,11 @@ __temp_0 = __temp_0 * 2
         block = ast.parse(code).body
 
         substitution = Substitution()
-        free_variables = {'x'}
+        free_variables = {"x"}
         enclosing_names = set()
 
         # The hygienic rename is __temp_0 (from unifier)
-        return_variables = ['__temp_0']
+        return_variables = ["__temp_0"]
 
         func_def, param_order = self.extractor.extract_function(
             template_block=block,
@@ -197,13 +197,13 @@ __temp_0 = __temp_0 * 2
             enclosing_names=enclosing_names,
             is_value_producing=True,
             return_variables=return_variables,
-            function_name="extracted"
+            function_name="extracted",
         )
 
         # Verify return statement uses hygienic name
         last_stmt = func_def.body[-1]
         self.assertIsInstance(last_stmt, ast.Return)
-        self.assertEqual(last_stmt.value.id, '__temp_0')
+        self.assertEqual(last_stmt.value.id, "__temp_0")
 
     def test_return_variables_maintain_order(self):
         """
@@ -219,11 +219,11 @@ third = z + 1
         block = ast.parse(code).body
 
         substitution = Substitution()
-        free_variables = {'x', 'y', 'z'}
+        free_variables = {"x", "y", "z"}
         enclosing_names = set()
 
         # Order matters!
-        return_variables = ['first', 'second', 'third']
+        return_variables = ["first", "second", "third"]
 
         func_def, param_order = self.extractor.extract_function(
             template_block=block,
@@ -232,16 +232,16 @@ third = z + 1
             enclosing_names=enclosing_names,
             is_value_producing=True,
             return_variables=return_variables,
-            function_name="extracted"
+            function_name="extracted",
         )
 
         # Verify return tuple maintains order
         last_stmt = func_def.body[-1]
         tuple_elts = last_stmt.value.elts
 
-        self.assertEqual(tuple_elts[0].id, 'first')
-        self.assertEqual(tuple_elts[1].id, 'second')
-        self.assertEqual(tuple_elts[2].id, 'third')
+        self.assertEqual(tuple_elts[0].id, "first")
+        self.assertEqual(tuple_elts[1].id, "second")
+        self.assertEqual(tuple_elts[2].id, "third")
 
     def test_return_statement_ast_correctness(self):
         """
@@ -255,9 +255,9 @@ result = x + 1
         block = ast.parse(code).body
 
         substitution = Substitution()
-        free_variables = {'x'}
+        free_variables = {"x"}
         enclosing_names = set()
-        return_variables = ['result']
+        return_variables = ["result"]
 
         func_def, param_order = self.extractor.extract_function(
             template_block=block,
@@ -266,7 +266,7 @@ result = x + 1
             enclosing_names=enclosing_names,
             is_value_producing=True,
             return_variables=return_variables,
-            function_name="extracted"
+            function_name="extracted",
         )
 
         # Verify the function is valid AST and can be compiled
@@ -274,7 +274,7 @@ result = x + 1
         ast.fix_missing_locations(module)
 
         try:
-            code_obj = compile(module, '<test>', 'exec')
+            code_obj = compile(module, "<test>", "exec")
             self.assertIsNotNone(code_obj)
         except SyntaxError as e:
             self.fail(f"Generated AST is not valid Python: {e}")
@@ -290,7 +290,7 @@ result = x + 1
         substitution = Substitution()
         free_variables = set()
         enclosing_names = set()
-        return_variables = ['result']
+        return_variables = ["result"]
 
         func_def, param_order = self.extractor.extract_function(
             template_block=block,
@@ -299,7 +299,7 @@ result = x + 1
             enclosing_names=enclosing_names,
             is_value_producing=True,
             return_variables=return_variables,
-            function_name="extracted"
+            function_name="extracted",
         )
 
         # Should have pass statement or return statement
@@ -312,5 +312,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

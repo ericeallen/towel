@@ -12,7 +12,7 @@ from src.towel.unification.assignment_analyzer import (
     analyze_assignments,
     AssignmentAnalyzer,
     has_reassignments_without_bindings,
-    _collect_bindings_and_reassignments
+    _collect_bindings_and_reassignments,
 )
 
 
@@ -469,7 +469,7 @@ def foo():
         )
 
         self.assertTrue(has_unsafe, "Block should be unsafe")
-        self.assertIn('x', problematic, "x should be problematic (reassigned without binding)")
+        self.assertIn("x", problematic, "x should be problematic (reassigned without binding)")
 
     def test_safe_partial_block(self):
         """Test partial block that includes the initial binding."""
@@ -513,11 +513,9 @@ def foo():
         reassigned_vars = set()
 
         for node in func.body:
-            _collect_bindings_and_reassignments(
-                node, reassignments, bound_vars, reassigned_vars
-            )
+            _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
 
-        self.assertEqual(bound_vars, {'x', 'y'}, "Should collect both bindings")
+        self.assertEqual(bound_vars, {"x", "y"}, "Should collect both bindings")
         self.assertEqual(len(reassigned_vars), 0, "Should have no reassignments")
 
     def test_collects_reassignments(self):
@@ -535,12 +533,10 @@ def foo():
         reassigned_vars = set()
 
         for node in func.body:
-            _collect_bindings_and_reassignments(
-                node, reassignments, bound_vars, reassigned_vars
-            )
+            _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
 
-        self.assertIn('x', bound_vars, "x should be in bound_vars")
-        self.assertIn('x', reassigned_vars, "x should be in reassigned_vars")
+        self.assertIn("x", bound_vars, "x should be in bound_vars")
+        self.assertIn("x", reassigned_vars, "x should be in reassigned_vars")
 
     def test_collects_for_loop_bindings(self):
         """Test collecting for loop variable bindings."""
@@ -557,12 +553,10 @@ def foo():
         reassigned_vars = set()
 
         for node in func.body:
-            _collect_bindings_and_reassignments(
-                node, reassignments, bound_vars, reassigned_vars
-            )
+            _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
 
-        self.assertIn('i', bound_vars, "i should be bound by for loop")
-        self.assertIn('x', bound_vars, "x should be bound in loop body")
+        self.assertIn("i", bound_vars, "i should be bound by for loop")
+        self.assertIn("x", bound_vars, "x should be bound in loop body")
 
     def test_collects_with_bindings(self):
         """Test collecting with statement bindings."""
@@ -579,12 +573,10 @@ def foo():
         reassigned_vars = set()
 
         for node in func.body:
-            _collect_bindings_and_reassignments(
-                node, reassignments, bound_vars, reassigned_vars
-            )
+            _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
 
-        self.assertIn('f', bound_vars, "f should be bound by with statement")
-        self.assertIn('x', bound_vars, "x should be bound in with body")
+        self.assertIn("f", bound_vars, "f should be bound by with statement")
+        self.assertIn("x", bound_vars, "x should be bound in with body")
 
     def test_ignores_nested_functions(self):
         """Test that nested functions are ignored."""
@@ -602,12 +594,10 @@ def foo():
         reassigned_vars = set()
 
         for node in func.body:
-            _collect_bindings_and_reassignments(
-                node, reassignments, bound_vars, reassigned_vars
-            )
+            _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
 
-        self.assertEqual(bound_vars, {'x'}, "Should only collect outer function bindings")
-        self.assertNotIn('y', bound_vars, "Should not collect nested function bindings")
+        self.assertEqual(bound_vars, {"x"}, "Should only collect outer function bindings")
+        self.assertNotIn("y", bound_vars, "Should not collect nested function bindings")
 
 
 class TestEdgeCases(unittest.TestCase):
@@ -698,5 +688,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -13,21 +13,18 @@ import ast
 from typing import List, Tuple, Dict, Set, Optional
 from pathlib import Path
 from dataclasses import dataclass, field
-import os
 
 from .scope_analyzer import ScopeAnalyzer, Scope
-from .unifier import Unifier, Substitution
-from .extractor import HygienicExtractor, is_value_producing, get_enclosing_names
+from .unifier import Unifier
+from .extractor import HygienicExtractor, is_value_producing
 from .orphan_detector import has_orphaned_variables
-from .assignment_analyzer import (
-    analyze_assignments,
-    has_reassignments_without_bindings
-)
+from .assignment_analyzer import analyze_assignments, has_reassignments_without_bindings
 
 
 @dataclass
 class CodeBlockPair:
     """Represents a pair of potentially duplicate code blocks."""
+
     file_path: str
     function1_name: str
     function2_name: str
@@ -36,10 +33,10 @@ class CodeBlockPair:
     block1_nodes: List[ast.AST]
     block2_nodes: List[ast.AST]
     file_path2: Optional[str] = None  # For cross-file pairs
-    scope_analyzer1: Optional['ScopeAnalyzer'] = None
-    scope_analyzer2: Optional['ScopeAnalyzer'] = None
-    root_scope1: Optional['Scope'] = None
-    root_scope2: Optional['Scope'] = None
+    scope_analyzer1: Optional["ScopeAnalyzer"] = None
+    scope_analyzer2: Optional["ScopeAnalyzer"] = None
+    root_scope1: Optional["Scope"] = None
+    root_scope2: Optional["Scope"] = None
     source1: Optional[str] = None
     source2: Optional[str] = None
 
@@ -47,12 +44,16 @@ class CodeBlockPair:
 @dataclass
 class RefactoringProposal:
     """Proposed refactoring."""
+
     file_path: str
     extracted_function: ast.FunctionDef
-    replacements: List[Tuple[Tuple[int, int], ast.AST]]  # (line_range, replacement_node)
+    # (line_range, replacement_node) or (line_range, replacement_node, file_path)
+    replacements: List[Tuple]
     description: str
     parameters_count: int
-    return_variables: List[str] = field(default_factory=list)  # Variables that extracted function returns
+    return_variables: List[str] = field(
+        default_factory=list
+    )  # Variables that extracted function returns
 
 
 class UnificationRefactorEngine:
@@ -63,10 +64,7 @@ class UnificationRefactorEngine:
     """
 
     def __init__(
-        self,
-        max_parameters: int = 5,
-        min_lines: int = 4,
-        parameterize_constants: bool = True
+        self, max_parameters: int = 5, min_lines: int = 4, parameterize_constants: bool = True
     ):
         """
         Initialize the refactoring engine.
@@ -80,8 +78,7 @@ class UnificationRefactorEngine:
         self.min_lines = min_lines
         self.parameterize_constants = parameterize_constants
         self.unifier = Unifier(
-            max_parameters=max_parameters,
-            parameterize_constants=parameterize_constants
+            max_parameters=max_parameters, parameterize_constants=parameterize_constants
         )
         self.extractor = HygienicExtractor()
 
@@ -97,7 +94,9 @@ class UnificationRefactorEngine:
         """
         return self.analyze_files([file_path])
 
-    def analyze_directory(self, directory: str, recursive: bool = True) -> List[RefactoringProposal]:
+    def analyze_directory(
+        self, directory: str, recursive: bool = True
+    ) -> List[RefactoringProposal]:
         """
         Analyze all Python files in a directory and find refactoring opportunities.
 
@@ -140,8 +139,10 @@ class UnificationRefactorEngine:
             # Recursively find all .py files
             for py_file in directory_path.rglob("*.py"):
                 # Skip common directories to ignore
-                if any(part.startswith('.') or part in ['__pycache__', 'venv', 'env', 'node_modules']
-                       for part in py_file.parts):
+                if any(
+                    part.startswith(".") or part in ["__pycache__", "venv", "env", "node_modules"]
+                    for part in py_file.parts
+                ):
                     continue
                 python_files.append(str(py_file))
         else:
@@ -165,7 +166,7 @@ class UnificationRefactorEngine:
         all_functions = []  # List of (file_path, function_node, source, scope_analyzer, root_scope)
 
         for file_path in file_paths:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 source = f.read()
 
             try:
@@ -179,7 +180,8 @@ class UnificationRefactorEngine:
 
             # Extract top-level functions
             top_level_functions = [
-                node for node in tree.body
+                node
+                for node in tree.body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             ]
 
@@ -205,8 +207,7 @@ class UnificationRefactorEngine:
         return proposals
 
     def _extract_code_blocks(
-        self,
-        function: ast.FunctionDef
+        self, function: ast.FunctionDef
     ) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
         """
         Extract all contiguous code blocks from a function body.
@@ -221,9 +222,12 @@ class UnificationRefactorEngine:
 
         # Skip docstring if present
         start_idx = 0
-        if (body and isinstance(body[0], ast.Expr) and
-            isinstance(body[0].value, ast.Constant) and
-            isinstance(body[0].value.value, str)):
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
             start_idx = 1
 
         body = body[start_idx:]
@@ -233,14 +237,16 @@ class UnificationRefactorEngine:
         # Start with longer sequences (more code savings)
         for length in range(len(body), 0, -1):
             for start in range(len(body) - length + 1):
-                block = body[start:start + length]
+                block = body[start : start + length]
 
                 # Calculate line count
                 if not block:
                     continue
 
                 start_line = block[0].lineno
-                end_line = block[-1].end_lineno if hasattr(block[-1], 'end_lineno') else block[-1].lineno
+                end_line = (
+                    block[-1].end_lineno if hasattr(block[-1], "end_lineno") else block[-1].lineno
+                )
                 line_count = end_line - start_line + 1
 
                 if line_count >= self.min_lines:
@@ -266,9 +272,12 @@ class UnificationRefactorEngine:
 
         # Skip docstring if present
         start_idx = 0
-        if (body and isinstance(body[0], ast.Expr) and
-            isinstance(body[0].value, ast.Constant) and
-            isinstance(body[0].value.value, str)):
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
             start_idx = 1
 
         body = body[start_idx:]
@@ -292,6 +301,7 @@ class UnificationRefactorEngine:
         Returns:
             True if there are returns inside loop statements
         """
+
         class LoopReturnFinder(ast.NodeVisitor):
             def __init__(self):
                 self.has_loop_return = False
@@ -361,8 +371,7 @@ class UnificationRefactorEngine:
         return used
 
     def _find_block_pairs_multi_file(
-        self,
-        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope]]
+        self, all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope]]
     ) -> List[CodeBlockPair]:
         """
         Find all non-overlapping pairs of code blocks across multiple files.
@@ -377,7 +386,7 @@ class UnificationRefactorEngine:
 
         # For each pair of functions (including across files)
         for i, (file1, func1, source1, analyzer1, scope1) in enumerate(all_functions):
-            for file2, func2, source2, analyzer2, scope2 in all_functions[i+1:]:
+            for file2, func2, source2, analyzer2, scope2 in all_functions[i + 1 :]:
                 # Extract all code blocks from each function
                 blocks1 = self._extract_code_blocks(func1)
                 blocks2 = self._extract_code_blocks(func2)
@@ -392,7 +401,9 @@ class UnificationRefactorEngine:
                         # Check minimum size
                         start1, end1 = block1_range
                         start2, end2 = block2_range
-                        if (end1 - start1 + 1) < self.min_lines or (end2 - start2 + 1) < self.min_lines:
+                        if (end1 - start1 + 1) < self.min_lines or (
+                            end2 - start2 + 1
+                        ) < self.min_lines:
                             continue
 
                         # Create pair with all necessary context
@@ -410,7 +421,7 @@ class UnificationRefactorEngine:
                             root_scope1=scope1,
                             root_scope2=scope2,
                             source1=source1,
-                            source2=source2
+                            source2=source2,
                         )
                         pairs.append(pair)
 
@@ -419,7 +430,7 @@ class UnificationRefactorEngine:
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
-        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope]]
+        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope]],
     ) -> Optional[RefactoringProposal]:
         """
         Try to refactor a pair of code blocks using unification (cross-file support).
@@ -433,8 +444,9 @@ class UnificationRefactorEngine:
         """
         # DEBUG logging
         import os
-        if os.getenv('DEBUG_VALIDATION'):
-            print(f"\n=== _try_refactor_pair_multi_file called ===")
+
+        if os.getenv("DEBUG_VALIDATION"):
+            print("\n=== _try_refactor_pair_multi_file called ===")
             print(f"Functions: {pair.function1_name} and {pair.function2_name}")
             print(f"Block1 range: {pair.block1_range}")
             print(f"Block2 range: {pair.block2_range}")
@@ -449,13 +461,17 @@ class UnificationRefactorEngine:
         for file_path, func, _, _, _ in all_functions:
             if file_path == pair.file_path and func.name == pair.function1_name:
                 func1 = func
-            if file_path == (pair.file_path2 or pair.file_path) and func.name == pair.function2_name:
+            if (
+                file_path == (pair.file_path2 or pair.file_path)
+                and func.name == pair.function2_name
+            ):
                 func2 = func
 
         # DEBUG logging
         import os
-        if os.getenv('DEBUG_VALIDATION'):
-            print(f"\n=== Finding Functions ===")
+
+        if os.getenv("DEBUG_VALIDATION"):
+            print("\n=== Finding Functions ===")
             print(f"Looking for: {pair.function1_name} and {pair.function2_name}")
             print(f"Found func1: {func1 is not None}")
             print(f"Found func2: {func2 is not None}")
@@ -510,7 +526,7 @@ class UnificationRefactorEngine:
             bound_before_block1 = set()
             block_start_line = pair.block1_range[0]
             for stmt in func1.body:
-                if hasattr(stmt, 'lineno') and stmt.lineno < block_start_line:
+                if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
                     # Collect bindings from statements before the block
                     stmt_bound = set()
                     stmt_reassigned = set()
@@ -524,7 +540,7 @@ class UnificationRefactorEngine:
                 param_names1 = set()
                 for arg in func1.args.args:
                     param_names1.add(arg.arg)
-                for arg in getattr(func1.args, 'posonlyargs', []) or []:
+                for arg in getattr(func1.args, "posonlyargs", []) or []:
                     param_names1.add(arg.arg)
                 for arg in func1.args.kwonlyargs:
                     param_names1.add(arg.arg)
@@ -538,7 +554,7 @@ class UnificationRefactorEngine:
             bound_after_block1 = set()
             block_end_line = pair.block1_range[1]
             for stmt in func1.body:
-                if hasattr(stmt, 'lineno') and stmt.lineno > block_end_line:
+                if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
                     stmt_bound = set()
                     stmt_reassigned = set()
                     _collect_bindings_and_reassignments(
@@ -552,8 +568,9 @@ class UnificationRefactorEngine:
 
             # DEBUG logging
             import os
-            if os.getenv('DEBUG_VALIDATION'):
-                print(f"\n=== Block1 Validation Debug ===")
+
+            if os.getenv("DEBUG_VALIDATION"):
+                print("\n=== Block1 Validation Debug ===")
                 print(f"Function: {pair.function1_name}")
                 print(f"Block lines: {pair.block1_range}")
                 print(f"Bound in block: {bound_in_block1}")
@@ -569,30 +586,32 @@ class UnificationRefactorEngine:
                 # Find the position of the block in the function
                 block_end_line = pair.block1_range[1]
 
-                if os.getenv('DEBUG_VALIDATION'):
+                if os.getenv("DEBUG_VALIDATION"):
                     print(f"Block ends at line {block_end_line}")
                     print(f"Checking statements after line {block_end_line}:")
 
                 # Check if any of these variables are used after the block
                 for stmt in func1.body:
-                    if hasattr(stmt, 'lineno'):
-                        if os.getenv('DEBUG_VALIDATION'):
+                    if hasattr(stmt, "lineno"):
+                        if os.getenv("DEBUG_VALIDATION"):
                             print(f"  Statement at line {stmt.lineno}: {stmt.__class__.__name__}")
 
                         if stmt.lineno > block_end_line:
                             # Check if stmt uses any of the initially bound variables
                             uses = self._get_used_names(stmt)
-                            if os.getenv('DEBUG_VALIDATION'):
+                            if os.getenv("DEBUG_VALIDATION"):
                                 print(f"    Uses: {uses}")
 
                             if uses & initially_bound1:
                                 # Variable is bound in block and used after
                                 # This is recoverable - we'll make the extracted function return these variables
                                 return_variables_block1.update(uses & initially_bound1)
-                                if os.getenv('DEBUG_VALIDATION'):
-                                    print(f"    RETURN NEEDED: Variable(s) {uses & initially_bound1} will be returned from extracted function")
+                                if os.getenv("DEBUG_VALIDATION"):
+                                    print(
+                                        f"    RETURN NEEDED: Variable(s) {uses & initially_bound1} will be returned from extracted function"
+                                    )
 
-                if os.getenv('DEBUG_VALIDATION') and return_variables_block1:
+                if os.getenv("DEBUG_VALIDATION") and return_variables_block1:
                     print(f"Block1 requires returning: {return_variables_block1}")
 
             # Same check for block2
@@ -607,7 +626,7 @@ class UnificationRefactorEngine:
             bound_before_block2 = set()
             block_start_line = pair.block2_range[0]
             for stmt in func2.body:
-                if hasattr(stmt, 'lineno') and stmt.lineno < block_start_line:
+                if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
                     stmt_bound = set()
                     stmt_reassigned = set()
                     _collect_bindings_and_reassignments(
@@ -620,7 +639,7 @@ class UnificationRefactorEngine:
                 param_names2 = set()
                 for arg in func2.args.args:
                     param_names2.add(arg.arg)
-                for arg in getattr(func2.args, 'posonlyargs', []) or []:
+                for arg in getattr(func2.args, "posonlyargs", []) or []:
                     param_names2.add(arg.arg)
                 for arg in func2.args.kwonlyargs:
                     param_names2.add(arg.arg)
@@ -634,7 +653,7 @@ class UnificationRefactorEngine:
             bound_after_block2 = set()
             block_end_line = pair.block2_range[1]
             for stmt in func2.body:
-                if hasattr(stmt, 'lineno') and stmt.lineno > block_end_line:
+                if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
                     stmt_bound = set()
                     stmt_reassigned = set()
                     _collect_bindings_and_reassignments(
@@ -651,8 +670,8 @@ class UnificationRefactorEngine:
             if initially_bound2:
                 block_end_line = pair.block2_range[1]
 
-                if os.getenv('DEBUG_VALIDATION'):
-                    print(f"\n=== Block2 Validation Debug ===")
+                if os.getenv("DEBUG_VALIDATION"):
+                    print("\n=== Block2 Validation Debug ===")
                     print(f"Function: {pair.function2_name}")
                     print(f"Block lines: {pair.block2_range}")
                     print(f"Bound in block: {bound_in_block2}")
@@ -660,15 +679,17 @@ class UnificationRefactorEngine:
                     print(f"Newly bound in block: {initially_bound2}")
 
                 for stmt in func2.body:
-                    if hasattr(stmt, 'lineno') and stmt.lineno > block_end_line:
+                    if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
                         uses = self._get_used_names(stmt)
                         if uses & initially_bound2:
                             # Variable is bound in block and used after - will be returned
                             return_variables_block2.update(uses & initially_bound2)
-                            if os.getenv('DEBUG_VALIDATION'):
-                                print(f"    RETURN NEEDED: Variable(s) {uses & initially_bound2} will be returned from extracted function")
+                            if os.getenv("DEBUG_VALIDATION"):
+                                print(
+                                    f"    RETURN NEEDED: Variable(s) {uses & initially_bound2} will be returned from extracted function"
+                                )
 
-                if os.getenv('DEBUG_VALIDATION') and return_variables_block2:
+                if os.getenv("DEBUG_VALIDATION") and return_variables_block2:
                     print(f"Block2 requires returning: {return_variables_block2}")
 
         # Check if both blocks are value-producing or both are not
@@ -677,7 +698,7 @@ class UnificationRefactorEngine:
         value_prod1 = is_value_producing(pair.block1_nodes) or bool(return_variables_block1)
         value_prod2 = is_value_producing(pair.block2_nodes) or bool(return_variables_block2)
 
-        if os.getenv('DEBUG_VALIDATION'):
+        if os.getenv("DEBUG_VALIDATION"):
             print(f"  Value-producing check: block1={value_prod1}, block2={value_prod2}")
             if return_variables_block1:
                 print(f"  Block1 has return_variables: {return_variables_block1}")
@@ -685,8 +706,8 @@ class UnificationRefactorEngine:
                 print(f"  Block2 has return_variables: {return_variables_block2}")
 
         if value_prod1 != value_prod2:
-            if os.getenv('DEBUG_VALIDATION'):
-                print(f"  REJECTED: Value-producing mismatch")
+            if os.getenv("DEBUG_VALIDATION"):
+                print("  REJECTED: Value-producing mismatch")
             return None
 
         # CRITICAL: If blocks are NATURALLY value-producing (have return statements),
@@ -694,13 +715,14 @@ class UnificationRefactorEngine:
         # Skip this check for blocks that will have return statements ADDED for return_variables
         if value_prod1 and not return_variables_block1:  # Naturally value-producing
             from .extractor import has_complete_return_coverage
+
             if not has_complete_return_coverage(pair.block1_nodes):
-                if os.getenv('DEBUG_VALIDATION'):
-                    print(f"  REJECTED: Block1 missing complete return coverage")
+                if os.getenv("DEBUG_VALIDATION"):
+                    print("  REJECTED: Block1 missing complete return coverage")
                 return None
             if not has_complete_return_coverage(pair.block2_nodes):
-                if os.getenv('DEBUG_VALIDATION'):
-                    print(f"  REJECTED: Block2 missing complete return coverage")
+                if os.getenv("DEBUG_VALIDATION"):
+                    print("  REJECTED: Block2 missing complete return coverage")
                 return None
 
         # Heuristic: avoid extracting trivial single-line return blocks that just
@@ -717,39 +739,44 @@ class UnificationRefactorEngine:
                 and stmt.value.id not in bound_in_block
             )
 
-        if _is_trivial_return_of_bound_name(pair.block1_nodes, bound_before_block1, bound_in_block1) \
-           and _is_trivial_return_of_bound_name(pair.block2_nodes, bound_before_block2, bound_in_block2):
-            if os.getenv('DEBUG_VALIDATION'):
-                print("  REJECTED: Trivial single-line return blocks (prefer extracting computation)")
+        if _is_trivial_return_of_bound_name(
+            pair.block1_nodes, bound_before_block1, bound_in_block1
+        ) and _is_trivial_return_of_bound_name(
+            pair.block2_nodes, bound_before_block2, bound_in_block2
+        ):
+            if os.getenv("DEBUG_VALIDATION"):
+                print(
+                    "  REJECTED: Trivial single-line return blocks (prefer extracting computation)"
+                )
             return None
 
         # Check structural similarity
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
-            if os.getenv('DEBUG_VALIDATION'):
-                print(f"  REJECTED: Not structurally similar")
+            if os.getenv("DEBUG_VALIDATION"):
+                print("  REJECTED: Not structurally similar")
             return None
 
         # Attempt unification
         blocks = [pair.block1_nodes, pair.block2_nodes]
         hygienic_renames = [{}, {}]
 
-        if os.getenv('DEBUG_VALIDATION'):
-            print(f"  Attempting unification...")
+        if os.getenv("DEBUG_VALIDATION"):
+            print("  Attempting unification...")
 
         try:
             substitution = self.unifier.unify_blocks(blocks, hygienic_renames)
         except Exception as e:
-            if os.getenv('DEBUG_VALIDATION'):
+            if os.getenv("DEBUG_VALIDATION"):
                 print(f"  REJECTED: Unification exception: {e}")
             return None
 
         if not substitution:
-            if os.getenv('DEBUG_VALIDATION'):
-                print(f"  REJECTED: Unification failed (no substitution)")
+            if os.getenv("DEBUG_VALIDATION"):
+                print("  REJECTED: Unification failed (no substitution)")
             return None
 
-        if os.getenv('DEBUG_VALIDATION'):
-            print(f"  ✓ Unification successful")
+        if os.getenv("DEBUG_VALIDATION"):
+            print("  ✓ Unification successful")
             print(f"  Substitution: {substitution}")
 
         # Get enclosing names to avoid shadowing
@@ -759,22 +786,30 @@ class UnificationRefactorEngine:
         # Use block1's free variables to derive parameters for the extracted function,
         # but validate incomplete lifetimes independently for each block.
         free_vars1 = scope_analyzer.get_free_variables(pair.block1_nodes)
-        free_vars2 = pair.scope_analyzer2.get_free_variables(pair.block2_nodes) if pair.scope_analyzer2 else set()
+        free_vars2 = (
+            pair.scope_analyzer2.get_free_variables(pair.block2_nodes)
+            if pair.scope_analyzer2
+            else set()
+        )
 
         # CRITICAL VALIDATION: Reject proposals with incomplete variable lifetimes
         # A free variable bound AFTER the block is problematic - we'd be using it before it's defined.
         # However, free variables bound BEFORE the block are OK - they become parameters.
         if free_vars1 & bound_after_block1:
             incomplete_vars = free_vars1 & bound_after_block1
-            if os.getenv('DEBUG_VALIDATION'):
-                print(f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}")
-                print(f"    These variables would be used before they're defined")
+            if os.getenv("DEBUG_VALIDATION"):
+                print(
+                    f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}"
+                )
+                print("    These variables would be used before they're defined")
             return None
 
         if free_vars2 & bound_after_block2:
             incomplete_vars = free_vars2 & bound_after_block2
-            if os.getenv('DEBUG_VALIDATION'):
-                print(f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}")
+            if os.getenv("DEBUG_VALIDATION"):
+                print(
+                    f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}"
+                )
             return None
 
         # Find all variables used in augmented assignments in block1
@@ -817,7 +852,7 @@ class UnificationRefactorEngine:
                 params_to_remove.append(param_name)
 
         # Store the mappings in the substitution object for later use
-        if not hasattr(substitution, 'aug_assign_mappings'):
+        if not hasattr(substitution, "aug_assign_mappings"):
             substitution.aug_assign_mappings = {}
         for param_name, block_mappings in aug_assign_param_mappings.items():
             if 0 in block_mappings:
@@ -883,9 +918,9 @@ class UnificationRefactorEngine:
                 enclosing_names=enclosing_names,
                 is_value_producing=value_prod1,
                 return_variables=list(return_variables_block1),
-                function_name="extracted_func"
+                function_name="extracted_func",
             )
-        except Exception as e:
+        except Exception:
             return None
 
         # Check for orphaned variables before proceeding
@@ -895,7 +930,10 @@ class UnificationRefactorEngine:
         for file_path, func, source, analyzer, scope in all_functions:
             if file_path == pair.file_path and func.name == pair.function1_name:
                 func1 = func
-            if file_path == (pair.file_path2 or pair.file_path) and func.name == pair.function2_name:
+            if (
+                file_path == (pair.file_path2 or pair.file_path)
+                and func.name == pair.function2_name
+            ):
                 func2 = func
 
         if func1 and func2:
@@ -907,17 +945,23 @@ class UnificationRefactorEngine:
                 # Get function bodies (skip docstring)
                 body1 = func1.body
                 start_idx1 = 0
-                if (body1 and isinstance(body1[0], ast.Expr) and
-                    isinstance(body1[0].value, ast.Constant) and
-                    isinstance(body1[0].value.value, str)):
+                if (
+                    body1
+                    and isinstance(body1[0], ast.Expr)
+                    and isinstance(body1[0].value, ast.Constant)
+                    and isinstance(body1[0].value.value, str)
+                ):
                     start_idx1 = 1
                 body1 = body1[start_idx1:]
 
                 body2 = func2.body
                 start_idx2 = 0
-                if (body2 and isinstance(body2[0], ast.Expr) and
-                    isinstance(body2[0].value, ast.Constant) and
-                    isinstance(body2[0].value.value, str)):
+                if (
+                    body2
+                    and isinstance(body2[0], ast.Expr)
+                    and isinstance(body2[0].value, ast.Constant)
+                    and isinstance(body2[0].value.value, str)
+                ):
                     start_idx2 = 1
                 body2 = body2[start_idx2:]
 
@@ -933,15 +977,14 @@ class UnificationRefactorEngine:
         replacements = []
 
         # Map block indices to their return variables
-        return_vars_by_block = {
-            0: list(return_variables_block1),
-            1: list(return_variables_block2)
-        }
+        return_vars_by_block = {0: list(return_variables_block1), 1: list(return_variables_block2)}
 
-        for block_idx, (block_range, file_path) in enumerate([
-            (pair.block1_range, pair.file_path),
-            (pair.block2_range, pair.file_path2 or pair.file_path)
-        ]):
+        for block_idx, (block_range, file_path) in enumerate(
+            [
+                (pair.block1_range, pair.file_path),
+                (pair.block2_range, pair.file_path2 or pair.file_path),
+            ]
+        ):
             try:
                 call_node = self.extractor.generate_call(
                     function_name=func_def.name,
@@ -951,11 +994,11 @@ class UnificationRefactorEngine:
                     free_variables=free_vars,
                     is_value_producing=value_prod1,
                     return_variables=return_vars_by_block[block_idx],
-                    hygienic_renames=hygienic_renames
+                    hygienic_renames=hygienic_renames,
                 )
                 # Store file_path with replacement for cross-file handling
                 replacements.append((block_range, call_node, file_path))
-            except Exception as e:
+            except Exception:
                 return None
 
         # Determine canonical file for extracted function
@@ -963,7 +1006,7 @@ class UnificationRefactorEngine:
         canonical_file = pair.file_path
 
         # Create proposal
-        is_cross_file = (pair.file_path2 is not None and pair.file_path != pair.file_path2)
+        is_cross_file = pair.file_path2 is not None and pair.file_path != pair.file_path2
 
         desc = f"Extract common code from {pair.function1_name}"
         if is_cross_file:
@@ -977,7 +1020,7 @@ class UnificationRefactorEngine:
             replacements=replacements,  # Now includes file_path
             description=desc,
             parameters_count=len(substitution.param_expressions),
-            return_variables=list(return_variables_block1)
+            return_variables=list(return_variables_block1),
         )
 
         return proposal
@@ -1026,7 +1069,7 @@ class UnificationRefactorEngine:
 
         for file_path, replacements in replacements_by_file.items():
             # Read original source
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
 
             # Sort replacements by line number (reverse order)
@@ -1036,31 +1079,35 @@ class UnificationRefactorEngine:
             for (start_line, end_line), replacement_node in replacements:
                 # Validate line numbers
                 if start_line < 1 or start_line > len(lines):
-                    print(f"Warning: Invalid line range {start_line}-{end_line} for {file_path} (file has {len(lines)} lines)")
-                    print(f"Skipping this replacement")
+                    print(
+                        f"Warning: Invalid line range {start_line}-{end_line} for {file_path} (file has {len(lines)} lines)"
+                    )
+                    print("Skipping this replacement")
                     continue
 
                 if end_line > len(lines):
-                    print(f"Warning: End line {end_line} exceeds file length {len(lines)} for {file_path}")
-                    print(f"Adjusting to end of file")
+                    print(
+                        f"Warning: End line {end_line} exceeds file length {len(lines)} for {file_path}"
+                    )
+                    print("Adjusting to end of file")
                     end_line = len(lines)
 
                 replacement_code = ast.unparse(replacement_node)
                 indent = self._get_indent(lines[start_line - 1])
 
                 # Split code and indent properly: first line gets indent, subsequent lines keep their relative indentation
-                code_lines = replacement_code.split('\n')
+                code_lines = replacement_code.split("\n")
                 replacement_lines = []
                 for i, line in enumerate(code_lines):
                     if i == 0:
                         # First line gets the base indent
-                        replacement_lines.append(indent + line + '\n')
+                        replacement_lines.append(indent + line + "\n")
                     else:
                         # Subsequent lines maintain their relative indentation from ast.unparse
                         if line.strip():  # Only indent non-empty lines
-                            replacement_lines.append(line + '\n')
+                            replacement_lines.append(line + "\n")
                         else:
-                            replacement_lines.append('\n')
+                            replacement_lines.append("\n")
 
                 # Check if we need to preserve blank lines after the replacement
                 # to maintain PEP 8 spacing between functions
@@ -1075,22 +1122,24 @@ class UnificationRefactorEngine:
                     # ensure we have 2 blank lines
                     if next_line_idx < len(lines):
                         next_line = lines[next_line_idx].strip()
-                        if (next_line.startswith('def ') or
-                            next_line.startswith('class ') or
-                            next_line.startswith('async def ')):
+                        if (
+                            next_line.startswith("def ")
+                            or next_line.startswith("class ")
+                            or next_line.startswith("async def ")
+                        ):
                             # Count existing blank lines between end and next def
                             existing_blanks = next_line_idx - end_line
                             # We need 2 blank lines total
                             if existing_blanks < 2:
-                                trailing_blank_lines = ['\n'] * (2 - existing_blanks)
+                                trailing_blank_lines = ["\n"] * (2 - existing_blanks)
 
-                del lines[start_line - 1:end_line]
-                lines[start_line - 1:start_line - 1] = replacement_lines + trailing_blank_lines
+                del lines[start_line - 1 : end_line]
+                lines[start_line - 1 : start_line - 1] = replacement_lines + trailing_blank_lines
 
             # Add extracted function to canonical file only
             if file_path == proposal.file_path:
                 func_code = ast.unparse(proposal.extracted_function)
-                func_lines = [line + '\n' for line in func_code.split('\n')]
+                func_lines = [line + "\n" for line in func_code.split("\n")]
                 insert_line = self._find_insert_position(lines)
 
                 # Ensure proper spacing: PEP 8 requires 2 blank lines between top-level functions
@@ -1108,13 +1157,13 @@ class UnificationRefactorEngine:
 
                     # Add blank lines if needed to reach 2
                     if blank_lines_before < 2:
-                        lines_to_insert.extend(['\n'] * (2 - blank_lines_before))
+                        lines_to_insert.extend(["\n"] * (2 - blank_lines_before))
 
                 # Add the function itself
                 lines_to_insert.extend(func_lines)
 
                 # Add 2 blank lines after the function
-                lines_to_insert.extend(['\n', '\n'])
+                lines_to_insert.extend(["\n", "\n"])
 
                 lines[insert_line:insert_line] = lines_to_insert
             else:
@@ -1131,18 +1180,20 @@ class UnificationRefactorEngine:
                     # Find common parent and build relative path
                     try:
                         # Get relative path from importing file to target file
-                        common_parent = Path(*[p for p in from_path.parts[:-1] if p in to_path.parts[:-1]])
-                        if common_parent == Path('.'):
+                        common_parent = Path(
+                            *[p for p in from_path.parts[:-1] if p in to_path.parts[:-1]]
+                        )
+                        if common_parent == Path("."):
                             # No common parent - use absolute-style import with directory structure
                             module_parts = list(from_path.parent.parts) + [from_path.stem]
-                            module_name = '.'.join(module_parts)
+                            module_name = ".".join(module_parts)
                         else:
                             # Has common parent - use relative path from common root
                             module_parts = list(from_path.parent.parts) + [from_path.stem]
                             # Find where common parent ends
                             common_depth = len([p for p in common_parent.parts])
                             module_parts = module_parts[common_depth:]
-                            module_name = '.'.join(module_parts) if module_parts else from_path.stem
+                            module_name = ".".join(module_parts) if module_parts else from_path.stem
                     except (ValueError, IndexError):
                         # Fallback to stem if relative path calculation fails
                         module_name = from_path.stem
@@ -1154,7 +1205,7 @@ class UnificationRefactorEngine:
                 import_pos = self._find_import_position(lines)
                 lines.insert(import_pos, import_line)
 
-            modified_files[file_path] = ''.join(lines)
+            modified_files[file_path] = "".join(lines)
 
         return modified_files
 
@@ -1185,12 +1236,12 @@ class UnificationRefactorEngine:
                 continue
 
             # Track imports
-            if stripped.startswith('import ') or stripped.startswith('from '):
+            if stripped.startswith("import ") or stripped.startswith("from "):
                 last_import_line = i + 1
                 continue
 
             # If we're past docstring and imports, stop
-            if last_import_line > 0 and stripped and not stripped.startswith('#'):
+            if last_import_line > 0 and stripped and not stripped.startswith("#"):
                 break
 
         # Insert after last import, or after docstring if no imports
@@ -1200,7 +1251,7 @@ class UnificationRefactorEngine:
 
     def _get_indent(self, line: str) -> str:
         """Get the indentation of a line."""
-        return line[:len(line) - len(line.lstrip())]
+        return line[: len(line) - len(line.lstrip())]
 
     def _find_insert_position(self, lines: List[str]) -> int:
         """
@@ -1220,9 +1271,7 @@ class UnificationRefactorEngine:
         return 0
 
     def _get_block_indices(
-        self,
-        function: ast.FunctionDef,
-        block_nodes: List[ast.AST]
+        self, function: ast.FunctionDef, block_nodes: List[ast.AST]
     ) -> Optional[Tuple[int, int]]:
         """
         Find the indices of a block within a function body.
@@ -1240,35 +1289,41 @@ class UnificationRefactorEngine:
         # Get function body (skip docstring)
         body = function.body
         start_idx = 0
-        if (body and isinstance(body[0], ast.Expr) and
-            isinstance(body[0].value, ast.Constant) and
-            isinstance(body[0].value.value, str)):
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
             start_idx = 1
         body = body[start_idx:]
 
         # Match by line numbers
         block_start_line = block_nodes[0].lineno
-        block_end_line = block_nodes[-1].end_lineno if hasattr(block_nodes[-1], 'end_lineno') else block_nodes[-1].lineno
+        block_end_line = (
+            block_nodes[-1].end_lineno
+            if hasattr(block_nodes[-1], "end_lineno")
+            else block_nodes[-1].lineno
+        )
 
         # Find matching range in body
         for i, stmt in enumerate(body):
             stmt_start = stmt.lineno
-            stmt_end = stmt.end_lineno if hasattr(stmt, 'end_lineno') else stmt.lineno
+            stmt_end = stmt.end_lineno if hasattr(stmt, "end_lineno") else stmt.lineno
 
             if stmt_start == block_start_line:
                 # Found start, now find end
                 for j in range(i, len(body)):
-                    stmt_end = body[j].end_lineno if hasattr(body[j], 'end_lineno') else body[j].lineno
+                    stmt_end = (
+                        body[j].end_lineno if hasattr(body[j], "end_lineno") else body[j].lineno
+                    )
                     if stmt_end == block_end_line:
                         return (i, j)
 
         return None
 
     def _are_structurally_similar(
-        self,
-        block1: List[ast.AST],
-        block2: List[ast.AST],
-        threshold: float = 0.6
+        self, block1: List[ast.AST], block2: List[ast.AST], threshold: float = 0.6
     ) -> bool:
         """
         Check if two blocks are structurally similar enough to attempt unification.
@@ -1304,6 +1359,7 @@ class UnificationRefactorEngine:
 
             # Count common types
             from collections import Counter
+
             counter1 = Counter(types1)
             counter2 = Counter(types2)
 
@@ -1320,9 +1376,7 @@ class UnificationRefactorEngine:
         return similarity >= threshold
 
     def refactor_to_fixed_point(
-        self,
-        file_path: str,
-        max_iterations: int = 10
+        self, file_path: str, max_iterations: int = 10
     ) -> Tuple[str, int, List[str]]:
         """
         Apply refactorings iteratively until a fixed point is reached.
@@ -1344,7 +1398,7 @@ class UnificationRefactorEngine:
 
         for iteration in range(max_iterations):
             # Write current code to file for analysis
-            with open(file_path, 'w') as f:
+            with open(file_path, "w") as f:
                 f.write(current_code)
 
             # Analyze for refactoring opportunities
@@ -1363,10 +1417,7 @@ class UnificationRefactorEngine:
         return current_code, num_applied, descriptions
 
     def refactor_directory_to_fixed_point(
-        self,
-        input_dir: str,
-        output_dir: str,
-        max_iterations: int = 10
+        self, input_dir: str, output_dir: str, max_iterations: int = 10
     ) -> Dict[str, Tuple[int, List[str]]]:
         """
         Apply refactorings to all files in a directory until fixed point.
@@ -1390,7 +1441,7 @@ class UnificationRefactorEngine:
 
         # Copy all files to output directory first
         if input_path != output_path:
-            for item in input_path.rglob('*'):
+            for item in input_path.rglob("*"):
                 if item.is_file():
                     rel_path = item.relative_to(input_path)
                     output_file = output_path / rel_path
@@ -1399,17 +1450,16 @@ class UnificationRefactorEngine:
 
         # Process each Python file
         results = {}
-        for py_file in output_path.rglob('*.py'):
-            if py_file.name.startswith('.'):
+        for py_file in output_path.rglob("*.py"):
+            if py_file.name.startswith("."):
                 continue
 
             final_code, num_applied, descriptions = self.refactor_to_fixed_point(
-                str(py_file),
-                max_iterations
+                str(py_file), max_iterations
             )
 
             # Write final result
-            with open(py_file, 'w') as f:
+            with open(py_file, "w") as f:
                 f.write(final_code)
 
             if num_applied > 0:
@@ -1419,6 +1469,7 @@ class UnificationRefactorEngine:
 
 
 # Utility functions for overlap filtering
+
 
 def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
     """
@@ -1480,7 +1531,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
                 (start_line, end_line), _, _ = item
             else:
                 (start_line, end_line), _ = item
-            total_lines += (end_line - start_line + 1)
+            total_lines += end_line - start_line + 1
         return total_lines
 
     # Sort by size (larger first)

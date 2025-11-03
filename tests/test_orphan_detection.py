@@ -10,7 +10,7 @@ import ast
 from towel.unification.orphan_detector import (
     get_bound_variables,
     get_used_variables,
-    has_orphaned_variables
+    has_orphaned_variables,
 )
 
 
@@ -25,7 +25,7 @@ y = 20
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertEqual(bound, {'x', 'y'})
+        self.assertEqual(bound, {"x", "y"})
 
     def test_get_bound_variables_for_loop(self):
         """Test detecting for loop variable bindings."""
@@ -35,7 +35,7 @@ for i in range(10):
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertIn('i', bound)
+        self.assertIn("i", bound)
 
     def test_get_bound_variables_comprehension_excluded(self):
         """Test that comprehension variables are NOT bound at function level."""
@@ -45,8 +45,8 @@ result = [x for x in range(10)]
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
         # 'result' is bound, but 'x' is local to the comprehension
-        self.assertIn('result', bound)
-        self.assertNotIn('x', bound)
+        self.assertIn("result", bound)
+        self.assertNotIn("x", bound)
 
     def test_get_used_variables(self):
         """Test detecting variable usage."""
@@ -56,9 +56,9 @@ print(result)
 """
         tree = ast.parse(code)
         used = get_used_variables(tree.body)
-        self.assertIn('x', used)
-        self.assertIn('y', used)
-        self.assertIn('print', used)
+        self.assertIn("x", used)
+        self.assertIn("y", used)
+        self.assertIn("print", used)
         # 'result' is used in print, but also bound in first line
 
     def test_no_orphans_no_remaining_code(self):
@@ -98,7 +98,7 @@ def foo():
         # But remaining code uses 'total'
         has_orphans, orphans = has_orphaned_variables(body, (0, 2))
         self.assertTrue(has_orphans)
-        self.assertIn('total', orphans)
+        self.assertIn("total", orphans)
 
     def test_no_orphans_variable_rebound(self):
         """Test that no orphans if variable is rebound in remaining code."""
@@ -143,7 +143,7 @@ def process():
         # Both 'x' and 'result' should be orphaned (bound in extracted, used in remaining)
         # But wait, 'result' is also BOUND in the remaining code (line 4)
         # So only 'x' should be orphaned
-        self.assertIn('x', orphans)
+        self.assertIn("x", orphans)
 
     def test_no_orphans_only_uses_parameters(self):
         """Test that using function parameters in remaining code is fine."""
@@ -164,7 +164,7 @@ def process(data):
         # Remaining code uses 'data' (parameter) and 'total' (bound in extracted)
         has_orphans, orphans = has_orphaned_variables(body, (0, 2))
         self.assertTrue(has_orphans)
-        self.assertIn('total', orphans)
+        self.assertIn("total", orphans)
         # 'data' is a parameter, not bound in extracted block
 
     def test_annotated_assignment_binding(self):
@@ -175,8 +175,8 @@ y: str = "hello"
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertIn('x', bound)
-        self.assertIn('y', bound)
+        self.assertIn("x", bound)
+        self.assertIn("y", bound)
 
     def test_async_function_binding(self):
         """Test that async function definitions are detected as bindings."""
@@ -187,8 +187,8 @@ x = 1
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertIn('fetch_data', bound)
-        self.assertIn('x', bound)
+        self.assertIn("fetch_data", bound)
+        self.assertIn("x", bound)
 
     def test_class_definition_binding(self):
         """Test that class definitions are detected as bindings."""
@@ -199,8 +199,8 @@ x = 1
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertIn('MyClass', bound)
-        self.assertIn('x', bound)
+        self.assertIn("MyClass", bound)
+        self.assertIn("x", bound)
 
     def test_set_comprehension_not_bound(self):
         """Test that set comprehension variables are not bound at outer level."""
@@ -209,8 +209,8 @@ result = {x * 2 for x in range(10)}
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertIn('result', bound)
-        self.assertNotIn('x', bound)
+        self.assertIn("result", bound)
+        self.assertNotIn("x", bound)
 
     def test_generator_expression_not_bound(self):
         """Test that generator expression variables are not bound at outer level."""
@@ -219,8 +219,8 @@ result = (x * 2 for x in range(10))
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertIn('result', bound)
-        self.assertNotIn('x', bound)
+        self.assertIn("result", bound)
+        self.assertNotIn("x", bound)
 
     def test_starred_assignment(self):
         """Test that starred assignments are detected as bindings."""
@@ -229,9 +229,9 @@ a, *rest, b = [1, 2, 3, 4, 5]
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertIn('a', bound)
-        self.assertIn('rest', bound)
-        self.assertIn('b', bound)
+        self.assertIn("a", bound)
+        self.assertIn("rest", bound)
+        self.assertIn("b", bound)
 
     def test_augmented_assignment_binding(self):
         """Test that augmented assignments are detected as bindings."""
@@ -241,8 +241,8 @@ x += 5
 """
         tree = ast.parse(code)
         bound = get_bound_variables(tree.body)
-        self.assertIn('x', bound)
+        self.assertIn("x", bound)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

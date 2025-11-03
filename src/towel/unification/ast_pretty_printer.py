@@ -5,7 +5,7 @@ A utility for displaying Python AST structures in a human-readable format.
 """
 
 import ast
-from typing import Any, Set
+from typing import Any, Optional
 
 
 class ASTPrettyPrinter:
@@ -17,27 +17,27 @@ class ASTPrettyPrinter:
 
     def format(self, node: ast.AST, indent: int = 0) -> str:
         """Format an AST node as a pretty-printed string."""
-        lines = []
+        lines: list[str] = []
         self._format_node(node, indent, lines)
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def _format_node(self, node: Any, indent: int, lines: list) -> None:
         """Recursively format an AST node."""
-        prefix = ' ' * indent
+        prefix = " " * indent
 
         if isinstance(node, ast.AST):
             # Format the node type
             node_name = node.__class__.__name__
 
             # Add line number if available and requested
-            if self.show_line_numbers and hasattr(node, 'lineno'):
+            if self.show_line_numbers and hasattr(node, "lineno"):
                 node_name = f"{node_name}@L{node.lineno}"
 
             lines.append(f"{prefix}{node_name}(")
 
             # Get all fields for this node
             for field_name, field_value in ast.iter_fields(node):
-                field_prefix = ' ' * (indent + self.indent_size)
+                field_prefix = " " * (indent + self.indent_size)
 
                 if field_value is None:
                     continue
@@ -74,7 +74,7 @@ class ASTPrettyPrinter:
         else:
             return str(value)
 
-    def print(self, node: ast.AST, title: str = None) -> None:
+    def print(self, node: ast.AST, title: Optional[str] = None) -> None:
         """Print an AST node with an optional title."""
         if title:
             print("=" * 80)
@@ -84,8 +84,12 @@ class ASTPrettyPrinter:
         print()
 
 
-def print_ast(node: ast.AST, title: str = None, indent_size: int = 2,
-              show_line_numbers: bool = False) -> None:
+def print_ast(
+    node: ast.AST,
+    title: Optional[str] = None,
+    indent_size: int = 2,
+    show_line_numbers: bool = False,
+) -> None:
     """
     Convenience function to pretty-print an AST node.
 
@@ -99,8 +103,9 @@ def print_ast(node: ast.AST, title: str = None, indent_size: int = 2,
     printer.print(node, title=title)
 
 
-def compare_asts(node1: ast.AST, node2: ast.AST,
-                 title1: str = "AST 1", title2: str = "AST 2") -> None:
+def compare_asts(
+    node1: ast.AST, node2: ast.AST, title1: str = "AST 1", title2: str = "AST 2"
+) -> None:
     """
     Print two ASTs side by side for comparison.
 

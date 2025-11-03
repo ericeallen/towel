@@ -39,22 +39,24 @@ def normalize_generated_names(code: str) -> str:
     param_mapping = {}
 
     # Find all function names and create canonical mapping
-    func_names = re.findall(r'__extracted_func_\d+', code)
+    func_names = re.findall(r"__extracted_func_\d+", code)
     for func_name in func_names:
         if func_name not in func_mapping:
-            func_mapping[func_name] = f'__extracted_func_{len(func_mapping)}'
+            func_mapping[func_name] = f"__extracted_func_{len(func_mapping)}"
 
     # Find all parameter names and create canonical mapping
-    param_names = re.findall(r'__param_\d+', code)
+    param_names = re.findall(r"__param_\d+", code)
     for param_name in param_names:
         if param_name not in param_mapping:
-            param_mapping[param_name] = f'__param_{len(param_mapping)}'
+            param_mapping[param_name] = f"__param_{len(param_mapping)}"
 
     # Apply replacements (sort by length descending to avoid partial replacements)
     result = code
     for original, normalized in sorted(func_mapping.items(), key=lambda x: len(x[0]), reverse=True):
         result = result.replace(original, normalized)
-    for original, normalized in sorted(param_mapping.items(), key=lambda x: len(x[0]), reverse=True):
+    for original, normalized in sorted(
+        param_mapping.items(), key=lambda x: len(x[0]), reverse=True
+    ):
         result = result.replace(original, normalized)
 
     return result
@@ -80,7 +82,7 @@ class TestSingleFileRegression(unittest.TestCase):
         self.assertTrue(
             self.expected_output.exists(),
             f"Expected output directory not found: {self.expected_output}\n"
-            "Run: python tests/generate_baseline.py"
+            "Run: python tests/generate_baseline.py",
         )
 
     def test_observational_equivalence_all_examples(self):
@@ -94,8 +96,8 @@ class TestSingleFileRegression(unittest.TestCase):
 
         # Collect failed files
         failed_files = []
-        for filename, file_result in results['file_results'].items():
-            if file_result['failed'] > 0:
+        for filename, file_result in results["file_results"].items():
+            if file_result["failed"] > 0:
                 # Add whitespace before each failed file for clarity
                 if failed_files:
                     failed_files.append("")  # Blank line separator
@@ -103,7 +105,7 @@ class TestSingleFileRegression(unittest.TestCase):
                     f"  {filename}: {file_result['failed']}/{file_result['passed'] + file_result['failed']} failed"
                 )
                 # Show only first error example (rest is clutter)
-                for error in file_result['errors'][:1]:
+                for error in file_result["errors"][:1]:
                     failed_files.append(f"    - {error}")
 
         # Assert all tests passed
@@ -126,8 +128,9 @@ class TestSingleFileRegression(unittest.TestCase):
         unintentionally change the output on known test cases.
         """
         # Get all test example Python files
-        python_files = [f for f in self.test_examples.glob("*.py")
-                       if f.is_file() and not f.name.startswith('_')]
+        python_files = [
+            f for f in self.test_examples.glob("*.py") if f.is_file() and not f.name.startswith("_")
+        ]
 
         differences = []
 
@@ -150,9 +153,7 @@ class TestSingleFileRegression(unittest.TestCase):
                 original_output = py_file.read_text()
 
                 if baseline_output != original_output:
-                    differences.append(
-                        f"{py_file.name}: Previously had proposals, now has none"
-                    )
+                    differences.append(f"{py_file.name}: Previously had proposals, now has none")
                 # If baseline == original, this is fine - no proposals before or now
                 continue
 
@@ -160,9 +161,7 @@ class TestSingleFileRegression(unittest.TestCase):
             try:
                 current_output = self.engine.apply_refactoring(str(py_file), proposals[0])
             except Exception as e:
-                differences.append(
-                    f"{py_file.name}: Failed to apply refactoring: {e}"
-                )
+                differences.append(f"{py_file.name}: Failed to apply refactoring: {e}")
                 continue
 
             # Read baseline
@@ -185,8 +184,8 @@ class TestSingleFileRegression(unittest.TestCase):
         if differences:
             failure_msg = (
                 "\n\nRegression detected - refactoring output changed:\n\n"
-                + "\n".join(differences) +
-                "\n\nIf this change is intentional, regenerate baseline with:\n"
+                + "\n".join(differences)
+                + "\n\nIf this change is intentional, regenerate baseline with:\n"
                 "  python tests/generate_baseline.py\n"
             )
             self.fail(failure_msg)
@@ -212,7 +211,7 @@ class TestCrossFileRegression(unittest.TestCase):
         self.assertTrue(
             self.expected_output.exists(),
             f"Expected cross-file output directory not found: {self.expected_output}\n"
-            "Run: python tests/generate_baseline.py"
+            "Run: python tests/generate_baseline.py",
         )
 
     def test_crossfile_observational_equivalence(self):
@@ -222,8 +221,11 @@ class TestCrossFileRegression(unittest.TestCase):
         This runs comprehensive tests on all cross-file test projects.
         """
         # Get all project directories
-        project_dirs = [d for d in self.crossfile_examples.iterdir()
-                       if d.is_dir() and not d.name.startswith('.')]
+        project_dirs = [
+            d
+            for d in self.crossfile_examples.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        ]
 
         if not project_dirs:
             self.skipTest("No cross-file test projects found")
@@ -233,10 +235,7 @@ class TestCrossFileRegression(unittest.TestCase):
         failures = []
 
         for project_dir in sorted(project_dirs):
-            passed, failed, errors = self.tester.test_project(
-                str(project_dir),
-                verbose=False
-            )
+            passed, failed, errors = self.tester.test_project(str(project_dir), verbose=False)
 
             total_passed += passed
             total_failed += failed
@@ -275,5 +274,5 @@ def main():
     return 0 if result.wasSuccessful() else 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

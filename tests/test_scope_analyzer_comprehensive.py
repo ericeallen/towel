@@ -32,51 +32,51 @@ class TestScopeBasics(unittest.TestCase):
     def test_scope_add_binding(self):
         """Test adding bindings to a scope."""
         scope = Scope(scope_id=0, parent=None)
-        node = ast.Name(id='x', ctx=ast.Store())
+        node = ast.Name(id="x", ctx=ast.Store())
 
-        scope.add_binding('x', node)
+        scope.add_binding("x", node)
 
-        self.assertIn('x', scope.bindings, "Binding should be added to scope")
-        binding = scope.bindings['x']
-        self.assertEqual(binding.name, 'x')
+        self.assertIn("x", scope.bindings, "Binding should be added to scope")
+        binding = scope.bindings["x"]
+        self.assertEqual(binding.name, "x")
         self.assertEqual(binding.scope_id, 0)
         self.assertEqual(binding.node, node)
 
     def test_scope_lookup_local(self):
         """Test looking up a binding in the local scope."""
         scope = Scope(scope_id=0, parent=None)
-        node = ast.Name(id='x', ctx=ast.Store())
-        scope.add_binding('x', node)
+        node = ast.Name(id="x", ctx=ast.Store())
+        scope.add_binding("x", node)
 
-        binding = scope.lookup('x')
+        binding = scope.lookup("x")
 
         self.assertIsNotNone(binding, "Should find local binding")
-        self.assertEqual(binding.name, 'x')
+        self.assertEqual(binding.name, "x")
 
     def test_scope_lookup_parent(self):
         """Test looking up a binding in parent scope."""
         parent_scope = Scope(scope_id=0, parent=None)
         child_scope = Scope(scope_id=1, parent=parent_scope)
-        node = ast.Name(id='x', ctx=ast.Store())
-        parent_scope.add_binding('x', node)
+        node = ast.Name(id="x", ctx=ast.Store())
+        parent_scope.add_binding("x", node)
 
-        binding = child_scope.lookup('x')
+        binding = child_scope.lookup("x")
 
         self.assertIsNotNone(binding, "Should find binding in parent scope")
-        self.assertEqual(binding.name, 'x')
+        self.assertEqual(binding.name, "x")
         self.assertEqual(binding.scope_id, 0, "Should be from parent scope")
 
     def test_scope_lookup_shadowing(self):
         """Test that local bindings shadow parent bindings."""
         parent_scope = Scope(scope_id=0, parent=None)
         child_scope = Scope(scope_id=1, parent=parent_scope)
-        parent_node = ast.Name(id='x', ctx=ast.Store())
-        child_node = ast.Name(id='x', ctx=ast.Store())
+        parent_node = ast.Name(id="x", ctx=ast.Store())
+        child_node = ast.Name(id="x", ctx=ast.Store())
 
-        parent_scope.add_binding('x', parent_node)
-        child_scope.add_binding('x', child_node)
+        parent_scope.add_binding("x", parent_node)
+        child_scope.add_binding("x", child_node)
 
-        binding = child_scope.lookup('x')
+        binding = child_scope.lookup("x")
 
         self.assertIsNotNone(binding, "Should find binding")
         self.assertEqual(binding.scope_id, 1, "Should find child's binding, not parent's")
@@ -85,7 +85,7 @@ class TestScopeBasics(unittest.TestCase):
         """Test looking up a non-existent binding."""
         scope = Scope(scope_id=0, parent=None)
 
-        binding = scope.lookup('nonexistent')
+        binding = scope.lookup("nonexistent")
 
         self.assertIsNone(binding, "Should return None for non-existent binding")
 
@@ -104,7 +104,7 @@ class TestSimpleStatements(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('x', scope.bindings, "Should have binding for x")
+        self.assertIn("x", scope.bindings, "Should have binding for x")
 
     def test_multiple_assignments(self):
         """Test analyzing multiple assignments."""
@@ -113,9 +113,9 @@ class TestSimpleStatements(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('x', scope.bindings)
-        self.assertIn('y', scope.bindings)
-        self.assertIn('z', scope.bindings)
+        self.assertIn("x", scope.bindings)
+        self.assertIn("y", scope.bindings)
+        self.assertIn("z", scope.bindings)
 
     def test_tuple_unpacking(self):
         """Test analyzing tuple unpacking."""
@@ -124,8 +124,8 @@ class TestSimpleStatements(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('x', scope.bindings, "Should have binding for x")
-        self.assertIn('y', scope.bindings, "Should have binding for y")
+        self.assertIn("x", scope.bindings, "Should have binding for x")
+        self.assertIn("y", scope.bindings, "Should have binding for y")
 
     def test_augmented_assignment(self):
         """Test analyzing augmented assignment."""
@@ -135,7 +135,7 @@ class TestSimpleStatements(unittest.TestCase):
         scope = self.analyzer.analyze(tree)
 
         # Augmented assignment doesn't create a new binding, just modifies
-        self.assertIn('x', scope.bindings)
+        self.assertIn("x", scope.bindings)
 
     def test_annotated_assignment(self):
         """Test analyzing annotated assignment."""
@@ -144,7 +144,7 @@ class TestSimpleStatements(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('x', scope.bindings)
+        self.assertIn("x", scope.bindings)
 
 
 class TestFunctionScopes(unittest.TestCase):
@@ -161,7 +161,7 @@ class TestFunctionScopes(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('foo', scope.bindings, "Function name should be in outer scope")
+        self.assertIn("foo", scope.bindings, "Function name should be in outer scope")
 
     def test_function_parameters(self):
         """Test that function parameters are bound in function scope."""
@@ -173,8 +173,8 @@ class TestFunctionScopes(unittest.TestCase):
 
         # Get the function's scope
         func_scope = self.analyzer.node_scopes[func_def]
-        self.assertIn('x', func_scope.bindings, "Parameter x should be in function scope")
-        self.assertIn('y', func_scope.bindings, "Parameter y should be in function scope")
+        self.assertIn("x", func_scope.bindings, "Parameter x should be in function scope")
+        self.assertIn("y", func_scope.bindings, "Parameter y should be in function scope")
 
     def test_function_with_defaults(self):
         """Test function with default parameter values."""
@@ -185,8 +185,8 @@ class TestFunctionScopes(unittest.TestCase):
         scope = self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
-        self.assertIn('x', func_scope.bindings)
-        self.assertIn('y', func_scope.bindings)
+        self.assertIn("x", func_scope.bindings)
+        self.assertIn("y", func_scope.bindings)
 
     def test_function_with_varargs(self):
         """Test function with *args."""
@@ -197,8 +197,8 @@ class TestFunctionScopes(unittest.TestCase):
         scope = self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
-        self.assertIn('x', func_scope.bindings)
-        self.assertIn('args', func_scope.bindings, "Vararg should be bound in function scope")
+        self.assertIn("x", func_scope.bindings)
+        self.assertIn("args", func_scope.bindings, "Vararg should be bound in function scope")
 
     def test_function_with_kwargs(self):
         """Test function with **kwargs."""
@@ -209,8 +209,8 @@ class TestFunctionScopes(unittest.TestCase):
         scope = self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
-        self.assertIn('x', func_scope.bindings)
-        self.assertIn('kwargs', func_scope.bindings, "Kwarg should be bound in function scope")
+        self.assertIn("x", func_scope.bindings)
+        self.assertIn("kwargs", func_scope.bindings, "Kwarg should be bound in function scope")
 
     def test_nested_functions(self):
         """Test analyzing nested function definitions."""
@@ -228,12 +228,12 @@ def outer(x):
 
         # Check outer function scope
         outer_scope = self.analyzer.node_scopes[outer_def]
-        self.assertIn('x', outer_scope.bindings)
-        self.assertIn('inner', outer_scope.bindings, "Inner function name should be in outer scope")
+        self.assertIn("x", outer_scope.bindings)
+        self.assertIn("inner", outer_scope.bindings, "Inner function name should be in outer scope")
 
         # Check inner function scope
         inner_scope = self.analyzer.node_scopes[inner_def]
-        self.assertIn('y', inner_scope.bindings)
+        self.assertIn("y", inner_scope.bindings)
 
 
 class TestClassScopes(unittest.TestCase):
@@ -250,7 +250,7 @@ class TestClassScopes(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('Foo', scope.bindings, "Class name should be in outer scope")
+        self.assertIn("Foo", scope.bindings, "Class name should be in outer scope")
 
     def test_class_with_methods(self):
         """Test class with method definitions."""
@@ -266,7 +266,7 @@ class Foo:
 
         # Check class scope
         class_scope = self.analyzer.node_scopes[class_def]
-        self.assertIn('method', class_scope.bindings, "Method should be in class scope")
+        self.assertIn("method", class_scope.bindings, "Method should be in class scope")
 
     def test_class_with_attributes(self):
         """Test class with class attributes."""
@@ -281,8 +281,8 @@ class Foo:
         scope = self.analyzer.analyze(tree)
 
         class_scope = self.analyzer.node_scopes[class_def]
-        self.assertIn('x', class_scope.bindings)
-        self.assertIn('y', class_scope.bindings)
+        self.assertIn("x", class_scope.bindings)
+        self.assertIn("y", class_scope.bindings)
 
 
 class TestControlFlow(unittest.TestCase):
@@ -299,7 +299,7 @@ class TestControlFlow(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('i', scope.bindings, "Loop variable should be bound")
+        self.assertIn("i", scope.bindings, "Loop variable should be bound")
 
     def test_for_loop_tuple_unpacking(self):
         """Test for loop with tuple unpacking."""
@@ -308,8 +308,8 @@ class TestControlFlow(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('x', scope.bindings)
-        self.assertIn('y', scope.bindings)
+        self.assertIn("x", scope.bindings)
+        self.assertIn("y", scope.bindings)
 
     def test_with_statement(self):
         """Test with statement binding."""
@@ -318,7 +318,7 @@ class TestControlFlow(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('f', scope.bindings, "With variable should be bound")
+        self.assertIn("f", scope.bindings, "With variable should be bound")
 
     def test_with_statement_no_as(self):
         """Test with statement without 'as' clause."""
@@ -354,7 +354,7 @@ def foo():
         func_scope = self.analyzer.node_scopes[func_def]
         # Global variables should be tracked
         self.assertIn(func_scope.scope_id, self.analyzer.global_vars)
-        self.assertIn('x', self.analyzer.global_vars[func_scope.scope_id])
+        self.assertIn("x", self.analyzer.global_vars[func_scope.scope_id])
 
     def test_nonlocal_declaration(self):
         """Test nonlocal variable declaration."""
@@ -374,7 +374,7 @@ def outer():
         inner_scope = self.analyzer.node_scopes[inner_def]
         # Nonlocal variables should be tracked
         self.assertIn(inner_scope.scope_id, self.analyzer.nonlocal_vars)
-        self.assertIn('x', self.analyzer.nonlocal_vars[inner_scope.scope_id])
+        self.assertIn("x", self.analyzer.nonlocal_vars[inner_scope.scope_id])
 
 
 class TestFreeVariables(unittest.TestCase):
@@ -402,7 +402,7 @@ class TestFreeVariables(unittest.TestCase):
         self.analyzer.analyze(tree)
         free_vars = self.analyzer.get_free_variables(tree.body)
 
-        self.assertIn('x', free_vars, "x should be a free variable")
+        self.assertIn("x", free_vars, "x should be a free variable")
 
     def test_used_before_assigned(self):
         """Test variable used before it's assigned."""
@@ -413,7 +413,7 @@ class TestFreeVariables(unittest.TestCase):
         free_vars = self.analyzer.get_free_variables(tree.body)
 
         # x is used before assigned, so it should be a free variable
-        self.assertIn('x', free_vars, "x should be free (used before assigned)")
+        self.assertIn("x", free_vars, "x should be free (used before assigned)")
 
     def test_augmented_assignment_is_use(self):
         """Test that augmented assignment counts as a use."""
@@ -423,7 +423,7 @@ class TestFreeVariables(unittest.TestCase):
         self.analyzer.analyze(tree)
         free_vars = self.analyzer.get_free_variables(tree.body)
 
-        self.assertIn('x', free_vars, "x should be free (augmented assignment is a use)")
+        self.assertIn("x", free_vars, "x should be free (augmented assignment is a use)")
 
     def test_free_variables_with_function(self):
         """Test free variables in function body."""
@@ -441,8 +441,8 @@ def foo(x):
         # z is free (not defined anywhere)
         # When calling get_free_variables on just the body statements without context,
         # x appears as a use before it's assigned in those statements
-        self.assertIn('z', free_vars, "z should be a free variable")
-        self.assertNotIn('y', free_vars, "y should not be free (it's assigned locally)")
+        self.assertIn("z", free_vars, "z should be a free variable")
+        self.assertNotIn("y", free_vars, "y should not be free (it's assigned locally)")
 
     def test_free_variables_nested_function(self):
         """Test that nested function definitions don't leak their bindings."""
@@ -471,7 +471,7 @@ x = 1
         free_vars = self.analyzer.get_free_variables(tree.body)
 
         # Global assignments are uses, not bindings
-        self.assertIn('x', free_vars, "Global variable should be treated as free")
+        self.assertIn("x", free_vars, "Global variable should be treated as free")
 
     def test_free_variables_builtin_filtered(self):
         """Test that Python builtins are filtered from free variables."""
@@ -481,7 +481,7 @@ x = 1
         self.analyzer.analyze(tree)
         free_vars = self.analyzer.get_free_variables(tree.body)
 
-        self.assertNotIn('len', free_vars, "Builtins should be filtered out")
+        self.assertNotIn("len", free_vars, "Builtins should be filtered out")
 
 
 class TestComprehensions(unittest.TestCase):
@@ -500,7 +500,7 @@ class TestComprehensions(unittest.TestCase):
 
         # NOTE: The ScopeAnalyzer walks the entire AST and tracks bindings.
         # Comprehensions create separate scopes in get_free_variables but not in analyze()
-        self.assertIn('result', scope.bindings, "Result variable should be bound")
+        self.assertIn("result", scope.bindings, "Result variable should be bound")
 
     def test_list_comprehension_free_variables(self):
         """Test free variables in list comprehensions."""
@@ -511,7 +511,7 @@ class TestComprehensions(unittest.TestCase):
         free_vars = self.analyzer.get_free_variables(tree.body)
 
         # factor is used but not defined, so it's free
-        self.assertIn('factor', free_vars, "factor should be a free variable")
+        self.assertIn("factor", free_vars, "factor should be a free variable")
 
 
 class TestImports(unittest.TestCase):
@@ -570,7 +570,7 @@ class TestWalrusOperator(unittest.TestCase):
         scope = self.analyzer.analyze(tree)
 
         # Walrus creates binding in current scope
-        self.assertIn('n', scope.bindings, "Walrus operator should create binding")
+        self.assertIn("n", scope.bindings, "Walrus operator should create binding")
 
 
 class TestEdgeCases(unittest.TestCase):
@@ -597,7 +597,7 @@ class TestEdgeCases(unittest.TestCase):
 
         scope = self.analyzer.analyze(tree)
 
-        self.assertIn('foo', scope.bindings, "Async function name should be bound")
+        self.assertIn("foo", scope.bindings, "Async function name should be bound")
 
     def test_async_for(self):
         """Test analyzing async for loop."""
@@ -612,7 +612,7 @@ async def foo():
         scope = self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
-        self.assertIn('item', func_scope.bindings, "Async for variable should be bound")
+        self.assertIn("item", func_scope.bindings, "Async for variable should be bound")
 
     def test_async_with(self):
         """Test analyzing async with statement."""
@@ -627,7 +627,7 @@ async def foo():
         scope = self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
-        self.assertIn('ctx', func_scope.bindings, "Async with variable should be bound")
+        self.assertIn("ctx", func_scope.bindings, "Async with variable should be bound")
 
     def test_exception_handler(self):
         """Test exception handler binding."""
@@ -643,9 +643,9 @@ except ValueError as e:
         free_vars = self.analyzer.get_free_variables(tree.body)
 
         # e is bound, risky and handle are free
-        self.assertIn('risky', free_vars)
-        self.assertIn('handle', free_vars)
-        self.assertNotIn('e', free_vars, "Exception variable should be bound")
+        self.assertIn("risky", free_vars)
+        self.assertIn("handle", free_vars)
+        self.assertNotIn("e", free_vars, "Exception variable should be bound")
 
 
 def main():
@@ -653,5 +653,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

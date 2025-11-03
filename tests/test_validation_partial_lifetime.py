@@ -19,12 +19,12 @@ class TestPartialLifetimeValidation(unittest.TestCase):
 
     def setUp(self):
         """Enable debug validation logging."""
-        os.environ['DEBUG_VALIDATION'] = '1'
+        os.environ["DEBUG_VALIDATION"] = "1"
 
     def tearDown(self):
         """Clean up environment."""
-        if 'DEBUG_VALIDATION' in os.environ:
-            del os.environ['DEBUG_VALIDATION']
+        if "DEBUG_VALIDATION" in os.environ:
+            del os.environ["DEBUG_VALIDATION"]
 
     def test_reject_partial_lifetime_extraction(self):
         """
@@ -52,14 +52,14 @@ class TestPartialLifetimeValidation(unittest.TestCase):
         engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
         # Analyze the file that has the problematic pattern
-        proposals = engine.analyze_file('test_examples/syntactic_coverage_comprehensive.py')
+        proposals = engine.analyze_file("test_examples/syntactic_coverage_comprehensive.py")
 
         # Look for the problematic proposal involving comparisons_a and calls_a
         # This proposal should NOT exist if validation is working
         problematic_proposal = None
         for proposal in proposals:
             desc = proposal.description.lower()
-            if 'comparisons_a' in desc and 'calls_a' in desc:
+            if "comparisons_a" in desc and "calls_a" in desc:
                 problematic_proposal = proposal
                 break
 
@@ -67,9 +67,8 @@ class TestPartialLifetimeValidation(unittest.TestCase):
         self.assertIsNone(
             problematic_proposal,
             "Engine should reject extraction that binds variables used after the block. "
-            "Found problematic proposal: " + (
-                problematic_proposal.description if problematic_proposal else "None"
-            )
+            "Found problematic proposal: "
+            + (problematic_proposal.description if problematic_proposal else "None"),
         )
 
     def test_validation_logic_directly(self):
@@ -124,25 +123,26 @@ def test_func(x):
         initially_bound = bound_in_block - bound_before_block
 
         # Check if result is initially bound
-        self.assertIn('result', initially_bound,
-                     "Should detect that 'result' is initially bound in the block")
+        self.assertIn(
+            "result", initially_bound, "Should detect that 'result' is initially bound in the block"
+        )
 
         # Check if result is used after the block
         block_end_line = block_stmts[-1].lineno
         uses_after = set()
 
         for stmt in func.body:
-            if hasattr(stmt, 'lineno') and stmt.lineno > block_end_line:
+            if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
                 uses = engine._get_used_names(stmt)
                 uses_after.update(uses)
 
-        self.assertIn('result', uses_after,
-                     "Should detect that 'result' is used after the block")
+        self.assertIn("result", uses_after, "Should detect that 'result' is used after the block")
 
         # Check for conflict
         conflict = initially_bound & uses_after
-        self.assertEqual(conflict, {'result'},
-                        "Should detect conflict: variable bound in block but used after")
+        self.assertEqual(
+            conflict, {"result"}, "Should detect conflict: variable bound in block but used after"
+        )
 
 
 def main():
@@ -150,5 +150,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

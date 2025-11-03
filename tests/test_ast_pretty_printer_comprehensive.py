@@ -10,11 +10,7 @@ import unittest
 import ast
 from io import StringIO
 import sys
-from src.towel.unification.ast_pretty_printer import (
-    ASTPrettyPrinter,
-    print_ast,
-    compare_asts
-)
+from src.towel.unification.ast_pretty_printer import ASTPrettyPrinter, print_ast, compare_asts
 
 
 class TestASTPrettyPrinterInit(unittest.TestCase):
@@ -255,9 +251,11 @@ class TestIndentation(unittest.TestCase):
 
         result = printer.format(tree)
 
-        lines = result.split('\n')
+        lines = result.split("\n")
         # Check that nested content has proper indentation
-        indented_lines = [line for line in lines if line.startswith('  ') and not line.startswith('    ')]
+        indented_lines = [
+            line for line in lines if line.startswith("  ") and not line.startswith("    ")
+        ]
         self.assertGreater(len(indented_lines), 0, "Should have lines with 2-space indent")
 
     def test_custom_indent(self):
@@ -268,9 +266,11 @@ class TestIndentation(unittest.TestCase):
 
         result = printer.format(tree)
 
-        lines = result.split('\n')
+        lines = result.split("\n")
         # Check that nested content has proper indentation
-        indented_lines = [line for line in lines if line.startswith('    ') and len(line.lstrip()) > 0]
+        indented_lines = [
+            line for line in lines if line.startswith("    ") and len(line.lstrip()) > 0
+        ]
         self.assertGreater(len(indented_lines), 0, "Should have lines with 4-space indent")
 
     def test_nested_indentation(self):
@@ -285,7 +285,7 @@ def foo():
 
         result = printer.format(tree)
 
-        lines = result.split('\n')
+        lines = result.split("\n")
         # Should have various levels of indentation
         indent_levels = set()
         for line in lines:
@@ -480,7 +480,7 @@ class TestEdgeCases(unittest.TestCase):
 
         result = printer.format(tree)
 
-        lines = result.split('\n')
+        lines = result.split("\n")
         self.assertGreater(len(lines), 3, "Should produce multiple lines")
 
     def test_format_preserves_structure(self):
@@ -492,11 +492,9 @@ class TestEdgeCases(unittest.TestCase):
         result = printer.format(tree)
 
         # Check that parentheses are balanced
-        self.assertEqual(result.count('('), result.count(')'),
-                        "Parentheses should be balanced")
+        self.assertEqual(result.count("("), result.count(")"), "Parentheses should be balanced")
         # Check that brackets are balanced
-        self.assertEqual(result.count('['), result.count(']'),
-                        "Brackets should be balanced")
+        self.assertEqual(result.count("["), result.count("]"), "Brackets should be balanced")
 
 
 class TestIntegration(unittest.TestCase):
@@ -536,10 +534,9 @@ y = 2
 
         self.assertIn("@L", result, "Should show line numbers")
         # Verify custom indent is used
-        lines = result.split('\n')
+        lines = result.split("\n")
         has_three_space_indent = any(
-            len(line) - len(line.lstrip()) == 3
-            for line in lines if len(line.strip()) > 0
+            len(line) - len(line.lstrip()) == 3 for line in lines if len(line.strip()) > 0
         )
         self.assertTrue(has_three_space_indent, "Should use 3-space indent")
 
@@ -549,5 +546,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

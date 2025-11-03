@@ -6,6 +6,7 @@ Tests the complete workflow from detection to application.
 IMPORTANT: These tests NEVER modify test_examples files directly.
 All test output goes to temporary directories that are automatically cleaned up.
 """
+
 import unittest
 import ast
 from pathlib import Path
@@ -14,7 +15,7 @@ from tests.test_helpers import (
     temporary_test_directory,
     copy_example_to_temp,
     get_test_example_path,
-    assert_file_not_modified
+    assert_file_not_modified,
 )
 
 
@@ -23,9 +24,7 @@ class TestRefactoringEngine(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5,
-            min_lines=4,
-            parameterize_constants=True
+            max_parameters=5, min_lines=4, parameterize_constants=True
         )
 
     def test_example1_simple(self):
@@ -33,7 +32,7 @@ class TestRefactoringEngine(unittest.TestCase):
 
         Reads from test_examples (read-only) and verifies it's never modified.
         """
-        example_path = get_test_example_path('example1_simple.py')
+        example_path = get_test_example_path("example1_simple.py")
         original_content = example_path.read_text()
 
         proposals = self.engine.analyze_file(str(example_path))
@@ -65,7 +64,7 @@ class TestRefactoringEngine(unittest.TestCase):
 
         Reads from test_examples (read-only) and verifies it's never modified.
         """
-        example_path = get_test_example_path('example4_complex.py')
+        example_path = get_test_example_path("example4_complex.py")
         original_content = example_path.read_text()
 
         proposals = self.engine.analyze_file(str(example_path))
@@ -90,7 +89,7 @@ class TestRefactoringEngine(unittest.TestCase):
         This test uses a temporary directory to ensure test_examples are never modified.
         """
         # Read from test_examples (read-only)
-        example_path = get_test_example_path('example1_simple.py')
+        example_path = get_test_example_path("example1_simple.py")
         original_content = example_path.read_text()
 
         proposals = self.engine.analyze_file(str(example_path))
@@ -101,7 +100,7 @@ class TestRefactoringEngine(unittest.TestCase):
         # Use temporary directory for all file operations
         with temporary_test_directory() as temp_dir:
             # Copy example to temp directory
-            temp_example = copy_example_to_temp('example1_simple.py', temp_dir)
+            temp_example = copy_example_to_temp("example1_simple.py", temp_dir)
 
             # Apply refactoring to the temp copy
             refactored = self.engine.apply_refactoring(str(temp_example), prop)
@@ -126,7 +125,7 @@ class TestRefactoringEngine(unittest.TestCase):
 
         Reads from test_examples (read-only) and verifies it's never modified.
         """
-        example_path = get_test_example_path('example1_simple.py')
+        example_path = get_test_example_path("example1_simple.py")
         original_content = example_path.read_text()
 
         # Create engine with low parameter limit
@@ -139,7 +138,7 @@ class TestRefactoringEngine(unittest.TestCase):
             self.assertLessEqual(
                 prop.parameters_count,
                 2,
-                f"Proposal has {prop.parameters_count} parameters, exceeds limit of 2"
+                f"Proposal has {prop.parameters_count} parameters, exceeds limit of 2",
             )
 
         # Verify original file was never modified
@@ -150,7 +149,7 @@ class TestRefactoringEngine(unittest.TestCase):
 
         Reads from test_examples (read-only) and verifies it's never modified.
         """
-        example_path = get_test_example_path('example1_simple.py')
+        example_path = get_test_example_path("example1_simple.py")
         original_content = example_path.read_text()
 
         # Create engine with high min_lines
@@ -162,9 +161,7 @@ class TestRefactoringEngine(unittest.TestCase):
         for prop in proposals:
             line_count = len(prop.extracted_function.body)
             self.assertGreaterEqual(
-                line_count,
-                1,  # At least some statements
-                f"Extracted function is too short"
+                line_count, 1, f"Extracted function is too short"  # At least some statements
             )
 
         # Verify original file was never modified
@@ -176,9 +173,7 @@ class TestDirectoryAnalysis(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5,
-            min_lines=4,
-            parameterize_constants=True
+            max_parameters=5, min_lines=4, parameterize_constants=True
         )
 
     def test_analyze_directory(self):
@@ -188,12 +183,13 @@ class TestDirectoryAnalysis(unittest.TestCase):
         """
         # Capture original state of all Python files in test_examples
         from pathlib import Path
-        test_examples_dir = Path('test_examples')
+
+        test_examples_dir = Path("test_examples")
         original_contents = {}
-        for py_file in test_examples_dir.glob('*.py'):
+        for py_file in test_examples_dir.glob("*.py"):
             original_contents[py_file] = py_file.read_text()
 
-        proposals = self.engine.analyze_directory('test_examples', recursive=True)
+        proposals = self.engine.analyze_directory("test_examples", recursive=True)
 
         # Should find duplicates across all example files
         self.assertGreater(len(proposals), 0, "Should find duplicates in test_examples directory")
@@ -214,8 +210,8 @@ class TestDirectoryAnalysis(unittest.TestCase):
 
         Reads from test_examples (read-only) and verifies files are not modified.
         """
-        file1_path = get_test_example_path('example3_file1.py')
-        file2_path = get_test_example_path('example3_file2.py')
+        file1_path = get_test_example_path("example3_file1.py")
+        file2_path = get_test_example_path("example3_file2.py")
 
         # Capture original contents
         file1_original = file1_path.read_text()
@@ -229,15 +225,10 @@ class TestDirectoryAnalysis(unittest.TestCase):
         self.assertGreater(len(proposals), 0, "Should find cross-file duplicates")
 
         # Check if any proposal is cross-file
-        cross_file_proposals = [
-            p for p in proposals
-            if any(len(r) == 3 for r in p.replacements)
-        ]
+        cross_file_proposals = [p for p in proposals if any(len(r) == 3 for r in p.replacements)]
 
         self.assertGreater(
-            len(cross_file_proposals),
-            0,
-            "Should find at least one cross-file proposal"
+            len(cross_file_proposals), 0, "Should find at least one cross-file proposal"
         )
 
         # Verify files were not modified
@@ -245,5 +236,5 @@ class TestDirectoryAnalysis(unittest.TestCase):
         assert_file_not_modified(file2_path, file2_original)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

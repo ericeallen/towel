@@ -20,7 +20,7 @@ from pathlib import Path
 from tests.test_observational_equivalence import (
     execute_function,
     compare_function_behavior,
-    FunctionExecutionResult
+    FunctionExecutionResult,
 )
 from tests.edge_case_values import EdgeCaseValues
 
@@ -41,18 +41,18 @@ def get_test_files():
         _TEST_FILES = []
 
         # Create an empty file
-        f1 = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+        f1 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
         f1.close()
         _TEST_FILES.append(f1.name)
 
         # Create a file with a single line
-        f2 = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+        f2 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
         f2.write("test line\n")
         f2.close()
         _TEST_FILES.append(f2.name)
 
         # Create a file with multiple lines
-        f3 = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+        f3 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
         f3.write("line 1\nline 2\nline 3\n")
         f3.close()
         _TEST_FILES.append(f3.name)
@@ -88,7 +88,7 @@ def extract_function_names_from_proposal(description: str) -> List[str]:
         List of function names that were refactored
     """
     # Pattern: "from <func1> and <func2>" or "from <func1> (<file>) and <func2> (<file>)"
-    pattern = r'from\s+(\w+)(?:\s+\([^)]+\))?\s+and\s+(\w+)(?:\s+\([^)]+\))?'
+    pattern = r"from\s+(\w+)(?:\s+\([^)]+\))?\s+and\s+(\w+)(?:\s+\([^)]+\))?"
     match = re.search(pattern, description)
 
     if match:
@@ -134,17 +134,17 @@ def analyze_parameter_usage(func_def: ast.FunctionDef, param_name: str) -> Optio
     for node in ast.walk(func_def):
         # Check for range() usage: range(param) or range(x, param) or range(x, y, param)
         if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id == 'range':
+            if isinstance(node.func, ast.Name) and node.func.id == "range":
                 # Check if param is used as any argument to range()
                 for arg in node.args:
                     if isinstance(arg, ast.Name) and arg.id == param_name:
-                        return 'range_arg'
+                        return "range_arg"
 
             # Check for dictionary methods
             if isinstance(node.func, ast.Attribute):
                 if isinstance(node.func.value, ast.Name) and node.func.value.id == param_name:
-                    if node.func.attr in ['get', 'keys', 'values', 'items']:
-                        return 'dict_methods'
+                    if node.func.attr in ["get", "keys", "values", "items"]:
+                        return "dict_methods"
 
         # Check for tuple unpacking in for loops: for a, b in param:
         if isinstance(node, ast.For):
@@ -152,33 +152,31 @@ def analyze_parameter_usage(func_def: ast.FunctionDef, param_name: str) -> Optio
                 if node.iter.id == param_name:
                     # Count how many variables are unpacked
                     num_elements = len(node.target.elts)
-                    return f'tuple_unpacking_{num_elements}'
+                    return f"tuple_unpacking_{num_elements}"
 
             # Check for range(param) in for loop: for i in range(param):
             if isinstance(node.iter, ast.Call):
-                if isinstance(node.iter.func, ast.Name) and node.iter.func.id == 'range':
+                if isinstance(node.iter.func, ast.Name) and node.iter.func.id == "range":
                     for arg in node.iter.args:
                         if isinstance(arg, ast.Name) and arg.id == param_name:
-                            return 'range_arg'
+                            return "range_arg"
 
         # Check for dictionary access: param['key'] or param.get('key')
         if isinstance(node, ast.Subscript):
             if isinstance(node.value, ast.Name) and node.value.id == param_name:
-                return 'dict_access'
+                return "dict_access"
 
         # Check for list/iterable iteration: for item in param:
         if isinstance(node, ast.For):
             if isinstance(node.iter, ast.Name) and node.iter.id == param_name:
                 if not isinstance(node.target, ast.Tuple):
-                    return 'list_iter'
+                    return "list_iter"
 
     return None
 
 
 def generate_test_values_for_type(
-    param_name: str,
-    annotation: Optional[ast.AST] = None,
-    usage_pattern: Optional[str] = None
+    param_name: str, annotation: Optional[ast.AST] = None, usage_pattern: Optional[str] = None
 ) -> List[Any]:
     """
     Generate test values for a parameter based on its type annotation, name, and usage.
@@ -193,18 +191,18 @@ def generate_test_values_for_type(
     """
     # Use usage pattern analysis first (most specific)
     if usage_pattern:
-        if usage_pattern.startswith('tuple_unpacking_'):
+        if usage_pattern.startswith("tuple_unpacking_"):
             # Extract number of elements from pattern like 'tuple_unpacking_2'
-            num_elements = int(usage_pattern.split('_')[-1])
+            num_elements = int(usage_pattern.split("_")[-1])
 
             if num_elements == 2:
                 # Common case: pairs like (key, value)
                 return [
                     [],  # Empty list
-                    [('a', 1), ('b', 2)],  # String keys, int values
-                    [('x', 'foo'), ('y', 'bar')],  # String keys and values
+                    [("a", 1), ("b", 2)],  # String keys, int values
+                    [("x", "foo"), ("y", "bar")],  # String keys and values
                     [(1, 10), (2, 20)],  # Integer pairs
-                    [('key1', None), ('key2', 100)],  # With None values
+                    [("key1", None), ("key2", 100)],  # With None values
                 ]
             else:
                 # General tuple unpacking
@@ -212,43 +210,37 @@ def generate_test_values_for_type(
                     return [
                         [],
                         [(1, 2, 3), (4, 5, 6)],
-                        [('a', 'b', 'c')],
+                        [("a", "b", "c")],
                     ]
                 else:
                     # Default tuples
                     sample_tuple = tuple(range(num_elements))
                     return [[], [sample_tuple, sample_tuple]]
 
-        elif usage_pattern in ['dict_access', 'dict_methods']:
+        elif usage_pattern in ["dict_access", "dict_methods"]:
             return [
                 {},
-                {'key': 'value'},
-                {'a': 1, 'b': 2},
-                {'id': 123, 'name': 'test'},
-                {'x': None, 'y': 100}
+                {"key": "value"},
+                {"a": 1, "b": 2},
+                {"id": 123, "name": "test"},
+                {"x": None, "y": 100},
             ]
 
-        elif usage_pattern == 'list_iter':
-            return [
-                [],
-                [1, 2, 3],
-                [0],
-                ['a', 'b', 'c'],
-                [10, 20, 30, 40]
-            ]
+        elif usage_pattern == "list_iter":
+            return [[], [1, 2, 3], [0], ["a", "b", "c"], [10, 20, 30, 40]]
 
-        elif usage_pattern == 'range_arg':
+        elif usage_pattern == "range_arg":
             # Limited integers for range() to avoid hanging
             # range() with huge values causes performance issues
             return [
-                0,      # Empty range
-                1,      # Single element
-                2,      # Two elements
-                5,      # Small range
-                10,     # Medium range
-                100,    # Large but reasonable
-                -1,     # Negative (empty range when used as range(n))
-                -5,     # More negative tests
+                0,  # Empty range
+                1,  # Single element
+                2,  # Two elements
+                5,  # Small range
+                10,  # Medium range
+                100,  # Large but reasonable
+                -1,  # Negative (empty range when used as range(n))
+                -5,  # More negative tests
             ]
 
     # Try to infer type from annotation
@@ -260,25 +252,25 @@ def generate_test_values_for_type(
 
             # Use comprehensive edge case values for better coverage
             # Note: Keep collections small to avoid performance issues, but full numeric coverage
-            if 'int' in type_name:
+            if "int" in type_name:
                 # Full integer edge cases - large ints don't cause issues unless used in range()
                 edge_ints = EdgeCaseValues.integers()
                 return edge_ints  # All int edge cases including sys.maxsize, 10**100
-            elif 'str' in type_name:
+            elif "str" in type_name:
                 edge_strs = EdgeCaseValues.strings()
                 # Exclude only the very long string (last one: 'a' * 1000)
                 return edge_strs[:-1]  # All except last
-            elif 'list' in type_name:
+            elif "list" in type_name:
                 edge_lists = EdgeCaseValues.lists()
                 # Exclude very large lists (last few with 100+ elements)
                 return edge_lists[:10]  # Up to 10 elements max
-            elif 'dict' in type_name:
+            elif "dict" in type_name:
                 edge_dicts = EdgeCaseValues.dicts()
                 # Exclude very large dicts (last one with 100 keys)
                 return edge_dicts[:-1]  # All except last
-            elif 'bool' in type_name:
+            elif "bool" in type_name:
                 return EdgeCaseValues.booleans()
-            elif 'float' in type_name:
+            elif "float" in type_name:
                 # Full float edge cases - inf, nan, etc. don't cause performance issues
                 edge_floats = EdgeCaseValues.floats()
                 return edge_floats  # All float edge cases including nan, inf, sys.float_info.max
@@ -288,44 +280,43 @@ def generate_test_values_for_type(
 
     # Check for filename/file/path parameters - use real test files
     # Match: filename, file_path, filepath, path, file1, file2, outer_file, etc.
-    if any(keyword in name_lower for keyword in ['filename', 'file_path', 'filepath', 'path']) or \
-       name_lower.startswith('file') or name_lower.endswith('file') or '_file' in name_lower:
+    if (
+        any(keyword in name_lower for keyword in ["filename", "file_path", "filepath", "path"])
+        or name_lower.startswith("file")
+        or name_lower.endswith("file")
+        or "_file" in name_lower
+    ):
         # Use real temporary files that can be safely opened
         test_files = get_test_files()
         return test_files
 
     # Check for plural names that suggest lists of structured data
-    if name_lower in ['pairs', 'tuples', 'entries']:
-        return [
-            [],
-            [('a', 1), ('b', 2)],
-            [('x', 'foo'), ('y', 'bar')],
-            [(1, 10), (2, 20)]
-        ]
+    if name_lower in ["pairs", "tuples", "entries"]:
+        return [[], [("a", 1), ("b", 2)], [("x", "foo"), ("y", "bar")], [(1, 10), (2, 20)]]
 
-    if 'id' in name_lower or name_lower.endswith('_id'):
+    if "id" in name_lower or name_lower.endswith("_id"):
         # IDs: test edge cases including boundaries - full range safe
         return EdgeCaseValues.integers()[:8]
-    elif 'count' in name_lower or 'num' in name_lower or 'size' in name_lower:
+    elif "count" in name_lower or "num" in name_lower or "size" in name_lower:
         # Counts: focus on boundary values (0, 1, moderate) - avoid large values that might go in range()
         return [0, 1, 5, 10, 100]
-    elif 'name' in name_lower:
+    elif "name" in name_lower:
         # Names: include unicode and empty
         return EdgeCaseValues.strings()[:8]
-    elif 'email' in name_lower:
-        return ['test@example.com', 'user@test.com', '', 'invalid']
-    elif 'items' in name_lower or 'list' in name_lower or 'values' in name_lower:
+    elif "email" in name_lower:
+        return ["test@example.com", "user@test.com", "", "invalid"]
+    elif "items" in name_lower or "list" in name_lower or "values" in name_lower:
         # Lists: include edge cases but limit to moderate size (no 1000-element lists)
         return EdgeCaseValues.lists()[:10]
-    elif 'data' in name_lower or 'dict' in name_lower or 'config' in name_lower:
+    elif "data" in name_lower or "dict" in name_lower or "config" in name_lower:
         # Dicts: include edge cases but limit size (no 100-key dicts)
         return EdgeCaseValues.dicts()[:-1]
-    elif 'text' in name_lower or 'message' in name_lower or 'str' in name_lower:
+    elif "text" in name_lower or "message" in name_lower or "str" in name_lower:
         # Text: include unicode and edge cases
         return EdgeCaseValues.strings()[:-1]  # All except 1000-char string
-    elif 'flag' in name_lower or 'enabled' in name_lower or 'is_' in name_lower:
+    elif "flag" in name_lower or "enabled" in name_lower or "is_" in name_lower:
         return EdgeCaseValues.booleans()
-    elif name_lower in ['x', 'y', 'z', 'n', 'm', 'i', 'j', 'k']:
+    elif name_lower in ["x", "y", "z", "n", "m", "i", "j", "k"]:
         # Generic numeric variables: use full int edge cases
         return EdgeCaseValues.integers()
 
@@ -336,11 +327,18 @@ def generate_test_values_for_type(
     edge_dicts = EdgeCaseValues.dicts()
 
     return [
-        edge_ints[0], edge_ints[1], edge_ints[2], edge_ints[3],  # 0, -0, 1, -1
-        edge_strs[0], edge_strs[1], edge_strs[2],  # '', 'a', 'A'
-        edge_lists[0], edge_lists[1],  # [], [0]
+        edge_ints[0],
+        edge_ints[1],
+        edge_ints[2],
+        edge_ints[3],  # 0, -0, 1, -1
+        edge_strs[0],
+        edge_strs[1],
+        edge_strs[2],  # '', 'a', 'A'
+        edge_lists[0],
+        edge_lists[1],  # [], [0]
         edge_dicts[0],  # {}
-        True, False,
+        True,
+        False,
     ]
 
 
@@ -360,11 +358,11 @@ def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tu
     # Get parameter information with usage analysis
     params = []
     for arg in func_def.args.args:
-        if arg.arg == 'self' or arg.arg == 'cls':
+        if arg.arg == "self" or arg.arg == "cls":
             continue
 
         # Get type annotation if available
-        annotation = arg.annotation if hasattr(arg, 'annotation') else None
+        annotation = arg.annotation if hasattr(arg, "annotation") else None
 
         # Analyze how this parameter is used in the function body
         usage_pattern = analyze_parameter_usage(func_def, arg.arg)
@@ -417,9 +415,7 @@ def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tu
 
 
 def test_all_refactored_functions(
-    original_code: str,
-    refactored_code: str,
-    proposal_description: str
+    original_code: str, refactored_code: str, proposal_description: str
 ) -> Tuple[bool, List[str]]:
     """
     Automatically test all functions mentioned in a refactoring proposal.
@@ -457,16 +453,13 @@ def test_all_refactored_functions(
 
         # Test observational equivalence
         all_passed, differences = compare_function_behavior(
-            original_code,
-            refactored_code,
-            func_name,
-            test_cases
+            original_code, refactored_code, func_name, test_cases
         )
 
         if not all_passed:
             all_errors.append(
-                f"Function '{func_name}' failed observational equivalence:\n" +
-                "\n".join(f"  {diff}" for diff in differences[:1])  # Show only first difference
+                f"Function '{func_name}' failed observational equivalence:\n"
+                + "\n".join(f"  {diff}" for diff in differences[:1])  # Show only first difference
             )
 
     return len(all_errors) == 0, all_errors
@@ -522,9 +515,7 @@ class AutomaticEquivalenceTester:
 
             # Test observational equivalence
             all_passed, errors = test_all_refactored_functions(
-                original_code,
-                refactored_code,
-                proposal.description
+                original_code, refactored_code, proposal.description
             )
 
             if all_passed:
@@ -536,7 +527,9 @@ class AutomaticEquivalenceTester:
 
         return passed, failed, all_errors
 
-    def test_all_examples(self, examples_dir: str = "test_examples", verbose: bool = True) -> Dict[str, Any]:
+    def test_all_examples(
+        self, examples_dir: str = "test_examples", verbose: bool = True
+    ) -> Dict[str, Any]:
         """
         Test all example files automatically.
 
@@ -549,32 +542,35 @@ class AutomaticEquivalenceTester:
         """
         examples_path = Path(examples_dir)
         results = {
-            'total_files': 0,
-            'total_proposals_tested': 0,
-            'total_passed': 0,
-            'total_failed': 0,
-            'file_results': {}
+            "total_files": 0,
+            "total_proposals_tested": 0,
+            "total_passed": 0,
+            "total_failed": 0,
+            "file_results": {},
         }
 
-        all_files = [f for f in sorted(examples_path.glob('*.py'))
-                     if f.name != '__init__.py' and not f.name.startswith('.')]
+        all_files = [
+            f
+            for f in sorted(examples_path.glob("*.py"))
+            if f.name != "__init__.py" and not f.name.startswith(".")
+        ]
 
         for i, py_file in enumerate(all_files, 1):
-            results['total_files'] += 1
+            results["total_files"] += 1
 
             if verbose:
-                print(f"[{i}/{len(all_files)}] Testing {py_file.name}...", end=' ', flush=True)
+                print(f"[{i}/{len(all_files)}] Testing {py_file.name}...", end=" ", flush=True)
 
             passed, failed, errors = self.test_file(str(py_file))
 
-            results['total_proposals_tested'] += (passed + failed)
-            results['total_passed'] += passed
-            results['total_failed'] += failed
+            results["total_proposals_tested"] += passed + failed
+            results["total_passed"] += passed
+            results["total_failed"] += failed
 
-            results['file_results'][py_file.name] = {
-                'passed': passed,
-                'failed': failed,
-                'errors': errors
+            results["file_results"][py_file.name] = {
+                "passed": passed,
+                "failed": failed,
+                "errors": errors,
             }
 
             if verbose:

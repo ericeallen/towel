@@ -30,17 +30,19 @@ def make_defensive_generic_visit(visitor_class_name: str):
                 # ... handle Name nodes
                 return node
     """
+
     def generic_visit(self, node):
         """
         Fallback for unhandled nodes. In DEBUG mode, raises an error.
         In production, delegates to parent.
         """
         # Check if we're in debug mode
-        if os.getenv('DEBUG_AST_COVERAGE'):
+        if os.getenv("DEBUG_AST_COVERAGE"):
             # Get the list of visitor methods this class has
             visitor_methods = {
-                name[6:] for name in dir(self)
-                if name.startswith('visit_') and callable(getattr(self, name))
+                name[6:]
+                for name in dir(self)
+                if name.startswith("visit_") and callable(getattr(self, name))
             }
 
             node_type = node.__class__.__name__

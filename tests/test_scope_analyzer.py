@@ -30,9 +30,9 @@ def foo(a, b, /, c):
         self.assertIsNotNone(func_scope)
 
         # Position-only args should be bound
-        self.assertIn('a', func_scope.bindings)
-        self.assertIn('b', func_scope.bindings)
-        self.assertIn('c', func_scope.bindings)
+        self.assertIn("a", func_scope.bindings)
+        self.assertIn("b", func_scope.bindings)
+        self.assertIn("c", func_scope.bindings)
 
     def test_keyword_only_args(self):
         """Test that keyword-only arguments are properly bound."""
@@ -48,9 +48,9 @@ def foo(a, *, b, c=10):
         self.assertIsNotNone(func_scope)
 
         # Keyword-only args should be bound
-        self.assertIn('a', func_scope.bindings)
-        self.assertIn('b', func_scope.bindings)
-        self.assertIn('c', func_scope.bindings)
+        self.assertIn("a", func_scope.bindings)
+        self.assertIn("b", func_scope.bindings)
+        self.assertIn("c", func_scope.bindings)
 
     def test_vararg_and_kwarg(self):
         """Test that *args and **kwargs are properly bound."""
@@ -66,9 +66,9 @@ def foo(a, *args, **kwargs):
         self.assertIsNotNone(func_scope)
 
         # *args and **kwargs should be bound
-        self.assertIn('a', func_scope.bindings)
-        self.assertIn('args', func_scope.bindings)
-        self.assertIn('kwargs', func_scope.bindings)
+        self.assertIn("a", func_scope.bindings)
+        self.assertIn("args", func_scope.bindings)
+        self.assertIn("kwargs", func_scope.bindings)
 
     def test_async_function(self):
         """Test that async functions are properly analyzed."""
@@ -81,15 +81,15 @@ async def fetch(url):
         scope = self.analyzer.analyze(tree)
 
         # Async function should be bound in module scope
-        self.assertIn('fetch', scope.bindings)
+        self.assertIn("fetch", scope.bindings)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
 
         # Parameters and local vars should be bound in function scope
-        self.assertIn('url', func_scope.bindings)
-        self.assertIn('data', func_scope.bindings)
+        self.assertIn("url", func_scope.bindings)
+        self.assertIn("data", func_scope.bindings)
 
     def test_annotated_assignment_with_value(self):
         """Test that annotated assignments with values are properly bound."""
@@ -107,8 +107,8 @@ def foo():
         self.assertIsNotNone(func_scope)
 
         # Annotated variables should be bound
-        self.assertIn('x', func_scope.bindings)
-        self.assertIn('y', func_scope.bindings)
+        self.assertIn("x", func_scope.bindings)
+        self.assertIn("y", func_scope.bindings)
 
     def test_if_else_branches(self):
         """Test that else branches are properly visited."""
@@ -128,8 +128,8 @@ def foo(x):
         self.assertIsNotNone(func_scope)
 
         # Variables in both branches should be bound
-        self.assertIn('y', func_scope.bindings)
-        self.assertIn('z', func_scope.bindings)
+        self.assertIn("y", func_scope.bindings)
+        self.assertIn("z", func_scope.bindings)
 
     def test_get_binding_for_name(self):
         """Test get_binding_for_name method."""
@@ -172,8 +172,8 @@ def foo(items):
         self.assertIsNotNone(func_scope)
 
         # 'result' should be bound, but not 'x' (it's local to comprehension)
-        self.assertIn('result', func_scope.bindings)
-        self.assertIn('items', func_scope.bindings)
+        self.assertIn("result", func_scope.bindings)
+        self.assertIn("items", func_scope.bindings)
 
     def test_all_arg_types_combined(self):
         """Test function with all argument types combined."""
@@ -189,9 +189,8 @@ def complex_func(a, b, /, c, d=10, *args, e, f=20, **kwargs):
         self.assertIsNotNone(func_scope)
 
         # All argument types should be bound
-        for arg_name in ['a', 'b', 'c', 'd', 'args', 'e', 'f', 'kwargs']:
-            self.assertIn(arg_name, func_scope.bindings,
-                         f"Argument '{arg_name}' should be bound")
+        for arg_name in ["a", "b", "c", "d", "args", "e", "f", "kwargs"]:
+            self.assertIn(arg_name, func_scope.bindings, f"Argument '{arg_name}' should be bound")
 
     def test_for_else_clause(self):
         """Test that for-else clauses are properly visited."""
@@ -213,9 +212,9 @@ def search(items, target):
         self.assertIsNotNone(func_scope)
 
         # Variables in both for body and else clause should be bound
-        self.assertIn('item', func_scope.bindings)
-        self.assertIn('found', func_scope.bindings)
+        self.assertIn("item", func_scope.bindings)
+        self.assertIn("found", func_scope.bindings)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

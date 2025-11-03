@@ -270,5 +270,5 @@ subset = data[2:6]
         self.assertEqual(len(result.param_expressions), 0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
