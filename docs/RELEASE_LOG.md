@@ -1,27 +1,18 @@
 ## 2025-11-03
 
 - Version: 0.5.4
-- Commit: aafd6f4db05716efea12b9c5a7f5cce9c687fe07
+- Commit: 91c89a309ef077a88af3f2a519e303a39f50524d
 - Summary:
   - Summary of changes here.
 - Status: All tests green
-  - Unit/integration tests: 0 tests OK (0 skipped)
+  - Unit/integration tests: 491 tests OK (0 skipped)
   - Observational equivalence: 116/116 proposals passed (100%)
-  - Cross-file observational equivalence: Found
-Found
-Found
-3 project(s), Python
-Python
-Python
-3/3
-2
-2
-3 proposals passed (0%)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
 
 ---
 
 Notes:
-- To revert to this exact state: check out commit `aafd6f4db05716efea12b9c5a7f5cce9c687fe07` on branch `main`.
+- To revert to this exact state: check out commit `91c89a309ef077a88af3f2a519e303a39f50524d` on branch `main`.
 - Changes were pushed to origin/main on 2025-11-03.
 
 # Release Log

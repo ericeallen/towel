@@ -166,44 +166,49 @@ release VERSION:
         rm -f "$TEST_OUT"
         exit 4
     fi
-    # Parse unit test count and skipped
-    UNIT_COUNT=$(grep -Eo 'Ran [0-9]+ tests' "$TEST_OUT" | tail -n1 | grep -Eo '[0-9]+') || UNIT_COUNT=0
-    if grep -q "OK (skipped=" "$TEST_OUT"; then
-        SKIPPED=$(grep -Eo 'OK \(skipped=[0-9]+' "$TEST_OUT" | tail -n1 | grep -Eo '[0-9]+')
-    else
-        SKIPPED=0
-    fi
+    # Parse unit test count and skipped robustly
+    UNIT_COUNT=$(awk '/^Ran [0-9]+ tests/ {n=$2} END {if (n=="" ) n=0; print n+0}' "$TEST_OUT")
+    SKIPPED=$(awk 'match($0,/OK \(skipped=([0-9]+)/,m){s=m[1]} END{if (s=="") s=0; print s+0}' "$TEST_OUT")
     rm -f "$TEST_OUT"
 
     echo "Computing observational equivalence statistics..."
-    # Single-file equivalence counts
+    # Single-file equivalence counts (suppress any internal prints)
     SF_STATS=$(python - <<-'PY'
+    import contextlib, io
     from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
     from src.towel.unification.refactor_engine import UnificationRefactorEngine
     engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
     tester = AutomaticEquivalenceTester(engine)
-    res = tester.test_all_examples('test_examples', verbose=False)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        res = tester.test_all_examples('test_examples', verbose=False)
     print(res['total_proposals_tested'], res['total_passed'], res['total_failed'])
     PY
     )
-    SF_TOTAL=$(echo "$SF_STATS" | awk '{print $1}')
-    SF_PASSED=$(echo "$SF_STATS" | awk '{print $2}')
-    SF_FAILED=$(echo "$SF_STATS" | awk '{print $3}')
+    # Extract strictly numeric fields from the final line
+    SF_TOTAL=$(echo "$SF_STATS" | tail -n1 | awk '{print $1+0}')
+    SF_PASSED=$(echo "$SF_STATS" | tail -n1 | awk '{print $2+0}')
+    SF_FAILED=$(echo "$SF_STATS" | tail -n1 | awk '{print $3+0}')
+    SF_PCT=$(awk -v p=${SF_PASSED} -v t=${SF_TOTAL} 'BEGIN{if (t>0) printf "%.0f", (100*p/t); else print 0}')
 
-    # Cross-file equivalence counts
+    # Cross-file equivalence counts (suppress any internal prints)
     CF_STATS=$(python - <<-'PY'
+    import contextlib, io
     from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
     from src.towel.unification.refactor_engine import UnificationRefactorEngine
     engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
     tester = CrossFileEquivalenceTester(engine)
-    res = tester.test_all_projects('test_examples_crossfile', verbose=False)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        res = tester.test_all_projects('test_examples_crossfile', verbose=False)
     print(res['total_projects'], res['total_proposals_tested'], res['total_passed'], res['total_failed'])
     PY
     )
-    CF_PROJECTS=$(echo "$CF_STATS" | awk '{print $1}')
-    CF_TOTAL=$(echo "$CF_STATS" | awk '{print $2}')
-    CF_PASSED=$(echo "$CF_STATS" | awk '{print $3}')
-    CF_FAILED=$(echo "$CF_STATS" | awk '{print $4}')
+    CF_PROJECTS=$(echo "$CF_STATS" | tail -n1 | awk '{print $1+0}')
+    CF_TOTAL=$(echo "$CF_STATS" | tail -n1 | awk '{print $2+0}')
+    CF_PASSED=$(echo "$CF_STATS" | tail -n1 | awk '{print $3+0}')
+    CF_FAILED=$(echo "$CF_STATS" | tail -n1 | awk '{print $4+0}')
+    CF_PCT=$(awk -v p=${CF_PASSED} -v t=${CF_TOTAL} 'BEGIN{if (t>0) printf "%.0f", (100*p/t); else print 0}')
 
     # Auto-stage any generated artifacts from checks/tests
     echo "Auto-staging generated artifacts from checks/tests..."
@@ -214,9 +219,6 @@ release VERSION:
     git add -A
     git commit -m "chore: bump version to ${V} and stage release artifacts"
 
-    # Capture commit hash
-    COMMIT=$(git rev-parse HEAD)
-
     # Prepend release log entry (template)
     DATE=$(date +%F)
     LOG=docs/RELEASE_LOG.md
@@ -225,18 +227,18 @@ release VERSION:
         echo "## ${DATE}"
         echo ""
         echo "- Version: ${V}"
-        echo "- Commit: ${COMMIT}"
+        echo "- Commit: $(git rev-parse HEAD)"
         echo "- Summary:"
         echo "  - Summary of changes here."
         echo "- Status: All tests green"
         echo "  - Unit/integration tests: ${UNIT_COUNT} tests OK (${SKIPPED} skipped)"
-        echo "  - Observational equivalence: ${SF_PASSED}/${SF_TOTAL} proposals passed ($([[ ${SF_TOTAL} -gt 0 ]] && awk -v p=${SF_PASSED} -v t=${SF_TOTAL} 'BEGIN{printf "%.0f", (100*p/t)}' || echo 0)%)"
-        echo "  - Cross-file observational equivalence: ${CF_PROJECTS} project(s), ${CF_PASSED}/${CF_TOTAL} proposals passed ($([[ ${CF_TOTAL} -gt 0 ]] && awk -v p=${CF_PASSED} -v t=${CF_TOTAL} 'BEGIN{printf "%.0f", (100*p/t)}' || echo 0)%)"
+        echo "  - Observational equivalence: ${SF_PASSED}/${SF_TOTAL} proposals passed (${SF_PCT}%)"
+        echo "  - Cross-file observational equivalence: ${CF_PROJECTS} project(s), ${CF_PASSED}/${CF_TOTAL} proposals passed (${CF_PCT}%)"
         echo ""
         echo "---"
         echo ""
         echo "Notes:"
-        echo "- To revert to this exact state: check out commit \`${COMMIT}\` on branch \`main\`."
+        echo "- To revert to this exact state: check out commit \"$(git rev-parse HEAD)\" on branch \"main\"."
         echo "- Changes were pushed to origin/main on ${DATE}."
         echo ""
         sed -n '1,99999p' "${LOG}"
