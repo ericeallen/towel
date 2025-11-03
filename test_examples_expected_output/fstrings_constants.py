@@ -28,40 +28,32 @@ def log_admin(admin_id, name):
 
 def format_number_a(value):
     """F-string with formatting."""
-    precision = 2
-    result = f"Value: {value:.{precision}f}"
-    return result
+    return __extracted_func_508(value)
 
 
 def format_number_b(value):
     """F-string with formatting (same literal - should unify)."""
-    precision = 2
-    result = f"Value: {value:.{precision}f}"
-    return result
+    return __extracted_func_508(value)
 
 
 def const_parameterization_a(item):
     """Test constant parameterization."""
-    return __extracted_func_453(100, 2, item)
+    return __extracted_func_504(100, 2, item)
 
 
 def const_parameterization_b(item):
     """Test constant parameterization (different constants)."""
-    return __extracted_func_453(200, 3, item)
+    return __extracted_func_504(200, 3, item)
 
 
 def string_const_a(name):
     """String constants."""
-    prefix = "Mr. "
-    suffix = " Esq."
-    return prefix + name + suffix
+    return __extracted_func_510('Mr. ', ' Esq.', name)
 
 
 def string_const_b(name):
     """String constants (different values)."""
-    prefix = "Dr. "
-    suffix = " PhD"
-    return prefix + name + suffix
+    return __extracted_func_510('Dr. ', ' PhD', name)
 
 
 def mixed_fstring_a(x, y):
@@ -76,11 +68,27 @@ def mixed_fstring_b(x, y):
     return result
 
 
-def __extracted_func_453(__param_0, __param_1, item):
+def __extracted_func_504(__param_0, __param_1, item):
     threshold = __param_0
     multiplier = __param_1
     if item > threshold:
         return item * multiplier
     return 0
+
+
+def __extracted_func_508(value):
+    precision = 2
+    result = f'Value: {value:.{precision}f}'
+    return result
+
+
+def __extracted_func_510(__param_0, __param_1, name):
+    prefix = __param_0
+    suffix = __param_1
+    return prefix + name + suffix
+
+
+
+
 
 

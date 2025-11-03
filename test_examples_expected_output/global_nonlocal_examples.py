@@ -33,22 +33,22 @@ def test_global_modify_b():
 
 def test_nonlocal_a():
     """Function using nonlocal."""
-    return __extracted_func_939()
+    return __extracted_func_1236()
 
 
 def test_nonlocal_b():
     """Duplicate with nonlocal."""
-    return __extracted_func_939()
+    return __extracted_func_1236()
 
 
 def test_nested_nonlocal_a():
     """Nested function with nonlocal."""
-    return __extracted_func_935()
+    return __extracted_func_1231()
 
 
 def test_nested_nonlocal_b():
     """Duplicate nested nonlocal."""
-    return __extracted_func_935()
+    return __extracted_func_1231()
 
 
 def test_global_and_local_a(items):
@@ -75,7 +75,7 @@ def test_global_and_local_b(items):
     return (counter, local_sum)
 
 
-def __extracted_func_935():
+def __extracted_func_1231():
 
     def outer():
         count = 0
@@ -95,7 +95,7 @@ def __extracted_func_935():
     return g()
 
 
-def __extracted_func_939():
+def __extracted_func_1236():
     total = 0
 
     def increment(value):

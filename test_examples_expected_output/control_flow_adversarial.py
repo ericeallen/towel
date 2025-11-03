@@ -8,75 +8,75 @@ when extracting code with early exits.
 
 def find_first_even_a(numbers):
     """Returns first even number, or None."""
-    return __extracted_func_145(numbers)
+    return __extracted_func_169(numbers)
 
 
 def find_first_even_b(values):
     """Similar pattern with early break."""
-    return __extracted_func_145(values)
+    return __extracted_func_169(values)
 
 
 def sum_until_zero_a(numbers):
     """Sum numbers until encountering zero."""
-    return __extracted_func_154(numbers)
+    return __extracted_func_178(numbers)
 
 
 def sum_until_zero_b(values):
     """Similar pattern with early break."""
-    return __extracted_func_154(values)
+    return __extracted_func_178(values)
 
 
 def skip_negatives_a(numbers):
     """Sum only non-negative numbers using continue."""
-    return __extracted_func_161(numbers)
+    return __extracted_func_185(numbers)
 
 
 def skip_negatives_b(values):
     """Similar pattern with continue."""
-    return __extracted_func_161(values)
+    return __extracted_func_185(values)
 
 
 def process_until_sentinel_a(items, sentinel):
     """Process items until sentinel is found."""
-    return __extracted_func_166(items, sentinel)
+    return __extracted_func_190(items, sentinel)
 
 
 def process_until_sentinel_b(values, stop_value):
     """Similar pattern with early return."""
-    return __extracted_func_166(values, stop_value)
+    return __extracted_func_190(values, stop_value)
 
 
 def nested_break_a(matrix):
     """Find first negative in 2D matrix."""
-    return __extracted_func_106(matrix)
+    return __extracted_func_130(matrix)
 
 
 def nested_break_b(grid):
     """Similar nested break pattern."""
-    return __extracted_func_106(grid)
+    return __extracted_func_130(grid)
 
 
 def while_with_break_a(n):
     """While loop with break condition."""
-    return __extracted_func_124(n)
+    return __extracted_func_148(n)
 
 
 def while_with_break_b(limit):
     """Similar while loop with break."""
-    return __extracted_func_124(limit)
+    return __extracted_func_148(limit)
 
 
 def continue_and_accumulate_a(items):
     """Skip some items and accumulate others."""
-    return __extracted_func_140(items)
+    return __extracted_func_164(items)
 
 
 def continue_and_accumulate_b(values):
     """Similar skip pattern."""
-    return __extracted_func_140(values)
+    return __extracted_func_164(values)
 
 
-def __extracted_func_106(__param_0):
+def __extracted_func_130(__param_0):
     found = None
     for row in __param_0:
         for val in row:
@@ -88,7 +88,7 @@ def __extracted_func_106(__param_0):
     return found
 
 
-def __extracted_func_124(__param_0):
+def __extracted_func_148(__param_0):
     count = 0
     total = 0
     while count < __param_0:
@@ -99,7 +99,7 @@ def __extracted_func_124(__param_0):
     return total
 
 
-def __extracted_func_140(__param_0):
+def __extracted_func_164(__param_0):
     result = []
     for item in __param_0:
         if item % 3 == 0:
@@ -109,7 +109,7 @@ def __extracted_func_140(__param_0):
     return result
 
 
-def __extracted_func_145(__param_0):
+def __extracted_func_169(__param_0):
     result = None
     for num in __param_0:
         if num % 2 == 0:
@@ -118,7 +118,7 @@ def __extracted_func_145(__param_0):
     return result
 
 
-def __extracted_func_154(__param_0):
+def __extracted_func_178(__param_0):
     total = 0
     for num in __param_0:
         if num == 0:
@@ -127,7 +127,7 @@ def __extracted_func_154(__param_0):
     return total
 
 
-def __extracted_func_161(__param_0):
+def __extracted_func_185(__param_0):
     total = 0
     for num in __param_0:
         if num < 0:
@@ -136,7 +136,7 @@ def __extracted_func_161(__param_0):
     return total
 
 
-def __extracted_func_166(__param_0, __param_1):
+def __extracted_func_190(__param_0, __param_1):
     results = []
     for item in __param_0:
         if item == __param_1:

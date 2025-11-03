@@ -34,6 +34,9 @@ class HygienicExtractor:
         enclosing_names: Set[str],
         is_value_producing: bool,
         return_variables: Optional[List[str]] = None,
+        *,
+        global_decls: Optional[Set[str]] = None,
+        nonlocal_decls: Optional[Set[str]] = None,
         function_name: str = "extracted_function",
     ) -> Tuple[ast.FunctionDef, Dict[str, int]]:
         """
@@ -107,6 +110,13 @@ class HygienicExtractor:
             if hasattr(substitution, "params_used_as_callee"):
                 substitution.params_used_as_callee.update(finder.found)
 
+        # Optionally inject global/nonlocal declarations at the top of the extracted function
+        injected_preamble: List[ast.stmt] = []
+        if global_decls:
+            injected_preamble.append(ast.Global(names=sorted(global_decls)))
+        if nonlocal_decls:
+            injected_preamble.append(ast.Nonlocal(names=sorted(nonlocal_decls)))
+
         # Add return statement for value-producing extraction
         if return_variables:
             # Prepare the return expression (expr type)
@@ -134,10 +144,13 @@ class HygienicExtractor:
         )
 
         # Create function definition
+        # Prepend any injected declarations before the transformed body
+        final_body: List[ast.stmt] = (injected_preamble + body) if injected_preamble else body
+
         func_def = ast.FunctionDef(
             name=function_name,
             args=args,
-            body=body if body else [ast.Pass()],
+            body=final_body if final_body else [ast.Pass()],
             decorator_list=[],
             returns=None,
         )

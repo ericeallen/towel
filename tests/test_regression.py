@@ -72,7 +72,7 @@ class TestSingleFileRegression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test fixtures."""
-        cls.engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+        cls.engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
         cls.tester = AutomaticEquivalenceTester(cls.engine)
         cls.test_examples = project_root / "test_examples"
         cls.expected_output = project_root / "test_examples_expected_output"
@@ -207,7 +207,7 @@ class TestCrossFileRegression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test fixtures."""
-        cls.engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+        cls.engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
         cls.tester = CrossFileEquivalenceTester(cls.engine)
         cls.crossfile_examples = project_root / "test_examples_crossfile"
         cls.expected_output = project_root / "test_examples_crossfile_expected_output"

@@ -10,32 +10,32 @@ Tests that Towel correctly handles free variable analysis for:
 
 def test_walrus_basic_a(items):
     """Walrus operator in if condition."""
-    return __extracted_func_52(items)
+    return __extracted_func_63(items)
 
 
 def test_walrus_basic_b(items):
     """Duplicate with walrus operator."""
-    return __extracted_func_52(items)
+    return __extracted_func_63(items)
 
 
 def test_with_statement_a(filename):
     """With statement binding."""
-    return __extracted_func_61(filename)
+    return __extracted_func_75(filename)
 
 
 def test_with_statement_b(filename):
     """Duplicate with statement."""
-    return __extracted_func_61(filename)
+    return __extracted_func_75(filename)
 
 
 def test_with_multiple_a(file1, file2):
     """Multiple context managers."""
-    return __extracted_func_67(file1, file2)
+    return __extracted_func_83(file1, file2)
 
 
 def test_with_multiple_b(file1, file2):
     """Duplicate multiple context managers."""
-    return __extracted_func_67(file1, file2)
+    return __extracted_func_83(file1, file2)
 
 
 def test_walrus_in_comprehension_a(items):
@@ -53,35 +53,35 @@ def test_walrus_in_comprehension_b(items):
 
 def test_nested_with_a(outer_file, inner_file):
     """Nested with statements."""
-    return __extracted_func_31(inner_file, outer_file)
+    return __extracted_func_38(inner_file, outer_file)
 
 
 def test_nested_with_b(outer_file, inner_file):
     """Duplicate nested with statements."""
-    return __extracted_func_31(inner_file, outer_file)
+    return __extracted_func_38(inner_file, outer_file)
 
 
 def test_exception_handler_binding_a(data):
     """Exception variable binding."""
-    return __extracted_func_13(data)
+    return __extracted_func_17(data)
 
 
 def test_exception_handler_binding_b(data):
     """Duplicate exception variable binding."""
-    return __extracted_func_13(data)
+    return __extracted_func_17(data)
 
 
 def test_walrus_while_a(items):
     """Walrus in while loop condition."""
-    return __extracted_func_48(items)
+    return __extracted_func_59(items)
 
 
 def test_walrus_while_b(items):
     """Duplicate walrus in while loop."""
-    return __extracted_func_48(items)
+    return __extracted_func_59(items)
 
 
-def __extracted_func_13(data):
+def __extracted_func_17(data):
     errors = []
     for item in data:
         try:
@@ -91,7 +91,7 @@ def __extracted_func_13(data):
     return errors
 
 
-def __extracted_func_31(inner_file, outer_file):
+def __extracted_func_38(inner_file, outer_file):
     result = []
     with open(outer_file) as f1:
         result.append(f1.readline())
@@ -100,7 +100,7 @@ def __extracted_func_31(inner_file, outer_file):
     return result
 
 
-def __extracted_func_48(items):
+def __extracted_func_59(items):
     results = []
     idx = 0
     while (item := (items[idx] if idx < len(items) else None)) is not None:
@@ -109,7 +109,7 @@ def __extracted_func_48(items):
     return results
 
 
-def __extracted_func_52(items):
+def __extracted_func_63(items):
     result = []
     if (n := len(items)) > 0:
         result.append(n)
@@ -117,7 +117,7 @@ def __extracted_func_52(items):
     return result
 
 
-def __extracted_func_61(filename):
+def __extracted_func_75(filename):
     lines = []
     with open(filename) as f:
         for line in f:
@@ -125,7 +125,7 @@ def __extracted_func_61(filename):
     return lines
 
 
-def __extracted_func_67(file1, file2):
+def __extracted_func_83(file1, file2):
     data = []
     with open(file1) as f1, open(file2) as f2:
         data.append(f1.read())
