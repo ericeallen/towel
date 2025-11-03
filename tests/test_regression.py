@@ -138,7 +138,9 @@ class TestSingleFileRegression(unittest.TestCase):
         total_files = len(files_sorted)
 
         for idx, py_file in enumerate(files_sorted, 1):
-            print(f"[Stability {idx}/{total_files}] Comparing {py_file.name}...", end=" ", flush=True)
+            print(
+                f"[Stability {idx}/{total_files}] Comparing {py_file.name}...", end=" ", flush=True
+            )
             # Check if baseline exists for this file
             baseline_file = self.expected_output / py_file.name
 
