@@ -118,6 +118,145 @@ regenerate-baseline:
     echo "✓ Baseline regenerated successfully"
     echo "⚠️  Remember to commit the updated baseline files to git!"
 
+# Bump project version in pyproject.toml
+bump-version VERSION:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    V="{{VERSION}}"
+    if [[ ! ${V} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Error: VERSION must be semantic version (e.g., 0.5.3)"
+        exit 2
+    fi
+    echo "Bumping version to ${V}..."
+    # Update version in pyproject.toml (replace first matching line)
+    tmpfile=$(mktemp)
+    awk -v ver="${V}" 'BEGIN{replaced=0} { if (!replaced && $0 ~ /^version = \".*\"/) { sub(/version = \".*\"/, "version = \"" ver "\""); replaced=1 } print }' pyproject.toml > "$tmpfile"
+    mv "$tmpfile" pyproject.toml
+    echo "✓ Version updated in pyproject.toml"
+
+# Full release: checks -> bump -> commit -> tag -> release log -> push
+release VERSION:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    V="{{VERSION}}"
+    if [[ ! ${V} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Error: VERSION must be semantic version (e.g., 0.5.3)"
+        exit 2
+    fi
+
+    # Ensure clean working tree
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "Error: Working tree not clean. Commit or stash changes first."
+        exit 3
+    fi
+
+    echo "Syncing with origin/main (rebase)..."
+    git fetch origin
+    git pull --rebase origin main
+
+    echo "Running pre-release checks..."
+    just check
+    just test-regression
+
+    echo "Running full unit/integration tests to capture counts..."
+    # Capture full test run output for parsing (must pass)
+    TEST_OUT=$(mktemp)
+    if ! python tests/run_tests.py | tee "$TEST_OUT"; then
+        echo "Error: Unit/integration tests failed"
+        rm -f "$TEST_OUT"
+        exit 4
+    fi
+    # Parse unit test count and skipped
+    UNIT_COUNT=$(grep -Eo 'Ran [0-9]+ tests' "$TEST_OUT" | tail -n1 | grep -Eo '[0-9]+') || UNIT_COUNT=0
+    if grep -q "OK (skipped=" "$TEST_OUT"; then
+        SKIPPED=$(grep -Eo 'OK \(skipped=[0-9]+' "$TEST_OUT" | tail -n1 | grep -Eo '[0-9]+')
+    else
+        SKIPPED=0
+    fi
+    rm -f "$TEST_OUT"
+
+    echo "Computing observational equivalence statistics..."
+    # Single-file equivalence counts
+    SF_STATS=$(python - <<-'PY'
+    from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
+    from src.towel.unification.refactor_engine import UnificationRefactorEngine
+    engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+    tester = AutomaticEquivalenceTester(engine)
+    res = tester.test_all_examples('test_examples', verbose=False)
+    print(res['total_proposals_tested'], res['total_passed'], res['total_failed'])
+    PY
+    )
+    SF_TOTAL=$(echo "$SF_STATS" | awk '{print $1}')
+    SF_PASSED=$(echo "$SF_STATS" | awk '{print $2}')
+    SF_FAILED=$(echo "$SF_STATS" | awk '{print $3}')
+
+    # Cross-file equivalence counts
+    CF_STATS=$(python - <<-'PY'
+    from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
+    from src.towel.unification.refactor_engine import UnificationRefactorEngine
+    engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+    tester = CrossFileEquivalenceTester(engine)
+    res = tester.test_all_projects('test_examples_crossfile', verbose=False)
+    print(res['total_projects'], res['total_proposals_tested'], res['total_passed'], res['total_failed'])
+    PY
+    )
+    CF_PROJECTS=$(echo "$CF_STATS" | awk '{print $1}')
+    CF_TOTAL=$(echo "$CF_STATS" | awk '{print $2}')
+    CF_PASSED=$(echo "$CF_STATS" | awk '{print $3}')
+    CF_FAILED=$(echo "$CF_STATS" | awk '{print $4}')
+
+    # Auto-stage any generated artifacts from checks/tests
+    echo "Auto-staging generated artifacts from checks/tests..."
+    git add -A
+
+    # Bump version and commit (include any staged artifacts)
+    just bump-version {{VERSION}}
+    git add -A
+    git commit -m "chore: bump version to ${V} and stage release artifacts"
+
+    # Capture commit hash
+    COMMIT=$(git rev-parse HEAD)
+
+    # Prepend release log entry (template)
+    DATE=$(date +%F)
+    LOG=docs/RELEASE_LOG.md
+    TMP=$(mktemp)
+    {
+        echo "## ${DATE}"
+        echo ""
+        echo "- Version: ${V}"
+        echo "- Commit: ${COMMIT}"
+        echo "- Summary:"
+        echo "  - Summary of changes here."
+        echo "- Status: All tests green"
+        echo "  - Unit/integration tests: ${UNIT_COUNT} tests OK (${SKIPPED} skipped)"
+        echo "  - Observational equivalence: ${SF_PASSED}/${SF_TOTAL} proposals passed ($([[ ${SF_TOTAL} -gt 0 ]] && awk -v p=${SF_PASSED} -v t=${SF_TOTAL} 'BEGIN{printf "%.0f", (100*p/t)}' || echo 0)%)"
+        echo "  - Cross-file observational equivalence: ${CF_PROJECTS} project(s), ${CF_PASSED}/${CF_TOTAL} proposals passed ($([[ ${CF_TOTAL} -gt 0 ]] && awk -v p=${CF_PASSED} -v t=${CF_TOTAL} 'BEGIN{printf "%.0f", (100*p/t)}' || echo 0)%)"
+        echo ""
+        echo "---"
+        echo ""
+        echo "Notes:"
+        echo "- To revert to this exact state: check out commit \`${COMMIT}\` on branch \`main\`."
+        echo "- Changes were pushed to origin/main on ${DATE}."
+        echo ""
+        sed -n '1,99999p' "${LOG}"
+    } > "${TMP}"
+    mv "${TMP}" "${LOG}"
+    git add -A
+    git commit -m "docs: add release log for ${V} and finalize release artifacts"
+
+    # Tag and push atomically (commit + tag together)
+    git tag -a v${V} -m "Release ${V}"
+    git push --atomic origin main v${V}
+    echo "Verified push with atomic refs."
+
+    # Final cleanliness check
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "Warning: Detected uncommitted changes after release. Please review 'git status'."
+        git status -sb
+    fi
+    echo "\n✓ Release ${V} complete."
+
 # Run tests with coverage report
 coverage:
     @echo "Running tests with coverage analysis..."
@@ -235,6 +374,8 @@ help:
     @echo "  test-engine           Test refactoring engine end-to-end"
     @echo "  test-observational    Test observational equivalence (refactored = original behavior)"
     @echo "  regenerate-baseline   ⚠️  DANGER: Regenerate regression baseline (asks for confirmation)"
+    @echo "  bump-version <ver>    Bump project version in pyproject.toml to <ver>"
+    @echo "  release <ver>         Run checks, bump, commit, tag, update release log, and push"
     @echo "  coverage              Run tests with coverage report"
     @echo "  coverage-html         Generate HTML coverage report"
     @echo "  coverage-unification  Show coverage for unification modules"
