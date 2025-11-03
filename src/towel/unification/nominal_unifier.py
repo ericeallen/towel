@@ -23,7 +23,7 @@ import ast
 from typing import Dict, List, Set, Optional, Tuple
 from dataclasses import dataclass, field
 
-from .binding_detector import detect_bindings, BindingKind
+from .binding_detector import detect_bindings
 
 
 @dataclass
@@ -40,9 +40,12 @@ class VariableCorrespondence:
         block_to_original = {0: 'user', 1: 'admin'}  # Original names per block
         original_to_canonical = {('user', 0): 'user', ('admin', 1): 'user'}
     """
+
     canonical_name: str  # The canonical/template variable name
     block_to_original: Dict[int, str] = field(default_factory=dict)  # block_idx → original name
-    original_to_canonical: Dict[Tuple[str, int], str] = field(default_factory=dict)  # (name, block_idx) → canonical
+    original_to_canonical: Dict[Tuple[str, int], str] = field(
+        default_factory=dict
+    )  # (name, block_idx) → canonical
 
 
 class NominalUnificationContext:
@@ -80,7 +83,9 @@ class NominalUnificationContext:
             original_name: The actual variable name in this block
         """
         if canonical_name not in self.correspondences:
-            self.correspondences[canonical_name] = VariableCorrespondence(canonical_name=canonical_name)
+            self.correspondences[canonical_name] = VariableCorrespondence(
+                canonical_name=canonical_name
+            )
 
         corr = self.correspondences[canonical_name]
         corr.block_to_original[block_idx] = original_name
@@ -173,13 +178,7 @@ class NominalVariableMatcher:
     def __init__(self, context: NominalUnificationContext):
         self.context = context
 
-    def try_match_variables(
-        self,
-        var1: str,
-        var2: str,
-        block_idx1: int,
-        block_idx2: int
-    ) -> bool:
+    def try_match_variables(self, var1: str, var2: str, block_idx1: int, block_idx2: int) -> bool:
         """
         Try to match two variables from different blocks.
 
@@ -230,11 +229,7 @@ class NominalVariableMatcher:
         return True
 
     def match_name_nodes(
-        self,
-        node1: ast.Name,
-        node2: ast.Name,
-        block_idx1: int,
-        block_idx2: int
+        self, node1: ast.Name, node2: ast.Name, block_idx1: int, block_idx2: int
     ) -> bool:
         """
         Try to match two Name nodes from different blocks.
@@ -274,9 +269,7 @@ def analyze_nominal_patterns(blocks: List[List[ast.AST]]) -> NominalUnificationC
 
 
 def build_hygienic_renames_from_unification(
-    blocks: List[List[ast.AST]],
-    canonical_block: List[ast.AST],
-    canonical_idx: int = 0
+    blocks: List[List[ast.AST]], canonical_block: List[ast.AST], canonical_idx: int = 0
 ) -> List[Dict[str, str]]:
     """
     Build hygienic_renames mapping by comparing blocks to a canonical template.

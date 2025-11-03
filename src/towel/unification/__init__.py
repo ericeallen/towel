@@ -7,4 +7,4 @@ duplicate code using unification from automated theorem proving.
 
 from .refactor_engine import UnificationRefactorEngine
 
-__all__ = ['UnificationRefactorEngine']
+__all__ = ["UnificationRefactorEngine"]

@@ -12,7 +12,7 @@ from src.towel.unification.orphan_detector import (
     _apply_visitor_to_nodes,
     get_bound_variables,
     get_used_variables,
-    has_orphaned_variables
+    has_orphaned_variables,
 )
 
 
@@ -21,6 +21,7 @@ class TestApplyVisitorToNodes(unittest.TestCase):
 
     def test_applies_visitor_to_all_nodes(self):
         """Test that visitor is applied to all nodes."""
+
         class CountingVisitor(ast.NodeVisitor):
             def __init__(self):
                 self.count = 0
@@ -44,6 +45,7 @@ z = 3
 
     def test_returns_result_set(self):
         """Test that the result set is returned."""
+
         class NameCollector(ast.NodeVisitor):
             def __init__(self):
                 self.names = set()
@@ -62,6 +64,7 @@ z = 3
 
     def test_empty_node_list(self):
         """Test with empty node list."""
+
         class DummyVisitor(ast.NodeVisitor):
             pass
 
@@ -83,7 +86,7 @@ class TestGetBoundVariablesBasic(unittest.TestCase):
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('x', result, "Should find x as bound variable")
+        self.assertIn("x", result, "Should find x as bound variable")
         self.assertEqual(len(result), 1, "Should have exactly one binding")
 
     def test_multiple_assignments(self):
@@ -97,7 +100,7 @@ z = 3
 
         result = get_bound_variables(tree.body)
 
-        self.assertEqual(result, {'x', 'y', 'z'}, "Should find all bound variables")
+        self.assertEqual(result, {"x", "y", "z"}, "Should find all bound variables")
 
     def test_multiple_targets_in_one_assignment(self):
         """Test assignment with multiple targets."""
@@ -106,8 +109,8 @@ z = 3
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('x', result, "Should find x")
-        self.assertIn('y', result, "Should find y")
+        self.assertIn("x", result, "Should find x")
+        self.assertIn("y", result, "Should find y")
 
     def test_tuple_unpacking(self):
         """Test tuple unpacking assignment."""
@@ -116,7 +119,7 @@ z = 3
 
         result = get_bound_variables(tree.body)
 
-        self.assertEqual(result, {'x', 'y'}, "Should find all unpacked variables")
+        self.assertEqual(result, {"x", "y"}, "Should find all unpacked variables")
 
     def test_nested_tuple_unpacking(self):
         """Test nested tuple unpacking."""
@@ -125,7 +128,7 @@ z = 3
 
         result = get_bound_variables(tree.body)
 
-        self.assertEqual(result, {'x', 'y', 'z'}, "Should find all nested variables")
+        self.assertEqual(result, {"x", "y", "z"}, "Should find all nested variables")
 
     def test_starred_assignment(self):
         """Test starred assignment unpacking."""
@@ -134,7 +137,7 @@ z = 3
 
         result = get_bound_variables(tree.body)
 
-        self.assertEqual(result, {'x', 'y', 'z'}, "Should find all variables including starred")
+        self.assertEqual(result, {"x", "y", "z"}, "Should find all variables including starred")
 
 
 class TestGetBoundVariablesAdvanced(unittest.TestCase):
@@ -150,7 +153,7 @@ for i in range(10):
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('i', result, "Should find loop variable")
+        self.assertIn("i", result, "Should find loop variable")
 
     def test_for_loop_tuple_unpacking(self):
         """Test for loop with tuple unpacking."""
@@ -162,7 +165,7 @@ for x, y in pairs:
 
         result = get_bound_variables(tree.body)
 
-        self.assertEqual(result, {'x', 'y'}, "Should find all loop variables")
+        self.assertEqual(result, {"x", "y"}, "Should find all loop variables")
 
     def test_function_definition(self):
         """Test function definition creates binding."""
@@ -174,7 +177,7 @@ def foo():
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('foo', result, "Should find function name")
+        self.assertIn("foo", result, "Should find function name")
 
     def test_async_function_definition(self):
         """Test async function definition creates binding."""
@@ -186,7 +189,7 @@ async def foo():
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('foo', result, "Should find async function name")
+        self.assertIn("foo", result, "Should find async function name")
 
     def test_class_definition(self):
         """Test class definition creates binding."""
@@ -198,7 +201,7 @@ class MyClass:
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('MyClass', result, "Should find class name")
+        self.assertIn("MyClass", result, "Should find class name")
 
     def test_annotated_assignment(self):
         """Test annotated assignment."""
@@ -207,7 +210,7 @@ class MyClass:
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('x', result, "Should find annotated variable")
+        self.assertIn("x", result, "Should find annotated variable")
 
     def test_augmented_assignment(self):
         """Test augmented assignment."""
@@ -216,7 +219,7 @@ class MyClass:
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('x', result, "Should find augmented assignment target")
+        self.assertIn("x", result, "Should find augmented assignment target")
 
 
 class TestGetBoundVariablesComprehensions(unittest.TestCase):
@@ -229,8 +232,8 @@ class TestGetBoundVariablesComprehensions(unittest.TestCase):
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('result', result, "Should find result variable")
-        self.assertNotIn('x', result, "Should NOT find comprehension variable")
+        self.assertIn("result", result, "Should find result variable")
+        self.assertNotIn("x", result, "Should NOT find comprehension variable")
 
     def test_set_comprehension_not_bound(self):
         """Test that set comprehension variables are not collected."""
@@ -239,8 +242,8 @@ class TestGetBoundVariablesComprehensions(unittest.TestCase):
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('result', result)
-        self.assertNotIn('x', result, "Should NOT find set comp variable")
+        self.assertIn("result", result)
+        self.assertNotIn("x", result, "Should NOT find set comp variable")
 
     def test_dict_comprehension_not_bound(self):
         """Test that dict comprehension variables are not collected."""
@@ -249,8 +252,8 @@ class TestGetBoundVariablesComprehensions(unittest.TestCase):
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('result', result)
-        self.assertNotIn('x', result, "Should NOT find dict comp variable")
+        self.assertIn("result", result)
+        self.assertNotIn("x", result, "Should NOT find dict comp variable")
 
     def test_generator_expression_not_bound(self):
         """Test that generator expression variables are not collected."""
@@ -259,8 +262,8 @@ class TestGetBoundVariablesComprehensions(unittest.TestCase):
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('result', result)
-        self.assertNotIn('x', result, "Should NOT find generator variable")
+        self.assertIn("result", result)
+        self.assertNotIn("x", result, "Should NOT find generator variable")
 
 
 class TestGetBoundVariablesIgnoresNonBindings(unittest.TestCase):
@@ -273,7 +276,7 @@ class TestGetBoundVariablesIgnoresNonBindings(unittest.TestCase):
 
         result = get_bound_variables(tree.body)
 
-        self.assertNotIn('arr', result, "Subscript target should not create binding")
+        self.assertNotIn("arr", result, "Subscript target should not create binding")
         self.assertEqual(len(result), 0, "Should have no bindings")
 
     def test_ignores_attribute_targets(self):
@@ -283,7 +286,7 @@ class TestGetBoundVariablesIgnoresNonBindings(unittest.TestCase):
 
         result = get_bound_variables(tree.body)
 
-        self.assertNotIn('obj', result, "Attribute target should not create binding")
+        self.assertNotIn("obj", result, "Attribute target should not create binding")
         self.assertEqual(len(result), 0, "Should have no bindings")
 
     def test_nested_function_not_traversed(self):
@@ -296,8 +299,8 @@ def outer():
 
         result = get_bound_variables(tree.body)
 
-        self.assertIn('outer', result, "Should find outer function name")
-        self.assertNotIn('x', result, "Should NOT traverse into nested function")
+        self.assertIn("outer", result, "Should find outer function name")
+        self.assertNotIn("x", result, "Should NOT traverse into nested function")
 
 
 class TestGetUsedVariables(unittest.TestCase):
@@ -310,8 +313,8 @@ class TestGetUsedVariables(unittest.TestCase):
 
         result = get_used_variables(tree.body)
 
-        self.assertIn('x', result, "Should find used variable x")
-        self.assertNotIn('y', result, "Should not include assignment target")
+        self.assertIn("x", result, "Should find used variable x")
+        self.assertNotIn("y", result, "Should not include assignment target")
 
     def test_multiple_uses(self):
         """Test multiple variable uses."""
@@ -320,7 +323,7 @@ class TestGetUsedVariables(unittest.TestCase):
 
         result = get_used_variables(tree.body)
 
-        self.assertEqual(result, {'x', 'y', 'z'}, "Should find all used variables")
+        self.assertEqual(result, {"x", "y", "z"}, "Should find all used variables")
 
     def test_expression_usage(self):
         """Test variable usage in expressions."""
@@ -329,7 +332,7 @@ class TestGetUsedVariables(unittest.TestCase):
 
         result = get_used_variables(tree.body)
 
-        self.assertEqual(result, {'a', 'b', 'c'}, "Should find all expression variables")
+        self.assertEqual(result, {"a", "b", "c"}, "Should find all expression variables")
 
     def test_function_call_usage(self):
         """Test variable usage in function calls."""
@@ -338,9 +341,9 @@ class TestGetUsedVariables(unittest.TestCase):
 
         result = get_used_variables(tree.body)
 
-        self.assertIn('foo', result, "Should find function name")
-        self.assertIn('x', result, "Should find argument x")
-        self.assertIn('y', result, "Should find argument y")
+        self.assertIn("foo", result, "Should find function name")
+        self.assertIn("x", result, "Should find argument x")
+        self.assertIn("y", result, "Should find argument y")
 
     def test_no_store_context(self):
         """Test that Store context names are not collected."""
@@ -349,7 +352,7 @@ class TestGetUsedVariables(unittest.TestCase):
 
         result = get_used_variables(tree.body)
 
-        self.assertNotIn('x', result, "Should not collect Store context name")
+        self.assertNotIn("x", result, "Should not collect Store context name")
 
     def test_empty_code(self):
         """Test empty code block."""
@@ -389,7 +392,7 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
 
         self.assertTrue(has_orphans, "Should detect orphan")
-        self.assertIn('x', orphaned, "x should be orphaned")
+        self.assertIn("x", orphaned, "x should be orphaned")
 
     def test_no_orphan_when_rebound_in_remaining(self):
         """Test no orphan when variable is rebound in remaining code."""
@@ -405,7 +408,7 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
 
         self.assertFalse(has_orphans, "Should not have orphans when rebound")
-        self.assertNotIn('x', orphaned, "x should not be orphaned")
+        self.assertNotIn("x", orphaned, "x should not be orphaned")
 
     def test_no_orphan_when_not_used(self):
         """Test no orphan when variable is bound but not used."""
@@ -439,8 +442,8 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 1))
 
         self.assertTrue(has_orphans)
-        self.assertIn('x', orphaned, "x should be orphaned")
-        self.assertIn('y', orphaned, "y should be orphaned")
+        self.assertIn("x", orphaned, "x should be orphaned")
+        self.assertIn("y", orphaned, "y should be orphaned")
 
     def test_partial_rebinding(self):
         """Test when only some variables are rebound."""
@@ -457,8 +460,8 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 1))
 
         self.assertTrue(has_orphans, "Should detect orphan")
-        self.assertNotIn('x', orphaned, "x is rebound, not orphaned")
-        self.assertIn('y', orphaned, "y should be orphaned")
+        self.assertNotIn("x", orphaned, "x is rebound, not orphaned")
+        self.assertIn("y", orphaned, "y should be orphaned")
 
     def test_for_loop_binding_in_extracted(self):
         """Test for loop variable in extracted block."""
@@ -474,7 +477,7 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
 
         self.assertTrue(has_orphans, "Loop variable should be orphaned")
-        self.assertIn('i', orphaned)
+        self.assertIn("i", orphaned)
 
     def test_function_def_binding_in_extracted(self):
         """Test function definition in extracted block."""
@@ -490,7 +493,7 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
 
         self.assertTrue(has_orphans, "Function should be orphaned")
-        self.assertIn('helper', orphaned)
+        self.assertIn("helper", orphaned)
 
     def test_extraction_range_boundaries(self):
         """Test extraction range is inclusive of end index."""
@@ -508,7 +511,7 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 2))
 
         self.assertTrue(has_orphans)
-        self.assertEqual(orphaned, {'x', 'y', 'z'}, "All three should be orphaned")
+        self.assertEqual(orphaned, {"x", "y", "z"}, "All three should be orphaned")
 
 
 class TestHasOrphanedVariablesEdgeCases(unittest.TestCase):
@@ -540,7 +543,7 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
 
         self.assertTrue(has_orphans)
-        self.assertIn('x', orphaned, "x used multiple times should be orphaned")
+        self.assertIn("x", orphaned, "x used multiple times should be orphaned")
 
     def test_augmented_assignment_in_remaining(self):
         """Test augmented assignment in remaining code."""
@@ -593,9 +596,9 @@ def process_data():
         has_orphans, orphaned = has_orphaned_variables(func.body, (1, 2))
 
         self.assertTrue(has_orphans, "Should detect orphans")
-        self.assertIn('transformed', orphaned, "transformed should be orphaned")
-        self.assertNotIn('cleaned', orphaned, "cleaned is not used in remaining code")
-        self.assertNotIn('data', orphaned, "data is bound before extraction")
+        self.assertIn("transformed", orphaned, "transformed should be orphaned")
+        self.assertNotIn("cleaned", orphaned, "cleaned is not used in remaining code")
+        self.assertNotIn("data", orphaned, "data is bound before extraction")
 
     def test_no_orphans_when_extracting_independent_code(self):
         """Test extracting independent code has no orphans."""
@@ -627,7 +630,7 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 2))
 
         self.assertTrue(has_orphans)
-        self.assertEqual(orphaned, {'a', 'b', 'c'}, "All should be orphaned")
+        self.assertEqual(orphaned, {"a", "b", "c"}, "All should be orphaned")
 
     def test_mixed_binding_types(self):
         """Test extraction with mixed binding types."""
@@ -646,9 +649,9 @@ def foo():
         has_orphans, orphaned = has_orphaned_variables(func.body, (0, 2))
 
         self.assertTrue(has_orphans)
-        self.assertIn('x', orphaned, "Variable should be orphaned")
-        self.assertIn('i', orphaned, "Loop variable should be orphaned")
-        self.assertIn('helper', orphaned, "Function should be orphaned")
+        self.assertIn("x", orphaned, "Variable should be orphaned")
+        self.assertIn("i", orphaned, "Loop variable should be orphaned")
+        self.assertIn("helper", orphaned, "Function should be orphaned")
 
 
 def main():
@@ -656,5 +659,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

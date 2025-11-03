@@ -29,13 +29,13 @@ return x + y
         tree2 = ast.parse(code)
 
         result = self.unifier.unify_blocks(
-            [tree1.body, tree2.body],
-            [{}, {}]  # No hygienic renames
+            [tree1.body, tree2.body], [{}, {}]  # No hygienic renames
         )
 
         self.assertIsNotNone(result, "Unification of identical blocks should succeed")
-        self.assertEqual(len(result.param_expressions), 0,
-                        "Identical blocks should require 0 parameters")
+        self.assertEqual(
+            len(result.param_expressions), 0, "Identical blocks should require 0 parameters"
+        )
 
     def test_unify_blocks_with_single_difference(self):
         """Test unifying blocks with a single constant difference."""
@@ -45,14 +45,14 @@ return x + y
         tree1 = ast.parse(code1)
         tree2 = ast.parse(code2)
 
-        result = self.unifier.unify_blocks(
-            [tree1.body, tree2.body],
-            [{}, {}]
-        )
+        result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
 
         self.assertIsNotNone(result, "Unification with single difference should succeed")
-        self.assertEqual(len(result.param_expressions), 1,
-                        "Single constant difference should require 1 parameter")
+        self.assertEqual(
+            len(result.param_expressions),
+            1,
+            "Single constant difference should require 1 parameter",
+        )
 
     def test_unify_blocks_with_nested_function_definitions(self):
         """Test unifying blocks containing nested function definitions."""
@@ -66,17 +66,18 @@ return result
         tree1 = ast.parse(code)
         tree2 = ast.parse(code)
 
-        result = self.unifier.unify_blocks(
-            [tree1.body, tree2.body],
-            [{}, {}]
+        result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
+
+        self.assertIsNotNone(
+            result, "Unification of identical blocks with nested functions should succeed"
         )
 
-        self.assertIsNotNone(result,
-                           "Unification of identical blocks with nested functions should succeed")
-
         # Identical blocks should require 0 parameters
-        self.assertEqual(len(result.param_expressions), 0,
-                        "Identical blocks with nested functions should require 0 parameters")
+        self.assertEqual(
+            len(result.param_expressions),
+            0,
+            "Identical blocks with nested functions should require 0 parameters",
+        )
 
 
 class TestUnifierWithTwoNestedFunctions(unittest.TestCase):
@@ -103,17 +104,18 @@ return result
         tree1 = ast.parse(code)
         tree2 = ast.parse(code)
 
-        result = self.unifier.unify_blocks(
-            [tree1.body, tree2.body],
-            [{}, {}]
+        result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
+
+        self.assertIsNotNone(
+            result, "Unification of blocks with TWO nested functions should succeed"
         )
 
-        self.assertIsNotNone(result,
-                           "Unification of blocks with TWO nested functions should succeed")
-
         # Identical blocks should have 0 parameters
-        self.assertEqual(len(result.param_expressions), 0,
-                        "Identical blocks with nested functions should require 0 parameters")
+        self.assertEqual(
+            len(result.param_expressions),
+            0,
+            "Identical blocks with nested functions should require 0 parameters",
+        )
 
     def test_unify_higher_order_function_cd_blocks(self):
         """Test unifying Block 0 from higher_order_function_c and _d."""
@@ -149,17 +151,18 @@ return transformed
         tree_c = ast.parse(code_c)
         tree_d = ast.parse(code_d)
 
-        result = self.unifier.unify_blocks(
-            [tree_c.body, tree_d.body],
-            [{}, {}]
+        result = self.unifier.unify_blocks([tree_c.body, tree_d.body], [{}, {}])
+
+        self.assertIsNotNone(
+            result, "Unification of higher_order_function_c/d Block 0 should succeed"
         )
 
-        self.assertIsNotNone(result,
-                           "Unification of higher_order_function_c/d Block 0 should succeed")
-
         # Identical blocks should have 0 parameters
-        self.assertEqual(len(result.param_expressions), 0,
-                        "Identical blocks with nested functions should require 0 parameters")
+        self.assertEqual(
+            len(result.param_expressions),
+            0,
+            "Identical blocks with nested functions should require 0 parameters",
+        )
 
 
 class TestUnifierParameterCounting(unittest.TestCase):
@@ -178,13 +181,9 @@ class TestUnifierParameterCounting(unittest.TestCase):
         tree1 = ast.parse(code1)
         tree2 = ast.parse(code2)
 
-        result = self.unifier.unify_blocks(
-            [tree1.body, tree2.body],
-            [{}, {}]
-        )
+        result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
 
-        self.assertIsNone(result,
-                         "Unification should fail when too many parameters needed")
+        self.assertIsNone(result, "Unification should fail when too many parameters needed")
 
     def test_parameter_count_for_nested_functions_with_differences(self):
         """Test parameter counting when nested functions differ."""
@@ -207,14 +206,14 @@ return result
         tree1 = ast.parse(code1)
         tree2 = ast.parse(code2)
 
-        result = self.unifier.unify_blocks(
-            [tree1.body, tree2.body],
-            [{}, {}]
-        )
+        result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
 
         self.assertIsNotNone(result, "Should unify with one parameter")
-        self.assertEqual(len(result.param_expressions), 1,
-                        "Should require 1 parameter for the differing constant")
+        self.assertEqual(
+            len(result.param_expressions),
+            1,
+            "Should require 1 parameter for the differing constant",
+        )
 
 
 class TestUnifierEdgeCases(unittest.TestCase):
@@ -226,13 +225,12 @@ class TestUnifierEdgeCases(unittest.TestCase):
 
     def test_empty_blocks(self):
         """Test unifying empty blocks."""
-        result = self.unifier.unify_blocks(
-            [[], []],
-            [{}, {}]
-        )
+        result = self.unifier.unify_blocks([[], []], [{}, {}])
 
         self.assertIsNotNone(result, "Empty blocks should unify")
-        self.assertEqual(len(result.param_expressions), 0, "Empty blocks should require 0 parameters")
+        self.assertEqual(
+            len(result.param_expressions), 0, "Empty blocks should require 0 parameters"
+        )
 
     def test_mismatched_block_lengths(self):
         """Test unifying blocks of different lengths."""
@@ -242,13 +240,9 @@ class TestUnifierEdgeCases(unittest.TestCase):
         tree1 = ast.parse(code1)
         tree2 = ast.parse(code2)
 
-        result = self.unifier.unify_blocks(
-            [tree1.body, tree2.body],
-            [{}, {}]
-        )
+        result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
 
-        self.assertIsNone(result,
-                         "Blocks with different lengths should not unify")
+        self.assertIsNone(result, "Blocks with different lengths should not unify")
 
     def test_mismatched_statement_types(self):
         """Test unifying blocks with different statement types."""
@@ -258,13 +252,9 @@ class TestUnifierEdgeCases(unittest.TestCase):
         tree1 = ast.parse(code1)
         tree2 = ast.parse(code2)
 
-        result = self.unifier.unify_blocks(
-            [tree1.body, tree2.body],
-            [{}, {}]
-        )
+        result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
 
-        self.assertIsNone(result,
-                         "Blocks with different statement types should not unify")
+        self.assertIsNone(result, "Blocks with different statement types should not unify")
 
 
 class TestUnifierWithActualFunctionalPatternsCode(unittest.TestCase):
@@ -275,7 +265,7 @@ class TestUnifierWithActualFunctionalPatternsCode(unittest.TestCase):
         self.unifier = Unifier(max_parameters=5)
 
         # Read the actual test file
-        with open('test_examples/functional_patterns.py', 'r') as f:
+        with open("test_examples/functional_patterns.py", "r") as f:
             self.source = f.read()
 
         self.tree = ast.parse(self.source)
@@ -285,9 +275,9 @@ class TestUnifierWithActualFunctionalPatternsCode(unittest.TestCase):
         self.func_d = None
         for node in ast.walk(self.tree):
             if isinstance(node, ast.FunctionDef):
-                if node.name == 'higher_order_function_c':
+                if node.name == "higher_order_function_c":
                     self.func_c = node
-                elif node.name == 'higher_order_function_d':
+                elif node.name == "higher_order_function_d":
                     self.func_d = node
 
     def test_actual_block_0_unification(self):
@@ -300,14 +290,20 @@ class TestUnifierWithActualFunctionalPatternsCode(unittest.TestCase):
         body_d = self.func_d.body
 
         # Skip docstring if present
-        if (body_c and isinstance(body_c[0], ast.Expr) and
-                isinstance(body_c[0].value, ast.Constant) and
-                isinstance(body_c[0].value.value, str)):
+        if (
+            body_c
+            and isinstance(body_c[0], ast.Expr)
+            and isinstance(body_c[0].value, ast.Constant)
+            and isinstance(body_c[0].value.value, str)
+        ):
             body_c = body_c[1:]
 
-        if (body_d and isinstance(body_d[0], ast.Expr) and
-                isinstance(body_d[0].value, ast.Constant) and
-                isinstance(body_d[0].value.value, str)):
+        if (
+            body_d
+            and isinstance(body_d[0], ast.Expr)
+            and isinstance(body_d[0].value, ast.Constant)
+            and isinstance(body_d[0].value.value, str)
+        ):
             body_d = body_d[1:]
 
         # Verify both have 7 statements
@@ -315,19 +311,20 @@ class TestUnifierWithActualFunctionalPatternsCode(unittest.TestCase):
         self.assertEqual(len(body_d), 7, "Function d body should have 7 statements")
 
         # Attempt unification
-        result = self.unifier.unify_blocks(
-            [body_c, body_d],
-            [{}, {}]
-        )
+        result = self.unifier.unify_blocks([body_c, body_d], [{}, {}])
 
         # This is the critical test
-        self.assertIsNotNone(result,
-                           "Block 0 from higher_order_function_c/d should unify successfully")
+        self.assertIsNotNone(
+            result, "Block 0 from higher_order_function_c/d should unify successfully"
+        )
 
         # Verify minimal parameters (should be 0 since blocks are identical)
-        self.assertEqual(len(result.param_expressions), 0,
-                        f"Identical blocks should require 0 parameters, "
-                        f"but got {len(result.param_expressions)}")
+        self.assertEqual(
+            len(result.param_expressions),
+            0,
+            f"Identical blocks should require 0 parameters, "
+            f"but got {len(result.param_expressions)}",
+        )
 
 
 def main():
@@ -335,5 +332,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

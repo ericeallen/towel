@@ -39,8 +39,11 @@ def simple_function():
 
         # Check that blocks are sorted by length (longest first)
         block_lengths = [len(block[1]) for block in blocks]
-        self.assertEqual(block_lengths, sorted(block_lengths, reverse=True),
-                        "Blocks should be sorted by length (longest first)")
+        self.assertEqual(
+            block_lengths,
+            sorted(block_lengths, reverse=True),
+            "Blocks should be sorted by length (longest first)",
+        )
 
     def test_extract_blocks_respects_min_lines(self):
         """Test that only blocks meeting min_lines are extracted."""
@@ -64,9 +67,12 @@ def function_with_nested():
         for block_range, block_stmts in blocks:
             start, end = block_range
             line_count = end - start + 1
-            self.assertGreaterEqual(line_count, self.engine.min_lines,
-                                  f"Block {start}-{end} has {line_count} lines, "
-                                  f"should have at least {self.engine.min_lines}")
+            self.assertGreaterEqual(
+                line_count,
+                self.engine.min_lines,
+                f"Block {start}-{end} has {line_count} lines, "
+                f"should have at least {self.engine.min_lines}",
+            )
 
     def test_extract_blocks_skips_docstring(self):
         """Test that docstrings are skipped when extracting blocks."""
@@ -85,8 +91,9 @@ def function_with_docstring():
 
         # The full body block should not include the docstring
         full_body = blocks[0][1]
-        self.assertFalse(isinstance(full_body[0], ast.Expr),
-                        "First statement should not be docstring Expr node")
+        self.assertFalse(
+            isinstance(full_body[0], ast.Expr), "First statement should not be docstring Expr node"
+        )
 
     def test_extract_blocks_with_nested_functions(self):
         """Test extracting blocks containing nested function definitions."""
@@ -110,8 +117,9 @@ def outer():
         # Full body block should contain both nested functions
         full_body = blocks[0][1]
         nested_funcs = [stmt for stmt in full_body if isinstance(stmt, ast.FunctionDef)]
-        self.assertEqual(len(nested_funcs), 2,
-                        "Full body should contain both nested function definitions")
+        self.assertEqual(
+            len(nested_funcs), 2, "Full body should contain both nested function definitions"
+        )
 
 
 class TestStructuralSimilarity(unittest.TestCase):
@@ -177,26 +185,30 @@ class TestAnalyzeFile(unittest.TestCase):
 
     def test_analyze_file_with_no_functions(self):
         """Test analyzing a file with no functions."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("x = 1\ny = 2\n")
             temp_path = f.name
 
         try:
             proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0, "Should return empty list for file with no functions")
+            self.assertEqual(
+                len(proposals), 0, "Should return empty list for file with no functions"
+            )
         finally:
             os.unlink(temp_path)
 
     def test_analyze_file_with_single_function(self):
         """Test analyzing a file with only one function."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write("""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
 def function1():
     x = 1
     y = 2
     z = 3
     return x + y + z
-""")
+"""
+            )
             temp_path = f.name
 
         try:
@@ -207,8 +219,9 @@ def function1():
 
     def test_analyze_file_with_identical_functions(self):
         """Test analyzing a file with two identical functions."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write("""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
 def function1():
     x = 1
     y = 2
@@ -220,7 +233,8 @@ def function2():
     y = 2
     z = 3
     return x + y + z
-""")
+"""
+            )
             temp_path = f.name
 
         try:
@@ -230,7 +244,7 @@ def function2():
             # Check that at least one proposal involves both functions
             found = False
             for prop in proposals:
-                if 'function1' in prop.description and 'function2' in prop.description:
+                if "function1" in prop.description and "function2" in prop.description:
                     found = True
                     break
             self.assertTrue(found, "Should have proposal involving both functions")
@@ -239,13 +253,15 @@ def function2():
 
     def test_analyze_file_with_syntax_error(self):
         """Test that files with syntax errors are handled gracefully."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def function1(:\n    pass\n")  # Syntax error
             temp_path = f.name
 
         try:
             proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0, "Should return empty list for file with syntax error")
+            self.assertEqual(
+                len(proposals), 0, "Should return empty list for file with syntax error"
+            )
         finally:
             os.unlink(temp_path)
 
@@ -276,13 +292,14 @@ def func2():
 """
         tree = ast.parse(code)
         from src.towel.unification.scope_analyzer import ScopeAnalyzer
+
         analyzer = ScopeAnalyzer()
         scope = analyzer.analyze(tree)
 
         func1, func2 = tree.body[0], tree.body[1]
         all_functions = [
-            ('test.py', func1, code, analyzer, scope),
-            ('test.py', func2, code, analyzer, scope)
+            ("test.py", func1, code, analyzer, scope),
+            ("test.py", func2, code, analyzer, scope),
         ]
 
         pairs = self.engine._find_block_pairs_multi_file(all_functions)
@@ -291,8 +308,11 @@ def func2():
 
         # Check that pairs have equal length blocks
         for pair in pairs:
-            self.assertEqual(len(pair.block1_nodes), len(pair.block2_nodes),
-                           "Paired blocks should have equal number of statements")
+            self.assertEqual(
+                len(pair.block1_nodes),
+                len(pair.block2_nodes),
+                "Paired blocks should have equal number of statements",
+            )
 
     def test_find_pairs_respects_min_lines(self):
         """Test that only blocks meeting min_lines threshold form pairs."""
@@ -313,13 +333,14 @@ def func2():
 """
         tree = ast.parse(code)
         from src.towel.unification.scope_analyzer import ScopeAnalyzer
+
         analyzer = ScopeAnalyzer()
         scope = analyzer.analyze(tree)
 
         func1, func2 = tree.body[0], tree.body[1]
         all_functions = [
-            ('test.py', func1, code, analyzer, scope),
-            ('test.py', func2, code, analyzer, scope)
+            ("test.py", func1, code, analyzer, scope),
+            ("test.py", func2, code, analyzer, scope),
         ]
 
         pairs = self.engine._find_block_pairs_multi_file(all_functions)
@@ -328,10 +349,16 @@ def func2():
         for pair in pairs:
             start1, end1 = pair.block1_range
             start2, end2 = pair.block2_range
-            self.assertGreaterEqual(end1 - start1 + 1, self.engine.min_lines,
-                                  f"Block 1 should have at least {self.engine.min_lines} lines")
-            self.assertGreaterEqual(end2 - start2 + 1, self.engine.min_lines,
-                                  f"Block 2 should have at least {self.engine.min_lines} lines")
+            self.assertGreaterEqual(
+                end1 - start1 + 1,
+                self.engine.min_lines,
+                f"Block 1 should have at least {self.engine.min_lines} lines",
+            )
+            self.assertGreaterEqual(
+                end2 - start2 + 1,
+                self.engine.min_lines,
+                f"Block 2 should have at least {self.engine.min_lines} lines",
+            )
 
 
 class TestFullBodyWithNestedFunctions(unittest.TestCase):
@@ -343,8 +370,9 @@ class TestFullBodyWithNestedFunctions(unittest.TestCase):
 
     def test_identical_functions_with_two_nested_functions(self):
         """Test that identical functions with two nested functions produce correct proposal."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write("""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
 def outer1(data, threshold):
     def make_validator(limit):
         return lambda x: x > limit
@@ -370,7 +398,8 @@ def outer2(data, threshold):
     filtered = list(filter(validator, data))
     transformed = list(map(transformer, filtered))
     return transformed
-""")
+"""
+            )
             temp_path = f.name
 
         try:
@@ -380,27 +409,32 @@ def outer2(data, threshold):
             self.assertGreater(len(proposals), 0, "Should generate at least one proposal")
 
             # Find proposals involving both outer functions
-            relevant_proposals = [p for p in proposals
-                                if 'outer1' in p.description and 'outer2' in p.description]
+            relevant_proposals = [
+                p for p in proposals if "outer1" in p.description and "outer2" in p.description
+            ]
 
-            self.assertGreater(len(relevant_proposals), 0,
-                             "Should have proposals involving both outer functions")
+            self.assertGreater(
+                len(relevant_proposals), 0, "Should have proposals involving both outer functions"
+            )
 
             # Check if any proposal includes both nested functions as definitions
             found_both_nested = False
             for prop in relevant_proposals:
                 if isinstance(prop.extracted_function, ast.FunctionDef):
                     func_def = prop.extracted_function
-                    nested_defs = [stmt for stmt in func_def.body
-                                 if isinstance(stmt, ast.FunctionDef)]
+                    nested_defs = [
+                        stmt for stmt in func_def.body if isinstance(stmt, ast.FunctionDef)
+                    ]
                     nested_names = {func.name for func in nested_defs}
 
-                    if 'make_validator' in nested_names and 'make_transformer' in nested_names:
+                    if "make_validator" in nested_names and "make_transformer" in nested_names:
                         found_both_nested = True
                         break
 
-            self.assertTrue(found_both_nested,
-                          "Should have at least one proposal with both nested functions as definitions")
+            self.assertTrue(
+                found_both_nested,
+                "Should have at least one proposal with both nested functions as definitions",
+            )
 
         finally:
             os.unlink(temp_path)
@@ -453,8 +487,9 @@ def func2():
 
     def test_overlapping_block_prevention(self):
         """Test that overlapping blocks are not included in final proposals."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write("""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
 def func1():
     x = 1
     y = 2
@@ -470,7 +505,8 @@ def func2():
     w = 4
     v = 5
     return x + y + z + w + v
-""")
+"""
+            )
             temp_path = f.name
 
         try:
@@ -478,7 +514,7 @@ def func2():
 
             # Proposals should not have overlapping ranges
             for i, prop1 in enumerate(proposals):
-                for prop2 in proposals[i+1:]:
+                for prop2 in proposals[i + 1 :]:
                     # Check that proposals don't overlap
                     ranges1 = set()
                     ranges2 = set()
@@ -492,8 +528,9 @@ def func2():
                         ranges2.add((start, end))
 
                     # Ranges should not overlap
-                    self.assertEqual(ranges1 & ranges2, set(),
-                                   "Proposals should not have overlapping ranges")
+                    self.assertEqual(
+                        ranges1 & ranges2, set(), "Proposals should not have overlapping ranges"
+                    )
 
         finally:
             os.unlink(temp_path)
@@ -504,5 +541,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

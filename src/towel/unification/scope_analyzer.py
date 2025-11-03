@@ -3,7 +3,7 @@ Analyze identifier bindings and scopes in Python code.
 """
 
 import ast
-from typing import Dict, Set, List, Optional, Tuple
+from typing import Dict, Set, List, Optional
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 
@@ -11,6 +11,7 @@ from .builtins import filter_builtins
 @dataclass
 class Binding:
     """Represents a binding of an identifier to a value."""
+
     name: str
     scope_id: int  # Unique identifier for the scope
     node: ast.AST  # The AST node that creates this binding
@@ -19,10 +20,11 @@ class Binding:
 @dataclass
 class Scope:
     """Represents a lexical scope."""
+
     scope_id: int
-    parent: Optional['Scope']
+    parent: Optional["Scope"]
     bindings: Dict[str, Binding] = field(default_factory=dict)
-    children: List['Scope'] = field(default_factory=list)
+    children: List["Scope"] = field(default_factory=list)
 
     def lookup(self, name: str) -> Optional[Binding]:
         """Lookup a binding in this scope or parent scopes."""
@@ -246,7 +248,9 @@ class ScopeAnalyzer(ast.NodeVisitor):
             # Check if this variable is declared global or nonlocal
             scope_id = self.current_scope.scope_id if self.current_scope else -1
             is_global = scope_id in self.global_vars and target.id in self.global_vars[scope_id]
-            is_nonlocal = scope_id in self.nonlocal_vars and target.id in self.nonlocal_vars[scope_id]
+            is_nonlocal = (
+                scope_id in self.nonlocal_vars and target.id in self.nonlocal_vars[scope_id]
+            )
 
             # Only add as local binding if not global/nonlocal
             if not is_global and not is_nonlocal:
@@ -268,6 +272,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
 
         Excludes Python builtins.
         """
+
         # Custom visitor that doesn't descend into nested functions
         class ScopeRespectingWalker(ast.NodeVisitor):
             def __init__(self):
@@ -487,6 +492,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                     for gen in node.generators:
                         self.visit(gen)
                     self.visit(node.elt)
+
                 self._with_new_scope(set(), visit_body)
 
             def visit_DictComp(self, node):
@@ -496,6 +502,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                         self.visit(gen)
                     self.visit(node.key)
                     self.visit(node.value)
+
                 self._with_new_scope(set(), visit_body)
 
             def visit_SetComp(self, node):
@@ -504,6 +511,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                     for gen in node.generators:
                         self.visit(gen)
                     self.visit(node.elt)
+
                 self._with_new_scope(set(), visit_body)
 
             def visit_GeneratorExp(self, node):
@@ -512,6 +520,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                     for gen in node.generators:
                         self.visit(gen)
                     self.visit(node.elt)
+
                 self._with_new_scope(set(), visit_body)
 
             def visit_ExceptHandler(self, node):
@@ -537,7 +546,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                 # Binds: foo, baz
                 imports = set()
                 for alias in node.names:
-                    if alias.name == '*':
+                    if alias.name == "*":
                         # from module import * - skip, can't determine bindings
                         continue
                     name = alias.asname if alias.asname else alias.name

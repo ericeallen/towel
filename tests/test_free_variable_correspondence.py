@@ -33,8 +33,8 @@ class TestFreeVariableCorrespondence(unittest.TestCase):
         code0 = 'user.get("id")'
         code1 = 'admin.get("id")'
 
-        block0 = [ast.parse(code0, mode='eval').body]
-        block1 = [ast.parse(code1, mode='eval').body]
+        block0 = [ast.parse(code0, mode="eval").body]
+        block1 = [ast.parse(code1, mode="eval").body]
 
         # Unify the blocks
         hygienic_renames = [{}, {}]
@@ -48,10 +48,10 @@ class TestFreeVariableCorrespondence(unittest.TestCase):
         print(f"  Block 1: {hygienic_renames[1]}")
 
         # Block 1 should map 'admin' to 'user' (the canonical name)
-        self.assertIn('admin', hygienic_renames[1],
-                     "hygienic_renames[1] should contain 'admin'")
-        self.assertEqual(hygienic_renames[1]['admin'], 'user',
-                        "'admin' should map to canonical name 'user'")
+        self.assertIn("admin", hygienic_renames[1], "hygienic_renames[1] should contain 'admin'")
+        self.assertEqual(
+            hygienic_renames[1]["admin"], "user", "'admin' should map to canonical name 'user'"
+        )
 
     def test_free_variable_in_if_statement(self):
         """
@@ -60,14 +60,14 @@ class TestFreeVariableCorrespondence(unittest.TestCase):
         Block 0: if not user.get("id"): raise ValueError(...)
         Block 1: if not admin.get("id"): raise ValueError(...)
         """
-        code0 = '''
+        code0 = """
 if not user.get("id"):
     raise ValueError("ID required")
-'''
-        code1 = '''
+"""
+        code1 = """
 if not admin.get("id"):
     raise ValueError("ID required")
-'''
+"""
 
         block0 = ast.parse(code0).body
         block1 = ast.parse(code1).body
@@ -83,10 +83,8 @@ if not admin.get("id"):
         print(f"  Block 1: {hygienic_renames[1]}")
 
         # Verify correspondence
-        self.assertIn('admin', hygienic_renames[1],
-                     "hygienic_renames[1] should track 'admin'")
-        self.assertEqual(hygienic_renames[1]['admin'], 'user',
-                        "'admin' should map to 'user'")
+        self.assertIn("admin", hygienic_renames[1], "hygienic_renames[1] should track 'admin'")
+        self.assertEqual(hygienic_renames[1]["admin"], "user", "'admin' should map to 'user'")
 
     def test_multiple_free_variables(self):
         """
@@ -95,11 +93,11 @@ if not admin.get("id"):
         Block 0: user.id + config.value
         Block 1: admin.id + settings.value
         """
-        code0 = 'user.id + config.value'
-        code1 = 'admin.id + settings.value'
+        code0 = "user.id + config.value"
+        code1 = "admin.id + settings.value"
 
-        block0 = [ast.parse(code0, mode='eval').body]
-        block1 = [ast.parse(code1, mode='eval').body]
+        block0 = [ast.parse(code0, mode="eval").body]
+        block1 = [ast.parse(code1, mode="eval").body]
 
         hygienic_renames = [{}, {}]
         substitution = self.unifier.unify_blocks([block0, block1], hygienic_renames)
@@ -111,12 +109,10 @@ if not admin.get("id"):
         print(f"  Block 1: {hygienic_renames[1]}")
 
         # Both variables should be tracked
-        self.assertIn('admin', hygienic_renames[1],
-                     "Should track 'admin' → 'user'")
-        self.assertIn('settings', hygienic_renames[1],
-                     "Should track 'settings' → 'config'")
-        self.assertEqual(hygienic_renames[1]['admin'], 'user')
-        self.assertEqual(hygienic_renames[1]['settings'], 'config')
+        self.assertIn("admin", hygienic_renames[1], "Should track 'admin' → 'user'")
+        self.assertIn("settings", hygienic_renames[1], "Should track 'settings' → 'config'")
+        self.assertEqual(hygienic_renames[1]["admin"], "user")
+        self.assertEqual(hygienic_renames[1]["settings"], "config")
 
     def test_free_variable_used_multiple_times(self):
         """
@@ -125,11 +121,11 @@ if not admin.get("id"):
         Block 0: user.id + user.name
         Block 1: admin.id + admin.name
         """
-        code0 = 'user.id + user.name'
-        code1 = 'admin.id + admin.name'
+        code0 = "user.id + user.name"
+        code1 = "admin.id + admin.name"
 
-        block0 = [ast.parse(code0, mode='eval').body]
-        block1 = [ast.parse(code1, mode='eval').body]
+        block0 = [ast.parse(code0, mode="eval").body]
+        block1 = [ast.parse(code1, mode="eval").body]
 
         hygienic_renames = [{}, {}]
         substitution = self.unifier.unify_blocks([block0, block1], hygienic_renames)
@@ -141,9 +137,10 @@ if not admin.get("id"):
         print(f"  Block 1: {hygienic_renames[1]}")
 
         # Should still track even though used multiple times
-        self.assertIn('admin', hygienic_renames[1],
-                     "Should track 'admin' even when used multiple times")
-        self.assertEqual(hygienic_renames[1]['admin'], 'user')
+        self.assertIn(
+            "admin", hygienic_renames[1], "Should track 'admin' even when used multiple times"
+        )
+        self.assertEqual(hygienic_renames[1]["admin"], "user")
 
     def test_three_blocks_different_names(self):
         """
@@ -157,9 +154,9 @@ if not admin.get("id"):
         code1 = 'admin.get("id")'
         code2 = 'guest.get("id")'
 
-        block0 = [ast.parse(code0, mode='eval').body]
-        block1 = [ast.parse(code1, mode='eval').body]
-        block2 = [ast.parse(code2, mode='eval').body]
+        block0 = [ast.parse(code0, mode="eval").body]
+        block1 = [ast.parse(code1, mode="eval").body]
+        block2 = [ast.parse(code2, mode="eval").body]
 
         hygienic_renames = [{}, {}, {}]
         substitution = self.unifier.unify_blocks([block0, block1, block2], hygienic_renames)
@@ -172,15 +169,16 @@ if not admin.get("id"):
         print(f"  Block 2: {hygienic_renames[2]}")
 
         # Block 0 uses canonical name (no mapping needed)
-        self.assertEqual(len(hygienic_renames[0]), 0,
-                        "Block 0 should have no renames (uses canonical names)")
+        self.assertEqual(
+            len(hygienic_renames[0]), 0, "Block 0 should have no renames (uses canonical names)"
+        )
 
         # Blocks 1 and 2 should map to canonical
-        self.assertIn('admin', hygienic_renames[1])
-        self.assertEqual(hygienic_renames[1]['admin'], 'user')
+        self.assertIn("admin", hygienic_renames[1])
+        self.assertEqual(hygienic_renames[1]["admin"], "user")
 
-        self.assertIn('guest', hygienic_renames[2])
-        self.assertEqual(hygienic_renames[2]['guest'], 'user')
+        self.assertIn("guest", hygienic_renames[2])
+        self.assertEqual(hygienic_renames[2]["guest"], "user")
 
     def test_integration_with_generate_call(self):
         """
@@ -189,18 +187,18 @@ if not admin.get("id"):
         This is the end-to-end test showing the bug and the fix.
         """
         # Validation code blocks
-        code0 = '''
+        code0 = """
 if not user.get("id"):
     raise ValueError("ID required")
 if not user.get("name"):
     raise ValueError("Name required")
-'''
-        code1 = '''
+"""
+        code1 = """
 if not admin.get("id"):
     raise ValueError("ID required")
 if not admin.get("name"):
     raise ValueError("Name required")
-'''
+"""
 
         block0 = ast.parse(code0).body
         block1 = ast.parse(code1).body
@@ -212,7 +210,7 @@ if not admin.get("name"):
         self.assertIsNotNone(substitution, "Blocks should unify")
 
         # Extract function
-        free_variables = {'user'}  # Canonical name
+        free_variables = {"user"}  # Canonical name
         func_def, param_order = self.extractor.extract_function(
             template_block=block0,
             substitution=substitution,
@@ -220,7 +218,7 @@ if not admin.get("name"):
             enclosing_names=set(),
             is_value_producing=False,
             return_variables=[],
-            function_name="validate"
+            function_name="validate",
         )
 
         # Generate calls
@@ -232,7 +230,7 @@ if not admin.get("name"):
             free_variables=free_variables,
             is_value_producing=False,
             return_variables=[],
-            hygienic_renames=hygienic_renames
+            hygienic_renames=hygienic_renames,
         )
 
         call1 = self.extractor.generate_call(
@@ -243,7 +241,7 @@ if not admin.get("name"):
             free_variables=free_variables,
             is_value_producing=False,
             return_variables=[],
-            hygienic_renames=hygienic_renames
+            hygienic_renames=hygienic_renames,
         )
 
         # Unparse and check
@@ -255,12 +253,12 @@ if not admin.get("name"):
         print(f"  Call 1: {call1_str}")
 
         # Call 0 should use 'user'
-        self.assertIn('user', call0_str, f"Call 0 should use 'user': {call0_str}")
+        self.assertIn("user", call0_str, f"Call 0 should use 'user': {call0_str}")
 
         # Call 1 should use 'admin', NOT 'user'
-        self.assertIn('admin', call1_str, f"Call 1 should use 'admin': {call1_str}")
+        self.assertIn("admin", call1_str, f"Call 1 should use 'admin': {call1_str}")
         # This is the key assertion that currently fails:
-        self.assertNotIn('user', call1_str, f"Call 1 should NOT use 'user': {call1_str}")
+        self.assertNotIn("user", call1_str, f"Call 1 should NOT use 'user': {call1_str}")
 
 
 def main():
@@ -268,5 +266,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

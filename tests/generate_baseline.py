@@ -34,8 +34,9 @@ def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: P
     print(f"\nGenerating single-file baseline from {test_examples_dir}...")
 
     # Get all Python files
-    python_files = [f for f in test_examples_dir.glob("*.py")
-                   if f.is_file() and not f.name.startswith('_')]
+    python_files = [
+        f for f in test_examples_dir.glob("*.py") if f.is_file() and not f.name.startswith("_")
+    ]
 
     for py_file in sorted(python_files):
         print(f"  Processing {py_file.name}...")
@@ -80,8 +81,7 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
     print(f"\nGenerating cross-file baseline from {crossfile_dir}...")
 
     # Get all project directories
-    project_dirs = [d for d in crossfile_dir.iterdir()
-                   if d.is_dir() and not d.name.startswith('.')]
+    project_dirs = [d for d in crossfile_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
 
     for project_dir in sorted(project_dirs):
         print(f"  Processing project {project_dir.name}...")
@@ -101,7 +101,7 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
 
         # Copy original files to output
         for py_file in project_dir.rglob("*.py"):
-            if '__pycache__' in py_file.parts or py_file.name.startswith('.'):
+            if "__pycache__" in py_file.parts or py_file.name.startswith("."):
                 continue
 
             rel_path = py_file.relative_to(project_dir)
@@ -136,13 +136,13 @@ def main():
     """Generate all baseline outputs."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description='Generate baseline expected output for regression testing.',
-        epilog='WARNING: This script should NOT be run directly! Use: just regenerate-baseline'
+        description="Generate baseline expected output for regression testing.",
+        epilog="WARNING: This script should NOT be run directly! Use: just regenerate-baseline",
     )
     parser.add_argument(
-        '--confirm',
-        action='store_true',
-        help='Confirm that you want to regenerate the baseline (required)'
+        "--confirm",
+        action="store_true",
+        help="Confirm that you want to regenerate the baseline (required)",
     )
     args = parser.parse_args()
 
@@ -199,5 +199,5 @@ def main():
     print(f"Cross-file baseline: {output_crossfile}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

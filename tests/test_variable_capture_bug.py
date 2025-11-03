@@ -67,7 +67,7 @@ if not var.get("id"):
         template_block = ast.parse(validation_code).body
 
         # Extract function with 'var' as parameter
-        free_variables = {'var'}
+        free_variables = {"var"}
         enclosing_names = set()
 
         func_def, param_order = self.extractor.extract_function(
@@ -77,7 +77,7 @@ if not var.get("id"):
             enclosing_names=enclosing_names,
             is_value_producing=False,
             return_variables=[],
-            function_name="validate"
+            function_name="validate",
         )
 
         # Generate calls for both blocks
@@ -88,7 +88,7 @@ if not var.get("id"):
             param_order=param_order,
             free_variables=free_variables,
             is_value_producing=False,
-            return_variables=[]
+            return_variables=[],
         )
 
         call2 = self.extractor.generate_call(
@@ -98,7 +98,7 @@ if not var.get("id"):
             param_order=param_order,
             free_variables=free_variables,
             is_value_producing=False,
-            return_variables=[]
+            return_variables=[],
         )
 
         # Check that calls use correct variable names
@@ -106,14 +106,11 @@ if not var.get("id"):
         call2_code = ast.unparse(call2)
 
         # Call 1 should use 'user'
-        self.assertIn('user', call1_code,
-                     f"Call 1 should use 'user', got: {call1_code}")
+        self.assertIn("user", call1_code, f"Call 1 should use 'user', got: {call1_code}")
 
         # Call 2 should use 'admin' (NOT 'user')
-        self.assertIn('admin', call2_code,
-                     f"Call 2 should use 'admin', got: {call2_code}")
-        self.assertNotIn('user', call2_code,
-                        f"Call 2 should NOT use 'user', got: {call2_code}")
+        self.assertIn("admin", call2_code, f"Call 2 should use 'admin', got: {call2_code}")
+        self.assertNotIn("user", call2_code, f"Call 2 should NOT use 'user', got: {call2_code}")
 
     def test_example1_simple_scenario(self):
         """
@@ -151,8 +148,7 @@ if not guest.get("name"):
         # Unify all three blocks
         hygienic_renames = [{}, {}, {}]
         substitution = self.unifier.unify_blocks(
-            [block_user, block_admin, block_guest],
-            hygienic_renames
+            [block_user, block_admin, block_guest], hygienic_renames
         )
 
         self.assertIsNotNone(substitution, "All three blocks should unify")
@@ -161,7 +157,7 @@ if not guest.get("name"):
         # But hygienic_renames should map admin→user and guest→user
 
         # Extract function
-        free_variables = {'user'}  # Canonical name
+        free_variables = {"user"}  # Canonical name
         enclosing_names = set()
 
         func_def, param_order = self.extractor.extract_function(
@@ -171,7 +167,7 @@ if not guest.get("name"):
             enclosing_names=enclosing_names,
             is_value_producing=False,
             return_variables=[],
-            function_name="__extracted_func_2"
+            function_name="__extracted_func_2",
         )
 
         # Generate calls for each block
@@ -184,31 +180,22 @@ if not guest.get("name"):
                 param_order=param_order,
                 free_variables=free_variables,
                 is_value_producing=False,
-                return_variables=[]
+                return_variables=[],
             )
             calls.append(ast.unparse(call))
 
         # Verify each call uses the correct variable name
-        self.assertIn('user', calls[0],
-                     f"Block 0 should use 'user', got: {calls[0]}")
-        self.assertIn('admin', calls[1],
-                     f"Block 1 should use 'admin', got: {calls[1]}")
-        self.assertIn('guest', calls[2],
-                     f"Block 2 should use 'guest', got: {calls[2]}")
+        self.assertIn("user", calls[0], f"Block 0 should use 'user', got: {calls[0]}")
+        self.assertIn("admin", calls[1], f"Block 1 should use 'admin', got: {calls[1]}")
+        self.assertIn("guest", calls[2], f"Block 2 should use 'guest', got: {calls[2]}")
 
         # Verify wrong names are NOT used
-        self.assertNotIn('admin', calls[0],
-                        f"Block 0 should NOT use 'admin', got: {calls[0]}")
-        self.assertNotIn('guest', calls[0],
-                        f"Block 0 should NOT use 'guest', got: {calls[0]}")
-        self.assertNotIn('user', calls[1],
-                        f"Block 1 should NOT use 'user', got: {calls[1]}")
-        self.assertNotIn('guest', calls[1],
-                        f"Block 1 should NOT use 'guest', got: {calls[1]}")
-        self.assertNotIn('user', calls[2],
-                        f"Block 2 should NOT use 'user', got: {calls[2]}")
-        self.assertNotIn('admin', calls[2],
-                        f"Block 2 should NOT use 'admin', got: {calls[2]}")
+        self.assertNotIn("admin", calls[0], f"Block 0 should NOT use 'admin', got: {calls[0]}")
+        self.assertNotIn("guest", calls[0], f"Block 0 should NOT use 'guest', got: {calls[0]}")
+        self.assertNotIn("user", calls[1], f"Block 1 should NOT use 'user', got: {calls[1]}")
+        self.assertNotIn("guest", calls[1], f"Block 1 should NOT use 'guest', got: {calls[1]}")
+        self.assertNotIn("user", calls[2], f"Block 2 should NOT use 'user', got: {calls[2]}")
+        self.assertNotIn("admin", calls[2], f"Block 2 should NOT use 'admin', got: {calls[2]}")
 
 
 def main():
@@ -216,5 +203,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

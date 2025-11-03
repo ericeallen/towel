@@ -5,6 +5,7 @@ These tests ensure that:
 - The Unifier does not leak alpha-renamings or parameter counters across calls
 - analyze_file repeatedly returns stable proposals (e.g., format_number and mixed_fstring)
 """
+
 import ast
 import unittest
 
@@ -20,6 +21,7 @@ class TestUnifierStateReset(unittest.TestCase):
     def _fn_body(self, src: str):
         """Parse a single-function source and return its body statements."""
         import textwrap
+
         tree = ast.parse(textwrap.dedent(src).strip())
         func = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
         return func.body
@@ -56,20 +58,28 @@ class TestUnifierStateReset(unittest.TestCase):
         subst2 = self.unifier.unify_blocks(blocks2, hygienic_renames=[{}, {}])
         self.assertIsNotNone(subst2, "Second unification should succeed independently")
         # Ensure no parameters were introduced for identical blocks
-        self.assertEqual(len(subst2.param_expressions), 0, "Identical blocks should not introduce params")
+        self.assertEqual(
+            len(subst2.param_expressions), 0, "Identical blocks should not introduce params"
+        )
 
 
 class TestEngineEndToEndStability(unittest.TestCase):
     """Ensure analyze_file returns expected proposals consistently across repeated runs."""
 
     def setUp(self):
-        self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
-        self.example_path = get_test_example_path('fstrings_constants.py')
+        self.engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True
+        )
+        self.example_path = get_test_example_path("fstrings_constants.py")
 
     def _assert_expected_proposals(self, proposals):
         descs = [p.description.lower() for p in proposals]
-        self.assertTrue(any('format_number' in d for d in descs), "Should include format_number proposals")
-        self.assertTrue(any('mixed_fstring' in d for d in descs), "Should include mixed f-string proposals")
+        self.assertTrue(
+            any("format_number" in d for d in descs), "Should include format_number proposals"
+        )
+        self.assertTrue(
+            any("mixed_fstring" in d for d in descs), "Should include mixed f-string proposals"
+        )
 
     def test_analyze_file_multiple_runs_stable(self):
         # Run analyze_file multiple times with the same engine instance
@@ -78,5 +88,5 @@ class TestEngineEndToEndStability(unittest.TestCase):
             self._assert_expected_proposals(proposals)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

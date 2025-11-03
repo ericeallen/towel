@@ -35,7 +35,9 @@ class TestUnifierNestedComprehensions(unittest.TestCase):
 
         # Should unify successfully with zero parameters (pure alpha-equivalence)
         self.assertIsNotNone(subst, "Nested comprehensions should unify")
-        self.assertEqual(len(subst.param_expressions), 0, "No parameters expected for alpha-equivalent code")
+        self.assertEqual(
+            len(subst.param_expressions), 0, "No parameters expected for alpha-equivalent code"
+        )
 
     # Hygienic renames for bound comprehension vars are an internal detail and
     # may not be persisted; the critical property is that no parameters are needed.

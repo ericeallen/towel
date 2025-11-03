@@ -19,7 +19,7 @@ import importlib.util
 
 from tests.automatic_equivalence_tester import (
     test_all_refactored_functions,
-    extract_function_names_from_proposal
+    extract_function_names_from_proposal,
 )
 
 
@@ -76,18 +76,17 @@ class CrossFileEquivalenceTester:
         python_files = []
         for py_file in directory.rglob("*.py"):
             # Skip __pycache__, hidden files, __init__.py
-            if ('__pycache__' in py_file.parts or
-                any(part.startswith('.') for part in py_file.parts) or
-                py_file.name == '__init__.py'):
+            if (
+                "__pycache__" in py_file.parts
+                or any(part.startswith(".") for part in py_file.parts)
+                or py_file.name == "__init__.py"
+            ):
                 continue
             python_files.append(py_file)
         return sorted(python_files)
 
     def _compare_project_behavior(
-        self,
-        original_dir: Path,
-        refactored_dir: Path,
-        test_functions: Dict[str, List[str]]
+        self, original_dir: Path, refactored_dir: Path, test_functions: Dict[str, List[str]]
     ) -> Tuple[bool, List[str]]:
         """
         Compare behavior of functions between original and refactored projects.
@@ -115,14 +114,13 @@ class CrossFileEquivalenceTester:
             for file_path, func_names in test_functions.items():
                 # Construct module name from relative path
                 rel_path = Path(file_path).relative_to(original_dir)
-                module_name = str(rel_path.with_suffix('')).replace('/', '.')
+                module_name = str(rel_path.with_suffix("")).replace("/", ".")
 
                 # Import from original
                 sys.path.insert(0, original_dir_str)
                 original_file = original_dir / rel_path
                 original_module = self._import_module_from_path(
-                    original_file,
-                    f"original_{module_name}"
+                    original_file, f"original_{module_name}"
                 )
 
                 if not original_module:
@@ -140,8 +138,7 @@ class CrossFileEquivalenceTester:
                 sys.path[0] = refactored_dir_str
                 refactored_file = refactored_dir / rel_path
                 refactored_module = self._import_module_from_path(
-                    refactored_file,
-                    f"refactored_{module_name}"
+                    refactored_file, f"refactored_{module_name}"
                 )
 
                 if not refactored_module:
@@ -155,9 +152,7 @@ class CrossFileEquivalenceTester:
                     refactored_func = getattr(refactored_module, func_name, None)
 
                     if not original_func or not refactored_func:
-                        errors.append(
-                            f"Function '{func_name}' not found in {rel_path}"
-                        )
+                        errors.append(f"Function '{func_name}' not found in {rel_path}")
                         all_passed = False
                         continue
 
@@ -170,9 +165,7 @@ class CrossFileEquivalenceTester:
                     proposal_desc = f"Extract common code from {func_name} and {func_name}"
 
                     passed, func_errors = test_all_refactored_functions(
-                        original_source,
-                        refactored_source,
-                        proposal_desc
+                        original_source, refactored_source, proposal_desc
                     )
 
                     if not passed:
@@ -191,11 +184,7 @@ class CrossFileEquivalenceTester:
 
         return all_passed, errors
 
-    def test_project(
-        self,
-        project_dir: str,
-        verbose: bool = True
-    ) -> Tuple[int, int, List[str]]:
+    def test_project(self, project_dir: str, verbose: bool = True) -> Tuple[int, int, List[str]]:
         """
         Test cross-file refactorings for an entire project directory.
 
@@ -291,9 +280,7 @@ class CrossFileEquivalenceTester:
 
                 # Compare behavior
                 all_passed, errors = self._compare_project_behavior(
-                    original_copy,
-                    refactored_copy,
-                    test_functions
+                    original_copy, refactored_copy, test_functions
                 )
 
                 if all_passed:
@@ -310,9 +297,7 @@ class CrossFileEquivalenceTester:
         return passed, failed, all_errors
 
     def test_all_projects(
-        self,
-        projects_dir: str = "test_examples_crossfile",
-        verbose: bool = True
+        self, projects_dir: str = "test_examples_crossfile", verbose: bool = True
     ) -> Dict[str, Any]:
         """
         Test all project directories in a root directory.
@@ -328,45 +313,46 @@ class CrossFileEquivalenceTester:
 
         if not projects_path.exists():
             return {
-                'total_projects': 0,
-                'total_proposals_tested': 0,
-                'total_passed': 0,
-                'total_failed': 0,
-                'project_results': {},
-                'error': f'Projects directory not found: {projects_dir}'
+                "total_projects": 0,
+                "total_proposals_tested": 0,
+                "total_passed": 0,
+                "total_failed": 0,
+                "project_results": {},
+                "error": f"Projects directory not found: {projects_dir}",
             }
 
         results = {
-            'total_projects': 0,
-            'total_proposals_tested': 0,
-            'total_passed': 0,
-            'total_failed': 0,
-            'project_results': {}
+            "total_projects": 0,
+            "total_proposals_tested": 0,
+            "total_passed": 0,
+            "total_failed": 0,
+            "project_results": {},
         }
 
         # Find all project directories (subdirectories of projects_dir)
-        project_dirs = [d for d in projects_path.iterdir()
-                       if d.is_dir() and not d.name.startswith('.')]
+        project_dirs = [
+            d for d in projects_path.iterdir() if d.is_dir() and not d.name.startswith(".")
+        ]
 
         if verbose:
             print(f"\n=== Testing {len(project_dirs)} Cross-File Project(s) ===\n")
 
         for i, project_dir in enumerate(sorted(project_dirs), 1):
-            results['total_projects'] += 1
+            results["total_projects"] += 1
 
             if verbose:
                 print(f"[{i}/{len(project_dirs)}] Testing {project_dir.name}...")
 
             passed, failed, errors = self.test_project(str(project_dir), verbose=verbose)
 
-            results['total_proposals_tested'] += (passed + failed)
-            results['total_passed'] += passed
-            results['total_failed'] += failed
+            results["total_proposals_tested"] += passed + failed
+            results["total_passed"] += passed
+            results["total_failed"] += failed
 
-            results['project_results'][project_dir.name] = {
-                'passed': passed,
-                'failed': failed,
-                'errors': errors
+            results["project_results"][project_dir.name] = {
+                "passed": passed,
+                "failed": failed,
+                "errors": errors,
             }
 
             if verbose:

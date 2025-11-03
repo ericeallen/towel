@@ -30,10 +30,11 @@ def foo():
         func = tree.body[0]
 
         from towel.unification.unifier import Substitution
+
         subst = Substitution()
 
         # Try to extract with too many free variables
-        free_vars = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'}
+        free_vars = {"a", "b", "c", "d", "e", "f", "g", "h"}
 
         try:
             func_def, param_order = self.extractor.extract_function(
@@ -42,7 +43,7 @@ def foo():
                 free_variables=free_vars,
                 enclosing_names=set(),
                 is_value_producing=True,
-                function_name="extracted_func"
+                function_name="extracted_func",
             )
             # Should succeed but with parameters
             self.assertIsNotNone(func_def)
@@ -150,7 +151,7 @@ def bar():
     x = 2
     return x
 """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(code)
             f.flush()
             temp_path = f.name
@@ -184,7 +185,7 @@ def a():
 def b():
     return 2
 """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(code)
             f.flush()
             temp_path = f.name
@@ -211,7 +212,7 @@ def process_data_b(x):
     z = y + 10
     return z
 """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(code)
             f.flush()
             temp_path = f.name
@@ -232,7 +233,7 @@ def process_data_b(x):
 
             # Create a Python file in it
             hidden_file = os.path.join(hidden_dir, "test.py")
-            with open(hidden_file, 'w') as f:
+            with open(hidden_file, "w") as f:
                 f.write("def foo(): pass")
 
             # Should not find files in hidden directories
@@ -248,7 +249,7 @@ def process_data_b(x):
 
             # Create a file in it
             cache_file = os.path.join(pycache_dir, "test.pyc")
-            with open(cache_file, 'w') as f:
+            with open(cache_file, "w") as f:
                 f.write("fake bytecode")
 
             # Should not find files in __pycache__
@@ -256,5 +257,5 @@ def process_data_b(x):
             self.assertEqual(len(files), 0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

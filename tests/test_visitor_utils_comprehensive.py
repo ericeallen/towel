@@ -17,27 +17,28 @@ class TestMakeDefensiveGenericVisit(unittest.TestCase):
 
     def tearDown(self):
         """Clean up environment variables after each test."""
-        if 'DEBUG_AST_COVERAGE' in os.environ:
-            del os.environ['DEBUG_AST_COVERAGE']
+        if "DEBUG_AST_COVERAGE" in os.environ:
+            del os.environ["DEBUG_AST_COVERAGE"]
 
     def test_returns_callable(self):
         """Test that make_defensive_generic_visit returns a callable."""
-        result = make_defensive_generic_visit('TestVisitor')
+        result = make_defensive_generic_visit("TestVisitor")
 
         self.assertTrue(callable(result), "Should return a callable function")
 
     def test_function_signature(self):
         """Test that returned function has correct signature."""
-        generic_visit = make_defensive_generic_visit('TestVisitor')
+        generic_visit = make_defensive_generic_visit("TestVisitor")
 
         # Should accept self and node parameters
         import inspect
+
         sig = inspect.signature(generic_visit)
         params = list(sig.parameters.keys())
 
         self.assertEqual(len(params), 2, "Should have 2 parameters (self, node)")
-        self.assertEqual(params[0], 'self', "First parameter should be 'self'")
-        self.assertEqual(params[1], 'node', "Second parameter should be 'node'")
+        self.assertEqual(params[0], "self", "First parameter should be 'self'")
+        self.assertEqual(params[1], "node", "Second parameter should be 'node'")
 
 
 class TestProductionModeBehavior(unittest.TestCase):
@@ -45,19 +46,20 @@ class TestProductionModeBehavior(unittest.TestCase):
 
     def tearDown(self):
         """Clean up environment variables."""
-        if 'DEBUG_AST_COVERAGE' in os.environ:
-            del os.environ['DEBUG_AST_COVERAGE']
+        if "DEBUG_AST_COVERAGE" in os.environ:
+            del os.environ["DEBUG_AST_COVERAGE"]
 
     def test_delegates_to_parent_visitor(self):
         """Test that production mode delegates to parent NodeVisitor."""
+
         class TestVisitor(ast.NodeVisitor):
-            generic_visit = make_defensive_generic_visit('TestVisitor')
+            generic_visit = make_defensive_generic_visit("TestVisitor")
 
             def __init__(self):
                 self.visited = []
 
             def visit_Name(self, node):
-                self.visited.append(('Name', node.id))
+                self.visited.append(("Name", node.id))
                 return node
 
         code = "x = y + z"
@@ -72,8 +74,9 @@ class TestProductionModeBehavior(unittest.TestCase):
 
     def test_delegates_to_parent_transformer(self):
         """Test that production mode delegates to parent NodeTransformer."""
+
         class TestTransformer(ast.NodeTransformer):
-            generic_visit = make_defensive_generic_visit('TestTransformer')
+            generic_visit = make_defensive_generic_visit("TestTransformer")
 
             def visit_Constant(self, node):
                 # Double constant values
@@ -97,17 +100,18 @@ class TestDebugModeBehavior(unittest.TestCase):
 
     def setUp(self):
         """Enable debug mode."""
-        os.environ['DEBUG_AST_COVERAGE'] = '1'
+        os.environ["DEBUG_AST_COVERAGE"] = "1"
 
     def tearDown(self):
         """Clean up environment."""
-        if 'DEBUG_AST_COVERAGE' in os.environ:
-            del os.environ['DEBUG_AST_COVERAGE']
+        if "DEBUG_AST_COVERAGE" in os.environ:
+            del os.environ["DEBUG_AST_COVERAGE"]
 
     def test_raises_for_unhandled_node(self):
         """Test that debug mode raises NotImplementedError for unhandled nodes."""
+
         class IncompleteVisitor(ast.NodeVisitor):
-            generic_visit = make_defensive_generic_visit('IncompleteVisitor')
+            generic_visit = make_defensive_generic_visit("IncompleteVisitor")
 
             def visit_Module(self, node):
                 # Handle Module but not its children
@@ -123,39 +127,40 @@ class TestDebugModeBehavior(unittest.TestCase):
             visitor.visit(tree)
 
         error_message = str(ctx.exception)
-        self.assertIn('IncompleteVisitor', error_message, "Error should mention visitor class")
-        self.assertIn('Assign', error_message, "Error should mention missing node type")
-        self.assertIn('visit_Assign', error_message, "Error should suggest visitor method")
+        self.assertIn("IncompleteVisitor", error_message, "Error should mention visitor class")
+        self.assertIn("Assign", error_message, "Error should mention missing node type")
+        self.assertIn("visit_Assign", error_message, "Error should suggest visitor method")
 
     def test_does_not_raise_for_handled_node(self):
         """Test that debug mode doesn't raise for handled nodes."""
+
         class CompleteVisitor(ast.NodeVisitor):
-            generic_visit = make_defensive_generic_visit('CompleteVisitor')
+            generic_visit = make_defensive_generic_visit("CompleteVisitor")
 
             def __init__(self):
                 self.visited = []
 
             def visit_Module(self, node):
-                self.visited.append('Module')
+                self.visited.append("Module")
                 self.generic_visit(node)
 
             def visit_Assign(self, node):
-                self.visited.append('Assign')
+                self.visited.append("Assign")
                 self.generic_visit(node)
 
             def visit_Name(self, node):
-                self.visited.append('Name')
+                self.visited.append("Name")
                 self.generic_visit(node)
 
             def visit_Constant(self, node):
-                self.visited.append('Constant')
+                self.visited.append("Constant")
                 self.generic_visit(node)
 
             def visit_Store(self, node):
-                self.visited.append('Store')
+                self.visited.append("Store")
 
             def visit_Load(self, node):
-                self.visited.append('Load')
+                self.visited.append("Load")
 
         code = "x = 1"
         tree = ast.parse(code)
@@ -169,8 +174,9 @@ class TestDebugModeBehavior(unittest.TestCase):
 
     def test_error_message_includes_visitor_name(self):
         """Test that error message includes the visitor class name."""
+
         class MySpecialVisitor(ast.NodeVisitor):
-            generic_visit = make_defensive_generic_visit('MySpecialVisitor')
+            generic_visit = make_defensive_generic_visit("MySpecialVisitor")
 
         code = "x = 1"
         tree = ast.parse(code)
@@ -179,8 +185,9 @@ class TestDebugModeBehavior(unittest.TestCase):
         with self.assertRaises(NotImplementedError) as ctx:
             visitor.visit(tree)
 
-        self.assertIn('MySpecialVisitor', str(ctx.exception),
-                     "Error should mention custom visitor name")
+        self.assertIn(
+            "MySpecialVisitor", str(ctx.exception), "Error should mention custom visitor name"
+        )
 
 
 class TestNodeTypeChecking(unittest.TestCase):
@@ -188,17 +195,18 @@ class TestNodeTypeChecking(unittest.TestCase):
 
     def setUp(self):
         """Enable debug mode."""
-        os.environ['DEBUG_AST_COVERAGE'] = '1'
+        os.environ["DEBUG_AST_COVERAGE"] = "1"
 
     def tearDown(self):
         """Clean up environment."""
-        if 'DEBUG_AST_COVERAGE' in os.environ:
-            del os.environ['DEBUG_AST_COVERAGE']
+        if "DEBUG_AST_COVERAGE" in os.environ:
+            del os.environ["DEBUG_AST_COVERAGE"]
 
     def test_only_checks_ast_nodes(self):
         """Test that only real AST nodes (in ast module) trigger errors."""
+
         class TestVisitor(ast.NodeVisitor):
-            generic_visit = make_defensive_generic_visit('TestVisitor')
+            generic_visit = make_defensive_generic_visit("TestVisitor")
 
             def visit_Module(self, node):
                 # Visit all children
@@ -217,9 +225,11 @@ class TestNodeTypeChecking(unittest.TestCase):
         # Error should be about a real AST node
         error_msg = str(ctx.exception)
         # Should mention an actual AST node type
-        ast_types = ['Assign', 'Name', 'Constant', 'Store', 'Load']
-        self.assertTrue(any(t in error_msg for t in ast_types),
-                       f"Error should mention an AST node type: {error_msg}")
+        ast_types = ["Assign", "Name", "Constant", "Store", "Load"]
+        self.assertTrue(
+            any(t in error_msg for t in ast_types),
+            f"Error should mention an AST node type: {error_msg}",
+        )
 
 
 class TestVisitorVsTransformer(unittest.TestCase):
@@ -227,13 +237,14 @@ class TestVisitorVsTransformer(unittest.TestCase):
 
     def tearDown(self):
         """Clean up environment."""
-        if 'DEBUG_AST_COVERAGE' in os.environ:
-            del os.environ['DEBUG_AST_COVERAGE']
+        if "DEBUG_AST_COVERAGE" in os.environ:
+            del os.environ["DEBUG_AST_COVERAGE"]
 
     def test_works_with_node_visitor(self):
         """Test that it works correctly with NodeVisitor."""
+
         class TestVisitor(ast.NodeVisitor):
-            generic_visit = make_defensive_generic_visit('TestVisitor')
+            generic_visit = make_defensive_generic_visit("TestVisitor")
 
             def visit_Module(self, node):
                 self.generic_visit(node)
@@ -247,8 +258,9 @@ class TestVisitorVsTransformer(unittest.TestCase):
 
     def test_works_with_node_transformer(self):
         """Test that it works correctly with NodeTransformer."""
+
         class TestTransformer(ast.NodeTransformer):
-            generic_visit = make_defensive_generic_visit('TestTransformer')
+            generic_visit = make_defensive_generic_visit("TestTransformer")
 
             def visit_Module(self, node):
                 return self.generic_visit(node)
@@ -263,8 +275,9 @@ class TestVisitorVsTransformer(unittest.TestCase):
 
     def test_transformer_returns_node(self):
         """Test that transformer version returns nodes correctly."""
+
         class TestTransformer(ast.NodeTransformer):
-            generic_visit = make_defensive_generic_visit('TestTransformer')
+            generic_visit = make_defensive_generic_visit("TestTransformer")
 
             def visit_Constant(self, node):
                 # Modify constants
@@ -288,13 +301,14 @@ class TestIntegration(unittest.TestCase):
 
     def tearDown(self):
         """Clean up environment."""
-        if 'DEBUG_AST_COVERAGE' in os.environ:
-            del os.environ['DEBUG_AST_COVERAGE']
+        if "DEBUG_AST_COVERAGE" in os.environ:
+            del os.environ["DEBUG_AST_COVERAGE"]
 
     def test_realistic_visitor_production(self):
         """Test realistic visitor in production mode."""
+
         class NameCollector(ast.NodeVisitor):
-            generic_visit = make_defensive_generic_visit('NameCollector')
+            generic_visit = make_defensive_generic_visit("NameCollector")
 
             def __init__(self):
                 self.names = []
@@ -314,14 +328,15 @@ def foo(x, y):
         collector.visit(tree)
 
         # Should have collected variable names
-        self.assertIn('x', collector.names, "Should collect parameter name")
-        self.assertIn('y', collector.names, "Should collect parameter name")
-        self.assertIn('z', collector.names, "Should collect local variable name")
+        self.assertIn("x", collector.names, "Should collect parameter name")
+        self.assertIn("y", collector.names, "Should collect parameter name")
+        self.assertIn("z", collector.names, "Should collect local variable name")
 
     def test_realistic_transformer_production(self):
         """Test realistic transformer in production mode."""
+
         class ConstantDoubler(ast.NodeTransformer):
-            generic_visit = make_defensive_generic_visit('ConstantDoubler')
+            generic_visit = make_defensive_generic_visit("ConstantDoubler")
 
             def visit_Constant(self, node):
                 if isinstance(node.value, int):
@@ -344,5 +359,5 @@ def main():
     unittest.main(verbosity=2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
