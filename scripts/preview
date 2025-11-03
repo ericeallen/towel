@@ -64,7 +64,7 @@ def main():
         all_proposals = engine.analyze_file(target)
     else:
         print(f"Analyzing directory: {target}")
-        all_proposals = engine.analyze_directory(target, recursive=True)
+        all_proposals = engine.analyze_directory(target, recursive=True, verbose=True, progress="tqdm")
 
     print(f"\nFound {len(all_proposals)} refactoring opportunities")
 

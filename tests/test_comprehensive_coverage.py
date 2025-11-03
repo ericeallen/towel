@@ -41,7 +41,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         for py_file in test_examples_dir.glob("*.py"):
             original_contents[py_file] = py_file.read_text()
 
-        proposals = self.engine.analyze_directory("test_examples", recursive=False)
+        proposals = self.engine.analyze_directory("test_examples", recursive=False, verbose=True)
         # Should find some duplicates
         self.assertGreaterEqual(len(proposals), 0)
 
