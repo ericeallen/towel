@@ -64,7 +64,11 @@ class UnificationRefactorEngine:
     """
 
     def __init__(
-        self, max_parameters: int = 5, min_lines: int = 4, parameterize_constants: bool = True
+        self,
+        max_parameters: int = 5,
+        min_lines: int = 4,
+        parameterize_constants: bool = True,
+        allow_global_reads_without_assignment: bool = False,
     ):
         """
         Initialize the refactoring engine.
@@ -81,6 +85,11 @@ class UnificationRefactorEngine:
             max_parameters=max_parameters, parameterize_constants=parameterize_constants
         )
         self.extractor = HygienicExtractor()
+        # When True, allows extraction even if a free variable is declared global/nonlocal
+        # in the original function, provided the name itself is not assigned within the block.
+        # This enables patterns like `log.append(x)` where `log` is global, without making it
+        # a parameter or declaring it global in the extracted function.
+        self.allow_global_reads_without_assignment = allow_global_reads_without_assignment
 
     def analyze_file(self, file_path: str) -> List[RefactoringProposal]:
         """
@@ -992,10 +1001,61 @@ class UnificationRefactorEngine:
             # Check if any free variables are global or nonlocal in this scope
             global_vars = scope_analyzer.global_vars.get(func1_scope_id, set())
             nonlocal_vars = scope_analyzer.nonlocal_vars.get(func1_scope_id, set())
+            problematic = free_vars & (global_vars | nonlocal_vars)
+            if problematic:
+                # If allowed, relax restrictions when the NAME itself is not assigned,
+                # or when it is assigned but the block contains an explicit `global` declaration.
+                if self.allow_global_reads_without_assignment:
+                    assigned_names: Set[str] = set()
+                    declared_global_in_block: Set[str] = set()
 
-            if free_vars & (global_vars | nonlocal_vars):
-                # Cannot extract - would require making global/nonlocal variables into parameters
-                return None
+                    class AssignTargetVisitor(ast.NodeVisitor):
+                        def visit_Assign(self, node):
+                            for t in node.targets:
+                                if isinstance(t, ast.Name):
+                                    assigned_names.add(t.id)
+                            self.generic_visit(node)
+
+                        def visit_AugAssign(self, node):
+                            if isinstance(node.target, ast.Name):
+                                assigned_names.add(node.target.id)
+                            self.generic_visit(node)
+
+                        def visit_AnnAssign(self, node):
+                            if isinstance(node.target, ast.Name):
+                                assigned_names.add(node.target.id)
+                            self.generic_visit(node)
+
+                        def visit_Global(self, node):
+                            for n in node.names:
+                                declared_global_in_block.add(n)
+                            # no need to visit deeper for the statement itself
+
+                        def visit_FunctionDef(self, node):
+                            # Don't descend into nested functions
+                            pass
+
+                        def visit_AsyncFunctionDef(self, node):
+                            # Don't descend into nested async functions
+                            pass
+
+                    v = AssignTargetVisitor()
+                    for n in pair.block1_nodes:
+                        v.visit(n)
+                    for n in pair.block2_nodes:
+                        v.visit(n)
+
+                    # If a problematic name is assigned, allow only if it's declared global within the block
+                    assigned_problematic = assigned_names & problematic
+                    if assigned_problematic and not assigned_problematic <= declared_global_in_block:
+                        return None
+                    # Do not parameterize these globals; let them remain free
+                    # so the extracted function references the module-level name (and may
+                    # include an existing `global` statement if present in the block).
+                    free_vars -= problematic
+                else:
+                    # Strict mode: reject whenever a global/nonlocal free var is present
+                    return None
 
         # Extract function
         try:

@@ -50,8 +50,9 @@ def main():
     # Create engine
     engine = UnificationRefactorEngine(
         max_parameters=5,
-        min_lines=4,
-        parameterize_constants=True
+        min_lines=3,
+        parameterize_constants=True,
+        allow_global_reads_without_assignment=True,
     )
 
     # Analyze based on type
