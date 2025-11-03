@@ -11,12 +11,12 @@ ensuring the refactoring system handles all edge cases correctly.
 
 def literals_a(x):
     """Test all literal types."""
-    return __extracted_func_1894(x)
+    return __extracted_func_2645(x)
 
 
 def literals_b(y):
     """Test all literal types."""
-    return __extracted_func_1894(y)
+    return __extracted_func_2645(y)
 
 # =============================================================================
 # 2. COLLECTION LITERALS
@@ -24,12 +24,12 @@ def literals_b(y):
 
 def collections_a(x):
     """Test collection literal construction."""
-    return __extracted_func_2168(x)
+    return __extracted_func_3282(x)
 
 
 def collections_b(y):
     """Test collection literal construction."""
-    return __extracted_func_2168(y)
+    return __extracted_func_3282(y)
 
 # =============================================================================
 # 3. ARITHMETIC OPERATIONS
@@ -37,12 +37,12 @@ def collections_b(y):
 
 def arithmetic_a(x, y):
     """Test all arithmetic operators."""
-    return __extracted_func_1953(x, y)
+    return __extracted_func_2771(x, y)
 
 
 def arithmetic_b(a, b):
     """Test all arithmetic operators."""
-    return __extracted_func_1953(a, b)
+    return __extracted_func_2771(a, b)
 
 # =============================================================================
 # 4. COMPARISON OPERATIONS
@@ -50,12 +50,12 @@ def arithmetic_b(a, b):
 
 def comparisons_a(x, y):
     """Test all comparison operators."""
-    return __extracted_func_1768(x, y)
+    return __extracted_func_2383(x, y)
 
 
 def comparisons_b(a, b):
     """Test all comparison operators."""
-    return __extracted_func_1768(a, b)
+    return __extracted_func_2383(a, b)
 
 # =============================================================================
 # 5. LOGICAL OPERATIONS
@@ -81,12 +81,12 @@ def logical_b(a, b):
 
 def bitwise_a(x, y):
     """Test bitwise operators."""
-    return __extracted_func_2006(x, y)
+    return __extracted_func_2893(x, y)
 
 
 def bitwise_b(a, b):
     """Test bitwise operators."""
-    return __extracted_func_2006(a, b)
+    return __extracted_func_2893(a, b)
 
 # =============================================================================
 # 7. AUGMENTED ASSIGNMENTS
@@ -94,12 +94,12 @@ def bitwise_b(a, b):
 
 def augmented_a(x):
     """Test augmented assignment operators."""
-    return __extracted_func_1848(x)
+    return __extracted_func_2541(x)
 
 
 def augmented_b(y):
     """Test augmented assignment operators."""
-    return __extracted_func_1848(y)
+    return __extracted_func_2541(y)
 
 # =============================================================================
 # 8. SEQUENCE UNPACKING
@@ -131,12 +131,12 @@ def unpacking_b(items):
 
 def subscript_a(data):
     """Test subscript and slice operations."""
-    return __extracted_func_2054(data)
+    return __extracted_func_3005(data)
 
 
 def subscript_b(items):
     """Test subscript and slice operations."""
-    return __extracted_func_2054(items)
+    return __extracted_func_3005(items)
 
 # =============================================================================
 # 10. ATTRIBUTE ACCESS
@@ -173,12 +173,12 @@ def helper(a, b, c=10, *args, **kwargs):
 
 def calls_a(x, y):
     """Test various function call patterns."""
-    return __extracted_func_2098(x, y, helper)
+    return __extracted_func_3111(x, y, helper)
 
 
 def calls_b(a, b):
     """Test various function call patterns."""
-    return __extracted_func_2098(a, b, helper)
+    return __extracted_func_3111(a, b, helper)
 
 # =============================================================================
 # 12. LIST COMPREHENSIONS
@@ -326,12 +326,12 @@ def fstring_b(a, b):
 
 def exceptions_a(x):
     """Test exception handling."""
-    return __extracted_func_1731(x)
+    return __extracted_func_2319(x)
 
 
 def exceptions_b(y):
     """Test exception handling."""
-    return __extracted_func_1731(y)
+    return __extracted_func_2319(y)
 
 # =============================================================================
 # 21. WITH STATEMENTS (CONTEXT MANAGERS)
@@ -367,12 +367,12 @@ def context_mgr_b(y):
 
 def walrus_a(data):
     """Test walrus operator."""
-    return __extracted_func_2144(data)
+    return __extracted_func_3228(data)
 
 
 def walrus_b(items):
     """Test walrus operator."""
-    return __extracted_func_2144(items)
+    return __extracted_func_3228(items)
 
 # =============================================================================
 # 23. CHAINED COMPARISONS
@@ -521,7 +521,7 @@ def complex_expr_b(a, b, items):
     return output
 
 
-def __extracted_func_1731(__param_0):
+def __extracted_func_2319(__param_0):
     result = __param_0
     try:
         result = result / __param_0
@@ -536,7 +536,7 @@ def __extracted_func_1731(__param_0):
     return result
 
 
-def __extracted_func_1768(__param_0, __param_1):
+def __extracted_func_2383(__param_0, __param_1):
     result = 1 if __param_0 == __param_1 else 0
     result += 1 if __param_0 != __param_1 else 0
     result += 1 if __param_0 < __param_1 else 0
@@ -548,7 +548,7 @@ def __extracted_func_1768(__param_0, __param_1):
     return result
 
 
-def __extracted_func_1848(__param_0):
+def __extracted_func_2541(__param_0):
     result = __param_0
     result += 10
     result -= 5
@@ -560,7 +560,7 @@ def __extracted_func_1848(__param_0):
     return result
 
 
-def __extracted_func_1894(__param_0):
+def __extracted_func_2645(__param_0):
     result = __param_0 + 42
     result = result + 3.14
     result = result + 1j
@@ -571,7 +571,7 @@ def __extracted_func_1894(__param_0):
     return result
 
 
-def __extracted_func_1953(__param_0, __param_1):
+def __extracted_func_2771(__param_0, __param_1):
     result = __param_0 + __param_1
     result = result - __param_1
     result = result * 2
@@ -582,7 +582,7 @@ def __extracted_func_1953(__param_0, __param_1):
     return result
 
 
-def __extracted_func_2006(__param_0, __param_1):
+def __extracted_func_2893(__param_0, __param_1):
     result = __param_0 & __param_1
     result = result | __param_1
     result = result ^ __param_1
@@ -592,7 +592,7 @@ def __extracted_func_2006(__param_0, __param_1):
     return result
 
 
-def __extracted_func_2054(__param_0):
+def __extracted_func_3005(__param_0):
     result = __param_0[0]
     result += __param_0[-1]
     result += sum(__param_0[1:3])
@@ -601,7 +601,7 @@ def __extracted_func_2054(__param_0):
     return result
 
 
-def __extracted_func_2098(__param_0, __param_1, helper):
+def __extracted_func_3111(__param_0, __param_1, helper):
     result = helper(__param_0, __param_1)
     result += helper(__param_0, __param_1, 20)
     result += helper(__param_0, __param_1, c=30)
@@ -610,7 +610,7 @@ def __extracted_func_2098(__param_0, __param_1, helper):
     return result
 
 
-def __extracted_func_2144(__param_0):
+def __extracted_func_3228(__param_0):
     result = 0
     if (n := len(__param_0)) > 5:
         result += n
@@ -619,7 +619,7 @@ def __extracted_func_2144(__param_0):
     return result
 
 
-def __extracted_func_2168(__param_0):
+def __extracted_func_3282(__param_0):
     data = [__param_0, __param_0 + 1, __param_0 + 2]
     data = data + list((__param_0, __param_0 + 1))
     data = data + list({__param_0, __param_0 + 1})

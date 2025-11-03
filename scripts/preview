@@ -52,7 +52,6 @@ def main():
         max_parameters=5,
         min_lines=3,
         parameterize_constants=True,
-        allow_global_reads_without_assignment=True,
     )
 
     # Analyze based on type

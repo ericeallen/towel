@@ -137,7 +137,7 @@ def main():
     print("=" * 70)
 
     # Create engine
-    engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+    engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
     # Define directories
     test_examples = project_root / "test_examples"

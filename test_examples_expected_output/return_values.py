@@ -8,61 +8,57 @@ properly propagate return values in replacement calls.
 
 def early_return_a(x):
     """Early return in if statement."""
-    return __extracted_func_1599(x)
+    return __extracted_func_2082(x)
 
 
 def early_return_b(x):
     """Early return in if statement (duplicate)."""
-    return __extracted_func_1599(x)
+    return __extracted_func_2082(x)
 
 
 def nested_return_a(x, y):
     """Return nested in multiple if statements."""
-    return __extracted_func_1590(x, y)
+    return __extracted_func_2070(x, y)
 
 
 def nested_return_b(x, y):
     """Return nested in multiple if statements (duplicate)."""
-    return __extracted_func_1590(x, y)
+    return __extracted_func_2070(x, y)
 
 
 def loop_with_return_a(items):
     """Return inside loop."""
-    return __extracted_func_1601(items)
+    return __extracted_func_2086(items)
 
 
 def loop_with_return_b(items):
     """Return inside loop (duplicate)."""
-    return __extracted_func_1601(items)
+    return __extracted_func_2086(items)
 
 
 def multiple_returns_a(x):
     """Multiple return paths."""
-    return __extracted_func_1597(x)
+    return __extracted_func_2079(x)
 
 
 def multiple_returns_b(x):
     """Multiple return paths (duplicate)."""
-    return __extracted_func_1597(x)
+    return __extracted_func_2079(x)
 
 
 def no_return_a(x):
     """Function with no explicit return (returns None)."""
-    result = []
-    for i in range(x):
-        result.append(i * 2)
+    __extracted_func_2088(x)
     # No return statement
 
 
 def no_return_b(x):
     """Function with no explicit return (duplicate)."""
-    result = []
-    for i in range(x):
-        result.append(i * 2)
+    __extracted_func_2088(x)
     # No return statement
 
 
-def __extracted_func_1590(x, y):
+def __extracted_func_2070(x, y):
     if x > 0:
         if y > 0:
             return x + y
@@ -71,7 +67,7 @@ def __extracted_func_1590(x, y):
     return 0
 
 
-def __extracted_func_1597(x):
+def __extracted_func_2079(x):
     if x < 0:
         return 'negative'
     elif x == 0:
@@ -80,18 +76,26 @@ def __extracted_func_1597(x):
         return 'positive'
 
 
-def __extracted_func_1599(x):
+def __extracted_func_2082(x):
     if x < 0:
         return None
     result = x * 2
     return result
 
 
-def __extracted_func_1601(items):
+def __extracted_func_2086(items):
     for item in items:
         if item > 100:
             return item
     return None
+
+
+def __extracted_func_2088(x):
+    result = []
+    for i in range(x):
+        result.append(i * 2)
+
+
 
 
 
