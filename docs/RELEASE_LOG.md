@@ -4,6 +4,23 @@ This log records notable repository states with all tests passing, to make it ea
 
 ## 2025-11-02
 
+- Version: 0.5.0
+- Commit: 7c7e919e529efad3c93147ed1c2d87f2f16e7551
+- Summary:
+  - Tests: Unskipped previously skipped observational equivalence tests (variable capture fix effective); suite now runs with zero skips.
+  - Quality: mypy/flake8/black all passing; no functional changes beyond test enablement.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `7c7e919e529efad3c93147ed1c2d87f2f16e7551` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-02.
+
+## 2025-11-02
+
 - Version: 1.0.1
 - Commit: cbfe0db0fbefe4d242c1764cfc14d35ef31de4d6
 - Summary:
