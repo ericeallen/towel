@@ -4,6 +4,25 @@ This log records notable repository states with all tests passing, to make it ea
 
 ## 2025-11-02
 
+- Version: 0.5.2
+- Commit: 42d96fbb0439a613294fd6f1fdacd90bcf9201db
+- Summary:
+  - Engine: Fixed a nested-block regression by deferring evaluation of unified parameters used as callees inside the extracted body. Call-site arguments are now wrapped in forwarding lambdas (thunks) to preserve guarded semantics and arity.
+  - Docs: Added note documenting the callee-parameter thunking rule (`docs/CALLEE_PARAMETER_THUNK.md`).
+  - Baseline: Regenerated expected outputs.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Observational equivalence: 116/116 proposals passed (100%)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `42d96fbb0439a613294fd6f1fdacd90bcf9201db` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-02.
+
+## 2025-11-02
+
 - Version: 0.5.1
 - Commit: 099dd1a12f941cb2a54f27238e5a3ccb0c751223
 - Summary:
