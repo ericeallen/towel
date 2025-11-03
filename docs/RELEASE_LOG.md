@@ -4,6 +4,23 @@ This log records notable repository states with all tests passing, to make it ea
 
 ## 2025-11-02
 
+- Version: 0.5.1
+- Commit: 099dd1a12f941cb2a54f27238e5a3ccb0c751223
+- Summary:
+  - Typing: Finished strict mypy cleanup by resolving remaining issues in unifier (async function visitor) and extractor (Optional handling, redundant cast removal).
+  - Quality: mypy/flake8/black all passing; no behavioral changes intended.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `099dd1a12f941cb2a54f27238e5a3ccb0c751223` on branch `main`.
+- Changes were committed on 2025-11-02.
+
+## 2025-11-02
+
 - Version: 0.5.0
 - Commit: 7c7e919e529efad3c93147ed1c2d87f2f16e7551
 - Summary:
