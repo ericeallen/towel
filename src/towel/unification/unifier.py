@@ -26,6 +26,10 @@ class Substitution:
     function_params: Dict[str, List[str]] = field(default_factory=dict)
     # Optional hygienic renames captured during unification (one mapping per block)
     hygienic_renames: Optional[List[Dict[str, str]]] = field(default_factory=list)
+    # Parameters that, after substitution, are used in call position (as a callee)
+    # within the extracted function body. These should be passed as thunks (lambdas)
+    # that perform the call to avoid eager evaluation at the call site.
+    params_used_as_callee: Set[str] = field(default_factory=set)
 
     def add_mapping(
         self, block_idx: int, expr: ast.AST, param_name: str, bound_vars: Optional[List[str]] = None
