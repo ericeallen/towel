@@ -14,11 +14,7 @@ def with_nested_func_a(items):
     def helper(x):
         return x * 2
 
-    result = []
-    for item in items:
-        if item > 0:
-            result.append(helper(item))
-    return result
+    return __extracted_func_1650(lambda *args, **kwargs: helper(*args, **kwargs), items)
 
 
 def with_nested_func_b(items):
@@ -26,41 +22,27 @@ def with_nested_func_b(items):
     def processor(x):
         return x * 2
 
-    result = []
-    for item in items:
-        if item > 0:
-            result.append(processor(item))
-    return result
+    return __extracted_func_1650(lambda *args, **kwargs: processor(*args, **kwargs), items)
 
 
 def with_lambda_a(items):
     """Lambda expression."""
-    processor = lambda x: x * 2
-    result = []
-    for item in items:
-        if item > 0:
-            result.append(processor(item))
-    return result
+    return __extracted_func_1642(items)
 
 
 def with_lambda_b(items):
     """Lambda expression (duplicate)."""
-    processor = lambda y: y * 2
-    result = []
-    for item in items:
-        if item > 0:
-            result.append(processor(item))
-    return result
+    return __extracted_func_1642(items)
 
 
 def closure_a(multiplier):
     """Function that creates closure."""
-    return __extracted_func_450(multiplier)
+    return __extracted_func_1622(multiplier)
 
 
 def closure_b(multiplier):
     """Function that creates closure (duplicate)."""
-    return __extracted_func_450(multiplier)
+    return __extracted_func_1622(multiplier)
 
 
 def shadowing_a(x):
@@ -83,23 +65,15 @@ def shadowing_b(x):
 
 def builtin_override_a(items):
     """Don't treat builtin names as parameters."""
-    result = []
-    for item in items:
-        if len(item) > 0:
-            result.append(str(item))
-    return result
+    return __extracted_func_1662(items)
 
 
 def builtin_override_b(items):
     """Don't treat builtin names as parameters (duplicate)."""
-    result = []
-    for item in items:
-        if len(item) > 0:
-            result.append(str(item))
-    return result
+    return __extracted_func_1662(items)
 
 
-def __extracted_func_450(multiplier):
+def __extracted_func_1622(multiplier):
 
     def process(items):
         result = []
@@ -108,5 +82,38 @@ def __extracted_func_450(multiplier):
                 result.append(item * multiplier)
         return result
     return process
+
+
+def __extracted_func_1642(items):
+    processor = lambda x: x * 2
+    return __extracted_func_1668(lambda *args, **kwargs: processor(*args, **kwargs), items)
+
+
+def __extracted_func_1650(__param_0, items):
+    return __extracted_func_1668(lambda *args, **kwargs: __param_0(*args, **kwargs), items)
+
+
+def __extracted_func_1662(items):
+    result = []
+    for item in items:
+        if len(item) > 0:
+            result.append(str(item))
+    return result
+
+
+def __extracted_func_1668(__param_0, items):
+    result = []
+    for item in items:
+        if item > 0:
+            result.append(__param_0(item))
+    return result
+
+
+
+
+
+
+
+
 
 

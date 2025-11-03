@@ -32,12 +32,12 @@ def process_with_temp_var_v2(data, result):
 
 def calculate_nested_scope_a(values, x, y):
     """Uses x and y as parameters - extracted function must avoid these."""
-    return __extracted_func_272(5, values, x, y)
+    return __extracted_func_945(5, values, x, y)
 
 
 def calculate_nested_scope_b(values, x, y):
     """Same outer variable names - extracted function needs hygienic naming."""
-    return __extracted_func_272(10, values, x, y)
+    return __extracted_func_945(10, values, x, y)
 
 
 def transform_with_shadowing_v1(data, temp, cache):
@@ -47,11 +47,7 @@ def transform_with_shadowing_v1(data, temp, cache):
 
     for key, value in data.items():
         # Block that modifies outer 'temp' and 'cache'
-        processed = value.upper()
-        validated = len(processed) > 5
-        if validated:
-            temp.append(processed)
-            cache[key] = processed
+        __extracted_func_955(lambda *args, **kwargs: value.upper(*args, **kwargs), 5, cache, key, temp, value)
 
     return temp, cache
 
@@ -63,11 +59,7 @@ def transform_with_shadowing_v2(data, temp, cache):
 
     for key, value in data.items():
         # Same pattern, different validation condition
-        processed = value.lower()
-        validated = len(processed) > 3
-        if validated:
-            temp.append(processed)
-            cache[key] = processed
+        __extracted_func_955(lambda *args, **kwargs: value.lower(*args, **kwargs), 3, cache, key, temp, value)
 
     return temp, cache
 
@@ -101,11 +93,7 @@ def compute_with_param_collision_b(items, param1, param2, param3):
 def nested_function_scope_v1(data, helper, processor):
     """Defines nested functions - extracted code must not collide."""
 
-    def helper(x):
-        return x * 2
-
-    def processor(x):
-        return x + 5
+    __extracted_func_961()
 
     results = []
     for item in data:
@@ -121,11 +109,7 @@ def nested_function_scope_v1(data, helper, processor):
 def nested_function_scope_v2(data, helper, processor):
     """Same nested function names, different computation."""
 
-    def helper(x):
-        return x * 2
-
-    def processor(x):
-        return x + 5
+    __extracted_func_961()
 
     results = []
     for item in data:
@@ -138,7 +122,7 @@ def nested_function_scope_v2(data, helper, processor):
     return results
 
 
-def __extracted_func_272(__param_0, values, x, y):
+def __extracted_func_945(__param_0, values, x, y):
     output = []
     for val in values:
         a = val + x
@@ -146,5 +130,26 @@ def __extracted_func_272(__param_0, values, x, y):
         c = b - __param_0
         output.append(c)
     return output
+
+
+def __extracted_func_955(__param_0, __param_1, cache, key, temp, value):
+    processed = __param_0()
+    validated = len(processed) > __param_1
+    if validated:
+        temp.append(processed)
+        cache[key] = processed
+
+
+def __extracted_func_961():
+
+    def helper(x):
+        return x * 2
+
+    def processor(x):
+        return x + 5
+
+
+
+
 
 

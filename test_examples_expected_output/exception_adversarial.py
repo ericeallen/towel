@@ -8,104 +8,52 @@ when extracting code with try/except/finally blocks.
 
 def safe_divide_a(x, y):
     """Division with exception handling."""
-    result = 0
-    try:
-        result = x / y
-    except ZeroDivisionError:
-        result = float('inf')
-    return result
+    return __extracted_func_447(x, y)
 
 
 def safe_divide_b(a, b):
     """Similar division pattern."""
-    output = 0
-    try:
-        output = a / b
-    except ZeroDivisionError:
-        output = float('inf')
-    return output
+    return __extracted_func_447(a, b)
 
 
 def parse_int_or_default_a(s, default=0):
     """Parse int with fallback."""
-    value = default
-    try:
-        value = int(s)
-    except (ValueError, TypeError):
-        value = default
-    return value
+    return __extracted_func_451(default, s)
 
 
 def parse_int_or_default_b(text, fallback=0):
     """Similar parse pattern."""
-    result = fallback
-    try:
-        result = int(text)
-    except (ValueError, TypeError):
-        result = fallback
-    return result
+    return __extracted_func_451(fallback, text)
 
 
 def process_with_cleanup_a(items):
     """Process with finally cleanup."""
-    results = []
-    count = 0
-    try:
-        for item in items:
-            count += 1
-            results.append(item * 2)
-    finally:
-        results.append(count)
-    return results
+    return __extracted_func_435(items)
 
 
 def process_with_cleanup_b(values):
     """Similar cleanup pattern."""
-    output = []
-    total = 0
-    try:
-        for value in values:
-            total += 1
-            output.append(value * 2)
-    finally:
-        output.append(total)
-    return output
+    return __extracted_func_435(values)
 
 
 def nested_exception_a(data):
     """Nested exception handling."""
-    result = 0
-    try:
-        try:
-            result = int(data)
-        except ValueError:
-            result = float(data)
-    except (ValueError, TypeError):
-        result = -1
-    return result
+    return __extracted_func_445(data)
 
 
 def nested_exception_b(input_val):
     """Similar nested exception pattern."""
-    output = 0
-    try:
-        try:
-            output = int(input_val)
-        except ValueError:
-            output = float(input_val)
-    except (ValueError, TypeError):
-        output = -1
-    return output
+    return __extracted_func_445(input_val)
 
 
 def exception_with_else_a(items):
     """Exception handling with else clause."""
-    return __extracted_func_119(items)
+    return __extracted_func_413(items)
 
 
 def exception_with_else_b(values):
     """Similar else clause pattern."""
-    return __extracted_func_119(values)
+    return __extracted_func_413(values)
 
 
 def reraise_exception_a(x):
@@ -132,33 +80,15 @@ def reraise_exception_b(y):
 
 def multiple_except_a(data):
     """Multiple except clauses."""
-    result = None
-    try:
-        result = int(data) / len(data)
-    except ValueError:
-        result = -1
-    except ZeroDivisionError:
-        result = -2
-    except TypeError:
-        result = -3
-    return result
+    return __extracted_func_429(data)
 
 
 def multiple_except_b(input_val):
     """Similar multiple except pattern."""
-    output = None
-    try:
-        output = int(input_val) / len(input_val)
-    except ValueError:
-        output = -1
-    except ZeroDivisionError:
-        output = -2
-    except TypeError:
-        output = -3
-    return output
+    return __extracted_func_429(input_val)
 
 
-def __extracted_func_119(__param_0):
+def __extracted_func_413(__param_0):
     results = []
     error = None
     try:
@@ -169,5 +99,70 @@ def __extracted_func_119(__param_0):
     else:
         results.append(999)
     return (results, error)
+
+
+def __extracted_func_429(__param_0):
+    result = None
+    try:
+        result = int(__param_0) / len(__param_0)
+    except ValueError:
+        result = -1
+    except ZeroDivisionError:
+        result = -2
+    except TypeError:
+        result = -3
+    return result
+
+
+def __extracted_func_435(__param_0):
+    results = []
+    count = 0
+    try:
+        for item in __param_0:
+            count += 1
+            results.append(item * 2)
+    finally:
+        results.append(count)
+    return results
+
+
+def __extracted_func_445(__param_0):
+    result = 0
+    try:
+        try:
+            result = int(__param_0)
+        except ValueError:
+            result = float(__param_0)
+    except (ValueError, TypeError):
+        result = -1
+    return result
+
+
+def __extracted_func_447(__param_0, __param_1):
+    result = 0
+    try:
+        result = __param_0 / __param_1
+    except ZeroDivisionError:
+        result = float('inf')
+    return result
+
+
+def __extracted_func_451(__param_0, __param_1):
+    value = __param_0
+    try:
+        value = int(__param_1)
+    except (ValueError, TypeError):
+        value = __param_0
+    return value
+
+
+
+
+
+
+
+
+
+
 
 

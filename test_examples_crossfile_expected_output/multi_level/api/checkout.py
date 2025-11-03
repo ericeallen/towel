@@ -6,23 +6,6 @@ Checkout API.
 def validate_checkout_amount(amount, currency):
     """Validate checkout amount."""
     # Validation logic (DUPLICATE across multiple levels!)
-    return __extracted_func_557(amount, currency)
-
-
-def checkout(cart_items, amount, currency):
-    """Process checkout."""
-    if not validate_checkout_amount(amount, currency):
-        return {'error': 'Invalid amount or currency'}
-
-    return {
-        'success': True,
-        'items': len(cart_items),
-        'total': amount,
-        'currency': currency
-    }
-
-
-def __extracted_func_557(amount, currency):
     if amount <= 0:
         return False
     if not currency:
@@ -36,3 +19,14 @@ def __extracted_func_557(amount, currency):
     return True
 
 
+def checkout(cart_items, amount, currency):
+    """Process checkout."""
+    if not validate_checkout_amount(amount, currency):
+        return {'error': 'Invalid amount or currency'}
+
+    return {
+        'success': True,
+        'items': len(cart_items),
+        'total': amount,
+        'currency': currency
+    }

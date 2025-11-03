@@ -92,7 +92,7 @@ class TestSingleFileRegression(unittest.TestCase):
         This runs the comprehensive observational equivalence suite on all
         test examples. Any failures indicate a regression in refactoring quality.
         """
-        results = self.tester.test_all_examples(str(self.test_examples), verbose=False)
+        results = self.tester.test_all_examples(str(self.test_examples), verbose=True)
 
         # Collect failed files
         failed_files = []
@@ -139,30 +139,26 @@ class TestSingleFileRegression(unittest.TestCase):
             baseline_file = self.expected_output / py_file.name
 
             if not baseline_file.exists():
-                # No baseline for files with no proposals
+                # No baseline for this file (skip)
                 continue
 
-            # Get current refactoring output
-            proposals = self.engine.analyze_file(str(py_file))
-
-            if not proposals:
-                # No proposals now - check if baseline differs from original
-                # If baseline == original: there were no proposals before either (OK)
-                # If baseline != original: there were proposals before (REGRESSION)
-                baseline_output = baseline_file.read_text()
-                original_output = py_file.read_text()
-
-                if baseline_output != original_output:
-                    differences.append(f"{py_file.name}: Previously had proposals, now has none")
-                # If baseline == original, this is fine - no proposals before or now
-                continue
-
-            # Apply first proposal (same as baseline generation)
+            # Compute current fixed-point refactoring output using a temp copy
             try:
-                current_output = self.engine.apply_refactoring(str(py_file), proposals[0])
+                with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as tmp:
+                    tmp.write(py_file.read_text())
+                    tmp.flush()
+                    tmp_path = Path(tmp.name)
+
+                final_code, num_applied, _ = self.engine.refactor_to_fixed_point(str(tmp_path))
+                current_output = final_code
             except Exception as e:
-                differences.append(f"{py_file.name}: Failed to apply refactoring: {e}")
+                differences.append(f"{py_file.name}: Fixed-point refactoring failed: {e}")
                 continue
+            finally:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
             # Read baseline
             baseline_output = baseline_file.read_text()
@@ -177,8 +173,7 @@ class TestSingleFileRegression(unittest.TestCase):
                 differences.append(
                     f"{py_file.name}: Output differs from baseline (after normalization)\n"
                     f"  Baseline length: {len(baseline_output)} chars\n"
-                    f"  Current length: {len(current_output)} chars\n"
-                    f"  First proposal: {proposals[0].description}"
+                    f"  Current length: {len(current_output)} chars"
                 )
 
         if differences:
@@ -235,7 +230,7 @@ class TestCrossFileRegression(unittest.TestCase):
         failures = []
 
         for project_dir in sorted(project_dirs):
-            passed, failed, errors = self.tester.test_project(str(project_dir), verbose=False)
+            passed, failed, errors = self.tester.test_project(str(project_dir), verbose=True)
 
             total_passed += passed
             total_failed += failed

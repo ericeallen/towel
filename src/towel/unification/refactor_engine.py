@@ -210,7 +210,7 @@ class UnificationRefactorEngine:
         self, function: ast.FunctionDef
     ) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
         """
-        Extract all contiguous code blocks from a function body.
+        Extract all contiguous code blocks from a function body, including nested bodies.
 
         Args:
             function: Function definition
@@ -218,9 +218,56 @@ class UnificationRefactorEngine:
         Returns:
             List of (line_range, statements) tuples
         """
-        body = function.body
 
-        # Skip docstring if present
+        def extract_from_body(body: List[ast.stmt]) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
+            # Extract all contiguous subsequences of minimum length from a given body
+            results: List[Tuple[Tuple[int, int], List[ast.AST]]] = []
+
+            # Extract all contiguous subsequences
+            for length in range(len(body), 0, -1):
+                for start in range(len(body) - length + 1):
+                    block = body[start : start + length]
+
+                    if not block:
+                        continue
+
+                    start_line = block[0].lineno
+                    end_line = (
+                        block[-1].end_lineno
+                        if hasattr(block[-1], "end_lineno")
+                        else block[-1].lineno
+                    )
+                    line_count = end_line - start_line + 1
+
+                    if line_count >= self.min_lines:
+                        results.append(((start_line, end_line), block))
+
+            # Recurse into nested bodies for control-flow/container statements
+            for stmt in body:
+                # Skip nested function/class definitions to avoid crossing scopes
+                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+
+                # Common body/orelse containers
+                if hasattr(stmt, "body") and isinstance(getattr(stmt, "body"), list):
+                    results.extend(extract_from_body(getattr(stmt, "body")))
+                if hasattr(stmt, "orelse") and isinstance(getattr(stmt, "orelse"), list):
+                    results.extend(extract_from_body(getattr(stmt, "orelse")))
+
+                # With and AsyncWith already covered by .body
+                # Try/Except/Finally blocks
+                if isinstance(stmt, ast.Try):
+                    if stmt.handlers:
+                        for h in stmt.handlers:
+                            if hasattr(h, "body") and isinstance(h.body, list):
+                                results.extend(extract_from_body(h.body))
+                    if hasattr(stmt, "finalbody") and isinstance(stmt.finalbody, list):
+                        results.extend(extract_from_body(stmt.finalbody))
+
+            return results
+
+        # Prepare top-level body (skip docstring)
+        body = function.body
         start_idx = 0
         if (
             body
@@ -229,30 +276,9 @@ class UnificationRefactorEngine:
             and isinstance(body[0].value.value, str)
         ):
             start_idx = 1
-
         body = body[start_idx:]
-        blocks = []
 
-        # Extract all contiguous subsequences of minimum length
-        # Start with longer sequences (more code savings)
-        for length in range(len(body), 0, -1):
-            for start in range(len(body) - length + 1):
-                block = body[start : start + length]
-
-                # Calculate line count
-                if not block:
-                    continue
-
-                start_line = block[0].lineno
-                end_line = (
-                    block[-1].end_lineno if hasattr(block[-1], "end_lineno") else block[-1].lineno
-                )
-                line_count = end_line - start_line + 1
-
-                if line_count >= self.min_lines:
-                    blocks.append(((start_line, end_line), block))
-
-        return blocks
+        return extract_from_body(body)
 
     def _has_code_after_block(self, function: ast.FunctionDef, block_end_line: int) -> bool:
         """

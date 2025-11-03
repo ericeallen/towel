@@ -87,6 +87,7 @@ class HygienicExtractor:
         # Detect parameters used as callees (in Call.func position) in the extracted body
         # so we can safely defer their evaluation at call sites via zero-arg lambdas.
         if param_names_unified:
+
             class _CalleeParamFinder(ast.NodeVisitor):
                 def __init__(self, params: Set[str]) -> None:
                     self.params = params
@@ -227,8 +228,16 @@ class HygienicExtractor:
                             call_func = cast(ast.expr, expr if isinstance(expr, ast.expr) else expr)
                             call_body = ast.Call(
                                 func=call_func,
-                                args=[ast.Starred(value=ast.Name(id="args", ctx=ast.Load()), ctx=ast.Load())],
-                                keywords=[ast.keyword(arg=None, value=ast.Name(id="kwargs", ctx=ast.Load()))],
+                                args=[
+                                    ast.Starred(
+                                        value=ast.Name(id="args", ctx=ast.Load()), ctx=ast.Load()
+                                    )
+                                ],
+                                keywords=[
+                                    ast.keyword(
+                                        arg=None, value=ast.Name(id="kwargs", ctx=ast.Load())
+                                    )
+                                ],
                             )
 
                             lambda_node = ast.Lambda(
