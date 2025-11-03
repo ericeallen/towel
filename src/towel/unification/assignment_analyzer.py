@@ -281,7 +281,20 @@ def has_reassignments_without_bindings(
     # Find variables that are reassigned but not initially bound in the block
     problematic_vars = reassigned_in_block - bound_in_block
 
-    return (len(problematic_vars) > 0, problematic_vars)
+    # Relaxation: allow reassignments to names declared global/nonlocal in the enclosing function
+    declared_global: Set[str] = set()
+    declared_nonlocal: Set[str] = set()
+
+    for stmt in func.body:
+        if isinstance(stmt, ast.Global):
+            declared_global.update(stmt.names)
+        elif isinstance(stmt, ast.Nonlocal):
+            declared_nonlocal.update(stmt.names)
+
+    allowed = (declared_global | declared_nonlocal)
+    remaining = problematic_vars - allowed
+
+    return (len(remaining) > 0, remaining)
 
 
 def _collect_bindings_and_reassignments(
