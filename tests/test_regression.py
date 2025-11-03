@@ -134,12 +134,17 @@ class TestSingleFileRegression(unittest.TestCase):
 
         differences = []
 
-        for py_file in sorted(python_files):
+        files_sorted = sorted(python_files)
+        total_files = len(files_sorted)
+
+        for idx, py_file in enumerate(files_sorted, 1):
+            print(f"[Stability {idx}/{total_files}] Comparing {py_file.name}...", end=" ", flush=True)
             # Check if baseline exists for this file
             baseline_file = self.expected_output / py_file.name
 
             if not baseline_file.exists():
                 # No baseline for this file (skip)
+                print("no baseline", flush=True)
                 continue
 
             # Compute current fixed-point refactoring output using a temp copy
@@ -153,6 +158,7 @@ class TestSingleFileRegression(unittest.TestCase):
                 current_output = final_code
             except Exception as e:
                 differences.append(f"{py_file.name}: Fixed-point refactoring failed: {e}")
+                print("error", flush=True)
                 continue
             finally:
                 try:
@@ -175,6 +181,9 @@ class TestSingleFileRegression(unittest.TestCase):
                     f"  Baseline length: {len(baseline_output)} chars\n"
                     f"  Current length: {len(current_output)} chars"
                 )
+                print("differs", flush=True)
+            else:
+                print("ok", flush=True)
 
         if differences:
             failure_msg = (

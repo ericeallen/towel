@@ -2,6 +2,25 @@
 
 This log records notable repository states with all tests passing, to make it easy to revert or audit changes.
 
+## 2025-11-03
+
+- Version: 0.5.3
+- Commit: afa5c209ed390cce36f91b82e985f457d4a848e6
+- Summary:
+  - Baseline/Testing: Switched baseline generation and regression comparison to fixed-point refactoring to match real-world usage (same behavior as `scripts/dry`). Regenerated expected outputs accordingly.
+  - DX: Enabled verbose progress output in single-file and cross-file observational equivalence tests to provide reassurance during long runs.
+  - Tooling: `regenerate-baseline` now uses fixed-point for both single-file and cross-file baselines.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Observational equivalence: 116/116 proposals passed (100%)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `afa5c209ed390cce36f91b82e985f457d4a848e6` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-03.
+
 ## 2025-11-02
 
 - Version: 0.5.2
