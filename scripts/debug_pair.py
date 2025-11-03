@@ -36,17 +36,25 @@ def main():
     eng = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
     # Build a minimal all_functions tuple as expected by engine internal call
-    all_functions = [(file_path, func1, src, analyzer, scope), (file_path, func2, src, analyzer, scope)]
+    all_functions = [
+        (file_path, func1, src, analyzer, scope),
+        (file_path, func2, src, analyzer, scope),
+    ]
 
     # Extract full body blocks (skip docstring)
     def body_range(f):
         body = f.body
-        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
             body = body[1:]
         if not body:
             return None
         start = body[0].lineno
-        end = getattr(body[-1], 'end_lineno', body[-1].lineno)
+        end = getattr(body[-1], "end_lineno", body[-1].lineno)
         return (start, end), body
 
     r1 = body_range(func1)
@@ -76,7 +84,8 @@ def main():
 
     # Monkey-print debug by setting env var inside process
     import os
-    os.environ['DEBUG_VALIDATION'] = '1'
+
+    os.environ["DEBUG_VALIDATION"] = "1"
 
     res = eng._try_refactor_pair_multi_file(pair, all_functions)
     if res:
@@ -84,6 +93,7 @@ def main():
         print(res.description)
         try:
             import ast as _ast
+
             print("\nExtracted function preview:\n")
             print(_ast.unparse(res.extracted_function))
         except Exception as e:

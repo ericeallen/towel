@@ -291,7 +291,7 @@ def has_reassignments_without_bindings(
         elif isinstance(stmt, ast.Nonlocal):
             declared_nonlocal.update(stmt.names)
 
-    allowed = (declared_global | declared_nonlocal)
+    allowed = declared_global | declared_nonlocal
     remaining = problematic_vars - allowed
 
     return (len(remaining) > 0, remaining)
