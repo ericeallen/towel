@@ -10,7 +10,7 @@ This helps the unification algorithm distinguish between fresh bindings and muta
 """
 
 import ast
-from typing import Set
+from typing import Set, cast
 from .visitor_utils import make_defensive_generic_visit
 
 
@@ -27,7 +27,7 @@ class AssignToAugAssignNormalizer(ast.NodeTransformer):
 
     generic_visit = make_defensive_generic_visit("AssignToAugAssignNormalizer")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.scopes: list[Set[str]] = [set()]  # Stack of scopes
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -114,26 +114,26 @@ class AssignToAugAssignNormalizer(ast.NodeTransformer):
             # Ensure it's in scope (should already be, but add it if not)
             self.scopes[-1].add(node.target.id)
 
-        return self.generic_visit(node)
+        return cast(ast.AugAssign, self.generic_visit(node))
 
     def visit_For(self, node: ast.For) -> ast.For:
         """Track loop variables."""
         if isinstance(node.target, ast.Name):
             self.scopes[-1].add(node.target.id)
-        return self.generic_visit(node)
+        return cast(ast.For, self.generic_visit(node))
 
     def visit_With(self, node: ast.With) -> ast.With:
         """Track context manager variables."""
         for item in node.items:
             if item.optional_vars and isinstance(item.optional_vars, ast.Name):
                 self.scopes[-1].add(item.optional_vars.id)
-        return self.generic_visit(node)
+        return cast(ast.With, self.generic_visit(node))
 
     def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
         """Track comprehension variables."""
         if isinstance(node.target, ast.Name):
             self.scopes[-1].add(node.target.id)
-        return self.generic_visit(node)
+        return cast(ast.comprehension, self.generic_visit(node))
 
     def _is_in_scope(self, name: str) -> bool:
         """Check if a variable is in any of the current scopes."""
@@ -159,7 +159,7 @@ def normalize_assigns_to_augassigns(tree: ast.AST) -> ast.AST:
         A new AST with assignments normalized to augmented assignments
     """
     normalizer = AssignToAugAssignNormalizer()
-    return normalizer.visit(tree)
+    return cast(ast.AST, normalizer.visit(tree))
 
 
 def normalize_code(code: str) -> str:

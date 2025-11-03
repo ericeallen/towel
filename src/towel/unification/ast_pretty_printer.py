@@ -5,7 +5,7 @@ A utility for displaying Python AST structures in a human-readable format.
 """
 
 import ast
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 
 class ASTPrettyPrinter:
@@ -17,11 +17,11 @@ class ASTPrettyPrinter:
 
     def format(self, node: ast.AST, indent: int = 0) -> str:
         """Format an AST node as a pretty-printed string."""
-        lines: list[str] = []
+        lines: List[str] = []
         self._format_node(node, indent, lines)
         return "\n".join(lines)
 
-    def _format_node(self, node: Any, indent: int, lines: list) -> None:
+    def _format_node(self, node: Any, indent: int, lines: List[str]) -> None:
         """Recursively format an AST node."""
         prefix = " " * indent
 
