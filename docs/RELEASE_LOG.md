@@ -3,7 +3,10 @@
 - Version: 0.5.4
 - Commit: 91c89a309ef077a88af3f2a519e303a39f50524d
 - Summary:
-  - Summary of changes here.
+  - Tooling: Added and adopted an automated release workflow (`just release <ver>`) that runs code quality checks, executes full unit and observational-equivalence suites, computes and records test statistics, bumps the version, updates this release log, creates an annotated tag, and pushes atomically.
+  - Git hygiene: Release flow enforces a clean working tree, rebases on `origin/main` before releasing, and auto-stages any generated artifacts from checks/tests.
+  - DX: Per-file progress indicators retained for long-running stability comparisons so you can see steady progress during releases and regression runs.
+  - Engine/Behavior: No engine changes in this release; refactoring behavior remains identical to 0.5.3 (which switched baselines and regression comparisons to fixed-point).
 - Status: All tests green
   - Unit/integration tests: 491 tests OK (0 skipped)
   - Observational equivalence: 116/116 proposals passed (100%)
