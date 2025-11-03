@@ -10,56 +10,32 @@ Tests that Towel correctly handles free variable analysis for:
 
 def test_walrus_basic_a(items):
     """Walrus operator in if condition."""
-    result = []
-    if (n := len(items)) > 0:
-        result.append(n)
-        result.append(n * 2)
-    return result
+    return __extracted_func_52(items)
 
 
 def test_walrus_basic_b(items):
     """Duplicate with walrus operator."""
-    result = []
-    if (n := len(items)) > 0:
-        result.append(n)
-        result.append(n * 2)
-    return result
+    return __extracted_func_52(items)
 
 
 def test_with_statement_a(filename):
     """With statement binding."""
-    lines = []
-    with open(filename) as f:
-        for line in f:
-            lines.append(line.strip())
-    return lines
+    return __extracted_func_61(filename)
 
 
 def test_with_statement_b(filename):
     """Duplicate with statement."""
-    lines = []
-    with open(filename) as f:
-        for line in f:
-            lines.append(line.strip())
-    return lines
+    return __extracted_func_61(filename)
 
 
 def test_with_multiple_a(file1, file2):
     """Multiple context managers."""
-    data = []
-    with open(file1) as f1, open(file2) as f2:
-        data.append(f1.read())
-        data.append(f2.read())
-    return data
+    return __extracted_func_67(file1, file2)
 
 
 def test_with_multiple_b(file1, file2):
     """Duplicate multiple context managers."""
-    data = []
-    with open(file1) as f1, open(file2) as f2:
-        data.append(f1.read())
-        data.append(f2.read())
-    return data
+    return __extracted_func_67(file1, file2)
 
 
 def test_walrus_in_comprehension_a(items):
@@ -77,22 +53,12 @@ def test_walrus_in_comprehension_b(items):
 
 def test_nested_with_a(outer_file, inner_file):
     """Nested with statements."""
-    result = []
-    with open(outer_file) as f1:
-        result.append(f1.readline())
-        with open(inner_file) as f2:
-            result.append(f2.readline())
-    return result
+    return __extracted_func_31(inner_file, outer_file)
 
 
 def test_nested_with_b(outer_file, inner_file):
     """Duplicate nested with statements."""
-    result = []
-    with open(outer_file) as f1:
-        result.append(f1.readline())
-        with open(inner_file) as f2:
-            result.append(f2.readline())
-    return result
+    return __extracted_func_31(inner_file, outer_file)
 
 
 def test_exception_handler_binding_a(data):
@@ -107,22 +73,12 @@ def test_exception_handler_binding_b(data):
 
 def test_walrus_while_a(items):
     """Walrus in while loop condition."""
-    results = []
-    idx = 0
-    while (item := items[idx] if idx < len(items) else None) is not None:
-        results.append(item * 2)
-        idx += 1
-    return results
+    return __extracted_func_48(items)
 
 
 def test_walrus_while_b(items):
     """Duplicate walrus in while loop."""
-    results = []
-    idx = 0
-    while (item := items[idx] if idx < len(items) else None) is not None:
-        results.append(item * 2)
-        idx += 1
-    return results
+    return __extracted_func_48(items)
 
 
 def __extracted_func_13(data):
@@ -133,5 +89,57 @@ def __extracted_func_13(data):
         except ValueError as e:
             errors.append(str(e))
     return errors
+
+
+def __extracted_func_31(inner_file, outer_file):
+    result = []
+    with open(outer_file) as f1:
+        result.append(f1.readline())
+        with open(inner_file) as f2:
+            result.append(f2.readline())
+    return result
+
+
+def __extracted_func_48(items):
+    results = []
+    idx = 0
+    while (item := (items[idx] if idx < len(items) else None)) is not None:
+        results.append(item * 2)
+        idx += 1
+    return results
+
+
+def __extracted_func_52(items):
+    result = []
+    if (n := len(items)) > 0:
+        result.append(n)
+        result.append(n * 2)
+    return result
+
+
+def __extracted_func_61(filename):
+    lines = []
+    with open(filename) as f:
+        for line in f:
+            lines.append(line.strip())
+    return lines
+
+
+def __extracted_func_67(file1, file2):
+    data = []
+    with open(file1) as f1, open(file2) as f2:
+        data.append(f1.read())
+        data.append(f2.read())
+    return data
+
+
+
+
+
+
+
+
+
+
 
 

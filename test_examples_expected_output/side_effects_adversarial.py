@@ -33,18 +33,12 @@ def append_and_sum_b(values):
 # Mutable default argument - classic Python gotcha
 def process_with_cache_a(item, cache=[]):
     """Uses mutable default argument."""
-    if item in cache:
-        return True
-    cache.append(item)
-    return False
+    return __extracted_func_1678(item, cache)
 
 
 def process_with_cache_b(value, cache=[]):
     """Similar pattern with mutable default."""
-    if value in cache:
-        return True
-    cache.append(value)
-    return False
+    return __extracted_func_1678(value, cache)
 
 
 # Side effects in comprehensions
@@ -101,20 +95,29 @@ def extend_and_return_b(target, values):
 # Multiple mutable arguments
 def swap_contents_a(list1, list2):
     """Swaps contents of two lists."""
-    return __extracted_func_456(list1, list2)
+    return __extracted_func_1672(list1, list2)
 
 
 def swap_contents_b(a, b):
     """Similar swap pattern."""
-    return __extracted_func_456(a, b)
+    return __extracted_func_1672(a, b)
 
 
-def __extracted_func_456(__param_0, __param_1):
+def __extracted_func_1672(__param_0, __param_1):
     temp = __param_0[:]
     __param_0.clear()
     __param_0.extend(__param_1)
     __param_1.clear()
     __param_1.extend(temp)
     return len(__param_0) + len(__param_1)
+
+
+def __extracted_func_1678(__param_0, cache):
+    if __param_0 in cache:
+        return True
+    cache.append(__param_0)
+    return False
+
+
 
 

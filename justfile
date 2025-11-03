@@ -112,7 +112,7 @@ regenerate-baseline:
         exit 1
     fi
     echo ""
-    echo "Regenerating baseline..."
+    echo "Regenerating baseline (using fixed-point refactoring)..."
     source venv/bin/activate && python tests/generate_baseline.py --confirm
     echo ""
     echo "✓ Baseline regenerated successfully"

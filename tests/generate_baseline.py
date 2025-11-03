@@ -20,6 +20,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.towel.unification.refactor_engine import UnificationRefactorEngine
+import tempfile
 
 
 def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: Path):
@@ -41,31 +42,33 @@ def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: P
     for py_file in sorted(python_files):
         print(f"  Processing {py_file.name}...")
 
-        # Analyze and get proposals
-        proposals = engine.analyze_file(str(py_file))
+        # Apply refactorings to fixed point using a temporary copy to avoid
+        # modifying files under test_examples.
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as tmp:
+            tmp.write(py_file.read_text())
+            tmp.flush()
+            tmp_path = Path(tmp.name)
 
-        if not proposals:
-            print(f"    No proposals found")
-            # Copy original to output even if no proposals
-            output_file = output_dir / py_file.name
-            shutil.copy2(py_file, output_file)
-            continue
-
-        print(f"    Found {len(proposals)} proposals")
-
-        # Apply only the first proposal for baseline
-        # (Testing will verify all proposals independently)
         try:
-            refactored_content = engine.apply_refactoring(str(py_file), proposals[0])
-            print(f"    Applied first proposal: {proposals[0].description}")
+            final_code, num_applied, descriptions = engine.refactor_to_fixed_point(str(tmp_path))
+            if num_applied > 0:
+                print(f"    Applied {num_applied} refactoring(s) to fixed point")
+                for i, d in enumerate(descriptions[:3], 1):
+                    print(f"      {i}. {d}")
+            else:
+                print(f"    No proposals found (fixed point)")
         except Exception as e:
-            print(f"    Failed to apply first proposal: {e}")
-            # Copy original if refactoring fails
-            refactored_content = py_file.read_text()
+            print(f"    Fixed-point refactoring failed: {e}")
+            final_code = py_file.read_text()
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
-        # Save refactored content to output directory
+        # Save final code to output directory
         output_file = output_dir / py_file.name
-        output_file.write_text(refactored_content)
+        output_file.write_text(final_code)
         print(f"    Saved to {output_file}")
 
 
@@ -86,50 +89,16 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
     for project_dir in sorted(project_dirs):
         print(f"  Processing project {project_dir.name}...")
 
-        # Analyze directory
-        proposals = engine.analyze_directory(str(project_dir), recursive=True)
-
-        if not proposals:
-            print(f"    No cross-file proposals found")
-            continue
-
-        print(f"    Found {len(proposals)} cross-file proposals")
-
-        # Create output directory for this project
+        # Apply refactorings to fixed point across the project into the output directory
         project_output = output_dir / project_dir.name
-        project_output.mkdir(parents=True, exist_ok=True)
-
-        # Copy original files to output
-        for py_file in project_dir.rglob("*.py"):
-            if "__pycache__" in py_file.parts or py_file.name.startswith("."):
-                continue
-
-            rel_path = py_file.relative_to(project_dir)
-            output_file = project_output / rel_path
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(py_file, output_file)
-
-        # Apply each proposal independently
-        for i, proposal in enumerate(proposals, 1):
-            try:
-                # Apply refactoring
-                modified_files = engine.apply_refactoring_multi_file(proposal)
-
-                # Write modified files
-                for file_path, content in modified_files.items():
-                    try:
-                        rel_path = Path(file_path).relative_to(project_dir)
-                    except ValueError:
-                        rel_path = Path(file_path).name
-
-                    output_file = project_output / rel_path
-                    output_file.parent.mkdir(parents=True, exist_ok=True)
-                    output_file.write_text(content)
-
-                print(f"    Applied proposal {i}: {proposal.description}")
-
-            except Exception as e:
-                print(f"    Failed to apply proposal {i}: {e}")
+        try:
+            results = engine.refactor_directory_to_fixed_point(
+                str(project_dir), str(project_output), max_iterations=10
+            )
+            total = sum(v[0] for v in results.values()) if results else 0
+            print(f"    Applied {total} refactoring(s) across project to fixed point")
+        except Exception as e:
+            print(f"    Fixed-point cross-file refactoring failed: {e}")
 
 
 def main():

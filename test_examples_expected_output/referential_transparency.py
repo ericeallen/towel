@@ -12,10 +12,7 @@ def update_mutable_state_v1(items, counter):
 
     for item in items:
         # This block modifies mutable state
-        counter["total"] += item
-        counter["processed"] += 1
-        result = counter["total"] / counter["processed"]
-        print(f"Current average: {result}")
+        __extracted_func_1588(item, counter)
 
     return counter
 
@@ -26,10 +23,7 @@ def update_mutable_state_v2(items, counter):
 
     for item in items:
         # Same pattern of mutation
-        counter["total"] += item * 2
-        counter["processed"] += 1
-        result = counter["total"] / counter["processed"]
-        print(f"Current average: {result}")
+        __extracted_func_1588(item * 2, counter)
 
     return counter
 
@@ -66,32 +60,14 @@ def accumulate_with_closure_v1(items, accumulator):
     """Version 1: Creates closure over accumulator."""
     accumulator = []
 
-    def add_processed(value, multiplier):
-        # Closure captures 'accumulator'
-        processed = value * multiplier
-        validated = processed > 0
-        if validated:
-            accumulator.append(processed)
-        return processed
-
-    results = [add_processed(item, 2) for item in items]
-    return accumulator, results
+    return __extracted_func_1562(2, accumulator, items)
 
 
 def accumulate_with_closure_v2(items, accumulator):
     """Version 2: Different multiplier, same closure pattern."""
     accumulator = []
 
-    def add_processed(value, multiplier):
-        # Same closure pattern
-        processed = value * multiplier
-        validated = processed > 0
-        if validated:
-            accumulator.append(processed)
-        return processed
-
-    results = [add_processed(item, 3) for item in items]
-    return accumulator, results
+    return __extracted_func_1562(3, accumulator, items)
 
 
 def transform_with_early_return_a(data, validator):
@@ -99,15 +75,7 @@ def transform_with_early_return_a(data, validator):
     for item in data:
         # Block with early returns
         cleaned = item.strip()
-        if not cleaned:
-            return None
-
-        validated = validator.check(cleaned)
-        if not validated:
-            return None
-
-        processed = cleaned.upper()
-        return processed
+        return __extracted_func_1585(lambda *args, **kwargs: cleaned.upper(*args, **kwargs), cleaned, validator)
 
     return "default"
 
@@ -117,15 +85,7 @@ def transform_with_early_return_b(data, validator):
     for item in data:
         # Same structure, different processing
         cleaned = item.strip()
-        if not cleaned:
-            return None
-
-        validated = validator.check(cleaned)
-        if not validated:
-            return None
-
-        processed = cleaned.lower()
-        return processed
+        return __extracted_func_1585(lambda *args, **kwargs: cleaned.lower(*args, **kwargs), cleaned, validator)
 
     return "default"
 
@@ -144,7 +104,7 @@ def nested_scope_capture_v1(outer_data, processor):
     See nested_scope_capture_valid_v1/v2 below for a corrected version
     that CAN be refactored.
     """
-    return __extracted_func_406(outer_data, processor)
+    return __extracted_func_1518(outer_data, processor)
 
 
 def nested_scope_capture_v2(outer_data, processor):
@@ -180,7 +140,7 @@ def nested_scope_capture_valid_v1(outer_data, processor):
     - No nested-scope variables are referenced in differing expressions
     - All differences can be parameterized at the outer scope level
     """
-    return __extracted_func_406(outer_data, processor)
+    return __extracted_func_1518(outer_data, processor)
 
 
 def nested_scope_capture_valid_v2(outer_data, processor):
@@ -190,51 +150,25 @@ def nested_scope_capture_valid_v2(outer_data, processor):
     This version can be successfully refactored with v1 above.
     The extracted function will accept outer_var as a parameter.
     """
-    outer_var = 200
-
-    def inner_process(data):
-        # Captures different outer_var
-        inner_var = 50
-        for item in data:
-            step1 = item + outer_var
-            step2 = step1 - inner_var
-            step3 = step2 * 2  # Correct: uses step2
-            processor.add(step3)
-
-    inner_process(outer_data)
-    return processor.get_results()
+    return __extracted_func_1549(200, outer_data, processor)
 
 
 def modify_external_state_a(data, cache, metrics):
     """Version A: Modifies multiple external objects."""
-    for key, value in data.items():
-        # Modifies both cache and metrics
-        processed = value * 2
-        cache[key] = processed
-        metrics["count"] += 1
-        metrics["total"] += processed
-        if processed > 100:
-            metrics["high_value"] += 1
-
-    return cache, metrics
+    return __extracted_func_1578(2, cache, data, metrics)
 
 
 def modify_external_state_b(data, cache, metrics):
     """Version B: Different multiplier, same modification pattern."""
-    for key, value in data.items():
-        # Same pattern, different multiplier
-        processed = value * 3
-        cache[key] = processed
-        metrics["count"] += 1
-        metrics["total"] += processed
-        if processed > 100:
-            metrics["high_value"] += 1
-
-    return cache, metrics
+    return __extracted_func_1578(3, cache, data, metrics)
 
 
-def __extracted_func_406(outer_data, processor):
-    outer_var = 100
+def __extracted_func_1518(outer_data, processor):
+    return __extracted_func_1549(100, outer_data, processor)
+
+
+def __extracted_func_1549(__param_0, outer_data, processor):
+    outer_var = __param_0
 
     def inner_process(data):
         inner_var = 50
@@ -245,5 +179,55 @@ def __extracted_func_406(outer_data, processor):
             processor.add(step3)
     inner_process(outer_data)
     return processor.get_results()
+
+
+def __extracted_func_1562(__param_0, accumulator, items):
+
+    def add_processed(value, multiplier):
+        processed = value * multiplier
+        validated = processed > 0
+        if validated:
+            accumulator.append(processed)
+        return processed
+    results = [add_processed(item, __param_0) for item in items]
+    return (accumulator, results)
+
+
+def __extracted_func_1578(__param_0, cache, data, metrics):
+    for key, value in data.items():
+        processed = value * __param_0
+        cache[key] = processed
+        metrics['count'] += 1
+        metrics['total'] += processed
+        if processed > 100:
+            metrics['high_value'] += 1
+    return (cache, metrics)
+
+
+def __extracted_func_1585(__param_0, cleaned, validator):
+    if not cleaned:
+        return None
+    validated = validator.check(cleaned)
+    if not validated:
+        return None
+    processed = __param_0()
+    return processed
+
+
+def __extracted_func_1588(__param_0, counter):
+    counter['total'] += __param_0
+    counter['processed'] += 1
+    result = counter['total'] / counter['processed']
+    print(f'Current average: {result}')
+
+
+
+
+
+
+
+
+
+
 
 
