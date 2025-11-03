@@ -352,11 +352,9 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
         3. Automatically generates test inputs based on function signatures
         4. Tests observational equivalence for all refactored functions
 
-        KNOWN ISSUES: This test will fail due to the known bugs:
-        - Variable capture bug (wrong variable names used)
-        - Sequential refactoring corruption bug (not tested here since we test one proposal at a time)
+    KNOWN ISSUES: Previously failed due to variable capture bug; this should now pass.
         """
-        self.skipTest("Known issues: Variable capture bug affects many examples")
+    # Unskipped: variable capture bug fixed; run full automatic equivalence across examples
 
         results = self.tester.test_all_examples("test_examples")
 
@@ -420,12 +418,9 @@ class TestObservationalEquivalence(unittest.TestCase):
         """
         Test that refactored example1_simple behaves identically to original.
 
-        KNOWN ISSUE: This test currently fails due to a bug in the unifier where
-        variable names are incorrectly captured. The refactored process_admin_data
-        calls extracted_func_2(admin, user) instead of extracted_func_2(admin, admin).
-        This demonstrates the value of observational equivalence testing!
+    KNOWN ISSUE: Previously failed due to variable capture; expected to pass now.
         """
-        self.skipTest("Known issue: Bug in variable capture - see test docstring")
+    # Unskipped: variable capture bug fixed; validating behavior
 
         example_path = get_test_example_path("example1_simple.py")
         original_content = example_path.read_text()
@@ -538,11 +533,9 @@ class TestObservationalEquivalence(unittest.TestCase):
         """
         Test observational equivalence with a simple arithmetic example.
 
-        KNOWN ISSUE: Same bug as test_example1_simple_observational_equivalence - variable
-        names are captured incorrectly. This test demonstrates the bug affects multiple
-        cases and shows the value of comprehensive observational equivalence testing.
+    KNOWN ISSUE: Previously failed due to variable capture; expected to pass now.
         """
-        self.skipTest("Known issue: Bug in variable capture - same as example1_simple")
+    # Unskipped: variable capture bug fixed; validating behavior
 
         # Create a simple test case inline
         original_code = '''
