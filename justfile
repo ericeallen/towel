@@ -7,10 +7,18 @@ default:
 
 # Install package (no external dependencies required!)
 install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 -m venv venv || true
+    source venv/bin/activate
     pip install -e .
 
 # Install development dependencies (coverage, black, flake8, mypy)
 install-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 -m venv venv || true
+    source venv/bin/activate
     pip install -e ".[dev]"
 
 # === User Commands ===
@@ -138,13 +146,13 @@ coverage-unification:
 # Format code with black
 format:
     @echo "Formatting Python code with black..."
-    black src/towel/ tests/ scripts/ --line-length 100 --exclude="venv|env|__pycache__" || echo "black not installed, skipping"
+    source venv/bin/activate && black src/towel/ tests/ scripts/ --line-length 100 --exclude="venv|env|__pycache__" || echo "black not installed, skipping"
 
 # Lint with flake8
 lint:
     @echo "Linting with flake8..."
     # Pass explicit flags so config is respected even on older flake8 versions
-    flake8 \
+    source venv/bin/activate && flake8 \
         --max-line-length 100 \
         --extend-ignore E501,W503,E203,F541 \
         --exclude "venv,env,__pycache__,tests" \
@@ -153,7 +161,7 @@ lint:
 # Type check with mypy
 typecheck:
     @echo "Type checking with mypy..."
-    mypy || echo "mypy not installed, skipping"
+    source venv/bin/activate && mypy || echo "mypy not installed, skipping"
 
 # Run all code quality checks
 check: format lint typecheck

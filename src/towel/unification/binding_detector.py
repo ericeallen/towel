@@ -61,7 +61,7 @@ class BindingDetector(ast.NodeVisitor):
     - The scope in which the binding is visible
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.bindings: List[Binding] = []
         self.scope_stack: List[ast.AST] = []  # Track nested scopes
 
@@ -69,7 +69,7 @@ class BindingDetector(ast.NodeVisitor):
         """Get the current scope node (function, class, or module)."""
         return self.scope_stack[-1] if self.scope_stack else None
 
-    def _add_binding(self, name: str, kind: BindingKind, node: ast.AST):
+    def _add_binding(self, name: str, kind: BindingKind, node: ast.AST) -> None:
         """Record a variable binding."""
         self.bindings.append(
             Binding(
@@ -81,7 +81,7 @@ class BindingDetector(ast.NodeVisitor):
             )
         )
 
-    def _extract_names_from_target(self, target: ast.AST, kind: BindingKind):
+    def _extract_names_from_target(self, target: ast.AST, kind: BindingKind) -> None:
         """
         Extract all variable names from an assignment target.
 
@@ -110,38 +110,38 @@ class BindingDetector(ast.NodeVisitor):
 
     # Assignment statements
 
-    def visit_Assign(self, node: ast.Assign):
+    def visit_Assign(self, node: ast.Assign) -> None:
         """Handle simple assignments: x = 1, x = y = 1, etc."""
         for target in node.targets:
             self._extract_names_from_target(target, BindingKind.ASSIGNMENT)
         self.generic_visit(node)
 
-    def visit_AugAssign(self, node: ast.AugAssign):
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
         """Handle augmented assignments: x += 1, x *= 2, etc."""
         # Note: Augmented assignment requires the variable to already exist,
         # but it's still considered a binding for our purposes
         self._extract_names_from_target(node.target, BindingKind.AUG_ASSIGNMENT)
         self.generic_visit(node)
 
-    def visit_AnnAssign(self, node: ast.AnnAssign):
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         """Handle annotated assignments: x: int = 1"""
         if node.value is not None:  # x: int (without assignment) doesn't bind
             self._extract_names_from_target(node.target, BindingKind.ASSIGNMENT)
         self.generic_visit(node)
 
-    def visit_NamedExpr(self, node: ast.NamedExpr):
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
         """Handle walrus operator: if (x := foo()):"""
         self._extract_names_from_target(node.target, BindingKind.NAMED_EXPR)
         self.generic_visit(node)
 
     # Loop constructs
 
-    def visit_For(self, node: ast.For):
+    def visit_For(self, node: ast.For) -> None:
         """Handle for loops: for x in iterable:"""
         self._extract_names_from_target(node.target, BindingKind.FOR_LOOP)
         self.generic_visit(node)
 
-    def visit_comprehension(self, node: ast.comprehension):
+    def visit_comprehension(self, node: ast.comprehension) -> None:
         """
         Handle comprehension variables: [x for x in ...], {k: v for k, v in ...}
 
@@ -152,7 +152,7 @@ class BindingDetector(ast.NodeVisitor):
 
     # Exception handling
 
-    def visit_ExceptHandler(self, node: ast.ExceptHandler):
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         """Handle exception binding: except Exception as e:"""
         if node.name:
             # In Python 3, node.name is a string, not an ast.Name
@@ -161,7 +161,7 @@ class BindingDetector(ast.NodeVisitor):
 
     # Context managers
 
-    def visit_With(self, node: ast.With):
+    def visit_With(self, node: ast.With) -> None:
         """Handle with statements: with open() as f:"""
         for item in node.items:
             if item.optional_vars:
@@ -170,7 +170,7 @@ class BindingDetector(ast.NodeVisitor):
 
     # Function and class definitions
 
-    def visit_FunctionDef(self, node: ast.FunctionDef):
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Handle function definitions: def foo(x, y):"""
         # The function name itself is a binding in the enclosing scope
         self._add_binding(node.name, BindingKind.FUNCTION_DEF, node)
@@ -207,7 +207,7 @@ class BindingDetector(ast.NodeVisitor):
         for decorator in node.decorator_list:
             self.visit(decorator)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         """Handle async function definitions: async def foo():"""
         # Mirror FunctionDef handling without calling visit_FunctionDef to satisfy type checker
         self._add_binding(node.name, BindingKind.FUNCTION_DEF, node)
@@ -244,7 +244,7 @@ class BindingDetector(ast.NodeVisitor):
         for decorator in node.decorator_list:
             self.visit(decorator)
 
-    def visit_Lambda(self, node: ast.Lambda):
+    def visit_Lambda(self, node: ast.Lambda) -> None:
         """Handle lambda expressions: lambda x, y: x + y"""
         # Enter lambda scope
         self.scope_stack.append(node)
@@ -270,7 +270,7 @@ class BindingDetector(ast.NodeVisitor):
         # Exit lambda scope
         self.scope_stack.pop()
 
-    def visit_ClassDef(self, node: ast.ClassDef):
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Handle class definitions: class Foo:"""
         # The class name is a binding in the enclosing scope
         self._add_binding(node.name, BindingKind.CLASS_DEF, node)
@@ -295,7 +295,7 @@ class BindingDetector(ast.NodeVisitor):
 
     # Import statements
 
-    def visit_Import(self, node: ast.Import):
+    def visit_Import(self, node: ast.Import) -> None:
         """Handle import statements: import x, import y as z"""
         for alias in node.names:
             # Use the alias if provided, otherwise the module name
@@ -303,7 +303,7 @@ class BindingDetector(ast.NodeVisitor):
             self._add_binding(name, BindingKind.IMPORT, node)
         self.generic_visit(node)
 
-    def visit_ImportFrom(self, node: ast.ImportFrom):
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Handle from-import statements: from x import y, from x import y as z"""
         for alias in node.names:
             if alias.name == "*":
@@ -315,7 +315,7 @@ class BindingDetector(ast.NodeVisitor):
 
     # Match statements (Python 3.10+)
 
-    def visit_Match(self, node: ast.Match):
+    def visit_Match(self, node: ast.Match) -> None:
         """Handle match statements: match x: case pattern:"""
         # Visit the subject
         self.visit(node.subject)
@@ -331,7 +331,7 @@ class BindingDetector(ast.NodeVisitor):
             for stmt in case.body:
                 self.visit(stmt)
 
-    def _extract_pattern_bindings(self, pattern: ast.AST):
+    def _extract_pattern_bindings(self, pattern: ast.AST) -> None:
         """Extract variable bindings from match patterns."""
         if isinstance(pattern, ast.MatchAs):
             # case pattern as x:
@@ -388,7 +388,7 @@ def detect_bindings(tree: ast.AST) -> List[Binding]:
     return detector.bindings
 
 
-def get_bound_variables(tree: ast.AST, scope_node: ast.AST = None) -> Set[str]:
+def get_bound_variables(tree: ast.AST, scope_node: Optional[ast.AST] = None) -> Set[str]:
     """
     Get the set of all variable names bound in an AST.
 

@@ -29,7 +29,7 @@ class Substitution:
 
     def add_mapping(
         self, block_idx: int, expr: ast.AST, param_name: str, bound_vars: Optional[List[str]] = None
-    ):
+    ) -> None:
         """
         Add a mapping from an expression to a parameter name.
 
@@ -83,10 +83,10 @@ def get_free_variables(expr: ast.AST) -> Set[str]:
     """
 
     class VarCollector(ast.NodeVisitor):
-        def __init__(self):
-            self.vars = set()
+        def __init__(self) -> None:
+            self.vars: Set[str] = set()
 
-        def visit_Name(self, node):
+        def visit_Name(self, node: ast.Name) -> None:
             if isinstance(node.ctx, ast.Load):
                 self.vars.add(node.id)
             self.generic_visit(node)
@@ -120,17 +120,33 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
 
     # Find bound variables by traversing the AST with a stack
     class BindingContextFinder(ast.NodeVisitor):
-        def __init__(self, target):
-            self.target = target
-            self.target_str = ast.unparse(target)
-            self.bound_vars = set()
-            self.found_target = False
+        def __init__(self, target: ast.AST) -> None:
+            self.target: ast.AST = target
+            self.target_str: str = ast.unparse(target)
+            self.bound_vars: Set[str] = set()
+            self.found_target: bool = False
             # Stack of currently bound variables (for control structures)
-            self.binding_stack = []
+            self.binding_stack: List[Set[str]] = []
             # Accumulated assignments (persist for rest of block)
-            self.assignments = set()
+            self.assignments: Set[str] = set()
 
-        def visit_For(self, node):
+        def _contains_target(self, node: ast.AST) -> bool:
+            """Check if node contains the target expression."""
+            return self.target_str in ast.unparse(node)
+
+        def _get_binding_vars(self, target: ast.AST) -> Set[str]:
+            """Extract variable names from a binding target (Name, Tuple, etc.)."""
+            if isinstance(target, ast.Name):
+                return {target.id}
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                vars = set()
+                for elt in target.elts:
+                    vars.update(self._get_binding_vars(elt))
+                return vars
+            else:
+                return set()
+
+        def visit_For(self, node: ast.For) -> None:
             # Check if target is in this for loop
             if self._contains_target(node):
                 # Extract loop variable(s)
@@ -142,7 +158,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def visit_comprehension(self, node):
+        def visit_comprehension(self, node: ast.comprehension) -> None:
             # comprehension node (part of generators list in ListComp, etc.)
             if self._contains_target(node):
                 comp_vars = self._get_binding_vars(node.target)
@@ -152,7 +168,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def visit_ListComp(self, node):
+        def visit_ListComp(self, node: ast.ListComp) -> None:
             # CRITICAL: Comprehension variables must be bound when visiting elt
             # [r.get_value() for r in results] - 'r' must be bound before visiting r.get_value()
             if self._contains_target(node):
@@ -176,7 +192,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def visit_SetComp(self, node):
+        def visit_SetComp(self, node: ast.SetComp) -> None:
             # CRITICAL: Comprehension variables must be bound when visiting elt
             if self._contains_target(node):
                 for gen in node.generators:
@@ -195,7 +211,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def visit_DictComp(self, node):
+        def visit_DictComp(self, node: ast.DictComp) -> None:
             # CRITICAL: Comprehension variables must be bound when visiting key and value
             if self._contains_target(node):
                 for gen in node.generators:
@@ -215,7 +231,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def visit_GeneratorExp(self, node):
+        def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
             # CRITICAL: Comprehension variables must be bound when visiting elt
             if self._contains_target(node):
                 for gen in node.generators:
@@ -234,7 +250,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def visit_FunctionDef(self, node):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             # Function creates a new scope - save current assignments and start fresh
             if self._contains_target(node):
                 # Save current assignments
@@ -244,7 +260,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
 
                 # Push function name and parameters for the function body
                 self.binding_stack.append({node.name})
-                params = set()
+                params: Set[str] = set()
                 for arg in node.args.args:
                     params.add(arg.arg)
                 for arg in node.args.posonlyargs:
@@ -275,11 +291,49 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                 # Target not in function - function name is bound in outer scope
                 self.assignments.add(node.name)
 
-        def visit_AsyncFunctionDef(self, node):
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
             # Same as FunctionDef
-            self.visit_FunctionDef(node)
+            # Async functions mirror FunctionDef handling but use AsyncFunctionDef fields
+            if self._contains_target(node):
+                # Save current assignments
+                saved_assignments = self.assignments.copy()
+                # Function name is bound in outer scope
+                self.assignments.add(node.name)
 
-        def visit_ClassDef(self, node):
+                # Push function name and parameters for the function body
+                self.binding_stack.append({node.name})
+                params: Set[str] = set()
+                for arg in node.args.args:
+                    params.add(arg.arg)
+                for arg in node.args.posonlyargs:
+                    params.add(arg.arg)
+                for arg in node.args.kwonlyargs:
+                    params.add(arg.arg)
+                if node.args.vararg:
+                    params.add(node.args.vararg.arg)
+                if node.args.kwarg:
+                    params.add(node.args.kwarg.arg)
+                if params:
+                    self.binding_stack.append(params)
+
+                # Clear assignments for function body (fresh scope)
+                self.assignments = set()
+
+                # Visit body
+                for stmt in node.body:
+                    self.visit(stmt)
+
+                # Restore outer scope assignments
+                self.assignments = saved_assignments
+
+                if params:
+                    self.binding_stack.pop()
+                self.binding_stack.pop()
+            else:
+                # Target not in function - function name is bound in outer scope
+                self.assignments.add(node.name)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
             # Class creates a new scope - save current assignments and start fresh
             if self._contains_target(node):
                 # Save current assignments
@@ -304,7 +358,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                 # Target not in class - class name is bound in outer scope
                 self.assignments.add(node.name)
 
-        def visit_Lambda(self, node):
+        def visit_Lambda(self, node: ast.Lambda) -> None:
             # Lambda creates a new scope for its parameters
             if self._contains_target(node):
                 lambda_vars = {arg.arg for arg in node.args.args}
@@ -314,7 +368,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                 if lambda_vars:
                     self.binding_stack.pop()
 
-        def visit_Assign(self, node):
+        def visit_Assign(self, node: ast.Assign) -> None:
             # CRITICAL: Assignments create bindings that persist for the rest of the block
             # We accumulate ALL assignments as we traverse (not just those containing target)
             # Extract assigned variable(s)
@@ -322,20 +376,20 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                 self.assignments.update(self._get_binding_vars(target))
             self.generic_visit(node)
 
-        def visit_AugAssign(self, node):
+        def visit_AugAssign(self, node: ast.AugAssign) -> None:
             # Augmented assignments also create persistent bindings
             self.assignments.update(self._get_binding_vars(node.target))
             self.generic_visit(node)
 
-        def visit_AnnAssign(self, node):
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
             # Annotated assignments create persistent bindings
             self.assignments.update(self._get_binding_vars(node.target))
             self.generic_visit(node)
 
-        def visit_With(self, node):
+        def visit_With(self, node: ast.With) -> None:
             # Handle with statements: with open(f) as file: ...
             if self._contains_target(node):
-                with_vars = set()
+                with_vars: Set[str] = set()
                 for item in node.items:
                     if item.optional_vars:
                         with_vars.update(self._get_binding_vars(item.optional_vars))
@@ -348,7 +402,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def visit_ExceptHandler(self, node):
+        def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
             # Handle exception handlers: except Exception as e: ...
             if self._contains_target(node):
                 if node.name:
@@ -361,7 +415,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def visit_NamedExpr(self, node):
+        def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
             # Handle walrus operator: if (x := foo()): ...
             if self._contains_target(node):
                 # The target of := is a binding
@@ -372,7 +426,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             else:
                 self.generic_visit(node)
 
-        def generic_visit(self, node):
+        def generic_visit(self, node: ast.AST) -> None:
             # Check if this node matches target
             if ast.unparse(node) == self.target_str:
                 self.found_target = True
@@ -381,23 +435,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                 for bound_set in self.binding_stack:
                     self.bound_vars.update(bound_set)
                 self.bound_vars.update(self.assignments)
-            super().generic_visit(node)
-
-        def _contains_target(self, node) -> bool:
-            """Check if node contains the target expression."""
-            return self.target_str in ast.unparse(node)
-
-        def _get_binding_vars(self, target) -> Set[str]:
-            """Extract variable names from a binding target (Name, Tuple, etc.)."""
-            if isinstance(target, ast.Name):
-                return {target.id}
-            elif isinstance(target, (ast.Tuple, ast.List)):
-                vars = set()
-                for elt in target.elts:
-                    vars.update(self._get_binding_vars(elt))
-                return vars
-            else:
-                return set()
+            ast.NodeVisitor.generic_visit(self, node)
 
     finder = BindingContextFinder(target_expr)
     finder.visit(node)
@@ -421,7 +459,7 @@ class Unifier:
 
     # Track constant occurrences: (block_idx, value) -> [position_paths]
     # position_path is a tuple of (stmt_idx, field_name, ...) identifying location
-    constant_positions: Dict[Tuple[int, Any], List[Tuple]]
+    constant_positions: Dict[Tuple[int, Any], List[Tuple[Any, ...]]]
 
     def __init__(self, max_parameters: int = 5, parameterize_constants: bool = True):
         """
@@ -1347,7 +1385,7 @@ class Unifier:
         # Positions align - can parameterize consistently
         return True
 
-    def _collect_constant_positions(self, blocks: List[List[ast.AST]]):
+    def _collect_constant_positions(self, blocks: List[List[ast.AST]]) -> None:
         """
         Collect all constant occurrences and their structural positions.
 
@@ -1364,7 +1402,9 @@ class Unifier:
                 # Traverse this statement and record all constants
                 self._record_constants_in_tree(stmt, (stmt_idx,), block_idx)
 
-    def _record_constants_in_tree(self, node: ast.AST, path: Tuple, block_idx: int):
+    def _record_constants_in_tree(
+        self, node: ast.AST, path: Tuple[Any, ...], block_idx: int
+    ) -> None:
         """
         Recursively traverse AST and record all constant positions.
 
@@ -1407,10 +1447,10 @@ class Unifier:
         Returns:
             List of ast.Constant nodes with matching value
         """
-        occurrences = []
+        occurrences: List[ast.AST] = []
 
         class OccurrenceFinder(ast.NodeVisitor):
-            def visit_Constant(self, node):
+            def visit_Constant(self, node: ast.Constant) -> None:
                 if node.value == value:
                     occurrences.append(node)
                 self.generic_visit(node)
@@ -1555,9 +1595,10 @@ class Unifier:
             for idx, expr in zip(block_indices, exprs):
                 if self.current_blocks is not None and idx < len(self.current_blocks):
                     from .scope_analyzer import ScopeAnalyzer
+                    from typing import Any as _Any, cast as _cast
 
-                    analyzer = ScopeAnalyzer()
-                    block_free_vars = analyzer.get_free_variables(self.current_blocks[idx])
+                    analyzer1 = _cast(_Any, ScopeAnalyzer)()
+                    block_free_vars = analyzer1.get_free_variables(self.current_blocks[idx])
 
                     # Check if all bound variables used in the expression are free variables
                     for var in common_bound_vars:
@@ -1577,9 +1618,10 @@ class Unifier:
                     # Get free variables of the entire block to see what's available
                     if self.current_blocks is not None and idx < len(self.current_blocks):
                         from .scope_analyzer import ScopeAnalyzer
+                        from typing import Any as _Any, cast as _cast
 
-                        analyzer = ScopeAnalyzer()
-                        block_free_vars = analyzer.get_free_variables(self.current_blocks[idx])
+                        analyzer2 = _cast(_Any, ScopeAnalyzer)()
+                        block_free_vars = analyzer2.get_free_variables(self.current_blocks[idx])
 
                         # Check if this variable is available at call site
                         if expr.id not in block_free_vars:
@@ -1604,7 +1646,7 @@ class Unifier:
 
         return True
 
-    def _setup_bound_variable_alpha_renamings(self, blocks: List[List[ast.AST]]):
+    def _setup_bound_variable_alpha_renamings(self, blocks: List[List[ast.AST]]) -> None:
         """
         Setup alpha-renamings for block-level bound variables.
 
@@ -1724,6 +1766,6 @@ class Unifier:
             # Other complex targets (subscript, attribute, etc.) - don't extract names
             return []
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the parameter counter."""
         self.param_counter = 0

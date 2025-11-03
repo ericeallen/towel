@@ -23,7 +23,7 @@ class HygienicExtractor:
     referential transparency.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.used_names: Set[str] = set()
 
     def extract_function(
@@ -224,6 +224,7 @@ class HygienicExtractor:
         mapped_return_vars: List[str] = []
         if return_variables:
             for var in return_variables:
+                # inverse_renames is Dict[str, str], default is the original var (str)
                 mapped_return_vars.append(inverse_renames.get(var, var))
 
         # Handle wrapping based on return variables and is_value_producing
@@ -275,7 +276,7 @@ class HygienicExtractor:
         class ParameterSubstituter(ast.NodeTransformer):
             def __init__(
                 self, subst: Substitution, param_names: List[str], rename_mapping: Dict[str, str]
-            ):
+            ) -> None:
                 self.subst = subst
                 self.param_names = param_names
                 self.rename_mapping = rename_mapping
@@ -302,11 +303,11 @@ class HygienicExtractor:
                                 self.var_to_param[expr.id] = param_name
                                 break
 
-            def visit_JoinedStr(self, node):
+            def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
                 # JoinedStr (f-string) can only have Constant or FormattedValue as direct children
                 # We must NEVER parameterize Constant nodes inside f-strings
                 # But we CAN parameterize expressions inside FormattedValue nodes
-                new_values = []
+                new_values: List[ast.expr] = []
                 for value in node.values:
                     if isinstance(value, ast.Constant):
                         # String literal parts of f-string must stay as constants
@@ -314,7 +315,7 @@ class HygienicExtractor:
                     elif isinstance(value, ast.FormattedValue):
                         # For FormattedValue, recursively visit the value expression
                         new_formatted = ast.FormattedValue(
-                            value=self.visit(value.value),
+                            value=cast(ast.expr, self.visit(value.value)),
                             conversion=value.conversion,
                             format_spec=value.format_spec,
                         )
@@ -324,7 +325,7 @@ class HygienicExtractor:
                         new_values.append(value)
                 return ast.JoinedStr(values=new_values)
 
-            def visit_For(self, node):
+            def visit_For(self, node: ast.For) -> ast.For:
                 """
                 Special handling for For loops to avoid replacing binding occurrences.
 
@@ -332,37 +333,41 @@ class HygienicExtractor:
                 and should NOT be replaced with a parameter.
                 """
                 # Transform the iterator (can contain parameterized expressions)
-                new_iter = self.visit(node.iter)
+                new_iter = cast(ast.expr, self.visit(node.iter))
 
                 # Don't transform the target (loop variable) - it's a binding
                 new_target = node.target
 
                 # Transform the body
-                new_body = [self.visit(stmt) for stmt in node.body]
-                new_orelse = [self.visit(stmt) for stmt in node.orelse] if node.orelse else []
+                new_body = [cast(ast.stmt, self.visit(stmt)) for stmt in node.body]
+                new_orelse = (
+                    [cast(ast.stmt, self.visit(stmt)) for stmt in node.orelse]
+                    if node.orelse
+                    else []
+                )
 
                 return ast.For(target=new_target, iter=new_iter, body=new_body, orelse=new_orelse)
 
-            def visit_comprehension(self, node):
+            def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
                 """
                 Special handling for comprehensions to avoid replacing binding occurrences.
 
                 In 'for target in iter', the 'target' is a BINDING occurrence.
                 """
                 # Transform the iterator
-                new_iter = self.visit(node.iter)
+                new_iter = cast(ast.expr, self.visit(node.iter))
 
                 # Don't transform the target (comprehension variable) - it's a binding
                 new_target = node.target
 
                 # Transform the filters
-                new_ifs = [self.visit(cond) for cond in node.ifs]
+                new_ifs = [cast(ast.expr, self.visit(cond)) for cond in node.ifs]
 
                 return ast.comprehension(
                     target=new_target, iter=new_iter, ifs=new_ifs, is_async=node.is_async
                 )
 
-            def visit_Assign(self, node):
+            def visit_Assign(self, node: ast.Assign) -> ast.Assign:
                 """
                 Special handling for assignments to handle both new bindings and reassignments.
 
@@ -374,10 +379,10 @@ class HygienicExtractor:
                 - Otherwise, keep the target unchanged (new binding)
                 """
                 # Transform the value expression first
-                new_value = self.visit(node.value)
+                new_value = cast(ast.expr, self.visit(node.value))
 
                 # Transform targets
-                new_targets = []
+                new_targets: List[ast.expr] = []
                 vars_to_delete = []  # Track which variables to remove from var_to_param
 
                 for target in node.targets:
@@ -413,7 +418,7 @@ class HygienicExtractor:
 
                 return ast.Assign(targets=new_targets, value=new_value)
 
-            def visit(self, node):
+            def visit(self, node: ast.AST) -> ast.AST:
                 # First, check if this is a variable that's equivalent to a parameter
                 # (e.g., result is equivalent to __param_0)
                 if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
@@ -423,9 +428,11 @@ class HygienicExtractor:
                         return ast.Name(id=param_name, ctx=ast.Load())
 
                 # Check if this expression should be replaced with a parameter
-                param_name = self.subst.get_param_for_expr(self.block_idx, node)
+                maybe_param_name: Optional[str] = self.subst.get_param_for_expr(
+                    self.block_idx, node
+                )
 
-                if param_name and param_name in self.param_names:
+                if maybe_param_name and maybe_param_name in self.param_names:
                     # CRITICAL: Never replace binding occurrences (Store/Del context)
                     # In 'for x in items:', the 'x' has Store context (binding)
                     # In 'result = x + 1', the 'x' has Load context (usage)
@@ -448,19 +455,19 @@ class HygienicExtractor:
                         return self.generic_visit(node)
 
                     # Check if this is a function parameter
-                    if self.subst.is_function_param(param_name):
+                    if self.subst.is_function_param(maybe_param_name):
                         # This parameter is a function - call it with bound variables
-                        bound_vars = self.subst.get_function_param_vars(param_name)
+                        bound_vars = self.subst.get_function_param_vars(maybe_param_name)
                         # Create call: param_name(bound_var1, bound_var2, ...)
                         call = ast.Call(
-                            func=ast.Name(id=param_name, ctx=ast.Load()),
+                            func=ast.Name(id=maybe_param_name, ctx=ast.Load()),
                             args=[ast.Name(id=var, ctx=ast.Load()) for var in bound_vars],
                             keywords=[],
                         )
                         return call
                     else:
                         # Regular parameter - just replace with parameter name
-                        return ast.Name(id=param_name, ctx=ast.Load())
+                        return ast.Name(id=maybe_param_name, ctx=ast.Load())
 
                 # Otherwise, recursively visit children
                 return self.generic_visit(node)
@@ -499,17 +506,17 @@ def contains_return(block: List[ast.stmt]) -> bool:
     """
 
     class ReturnFinder(ast.NodeVisitor):
-        def __init__(self):
-            self.found_return = False
+        def __init__(self) -> None:
+            self.found_return: bool = False
 
-        def visit_Return(self, node):
+        def visit_Return(self, node: ast.Return) -> None:
             self.found_return = True
 
-        def visit_FunctionDef(self, node):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             # Don't visit nested function definitions
             pass
 
-        def visit_AsyncFunctionDef(self, node):
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
             # Don't visit nested async function definitions
             pass
 

@@ -344,17 +344,17 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
 
     def test_all_examples_automatically(self):
         """
-        Automatically test observational equivalence for ALL example files.
+            Automatically test observational equivalence for ALL example files.
 
-        This test:
-        1. Processes each .py file in test_examples/
-        2. For each refactoring proposal, identifies refactored functions
-        3. Automatically generates test inputs based on function signatures
-        4. Tests observational equivalence for all refactored functions
+            This test:
+            1. Processes each .py file in test_examples/
+            2. For each refactoring proposal, identifies refactored functions
+            3. Automatically generates test inputs based on function signatures
+            4. Tests observational equivalence for all refactored functions
 
-    KNOWN ISSUES: Previously failed due to variable capture bug; this should now pass.
+        KNOWN ISSUES: Previously failed due to variable capture bug; this should now pass.
         """
-    # Unskipped: variable capture bug fixed; run full automatic equivalence across examples
+        # Unskipped: variable capture bug fixed; run full automatic equivalence across examples
 
         results = self.tester.test_all_examples("test_examples")
 
@@ -416,11 +416,11 @@ class TestObservationalEquivalence(unittest.TestCase):
 
     def test_example1_simple_observational_equivalence(self):
         """
-        Test that refactored example1_simple behaves identically to original.
+            Test that refactored example1_simple behaves identically to original.
 
-    KNOWN ISSUE: Previously failed due to variable capture; expected to pass now.
+        KNOWN ISSUE: Previously failed due to variable capture; expected to pass now.
         """
-    # Unskipped: variable capture bug fixed; validating behavior
+        # Unskipped: variable capture bug fixed; validating behavior
 
         example_path = get_test_example_path("example1_simple.py")
         original_content = example_path.read_text()
@@ -531,11 +531,11 @@ class TestObservationalEquivalence(unittest.TestCase):
 
     def test_simple_arithmetic_observational_equivalence(self):
         """
-        Test observational equivalence with a simple arithmetic example.
+            Test observational equivalence with a simple arithmetic example.
 
-    KNOWN ISSUE: Previously failed due to variable capture; expected to pass now.
+        KNOWN ISSUE: Previously failed due to variable capture; expected to pass now.
         """
-    # Unskipped: variable capture bug fixed; validating behavior
+        # Unskipped: variable capture bug fixed; validating behavior
 
         # Create a simple test case inline
         original_code = '''
