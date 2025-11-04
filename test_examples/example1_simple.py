@@ -11,12 +11,7 @@ def process_user_data(user_id):
     user = {"id": user_id, "name": "John", "email": "john@example.com"}
 
     # Validate user data
-    if not user.get("id"):
-        raise ValueError("User ID is required")
-    if not user.get("name"):
-        raise ValueError("User name is required")
-    if len(user.get("name", "")) < 2:
-        raise ValueError("User name too short")
+    __extracted_func_2(user)
 
     print(f"Processing user: {user['name']}")
     return user
@@ -28,12 +23,7 @@ def process_admin_data(admin_id):
     admin = {"id": admin_id, "name": "Admin", "email": "admin@example.com"}
 
     # Validate user data (DUPLICATE!)
-    if not admin.get("id"):
-        raise ValueError("User ID is required")
-    if not admin.get("name"):
-        raise ValueError("User name is required")
-    if len(admin.get("name", "")) < 2:
-        raise ValueError("User name too short")
+    __extracted_func_2(admin)
 
     print(f"Processing admin: {admin['name']}")
     return admin
@@ -54,3 +44,14 @@ def process_guest_data(guest_id):
 
     print(f"Processing guest: {guest['name']}")
     return guest
+
+
+def __extracted_func_2(__param_0):
+    if not __param_0.get('id'):
+        raise ValueError('User ID is required')
+    if not __param_0.get('name'):
+        raise ValueError('User name is required')
+    if len(__param_0.get('name', '')) < 2:
+        raise ValueError('User name too short')
+
+

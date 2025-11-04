@@ -19,6 +19,7 @@ from .unifier import Unifier
 from .extractor import HygienicExtractor, is_value_producing
 from .orphan_detector import has_orphaned_variables
 from .assignment_analyzer import analyze_assignments, has_reassignments_without_bindings
+from .project_layout import ProjectLayout
 
 
 @dataclass
@@ -33,6 +34,8 @@ class CodeBlockPair:
     block1_nodes: List[ast.AST]
     block2_nodes: List[ast.AST]
     file_path2: Optional[str] = None  # For cross-file pairs
+    class1_name: Optional[str] = None  # Enclosing class name if method
+    class2_name: Optional[str] = None
     scope_analyzer1: Optional["ScopeAnalyzer"] = None
     scope_analyzer2: Optional["ScopeAnalyzer"] = None
     root_scope1: Optional["Scope"] = None
@@ -54,6 +57,8 @@ class RefactoringProposal:
     return_variables: List[str] = field(
         default_factory=list
     )  # Variables that extracted function returns
+    # If provided, insert extracted function as a method of this class (same-file only)
+    insert_into_class: Optional[str] = None
 
 
 class UnificationRefactorEngine:
@@ -68,6 +73,9 @@ class UnificationRefactorEngine:
         max_parameters: int = 5,
         min_lines: int = 4,
         parameterize_constants: bool = True,
+        *,
+        prefer_absolute_imports: Optional[bool] = None,
+        pep420_namespace_packages: Optional[bool] = None,
     ):
         """
         Initialize the refactoring engine.
@@ -84,6 +92,9 @@ class UnificationRefactorEngine:
             max_parameters=max_parameters, parameterize_constants=parameterize_constants
         )
         self.extractor = HygienicExtractor()
+        # Cross-file import preferences
+        self.prefer_absolute_imports = prefer_absolute_imports
+        self.pep420_namespace_packages = pep420_namespace_packages
         # Default behavior: allow safe handling of globals/nonlocals by not parameterizing
         # them and promoting necessary declarations into the extracted function when needed.
 
@@ -180,7 +191,8 @@ class UnificationRefactorEngine:
             List of refactoring proposals
         """
         # Parse all files
-        all_functions = []  # List of (file_path, function_node, source, scope_analyzer, root_scope)
+        # List items are tuples: (file_path, function_node, source, scope_analyzer, root_scope, class_name)
+        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str]]] = []
 
         for file_path in file_paths:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -195,15 +207,17 @@ class UnificationRefactorEngine:
             scope_analyzer = ScopeAnalyzer()
             root_scope = scope_analyzer.analyze(tree)
 
-            # Extract top-level functions
-            top_level_functions = [
-                node
-                for node in tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            ]
+            # Collect top-level functions
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    all_functions.append((file_path, node, source, scope_analyzer, root_scope, None))
 
-            for func in top_level_functions:
-                all_functions.append((file_path, func, source, scope_analyzer, root_scope))
+            # Collect methods within classes with class context
+            for node in tree.body:
+                if isinstance(node, ast.ClassDef):
+                    for stmt in node.body:
+                        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            all_functions.append((file_path, stmt, source, scope_analyzer, root_scope, node.name))
 
         if len(all_functions) < 2:
             return []
@@ -219,7 +233,7 @@ class UnificationRefactorEngine:
             print(f"Evaluating {total_pairs} candidate block pair(s)...")
 
         # Process each pair - try unification
-        proposals = []
+        proposals: List[RefactoringProposal] = []
 
         # Choose progress style
         use_tqdm = False
@@ -465,7 +479,8 @@ class UnificationRefactorEngine:
         return used
 
     def _find_block_pairs_multi_file(
-        self, all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope]]
+        self,
+        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str]]],
     ) -> List[CodeBlockPair]:
         """
         Find all non-overlapping pairs of code blocks across multiple files.
@@ -479,8 +494,20 @@ class UnificationRefactorEngine:
         pairs = []
 
         # For each pair of functions (including across files)
-        for i, (file1, func1, source1, analyzer1, scope1) in enumerate(all_functions):
-            for file2, func2, source2, analyzer2, scope2 in all_functions[i + 1 :]:
+        for i, entry1 in enumerate(all_functions):
+            # Backward compatibility: allow 5-tuples (no class context)
+            if len(entry1) == 6:
+                file1, func1, source1, analyzer1, scope1, class1 = entry1
+            else:
+                file1, func1, source1, analyzer1, scope1 = entry1
+                class1 = None
+
+            for entry2 in all_functions[i + 1 :]:
+                if len(entry2) == 6:
+                    file2, func2, source2, analyzer2, scope2, class2 = entry2
+                else:
+                    file2, func2, source2, analyzer2, scope2 = entry2
+                    class2 = None
                 # Extract all code blocks from each function
                 blocks1 = self._extract_code_blocks(func1)
                 blocks2 = self._extract_code_blocks(func2)
@@ -510,6 +537,8 @@ class UnificationRefactorEngine:
                             block1_nodes=block1_nodes,
                             block2_nodes=block2_nodes,
                             file_path2=file2,
+                            class1_name=class1,
+                            class2_name=class2,
                             scope_analyzer1=analyzer1,
                             scope_analyzer2=analyzer2,
                             root_scope1=scope1,
@@ -524,7 +553,7 @@ class UnificationRefactorEngine:
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
-        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope]],
+        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str]]],
     ) -> Optional[RefactoringProposal]:
         """
         Try to refactor a pair of code blocks using unification (cross-file support).
@@ -552,7 +581,8 @@ class UnificationRefactorEngine:
         # Find the function definitions for context
         func1 = None
         func2 = None
-        for file_path, func, _, _, _ in all_functions:
+        for entry in all_functions:
+            file_path, func = entry[0], entry[1]
             if file_path == pair.file_path and func.name == pair.function1_name:
                 func1 = func
             if (
@@ -1086,7 +1116,7 @@ class UnificationRefactorEngine:
         # Need to find the function nodes to check for orphans
         func1 = None
         func2 = None
-        for file_path, func, source, analyzer, scope in all_functions:
+        for file_path, func, source, analyzer, scope, _ in all_functions:
             if file_path == pair.file_path and func.name == pair.function1_name:
                 func1 = func
             if (
@@ -1155,8 +1185,9 @@ class UnificationRefactorEngine:
                     return_variables=return_vars_by_block[block_idx],
                     hygienic_renames=hygienic_renames,
                 )
-                # Store file_path with replacement for cross-file handling
-                replacements.append((block_range, call_node, file_path))
+                # Store file_path and class context
+                class_name = pair.class1_name if block_idx == 0 else pair.class2_name
+                replacements.append((block_range, call_node, file_path, class_name))
             except Exception:
                 return None
 
@@ -1173,6 +1204,17 @@ class UnificationRefactorEngine:
         else:
             desc += f" and {pair.function2_name}"
 
+        # Default to module-level insertion; if same-file and same-class methods, insert into class
+        insert_into_class = None
+        if (
+            pair.file_path2 is not None
+            and pair.file_path2 == pair.file_path
+            and pair.class1_name
+            and pair.class2_name
+            and pair.class1_name == pair.class2_name
+        ):
+            insert_into_class = pair.class1_name
+
         proposal = RefactoringProposal(
             file_path=canonical_file,
             extracted_function=func_def,
@@ -1180,6 +1222,7 @@ class UnificationRefactorEngine:
             description=desc,
             parameters_count=len(substitution.param_expressions),
             return_variables=list(return_variables_block1),
+            insert_into_class=insert_into_class,
         )
 
         return proposal
@@ -1213,15 +1256,19 @@ class UnificationRefactorEngine:
         # Group replacements by file
         replacements_by_file = {}
         for item in proposal.replacements:
-            if len(item) == 3:
+            if len(item) == 4:
+                (start_line, end_line), replacement_node, file_path, class_name = item
+            elif len(item) == 3:
                 (start_line, end_line), replacement_node, file_path = item
+                class_name = None
             else:
                 (start_line, end_line), replacement_node = item
                 file_path = proposal.file_path
+                class_name = None
 
             if file_path not in replacements_by_file:
                 replacements_by_file[file_path] = []
-            replacements_by_file[file_path].append(((start_line, end_line), replacement_node))
+            replacements_by_file[file_path].append(((start_line, end_line), replacement_node, class_name))
 
         # Process each file
         modified_files = {}
@@ -1235,7 +1282,12 @@ class UnificationRefactorEngine:
             replacements = sorted(replacements, key=lambda r: r[0][0], reverse=True)
 
             # Apply replacements
-            for (start_line, end_line), replacement_node in replacements:
+            # Determine final function/method name for this proposal
+            final_func_name = proposal.extracted_function.name
+            if proposal.insert_into_class and not final_func_name.startswith("_"):
+                final_func_name = f"_{final_func_name}"
+
+            for (start_line, end_line), replacement_node, class_name in replacements:
                 # Validate line numbers
                 if start_line < 1 or start_line > len(lines):
                     print(
@@ -1250,6 +1302,11 @@ class UnificationRefactorEngine:
                     )
                     print("Adjusting to end of file")
                     end_line = len(lines)
+
+                # If inserting into a class (same-file same-class), and this replacement came from a method
+                # in the canonical file, rewrite to self._method(...) and drop leading self arg.
+                if proposal.insert_into_class and file_path == proposal.file_path and class_name:
+                    replacement_node = self._rewrite_call_to_method(replacement_node, proposal.extracted_function.name, final_func_name)
 
                 replacement_code = ast.unparse(replacement_node)
                 indent = self._get_indent(lines[start_line - 1])
@@ -1295,74 +1352,115 @@ class UnificationRefactorEngine:
                 del lines[start_line - 1 : end_line]
                 lines[start_line - 1 : start_line - 1] = replacement_lines + trailing_blank_lines
 
-            # Add extracted function to canonical file only
+            # Add extracted function/method to canonical file only
             if file_path == proposal.file_path:
-                func_code = ast.unparse(proposal.extracted_function)
-                func_lines = [line + "\n" for line in func_code.split("\n")]
-                insert_line = self._find_insert_position(lines)
+                if proposal.insert_into_class:
+                    # Rename function for method insertion
+                    if not proposal.extracted_function.name.startswith("_"):
+                        proposal.extracted_function.name = f"_{proposal.extracted_function.name}"
+                    # Ensure 'self' as first arg
+                    self._ensure_self_param(proposal.extracted_function)
 
-                # Ensure proper spacing: PEP 8 requires 2 blank lines between top-level functions
-                # Add blank lines before the function if needed
-                lines_to_insert = []
+                    func_code = ast.unparse(proposal.extracted_function)
+                    method_lines = [line + "\n" for line in func_code.split("\n")]
 
-                # Check if we need blank lines before the function
-                if insert_line > 0:
-                    # Count existing blank lines before insert position
-                    blank_lines_before = 0
-                    check_line = insert_line - 1
-                    while check_line >= 0 and not lines[check_line].strip():
-                        blank_lines_before += 1
-                        check_line -= 1
+                    # Find class position and indent
+                    insert_info = self._find_class_insert_position("".join(lines), proposal.insert_into_class)
+                    if insert_info is None:
+                        # Fallback to module-level insertion
+                        func_lines = method_lines
+                        insert_line = self._find_insert_position(lines)
+                        lines[insert_line:insert_line] = func_lines + ["\n", "\n"]
+                    else:
+                        insert_line_zero_based, indent = insert_info
+                        # Indent by one level beyond class indent
+                        indented = []
+                        method_indent = indent + "    "
+                        for line in method_lines:
+                            if line.strip():
+                                # Prefix method indent but preserve relative indentation within the function
+                                indented.append(method_indent + line)
+                            else:
+                                indented.append(line)
+                        # Compute insertion point AFTER the last class line
+                        insert_at = insert_line_zero_based + 1
+                        # Ensure a blank line before if needed
+                        prefix = []
+                        if insert_at > 0 and lines[insert_at - 1].strip():
+                            prefix.append("\n")
+                        # Optionally ensure a blank line after
+                        suffix = []
+                        if insert_at < len(lines) and lines[insert_at].strip():
+                            suffix.append("\n")
+                        lines[insert_at:insert_at] = prefix + indented + suffix
+                else:
+                    func_code = ast.unparse(proposal.extracted_function)
+                    func_lines = [line + "\n" for line in func_code.split("\n")]
+                    insert_line = self._find_insert_position(lines)
 
-                    # Add blank lines if needed to reach 2
-                    if blank_lines_before < 2:
-                        lines_to_insert.extend(["\n"] * (2 - blank_lines_before))
+                    # Ensure proper spacing: PEP 8 requires 2 blank lines between top-level functions
+                    # Add blank lines before the function if needed
+                    lines_to_insert = []
 
-                # Add the function itself
-                lines_to_insert.extend(func_lines)
+                    # Check if we need blank lines before the function
+                    if insert_line > 0:
+                        # Count existing blank lines before insert position
+                        blank_lines_before = 0
+                        check_line = insert_line - 1
+                        while check_line >= 0 and not lines[check_line].strip():
+                            blank_lines_before += 1
+                            check_line -= 1
 
-                # Add 2 blank lines after the function
-                lines_to_insert.extend(["\n", "\n"])
+                        # Add blank lines if needed to reach 2
+                        if blank_lines_before < 2:
+                            lines_to_insert.extend(["\n"] * (2 - blank_lines_before))
 
-                lines[insert_line:insert_line] = lines_to_insert
+                    # Add the function itself
+                    lines_to_insert.extend(func_lines)
+
+                    # Add 2 blank lines after the function
+                    lines_to_insert.extend(["\n", "\n"])
+
+                    lines[insert_line:insert_line] = lines_to_insert
             else:
                 # Add import statement to other files
-                # Calculate the correct module path for importing
+                # Calculate the correct module path using project layout discovery
                 from_path = Path(proposal.file_path)
                 to_path = Path(file_path)
 
-                # For files in the same directory, just use the stem
-                if from_path.parent == to_path.parent:
-                    module_name = from_path.stem
+                # Use the lowest common ancestor of the canonical and importing files
+                # to scope module names within the project subtree (avoid repo-level roots)
+                from pathlib import Path as _P
+                common_dir = _P(
+                    __import__('os').path.commonpath([str(from_path), str(to_path)])
+                )
+                layout = ProjectLayout.discover(
+                    common_dir,
+                    prefer_absolute_imports=self.prefer_absolute_imports,
+                    pep420_namespace_packages=self.pep420_namespace_packages,
+                )
+
+                abs_mod = layout.module_name_for(from_path)
+                # If preference is absolute and available, use absolute even for same-dir
+                if abs_mod and layout.prefer_absolute_imports:
+                    module_name = abs_mod
                 else:
-                    # For nested directories, calculate relative import path
-                    # Find common parent and build relative path
-                    try:
-                        # Get relative path from importing file to target file
-                        common_parent = Path(
-                            *[p for p in from_path.parts[:-1] if p in to_path.parts[:-1]]
-                        )
-                        if common_parent == Path("."):
-                            # No common parent - use absolute-style import with directory structure
-                            module_parts = list(from_path.parent.parts) + [from_path.stem]
-                            module_name = ".".join(module_parts)
-                        else:
-                            # Has common parent - use relative path from common root
-                            module_parts = list(from_path.parent.parts) + [from_path.stem]
-                            # Find where common parent ends
-                            common_depth = len([p for p in common_parent.parts])
-                            module_parts = module_parts[common_depth:]
-                            module_name = ".".join(module_parts) if module_parts else from_path.stem
-                    except (ValueError, IndexError):
-                        # Fallback to stem if relative path calculation fails
+                    # Otherwise, keep previous behavior: same-dir stem, else best-effort abs/stem
+                    if from_path.parent == to_path.parent:
                         module_name = from_path.stem
+                    else:
+                        module_name = abs_mod or from_path.stem
 
                 func_name = proposal.extracted_function.name
                 import_line = f"from {module_name} import {func_name}\n"
 
-                # Find position to insert import (after existing imports)
-                import_pos = self._find_import_position(lines)
-                lines.insert(import_pos, import_line)
+                # Avoid duplicate imports if already present
+                if any(import_line.strip() == ln.strip() for ln in lines):
+                    pass
+                else:
+                    # Find position to insert import (after existing imports)
+                    import_pos = self._find_import_position(lines)
+                    lines.insert(import_pos, import_line)
 
             modified_files[file_path] = "".join(lines)
 
@@ -1428,6 +1526,53 @@ class UnificationRefactorEngine:
 
         # Empty file - insert at beginning
         return 0
+
+    def _ensure_self_param(self, fn: ast.FunctionDef) -> None:
+        """Ensure 'self' is the first positional parameter of function definition."""
+        args = fn.args
+        # Remove duplicates of 'self' from args.args
+        new_args = [a for a in args.args if a.arg != "self"]
+        args.args = [ast.arg(arg="self")] + new_args
+
+    def _rewrite_call_to_method(self, node: ast.AST, original_name: str, new_name: str) -> ast.AST:
+        """Rewrite calls from original_name(...) to self.new_name(...), dropping leading self arg."""
+        class Rewriter(ast.NodeTransformer):
+            def visit_Call(self, n: ast.Call) -> ast.AST:
+                self.generic_visit(n)
+                if isinstance(n.func, ast.Name) and n.func.id == original_name:
+                    # Drop any 'self' positional argument; method receives it implicitly
+                    n.args = [a for a in n.args if not (isinstance(a, ast.Name) and a.id == "self")]
+                    n.func = ast.Attribute(value=ast.Name(id="self", ctx=ast.Load()), attr=new_name, ctx=ast.Load())
+                return n
+
+        return Rewriter().visit(node)
+
+    def _find_class_insert_position(self, source: str, class_name: str) -> Optional[Tuple[int, str]]:
+        """
+        Find insertion position (0-based line index) at end of class body and class indentation.
+
+        Returns (insert_line_index, class_indent_str) or None.
+        """
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return None
+
+        class ClassLocator(ast.NodeVisitor):
+            def __init__(self):
+                self.result: Optional[Tuple[int, str]] = None
+
+            def visit_ClassDef(self, node: ast.ClassDef):
+                if node.name == class_name and hasattr(node, "end_lineno"):
+                    lines = source.splitlines()
+                    class_line = lines[node.lineno - 1]
+                    indent = class_line[: len(class_line) - len(class_line.lstrip())]
+                    self.result = (node.end_lineno - 1, indent)
+                self.generic_visit(node)
+
+        locator = ClassLocator()
+        locator.visit(tree)
+        return locator.result
 
     def _get_block_indices(
         self, function: ast.FunctionDef, block_nodes: List[ast.AST]
@@ -1579,12 +1724,16 @@ class UnificationRefactorEngine:
         self, input_dir: str, output_dir: str, max_iterations: int = 10
     ) -> Dict[str, Tuple[int, List[str]]]:
         """
-        Apply refactorings to all files in a directory until fixed point.
+        Apply refactorings across a directory (recursively) until a fixed point.
+
+        Unlike the per-file variant, this performs whole-project analysis on every
+        iteration so it can apply BOTH same-file and cross-file proposals. One proposal
+        is applied per iteration, then the directory is re-analyzed, up to max_iterations.
 
         Args:
             input_dir: Input directory path
-            output_dir: Output directory path
-            max_iterations: Maximum iterations per file
+            output_dir: Output directory path (results are written here)
+            max_iterations: Maximum iterations to prevent infinite loops
 
         Returns:
             Dictionary mapping file paths to (num_refactorings, descriptions)
@@ -1607,22 +1756,32 @@ class UnificationRefactorEngine:
                     output_file.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(item, output_file)
 
-        # Process each Python file
-        results = {}
-        for py_file in output_path.rglob("*.py"):
-            if py_file.name.startswith("."):
-                continue
+        # Aggregate results per file
+        results: Dict[str, Tuple[int, List[str]]] = {}
 
-            final_code, num_applied, descriptions = self.refactor_to_fixed_point(
-                str(py_file), max_iterations
-            )
+        def _bump_result(path: str, desc: str):
+            count, descs = results.get(path, (0, []))
+            results[path] = (count + 1, descs + [desc])
 
-            # Write final result
-            with open(py_file, "w") as f:
-                f.write(final_code)
+        # Fixed-point iteration across the whole directory (recursive)
+        for _ in range(max_iterations):
+            # Analyze the current output directory for proposals (includes cross-file)
+            proposals = self.analyze_directory(str(output_path), recursive=True, verbose=False)
 
-            if num_applied > 0:
-                results[str(py_file)] = (num_applied, descriptions)
+            if not proposals:
+                break
+
+            # Apply one proposal at a time (like per-file fixed-point)
+            proposal = proposals[0]
+
+            modified_files = self.apply_refactoring_multi_file(proposal)
+
+            # Write all modified files back to disk and update per-file results
+            for fpath, content in modified_files.items():
+                # Ensure writing inside output path only
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                _bump_result(fpath, proposal.description)
 
         return results
 
@@ -1645,7 +1804,13 @@ def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
     """
     affected = set()
     for item in proposal.replacements:
-        if len(item) == 3:
+        # Support multiple replacement tuple shapes:
+        # - ((start, end), node)
+        # - ((start, end), node, file_path)
+        # - ((start, end), node, file_path, class_name)
+        if len(item) == 4:
+            (start_line, end_line), _, file_path, _ = item
+        elif len(item) == 3:
             (start_line, end_line), _, file_path = item
         else:
             (start_line, end_line), _ = item
@@ -1686,7 +1851,9 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
         """Calculate total lines affected by a proposal."""
         total_lines = 0
         for item in p.replacements:
-            if len(item) == 3:
+            if len(item) == 4:
+                (start_line, end_line), _, _, _ = item
+            elif len(item) == 3:
                 (start_line, end_line), _, _ = item
             else:
                 (start_line, end_line), _ = item

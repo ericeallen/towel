@@ -189,7 +189,10 @@ class TestDirectoryAnalysis(unittest.TestCase):
         for py_file in test_examples_dir.glob("*.py"):
             original_contents[py_file] = py_file.read_text()
 
-        proposals = self.engine.analyze_directory("test_examples", recursive=True)
+        # Enable progress for long-running analysis
+        proposals = self.engine.analyze_directory(
+            "test_examples", recursive=True, verbose=True, progress="tqdm"
+        )
 
         # Should find duplicates across all example files
         self.assertGreater(len(proposals), 0, "Should find duplicates in test_examples directory")
@@ -225,7 +228,8 @@ class TestDirectoryAnalysis(unittest.TestCase):
         self.assertGreater(len(proposals), 0, "Should find cross-file duplicates")
 
         # Check if any proposal is cross-file
-        cross_file_proposals = [p for p in proposals if any(len(r) == 3 for r in p.replacements)]
+        # Replacements may be tuples of 3 (range, node, file_path) or 4 (adds class_name)
+        cross_file_proposals = [p for p in proposals if any(len(r) >= 3 for r in p.replacements)]
 
         self.assertGreater(
             len(cross_file_proposals), 0, "Should find at least one cross-file proposal"

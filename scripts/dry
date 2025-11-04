@@ -12,6 +12,7 @@ Usage:
 import sys
 import os
 import shutil
+import argparse
 from pathlib import Path
 from typing import Dict, Set
 from towel.unification.refactor_engine import (
@@ -70,18 +71,50 @@ def copy_to_output(input_path: str, output_path: str) -> None:
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: python3 dry.py <input> <output>")
-        print("\nExamples:")
-        print("  python3 dry.py my_file.py cleaned.py      # Refactor single file")
-        print("  python3 dry.py src/ output/               # Refactor directory")
-        print("  python3 dry.py . cleaned/                 # Refactor current directory")
-        print("\nNote: Input files are copied to output location before refactoring.")
-        print("      To modify files in place, use the same path for input and output.")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Analyze and apply unification-based refactorings to file(s) or directories."
+    )
+    parser.add_argument("input", help="Input file or directory")
+    parser.add_argument("output", help="Output file or directory (can be same as input)")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Proceed without interactive confirmation",
+    )
+    pref_group = parser.add_mutually_exclusive_group()
+    pref_group.add_argument(
+        "--prefer-absolute-imports",
+        dest="prefer_absolute_imports",
+        action="store_true",
+        help="Prefer absolute imports for cross-file extractions when possible (even same-dir in packages)",
+    )
+    pref_group.add_argument(
+        "--no-prefer-absolute-imports",
+        dest="prefer_absolute_imports",
+        action="store_false",
+        help="Prefer local/same-dir imports when possible",
+    )
+    parser.set_defaults(prefer_absolute_imports=None)
 
-    input_path = sys.argv[1]
-    output_path = sys.argv[2]
+    pep_group = parser.add_mutually_exclusive_group()
+    pep_group.add_argument(
+        "--pep420",
+        dest="pep420",
+        action="store_true",
+        help="Treat directories as namespace packages (PEP 420) when deriving module paths",
+    )
+    pep_group.add_argument(
+        "--no-pep420",
+        dest="pep420",
+        action="store_false",
+        help="Require __init__.py for packages when deriving module paths",
+    )
+    parser.set_defaults(pep420=None)
+
+    args = parser.parse_args()
+
+    input_path = args.input
+    output_path = args.output
 
     # Check if input exists
     if not os.path.exists(input_path):
@@ -120,6 +153,8 @@ def main():
         max_parameters=5,
         min_lines=3,
         parameterize_constants=True,
+        prefer_absolute_imports=args.prefer_absolute_imports,
+        pep420_namespace_packages=args.pep420,
     )
 
     # Use fixed-point iteration to apply refactorings
@@ -133,11 +168,11 @@ def main():
     print("Extracted functions will be placed at the end of files.")
     print()
 
-    response = input("Proceed? (y/N): ").strip().lower()
-
-    if response != 'y':
-        print("Aborted.")
-        return
+    if not args.yes:
+        response = input("Proceed? (y/N): ").strip().lower()
+        if response != 'y':
+            print("Aborted.")
+            return
 
     print()
 
