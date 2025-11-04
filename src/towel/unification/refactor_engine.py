@@ -192,7 +192,9 @@ class UnificationRefactorEngine:
         """
         # Parse all files
         # List items are tuples: (file_path, function_node, source, scope_analyzer, root_scope, class_name)
-        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str]]] = []
+        all_functions: List[
+            Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str]]
+        ] = []
 
         for file_path in file_paths:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -210,14 +212,18 @@ class UnificationRefactorEngine:
             # Collect top-level functions
             for node in tree.body:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    all_functions.append((file_path, node, source, scope_analyzer, root_scope, None))
+                    all_functions.append(
+                        (file_path, node, source, scope_analyzer, root_scope, None)
+                    )
 
             # Collect methods within classes with class context
             for node in tree.body:
                 if isinstance(node, ast.ClassDef):
                     for stmt in node.body:
                         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            all_functions.append((file_path, stmt, source, scope_analyzer, root_scope, node.name))
+                            all_functions.append(
+                                (file_path, stmt, source, scope_analyzer, root_scope, node.name)
+                            )
 
         if len(all_functions) < 2:
             return []
@@ -1268,7 +1274,9 @@ class UnificationRefactorEngine:
 
             if file_path not in replacements_by_file:
                 replacements_by_file[file_path] = []
-            replacements_by_file[file_path].append(((start_line, end_line), replacement_node, class_name))
+            replacements_by_file[file_path].append(
+                ((start_line, end_line), replacement_node, class_name)
+            )
 
         # Process each file
         modified_files = {}
@@ -1306,7 +1314,9 @@ class UnificationRefactorEngine:
                 # If inserting into a class (same-file same-class), and this replacement came from a method
                 # in the canonical file, rewrite to self._method(...) and drop leading self arg.
                 if proposal.insert_into_class and file_path == proposal.file_path and class_name:
-                    replacement_node = self._rewrite_call_to_method(replacement_node, proposal.extracted_function.name, final_func_name)
+                    replacement_node = self._rewrite_call_to_method(
+                        replacement_node, proposal.extracted_function.name, final_func_name
+                    )
 
                 replacement_code = ast.unparse(replacement_node)
                 indent = self._get_indent(lines[start_line - 1])
@@ -1365,7 +1375,9 @@ class UnificationRefactorEngine:
                     method_lines = [line + "\n" for line in func_code.split("\n")]
 
                     # Find class position and indent
-                    insert_info = self._find_class_insert_position("".join(lines), proposal.insert_into_class)
+                    insert_info = self._find_class_insert_position(
+                        "".join(lines), proposal.insert_into_class
+                    )
                     if insert_info is None:
                         # Fallback to module-level insertion
                         func_lines = method_lines
@@ -1431,9 +1443,8 @@ class UnificationRefactorEngine:
                 # Use the lowest common ancestor of the canonical and importing files
                 # to scope module names within the project subtree (avoid repo-level roots)
                 from pathlib import Path as _P
-                common_dir = _P(
-                    __import__('os').path.commonpath([str(from_path), str(to_path)])
-                )
+
+                common_dir = _P(__import__("os").path.commonpath([str(from_path), str(to_path)]))
                 layout = ProjectLayout.discover(
                     common_dir,
                     prefer_absolute_imports=self.prefer_absolute_imports,
@@ -1536,18 +1547,23 @@ class UnificationRefactorEngine:
 
     def _rewrite_call_to_method(self, node: ast.AST, original_name: str, new_name: str) -> ast.AST:
         """Rewrite calls from original_name(...) to self.new_name(...), dropping leading self arg."""
+
         class Rewriter(ast.NodeTransformer):
             def visit_Call(self, n: ast.Call) -> ast.AST:
                 self.generic_visit(n)
                 if isinstance(n.func, ast.Name) and n.func.id == original_name:
                     # Drop any 'self' positional argument; method receives it implicitly
                     n.args = [a for a in n.args if not (isinstance(a, ast.Name) and a.id == "self")]
-                    n.func = ast.Attribute(value=ast.Name(id="self", ctx=ast.Load()), attr=new_name, ctx=ast.Load())
+                    n.func = ast.Attribute(
+                        value=ast.Name(id="self", ctx=ast.Load()), attr=new_name, ctx=ast.Load()
+                    )
                 return n
 
         return Rewriter().visit(node)
 
-    def _find_class_insert_position(self, source: str, class_name: str) -> Optional[Tuple[int, str]]:
+    def _find_class_insert_position(
+        self, source: str, class_name: str
+    ) -> Optional[Tuple[int, str]]:
         """
         Find insertion position (0-based line index) at end of class body and class indentation.
 
