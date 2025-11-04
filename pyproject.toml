@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "towel"
-version = "0.5.5"
+version = "0.5.6"
 description = "A Python tool that DRYs your code - finds and refactors repeated code using unification-based analysis"
 authors = [
     {name = "Eric Allen"}
