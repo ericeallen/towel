@@ -702,6 +702,24 @@ class Unifier:
                 cast(List[ast.GeneratorExp], nodes), subst, cast(List[int], list(block_indices))
             )
 
+        # Special handling for with-statements: optional_vars are bindings
+        if isinstance(first_node, ast.With):
+            return self._unify_with(
+                cast(List[ast.With], nodes), subst, cast(List[int], list(block_indices))
+            )
+
+        # Special handling for except handlers: name is a binding identifier
+        if isinstance(first_node, ast.ExceptHandler):
+            return self._unify_except_handler(
+                cast(List[ast.ExceptHandler], nodes), subst, cast(List[int], list(block_indices))
+            )
+
+        # Special handling for walrus operator: target is a binding (alpha-equivalent)
+        if isinstance(first_node, ast.NamedExpr):
+            return self._unify_named_expr(
+                cast(List[ast.NamedExpr], nodes), subst, cast(List[int], list(block_indices))
+            )
+
         # For each field in the node
         for field_name in first_node._fields:
             # Skip location fields
@@ -862,6 +880,139 @@ class Unifier:
                     return False
 
             return self._unify_nodes([n.elt for n in nodes], subst, block_indices)
+        finally:
+            self.alpha_renamings = saved_alpha
+
+    def _unify_with(
+        self, nodes: List[ast.With], subst: Substitution, block_indices: List[int]
+    ) -> bool:
+        """
+        Unify With nodes, treating optional_vars as bound (alpha-equivalent).
+
+        - Unify items' context_expr.
+        - Establish temporary alpha-renamings for optional_vars targets.
+        - Unify bodies under those mappings.
+        """
+        # Same number of items
+        items_lists = [n.items for n in nodes]
+        if not all(len(lst) == len(items_lists[0]) for lst in items_lists):
+            return False
+
+        # Save mappings to restore after
+        saved_alpha = dict(self.alpha_renamings)
+        try:
+            # Unify each item
+            num_items = len(items_lists[0])
+            for i in range(num_items):
+                items_i = [lst[i] for lst in items_lists]
+                # Unify context_expr
+                if not self._unify_nodes([it.context_expr for it in items_i], subst, block_indices):
+                    return False
+
+                # Handle optional_vars as bindings
+                optional_vars = [it.optional_vars for it in items_i]
+                if all(ov is None for ov in optional_vars):
+                    pass  # nothing to do
+                else:
+                    # All must be either None or AST; if any None while others not, fail
+                    if not all((ov is None) == (optional_vars[0] is None) for ov in optional_vars):
+                        return False
+                    if optional_vars[0] is not None:
+                        # Establish alpha-renaming for targets
+                        targets = cast(List[ast.AST], optional_vars)
+                        # Support simple Name or Tuple[List] of Names
+                        # Collect names positionally
+                        def flatten_names(t: ast.AST) -> List[str]:
+                            if isinstance(t, ast.Name):
+                                return [t.id]
+                            if isinstance(t, (ast.Tuple, ast.List)):
+                                names: List[str] = []
+                                for e in t.elts:  # type: ignore[attr-defined]
+                                    names.extend(flatten_names(e))
+                                return names
+                            return []
+
+                        names_per_block = [flatten_names(t) for t in targets]
+                        # Ensure all have same arity
+                        arities = [len(nl) for nl in names_per_block]
+                        if len(set(arities)) != 1:
+                            return False
+                        # Use first block's names as canonical, map positionally
+                        for pos in range(arities[0]):
+                            canonical = names_per_block[0][pos]
+                            for idx, block_idx in enumerate(block_indices):
+                                actual = names_per_block[idx][pos]
+                                self.alpha_renamings[(block_idx, actual)] = canonical
+
+            # Unify bodies
+            if not self._unify_lists([n.body for n in nodes], subst, block_indices):
+                return False
+
+            # type_comment (if present) must match
+            comments = [getattr(n, "type_comment", None) for n in nodes]
+            if not all(c == comments[0] for c in comments):
+                return False
+
+            return True
+        finally:
+            self.alpha_renamings = saved_alpha
+
+    def _unify_except_handler(
+        self, nodes: List[ast.ExceptHandler], subst: Substitution, block_indices: List[int]
+    ) -> bool:
+        """
+        Unify ExceptHandler nodes, treating the 'name' as a bound identifier.
+        """
+        # Unify exception types
+        if not self._unify_nodes([n.type for n in nodes], subst, block_indices):
+            return False
+
+        # Establish temporary alpha-renamings for the handler variable names (strings)
+        saved_alpha = dict(self.alpha_renamings)
+        try:
+            names = [n.name for n in nodes]
+            # If all None, fine; if some None and others not, fail
+            if all(nm is None for nm in names):
+                pass
+            else:
+                if not all((nm is None) == (names[0] is None) for nm in names):
+                    return False
+                if names[0] is not None:
+                    canonical = names[0]  # type: ignore[assignment]
+                    for idx, block_idx in enumerate(block_indices):
+                        actual = names[idx]
+                        assert actual is not None
+                        self.alpha_renamings[(block_idx, actual)] = canonical  # type: ignore[arg-type]
+
+            # Unify body
+            if not self._unify_lists([n.body for n in nodes], subst, block_indices):
+                return False
+            return True
+        finally:
+            self.alpha_renamings = saved_alpha
+
+    def _unify_named_expr(
+        self, nodes: List[ast.NamedExpr], subst: Substitution, block_indices: List[int]
+    ) -> bool:
+        """
+        Unify walrus (NamedExpr) treating the target as a binding.
+        Only simple Name targets are recognized for alpha-renaming.
+        """
+        # Save and set alpha mappings for targets
+        saved_alpha = dict(self.alpha_renamings)
+        try:
+            targets = [n.target for n in nodes]
+            if all(isinstance(t, ast.Name) for t in targets):
+                names = [cast(ast.Name, t).id for t in targets]
+                canonical = names[0]
+                for idx, block_idx in enumerate(block_indices):
+                    self.alpha_renamings[(block_idx, names[idx])] = canonical
+
+            # Unify values under established alpha-renamings
+            if not self._unify_nodes([n.value for n in nodes], subst, block_indices):
+                return False
+            # Do not require exact match for target identifiers (treated as bindings)
+            return True
         finally:
             self.alpha_renamings = saved_alpha
 
@@ -1747,6 +1898,16 @@ class Unifier:
             # Annotated assignment: x: int = 1
             if stmt.target:
                 targets.append(stmt.target)
+        elif isinstance(stmt, ast.With):
+            # With bindings: with expr as target
+            for item in stmt.items:
+                if item.optional_vars is not None:
+                    targets.extend(self._flatten_assignment_target(item.optional_vars))
+        elif isinstance(stmt, ast.Try):
+            # Except handler names are bindings
+            for handler in stmt.handlers:
+                if handler.name:
+                    targets.append(ast.Name(id=handler.name, ctx=ast.Store()))
 
         return targets
 
