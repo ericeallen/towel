@@ -4,6 +4,7 @@ for cross-file refactorings.
 
 This module is runtime-dependency-free and uses only the standard library.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -77,11 +78,7 @@ class ProjectLayout:
         source_roots: List[Path] = []
 
         try:
-            mapping = (
-                data.get("tool", {})
-                .get("setuptools", {})
-                .get("package-dir", {})
-            )
+            mapping = data.get("tool", {}).get("setuptools", {}).get("package-dir", {})
             # mapping: {"" : "src"} or {"mypkg": "src/mypkg"}
             candidates: Iterable[str] = mapping.values() if isinstance(mapping, dict) else []
             for rel in candidates:

@@ -24,13 +24,15 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-            """.strip()
+            """.strip(),
         )
 
         a_py = root / "src" / "acme" / "core" / "a.py"
         b_py = root / "src" / "acme" / "core" / "b.py"
 
-        _write(a_py, """
+        _write(
+            a_py,
+            """
 def f1(x):
     # duplicate block start
     if x is None:
@@ -39,9 +41,12 @@ def f1(x):
         return -x
     return x
     # duplicate block end
-""".lstrip())
+""".lstrip(),
+        )
 
-        _write(b_py, """
+        _write(
+            b_py,
+            """
 def f2(x):
     # duplicate block start
     if x is None:
@@ -50,7 +55,8 @@ def f2(x):
         return -x
     return x
     # duplicate block end
-""".lstrip())
+""".lstrip(),
+        )
 
         layout = ProjectLayout.discover(root)
         mod_a = layout.module_name_for(a_py)
@@ -75,7 +81,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-            """.strip()
+            """.strip(),
         )
 
         pkg_dir = root / "src" / "pkg" / "mod"
@@ -83,21 +89,27 @@ package-dir = {"" = "src"}
         b_py = pkg_dir / "beta.py"
 
         # Two functions with identical blocks to trigger extraction
-        _write(a_py, """
+        _write(
+            a_py,
+            """
 def fa(x):
     s = 0
     if x:
         s += 1
     return s
-""".lstrip())
+""".lstrip(),
+        )
 
-        _write(b_py, """
+        _write(
+            b_py,
+            """
 def fb(x):
     s = 0
     if x:
         s += 1
     return s
-""".lstrip())
+""".lstrip(),
+        )
 
         engine = UnificationRefactorEngine(
             max_parameters=5,
@@ -128,4 +140,6 @@ def fb(x):
         else:
             expected_prefix = "from pkg.mod.beta import extracted_func"
 
-        assert expected_prefix in content, f"Expected absolute import: {expected_prefix}\nGot:\n{content}"
+        assert (
+            expected_prefix in content
+        ), f"Expected absolute import: {expected_prefix}\nGot:\n{content}"
