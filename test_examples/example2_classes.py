@@ -14,12 +14,7 @@ class EmailProcessor:
     def process(self):
         """Process email."""
         # Validation logic
-        if not self.email:
-            raise ValueError("Email is required")
-        if "@" not in self.email:
-            raise ValueError("Invalid email format")
-        if len(self.email) < 5:
-            raise ValueError("Email too short")
+        extracted_func(self.email, self)
 
         print(f"Processing email: {self.email}")
         return True
@@ -34,12 +29,7 @@ class SMSProcessor:
     def process(self):
         """Process SMS."""
         # Validation logic (DUPLICATE!)
-        if not self.phone:
-            raise ValueError("Email is required")
-        if "@" not in self.phone:
-            raise ValueError("Invalid email format")
-        if len(self.phone) < 5:
-            raise ValueError("Email too short")
+        extracted_func(self.phone, self)
 
         print(f"Processing SMS: {self.phone}")
         return True
@@ -63,3 +53,14 @@ class PushNotificationProcessor:
 
         print(f"Processing push: {self.device_id}")
         return True
+
+
+def extracted_func(__param_0, self):
+    if not __param_0:
+        raise ValueError('Email is required')
+    if '@' not in __param_0:
+        raise ValueError('Invalid email format')
+    if len(__param_0) < 5:
+        raise ValueError('Email too short')
+
+

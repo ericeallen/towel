@@ -14,6 +14,7 @@ Usage:
 import sys
 import os
 import ast
+import argparse
 from pathlib import Path
 from towel.unification.refactor_engine import (
     UnificationRefactorEngine,
@@ -23,16 +24,41 @@ from towel.unification.refactor_engine import (
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 preview.py <file_or_directory>")
-        print("\nExamples:")
-        print("  python3 preview.py my_file.py          # Preview single file")
-        print("  python3 preview.py src/                # Preview directory")
-        print("  python3 preview.py .                   # Preview current directory")
-        print("\nThis is read-only - no files will be modified.")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Preview unification-based refactoring opportunities.")
+    parser.add_argument("target", help="File or directory to analyze")
+    pref_group = parser.add_mutually_exclusive_group()
+    pref_group.add_argument(
+        "--prefer-absolute-imports",
+        dest="prefer_absolute_imports",
+        action="store_true",
+        help="Prefer absolute imports for cross-file extractions when possible (even same-dir in packages)",
+    )
+    pref_group.add_argument(
+        "--no-prefer-absolute-imports",
+        dest="prefer_absolute_imports",
+        action="store_false",
+        help="Prefer local/same-dir imports when possible",
+    )
+    parser.set_defaults(prefer_absolute_imports=None)
 
-    target = sys.argv[1]
+    pep_group = parser.add_mutually_exclusive_group()
+    pep_group.add_argument(
+        "--pep420",
+        dest="pep420",
+        action="store_true",
+        help="Treat directories as namespace packages (PEP 420) when deriving module paths",
+    )
+    pep_group.add_argument(
+        "--no-pep420",
+        dest="pep420",
+        action="store_false",
+        help="Require __init__.py for packages when deriving module paths",
+    )
+    parser.set_defaults(pep420=None)
+
+    args = parser.parse_args()
+
+    target = args.target
 
     # Check if target exists
     if not os.path.exists(target):
@@ -52,6 +78,8 @@ def main():
         max_parameters=5,
         min_lines=3,
         parameterize_constants=True,
+        prefer_absolute_imports=args.prefer_absolute_imports,
+        pep420_namespace_packages=args.pep420,
     )
 
     # Analyze based on type
@@ -122,9 +150,9 @@ def main():
     print("\n" + "="*70)
     print("\nTo apply these refactorings, run:")
     if is_file:
-        print(f"  python3 analyze.py {target}")
+        print(f"  python3 scripts/dry {target} <output> [--yes]")
     else:
-        print(f"  python3 analyze.py {target}")
+        print(f"  python3 scripts/dry {target} <output_dir> [--yes]")
     print()
 
 
