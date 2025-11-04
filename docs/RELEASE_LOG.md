@@ -1,11 +1,13 @@
 ## 2025-11-04
 
 - Version: 0.5.7
-- Commit: (pending)
+- Commit: d05ec82
 - Summary:
   - Tests: Updated adversarial breaker tests in `tests/test_breakers.py` to reflect fixed behavior for `@staticmethod`/`@classmethod` extraction. The engine now preserves observational equivalence in these contexts; tests now assert zero failures.
   - Tooling: Ensured package is installed in editable mode for local runs; no runtime deps added.
   - Docs: Appended session notes to `docs/agent_log.md` capturing rationale and steps.
+  - Engine: Added binding-aware unification for additional Python constructs: `with ... as ...`, `except ... as ...`, and walrus `:=` targets. These identifiers are now treated as bindings (alpha-renamed) rather than parameters.
+  - Tests: Added `tests/test_bindings_additional.py` covering with-as, except-as, and walrus alpha-equivalence. All tests pass.
 - Status: All tests green (spot-checked breakers; full suite run as part of release flow)
   - Unit/integration tests: expected 491+ tests OK
   - Observational equivalence: no regressions expected
