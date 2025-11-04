@@ -77,10 +77,13 @@ Notes:
 - Configured local venv and installed package in editable mode so `towel` is importable in tests.
 - Ran the comprehensive unittest runner; observed 4 failing tests in `tests/test_breakers.py` expecting failures for staticmethod/classmethod extraction.
 - Verified the engine now preserves observational equivalence for these scenarios; updated tests to assert zero failures rather than expecting failures.
+- Identified further binding constructs needing alpha-renaming: `with ... as ...`, `except ... as ...`, and walrus `:=`.
+- Implemented unifier support for these constructs and added `tests/test_bindings_additional.py`.
 
 ### Test spot-check
 - Ran `python -m unittest tests/test_breakers.py` → 4 tests OK.
 - Prior full suite run (before test expectation fix) indicated only these 4 failures; other categories passed. A full suite will be run in the release step.
+- Ran `python -m unittest tests/test_bindings_additional.py` → 3 tests OK.
 
 ### Notes
 - The change reflects a bug fix already present in the engine: method decorator contexts (staticmethod/classmethod) are handled without breaking behavior.
