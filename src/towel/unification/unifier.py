@@ -910,39 +910,39 @@ class Unifier:
                     return False
 
                 # Handle optional_vars as bindings
-                optional_vars = [it.optional_vars for it in items_i]
-                if all(ov is None for ov in optional_vars):
+                optional_vars_raw = [it.optional_vars for it in items_i]
+                if all(ov is None for ov in optional_vars_raw):
                     pass  # nothing to do
                 else:
-                    # All must be either None or AST; if any None while others not, fail
-                    if not all((ov is None) == (optional_vars[0] is None) for ov in optional_vars):
+                    # All must be AST; if any None while others not, fail
+                    if any(ov is None for ov in optional_vars_raw):
                         return False
-                    if optional_vars[0] is not None:
-                        # Establish alpha-renaming for targets
-                        targets = cast(List[ast.AST], optional_vars)
-                        # Support simple Name or Tuple[List] of Names
-                        # Collect names positionally
-                        def flatten_names(t: ast.AST) -> List[str]:
-                            if isinstance(t, ast.Name):
-                                return [t.id]
-                            if isinstance(t, (ast.Tuple, ast.List)):
-                                names: List[str] = []
-                                for e in t.elts:  # type: ignore[attr-defined]
-                                    names.extend(flatten_names(e))
-                                return names
-                            return []
+                    # Establish alpha-renaming for targets
+                    targets = cast(List[ast.expr], optional_vars_raw)
+                    # Support simple Name or Tuple[List] of Names
+                    # Collect names positionally
 
-                        names_per_block = [flatten_names(t) for t in targets]
-                        # Ensure all have same arity
-                        arities = [len(nl) for nl in names_per_block]
-                        if len(set(arities)) != 1:
-                            return False
-                        # Use first block's names as canonical, map positionally
-                        for pos in range(arities[0]):
-                            canonical = names_per_block[0][pos]
-                            for idx, block_idx in enumerate(block_indices):
-                                actual = names_per_block[idx][pos]
-                                self.alpha_renamings[(block_idx, actual)] = canonical
+                    def flatten_names(t: ast.AST) -> List[str]:
+                        if isinstance(t, ast.Name):
+                            return [t.id]
+                        if isinstance(t, (ast.Tuple, ast.List)):
+                            names: List[str] = []
+                            for e in t.elts:
+                                names.extend(flatten_names(e))
+                            return names
+                        return []
+
+                    names_per_block = [flatten_names(t) for t in targets]
+                    # Ensure all have same arity
+                    arities = [len(nl) for nl in names_per_block]
+                    if len(set(arities)) != 1:
+                        return False
+                    # Use first block's names as canonical, map positionally
+                    for pos in range(arities[0]):
+                        canonical = names_per_block[0][pos]
+                        for idx, block_idx in enumerate(block_indices):
+                            actual = names_per_block[idx][pos]
+                            self.alpha_renamings[(block_idx, actual)] = canonical
 
             # Unify bodies
             if not self._unify_lists([n.body for n in nodes], subst, block_indices):
@@ -963,14 +963,20 @@ class Unifier:
         """
         Unify ExceptHandler nodes, treating the 'name' as a bound identifier.
         """
-        # Unify exception types
-        if not self._unify_nodes([n.type for n in nodes], subst, block_indices):
-            return False
+        # Unify exception types (may be None)
+        types_list: List[Optional[ast.expr]] = [n.type for n in nodes]
+        if all(t is None for t in types_list):
+            pass
+        else:
+            if any(t is None for t in types_list):
+                return False
+            if not self._unify_nodes(cast(List[ast.AST], types_list), subst, block_indices):
+                return False
 
         # Establish temporary alpha-renamings for the handler variable names (strings)
         saved_alpha = dict(self.alpha_renamings)
         try:
-            names = [n.name for n in nodes]
+            names: List[Optional[str]] = [n.name for n in nodes]
             # If all None, fine; if some None and others not, fail
             if all(nm is None for nm in names):
                 pass
@@ -978,11 +984,11 @@ class Unifier:
                 if not all((nm is None) == (names[0] is None) for nm in names):
                     return False
                 if names[0] is not None:
-                    canonical = names[0]  # type: ignore[assignment]
+                    names_str: List[str] = cast(List[str], names)
+                    canonical = names_str[0]
                     for idx, block_idx in enumerate(block_indices):
-                        actual = names[idx]
-                        assert actual is not None
-                        self.alpha_renamings[(block_idx, actual)] = canonical  # type: ignore[arg-type]
+                        actual = names_str[idx]
+                        self.alpha_renamings[(block_idx, actual)] = canonical
 
             # Unify body
             if not self._unify_lists([n.body for n in nodes], subst, block_indices):
@@ -1002,8 +1008,9 @@ class Unifier:
         saved_alpha = dict(self.alpha_renamings)
         try:
             targets = [n.target for n in nodes]
-            if all(isinstance(t, ast.Name) for t in targets):
-                names = [cast(ast.Name, t).id for t in targets]
+            name_targets: List[ast.Name] = [t for t in targets if isinstance(t, ast.Name)]
+            if len(name_targets) == len(targets):
+                names = [t.id for t in name_targets]
                 canonical = names[0]
                 for idx, block_idx in enumerate(block_indices):
                     self.alpha_renamings[(block_idx, names[idx])] = canonical

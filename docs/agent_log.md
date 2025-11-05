@@ -88,3 +88,28 @@ Notes:
 ### Notes
 - The change reflects a bug fix already present in the engine: method decorator contexts (staticmethod/classmethod) are handled without breaking behavior.
 - Next steps: bump version, update release log, run full suite during release automation, and push.
+
+## Hygiene + lint/type check checkpoint (2025-11-04 14:30 local)
+
+### .gitignore
+- Added patterns to avoid future tmp noise:
+	- `tmp_*`, `tmp_out_*/`, `tmp_out_*`
+
+### Tool versions
+- Black: 25.9.0 (CPython 3.13.7)
+- Flake8: 7.3.0
+- MyPy: 1.18.2
+
+### Results
+- Black (src only): PASS — `black --check src/towel` → 15 files left unchanged.
+- Black (repo root): FAIL — 52 files would be reformatted (predominantly example/expected-output files and test scaffolding). Deferred mass reformat to avoid churn; can do in a follow-up formatting-only commit.
+- Flake8 (src with repo config): PASS — after fixing one E301 (blank line before inner def in `unifier.py`).
+- MyPy (strict on selected files): PASS — 0 issues.
+
+### Notes
+- Type-check improvements in `src/towel/unification/unifier.py`:
+	- Correctly handled `ExceptHandler.type` as Optional[expr] with explicit None-paths.
+	- Avoided Optional list casts for `with ... as ...` by narrowing and explicit casts to `List[ast.expr]`.
+	- Removed unnecessary ignores; minimized the need for casts; kept naming-operator handling precise.
+- No behavioral changes expected; re-ran unit tests touching unifier logic — still green.
+
