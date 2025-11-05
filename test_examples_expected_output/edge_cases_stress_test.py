@@ -23,13 +23,13 @@ def deeply_nested_computation_v2(data, config, cache, logger, metrics):
 def many_parameters_v1(a, b, c, d, e, f, g, h):
     """Version 1: Many parameters, complex expression."""
     # Very complex expression using many variables
-    return __extracted_func_394(2, a, b, c, d, e, f, g, h)
+    return __extracted_func_392(2, a, b, c, d, e, f, g, h)
 
 
 def many_parameters_v2(a, b, c, d, e, f, g, h):
     """Version 2: Different multiplier in step3."""
     # Same complex expression, different multiplier
-    return __extracted_func_394(3, a, b, c, d, e, f, g, h)
+    return __extracted_func_392(3, a, b, c, d, e, f, g, h)
 
 
 def complex_control_flow_a(data, validators, transformers, handlers):
@@ -45,13 +45,13 @@ def complex_control_flow_b(data, validators, transformers, handlers):
 def mixed_comprehensions_v1(data, filters, mappers):
     """Version 1: Multiple comprehension types."""
     # Mix of comprehensions
-    return __extracted_func_384(2, data, filters, mappers)
+    return __extracted_func_383(2, data, filters, mappers)
 
 
 def mixed_comprehensions_v2(data, filters, mappers):
     """Version 2: Different multiplier, same comprehensions."""
     # Same structure, different multiplier
-    return __extracted_func_384(3, data, filters, mappers)
+    return __extracted_func_383(3, data, filters, mappers)
 
 
 def exception_heavy_processing_a(items, processor, logger, fallback):
@@ -162,7 +162,7 @@ def __extracted_func_356(__param_0, __param_1, __param_2, data, handlers, transf
                     handlers['low'].handle(transformed)
 
 
-def __extracted_func_384(__param_0, data, filters, mappers):
+def __extracted_func_383(__param_0, data, filters, mappers):
     list_comp = [x * __param_0 for x in data if filters['positive'](x)]
     dict_comp = {k: v * __param_0 for k, v in enumerate(list_comp) if v > 10}
     set_comp = {v for v in dict_comp.values() if v < 1000}
@@ -170,7 +170,7 @@ def __extracted_func_384(__param_0, data, filters, mappers):
     return {'list': list_comp, 'dict': dict_comp, 'set': set_comp, 'nested': nested}
 
 
-def __extracted_func_394(__param_0, a, b, c, d, e, f, g, h):
+def __extracted_func_392(__param_0, a, b, c, d, e, f, g, h):
     step1 = (a + b) * (c - d) + (e / f if f != 0 else 0) ** (g % 5)
     step2 = step1 + h
     step3 = step2 * __param_0

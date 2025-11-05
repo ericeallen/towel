@@ -35,11 +35,7 @@ def reduce_with_lambda_a(values, initial, combiner):
     from functools import reduce
 
     # Complex reduce operation
-    result = reduce(
-        lambda acc, x: acc + (x ** 2 if x > 10 else x),
-        values,
-        initial
-    )
+    result = reduce(lambda acc, x: acc + (x**2 if x > 10 else x), values, initial)
 
     # Post-process with lambda
     normalized = list(map(lambda x: x / result if result != 0 else 0, values))
@@ -52,11 +48,7 @@ def reduce_with_lambda_b(values, initial, combiner):
     from functools import reduce
 
     # Same pattern, different threshold
-    result = reduce(
-        lambda acc, x: acc + (x ** 2 if x > 20 else x),
-        values,
-        initial
-    )
+    result = reduce(lambda acc, x: acc + (x**2 if x > 20 else x), values, initial)
 
     # Post-process with lambda
     normalized = list(map(lambda x: x / result if result != 0 else 0, values))
@@ -96,6 +88,7 @@ def chain_functional_ops_v2(data, filter_func, map_func):
 
 def higher_order_function_a(data, threshold):
     """Version A: Returns and uses functions."""
+
     # Create higher-order functions
     def make_validator(limit):
         return lambda x: x > limit and x < limit * 10
@@ -115,6 +108,7 @@ def higher_order_function_a(data, threshold):
 
 def higher_order_function_b(data, threshold):
     """Version B: Different limit, same higher-order pattern."""
+
     # Same pattern, different limit
     def make_validator(limit):
         return lambda x: x > limit and x < limit * 10
@@ -134,6 +128,7 @@ def higher_order_function_b(data, threshold):
 
 def higher_order_function_c(data, threshold):
     """Version C: Same as A but with identical usage (no parameter differences)."""
+
     # Create higher-order functions
     def make_validator(limit):
         return lambda x: x > limit and x < limit * 10
@@ -153,6 +148,7 @@ def higher_order_function_c(data, threshold):
 
 def higher_order_function_d(data, threshold):
     """Version D: Same as C - identical nested function usage."""
+
     # Create higher-order functions
     def make_validator(limit):
         return lambda x: x > limit and x < limit * 10
@@ -213,11 +209,7 @@ def partial_application_a(values, base_func, modifier):
     processed = list(map(apply_modifier, values))
     filtered = list(filter(lambda x: x > 100, processed))
 
-    return {
-        "processed": processed,
-        "filtered": filtered,
-        "count": len(filtered)
-    }
+    return {"processed": processed, "filtered": filtered, "count": len(filtered)}
 
 
 def partial_application_b(values, base_func, modifier):
@@ -229,11 +221,7 @@ def partial_application_b(values, base_func, modifier):
     processed = list(map(apply_modifier, values))
     filtered = list(filter(lambda x: x > 100, processed))
 
-    return {
-        "processed": processed,
-        "filtered": filtered,
-        "count": len(filtered)
-    }
+    return {"processed": processed, "filtered": filtered, "count": len(filtered)}
 
 
 def curry_functions_v1(data, operation, param1, param2):
@@ -277,7 +265,7 @@ def generator_with_lambda_a(data, predicate):
     # Generator expression with lambda
     transformed = (item * 2 for item in data if predicate(item))
     filtered = (x for x in transformed if x > 10)
-    squared = (x ** 2 for x in filtered)
+    squared = (x**2 for x in filtered)
 
     # Consume generator
     result = list(squared)
@@ -291,7 +279,7 @@ def generator_with_lambda_b(data, predicate):
     # Same generator pattern
     transformed = (item * 3 for item in data if predicate(item))
     filtered = (x for x in transformed if x > 10)
-    squared = (x ** 2 for x in filtered)
+    squared = (x**2 for x in filtered)
 
     # Consume generator
     result = list(squared)

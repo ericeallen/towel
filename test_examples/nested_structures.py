@@ -36,11 +36,7 @@ def transform_with_comprehension_a(data, filter_func):
     """Version A: List comprehension as expression."""
     processed = [x * 2 for x in data if x > 0]
     filtered = [item for item in processed if filter_func(item)]
-    result = {
-        "values": filtered,
-        "count": len(filtered),
-        "sum": sum(filtered)
-    }
+    result = {"values": filtered, "count": len(filtered), "sum": sum(filtered)}
     return result
 
 
@@ -48,23 +44,13 @@ def transform_with_comprehension_b(data, filter_func):
     """Version B: Different multiplier in comprehension."""
     processed = [x * 3 for x in data if x > 0]
     filtered = [item for item in processed if filter_func(item)]
-    result = {
-        "values": filtered,
-        "count": len(filtered),
-        "sum": sum(filtered)
-    }
+    result = {"values": filtered, "count": len(filtered), "sum": sum(filtered)}
     return result
 
 
 def build_complex_structure_v1(items, metadata):
     """Version 1: Builds complex nested structure."""
-    output = {
-        "data": [],
-        "meta": {
-            "total": 0,
-            "categories": {}
-        }
-    }
+    output = {"data": [], "meta": {"total": 0, "categories": {}}}
 
     for item in items:
         # Builds nested structure
@@ -81,13 +67,7 @@ def build_complex_structure_v1(items, metadata):
 
 def build_complex_structure_v2(items, metadata):
     """Version 2: Different multiplier, same structure building."""
-    output = {
-        "data": [],
-        "meta": {
-            "total": 0,
-            "categories": {}
-        }
-    }
+    output = {"data": [], "meta": {"total": 0, "categories": {}}}
 
     for item in items:
         # Same structure, different multiplier
@@ -108,7 +88,7 @@ def filter_nested_lists_a(matrix, threshold):
     for row in matrix:
         # Nested list comprehension and filtering
         filtered_row = [x for x in row if x > threshold]
-        processed = [x ** 2 for x in filtered_row]
+        processed = [x**2 for x in filtered_row]
         if sum(processed) > 100:
             result.append(processed)
     return result
@@ -120,7 +100,7 @@ def filter_nested_lists_b(matrix, threshold):
     for row in matrix:
         # Same nesting pattern, different operation
         filtered_row = [x for x in row if x < threshold]
-        processed = [x ** 2 for x in filtered_row]
+        processed = [x**2 for x in filtered_row]
         if sum(processed) > 100:
             result.append(processed)
     return result
@@ -136,7 +116,7 @@ def merge_nested_dicts_v1(dict1, dict2, merger):
             result[key] = {
                 "a": dict1[key]["values"],
                 "b": dict2[key]["values"],
-                "merged": merger(dict1[key]["values"], dict2[key]["values"])
+                "merged": merger(dict1[key]["values"], dict2[key]["values"]),
             }
         else:
             result[key] = dict1[key]
@@ -154,7 +134,7 @@ def merge_nested_dicts_v2(dict1, dict2, merger):
             result[key] = {
                 "first": dict1[key]["data"],
                 "second": dict2[key]["data"],
-                "merged": merger(dict1[key]["data"], dict2[key]["data"])
+                "merged": merger(dict1[key]["data"], dict2[key]["data"]),
             }
         else:
             result[key] = dict1[key]
@@ -164,12 +144,7 @@ def merge_nested_dicts_v2(dict1, dict2, merger):
 
 def process_mixed_types_a(data, converter):
     """Version A: Mixed types in nested structure."""
-    output = {
-        "strings": [],
-        "numbers": [],
-        "lists": [],
-        "total": 0
-    }
+    output = {"strings": [], "numbers": [], "lists": [], "total": 0}
 
     for item in data:
         # Type checking and nested appends
@@ -186,12 +161,7 @@ def process_mixed_types_a(data, converter):
 
 def process_mixed_types_b(data, converter):
     """Version B: Different multiplier, same type handling."""
-    output = {
-        "strings": [],
-        "numbers": [],
-        "lists": [],
-        "total": 0
-    }
+    output = {"strings": [], "numbers": [], "lists": [], "total": 0}
 
     for item in data:
         # Same type checking, different multiplier

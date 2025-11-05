@@ -59,6 +59,7 @@ def test_nonlocal_b():
 
 def test_nested_nonlocal_a():
     """Nested function with nonlocal."""
+
     def outer():
         count = 0
 
@@ -82,6 +83,7 @@ def test_nested_nonlocal_a():
 
 def test_nested_nonlocal_b():
     """Duplicate nested nonlocal."""
+
     def outer():
         count = 0
 

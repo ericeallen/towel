@@ -12,7 +12,7 @@ def validate_transaction_amount(amount, currency):
         return False
     if len(currency) != 3:
         return False
-    if currency not in ['USD', 'EUR', 'GBP']:
+    if currency not in ["USD", "EUR", "GBP"]:
         return False
     if amount > 1000000:
         return False
@@ -21,6 +21,6 @@ def validate_transaction_amount(amount, currency):
 
 def validate_transaction(transaction):
     """Validate a transaction dictionary."""
-    amount = transaction.get('amount', 0)
-    currency = transaction.get('currency', '')
+    amount = transaction.get("amount", 0)
+    currency = transaction.get("currency", "")
     return validate_transaction_amount(amount, currency)
