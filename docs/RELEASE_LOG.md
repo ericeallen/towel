@@ -1,3 +1,25 @@
+## 2025-11-05
+
+- Version: 0.5.7
+- Commit: 510cb64
+- Summary:
+  - Tests: Added broader DCE (deepest common enclosing scope) adversarial coverage in `tests/test_engine_adversarial.py`:
+    - Async nested functions: helper insertion into enclosing async outer function.
+    - Class method nesting: helper insertion into method scope (function-in-class), not class/module.
+    - Inner common ancestor: selection of deepest common ancestor that is itself an inner function.
+  - Engine: Validated existing DCE selection and in-function insertion logic across async and method scopes; preserves hygiene and avoids triple blank lines.
+  - Safety: Conservative skip for proposals involving nonlocal closures retained to preserve semantics and baselines.
+  - Docs: This entry records the additional test coverage; no version bump since behavior remains compatible.
+- Status: All tests green
+  - Unit/integration tests: 544 tests OK (0 skipped)
+  - Observational equivalence: regression suite green; baselines unchanged
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `510cb64` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-05.
+
 ## 2025-11-04
 
 - Version: 0.5.7
