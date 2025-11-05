@@ -38,6 +38,8 @@ class CodeBlockPair:
     class2_name: Optional[str] = None
     enclosing_function1_name: Optional[str] = None  # Nearest enclosing function (if nested)
     enclosing_function2_name: Optional[str] = None
+    function1_ancestry: Optional[List[str]] = None  # Outermost->innermost enclosing function names
+    function2_ancestry: Optional[List[str]] = None
     scope_analyzer1: Optional["ScopeAnalyzer"] = None
     scope_analyzer2: Optional["ScopeAnalyzer"] = None
     root_scope1: Optional["Scope"] = None
@@ -195,9 +197,9 @@ class UnificationRefactorEngine:
             List of refactoring proposals
         """
         # Parse all files
-        # List items are tuples: (file_path, function_node, source, scope_analyzer, root_scope, class_name, enclosing_function_name)
+        # List items are tuples: (file_path, function_node, source, scope_analyzer, root_scope, class_name, enclosing_function_name, function_ancestry)
         all_functions: List[
-            Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str]]
+            Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]
         ] = []
 
         for file_path in file_paths:
@@ -226,6 +228,7 @@ class UnificationRefactorEngine:
 
                 def visit_FunctionDef(self, node: ast.FunctionDef):
                     # Record this function
+                    ancestry = [n for n in self.func_stack if n is not None]
                     all_functions.append(
                         (
                             file_path,
@@ -235,6 +238,7 @@ class UnificationRefactorEngine:
                             root_scope,
                             self.class_stack[-1],
                             self.func_stack[-1],
+                            ancestry,
                         )
                     )
                     # Recurse with this as enclosing function
@@ -244,6 +248,7 @@ class UnificationRefactorEngine:
 
                 def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
                     # Treat similarly to FunctionDef
+                    ancestry = [n for n in self.func_stack if n is not None]
                     all_functions.append(
                         (
                             file_path,
@@ -253,6 +258,7 @@ class UnificationRefactorEngine:
                             root_scope,
                             self.class_stack[-1],
                             self.func_stack[-1],
+                            ancestry,
                         )
                     )
                     self.func_stack.append(node.name)  # type: ignore[attr-defined]
@@ -522,7 +528,7 @@ class UnificationRefactorEngine:
 
     def _find_block_pairs_multi_file(
         self,
-    all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str]]],
+        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]],
     ) -> List[CodeBlockPair]:
         """
         Find all non-overlapping pairs of code blocks across multiple files.
@@ -538,26 +544,28 @@ class UnificationRefactorEngine:
         # For each pair of functions (including across files)
         for i, entry1 in enumerate(all_functions):
             # Backward compatibility: allow 5-tuples (no class context)
-            if len(entry1) >= 7:
+            if len(entry1) >= 8:
+                file1, func1, source1, analyzer1, scope1, class1, encl1, anc1 = entry1
+            elif len(entry1) == 7:
                 file1, func1, source1, analyzer1, scope1, class1, encl1 = entry1
-            elif len(entry1) == 6:
-                file1, func1, source1, analyzer1, scope1, class1 = entry1
-                encl1 = None
+                anc1 = []
             else:
                 file1, func1, source1, analyzer1, scope1 = entry1
                 class1 = None
                 encl1 = None
+                anc1 = []
 
             for entry2 in all_functions[i + 1 :]:
-                if len(entry2) >= 7:
+                if len(entry2) >= 8:
+                    file2, func2, source2, analyzer2, scope2, class2, encl2, anc2 = entry2
+                elif len(entry2) == 7:
                     file2, func2, source2, analyzer2, scope2, class2, encl2 = entry2
-                elif len(entry2) == 6:
-                    file2, func2, source2, analyzer2, scope2, class2 = entry2
-                    encl2 = None
+                    anc2 = []
                 else:
                     file2, func2, source2, analyzer2, scope2 = entry2
                     class2 = None
                     encl2 = None
+                    anc2 = []
                 # Extract all code blocks from each function
                 blocks1 = self._extract_code_blocks(func1)
                 blocks2 = self._extract_code_blocks(func2)
@@ -591,6 +599,8 @@ class UnificationRefactorEngine:
                             class2_name=class2,
                             enclosing_function1_name=encl1,
                             enclosing_function2_name=encl2,
+                            function1_ancestry=anc1,
+                            function2_ancestry=anc2,
                             scope_analyzer1=analyzer1,
                             scope_analyzer2=analyzer2,
                             root_scope1=scope1,
@@ -605,7 +615,7 @@ class UnificationRefactorEngine:
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
-    all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str]]],
+        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]],
     ) -> Optional[RefactoringProposal]:
         """
         Try to refactor a pair of code blocks using unification (cross-file support).
@@ -1257,28 +1267,40 @@ class UnificationRefactorEngine:
         else:
             desc += f" and {pair.function2_name}"
 
-    # Default to module-level insertion; if same-file and same-class methods, insert into class
+        # Default to module-level insertion; when possible insert into deepest common enclosing function.
         insert_into_class = None
         insert_into_function = None
+
+        same_file = pair.file_path2 is not None and pair.file_path2 == pair.file_path
+
+        # Compute deepest common enclosing function (DCE) if same file and both have ancestry
+        def _deepest_common(anc1: List[str], anc2: List[str]) -> Optional[str]:
+            if not anc1 or not anc2:
+                return None
+            # Common prefix of outer->inner list; return the last element of common prefix
+            dce = None
+            for a, b in zip(anc1, anc2):
+                if a == b:
+                    dce = a
+                else:
+                    break
+            return dce
+
+        if same_file and pair.function1_ancestry is not None and pair.function2_ancestry is not None:
+            dce = _deepest_common(pair.function1_ancestry or [], pair.function2_ancestry or [])
+            if dce:
+                insert_into_function = dce
+
+        # If not inserting into a function, and it's a same-file same-class method case, insert into class
         if (
-            pair.file_path2 is not None
+            insert_into_function is None
+            and pair.file_path2 is not None
             and pair.file_path2 == pair.file_path
             and pair.class1_name
             and pair.class2_name
             and pair.class1_name == pair.class2_name
         ):
             insert_into_class = pair.class1_name
-
-        # If both blocks come from functions nested within the SAME enclosing function in the SAME file,
-        # insert the helper inside that enclosing function's body.
-        if (
-            pair.file_path2 is not None
-            and pair.file_path2 == pair.file_path
-            and pair.enclosing_function1_name
-            and pair.enclosing_function2_name
-            and pair.enclosing_function1_name == pair.enclosing_function2_name
-        ):
-            insert_into_function = pair.enclosing_function1_name
 
         # SAFETY: Avoid refactoring across closures with nonlocal variables for now.
         # If the containing functions (func1/func2) declare any nonlocal variables, skip this proposal
@@ -1446,7 +1468,40 @@ class UnificationRefactorEngine:
 
             # Add extracted function/method to canonical file only
             if file_path == proposal.file_path:
-                if proposal.insert_into_class:
+                # Prefer function-scope insertion over class-scope
+                if proposal.insert_into_function:
+                    func_code = ast.unparse(proposal.extracted_function)
+                    fn_lines = [line + "\n" for line in func_code.split("\n")]
+
+                    insert_info = self._find_function_insert_position_before_body_statements(
+                        "".join(lines), proposal.insert_into_function
+                    )
+                    if insert_info is None:
+                        # Fallback to module-level insertion if function not found
+                        func_lines = fn_lines
+                        insert_line = self._find_insert_position(lines)
+                        lines[insert_line:insert_line] = func_lines + ["\n", "\n"]
+                    else:
+                        insert_at_zero_based, indent = insert_info
+                        # Indent by one level beyond function indent
+                        indented = []
+                        inner_indent = indent + "    "
+                        for line in fn_lines:
+                            if line.strip():
+                                indented.append(inner_indent + line)
+                            else:
+                                indented.append(line)
+                        # Ensure spacing within function: avoid triple blank lines
+                        prefix = []
+                        if insert_at_zero_based > 0 and lines[insert_at_zero_based - 1].strip():
+                            prefix.append("\n")
+                        suffix = []
+                        if insert_at_zero_based < len(lines) and lines[insert_at_zero_based].strip():
+                            suffix.append("\n")
+                        lines[insert_at_zero_based:insert_at_zero_based] = (
+                            prefix + indented + suffix
+                        )
+                elif proposal.insert_into_class:
                     # Rename function for method insertion
                     if not proposal.extracted_function.name.startswith("_"):
                         proposal.extracted_function.name = f"_{proposal.extracted_function.name}"
@@ -1487,38 +1542,6 @@ class UnificationRefactorEngine:
                         if insert_at < len(lines) and lines[insert_at].strip():
                             suffix.append("\n")
                         lines[insert_at:insert_at] = prefix + indented + suffix
-                elif proposal.insert_into_function:
-                    func_code = ast.unparse(proposal.extracted_function)
-                    fn_lines = [line + "\n" for line in func_code.split("\n")]
-
-                    insert_info = self._find_function_insert_position_before_body_statements(
-                        "".join(lines), proposal.insert_into_function
-                    )
-                    if insert_info is None:
-                        # Fallback to module-level insertion if function not found
-                        func_lines = fn_lines
-                        insert_line = self._find_insert_position(lines)
-                        lines[insert_line:insert_line] = func_lines + ["\n", "\n"]
-                    else:
-                        insert_at_zero_based, indent = insert_info
-                        # Indent by one level beyond function indent
-                        indented = []
-                        inner_indent = indent + "    "
-                        for line in fn_lines:
-                            if line.strip():
-                                indented.append(inner_indent + line)
-                            else:
-                                indented.append(line)
-                        # Ensure spacing within function: avoid triple blank lines
-                        prefix = []
-                        if insert_at_zero_based > 0 and lines[insert_at_zero_based - 1].strip():
-                            prefix.append("\n")
-                        suffix = []
-                        if insert_at_zero_based < len(lines) and lines[insert_at_zero_based].strip():
-                            suffix.append("\n")
-                        lines[insert_at_zero_based:insert_at_zero_based] = (
-                            prefix + indented + suffix
-                        )
                 else:
                     func_code = ast.unparse(proposal.extracted_function)
                     func_lines = [line + "\n" for line in func_code.split("\n")]
