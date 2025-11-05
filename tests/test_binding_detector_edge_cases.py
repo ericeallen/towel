@@ -264,6 +264,52 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         self.assertNotIn("dec1", foo_scope_names)
         self.assertNotIn("dec2", foo_scope_names)
 
+    def test_async_params_and_decorator_and_match_guard(self) -> None:
+        code = """
+        def d(fn):
+            return fn
+
+        @d
+        async def baz(a, /, b, *args, c, **kw):
+            match a:
+                case y if cond():
+                    return (args, c, kw, y)
+            return a
+
+        class Base: pass
+        class Meta(type): pass
+        class D(Base, metaclass=Meta):
+            pass
+        """
+        tree = _parse(code)
+        detector = BindingDetector()
+        detector.visit(tree)
+        bindings = detector.bindings
+
+        # Async function name bound at module scope
+        self.assertIn("baz", {b.name for b in bindings if b.kind == BindingKind.FUNCTION_DEF and b.scope_node is None})
+
+        # Async params captured in baz scope (posonly, normal, vararg, kwonly, varkw)
+        baz_node = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "baz")
+        params = {b.name for b in bindings if b.scope_node is baz_node and b.kind == BindingKind.FUNCTION_PARAM}
+        self.assertTrue({"a", "b", "args", "c", "kw"}.issubset(params))
+
+        # Match guard should not create extra bindings, but 'y' should bind
+        match_bindings = get_bound_variables(tree, scope_node=baz_node)
+        self.assertIn("y", match_bindings)
+
+    def test_lambda_vararg_binding(self) -> None:
+        code = """
+        f = lambda *args: args
+        """
+        tree = _parse(code)
+        # Find lambda and ensure *args is recorded as a parameter binding
+        detector = BindingDetector()
+        detector.visit(tree)
+        lam = next(n for n in ast.walk(tree) if isinstance(n, ast.Lambda))
+        lam_params = {b.name for b in detector.bindings if b.scope_node is lam and b.kind == BindingKind.FUNCTION_PARAM}
+        self.assertIn("args", lam_params)
+
 
 if __name__ == "__main__":
     unittest.main()

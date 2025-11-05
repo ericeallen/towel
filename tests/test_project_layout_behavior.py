@@ -1,10 +1,9 @@
-import os
 from pathlib import Path
 import tempfile
 import textwrap
 import unittest
 
-from src.towel.unification.project_layout import ProjectLayout
+from src.towel.unification.project_layout import ProjectLayout, _is_package_dir
 
 
 class TestProjectLayoutBehavior(unittest.TestCase):
@@ -113,6 +112,76 @@ class TestProjectLayoutBehavior(unittest.TestCase):
                 outside = Path(other_td) / "ext.py"
                 outside.write_text("pass\n")
                 self.assertIsNone(layout.module_name_for(outside))
+
+    def test_is_package_dir_direct_and_fallback_non_py(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Create a file (not directory) to test _is_package_dir False path
+            file_path = root / "not_a_dir.py"
+            file_path.write_text("pass\n")
+            self.assertFalse(_is_package_dir(file_path, pep420=False))
+            # pep420 True returns True for any directory; create directory to test True
+            pkg_dir = root / "pkg"
+            pkg_dir.mkdir()
+            self.assertTrue(_is_package_dir(pkg_dir, pep420=True))
+
+            # With mapping to 'src', ensure fallback handles non-.py under project root
+            (root / "pyproject.toml").write_text(
+                textwrap.dedent(
+                    """
+                    [tool.setuptools]
+                    package-dir = {"" = "src"}
+                    """
+                ).strip()
+            )
+            (root / "src").mkdir(parents=True)
+            (root / "other").mkdir(parents=True)
+            data = root / "other" / "data.txt"
+            data.write_text("x\n")
+            layout = ProjectLayout.discover(root)
+            self.assertIsNone(layout.module_name_for(data))
+
+    def test_mapping_values_type_error_path(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # package-dir values include a non-string to trigger TypeError in path join
+            (root / "pyproject.toml").write_text(
+                textwrap.dedent(
+                    """
+                    [tool.setuptools]
+                    package-dir = {"" = 1, "pkg" = "lib"}
+                    """
+                ).strip()
+            )
+            layout = ProjectLayout.discover(root)
+            # Should fallback to project_root only due to exception
+            self.assertEqual(layout.source_roots, [root.resolve()])
+
+    def test_module_name_for_empty_parts_via_fake_path(self) -> None:
+        # Create a layout with default source root
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            layout = ProjectLayout.discover(root)
+
+            class FakeRel:
+                suffix = ".py"
+
+                def with_suffix(self, _s: str):
+                    return self
+
+                @property
+                def parts(self):
+                    return ()  # empty, triggers `if not parts:` branch
+
+            class FakePath:
+                def resolve(self):
+                    return self
+
+                def relative_to(self, _other):
+                    return FakeRel()
+
+            # Should return None, but importantly executes the `if not parts:` line
+            self.assertIsNone(layout.module_name_for(FakePath()))
 
     def test_multiple_source_roots_mixed_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as td:
