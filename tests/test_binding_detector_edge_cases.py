@@ -151,6 +151,59 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         names_in_func = get_bound_variables(tree, scope_node=func_node)
         self.assertTrue({"x", "y", "b", "rest", "px", "py", "tail", "u", "whole"}.issubset(names_in_func))
 
+    def test_exotic_match_and_line_numbers_and_scopes(self) -> None:
+        code = """
+        def outer(a, b):
+            # line 2
+            match a:
+                case (A(val) | B(val)) as either:
+                    pass
+                case [x, y, *rest, z]:
+                    pass
+                case Point(x=px, y=py):
+                    pass
+                case 0 | 1:
+                    pass
+                case True:
+                    pass
+            lam = (lambda u, /, v, *, w: (u, v, w))
+            return a, b, lam
+        """
+        tree = _parse(code)
+
+        # Collect bindings
+        detector = BindingDetector()
+        detector.visit(tree)
+        bindings = detector.bindings
+
+        # Function def name bound at module scope (None)
+        fn_name = next(b for b in bindings if b.kind == BindingKind.FUNCTION_DEF and b.name == "outer")
+        self.assertIsNone(fn_name.scope_node)
+        self.assertGreaterEqual(fn_name.line_number, 1)
+
+        # Function params have scope = function node; check scope line matches function line
+        func_node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "outer")
+        func_line = func_node.lineno
+        params = [b for b in bindings if b.kind == BindingKind.FUNCTION_PARAM and b.scope_node is func_node]
+        self.assertTrue({"a", "b"}.issubset({p.name for p in params}))
+        for p in params:
+            self.assertIs(p.scope_node, func_node)
+            self.assertEqual(p.scope_node.lineno, func_line)
+            # Binding line should match its AST node
+            self.assertEqual(p.line_number, getattr(p.node, "lineno", -1))
+
+        # MatchOr + MatchAs bind 'val' and 'either'
+        names_in_func = get_bound_variables(tree, scope_node=func_node)
+        self.assertTrue({"val", "either", "x", "y", "rest", "z", "px", "py"}.issubset(names_in_func))
+
+        # Lambda scope correctness and line numbers
+        lam_node = next(n for n in ast.walk(tree) if isinstance(n, ast.Lambda))
+        lam_params = [b for b in bindings if b.scope_node is lam_node and b.kind == BindingKind.FUNCTION_PARAM]
+        self.assertEqual({p.name for p in lam_params}, {"u", "v", "w"})
+        for lp in lam_params:
+            self.assertEqual(lp.scope_node.lineno, lam_node.lineno)
+            self.assertEqual(lp.line_number, getattr(lp.node, "lineno", -1))
+
 
 if __name__ == "__main__":
     unittest.main()
