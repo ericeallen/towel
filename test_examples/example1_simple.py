@@ -47,11 +47,9 @@ def process_guest_data(guest_id):
 
 
 def __extracted_func_2(__param_0):
-    if not __param_0.get('id'):
-        raise ValueError('User ID is required')
-    if not __param_0.get('name'):
-        raise ValueError('User name is required')
-    if len(__param_0.get('name', '')) < 2:
-        raise ValueError('User name too short')
-
-
+    if not __param_0.get("id"):
+        raise ValueError("User ID is required")
+    if not __param_0.get("name"):
+        raise ValueError("User name is required")
+    if len(__param_0.get("name", "")) < 2:
+        raise ValueError("User name too short")

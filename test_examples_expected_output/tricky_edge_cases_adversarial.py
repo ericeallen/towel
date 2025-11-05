@@ -12,72 +12,72 @@ These examples test really subtle scenarios that could expose bugs:
 
 def conditional_return_a(x, threshold):
     """Multiple return points."""
-    return __extracted_func_3489(x, threshold)
+    return __extracted_func_3358(x, threshold)
 
 
 def conditional_return_b(y, limit):
     """Similar multiple return pattern."""
-    return __extracted_func_3489(y, limit)
+    return __extracted_func_3358(y, limit)
 
 
 def early_return_a(items):
     """Early return for empty case."""
-    return __extracted_func_3462(items)
+    return __extracted_func_3331(items)
 
 
 def early_return_b(values):
     """Similar early return pattern."""
-    return __extracted_func_3462(values)
+    return __extracted_func_3331(values)
 
 
 def string_formatting_a(name, age):
     """String formatting operations."""
-    return __extracted_func_3553(name, age)
+    return __extracted_func_3422(name, age)
 
 
 def string_formatting_b(title, count):
     """Similar string formatting."""
-    return __extracted_func_3553(title, count)
+    return __extracted_func_3422(title, count)
 
 
 def ternary_expression_a(x, y):
     """Conditional expressions."""
-    return __extracted_func_3565(x, y)
+    return __extracted_func_3434(x, y)
 
 
 def ternary_expression_b(a, b):
     """Similar ternary pattern."""
-    return __extracted_func_3565(a, b)
+    return __extracted_func_3434(a, b)
 
 
 def list_extend_vs_assign_a(items, extra):
     """Tests list modification semantics."""
-    return __extracted_func_3518(items, extra)
+    return __extracted_func_3387(items, extra)
 
 
 def list_extend_vs_assign_b(values, additional):
     """Similar list modification."""
-    return __extracted_func_3518(values, additional)
+    return __extracted_func_3387(values, additional)
 
 
 def dict_update_a(base, updates):
     """Dictionary update operations."""
-    return __extracted_func_3540(base, updates)
+    return __extracted_func_3409(base, updates)
 
 
 def dict_update_b(initial, changes):
     """Similar dict update pattern."""
-    return __extracted_func_3540(initial, changes)
+    return __extracted_func_3409(initial, changes)
 
 
 def boolean_logic_a(x, y, z):
     """Complex boolean expressions."""
-    return __extracted_func_3575(x, y, z)
+    return __extracted_func_3444(x, y, z)
 
 
 def boolean_logic_b(a, b, c):
     """Similar boolean logic."""
-    return __extracted_func_3575(a, b, c)
+    return __extracted_func_3444(a, b, c)
 
 
 def chained_comparisons_a(x, lower, upper):
@@ -96,22 +96,22 @@ def chained_comparisons_b(y, min_val, max_val):
 
 def mixed_types_a(value):
     """Operations on mixed types."""
-    return __extracted_func_3452(value)
+    return __extracted_func_3321(value)
 
 
 def mixed_types_b(item):
     """Similar mixed type handling."""
-    return __extracted_func_3452(item)
+    return __extracted_func_3321(item)
 
 
 def slice_operations_a(items, start, end):
     """List slicing operations."""
-    return __extracted_func_3584(items, start, end)
+    return __extracted_func_3453(items, start, end)
 
 
 def slice_operations_b(values, begin, finish):
     """Similar slice pattern."""
-    return __extracted_func_3584(values, begin, finish)
+    return __extracted_func_3453(values, begin, finish)
 
 
 def membership_test_a(item, collection):
@@ -130,15 +130,15 @@ def membership_test_b(element, group):
 
 def set_operations_a(set1, set2):
     """Set union/intersection."""
-    return __extracted_func_3591(set1, set2)
+    return __extracted_func_3460(set1, set2)
 
 
 def set_operations_b(group1, group2):
     """Similar set operations."""
-    return __extracted_func_3591(group1, group2)
+    return __extracted_func_3460(group1, group2)
 
 
-def __extracted_func_3452(__param_0):
+def __extracted_func_3321(__param_0):
     result = 0
     if isinstance(__param_0, int):
         result = __param_0 * 2
@@ -149,7 +149,7 @@ def __extracted_func_3452(__param_0):
     return result
 
 
-def __extracted_func_3462(__param_0):
+def __extracted_func_3331(__param_0):
     if not __param_0:
         return 0
     total = 0
@@ -158,7 +158,7 @@ def __extracted_func_3462(__param_0):
     return total
 
 
-def __extracted_func_3489(__param_0, __param_1):
+def __extracted_func_3358(__param_0, __param_1):
     result = __param_0 * 2
     if result > __param_1:
         return result
@@ -166,7 +166,7 @@ def __extracted_func_3489(__param_0, __param_1):
     return result
 
 
-def __extracted_func_3518(__param_0, __param_1):
+def __extracted_func_3387(__param_0, __param_1):
     result = []
     for item in __param_0:
         result.append(item)
@@ -174,7 +174,7 @@ def __extracted_func_3518(__param_0, __param_1):
     return len(result)
 
 
-def __extracted_func_3540(__param_0, __param_1):
+def __extracted_func_3409(__param_0, __param_1):
     result = {}
     for key, value in __param_0.items():
         result[key] = value
@@ -182,35 +182,35 @@ def __extracted_func_3540(__param_0, __param_1):
     return len(result)
 
 
-def __extracted_func_3553(__param_0, __param_1):
+def __extracted_func_3422(__param_0, __param_1):
     message = ''
     message = f'Name: {__param_0}'
     message = message + f', Age: {__param_1}'
     return message
 
 
-def __extracted_func_3565(__param_0, __param_1):
+def __extracted_func_3434(__param_0, __param_1):
     result = 0
     result = __param_0 if __param_0 > __param_1 else __param_1
     result = result * 2
     return result
 
 
-def __extracted_func_3575(__param_0, __param_1, __param_2):
+def __extracted_func_3444(__param_0, __param_1, __param_2):
     result = False
     result = __param_0 > 0 and __param_1 > 0
     result = result or __param_2 > 0
     return result
 
 
-def __extracted_func_3584(__param_0, __param_1, __param_2):
+def __extracted_func_3453(__param_0, __param_1, __param_2):
     result = []
     result = __param_0[__param_1:__param_2]
     result = result + [999]
     return len(result)
 
 
-def __extracted_func_3591(__param_0, __param_1):
+def __extracted_func_3460(__param_0, __param_1):
     result = set()
     result = __param_0 | __param_1
     result = result & {1, 2, 3}

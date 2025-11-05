@@ -37,10 +37,9 @@ def process_api_response_v2(response, validator, transformer):
 def update_model_fields_a(model, updates, validator):
     """Version A: Fluent interface pattern."""
     # Fluent method calls
-    model.set_name(updates["name"])\
-         .set_description(updates["description"])\
-         .set_status("active")\
-         .validate()
+    model.set_name(updates["name"]).set_description(updates["description"]).set_status(
+        "active"
+    ).validate()
 
     if validator.is_valid(model):
         model.save()
@@ -52,10 +51,9 @@ def update_model_fields_a(model, updates, validator):
 def update_model_fields_b(model, updates, validator):
     """Version B: Different keys, same fluent pattern."""
     # Same fluent pattern
-    model.set_title(updates["title"])\
-         .set_content(updates["content"])\
-         .set_status("active")\
-         .validate()
+    model.set_title(updates["title"]).set_content(updates["content"]).set_status(
+        "active"
+    ).validate()
 
     if validator.is_valid(model):
         model.save()
@@ -67,12 +65,14 @@ def update_model_fields_b(model, updates, validator):
 def query_database_v1(db, filters, mapper):
     """Version 1: Database query builder pattern."""
     # Method chaining query
-    results = (db.table("users")
-                 .where("age", ">", 18)
-                 .where("status", "=", "active")
-                 .order_by("created_at", "desc")
-                 .limit(100)
-                 .get())
+    results = (
+        db.table("users")
+        .where("age", ">", 18)
+        .where("status", "=", "active")
+        .order_by("created_at", "desc")
+        .limit(100)
+        .get()
+    )
 
     # Map results
     mapped = [mapper.to_dto(row) for row in results]
@@ -84,12 +84,14 @@ def query_database_v1(db, filters, mapper):
 def query_database_v2(db, filters, mapper):
     """Version 2: Different age threshold, same pattern."""
     # Same query pattern, different threshold
-    results = (db.table("users")
-                 .where("age", ">", 21)
-                 .where("status", "=", "active")
-                 .order_by("created_at", "desc")
-                 .limit(100)
-                 .get())
+    results = (
+        db.table("users")
+        .where("age", ">", 21)
+        .where("status", "=", "active")
+        .order_by("created_at", "desc")
+        .limit(100)
+        .get()
+    )
 
     # Map results
     mapped = [mapper.to_dto(row) for row in results]
@@ -101,10 +103,12 @@ def query_database_v2(db, filters, mapper):
 def process_stream_v1(stream, parser, handler):
     """Version 1: Stream processing with method calls."""
     # Stream operations
-    processed = (stream.filter(lambda x: x.is_valid())
-                      .map(parser.parse)
-                      .filter(lambda x: x is not None)
-                      .take(1000))
+    processed = (
+        stream.filter(lambda x: x.is_valid())
+        .map(parser.parse)
+        .filter(lambda x: x is not None)
+        .take(1000)
+    )
 
     for item in processed:
         handler.process(item)
@@ -118,10 +122,12 @@ def process_stream_v1(stream, parser, handler):
 def process_stream_v2(stream, parser, handler):
     """Version 2: Different take limit, same pattern."""
     # Same stream pattern, different limit
-    processed = (stream.filter(lambda x: x.is_valid())
-                      .map(parser.parse)
-                      .filter(lambda x: x is not None)
-                      .take(5000))
+    processed = (
+        stream.filter(lambda x: x.is_valid())
+        .map(parser.parse)
+        .filter(lambda x: x is not None)
+        .take(5000)
+    )
 
     for item in processed:
         handler.process(item)
@@ -205,11 +211,13 @@ def aggregate_results_a(results, aggregator, formatter):
     average = aggregator.average([r.get_value() for r in results])
     maximum = aggregator.max([r.get_value() for r in results])
 
-    formatted = formatter.create_summary()\
-                        .add_metric("total", total)\
-                        .add_metric("average", average)\
-                        .add_metric("maximum", maximum)\
-                        .finalize()
+    formatted = (
+        formatter.create_summary()
+        .add_metric("total", total)
+        .add_metric("average", average)
+        .add_metric("maximum", maximum)
+        .finalize()
+    )
 
     return formatted
 
@@ -221,10 +229,12 @@ def aggregate_results_b(results, aggregator, formatter):
     average = aggregator.average([r.get_amount() for r in results])
     maximum = aggregator.max([r.get_amount() for r in results])
 
-    formatted = formatter.create_summary()\
-                        .add_metric("sum", total)\
-                        .add_metric("mean", average)\
-                        .add_metric("max", maximum)\
-                        .finalize()
+    formatted = (
+        formatter.create_summary()
+        .add_metric("sum", total)
+        .add_metric("mean", average)
+        .add_metric("max", maximum)
+        .finalize()
+    )
 
     return formatted

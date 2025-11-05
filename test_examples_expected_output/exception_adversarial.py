@@ -8,52 +8,52 @@ when extracting code with try/except/finally blocks.
 
 def safe_divide_a(x, y):
     """Division with exception handling."""
-    return __extracted_func_497(x, y)
+    return __extracted_func_477(x, y)
 
 
 def safe_divide_b(a, b):
     """Similar division pattern."""
-    return __extracted_func_497(a, b)
+    return __extracted_func_477(a, b)
 
 
 def parse_int_or_default_a(s, default=0):
     """Parse int with fallback."""
-    return __extracted_func_501(default, s)
+    return __extracted_func_481(default, s)
 
 
 def parse_int_or_default_b(text, fallback=0):
     """Similar parse pattern."""
-    return __extracted_func_501(fallback, text)
+    return __extracted_func_481(fallback, text)
 
 
 def process_with_cleanup_a(items):
     """Process with finally cleanup."""
-    return __extracted_func_485(items)
+    return __extracted_func_465(items)
 
 
 def process_with_cleanup_b(values):
     """Similar cleanup pattern."""
-    return __extracted_func_485(values)
+    return __extracted_func_465(values)
 
 
 def nested_exception_a(data):
     """Nested exception handling."""
-    return __extracted_func_495(data)
+    return __extracted_func_475(data)
 
 
 def nested_exception_b(input_val):
     """Similar nested exception pattern."""
-    return __extracted_func_495(input_val)
+    return __extracted_func_475(input_val)
 
 
 def exception_with_else_a(items):
     """Exception handling with else clause."""
-    return __extracted_func_463(items)
+    return __extracted_func_443(items)
 
 
 def exception_with_else_b(values):
     """Similar else clause pattern."""
-    return __extracted_func_463(values)
+    return __extracted_func_443(values)
 
 
 def reraise_exception_a(x):
@@ -80,15 +80,15 @@ def reraise_exception_b(y):
 
 def multiple_except_a(data):
     """Multiple except clauses."""
-    return __extracted_func_479(data)
+    return __extracted_func_459(data)
 
 
 def multiple_except_b(input_val):
     """Similar multiple except pattern."""
-    return __extracted_func_479(input_val)
+    return __extracted_func_459(input_val)
 
 
-def __extracted_func_463(__param_0):
+def __extracted_func_443(__param_0):
     results = []
     error = None
     try:
@@ -101,7 +101,7 @@ def __extracted_func_463(__param_0):
     return (results, error)
 
 
-def __extracted_func_479(__param_0):
+def __extracted_func_459(__param_0):
     result = None
     try:
         result = int(__param_0) / len(__param_0)
@@ -114,7 +114,7 @@ def __extracted_func_479(__param_0):
     return result
 
 
-def __extracted_func_485(__param_0):
+def __extracted_func_465(__param_0):
     results = []
     count = 0
     try:
@@ -126,7 +126,7 @@ def __extracted_func_485(__param_0):
     return results
 
 
-def __extracted_func_495(__param_0):
+def __extracted_func_475(__param_0):
     result = 0
     try:
         try:
@@ -138,7 +138,7 @@ def __extracted_func_495(__param_0):
     return result
 
 
-def __extracted_func_497(__param_0, __param_1):
+def __extracted_func_477(__param_0, __param_1):
     result = 0
     try:
         result = __param_0 / __param_1
@@ -147,7 +147,7 @@ def __extracted_func_497(__param_0, __param_1):
     return result
 
 
-def __extracted_func_501(__param_0, __param_1):
+def __extracted_func_481(__param_0, __param_1):
     value = __param_0
     try:
         value = int(__param_1)

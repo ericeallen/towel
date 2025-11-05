@@ -72,14 +72,14 @@ def filter_and_log_b(values):
 def modify_dict_a(data, key, value):
     """Modifies dict in place and returns it."""
     data[key] = value
-    data['modified'] = True
+    data["modified"] = True
     return data
 
 
 def modify_dict_b(config, k, v):
     """Similar dict modification pattern."""
     config[k] = v
-    config['modified'] = True
+    config["modified"] = True
     return config
 
 

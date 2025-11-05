@@ -11,6 +11,7 @@ Tests:
 
 def with_nested_func_a(items):
     """Nested function definition."""
+
     def helper(x):
         return x * 2
 
@@ -23,6 +24,7 @@ def with_nested_func_a(items):
 
 def with_nested_func_b(items):
     """Nested function definition (duplicate outer, different inner name)."""
+
     def processor(x):
         return x * 2
 
@@ -55,23 +57,27 @@ def with_lambda_b(items):
 
 def closure_a(multiplier):
     """Function that creates closure."""
+
     def process(items):
         result = []
         for item in items:
             if item > 0:
                 result.append(item * multiplier)
         return result
+
     return process
 
 
 def closure_b(multiplier):
     """Function that creates closure (duplicate)."""
+
     def process(items):
         result = []
         for item in items:
             if item > 0:
                 result.append(item * multiplier)
         return result
+
     return process
 
 

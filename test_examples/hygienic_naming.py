@@ -13,7 +13,7 @@ def process_with_temp_var_v1(data, result):
         # This block should be extracted, but 'x' might collide
         x = item * 2
         y = x + 10
-        z = y ** 2
+        z = y**2
         result.append(z)
     return result
 
@@ -25,7 +25,7 @@ def process_with_temp_var_v2(data, result):
         # Same block - extracted function must avoid collision with 'result'
         x = item * 3
         y = x + 10
-        z = y ** 2
+        z = y**2
         result.append(z)
     return result
 
@@ -94,7 +94,7 @@ def compute_with_param_collision_a(items, param1, param2, param3):
         step1 = item + param1
         step2 = step1 * param2
         step3 = step2 - param3
-        final = step3 ** 2
+        final = step3**2
         results.append(final)
     return results
 
@@ -107,7 +107,7 @@ def compute_with_param_collision_b(items, param1, param2, param3):
         step1 = item - param1
         step2 = step1 / param2
         step3 = step2 + param3
-        final = step3 ** 2
+        final = step3**2
         results.append(final)
     return results
 
@@ -124,7 +124,7 @@ def nested_function_scope_v1(data, helper, processor):
     results = []
     for item in data:
         # This block could have naming conflicts with nested functions
-        a = item ** 2
+        a = item**2
         b = a + 100
         c = b * 3
         results.append(c)
@@ -144,7 +144,7 @@ def nested_function_scope_v2(data, helper, processor):
     results = []
     for item in data:
         # Different computation, same structure
-        a = item ** 3
+        a = item**3
         b = a + 200
         c = b * 3
         results.append(c)

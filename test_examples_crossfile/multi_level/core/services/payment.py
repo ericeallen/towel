@@ -12,7 +12,7 @@ def validate_payment_amount(amount, currency):
         return False
     if len(currency) != 3:
         return False
-    if currency not in ['USD', 'EUR', 'GBP']:
+    if currency not in ["USD", "EUR", "GBP"]:
         return False
     if amount > 1000000:
         return False
@@ -22,11 +22,6 @@ def validate_payment_amount(amount, currency):
 def process_payment(user_id, amount, currency):
     """Process a payment."""
     if not validate_payment_amount(amount, currency):
-        return {'status': 'error', 'message': 'Invalid payment'}
+        return {"status": "error", "message": "Invalid payment"}
 
-    return {
-        'status': 'success',
-        'user_id': user_id,
-        'amount': amount,
-        'currency': currency
-    }
+    return {"status": "success", "user_id": user_id, "amount": amount, "currency": currency}
