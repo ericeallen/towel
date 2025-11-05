@@ -262,15 +262,15 @@ release VERSION:
 # Run tests with coverage report
 coverage:
     @echo "Running tests with coverage analysis..."
-    source venv/bin/activate && python -m coverage run --source=src/towel tests/run_tests.py
+    venv/bin/python -m coverage run --source=src/towel tests/run_tests.py
     @echo ""
-    source venv/bin/activate && python -m coverage report
+    venv/bin/python -m coverage report
 
 # Generate HTML coverage report
 coverage-html:
     @echo "Generating HTML coverage report..."
-    source venv/bin/activate && python -m coverage run --source=src/towel tests/run_tests.py
-    source venv/bin/activate && python -m coverage html
+    venv/bin/python -m coverage run --source=src/towel tests/run_tests.py
+    venv/bin/python -m coverage html
     @echo ""
     @echo "✓ HTML coverage report generated in htmlcov/index.html"
     @echo "  Open with: open htmlcov/index.html"
@@ -278,9 +278,9 @@ coverage-html:
 # Show coverage for active unification modules only
 coverage-unification:
     @echo "Running coverage for unification modules..."
-    source venv/bin/activate && python -m coverage run --source=src/towel tests/run_tests.py
+    venv/bin/python -m coverage run --source=src/towel tests/run_tests.py
     @echo ""
-    source venv/bin/activate && python -m coverage report --include="src/towel/unification/*"
+    venv/bin/python -m coverage report --include="src/towel/unification/*"
 
 # === Code Quality ===
 
