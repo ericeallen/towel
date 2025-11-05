@@ -9,73 +9,73 @@ and object-oriented code patterns correctly.
 def process_api_response_v1(response, validator, transformer):
     """Version 1: Method chaining on API response."""
     # Complex method chain
-    return __extracted_func_1563('data', 'items', response, transformer, validator)
+    return __extracted_func_1451('data', 'items', response, transformer, validator)
 
 
 def process_api_response_v2(response, validator, transformer):
     """Version 2: Different key path, same chaining pattern."""
     # Different keys, same chain
-    return __extracted_func_1563('payload', 'records', response, transformer, validator)
+    return __extracted_func_1451('payload', 'records', response, transformer, validator)
 
 
 def update_model_fields_a(model, updates, validator):
     """Version A: Fluent interface pattern."""
     # Fluent method calls
-    return __extracted_func_1558(model.set_name, 'name', lambda *args, **kwargs: model.set_name(updates['name']).set_description(*args, **kwargs), 'description', model, updates, validator)
+    return __extracted_func_1464(model.set_name, 'name', lambda *args, **kwargs: model.set_name(updates['name']).set_description(*args, **kwargs), 'description', model, updates, validator)
 
 
 def update_model_fields_b(model, updates, validator):
     """Version B: Different keys, same fluent pattern."""
     # Same fluent pattern
-    return __extracted_func_1558(model.set_title, 'title', lambda *args, **kwargs: model.set_title(updates['title']).set_content(*args, **kwargs), 'content', model, updates, validator)
+    return __extracted_func_1464(model.set_title, 'title', lambda *args, **kwargs: model.set_title(updates['title']).set_content(*args, **kwargs), 'content', model, updates, validator)
 
 
 def query_database_v1(db, filters, mapper):
     """Version 1: Database query builder pattern."""
     # Method chaining query
-    return __extracted_func_1355(18, db, mapper)
+    return __extracted_func_1256(18, db, mapper)
 
 
 def query_database_v2(db, filters, mapper):
     """Version 2: Different age threshold, same pattern."""
     # Same query pattern, different threshold
-    return __extracted_func_1355(21, db, mapper)
+    return __extracted_func_1256(21, db, mapper)
 
 
 def process_stream_v1(stream, parser, handler):
     """Version 1: Stream processing with method calls."""
     # Stream operations
-    return __extracted_func_1418(1000, handler, parser, stream)
+    return __extracted_func_1319(1000, handler, parser, stream)
 
 
 def process_stream_v2(stream, parser, handler):
     """Version 2: Different take limit, same pattern."""
     # Same stream pattern, different limit
-    return __extracted_func_1418(5000, handler, parser, stream)
+    return __extracted_func_1319(5000, handler, parser, stream)
 
 
 def build_response_a(data, serializer, cache):
     """Version A: Response builder with multiple method calls."""
     # Building response
-    return __extracted_func_1525('max-age=3600', cache, data, serializer)
+    return __extracted_func_1426('max-age=3600', cache, data, serializer)
 
 
 def build_response_b(data, serializer, cache):
     """Version B: Different cache duration, same pattern."""
     # Same building pattern
-    return __extracted_func_1525('max-age=7200', cache, data, serializer)
+    return __extracted_func_1426('max-age=7200', cache, data, serializer)
 
 
 def transform_entity_v1(entity, transformer, validator):
     """Version 1: Entity transformation with validation."""
     # Transform entity
-    return __extracted_func_1498('processed', entity, transformer, validator)
+    return __extracted_func_1399('processed', entity, transformer, validator)
 
 
 def transform_entity_v2(entity, transformer, validator):
     """Version 2: Different field name, same pattern."""
     # Same transformation pattern
-    return __extracted_func_1498('completed', entity, transformer, validator)
+    return __extracted_func_1399('completed', entity, transformer, validator)
 
 
 def aggregate_results_a(results, aggregator, formatter):
@@ -85,7 +85,7 @@ def aggregate_results_a(results, aggregator, formatter):
     average = aggregator.average([r.get_value() for r in results])
     maximum = aggregator.max([r.get_value() for r in results])
 
-    return __extracted_func_1573('total', 'average', 'maximum', average, formatter, maximum, total)
+    return __extracted_func_1469('total', 'average', 'maximum', average, formatter, maximum, total)
 
 
 def aggregate_results_b(results, aggregator, formatter):
@@ -95,17 +95,17 @@ def aggregate_results_b(results, aggregator, formatter):
     average = aggregator.average([r.get_amount() for r in results])
     maximum = aggregator.max([r.get_amount() for r in results])
 
-    return __extracted_func_1573('sum', 'mean', 'max', average, formatter, maximum, total)
+    return __extracted_func_1469('sum', 'mean', 'max', average, formatter, maximum, total)
 
 
-def __extracted_func_1355(__param_0, db, mapper):
+def __extracted_func_1256(__param_0, db, mapper):
     results = db.table('users').where('age', '>', __param_0).where('status', '=', 'active').order_by('created_at', 'desc').limit(100).get()
     mapped = [mapper.to_dto(row) for row in results]
     validated = [item for item in mapped if item.is_valid()]
     return validated
 
 
-def __extracted_func_1418(__param_0, handler, parser, stream):
+def __extracted_func_1319(__param_0, handler, parser, stream):
     processed = stream.filter(lambda x: x.is_valid()).map(parser.parse).filter(lambda x: x is not None).take(__param_0)
     for item in processed:
         handler.process(item)
@@ -115,7 +115,7 @@ def __extracted_func_1418(__param_0, handler, parser, stream):
     return handler.get_statistics()
 
 
-def __extracted_func_1498(__param_0, entity, transformer, validator):
+def __extracted_func_1399(__param_0, entity, transformer, validator):
     entity.set_field(__param_0, True)
     entity.increment_version()
     transformed_data = transformer.apply(entity.get_data())
@@ -128,7 +128,7 @@ def __extracted_func_1498(__param_0, entity, transformer, validator):
     return None
 
 
-def __extracted_func_1525(__param_0, cache, data, serializer):
+def __extracted_func_1426(__param_0, cache, data, serializer):
     response = serializer.create_response()
     response.set_data(data)
     response.set_status(200)
@@ -139,16 +139,7 @@ def __extracted_func_1525(__param_0, cache, data, serializer):
     return response.build()
 
 
-def __extracted_func_1558(__param_0, __param_1, __param_2, __param_3, model, updates, validator):
-    __param_2(updates[__param_3]).set_status('active').validate()
-    if validator.is_valid(model):
-        model.save()
-        model.notify_observers()
-        return True
-    return False
-
-
-def __extracted_func_1563(__param_0, __param_1, response, transformer, validator):
+def __extracted_func_1451(__param_0, __param_1, response, transformer, validator):
     data = response.json().get(__param_0, {}).get(__param_1, [])
     cleaned = [item.strip().lower() for item in data]
     validated = [validator.check(item) for item in cleaned]
@@ -159,7 +150,16 @@ def __extracted_func_1563(__param_0, __param_1, response, transformer, validator
     return []
 
 
-def __extracted_func_1573(__param_0, __param_1, __param_2, average, formatter, maximum, total):
+def __extracted_func_1464(__param_0, __param_1, __param_2, __param_3, model, updates, validator):
+    __param_2(updates[__param_3]).set_status('active').validate()
+    if validator.is_valid(model):
+        model.save()
+        model.notify_observers()
+        return True
+    return False
+
+
+def __extracted_func_1469(__param_0, __param_1, __param_2, average, formatter, maximum, total):
     formatted = formatter.create_summary().add_metric(__param_0, total).add_metric(__param_1, average).add_metric(__param_2, maximum).finalize()
     return formatted
 

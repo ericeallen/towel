@@ -12,7 +12,7 @@ def safe_divide_a(x, y):
     try:
         result = x / y
     except ZeroDivisionError:
-        result = float('inf')
+        result = float("inf")
     return result
 
 
@@ -22,7 +22,7 @@ def safe_divide_b(a, b):
     try:
         output = a / b
     except ZeroDivisionError:
-        output = float('inf')
+        output = float("inf")
     return output
 
 

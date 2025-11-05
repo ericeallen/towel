@@ -39,7 +39,9 @@ class TestAdditionalBindings(unittest.TestCase):
             return len(data)
         """
         path = self._write_temp_py(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True
+        )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
         self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
@@ -60,7 +62,9 @@ class TestAdditionalBindings(unittest.TestCase):
                 return str(err)
         """
         path = self._write_temp_py(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True
+        )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
         self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
@@ -79,7 +83,9 @@ class TestAdditionalBindings(unittest.TestCase):
             return 0
         """
         path = self._write_temp_py(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True
+        )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
         self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")

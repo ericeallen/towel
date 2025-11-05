@@ -31,7 +31,9 @@ class TestAdversarialBreakers(unittest.TestCase):
                 return x + y
         """
         path = self._write_temp_py(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True
+        )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
         # Expect at least one refactoring proposal and no failures (bug fixed)
@@ -55,14 +57,14 @@ class TestAdversarialBreakers(unittest.TestCase):
                 return x + y
         """
         path = self._write_temp_py(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True
+        )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
         # Expect at least one proposal and no failures (bug fixed)
         self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
-        self.assertEqual(
-            failed, 0, f"Expected no failures for classmethod handling, got: {errors}"
-        )
+        self.assertEqual(failed, 0, f"Expected no failures for classmethod handling, got: {errors}")
 
     def test_staticmethod_vs_staticmethod_extraction_breaks(self):
         code = """
@@ -80,13 +82,13 @@ class TestAdversarialBreakers(unittest.TestCase):
                 return z
         """
         path = self._write_temp_py(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True
+        )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
         self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
-        self.assertEqual(
-            failed, 0, "Expected no failures for staticmethod→staticmethod extraction"
-        )
+        self.assertEqual(failed, 0, "Expected no failures for staticmethod→staticmethod extraction")
 
     def test_classmethod_vs_classmethod_extraction_breaks(self):
         code = """
@@ -104,13 +106,13 @@ class TestAdversarialBreakers(unittest.TestCase):
                 return z
         """
         path = self._write_temp_py(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True
+        )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
         self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
-        self.assertEqual(
-            failed, 0, "Expected no failures for classmethod→classmethod extraction"
-        )
+        self.assertEqual(failed, 0, "Expected no failures for classmethod→classmethod extraction")
 
 
 if __name__ == "__main__":

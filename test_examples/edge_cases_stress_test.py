@@ -20,8 +20,9 @@ def deeply_nested_computation_v1(data, config, cache, logger, metrics):
                 if middle_item.get("status") == "active":
                     for inner_item in middle_item.get("values", []):
                         # This deeply nested block should be extractable
-                        computed = (inner_item["value"] * config["multiplier"] +
-                                    config["offset"]) ** config["power"]
+                        computed = (
+                            inner_item["value"] * config["multiplier"] + config["offset"]
+                        ) ** config["power"]
 
                         if computed > config["threshold"]:
                             normalized = computed / config["normalizer"]
@@ -30,11 +31,13 @@ def deeply_nested_computation_v1(data, config, cache, logger, metrics):
                             if validated:
                                 logger.debug(f"Validated: {normalized}")
                                 metrics.record("validated", normalized)
-                                results.append({
-                                    "original": inner_item["value"],
-                                    "computed": computed,
-                                    "normalized": normalized
-                                })
+                                results.append(
+                                    {
+                                        "original": inner_item["value"],
+                                        "computed": computed,
+                                        "normalized": normalized,
+                                    }
+                                )
 
     return results
 
@@ -49,8 +52,9 @@ def deeply_nested_computation_v2(data, config, cache, logger, metrics):
                 if middle_item.get("status") == "active":
                     for inner_item in middle_item.get("values", []):
                         # Same structure, different multiplier
-                        computed = (inner_item["value"] * config["factor"] +
-                                    config["offset"]) ** config["power"]
+                        computed = (
+                            inner_item["value"] * config["factor"] + config["offset"]
+                        ) ** config["power"]
 
                         if computed > config["threshold"]:
                             normalized = computed / config["normalizer"]
@@ -59,11 +63,13 @@ def deeply_nested_computation_v2(data, config, cache, logger, metrics):
                             if validated:
                                 logger.debug(f"Validated: {normalized}")
                                 metrics.record("validated", normalized)
-                                results.append({
-                                    "original": inner_item["value"],
-                                    "computed": computed,
-                                    "normalized": normalized
-                                })
+                                results.append(
+                                    {
+                                        "original": inner_item["value"],
+                                        "computed": computed,
+                                        "normalized": normalized,
+                                    }
+                                )
 
     return results
 
@@ -152,16 +158,11 @@ def mixed_comprehensions_v1(data, filters, mappers):
     # Nested comprehension
     nested = [
         [mappers["inner"](y) for y in row if y is not None]
-        for row in [list_comp[i:i+5] for i in range(0, len(list_comp), 5)]
+        for row in [list_comp[i : i + 5] for i in range(0, len(list_comp), 5)]
         if len(row) > 0
     ]
 
-    return {
-        "list": list_comp,
-        "dict": dict_comp,
-        "set": set_comp,
-        "nested": nested
-    }
+    return {"list": list_comp, "dict": dict_comp, "set": set_comp, "nested": nested}
 
 
 def mixed_comprehensions_v2(data, filters, mappers):
@@ -174,16 +175,11 @@ def mixed_comprehensions_v2(data, filters, mappers):
     # Nested comprehension
     nested = [
         [mappers["inner"](y) for y in row if y is not None]
-        for row in [list_comp[i:i+5] for i in range(0, len(list_comp), 5)]
+        for row in [list_comp[i : i + 5] for i in range(0, len(list_comp), 5)]
         if len(row) > 0
     ]
 
-    return {
-        "list": list_comp,
-        "dict": dict_comp,
-        "set": set_comp,
-        "nested": nested
-    }
+    return {"list": list_comp, "dict": dict_comp, "set": set_comp, "nested": nested}
 
 
 def exception_heavy_processing_a(items, processor, logger, fallback):
@@ -285,12 +281,14 @@ def state_machine_pattern_v1(events, states, transitions, handlers):
                             action_result = handlers[transition["action"]](event, current_state)
                             outputs.append(action_result * 2)
 
-                            history.append({
-                                "from": old_state,
-                                "to": current_state,
-                                "event": event["type"],
-                                "result": action_result
-                            })
+                            history.append(
+                                {
+                                    "from": old_state,
+                                    "to": current_state,
+                                    "event": event["type"],
+                                    "result": action_result,
+                                }
+                            )
 
     return {"final_state": current_state, "history": history, "outputs": outputs}
 
@@ -318,11 +316,13 @@ def state_machine_pattern_v2(events, states, transitions, handlers):
                             action_result = handlers[transition["action"]](event, current_state)
                             outputs.append(action_result * 3)
 
-                            history.append({
-                                "from": old_state,
-                                "to": current_state,
-                                "event": event["type"],
-                                "result": action_result
-                            })
+                            history.append(
+                                {
+                                    "from": old_state,
+                                    "to": current_state,
+                                    "event": event["type"],
+                                    "result": action_result,
+                                }
+                            )
 
     return {"final_state": current_state, "history": history, "outputs": outputs}

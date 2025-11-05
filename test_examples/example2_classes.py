@@ -57,10 +57,8 @@ class PushNotificationProcessor:
 
 def extracted_func(__param_0, self):
     if not __param_0:
-        raise ValueError('Email is required')
-    if '@' not in __param_0:
-        raise ValueError('Invalid email format')
+        raise ValueError("Email is required")
+    if "@" not in __param_0:
+        raise ValueError("Invalid email format")
     if len(__param_0) < 5:
-        raise ValueError('Email too short')
-
-
+        raise ValueError("Email too short")

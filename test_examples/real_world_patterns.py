@@ -63,11 +63,7 @@ def etl_pipeline_extract_a(source, config, logger):
 
     while retry_count < max_retries:
         try:
-            data = source.fetch(
-                endpoint=config["endpoint"],
-                params=config["params"],
-                timeout=30
-            )
+            data = source.fetch(endpoint=config["endpoint"], params=config["params"], timeout=30)
             logger.info(f"Extracted {len(data)} records")
             break
         except Exception as e:
@@ -91,11 +87,7 @@ def etl_pipeline_extract_b(source, config, logger):
 
     while retry_count < max_retries:
         try:
-            data = source.fetch(
-                endpoint=config["endpoint"],
-                params=config["params"],
-                timeout=60
-            )
+            data = source.fetch(endpoint=config["endpoint"], params=config["params"], timeout=60)
             logger.info(f"Extracted {len(data)} records")
             break
         except Exception as e:
@@ -272,11 +264,7 @@ def aggregate_metrics_a(events, time_window, aggregator):
         bucket_key = (timestamp // time_window) * time_window
 
         if bucket_key not in buckets:
-            buckets[bucket_key] = {
-                "count": 0,
-                "sum": 0,
-                "values": []
-            }
+            buckets[bucket_key] = {"count": 0, "sum": 0, "values": []}
 
         # Aggregate
         value = event["value"] * 2
@@ -289,7 +277,7 @@ def aggregate_metrics_a(events, time_window, aggregator):
         k: {
             "count": v["count"],
             "sum": v["sum"],
-            "avg": v["sum"] / v["count"] if v["count"] > 0 else 0
+            "avg": v["sum"] / v["count"] if v["count"] > 0 else 0,
         }
         for k, v in buckets.items()
     }
@@ -305,11 +293,7 @@ def aggregate_metrics_b(events, time_window, aggregator):
         bucket_key = (timestamp // time_window) * time_window
 
         if bucket_key not in buckets:
-            buckets[bucket_key] = {
-                "count": 0,
-                "sum": 0,
-                "values": []
-            }
+            buckets[bucket_key] = {"count": 0, "sum": 0, "values": []}
 
         # Different multiplier
         value = event["value"] * 3
@@ -322,7 +306,7 @@ def aggregate_metrics_b(events, time_window, aggregator):
         k: {
             "count": v["count"],
             "sum": v["sum"],
-            "avg": v["sum"] / v["count"] if v["count"] > 0 else 0
+            "avg": v["sum"] / v["count"] if v["count"] > 0 else 0,
         }
         for k, v in buckets.items()
     }
