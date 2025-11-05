@@ -94,6 +94,26 @@ class TestProjectLayoutBehavior(unittest.TestCase):
             self.assertEqual(layout.project_root, nested.resolve())
             self.assertEqual(layout.module_name_for(f), "child")
 
+    def test_malformed_pyproject_and_outside_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Malformed TOML should be handled gracefully (treated as no mapping)
+            (root / "pyproject.toml").write_text("this = not = valid [[\n")
+            (root / "src" / "pkg").mkdir(parents=True)
+            mod = root / "src" / "pkg" / "mod.py"
+            mod.write_text("x = 1\n")
+
+            layout = ProjectLayout.discover(root)
+            # Falls back to project root as source root due to parsing failure
+            self.assertEqual(layout.source_roots, [root.resolve()])
+            self.assertEqual(layout.module_name_for(mod), "src.pkg.mod")
+
+            # File completely outside the project should return None
+            with tempfile.TemporaryDirectory() as other_td:
+                outside = Path(other_td) / "ext.py"
+                outside.write_text("pass\n")
+                self.assertIsNone(layout.module_name_for(outside))
+
 
 if __name__ == "__main__":
     unittest.main()
