@@ -204,6 +204,66 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
             self.assertEqual(lp.scope_node.lineno, lam_node.lineno)
             self.assertEqual(lp.line_number, getattr(lp.node, "lineno", -1))
 
+    def test_match_negative_patterns_no_bindings(self) -> None:
+        code = """
+        def f(x):
+            match x:
+                case 0:
+                    pass
+                case True:
+                    pass
+                case "hi":
+                    pass
+                case None:
+                    pass
+                case Color.RED:
+                    pass
+        """
+        tree = _parse(code)
+
+        func_node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "f")
+        # MATCH_CASE bindings within the function should be empty
+        detector = BindingDetector()
+        detector.visit(tree)
+        match_bind_names = {b.name for b in detector.bindings if b.kind == BindingKind.MATCH_CASE and b.scope_node is func_node}
+        self.assertEqual(match_bind_names, set())
+
+    def test_decorators_do_not_affect_scope(self) -> None:
+        code = """
+        def dec1(arg):
+            def wrap(fn):
+                return fn
+            return wrap
+
+        def dec2(fn):
+            return fn
+
+        @dec1(123)
+        @dec2
+        def foo(a):
+            return a
+
+        @dec2
+        class C:
+            pass
+        """
+        tree = _parse(code)
+        detector = BindingDetector()
+        detector.visit(tree)
+        bindings = detector.bindings
+
+        # Function name and class name bound at module scope
+        top_defs = {b.name for b in bindings if b.kind in {BindingKind.FUNCTION_DEF, BindingKind.CLASS_DEF} and b.scope_node is None}
+        self.assertTrue({"foo", "C", "dec1", "dec2"}.issubset(top_defs))
+
+        func_node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "foo")
+        # Only parameter 'a' should be bound in foo's scope
+        foo_scope_names = {b.name for b in bindings if b.scope_node is func_node}
+        self.assertIn("a", foo_scope_names)
+        # No decorator names should appear as bindings in foo's scope
+        self.assertNotIn("dec1", foo_scope_names)
+        self.assertNotIn("dec2", foo_scope_names)
+
 
 if __name__ == "__main__":
     unittest.main()

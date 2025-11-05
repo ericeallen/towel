@@ -114,6 +114,34 @@ class TestProjectLayoutBehavior(unittest.TestCase):
                 outside.write_text("pass\n")
                 self.assertIsNone(layout.module_name_for(outside))
 
+    def test_multiple_source_roots_mixed_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Mixed mapping: default '' -> src, plus named package 'pkg2' in lib2
+            (root / "pyproject.toml").write_text(
+                textwrap.dedent(
+                    """
+                    [tool.setuptools]
+                    package-dir = {"" = "src", "pkg2" = "lib2"}
+                    """
+                ).strip()
+            )
+            (root / "src" / "alpha").mkdir(parents=True)
+            (root / "lib2" / "pkg2").mkdir(parents=True)
+            f1 = root / "src" / "alpha" / "beta.py"
+            f2 = root / "lib2" / "pkg2" / "mod.py"
+            f1.write_text("pass\n")
+            f2.write_text("pass\n")
+
+            layout = ProjectLayout.discover(root)
+            # Ensure both source roots recognized
+            self.assertTrue((root / "src").resolve() in layout.source_roots)
+            self.assertTrue((root / "lib2").resolve() in layout.source_roots)
+
+            # module names relative to their respective roots
+            self.assertEqual(layout.module_name_for(f1), "alpha.beta")
+            self.assertEqual(layout.module_name_for(f2), "pkg2.mod")
+
 
 if __name__ == "__main__":
     unittest.main()
