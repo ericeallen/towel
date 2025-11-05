@@ -60,6 +60,9 @@ test_examples_copy/
 my_test*.py
 tmp
 tmp.py
+tmp_*
+tmp_out_*/
+tmp_out_*
 
 # Temporary test output directories (not the legitimate test_examples/)
 test_all/
