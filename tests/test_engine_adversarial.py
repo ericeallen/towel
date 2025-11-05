@@ -216,6 +216,59 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         class_block = "\n".join(lines[start:end+1])
         self.assertNotIn("\n\n\n", class_block, "Should not contain triple blank lines inside class body")
 
+    def test_local_function_insertion_into_enclosing_function_scope(self):
+        # Duplicate blocks exist inside two sibling inner functions; extracted helper
+        # should be inserted into the most specific common enclosing scope (the outer function),
+        # not at module level.
+        code = """
+        def outer(a, b):
+            def f1(x):
+                p = x + a
+                q = p * b
+                return q
+
+            def f2(x):
+                p = x + a
+                q = p * b
+                return q
+
+            return f1(3) + f2(4)
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+
+        # Capture original behavior
+        ns = {}
+        exec(m.path.read_text(), ns)
+        orig = ns["outer"](2, 5)
+
+        engine = self._engine(min_lines=2)
+        proposals = engine.analyze_file(str(m.path))
+        # Expect at least one proposal pairing the inner functions' bodies
+        self.assertTrue(proposals, "Expected a proposal for duplicate inner function bodies")
+
+        # Apply proposals until we find one that inserts into the enclosing function scope
+        found_local_insertion = False
+        for p in proposals:
+            new_src = engine.apply_refactoring(str(m.path), p)
+            mod = ast.parse(new_src)
+            outers = [n for n in mod.body if isinstance(n, ast.FunctionDef) and n.name == "outer"]
+            if not outers:
+                continue
+            outer_fn = outers[0]
+            inner_names = {n.name for n in outer_fn.body if isinstance(n, ast.FunctionDef)}
+            top_level_names = {n.name for n in mod.body if isinstance(n, ast.FunctionDef)}
+            if "extracted_func" in inner_names and "extracted_func" not in top_level_names:
+                # Runtime equivalence: calling outer should still work and match original
+                ns2 = {}
+                exec(new_src, ns2)
+                new_val = ns2["outer"](2, 5)
+                self.assertEqual(orig, new_val)
+                found_local_insertion = True
+                break
+
+        self.assertTrue(found_local_insertion, "Did not find a proposal inserting helper into outer()")
+
 
 class TestUnifierExtractorCalleeThunk(unittest.TestCase):
     def test_callee_parameter_is_wrapped_in_thunk(self):
