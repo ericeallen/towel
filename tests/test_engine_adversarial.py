@@ -180,6 +180,42 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.assertIn("return self._extracted_func(", out)
         self.assertNotIn("self, self._extracted_func", out)
 
+    def test_decorators_preserved_and_no_triple_blank_lines_in_class(self):
+        code = """
+        class C:
+            @classmethod
+            def a(cls, x):
+                y = x + 1
+                z = y * 2
+                return z
+
+            @staticmethod
+            def b(x):
+                y = x + 1
+                z = y * 2
+                return z
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+        engine = self._engine(min_lines=2)
+        proposals = engine.analyze_file(str(m.path))
+        self.assertTrue(proposals, "Expected a proposal for methods with decorators")
+        out = engine.apply_refactoring(str(m.path), proposals[0])
+        # Ensure decorators still present on original methods
+        self.assertIn("@classmethod", out)
+        self.assertIn("@staticmethod", out)
+        # Extract the class body and assert no triple blank lines
+        lines = out.splitlines()
+        import ast as _ast
+        mod = _ast.parse(out)
+        cls_nodes = [n for n in mod.body if isinstance(n, _ast.ClassDef) and n.name == "C"]
+        self.assertTrue(cls_nodes)
+        cls = cls_nodes[0]
+        start = cls.lineno - 1
+        end = getattr(cls, "end_lineno", cls.lineno) - 1
+        class_block = "\n".join(lines[start:end+1])
+        self.assertNotIn("\n\n\n", class_block, "Should not contain triple blank lines inside class body")
+
 
 class TestUnifierExtractorCalleeThunk(unittest.TestCase):
     def test_callee_parameter_is_wrapped_in_thunk(self):
@@ -268,6 +304,57 @@ class TestCrossFileImports(unittest.TestCase):
             # At least one file should gain an import of the extracted function
             has_import = any("import extracted_func" in content for content in modified.values())
             self.assertTrue(has_import, "Expected an import of extracted_func in one modified file")
+
+    def test_cross_file_runtime_equivalence_after_refactor(self):
+        import sys, importlib
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            a = base / "a.py"
+            b = base / "b.py"
+            a.write_text(textwrap.dedent(
+                """
+                def fa(x):
+                    y = x + 1
+                    z = y * 2
+                    return z - 3
+                """
+            ).strip()+"\n", encoding="utf-8")
+            b.write_text(textwrap.dedent(
+                """
+                def fb(x):
+                    y = x + 1
+                    z = y * 2
+                    return z - 3
+                """
+            ).strip()+"\n", encoding="utf-8")
+            sys.path.insert(0, str(base))
+            try:
+                a_mod = importlib.import_module("a")
+                b_mod = importlib.import_module("b")
+                orig_a = [a_mod.fa(i) for i in (0,1,5)]
+                orig_b = [b_mod.fb(i) for i in (0,1,5)]
+
+                engine = UnificationRefactorEngine(max_parameters=5, min_lines=2, parameterize_constants=True)
+                props = engine.analyze_directory(str(base), recursive=False)
+                self.assertTrue(props, "Expected a cross-file proposal between a.py and b.py in same directory")
+                modified = engine.apply_refactoring_multi_file(props[0])
+                # Write modifications to disk
+                for fpath, content in modified.items():
+                    Path(fpath).write_text(content, encoding="utf-8")
+                # Reload modules to pick up changes
+                for name in ["a", "b"]:
+                    if name in sys.modules:
+                        del sys.modules[name]
+                a_mod2 = importlib.import_module("a")
+                b_mod2 = importlib.import_module("b")
+                new_a = [a_mod2.fa(i) for i in (0,1,5)]
+                new_b = [b_mod2.fb(i) for i in (0,1,5)]
+                self.assertEqual(orig_a, new_a)
+                self.assertEqual(orig_b, new_b)
+            finally:
+                # Remove from sys.path to avoid pollution
+                if str(base) in sys.path:
+                    sys.path.remove(str(base))
 
     def test_structural_similarity_filter_blocks_unrelated_pairs(self):
         code = """

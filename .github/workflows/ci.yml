@@ -28,6 +28,9 @@ jobs:
         run: |
           python -m coverage run -m unittest discover -v
           python -m coverage report --fail-under=85
+      - name: Enforce higher coverage for unification package
+        run: |
+          python -m coverage report --include="src/towel/unification/*" --fail-under=90
 
       - name: Generate coverage XML (artifact)
         if: always()
