@@ -137,3 +137,32 @@ Notes:
 ### Notes
 - Preserve existing behavior for class insertion; local function insertion applies only when deepest common scope is a FunctionDef.
 
+### Update (2025-11-05)
+
+#### Actions
+- Generalized scope selection to Deepest Common Enclosing (DCE) function using ancestry chains collected during analysis; prefer function-scope insertion over class/module when available.
+- Added adversarial tests in `tests/test_engine_adversarial.py`:
+	- `test_deepest_common_enclosing_function_is_chosen` (mixed-depth nesting).
+	- `test_dce_with_async_nested_functions_inserts_into_enclosing_async_outer`.
+	- `test_dce_with_class_method_nested_functions_inserts_into_method_scope`.
+- Verified runtime equivalence for each scenario and ensured helper placement avoids triple blank lines.
+- Ran full test suite: 544 tests OK.
+- Updated `docs/RELEASE_LOG.md` with a 2025-11-05 entry documenting the added DCE coverage.
+
+#### Results
+- Full suite: PASS (544 tests, 0 skipped).
+- Observational equivalence and baseline stability: green; no expected-output changes.
+- Async and class-method nested cases handled without engine changes beyond existing DCE/in-function insertion logic.
+- Conservative skip remains for proposals involving nonlocal closures to preserve semantics in closure-heavy examples.
+
+#### Notes
+- DCE computation: common prefix over outer→inner ancestry lists; choose the last matching name as the insertion function.
+- In-function insertion point: before executable statements (after docstrings and leading defs) to ensure binding before use.
+- Hygiene: still leveraging existing extractor’s global/nonlocal injection; consider augmenting with local-scope binding awareness for inserted helpers.
+
+#### Next steps
+- Add more DCE variants (mixed sync/async, multiple candidates at different depths, interleaved defs).
+- Enhance hygiene for function-scope insertion by explicitly incorporating target function’s local bindings to avoid collisions.
+- Investigate safe support for nonlocal closures; if feasible, add targeted tests and relax the conservative skip.
+
+
