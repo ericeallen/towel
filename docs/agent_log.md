@@ -113,3 +113,27 @@ Notes:
 	- Removed unnecessary ignores; minimized the need for casts; kept naming-operator handling precise.
 - No behavioral changes expected; re-ran unit tests touching unifier logic — still green.
 
+## Session (2025-11-05)
+
+- Acknowledgment: I have read CLAUDE_proposed.md and understand. Current date/time: Wed Nov  5 09:08:42 EST 2025. Agent log location: docs/agent_log.md
+
+### Goals
+- Extend engine to extract local functions: insert the extracted helper into the most specific enclosing function scope shared by the refactored sites.
+- Follow TDD: write failing tests first, then implement.
+
+### Hypotheses
+- Engine currently analyzes only module-level functions and class methods; nested FunctionDef/AsyncFunctionDef are not collected.
+- The insertion point should be the deepest common enclosing FunctionDef for same-file pairs; otherwise fall back to class-level (same-class methods) or module-level insertion.
+
+### Plan
+1) Add tests: nested functions inside an outer() function; expect extraction inserted inside outer() (not module-level); assert runtime equivalence.
+2) Run tests (expect failure).
+3) Implement:
+   - Analyze nested functions and capture their scope context.
+   - Compute deepest common enclosing function; carry in proposal (e.g., insert_into_function metadata).
+   - Insert inside function body with correct indentation and spacing (avoid triple blank lines).
+4) Re-run tests; iterate to green; commit and push.
+
+### Notes
+- Preserve existing behavior for class insertion; local function insertion applies only when deepest common scope is a FunctionDef.
+

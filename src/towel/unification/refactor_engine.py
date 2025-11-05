@@ -36,6 +36,8 @@ class CodeBlockPair:
     file_path2: Optional[str] = None  # For cross-file pairs
     class1_name: Optional[str] = None  # Enclosing class name if method
     class2_name: Optional[str] = None
+    enclosing_function1_name: Optional[str] = None  # Nearest enclosing function (if nested)
+    enclosing_function2_name: Optional[str] = None
     scope_analyzer1: Optional["ScopeAnalyzer"] = None
     scope_analyzer2: Optional["ScopeAnalyzer"] = None
     root_scope1: Optional["Scope"] = None
@@ -59,6 +61,8 @@ class RefactoringProposal:
     )  # Variables that extracted function returns
     # If provided, insert extracted function as a method of this class (same-file only)
     insert_into_class: Optional[str] = None
+    # If provided, insert extracted function inside this function's body (same-file only)
+    insert_into_function: Optional[str] = None
 
 
 class UnificationRefactorEngine:
@@ -191,9 +195,9 @@ class UnificationRefactorEngine:
             List of refactoring proposals
         """
         # Parse all files
-        # List items are tuples: (file_path, function_node, source, scope_analyzer, root_scope, class_name)
+        # List items are tuples: (file_path, function_node, source, scope_analyzer, root_scope, class_name, enclosing_function_name)
         all_functions: List[
-            Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str]]
+            Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str]]
         ] = []
 
         for file_path in file_paths:
@@ -209,27 +213,59 @@ class UnificationRefactorEngine:
             scope_analyzer = ScopeAnalyzer()
             root_scope = scope_analyzer.analyze(tree)
 
-            # Collect top-level functions
-            for node in tree.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    all_functions.append(
-                        (file_path, node, source, scope_analyzer, root_scope, None)
-                    )
+            # Walk the tree to collect functions at all nesting levels and capture enclosing class/function context
+            class _FuncCollector(ast.NodeVisitor):
+                def __init__(self):
+                    self.class_stack: list[Optional[str]] = [None]
+                    self.func_stack: list[Optional[str]] = [None]
 
-            # Collect methods within classes with class context
-            for node in tree.body:
-                if isinstance(node, ast.ClassDef):
-                    for stmt in node.body:
-                        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            all_functions.append(
-                                (file_path, stmt, source, scope_analyzer, root_scope, node.name)
-                            )
+                def visit_ClassDef(self, node: ast.ClassDef):
+                    self.class_stack.append(node.name)
+                    self.generic_visit(node)
+                    self.class_stack.pop()
+
+                def visit_FunctionDef(self, node: ast.FunctionDef):
+                    # Record this function
+                    all_functions.append(
+                        (
+                            file_path,
+                            node,
+                            source,
+                            scope_analyzer,
+                            root_scope,
+                            self.class_stack[-1],
+                            self.func_stack[-1],
+                        )
+                    )
+                    # Recurse with this as enclosing function
+                    self.func_stack.append(node.name)
+                    self.generic_visit(node)
+                    self.func_stack.pop()
+
+                def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+                    # Treat similarly to FunctionDef
+                    all_functions.append(
+                        (
+                            file_path,
+                            node,  # type: ignore[arg-type]
+                            source,
+                            scope_analyzer,
+                            root_scope,
+                            self.class_stack[-1],
+                            self.func_stack[-1],
+                        )
+                    )
+                    self.func_stack.append(node.name)  # type: ignore[attr-defined]
+                    self.generic_visit(node)
+                    self.func_stack.pop()
+
+            _FuncCollector().visit(tree)
 
         if len(all_functions) < 2:
             return []
 
         if verbose:
-            print(f"Parsed {len(all_functions)} top-level functions from {len(file_paths)} file(s)")
+            print(f"Parsed {len(all_functions)} functions (including nested) from {len(file_paths)} file(s)")
 
         # Find pairs of code blocks across all functions (including cross-file)
         block_pairs = self._find_block_pairs_multi_file(all_functions)
@@ -486,7 +522,7 @@ class UnificationRefactorEngine:
 
     def _find_block_pairs_multi_file(
         self,
-        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str]]],
+    all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str]]],
     ) -> List[CodeBlockPair]:
         """
         Find all non-overlapping pairs of code blocks across multiple files.
@@ -502,18 +538,26 @@ class UnificationRefactorEngine:
         # For each pair of functions (including across files)
         for i, entry1 in enumerate(all_functions):
             # Backward compatibility: allow 5-tuples (no class context)
-            if len(entry1) == 6:
+            if len(entry1) >= 7:
+                file1, func1, source1, analyzer1, scope1, class1, encl1 = entry1
+            elif len(entry1) == 6:
                 file1, func1, source1, analyzer1, scope1, class1 = entry1
+                encl1 = None
             else:
                 file1, func1, source1, analyzer1, scope1 = entry1
                 class1 = None
+                encl1 = None
 
             for entry2 in all_functions[i + 1 :]:
-                if len(entry2) == 6:
+                if len(entry2) >= 7:
+                    file2, func2, source2, analyzer2, scope2, class2, encl2 = entry2
+                elif len(entry2) == 6:
                     file2, func2, source2, analyzer2, scope2, class2 = entry2
+                    encl2 = None
                 else:
                     file2, func2, source2, analyzer2, scope2 = entry2
                     class2 = None
+                    encl2 = None
                 # Extract all code blocks from each function
                 blocks1 = self._extract_code_blocks(func1)
                 blocks2 = self._extract_code_blocks(func2)
@@ -545,6 +589,8 @@ class UnificationRefactorEngine:
                             file_path2=file2,
                             class1_name=class1,
                             class2_name=class2,
+                            enclosing_function1_name=encl1,
+                            enclosing_function2_name=encl2,
                             scope_analyzer1=analyzer1,
                             scope_analyzer2=analyzer2,
                             root_scope1=scope1,
@@ -559,7 +605,7 @@ class UnificationRefactorEngine:
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
-        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str]]],
+    all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str]]],
     ) -> Optional[RefactoringProposal]:
         """
         Try to refactor a pair of code blocks using unification (cross-file support).
@@ -1122,7 +1168,8 @@ class UnificationRefactorEngine:
         # Need to find the function nodes to check for orphans
         func1 = None
         func2 = None
-        for file_path, func, source, analyzer, scope, _ in all_functions:
+        for entry in all_functions:
+            file_path, func = entry[0], entry[1]
             if file_path == pair.file_path and func.name == pair.function1_name:
                 func1 = func
             if (
@@ -1197,7 +1244,7 @@ class UnificationRefactorEngine:
             except Exception:
                 return None
 
-        # Determine canonical file for extracted function
+    # Determine canonical file for extracted function
         # For cross-file: choose first file
         canonical_file = pair.file_path
 
@@ -1210,8 +1257,9 @@ class UnificationRefactorEngine:
         else:
             desc += f" and {pair.function2_name}"
 
-        # Default to module-level insertion; if same-file and same-class methods, insert into class
+    # Default to module-level insertion; if same-file and same-class methods, insert into class
         insert_into_class = None
+        insert_into_function = None
         if (
             pair.file_path2 is not None
             and pair.file_path2 == pair.file_path
@@ -1221,6 +1269,39 @@ class UnificationRefactorEngine:
         ):
             insert_into_class = pair.class1_name
 
+        # If both blocks come from functions nested within the SAME enclosing function in the SAME file,
+        # insert the helper inside that enclosing function's body.
+        if (
+            pair.file_path2 is not None
+            and pair.file_path2 == pair.file_path
+            and pair.enclosing_function1_name
+            and pair.enclosing_function2_name
+            and pair.enclosing_function1_name == pair.enclosing_function2_name
+        ):
+            insert_into_function = pair.enclosing_function1_name
+
+        # SAFETY: Avoid refactoring across closures with nonlocal variables for now.
+        # If the containing functions (func1/func2) declare any nonlocal variables, skip this proposal
+        # to preserve known semantics and baseline expectations (e.g., closure_adversarial.py).
+        try:
+            nonlocal_in_func1 = False
+            nonlocal_in_func2 = False
+            if pair.scope_analyzer1 and func1 is not None:
+                scope_id1 = pair.scope_analyzer1.node_scopes.get(func1)
+                if scope_id1:
+                    nlv1 = pair.scope_analyzer1.nonlocal_vars.get(scope_id1.scope_id, set())
+                    nonlocal_in_func1 = bool(nlv1)
+            if pair.scope_analyzer2 and func2 is not None:
+                scope_id2 = pair.scope_analyzer2.node_scopes.get(func2)
+                if scope_id2:
+                    nlv2 = pair.scope_analyzer2.nonlocal_vars.get(scope_id2.scope_id, set())
+                    nonlocal_in_func2 = bool(nlv2)
+            if nonlocal_in_func1 or nonlocal_in_func2:
+                return None
+        except Exception:
+            # On any analyzer lookup issue, be conservative and proceed without special handling
+            pass
+
         proposal = RefactoringProposal(
             file_path=canonical_file,
             extracted_function=func_def,
@@ -1229,6 +1310,7 @@ class UnificationRefactorEngine:
             parameters_count=len(substitution.param_expressions),
             return_variables=list(return_variables_block1),
             insert_into_class=insert_into_class,
+            insert_into_function=insert_into_function,
         )
 
         return proposal
@@ -1405,6 +1487,38 @@ class UnificationRefactorEngine:
                         if insert_at < len(lines) and lines[insert_at].strip():
                             suffix.append("\n")
                         lines[insert_at:insert_at] = prefix + indented + suffix
+                elif proposal.insert_into_function:
+                    func_code = ast.unparse(proposal.extracted_function)
+                    fn_lines = [line + "\n" for line in func_code.split("\n")]
+
+                    insert_info = self._find_function_insert_position_before_body_statements(
+                        "".join(lines), proposal.insert_into_function
+                    )
+                    if insert_info is None:
+                        # Fallback to module-level insertion if function not found
+                        func_lines = fn_lines
+                        insert_line = self._find_insert_position(lines)
+                        lines[insert_line:insert_line] = func_lines + ["\n", "\n"]
+                    else:
+                        insert_at_zero_based, indent = insert_info
+                        # Indent by one level beyond function indent
+                        indented = []
+                        inner_indent = indent + "    "
+                        for line in fn_lines:
+                            if line.strip():
+                                indented.append(inner_indent + line)
+                            else:
+                                indented.append(line)
+                        # Ensure spacing within function: avoid triple blank lines
+                        prefix = []
+                        if insert_at_zero_based > 0 and lines[insert_at_zero_based - 1].strip():
+                            prefix.append("\n")
+                        suffix = []
+                        if insert_at_zero_based < len(lines) and lines[insert_at_zero_based].strip():
+                            suffix.append("\n")
+                        lines[insert_at_zero_based:insert_at_zero_based] = (
+                            prefix + indented + suffix
+                        )
                 else:
                     func_code = ast.unparse(proposal.extracted_function)
                     func_lines = [line + "\n" for line in func_code.split("\n")]
@@ -1587,6 +1701,98 @@ class UnificationRefactorEngine:
                 self.generic_visit(node)
 
         locator = ClassLocator()
+        locator.visit(tree)
+        return locator.result
+
+    def _find_function_insert_position_before_body_statements(
+        self, source: str, function_name: str
+    ) -> Optional[Tuple[int, str]]:
+        """
+        Find an insertion position (0-based line index) inside the given function BEFORE
+        executable body statements (i.e., after any docstring and after any leading
+        nested defs), along with the function's indentation.
+
+        This ensures the inserted helper is bound before returns/calls are executed.
+        Returns (insert_line_index, function_indent_str) or None if function not found.
+        """
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return None
+
+        class FuncLocator(ast.NodeVisitor):
+            def __init__(self):
+                self.result: Optional[Tuple[int, str]] = None
+
+            def visit_FunctionDef(self, node: ast.FunctionDef):
+                if node.name == function_name:
+                    lines = source.splitlines()
+                    fn_line = lines[node.lineno - 1]
+                    indent = fn_line[: len(fn_line) - len(fn_line.lstrip())]
+                    # Determine start of body after optional docstring
+                    body = list(node.body)
+                    start_idx = 0
+                    if (
+                        body
+                        and isinstance(body[0], ast.Expr)
+                        and isinstance(body[0].value, ast.Constant)
+                        and isinstance(body[0].value.value, str)
+                    ):
+                        start_idx = 1
+                    # Advance past any leading nested defs
+                    insert_line = None
+                    last_def_end = None
+                    for i, stmt in enumerate(body[start_idx:], start=start_idx):
+                        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                            last_def_end = getattr(stmt, "end_lineno", stmt.lineno)
+                            continue
+                        # First non-def statement: insert before it
+                        insert_line = stmt.lineno - 1  # 0-based index
+                        break
+                    if insert_line is None:
+                        # All are defs or empty; insert after the last def or after signature line
+                        if last_def_end is not None:
+                            insert_line = last_def_end  # after last def
+                        else:
+                            # Insert at first body line (after signature), conservatively at node.lineno
+                            insert_line = node.lineno  # line after def header
+                    self.result = (insert_line, indent)
+                else:
+                    # Continue search in nested functions as well
+                    self.generic_visit(node)
+
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+                if node.name == function_name:
+                    lines = source.splitlines()
+                    fn_line = lines[node.lineno - 1]
+                    indent = fn_line[: len(fn_line) - len(fn_line.lstrip())]
+                    body = list(node.body)
+                    start_idx = 0
+                    if (
+                        body
+                        and isinstance(body[0], ast.Expr)
+                        and isinstance(body[0].value, ast.Constant)
+                        and isinstance(body[0].value.value, str)
+                    ):
+                        start_idx = 1
+                    insert_line = None
+                    last_def_end = None
+                    for i, stmt in enumerate(body[start_idx:], start=start_idx):
+                        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                            last_def_end = getattr(stmt, "end_lineno", stmt.lineno)
+                            continue
+                        insert_line = stmt.lineno - 1
+                        break
+                    if insert_line is None:
+                        if last_def_end is not None:
+                            insert_line = last_def_end
+                        else:
+                            insert_line = node.lineno
+                    self.result = (insert_line, indent)
+                else:
+                    self.generic_visit(node)
+
+        locator = FuncLocator()
         locator.visit(tree)
         return locator.result
 
