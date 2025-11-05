@@ -269,6 +269,218 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         self.assertTrue(found_local_insertion, "Did not find a proposal inserting helper into outer()")
 
+    def test_deepest_common_enclosing_function_is_chosen(self):
+        # Mixed-depth nesting: f.inner1.deep and f.inner2 share common ancestor f but not inner1/inner2.
+        # The extracted helper should be inserted into f (the deepest common ancestor), not at module
+        # scope and not inside inner1 or inner2 exclusively.
+        code = """
+        def f(a):
+            def inner1():
+                def deep(x):
+                    t = x + a
+                    u = t * 2
+                    return u
+                return deep(1)
+
+            def inner2(x):
+                t = x + a
+                u = t * 2
+                return u
+
+            return inner1() + inner2(3)
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+        ns = {}
+        exec(m.path.read_text(), ns)
+        orig = ns["f"](5)
+
+        engine = self._engine(min_lines=2)
+        props = engine.analyze_file(str(m.path))
+        self.assertTrue(props, "Expected a proposal in mixed-depth nesting case")
+
+        picked = None
+        new_src = None
+        for p in props:
+            out = engine.apply_refactoring(str(m.path), p)
+            mod = ast.parse(out)
+            fns = [n for n in mod.body if isinstance(n, ast.FunctionDef) and n.name == "f"]
+            if not fns:
+                continue
+            f_node = fns[0]
+            inner_names = {n.name for n in f_node.body if isinstance(n, ast.FunctionDef)}
+            top_level = {n.name for n in mod.body if isinstance(n, ast.FunctionDef)}
+            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+                picked = p
+                new_src = out
+                break
+
+        self.assertIsNotNone(picked, "No proposal inserted helper into the deepest common ancestor f")
+        ns2 = {}
+        exec(new_src, ns2)
+        self.assertEqual(orig, ns2["f"](5))
+
+    def test_dce_with_async_nested_functions_inserts_into_enclosing_async_outer(self):
+        # Async outer with two inner async functions sharing a duplicate block.
+        # Helper should be inserted into the async outer function body, not at module scope.
+        import asyncio
+
+        code = """
+        import asyncio
+
+        async def outer(a, b):
+            async def f1(x):
+                p = x + a
+                q = p * b
+                return q
+
+            async def f2(x):
+                p = x + a
+                q = p * b
+                return q
+
+            return await f1(3) + await f2(4)
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+
+        ns = {}
+        exec(m.path.read_text(), ns)
+        orig = asyncio.run(ns["outer"](2, 5))
+
+        engine = self._engine(min_lines=2)
+        proposals = engine.analyze_file(str(m.path))
+        self.assertTrue(proposals, "Expected a proposal for duplicate async inner function bodies")
+
+        found_local_insertion = False
+        for p in proposals:
+            new_src = engine.apply_refactoring(str(m.path), p)
+            mod = ast.parse(new_src)
+            outers = [n for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "outer"]
+            if not outers:
+                continue
+            outer_fn = outers[0]
+            inner_names = {n.name for n in outer_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            top_level_names = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if "extracted_func" in inner_names and "extracted_func" not in top_level_names:
+                ns2 = {}
+                exec(new_src, ns2)
+                new_val = asyncio.run(ns2["outer"](2, 5))
+                self.assertEqual(orig, new_val)
+                found_local_insertion = True
+                break
+
+        self.assertTrue(found_local_insertion, "Did not find a proposal inserting helper into async outer()")
+
+    def test_dce_with_class_method_nested_functions_inserts_into_method_scope(self):
+        # Inner functions inside a class method share a duplicate block; helper should be
+        # inserted into the method scope (function inside class), not at class or module level.
+        code = """
+        class C:
+            def m(self, a, b):
+                def f1(x):
+                    p = x + a
+                    q = p * b
+                    return q
+
+                def f2(x):
+                    p = x + a
+                    q = p * b
+                    return q
+
+                return f1(2) + f2(3)
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+
+        ns = {}
+        exec(m.path.read_text(), ns)
+        orig = ns["C"]().m(2, 5)
+
+        engine = self._engine(min_lines=2)
+        proposals = engine.analyze_file(str(m.path))
+        self.assertTrue(proposals, "Expected a proposal for duplicate inner function bodies in a method")
+
+        found_method_insertion = False
+        picked_src = None
+        for p in proposals:
+            new_src = engine.apply_refactoring(str(m.path), p)
+            mod = ast.parse(new_src)
+            classes = [n for n in mod.body if isinstance(n, ast.ClassDef) and n.name == "C"]
+            if not classes:
+                continue
+            cls = classes[0]
+            methods = [n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "m"]
+            if not methods:
+                continue
+            m_fn = methods[0]
+            inner_names = {n.name for n in m_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            class_level_names = {n.name for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            top_level_names = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if "extracted_func" in inner_names and "extracted_func" not in class_level_names and "extracted_func" not in top_level_names:
+                ns2 = {}
+                exec(new_src, ns2)
+                new_val = ns2["C"]().m(2, 5)
+                self.assertEqual(orig, new_val)
+                found_method_insertion = True
+                picked_src = new_src
+                break
+
+        self.assertTrue(found_method_insertion, "Did not find a proposal inserting helper into method scope C.m")
+
+    def test_deepest_common_enclosing_inner_function_is_chosen(self):
+        # Deepest common ancestor is an inner function (not the outermost):
+        # f -> common -> d1 and f -> common -> d2 have duplicate blocks; helper should be
+        # inserted into 'common', not into d1/d2 and not into f.
+        code = """
+        def f(a):
+            def common(b):
+                def d1(x):
+                    t = x + a + b
+                    u = t * 2
+                    return u
+                def d2(x):
+                    t = x + a + b
+                    u = t * 2
+                    return u
+                return d1(1) + d2(2)
+            return common(3)
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+
+        ns = {}
+        exec(m.path.read_text(), ns)
+        orig = ns["f"](5)
+
+        engine = self._engine(min_lines=2)
+        props = engine.analyze_file(str(m.path))
+        self.assertTrue(props, "Expected a proposal in inner-common ancestor case")
+
+        found_common_insertion = False
+        for p in props:
+            out = engine.apply_refactoring(str(m.path), p)
+            mod = ast.parse(out)
+            fns = [n for n in mod.body if isinstance(n, ast.FunctionDef) and n.name == "f"]
+            if not fns:
+                continue
+            f_node = fns[0]
+            commons = [n for n in f_node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "common"]
+            if not commons:
+                continue
+            common_fn = commons[0]
+            # Helper should be in 'common' body
+            inner_names = {n.name for n in common_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            top_level = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+                ns2 = {}
+                exec(out, ns2)
+                self.assertEqual(orig, ns2["f"](5))
+                found_common_insertion = True
+                break
+
+        self.assertTrue(found_common_insertion, "No proposal inserted helper into the inner common ancestor function")
+
 
 class TestUnifierExtractorCalleeThunk(unittest.TestCase):
     def test_callee_parameter_is_wrapped_in_thunk(self):
