@@ -13,47 +13,47 @@ counter = 0
 
 def test_global_modify_a():
     """Function that modifies global variable."""
-    return __extracted_func_1173()
+    return __extracted_func_3()
 
 
 def test_global_modify_b():
     """Duplicate with global modification."""
-    return __extracted_func_1173()
+    return __extracted_func_3()
 
 
 def test_nonlocal_a():
     """Function using nonlocal."""
-    return __extracted_func_1153()
+    return __extracted_func_1()
 
 
 def test_nonlocal_b():
     """Duplicate with nonlocal."""
-    return __extracted_func_1153()
+    return __extracted_func_1()
 
 
 def test_nested_nonlocal_a():
     """Nested function with nonlocal."""
 
-    return __extracted_func_1138()
+    return extracted_func()
 
 
 def test_nested_nonlocal_b():
     """Duplicate nested nonlocal."""
 
-    return __extracted_func_1138()
+    return extracted_func()
 
 
 def test_global_and_local_a(items):
     """Mix of global and local variables."""
-    return __extracted_func_1169(items)
+    return __extracted_func_2(items)
 
 
 def test_global_and_local_b(items):
     """Duplicate mix of global and local."""
-    return __extracted_func_1169(items)
+    return __extracted_func_2(items)
 
 
-def __extracted_func_1138():
+def extracted_func():
 
     def outer():
         count = 0
@@ -73,7 +73,7 @@ def __extracted_func_1138():
     return g()
 
 
-def __extracted_func_1153():
+def __extracted_func_1():
     total = 0
 
     def increment(value):
@@ -84,7 +84,7 @@ def __extracted_func_1153():
     return results
 
 
-def __extracted_func_1169(items):
+def __extracted_func_2(items):
     global counter
     local_sum = 0
     for item in items:
@@ -93,7 +93,7 @@ def __extracted_func_1169(items):
     return (counter, local_sum)
 
 
-def __extracted_func_1173():
+def __extracted_func_3():
     global counter
     result = []
     for i in range(5):

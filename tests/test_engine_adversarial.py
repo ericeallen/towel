@@ -481,6 +481,188 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         self.assertTrue(found_common_insertion, "No proposal inserted helper into the inner common ancestor function")
 
+    def test_dce_mixed_async_sync_within_same_async_outer(self):
+        # Mixed async/sync inner functions under an async outer. The shared block should extract
+        # into the async outer function scope. Validate runtime equivalence.
+        import asyncio
+
+        code = """
+        import asyncio
+
+        async def outer(a, b):
+            async def f1(x):
+                p = x + a
+                q = p * b
+                return q
+
+            def f2(x):
+                p = x + a
+                q = p * b
+                return q
+
+            return await f1(3) + f2(4)
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+
+        ns = {}
+        exec(m.path.read_text(), ns)
+        orig = asyncio.run(ns["outer"](2, 5))
+
+        engine = self._engine(min_lines=2)
+        props = engine.analyze_file(str(m.path))
+        self.assertTrue(props, "Expected a proposal for mixed async/sync inner functions")
+
+        found_insertion = False
+        for p in props:
+            out = engine.apply_refactoring(str(m.path), p)
+            mod = ast.parse(out)
+            outers = [n for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "outer"]
+            if not outers:
+                continue
+            outer_fn = outers[0]
+            inner_names = {n.name for n in outer_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            top_level = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+                ns2 = {}
+                exec(out, ns2)
+                self.assertEqual(orig, asyncio.run(ns2["outer"](2, 5)))
+                found_insertion = True
+                break
+
+        self.assertTrue(found_insertion, "No proposal inserted helper into async outer() for mixed async/sync case")
+
+    def test_dce_multiple_candidates_interleaved_defs(self):
+        # Multiple duplicate pairs interleaved at different depths; ensure at least one proposal
+        # targets the correct DCE and runtime equivalence holds for the outer function.
+        code = """
+        def outer(a):
+            def g1(x):
+                t = x + a
+                u = t * 2
+                return u
+
+            def mid():
+                def g2(x):
+                    t = x + a
+                    u = t * 2
+                    return u
+                def h1(y):
+                    r = y - a
+                    s = r * 3
+                    return s
+                def h2(y):
+                    r = y - a
+                    s = r * 3
+                    return s
+                return g2(2) + h1(5) + h2(6)
+
+            return g1(1) + mid()
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+
+        ns = {}
+        exec(m.path.read_text(), ns)
+        orig = ns["outer"](7)
+
+        engine = self._engine(min_lines=2)
+        props = engine.analyze_file(str(m.path))
+        self.assertTrue(props, "Expected proposals for interleaved nested duplicate blocks")
+
+        # Look for a proposal that inserts into 'outer' (DCE for g1 vs g2)
+        found_outer = False
+        new_src = None
+        for p in props:
+            out = engine.apply_refactoring(str(m.path), p)
+            mod = ast.parse(out)
+            outers = [n for n in mod.body if isinstance(n, ast.FunctionDef) and n.name == "outer"]
+            if not outers:
+                continue
+            outer_fn = outers[0]
+            inner_names = {n.name for n in outer_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            top_level = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+                found_outer = True
+                new_src = out
+                break
+
+        self.assertTrue(found_outer, "Expected at least one proposal inserting helper into outer()")
+        ns2 = {}
+        exec(new_src, ns2)
+        self.assertEqual(orig, ns2["outer"](7))
+
+    def test_dce_nonlocal_skips_and_global_injection(self):
+        # Nonlocal case should be skipped conservatively; Global case should inject a global decl
+        # into the extracted helper inserted into function scope.
+        # Nonlocal scenario
+        code_nonlocal = """
+        def outer():
+            x = 0
+            def f1():
+                nonlocal x
+                t = x + 1
+                u = t * 2
+                return u
+            def f2():
+                nonlocal x
+                t = x + 1
+                u = t * 2
+                return u
+            return f1() + f2()
+        """
+        m1 = TempModule(code_nonlocal)
+        self.addCleanup(m1.cleanup)
+        engine = self._engine(min_lines=2)
+        props1 = engine.analyze_file(str(m1.path))
+        # Expect no proposals due to nonlocal conservative skip
+        self.assertEqual(props1, [], "Expected proposals to be skipped when nonlocal is present")
+
+        # Global scenario
+        code_global = """
+        G = 0
+        def outer(a):
+            def f1(x):
+                global G
+                t = x + a
+                G = t
+                return t
+            def f2(x):
+                global G
+                t = x + a
+                G = t
+                return t
+            return f1(1) + f2(2)
+        """
+        m2 = TempModule(code_global)
+        self.addCleanup(m2.cleanup)
+
+        ns = {}
+        exec(m2.path.read_text(), ns)
+        orig = ns["outer"](5)
+
+        props2 = engine.analyze_file(str(m2.path))
+        self.assertTrue(props2, "Expected proposals when using global declarations")
+        found = False
+        for p in props2:
+            out = engine.apply_refactoring(str(m2.path), p)
+            # Ensure extracted helper inside outer and contains 'global G'
+            self.assertIn("global G", out)
+            mod = ast.parse(out)
+            outers = [n for n in mod.body if isinstance(n, ast.FunctionDef) and n.name == "outer"]
+            if not outers:
+                continue
+            outer_fn = outers[0]
+            inner_names = {n.name for n in outer_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            top_level = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+                ns2 = {}
+                exec(out, ns2)
+                self.assertEqual(orig, ns2["outer"](5))
+                found = True
+                break
+        self.assertTrue(found, "Expected a proposal inserting helper with global injection into outer()")
+
 
 class TestUnifierExtractorCalleeThunk(unittest.TestCase):
     def test_callee_parameter_is_wrapped_in_thunk(self):
