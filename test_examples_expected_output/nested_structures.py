@@ -8,32 +8,32 @@ lists, dicts, comprehensions, and deeply nested expressions.
 
 def process_nested_dict_v1(data, config):
     """Version 1: Nested dictionary access."""
-    return __extracted_func_1575('user', 'profile', 'settings', 'threshold', config, data)
+    return __extracted_func_3('user', 'profile', 'settings', 'threshold', config, data)
 
 
 def process_nested_dict_v2(data, config):
     """Version 2: Different nested path, same pattern."""
-    return __extracted_func_1575('customer', 'account', 'preferences', 'limit', config, data)
+    return __extracted_func_3('customer', 'account', 'preferences', 'limit', config, data)
 
 
 def transform_with_comprehension_a(data, filter_func):
     """Version A: List comprehension as expression."""
-    return __extracted_func_1595(2, data, filter_func)
+    return __extracted_func_5(2, data, filter_func)
 
 
 def transform_with_comprehension_b(data, filter_func):
     """Version B: Different multiplier in comprehension."""
-    return __extracted_func_1595(3, data, filter_func)
+    return __extracted_func_5(3, data, filter_func)
 
 
 def build_complex_structure_v1(items, metadata):
     """Version 1: Builds complex nested structure."""
-    return __extracted_func_1526(2, items)
+    return __extracted_func_1(2, items)
 
 
 def build_complex_structure_v2(items, metadata):
     """Version 2: Different multiplier, same structure building."""
-    return __extracted_func_1526(3, items)
+    return __extracted_func_1(3, items)
 
 
 def filter_nested_lists_a(matrix, threshold):
@@ -42,7 +42,7 @@ def filter_nested_lists_a(matrix, threshold):
     for row in matrix:
         # Nested list comprehension and filtering
         filtered_row = [x for x in row if x > threshold]
-        __extracted_func_1599(filtered_row, result)
+        __extracted_func_6(filtered_row, result)
     return result
 
 
@@ -52,18 +52,18 @@ def filter_nested_lists_b(matrix, threshold):
     for row in matrix:
         # Same nesting pattern, different operation
         filtered_row = [x for x in row if x < threshold]
-        __extracted_func_1599(filtered_row, result)
+        __extracted_func_6(filtered_row, result)
     return result
 
 
 def merge_nested_dicts_v1(dict1, dict2, merger):
     """Version 1: Deep dictionary merging."""
-    return __extracted_func_1499('a', 'b', 'values', dict1, dict2, merger)
+    return extracted_func('a', 'b', 'values', dict1, dict2, merger)
 
 
 def merge_nested_dicts_v2(dict1, dict2, merger):
     """Version 2: Different key names, same merge pattern."""
-    return __extracted_func_1499('first', 'second', 'data', dict1, dict2, merger)
+    return extracted_func('first', 'second', 'data', dict1, dict2, merger)
 
 
 def process_mixed_types_a(data, converter):
@@ -72,7 +72,7 @@ def process_mixed_types_a(data, converter):
 
     for item in data:
         # Type checking and nested appends
-        __extracted_func_1593(lambda *args, **kwargs: item.upper(*args, **kwargs), 2, item, output)
+        __extracted_func_4(lambda *args, **kwargs: item.upper(*args, **kwargs), 2, item, output)
 
     return output
 
@@ -83,22 +83,22 @@ def process_mixed_types_b(data, converter):
 
     for item in data:
         # Same type checking, different multiplier
-        __extracted_func_1593(lambda *args, **kwargs: item.lower(*args, **kwargs), 3, item, output)
+        __extracted_func_4(lambda *args, **kwargs: item.lower(*args, **kwargs), 3, item, output)
 
     return output
 
 
 def chain_nested_operations_v1(data, processor):
     """Version 1: Chained operations on nested structures."""
-    return __extracted_func_1567(2, data, processor)
+    return __extracted_func_2(2, data, processor)
 
 
 def chain_nested_operations_v2(data, processor):
     """Version 2: Different multiplier, same chaining."""
-    return __extracted_func_1567(3, data, processor)
+    return __extracted_func_2(3, data, processor)
 
 
-def __extracted_func_1499(__param_0, __param_1, __param_2, dict1, dict2, merger):
+def extracted_func(__param_0, __param_1, __param_2, dict1, dict2, merger):
     result = {}
     for key in dict1.keys():
         if key in dict2:
@@ -108,7 +108,7 @@ def __extracted_func_1499(__param_0, __param_1, __param_2, dict1, dict2, merger)
     return result
 
 
-def __extracted_func_1526(__param_0, items):
+def __extracted_func_1(__param_0, items):
     output = {'data': [], 'meta': {'total': 0, 'categories': {}}}
     for item in items:
         category = item['category']
@@ -121,7 +121,7 @@ def __extracted_func_1526(__param_0, items):
     return output
 
 
-def __extracted_func_1567(__param_0, data, processor):
+def __extracted_func_2(__param_0, data, processor):
     result = []
     for item in data:
         stage1 = {k: v * __param_0 for k, v in item.items()}
@@ -132,7 +132,7 @@ def __extracted_func_1567(__param_0, data, processor):
     return result
 
 
-def __extracted_func_1575(__param_0, __param_1, __param_2, __param_3, config, data):
+def __extracted_func_3(__param_0, __param_1, __param_2, __param_3, config, data):
     results = []
     for item in data:
         value = item[__param_0][__param_1][__param_2][__param_3]
@@ -143,7 +143,7 @@ def __extracted_func_1575(__param_0, __param_1, __param_2, __param_3, config, da
     return results
 
 
-def __extracted_func_1593(__param_0, __param_1, item, output):
+def __extracted_func_4(__param_0, __param_1, item, output):
     if isinstance(item, str):
         output['strings'].append(__param_0())
     elif isinstance(item, (int, float)):
@@ -153,14 +153,14 @@ def __extracted_func_1593(__param_0, __param_1, item, output):
         output['lists'].append([x * __param_1 for x in item])
 
 
-def __extracted_func_1595(__param_0, data, filter_func):
+def __extracted_func_5(__param_0, data, filter_func):
     processed = [x * __param_0 for x in data if x > 0]
     filtered = [item for item in processed if filter_func(item)]
     result = {'values': filtered, 'count': len(filtered), 'sum': sum(filtered)}
     return result
 
 
-def __extracted_func_1599(filtered_row, result):
+def __extracted_func_6(filtered_row, result):
     processed = [x ** 2 for x in filtered_row]
     if sum(processed) > 100:
         result.append(processed)

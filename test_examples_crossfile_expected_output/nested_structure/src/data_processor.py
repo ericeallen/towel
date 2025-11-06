@@ -1,13 +1,13 @@
 """
 Data processing module.
 """
-from lib.report_generator import __extracted_func_3482
+from lib.report_generator import extracted_func
 
 
 def calculate_statistics(values):
     """Calculate statistics for a list of values."""
     # Statistics calculation (DUPLICATE across subdirectories!)
-    return __extracted_func_3482(values)
+    return extracted_func(values)
 
 
 def process_data(data_list):

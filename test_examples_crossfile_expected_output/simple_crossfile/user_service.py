@@ -1,13 +1,13 @@
 """
 User service module.
 """
-from admin_service import __extracted_func_3490
+from admin_service import extracted_func
 
 
 def validate_user_email(email):
     """Validate user email format."""
     # Validation logic (DUPLICATE across files!)
-    return __extracted_func_3490(email)
+    return extracted_func(email)
 
 
 def create_user(name, email):

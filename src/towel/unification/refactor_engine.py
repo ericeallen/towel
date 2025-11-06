@@ -965,8 +965,80 @@ class UnificationRefactorEngine:
             print("  ✓ Unification successful")
             print(f"  Substitution: {substitution}")
 
-        # Get enclosing names to avoid shadowing
-        enclosing_names = set(root_scope.bindings.keys())
+        # Pre-compute the deepest common enclosing function (for same-file cases)
+        dce_insert_func: Optional[str] = None
+        try:
+            same_file_ctx = pair.file_path2 is not None and pair.file_path2 == pair.file_path
+            if same_file_ctx and pair.function1_ancestry is not None and pair.function2_ancestry is not None:
+                def _deepest_common_pre(anc1: List[str], anc2: List[str]) -> Optional[str]:
+                    if not anc1 or not anc2:
+                        return None
+                    dce = None
+                    for a, b in zip(anc1, anc2):
+                        if a == b:
+                            dce = a
+                        else:
+                            break
+                    return dce
+
+                dce_insert_func = _deepest_common_pre(
+                    pair.function1_ancestry or [], pair.function2_ancestry or []
+                )
+        except Exception:
+            dce_insert_func = None
+
+        # Get enclosing names to avoid shadowing (module-level by default)
+        enclosing_names = set(root_scope.bindings.keys()) if root_scope else set()
+        # If we plan to insert into a specific function scope (DCE), enrich hygiene set with that
+        # function's local bindings to avoid name collisions
+        if dce_insert_func:
+            try:
+                for (fpath, fn, _src, analyzer, rscope, _cls, _encl, _anc) in all_functions:
+                    if fpath == (pair.file_path2 or pair.file_path) and fn.name == dce_insert_func:
+                        func_scope = analyzer.node_scopes.get(fn)
+                        if func_scope is not None:
+                            enclosing_names.update(func_scope.bindings.keys())
+                        break
+            except Exception:
+                # Best effort only
+                pass
+        # Hygiene improvement: if we'll insert into a specific function scope (DCE),
+        # include that function's local bindings to avoid name collisions.
+        try:
+            same_file_for_hygiene = (
+                pair.file_path2 is not None and pair.file_path2 == pair.file_path
+            )
+            def _deepest_common_local(anc1: List[str] | None, anc2: List[str] | None) -> Optional[str]:
+                if not anc1 or not anc2:
+                    return None
+                dce_name = None
+                for a, b in zip(anc1, anc2):
+                    if a == b:
+                        dce_name = a
+                    else:
+                        break
+                return dce_name
+            target_insert_fn: Optional[str] = None
+            if same_file_for_hygiene:
+                target_insert_fn = _deepest_common_local(
+                    pair.function1_ancestry, pair.function2_ancestry
+                )
+            if target_insert_fn:
+                # Locate the target function node and its scope analyzer for this file
+                target_func_node = None
+                target_analyzer: Optional[ScopeAnalyzer] = None
+                for (fpath, fn, _src, analyzer, _rscope, _cls, _encl, _anc) in all_functions:
+                    if fpath == pair.file_path and fn.name == target_insert_fn:
+                        target_func_node = fn
+                        target_analyzer = analyzer
+                        break
+                if target_func_node is not None and target_analyzer is not None:
+                    func_scope = target_analyzer.node_scopes.get(target_func_node)
+                    if func_scope is not None:
+                        enclosing_names.update(func_scope.bindings.keys())
+        except Exception:
+            # Best-effort only; if anything goes wrong, proceed with module-level names
+            pass
 
         # Compute free variables for both blocks (variables used but not defined in each block)
         # Use block1's free variables to derive parameters for the extracted function,
@@ -1090,69 +1162,74 @@ class UnificationRefactorEngine:
         nonlocals_to_declare_in_extracted: Set[str] = set()
 
         if func1_scope_id is not None:
-            # Check if any free variables are global or nonlocal in this scope
+            # Check if any variables relevant to this block are global or nonlocal in this scope
             global_vars = scope_analyzer.global_vars.get(func1_scope_id, set())
             nonlocal_vars = scope_analyzer.nonlocal_vars.get(func1_scope_id, set())
+
+            # For parameterization safety: if a free variable is declared global/nonlocal, do not parameterize it
             problematic = free_vars & (global_vars | nonlocal_vars)
-            if problematic:
-                assigned_names: Set[str] = set()
-                declared_global_in_block: Set[str] = set()
-                declared_nonlocal_in_block: Set[str] = set()
 
-                class AssignTargetVisitor(ast.NodeVisitor):
-                    def visit_Assign(self, node):
-                        for t in node.targets:
-                            if isinstance(t, ast.Name):
-                                assigned_names.add(t.id)
-                        self.generic_visit(node)
+            # Collect assignment targets and explicit decls inside the template blocks
+            assigned_names: Set[str] = set()
+            declared_global_in_block: Set[str] = set()
+            declared_nonlocal_in_block: Set[str] = set()
 
-                    def visit_AugAssign(self, node):
-                        if isinstance(node.target, ast.Name):
-                            assigned_names.add(node.target.id)
-                        self.generic_visit(node)
+            class AssignTargetVisitor(ast.NodeVisitor):
+                def visit_Assign(self, node):
+                    for t in node.targets:
+                        if isinstance(t, ast.Name):
+                            assigned_names.add(t.id)
+                    self.generic_visit(node)
 
-                    def visit_AnnAssign(self, node):
-                        if isinstance(node.target, ast.Name):
-                            assigned_names.add(node.target.id)
-                        self.generic_visit(node)
+                def visit_AugAssign(self, node):
+                    if isinstance(node.target, ast.Name):
+                        assigned_names.add(node.target.id)
+                    self.generic_visit(node)
 
-                    def visit_Global(self, node):
-                        for n in node.names:
-                            declared_global_in_block.add(n)
+                def visit_AnnAssign(self, node):
+                    if isinstance(node.target, ast.Name):
+                        assigned_names.add(node.target.id)
+                    self.generic_visit(node)
 
-                    def visit_Nonlocal(self, node):
-                        for n in node.names:
-                            declared_nonlocal_in_block.add(n)
+                def visit_Global(self, node):
+                    for n in node.names:
+                        declared_global_in_block.add(n)
 
-                    def visit_FunctionDef(self, node):
-                        # Don't descend into nested functions
-                        pass
+                def visit_Nonlocal(self, node):
+                    for n in node.names:
+                        declared_nonlocal_in_block.add(n)
 
-                    def visit_AsyncFunctionDef(self, node):
-                        # Don't descend into nested async functions
-                        pass
+                def visit_FunctionDef(self, node):
+                    # Don't descend into nested functions
+                    pass
 
-                v = AssignTargetVisitor()
-                for n in pair.block1_nodes:
-                    v.visit(n)
-                for n in pair.block2_nodes:
-                    v.visit(n)
+                def visit_AsyncFunctionDef(self, node):
+                    # Don't descend into nested async functions
+                    pass
 
-                # Names that are assigned within the block and are global/nonlocal in the enclosing function
-                assigned_problematic = assigned_names & problematic
+            v = AssignTargetVisitor()
+            for n in pair.block1_nodes:
+                v.visit(n)
+            for n in pair.block2_nodes:
+                v.visit(n)
 
-                # For assigned globals/nonlocals that weren't explicitly declared within the block,
-                # promote the declaration into the extracted function body.
-                globals_to_declare_in_extracted = (
-                    assigned_problematic & global_vars
-                ) - declared_global_in_block
-                nonlocals_to_declare_in_extracted = (
-                    assigned_problematic & nonlocal_vars
-                ) - declared_nonlocal_in_block
+            # Names that are assigned within the block and are global/nonlocal in the enclosing function
+            # MUST be declared in the extracted helper to preserve assignment semantics,
+            # even if they are not free variables of the original block.
+            assigned_problematic_any = (assigned_names & (global_vars | nonlocal_vars))
 
-                # Do not parameterize these globals/nonlocals; let them remain free
-                # so the extracted function references the outer binding.
-                free_vars -= problematic
+            # For assigned globals/nonlocals that weren't explicitly declared within the block,
+            # promote the declaration into the extracted function body.
+            globals_to_declare_in_extracted = (
+                assigned_problematic_any & global_vars
+            ) - declared_global_in_block
+            nonlocals_to_declare_in_extracted = (
+                assigned_problematic_any & nonlocal_vars
+            ) - declared_nonlocal_in_block
+
+            # Do not parameterize free variables that are global/nonlocal; let them remain free
+            # so the extracted function references the outer binding.
+            free_vars -= problematic
 
         # Extract function
         try:
@@ -1267,11 +1344,12 @@ class UnificationRefactorEngine:
         else:
             desc += f" and {pair.function2_name}"
 
-        # Default to module-level insertion; when possible insert into deepest common enclosing function.
+    # Default to module-level insertion; when possible insert into deepest common enclosing function.
         insert_into_class = None
         insert_into_function = None
 
-        same_file = pair.file_path2 is not None and pair.file_path2 == pair.file_path
+        # Consider pairs from the same file even if file_path2 is None (same-file pairing)
+        same_file = (pair.file_path2 is None) or (pair.file_path2 == pair.file_path)
 
         # Compute deepest common enclosing function (DCE) if same file and both have ancestry
         def _deepest_common(anc1: List[str], anc2: List[str]) -> Optional[str]:

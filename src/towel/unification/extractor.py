@@ -54,6 +54,10 @@ class HygienicExtractor:
         Returns:
             Tuple of (function AST node, parameter order dict)
         """
+        # Reset name usage per extraction to keep function names stable across proposals
+        # and avoid cross-proposal suffix inflation.
+        self.used_names.clear()
+
         if return_variables is None:
             return_variables = []
         # Ensure function name doesn't shadow

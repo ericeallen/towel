@@ -6,7 +6,7 @@ Admin service module.
 def validate_admin_email(email):
     """Validate admin email format."""
     # Validation logic (DUPLICATE across files!)
-    return __extracted_func_3490(email)
+    return extracted_func(email)
 
 
 def create_admin(name, email, permissions):
@@ -16,7 +16,7 @@ def create_admin(name, email, permissions):
     return {"name": name, "email": email, "active": True, "permissions": permissions}
 
 
-def __extracted_func_3490(email):
+def extracted_func(email):
     if not email:
         return False
     if '@' not in email:

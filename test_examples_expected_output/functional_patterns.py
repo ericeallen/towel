@@ -9,42 +9,42 @@ map/filter/reduce patterns, and functional composition.
 def apply_transformation_v1(data, multiplier):
     """Version 1: Lambda with captured variable."""
     # Lambda that captures multiplier
-    return __extracted_func_1106(10, data, multiplier)
+    return __extracted_func_8(10, data, multiplier)
 
 
 def apply_transformation_v2(data, multiplier):
     """Version 2: Different offset, same lambda pattern."""
     # Same pattern, different offset
-    return __extracted_func_1106(20, data, multiplier)
+    return __extracted_func_8(20, data, multiplier)
 
 
 def reduce_with_lambda_a(values, initial, combiner):
     """Version A: Reduce with lambda."""
-    return __extracted_func_1011(10, initial, values)
+    return __extracted_func_5(10, initial, values)
 
 
 def reduce_with_lambda_b(values, initial, combiner):
     """Version B: Different threshold, same reduce pattern."""
-    return __extracted_func_1011(20, initial, values)
+    return __extracted_func_5(20, initial, values)
 
 
 def chain_functional_ops_v1(data, filter_func, map_func):
     """Version 1: Chained functional operations."""
     # Functional pipeline
-    return __extracted_func_959(2, data, filter_func, map_func)
+    return __extracted_func_4(2, data, filter_func, map_func)
 
 
 def chain_functional_ops_v2(data, filter_func, map_func):
     """Version 2: Different multiplier, same pipeline."""
     # Same pipeline, different multiplier
-    return __extracted_func_959(3, data, filter_func, map_func)
+    return __extracted_func_4(3, data, filter_func, map_func)
 
 
 def higher_order_function_a(data, threshold):
     """Version A: Returns and uses functions."""
 
     # Create higher-order functions
-    return __extracted_func_540(data, threshold)
+    return extracted_func(data, threshold)
 
 
 def higher_order_function_b(data, threshold):
@@ -54,79 +54,79 @@ def higher_order_function_b(data, threshold):
     def make_validator(limit):
         return lambda x: x > limit and x < limit * 10
 
-    return __extracted_func_1055(10, data, make_validator, threshold)
+    return __extracted_func_6(10, data, make_validator, threshold)
 
 
 def higher_order_function_c(data, threshold):
     """Version C: Same as A but with identical usage (no parameter differences)."""
 
     # Create higher-order functions
-    return __extracted_func_540(data, threshold)
+    return extracted_func(data, threshold)
 
 
 def higher_order_function_d(data, threshold):
     """Version D: Same as C - identical nested function usage."""
 
     # Create higher-order functions
-    return __extracted_func_836(data, threshold)
+    return __extracted_func_2(data, threshold)
 
 
 def compose_functions_v1(data, f, g, h):
     """Version 1: Function composition."""
     # Compose functions
-    return __extracted_func_920(2, data, f, g, h)
+    return __extracted_func_3(2, data, f, g, h)
 
 
 def compose_functions_v2(data, f, g, h):
     """Version 2: Different multiplier, same composition."""
     # Same composition
-    return __extracted_func_920(3, data, f, g, h)
+    return __extracted_func_3(3, data, f, g, h)
 
 
 def partial_application_a(values, base_func, modifier):
     """Version A: Partial function application."""
     # Partial application
-    return __extracted_func_1119('config1', base_func, modifier, values)
+    return __extracted_func_9('config1', base_func, modifier, values)
 
 
 def partial_application_b(values, base_func, modifier):
     """Version B: Different config, same partial application."""
     # Same partial application pattern
-    return __extracted_func_1119('config2', base_func, modifier, values)
+    return __extracted_func_9('config2', base_func, modifier, values)
 
 
 def curry_functions_v1(data, operation, param1, param2):
     """Version 1: Currying pattern."""
     # Curried functions
-    return __extracted_func_753(2, data, operation, param1, param2)
+    return __extracted_func_1(2, data, operation, param1, param2)
 
 
 def curry_functions_v2(data, operation, param1, param2):
     """Version 2: Different multiplier, same currying."""
     # Same currying pattern
-    return __extracted_func_753(3, data, operation, param1, param2)
+    return __extracted_func_1(3, data, operation, param1, param2)
 
 
 def generator_with_lambda_a(data, predicate):
     """Version A: Generator with lambda."""
     # Generator expression with lambda
     transformed = (item * 2 for item in data if predicate(item))
-    return __extracted_func_1098(transformed)
+    return __extracted_func_7(transformed)
 
 
 def generator_with_lambda_b(data, predicate):
     """Version B: Different multiplier, same generator pattern."""
     # Same generator pattern
     transformed = (item * 3 for item in data if predicate(item))
-    return __extracted_func_1098(transformed)
+    return __extracted_func_7(transformed)
 
 
-def __extracted_func_540(data, threshold):
+def extracted_func(data, threshold):
 
-    return __extracted_func_836(data, threshold)
+    return __extracted_func_2(data, threshold)
 
 
-def __extracted_func_753(__param_0, data, operation, param1, param2):
+def __extracted_func_1(__param_0, data, operation, param1, param2):
     curried = lambda a: lambda b: lambda c: operation(a, b, c)
     stage1 = curried(param1)
     stage2 = stage1(param2)
@@ -138,15 +138,15 @@ def __extracted_func_753(__param_0, data, operation, param1, param2):
     return results
 
 
-def __extracted_func_836(data, threshold):
+def __extracted_func_2(data, threshold):
 
     def make_validator(limit):
         return lambda x: x > limit and x < limit * 10
 
-    return __extracted_func_1055(5, data, make_validator, threshold)
+    return __extracted_func_6(5, data, make_validator, threshold)
 
 
-def __extracted_func_920(__param_0, data, f, g, h):
+def __extracted_func_3(__param_0, data, f, g, h):
     compose = lambda x: h(g(f(x)))
     results = []
     for item in data:
@@ -159,7 +159,7 @@ def __extracted_func_920(__param_0, data, f, g, h):
     return results
 
 
-def __extracted_func_959(__param_0, data, filter_func, map_func):
+def __extracted_func_4(__param_0, data, filter_func, map_func):
     step1 = filter(lambda x: x is not None and x > 0, data)
     step2 = map(lambda x: x * __param_0, step1)
     step3 = filter(filter_func, step2)
@@ -170,14 +170,14 @@ def __extracted_func_959(__param_0, data, filter_func, map_func):
     return []
 
 
-def __extracted_func_1011(__param_0, initial, values):
+def __extracted_func_5(__param_0, initial, values):
     from functools import reduce
     result = reduce(lambda acc, x: acc + (x ** 2 if x > __param_0 else x), values, initial)
     normalized = list(map(lambda x: x / result if result != 0 else 0, values))
     return {'reduced': result, 'normalized': normalized}
 
 
-def __extracted_func_1055(__param_0, data, make_validator, threshold):
+def __extracted_func_6(__param_0, data, make_validator, threshold):
 
     def make_transformer(factor):
         return lambda x: x * factor + threshold
@@ -188,7 +188,7 @@ def __extracted_func_1055(__param_0, data, make_validator, threshold):
     return transformed
 
 
-def __extracted_func_1098(transformed):
+def __extracted_func_7(transformed):
     filtered = (x for x in transformed if x > 10)
     squared = (x ** 2 for x in filtered)
     result = list(squared)
@@ -197,7 +197,7 @@ def __extracted_func_1098(transformed):
     return []
 
 
-def __extracted_func_1106(__param_0, data, multiplier):
+def __extracted_func_8(__param_0, data, multiplier):
     transform = lambda x: x * multiplier + __param_0
     filtered = filter(lambda x: x > 0, data)
     result = list(map(transform, filtered))
@@ -206,7 +206,7 @@ def __extracted_func_1106(__param_0, data, multiplier):
     return []
 
 
-def __extracted_func_1119(__param_0, base_func, modifier, values):
+def __extracted_func_9(__param_0, base_func, modifier, values):
     apply_modifier = lambda x: base_func(x, modifier, __param_0)
     processed = list(map(apply_modifier, values))
     filtered = list(filter(lambda x: x > 100, processed))

@@ -35,17 +35,17 @@ def process_guest_data(guest_id):
     guest = {"id": guest_id, "name": "Guest", "email": "guest@example.com"}
 
     # Validate user data (DUPLICATE!)
-    __extracted_func_399(guest)
+    extracted_func(guest)
 
     print(f"Processing guest: {guest['name']}")
     return guest
 
 
 def __extracted_func_2(__param_0):
-    __extracted_func_399(__param_0)
+    extracted_func(__param_0)
 
 
-def __extracted_func_399(__param_0):
+def extracted_func(__param_0):
     if not __param_0.get('id'):
         raise ValueError('User ID is required')
     if not __param_0.get('name'):

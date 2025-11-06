@@ -15,7 +15,7 @@ def with_nested_func_a(items):
     def helper(x):
         return x * 2
 
-    return __extracted_func_2056(lambda *args, **kwargs: helper(*args, **kwargs), items)
+    return __extracted_func_2(lambda *args, **kwargs: helper(*args, **kwargs), items)
 
 
 def with_nested_func_b(items):
@@ -24,29 +24,29 @@ def with_nested_func_b(items):
     def processor(x):
         return x * 2
 
-    return __extracted_func_2056(lambda *args, **kwargs: processor(*args, **kwargs), items)
+    return __extracted_func_2(lambda *args, **kwargs: processor(*args, **kwargs), items)
 
 
 def with_lambda_a(items):
     """Lambda expression."""
-    return __extracted_func_2046(items)
+    return __extracted_func_1(items)
 
 
 def with_lambda_b(items):
     """Lambda expression (duplicate)."""
-    return __extracted_func_2046(items)
+    return __extracted_func_1(items)
 
 
 def closure_a(multiplier):
     """Function that creates closure."""
 
-    return __extracted_func_2020(multiplier)
+    return extracted_func(multiplier)
 
 
 def closure_b(multiplier):
     """Function that creates closure (duplicate)."""
 
-    return __extracted_func_2020(multiplier)
+    return extracted_func(multiplier)
 
 
 def shadowing_a(x):
@@ -69,15 +69,15 @@ def shadowing_b(x):
 
 def builtin_override_a(items):
     """Don't treat builtin names as parameters."""
-    return __extracted_func_2072(items)
+    return __extracted_func_3(items)
 
 
 def builtin_override_b(items):
     """Don't treat builtin names as parameters (duplicate)."""
-    return __extracted_func_2072(items)
+    return __extracted_func_3(items)
 
 
-def __extracted_func_2020(multiplier):
+def extracted_func(multiplier):
 
     def process(items):
         result = []
@@ -88,16 +88,16 @@ def __extracted_func_2020(multiplier):
     return process
 
 
-def __extracted_func_2046(items):
+def __extracted_func_1(items):
     processor = lambda x: x * 2
-    return __extracted_func_2080(lambda *args, **kwargs: processor(*args, **kwargs), items)
+    return __extracted_func_4(lambda *args, **kwargs: processor(*args, **kwargs), items)
 
 
-def __extracted_func_2056(__param_0, items):
-    return __extracted_func_2080(lambda *args, **kwargs: __param_0(*args, **kwargs), items)
+def __extracted_func_2(__param_0, items):
+    return __extracted_func_4(lambda *args, **kwargs: __param_0(*args, **kwargs), items)
 
 
-def __extracted_func_2072(items):
+def __extracted_func_3(items):
     result = []
     for item in items:
         if len(item) > 0:
@@ -105,7 +105,7 @@ def __extracted_func_2072(items):
     return result
 
 
-def __extracted_func_2080(__param_0, items):
+def __extracted_func_4(__param_0, items):
     result = []
     for item in items:
         if item > 0:

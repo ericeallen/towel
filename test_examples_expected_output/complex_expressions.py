@@ -26,22 +26,22 @@ def process_user_score_v2(user, threshold):
 
 def calculate_discount_tier1(price, customer_level):
     """Tier 1: Complex boolean expression."""
-    return __extracted_func_111(5, 100, 10, 50, customer_level, price)
+    return extracted_func(5, 100, 10, 50, customer_level, price)
 
 
 def calculate_discount_tier2(price, customer_level):
     """Tier 2: Different boolean expression, same structure."""
-    return __extracted_func_111(3, 200, 8, 75, customer_level, price)
+    return extracted_func(3, 200, 8, 75, customer_level, price)
 
 
 def transform_data_format_a(data, processor):
     """Format A: Nested method calls and indexing."""
-    return __extracted_func_118('values', lambda *args, **kwargs: processor.normalize(data['values']).upper(*args, **kwargs), data, processor)
+    return __extracted_func_1('values', lambda *args, **kwargs: processor.normalize(data['values']).upper(*args, **kwargs), data, processor)
 
 
 def transform_data_format_b(data, processor):
     """Format B: Different nested calls, same pattern."""
-    return __extracted_func_118('items', lambda *args, **kwargs: processor.normalize(data['items']).lower(*args, **kwargs), data, processor)
+    return __extracted_func_1('items', lambda *args, **kwargs: processor.normalize(data['items']).lower(*args, **kwargs), data, processor)
 
 
 def compute_metrics_slow(dataset, multiplier, offset):
@@ -60,7 +60,7 @@ def compute_metrics_fast(dataset, multiplier, offset):
     return {"total": total, "avg": average, "var": variance}
 
 
-def __extracted_func_111(__param_0, __param_1, __param_2, __param_3, customer_level, price):
+def extracted_func(__param_0, __param_1, __param_2, __param_3, customer_level, price):
     base = price * 0.9
     if customer_level > __param_0 and base > __param_1 or (customer_level > __param_2 and base > __param_3):
         final = base - 20
@@ -69,7 +69,7 @@ def __extracted_func_111(__param_0, __param_1, __param_2, __param_3, customer_le
     return base
 
 
-def __extracted_func_118(__param_0, __param_1, data, processor):
+def __extracted_func_1(__param_0, __param_1, data, processor):
     result = __param_1().strip()
     validated = processor.validate(result)
     if validated:
