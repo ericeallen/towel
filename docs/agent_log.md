@@ -165,4 +165,22 @@ Notes:
 - Enhance hygiene for function-scope insertion by explicitly incorporating target function’s local bindings to avoid collisions.
 - Investigate safe support for nonlocal closures; if feasible, add targeted tests and relax the conservative skip.
 
+### Update (2025-11-05 18:10 local)
+
+#### Actions
+- Expanded DCE adversarial coverage: mixed async/sync, interleaved nested candidates, and nonlocal/global interactions (skip nonlocal, inject `global` in helper when assigned).
+- Engine improvements:
+	- Insert extracted helpers into deepest common enclosing function scope (same-file pairs).
+	- Promote `global`/`nonlocal` declarations for assigned names into extracted helper to preserve semantics.
+	- Hygiene: include target function’s locals in `enclosing_names` during extraction; reset extractor `used_names` per extraction to stabilize helper naming.
+- Baseline regeneration: updated single-file and cross-file expected outputs to reflect function-scope insertion and global handling changes.
+
+#### Results
+- Observational equivalence: PASS (single-file and cross-file).
+- Curated tests: 547 tests OK.
+- Commit: c419770 on main; version bumped to 0.6.0.
+
+#### Notes
+- The stability diffs were expected due to insertion scope/hygiene improvements; baselines regenerated accordingly.
+
 
