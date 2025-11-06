@@ -1,23 +1,21 @@
 ## 2025-11-05
 
-- Version: 0.5.7
-- Commit: 510cb64
+- Version: 0.6.0
+- Commit: c419770
 - Summary:
-  - Tests: Added broader DCE (deepest common enclosing scope) adversarial coverage in `tests/test_engine_adversarial.py`:
-    - Async nested functions: helper insertion into enclosing async outer function.
-    - Class method nesting: helper insertion into method scope (function-in-class), not class/module.
-    - Inner common ancestor: selection of deepest common ancestor that is itself an inner function.
-  - Engine: Validated existing DCE selection and in-function insertion logic across async and method scopes; preserves hygiene and avoids triple blank lines.
-  - Safety: Conservative skip for proposals involving nonlocal closures retained to preserve semantics and baselines.
-  - Docs: This entry records the additional test coverage; no version bump since behavior remains compatible.
+  - Engine: Insert extracted helpers into the Deepest Common Enclosing (DCE) function scope when possible; prefer function-scope over class/module.
+  - Semantics: Promote global/nonlocal declarations for assigned names into the extracted helper to preserve runtime behavior; continue conservative skip for nonlocal closure contexts.
+  - Hygiene: Include target function’s local bindings into `enclosing_names` when inserting within that function; reset extractor `used_names` per extraction to stabilize helper names across proposals.
+  - Tests: Added adversarial DCE variants (mixed async/sync, interleaved nested candidates, nonlocal/global interaction ensuring global injection and nonlocal skip) in `tests/test_engine_adversarial.py`.
+  - Baselines: Regenerated single-file and cross-file expected outputs to reflect function-scope insertion and global handling.
 - Status: All tests green
-  - Unit/integration tests: 544 tests OK (0 skipped)
-  - Observational equivalence: regression suite green; baselines unchanged
+  - Curated tests: 547 tests OK
+  - Observational equivalence: single-file and cross-file suites PASS
 
 ---
 
 Notes:
-- To revert to this exact state: check out commit `510cb64` on branch `main`.
+- To revert to this exact state: check out commit `c419770` on branch `main`.
 - Changes were pushed to origin/main on 2025-11-05.
 
 ## 2025-11-04
