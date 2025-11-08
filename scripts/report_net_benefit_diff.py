@@ -30,7 +30,9 @@ TEST_EXAMPLES = ROOT / "test_examples"
 THRESHOLDS = [2, 1, 0]
 
 
-def estimate_net_delta(engine: UnificationRefactorEngine, proposal: RefactoringProposal) -> Tuple[int, int, int]:
+def estimate_net_delta(
+    engine: UnificationRefactorEngine, proposal: RefactoringProposal
+) -> Tuple[int, int, int]:
     """Return (added_lines, removed_effective, net_delta) for the proposal."""
     added_lines = engine._estimate_extracted_function_loc(proposal.extracted_function)
     # Approximate one extra spacer line

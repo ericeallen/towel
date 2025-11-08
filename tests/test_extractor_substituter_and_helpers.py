@@ -30,7 +30,11 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
                 "ycall",
                 ast.JoinedStr(
                     values=[
-                        ast.FormattedValue(value=ast.Name(id="result", ctx=ast.Load()), conversion=-1, format_spec=None),
+                        ast.FormattedValue(
+                            value=ast.Name(id="result", ctx=ast.Load()),
+                            conversion=-1,
+                            format_spec=None,
+                        ),
                         ast.Constant(value="-ok"),
                     ]
                 ),

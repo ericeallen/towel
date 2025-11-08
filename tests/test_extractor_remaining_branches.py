@@ -50,7 +50,9 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 target=ast.Name("i", ast.Store()),
                 iter=ast.Name("items", ast.Load()),
                 body=[ast.Expr(value=ast.Name("use", ast.Load()))],
-                orelse=[ast.Assign(targets=[ast.Name("after", ast.Store())], value=ast.Constant(0))],
+                orelse=[
+                    ast.Assign(targets=[ast.Name("after", ast.Store())], value=ast.Constant(0))
+                ],
             )
         ]
         block = _fix(block_raw)
@@ -117,7 +119,9 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             ast.Assign(targets=[ast.Name("result", ast.Store())], value=ast.Name("x", ast.Load())),
             ast.Assign(targets=[ast.Name("result", ast.Store())], value=ast.Name("x", ast.Load())),
             ast.Assign(targets=[ast.Name("result", ast.Store())], value=ast.Constant(5)),
-            ast.Assign(targets=[ast.Name("final", ast.Store())], value=ast.Name("result", ast.Load())),
+            ast.Assign(
+                targets=[ast.Name("final", ast.Store())], value=ast.Name("result", ast.Load())
+            ),
         ]
         block = _fix(block_raw)
         subst = Substitution()
@@ -144,7 +148,12 @@ class TestExtractorRemainingBranches(unittest.TestCase):
     def test_tuple_assignment_parameter_binding(self):
         block_raw = [
             ast.Assign(
-                targets=[ast.Tuple(elts=[ast.Name("a", ast.Store()), ast.Name("b", ast.Store())], ctx=ast.Store())],
+                targets=[
+                    ast.Tuple(
+                        elts=[ast.Name("a", ast.Store()), ast.Name("b", ast.Store())],
+                        ctx=ast.Store(),
+                    )
+                ],
                 value=ast.Name("val", ast.Load()),
             )
         ]
@@ -165,7 +174,9 @@ class TestExtractorRemainingBranches(unittest.TestCase):
 
     def test_function_parameter_substitution(self):
         # Expression references bound vars x,y -> should produce call __param_0(x, y)
-        expr = ast.BinOp(left=ast.Name("x", ast.Load()), op=ast.Add(), right=ast.Name("y", ast.Load()))
+        expr = ast.BinOp(
+            left=ast.Name("x", ast.Load()), op=ast.Add(), right=ast.Name("y", ast.Load())
+        )
         block_raw = [ast.Assign(targets=[ast.Name("res", ast.Store())], value=expr)]
         block = _fix(block_raw)
         subst = Substitution()
@@ -185,7 +196,14 @@ class TestExtractorRemainingBranches(unittest.TestCase):
         self.assertEqual([a.id for a in assign.value.args], ["x", "y"])  # type: ignore
 
     def test_fstring_constant_guard(self):
-        fstr = ast.JoinedStr(values=[ast.Constant("hi "), ast.FormattedValue(value=ast.Name("x", ast.Load()), conversion=-1, format_spec=None)])
+        fstr = ast.JoinedStr(
+            values=[
+                ast.Constant("hi "),
+                ast.FormattedValue(
+                    value=ast.Name("x", ast.Load()), conversion=-1, format_spec=None
+                ),
+            ]
+        )
         block = _fix([ast.Assign(targets=[ast.Name("s", ast.Store())], value=fstr)])
         subst = Substitution()
         subst.add_mapping(0, ast.Name("x", ast.Load()), "__param_0")

@@ -24,15 +24,11 @@ class TestASTPrettyPrinter(unittest.TestCase):
 
         # Should include node names with line numbers
         self.assertIn("Module(", output)
-        self.assertTrue(
-            "FunctionDef@L2(" in output or "AsyncFunctionDef@L2(" in output
-        )
+        self.assertTrue("FunctionDef@L2(" in output or "AsyncFunctionDef@L2(" in output)
 
         # Ensure list fields are rendered with brackets and nested items
         self.assertIn("body=[", output)
-        self.assertTrue(
-            "]\n)" in output or output.rstrip().endswith(")")
-        )
+        self.assertTrue("]\n)" in output or output.rstrip().endswith(")"))
 
     def test_format_primitives_and_non_ast_list(self) -> None:
         printer = ASTPrettyPrinter(indent_size=2, show_line_numbers=False)

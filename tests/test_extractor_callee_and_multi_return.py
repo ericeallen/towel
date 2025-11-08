@@ -64,14 +64,31 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
     def test_multi_return_tuple_and_assignment(self):
         # Template returns two locals bound from parameters
         block = [
-            ast.Assign(targets=[ast.Name(id="a", ctx=ast.Store())], value=ast.Name(id="__param_0", ctx=ast.Load())),
-            ast.Assign(targets=[ast.Name(id="b", ctx=ast.Store())], value=ast.Name(id="__param_1", ctx=ast.Load())),
-            ast.Return(value=ast.Tuple(elts=[ast.Name(id="a", ctx=ast.Load()), ast.Name(id="b", ctx=ast.Load())], ctx=ast.Load())),
+            ast.Assign(
+                targets=[ast.Name(id="a", ctx=ast.Store())],
+                value=ast.Name(id="__param_0", ctx=ast.Load()),
+            ),
+            ast.Assign(
+                targets=[ast.Name(id="b", ctx=ast.Store())],
+                value=ast.Name(id="__param_1", ctx=ast.Load()),
+            ),
+            ast.Return(
+                value=ast.Tuple(
+                    elts=[ast.Name(id="a", ctx=ast.Load()), ast.Name(id="b", ctx=ast.Load())],
+                    ctx=ast.Load(),
+                )
+            ),
         ]
         block = _fix(block)
         subst = Substitution()
-        subst.param_expressions["__param_0"] = [(0, ast.Name(id="x", ctx=ast.Load())), (1, ast.Name(id="y", ctx=ast.Load()))]
-        subst.param_expressions["__param_1"] = [(0, ast.Name(id="p", ctx=ast.Load())), (1, ast.Name(id="q", ctx=ast.Load()))]
+        subst.param_expressions["__param_0"] = [
+            (0, ast.Name(id="x", ctx=ast.Load())),
+            (1, ast.Name(id="y", ctx=ast.Load())),
+        ]
+        subst.param_expressions["__param_1"] = [
+            (0, ast.Name(id="p", ctx=ast.Load())),
+            (1, ast.Name(id="q", ctx=ast.Load())),
+        ]
 
         extractor = HygienicExtractor()
         func_def, order = extractor.extract_function(

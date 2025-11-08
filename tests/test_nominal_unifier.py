@@ -17,13 +17,17 @@ def parse_stmts(code: str):
 
 class TestNominalUnifier(unittest.TestCase):
     def test_binding_detection_and_sites(self):
-        block0 = parse_stmts("""
+        block0 = parse_stmts(
+            """
         x = 1
         y = x + 2
-        """)
-        block1 = parse_stmts("""
+        """
+        )
+        block1 = parse_stmts(
+            """
         z = 3
-        """)
+        """
+        )
         ctx = NominalUnificationContext(num_blocks=2)
         ctx.detect_bindings_in_blocks([block0, block1])
 
@@ -93,7 +97,9 @@ class TestNominalUnifier(unittest.TestCase):
         self.assertIn("b", ctx.bound_variables[1])
 
         # build_hygienic_renames_from_unification produces { "b": "a" } for block 1
-        renames = build_hygienic_renames_from_unification([canon, other], canonical_block=canon, canonical_idx=0)
+        renames = build_hygienic_renames_from_unification(
+            [canon, other], canonical_block=canon, canonical_idx=0
+        )
         self.assertEqual(renames, [{}, {"b": "a"}])
 
     def test_get_original_name_for_missing_canonical(self):

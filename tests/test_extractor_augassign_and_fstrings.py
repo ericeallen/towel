@@ -16,7 +16,11 @@ class TestExtractorAugAssignAndFStrings(unittest.TestCase):
         # Template has augmented assignment to a variable that was parameterized by refactor_engine; extractor should treat it as free var and map per block
         # Simulate refactor_engine having removed the parameter and stored aug_assign_mappings
         block = [
-            ast.AugAssign(target=ast.Name(id="acc", ctx=ast.Store()), op=ast.Add(), value=ast.Constant(value=1)),
+            ast.AugAssign(
+                target=ast.Name(id="acc", ctx=ast.Store()),
+                op=ast.Add(),
+                value=ast.Constant(value=1),
+            ),
             ast.Return(value=ast.Name(id="acc", ctx=ast.Load())),
         ]
         block = _fix(block)
@@ -70,10 +74,14 @@ class TestExtractorAugAssignAndFStrings(unittest.TestCase):
     def test_fstring_parameter_guard(self):
         # If a unified parameter corresponds to a JoinedStr in template, extractor should not try to replace the entire f-string
         # Here we just ensure substitute pass-through for f-string parts and FormattedValue children are visitable
-        fstr = ast.JoinedStr(values=[
-            ast.Constant(value="Hello "),
-            ast.FormattedValue(value=ast.Name(id="name", ctx=ast.Load()), conversion=-1, format_spec=None),
-        ])
+        fstr = ast.JoinedStr(
+            values=[
+                ast.Constant(value="Hello "),
+                ast.FormattedValue(
+                    value=ast.Name(id="name", ctx=ast.Load()), conversion=-1, format_spec=None
+                ),
+            ]
+        )
         block = [ast.Expr(value=fstr)]
         block = _fix(block)
 
@@ -81,7 +89,7 @@ class TestExtractorAugAssignAndFStrings(unittest.TestCase):
         # Map a different expression for block 1 to force parameterization attempt, but since it's a JoinedStr, extractor should not break it
         subst.param_expressions["__param_0"] = [
             (0, fstr),
-            (1, ast.JoinedStr(values=[ast.Constant(value="Hi ")]))
+            (1, ast.JoinedStr(values=[ast.Constant(value="Hi ")])),
         ]
 
         extractor = HygienicExtractor()
@@ -95,7 +103,12 @@ class TestExtractorAugAssignAndFStrings(unittest.TestCase):
             function_name="extracted_function",
         )
         # Ensure the body still contains a JoinedStr and Constant child
-        self.assertTrue(any(isinstance(n, ast.Expr) and isinstance(n.value, ast.JoinedStr) for n in func_def.body))
+        self.assertTrue(
+            any(
+                isinstance(n, ast.Expr) and isinstance(n.value, ast.JoinedStr)
+                for n in func_def.body
+            )
+        )
 
 
 if __name__ == "__main__":

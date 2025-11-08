@@ -45,7 +45,7 @@ class TestProjectLayoutBehavior(unittest.TestCase):
 
             layout = ProjectLayout.discover(root)
             # Should pick src as the sole source root
-            self.assertEqual(layout.source_roots, [(root / "src").resolve()]) 
+            self.assertEqual(layout.source_roots, [(root / "src").resolve()])
 
             name = layout.module_name_for(mod)
             self.assertEqual(name, "pkg.mod")
