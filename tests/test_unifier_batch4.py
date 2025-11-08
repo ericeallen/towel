@@ -38,18 +38,22 @@ class TestUnifierBatch4(unittest.TestCase):
 
     def test_except_handler_body_param(self) -> None:
         # Bodies differ by a constant; expect parameterization within body
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         try:
             pass
         except Exception as e:
             x = 2
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         try:
             pass
         except Exception as e:
             x = 3
-        """)
+        """
+        )
         uni = Unifier()
         subst = uni.unify_blocks([b0, b1], [{}, {}])
         self.assertIsNotNone(subst)
@@ -63,14 +67,18 @@ class TestUnifierBatch4(unittest.TestCase):
         self.assertIsNone(uni.unify_blocks([b0, b1], [{}, {}]))
 
     def test_nested_destructuring_assignment_alpha(self) -> None:
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         (a, (b, c)) = data
         sum1 = a + b + c
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         (x, (y, z)) = data
         sum1 = x + y + z
-        """)
+        """
+        )
         uni = Unifier()
         subst = uni.unify_blocks([b0, b1], [{}, {}])
         self.assertIsNotNone(subst)
@@ -86,14 +94,18 @@ class TestUnifierBatch4(unittest.TestCase):
 
     def test_function_param_lifting_for_bound_accessible(self) -> None:
         # Expressions referencing bound variables within accessible scope should yield function params only if common bound vars detected.
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         base = 1
         res = base + a
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         base = 1
         res = base + b
-        """)
+        """
+        )
         uni = Unifier()
         subst = uni.unify_blocks([b0, b1], [{}, {}])
         self.assertIsNotNone(subst)

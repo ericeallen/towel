@@ -10,6 +10,7 @@ Anything passing these gates is considered for full unification. All other
 behavior (ratio/histogram/simhash) has been removed to restore baseline
 proposal counts and prevent false negatives introduced by over‑filtering.
 """
+
 from __future__ import annotations
 
 import ast

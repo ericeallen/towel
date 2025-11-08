@@ -214,7 +214,16 @@ class UnificationRefactorEngine:
         # Parse all files
         # List items are tuples: (file_path, function_node, source, scope_analyzer, root_scope, class_name, enclosing_function_name, function_ancestry)
         all_functions: List[
-            Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]
+            Tuple[
+                str,
+                ast.FunctionDef,
+                str,
+                ScopeAnalyzer,
+                Scope,
+                Optional[str],
+                Optional[str],
+                List[str],
+            ]
         ] = []
 
         for file_path in file_paths:
@@ -286,7 +295,9 @@ class UnificationRefactorEngine:
             return []
 
         if verbose:
-            print(f"Parsed {len(all_functions)} functions (including nested) from {len(file_paths)} file(s)")
+            print(
+                f"Parsed {len(all_functions)} functions (including nested) from {len(file_paths)} file(s)"
+            )
 
         # Find pairs of code blocks across all functions (including cross-file)
         block_pairs = self._find_block_pairs_multi_file(all_functions)
@@ -550,7 +561,18 @@ class UnificationRefactorEngine:
 
     def _find_block_pairs_multi_file(
         self,
-        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]],
+        all_functions: List[
+            Tuple[
+                str,
+                ast.FunctionDef,
+                str,
+                ScopeAnalyzer,
+                Scope,
+                Optional[str],
+                Optional[str],
+                List[str],
+            ]
+        ],
     ) -> List[CodeBlockPair]:
         """
         Find all non-overlapping pairs of code blocks across multiple files.
@@ -646,7 +668,18 @@ class UnificationRefactorEngine:
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
-        all_functions: List[Tuple[str, ast.FunctionDef, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]],
+        all_functions: List[
+            Tuple[
+                str,
+                ast.FunctionDef,
+                str,
+                ScopeAnalyzer,
+                Scope,
+                Optional[str],
+                Optional[str],
+                List[str],
+            ]
+        ],
     ) -> Optional[RefactoringProposal]:
         """
         Try to refactor a pair of code blocks using unification (cross-file support).
@@ -1000,7 +1033,12 @@ class UnificationRefactorEngine:
         dce_insert_func: Optional[str] = None
         try:
             same_file_ctx = pair.file_path2 is not None and pair.file_path2 == pair.file_path
-            if same_file_ctx and pair.function1_ancestry is not None and pair.function2_ancestry is not None:
+            if (
+                same_file_ctx
+                and pair.function1_ancestry is not None
+                and pair.function2_ancestry is not None
+            ):
+
                 def _deepest_common_pre(anc1: List[str], anc2: List[str]) -> Optional[str]:
                     if not anc1 or not anc2:
                         return None
@@ -1024,7 +1062,7 @@ class UnificationRefactorEngine:
         # function's local bindings to avoid name collisions
         if dce_insert_func:
             try:
-                for (fpath, fn, _src, analyzer, rscope, _cls, _encl, _anc) in all_functions:
+                for fpath, fn, _src, analyzer, rscope, _cls, _encl, _anc in all_functions:
                     if fpath == (pair.file_path2 or pair.file_path) and fn.name == dce_insert_func:
                         func_scope = analyzer.node_scopes.get(fn)
                         if func_scope is not None:
@@ -1039,7 +1077,10 @@ class UnificationRefactorEngine:
             same_file_for_hygiene = (
                 pair.file_path2 is not None and pair.file_path2 == pair.file_path
             )
-            def _deepest_common_local(anc1: List[str] | None, anc2: List[str] | None) -> Optional[str]:
+
+            def _deepest_common_local(
+                anc1: List[str] | None, anc2: List[str] | None
+            ) -> Optional[str]:
                 if not anc1 or not anc2:
                     return None
                 dce_name = None
@@ -1049,6 +1090,7 @@ class UnificationRefactorEngine:
                     else:
                         break
                 return dce_name
+
             target_insert_fn: Optional[str] = None
             if same_file_for_hygiene:
                 target_insert_fn = _deepest_common_local(
@@ -1058,7 +1100,7 @@ class UnificationRefactorEngine:
                 # Locate the target function node and its scope analyzer for this file
                 target_func_node = None
                 target_analyzer: Optional[ScopeAnalyzer] = None
-                for (fpath, fn, _src, analyzer, _rscope, _cls, _encl, _anc) in all_functions:
+                for fpath, fn, _src, analyzer, _rscope, _cls, _encl, _anc in all_functions:
                     if fpath == pair.file_path and fn.name == target_insert_fn:
                         target_func_node = fn
                         target_analyzer = analyzer
@@ -1247,7 +1289,7 @@ class UnificationRefactorEngine:
             # Names that are assigned within the block and are global/nonlocal in the enclosing function
             # MUST be declared in the extracted helper to preserve assignment semantics,
             # even if they are not free variables of the original block.
-            assigned_problematic_any = (assigned_names & (global_vars | nonlocal_vars))
+            assigned_problematic_any = assigned_names & (global_vars | nonlocal_vars)
 
             # For assigned globals/nonlocals that weren't explicitly declared within the block,
             # promote the declaration into the extracted function body.
@@ -1362,7 +1404,7 @@ class UnificationRefactorEngine:
             except Exception:
                 return None
 
-    # Determine canonical file for extracted function
+        # Determine canonical file for extracted function
         # For cross-file: choose first file
         canonical_file = pair.file_path
 
@@ -1375,7 +1417,7 @@ class UnificationRefactorEngine:
         else:
             desc += f" and {pair.function2_name}"
 
-    # Default to module-level insertion; when possible insert into deepest common enclosing function.
+        # Default to module-level insertion; when possible insert into deepest common enclosing function.
         insert_into_class = None
         insert_into_function = None
 
@@ -1395,7 +1437,11 @@ class UnificationRefactorEngine:
                     break
             return dce
 
-        if same_file and pair.function1_ancestry is not None and pair.function2_ancestry is not None:
+        if (
+            same_file
+            and pair.function1_ancestry is not None
+            and pair.function2_ancestry is not None
+        ):
             dce = _deepest_common(pair.function1_ancestry or [], pair.function2_ancestry or [])
             if dce:
                 insert_into_function = dce
@@ -1605,7 +1651,10 @@ class UnificationRefactorEngine:
                         if insert_at_zero_based > 0 and lines[insert_at_zero_based - 1].strip():
                             prefix.append("\n")
                         suffix = []
-                        if insert_at_zero_based < len(lines) and lines[insert_at_zero_based].strip():
+                        if (
+                            insert_at_zero_based < len(lines)
+                            and lines[insert_at_zero_based].strip()
+                        ):
                             suffix.append("\n")
                         lines[insert_at_zero_based:insert_at_zero_based] = (
                             prefix + indented + suffix

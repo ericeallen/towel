@@ -67,18 +67,22 @@ class TestUnifierBatch2(unittest.TestCase):
         self.assertEqual(len(subst.param_expressions), 0)
 
     def test_except_type_mismatch_failure(self) -> None:
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         try:
             pass
         except Exception:
             pass
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         try:
             pass
         except:
             pass
-        """)
+        """
+        )
         uni = Unifier()
         self.assertIsNone(uni.unify_blocks([b0, b1], [{}, {}]))
 

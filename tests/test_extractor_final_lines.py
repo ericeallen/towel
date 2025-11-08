@@ -94,9 +94,7 @@ class TestExtractorFinalLines(unittest.TestCase):
         """Line 472: visiting AsyncFunctionDef should not count as a return."""
         async_func = ast.AsyncFunctionDef(
             name="af",
-            args=ast.arguments(
-                posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]
-            ),
+            args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
             body=[ast.Pass()],
             decorator_list=[],
             returns=None,

@@ -39,7 +39,10 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         assign = {b.name for b in get_bindings_by_kind(tree, BindingKind.ASSIGNMENT)}
         self.assertTrue({"x", "a", "b", "c", "d", "e", "rest", "z"}.issubset(assign))
 
-        aug = {b.name for b in get_bindings_by_kind(_parse("x = 0\nx += 1"), BindingKind.AUG_ASSIGNMENT)}
+        aug = {
+            b.name
+            for b in get_bindings_by_kind(_parse("x = 0\nx += 1"), BindingKind.AUG_ASSIGNMENT)
+        }
         self.assertEqual(aug, {"x"})
 
         named = {b.name for b in get_bindings_by_kind(tree, BindingKind.NAMED_EXPR)}
@@ -111,12 +114,20 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         bindings = detect_bindings(tree)
 
         # Top-level function/class names bound in enclosing (module) scope
-        top_defs = {b.name for b in bindings if b.kind in {BindingKind.FUNCTION_DEF, BindingKind.CLASS_DEF} and b.scope_node is None}
+        top_defs = {
+            b.name
+            for b in bindings
+            if b.kind in {BindingKind.FUNCTION_DEF, BindingKind.CLASS_DEF} and b.scope_node is None
+        }
         self.assertTrue({"foo", "bar", "C"}.issubset(top_defs))
 
         # Collect specific scope nodes
-        func_node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "foo")
-        async_node = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "bar")
+        func_node = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "foo"
+        )
+        async_node = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "bar"
+        )
         lambda_node = next(n for n in ast.walk(tree) if isinstance(n, ast.Lambda))
 
         # Params within function scope
@@ -147,9 +158,13 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         tree = _parse(code)
 
         # Limit to function scope to avoid collecting any top-level names
-        func_node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "matchy")
+        func_node = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "matchy"
+        )
         names_in_func = get_bound_variables(tree, scope_node=func_node)
-        self.assertTrue({"x", "y", "b", "rest", "px", "py", "tail", "u", "whole"}.issubset(names_in_func))
+        self.assertTrue(
+            {"x", "y", "b", "rest", "px", "py", "tail", "u", "whole"}.issubset(names_in_func)
+        )
 
     def test_exotic_match_and_line_numbers_and_scopes(self) -> None:
         code = """
@@ -177,14 +192,22 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         bindings = detector.bindings
 
         # Function def name bound at module scope (None)
-        fn_name = next(b for b in bindings if b.kind == BindingKind.FUNCTION_DEF and b.name == "outer")
+        fn_name = next(
+            b for b in bindings if b.kind == BindingKind.FUNCTION_DEF and b.name == "outer"
+        )
         self.assertIsNone(fn_name.scope_node)
         self.assertGreaterEqual(fn_name.line_number, 1)
 
         # Function params have scope = function node; check scope line matches function line
-        func_node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "outer")
+        func_node = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "outer"
+        )
         func_line = func_node.lineno
-        params = [b for b in bindings if b.kind == BindingKind.FUNCTION_PARAM and b.scope_node is func_node]
+        params = [
+            b
+            for b in bindings
+            if b.kind == BindingKind.FUNCTION_PARAM and b.scope_node is func_node
+        ]
         self.assertTrue({"a", "b"}.issubset({p.name for p in params}))
         for p in params:
             self.assertIs(p.scope_node, func_node)
@@ -194,11 +217,15 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
 
         # MatchOr + MatchAs bind 'val' and 'either'
         names_in_func = get_bound_variables(tree, scope_node=func_node)
-        self.assertTrue({"val", "either", "x", "y", "rest", "z", "px", "py"}.issubset(names_in_func))
+        self.assertTrue(
+            {"val", "either", "x", "y", "rest", "z", "px", "py"}.issubset(names_in_func)
+        )
 
         # Lambda scope correctness and line numbers
         lam_node = next(n for n in ast.walk(tree) if isinstance(n, ast.Lambda))
-        lam_params = [b for b in bindings if b.scope_node is lam_node and b.kind == BindingKind.FUNCTION_PARAM]
+        lam_params = [
+            b for b in bindings if b.scope_node is lam_node and b.kind == BindingKind.FUNCTION_PARAM
+        ]
         self.assertEqual({p.name for p in lam_params}, {"u", "v", "w"})
         for lp in lam_params:
             self.assertEqual(lp.scope_node.lineno, lam_node.lineno)
@@ -221,11 +248,17 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         """
         tree = _parse(code)
 
-        func_node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "f")
+        func_node = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "f"
+        )
         # MATCH_CASE bindings within the function should be empty
         detector = BindingDetector()
         detector.visit(tree)
-        match_bind_names = {b.name for b in detector.bindings if b.kind == BindingKind.MATCH_CASE and b.scope_node is func_node}
+        match_bind_names = {
+            b.name
+            for b in detector.bindings
+            if b.kind == BindingKind.MATCH_CASE and b.scope_node is func_node
+        }
         self.assertEqual(match_bind_names, set())
 
     def test_decorators_do_not_affect_scope(self) -> None:
@@ -253,10 +286,16 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         bindings = detector.bindings
 
         # Function name and class name bound at module scope
-        top_defs = {b.name for b in bindings if b.kind in {BindingKind.FUNCTION_DEF, BindingKind.CLASS_DEF} and b.scope_node is None}
+        top_defs = {
+            b.name
+            for b in bindings
+            if b.kind in {BindingKind.FUNCTION_DEF, BindingKind.CLASS_DEF} and b.scope_node is None
+        }
         self.assertTrue({"foo", "C", "dec1", "dec2"}.issubset(top_defs))
 
-        func_node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "foo")
+        func_node = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "foo"
+        )
         # Only parameter 'a' should be bound in foo's scope
         foo_scope_names = {b.name for b in bindings if b.scope_node is func_node}
         self.assertIn("a", foo_scope_names)
@@ -287,11 +326,24 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         bindings = detector.bindings
 
         # Async function name bound at module scope
-        self.assertIn("baz", {b.name for b in bindings if b.kind == BindingKind.FUNCTION_DEF and b.scope_node is None})
+        self.assertIn(
+            "baz",
+            {
+                b.name
+                for b in bindings
+                if b.kind == BindingKind.FUNCTION_DEF and b.scope_node is None
+            },
+        )
 
         # Async params captured in baz scope (posonly, normal, vararg, kwonly, varkw)
-        baz_node = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "baz")
-        params = {b.name for b in bindings if b.scope_node is baz_node and b.kind == BindingKind.FUNCTION_PARAM}
+        baz_node = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "baz"
+        )
+        params = {
+            b.name
+            for b in bindings
+            if b.scope_node is baz_node and b.kind == BindingKind.FUNCTION_PARAM
+        }
         self.assertTrue({"a", "b", "args", "c", "kw"}.issubset(params))
 
         # Match guard should not create extra bindings, but 'y' should bind
@@ -307,7 +359,11 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         detector = BindingDetector()
         detector.visit(tree)
         lam = next(n for n in ast.walk(tree) if isinstance(n, ast.Lambda))
-        lam_params = {b.name for b in detector.bindings if b.scope_node is lam and b.kind == BindingKind.FUNCTION_PARAM}
+        lam_params = {
+            b.name
+            for b in detector.bindings
+            if b.scope_node is lam and b.kind == BindingKind.FUNCTION_PARAM
+        }
         self.assertIn("args", lam_params)
 
 

@@ -12,18 +12,22 @@ def parse_block(src: str):
 class TestUnifierBatch3(unittest.TestCase):
     def test_multi_occurrence_constants_aligned_parameterize(self) -> None:
         # 2 appears twice both blocks; 3 appears twice both blocks; differ consistently -> can parameterize
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         x = a * 2
         y = b + 2
         z = c * 3
         w = d + 3
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         x = a * 5
         y = b + 5
         z = c * 7
         w = d + 7
-        """)
+        """
+        )
         uni = Unifier()
         subst = uni.unify_blocks([b0, b1], [{}, {}])
         self.assertIsNotNone(subst)
@@ -33,16 +37,20 @@ class TestUnifierBatch3(unittest.TestCase):
 
     def test_multi_occurrence_constants_misaligned_fail(self) -> None:
         # 2 appears twice in block0; block1 differs only once (inconsistent) -> reject
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         x = a * 2
         y = b + 2
         z = c * 4
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         x = a * 9
         y = b + 2
         z = c * 4
-        """)
+        """
+        )
         uni = Unifier()
         self.assertIsNone(uni.unify_blocks([b0, b1], [{}, {}]))
 
@@ -58,18 +66,22 @@ class TestUnifierBatch3(unittest.TestCase):
         self.assertEqual(len(subst.param_expressions), 0)
 
     def test_except_different_specific_types_fail(self) -> None:
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         try:
             pass
         except ValueError:
             pass
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         try:
             pass
         except KeyError:
             pass
-        """)
+        """
+        )
         uni = Unifier()
         self.assertIsNone(uni.unify_blocks([b0, b1], [{}, {}]))
 
@@ -92,18 +104,22 @@ class TestUnifierBatch3(unittest.TestCase):
         self.assertIsNone(uni.unify_blocks([b0, b1], [{}, {}]))
 
     def test_assignment_chain_alpha_renaming(self) -> None:
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         first = a + 1
         second = first + 2
         result = second * first
         return result
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         initial = a + 1
         nxt = initial + 2
         out = nxt * initial
         return out
-        """)
+        """
+        )
         uni = Unifier()
         hr = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
@@ -114,16 +130,20 @@ class TestUnifierBatch3(unittest.TestCase):
         self.assertEqual(len(subst.param_expressions), 0)
 
     def test_destructuring_and_annotation_binding(self) -> None:
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         (x, y) = pair
         value: int = x + y
         total = value + 1
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         (a, b) = pair
         value: int = a + b
         total = value + 2
-        """)
+        """
+        )
         uni = Unifier()
         subst = uni.unify_blocks([b0, b1], [{}, {}])
         self.assertIsNotNone(subst)
@@ -149,18 +169,22 @@ class TestUnifierBatch3(unittest.TestCase):
 
     def test_function_param_lifting_with_bound_vars(self) -> None:
         # Create expressions referencing variables bound earlier in the block (assigned) so they are accessible at call site.
-        b0 = parse_block("""
+        b0 = parse_block(
+            """
         base = 10
         inc = 2
         total = base + inc
         final = total * base
-        """)
-        b1 = parse_block("""
+        """
+        )
+        b1 = parse_block(
+            """
         base = 20
         inc = 3
         total = base + inc
         final = total * base
-        """)
+        """
+        )
         uni = Unifier()
         subst = uni.unify_blocks([b0, b1], [{}, {}])
         self.assertIsNotNone(subst)

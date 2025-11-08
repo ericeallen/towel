@@ -11,12 +11,30 @@ def _ret(node: ast.expr) -> ast.stmt:
 class TestUnifierMoreBranches(unittest.TestCase):
     def test_lambda_vararg_rejected(self):
         # Two blocks returning lambdas with varargs should fail unification via _unify_lambda
-        lam1 = ast.Lambda(args=ast.arguments(posonlyargs=[], args=[], vararg=ast.arg(arg="args"),
-                                             kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[]),
-                          body=ast.Name(id="x", ctx=ast.Load()))
-        lam2 = ast.Lambda(args=ast.arguments(posonlyargs=[], args=[], vararg=ast.arg(arg="args"),
-                                             kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[]),
-                          body=ast.Name(id="y", ctx=ast.Load()))
+        lam1 = ast.Lambda(
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[],
+                vararg=ast.arg(arg="args"),
+                kwonlyargs=[],
+                kw_defaults=[],
+                kwarg=None,
+                defaults=[],
+            ),
+            body=ast.Name(id="x", ctx=ast.Load()),
+        )
+        lam2 = ast.Lambda(
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[],
+                vararg=ast.arg(arg="args"),
+                kwonlyargs=[],
+                kw_defaults=[],
+                kwarg=None,
+                defaults=[],
+            ),
+            body=ast.Name(id="y", ctx=ast.Load()),
+        )
         blocks = [[_ret(lam1)], [_ret(lam2)]]
         u = Unifier()
         res = u.unify_blocks(blocks, [{}, {}])
@@ -39,8 +57,26 @@ class TestUnifierMoreBranches(unittest.TestCase):
 
     def test_except_handler_alpha_and_name_none_mismatch(self):
         # Success case: names differ but alpha-renamed; same exception type
-        try1 = ast.Try(body=[ast.Pass()], handlers=[ast.ExceptHandler(type=ast.Name(id="Exception", ctx=ast.Load()), name="e", body=[ast.Pass()])], orelse=[], finalbody=[])
-        try2 = ast.Try(body=[ast.Pass()], handlers=[ast.ExceptHandler(type=ast.Name(id="Exception", ctx=ast.Load()), name="err", body=[ast.Pass()])], orelse=[], finalbody=[])
+        try1 = ast.Try(
+            body=[ast.Pass()],
+            handlers=[
+                ast.ExceptHandler(
+                    type=ast.Name(id="Exception", ctx=ast.Load()), name="e", body=[ast.Pass()]
+                )
+            ],
+            orelse=[],
+            finalbody=[],
+        )
+        try2 = ast.Try(
+            body=[ast.Pass()],
+            handlers=[
+                ast.ExceptHandler(
+                    type=ast.Name(id="Exception", ctx=ast.Load()), name="err", body=[ast.Pass()]
+                )
+            ],
+            orelse=[],
+            finalbody=[],
+        )
         for t in (try1, try2):
             m = ast.Module(body=[t], type_ignores=[])
             ast.fix_missing_locations(m)
@@ -68,8 +104,22 @@ class TestUnifierMoreBranches(unittest.TestCase):
 
     def test_joinedstr_component_type_mismatch(self):
         # At position 0, one has Constant, the other has FormattedValue -> _unify_joined_str returns False
-        js1 = ast.JoinedStr(values=[ast.Constant(value="A"), ast.FormattedValue(value=ast.Name(id="x", ctx=ast.Load()), conversion=-1, format_spec=None)])
-        js2 = ast.JoinedStr(values=[ast.FormattedValue(value=ast.Name(id="x", ctx=ast.Load()), conversion=-1, format_spec=None), ast.Constant(value="A")])
+        js1 = ast.JoinedStr(
+            values=[
+                ast.Constant(value="A"),
+                ast.FormattedValue(
+                    value=ast.Name(id="x", ctx=ast.Load()), conversion=-1, format_spec=None
+                ),
+            ]
+        )
+        js2 = ast.JoinedStr(
+            values=[
+                ast.FormattedValue(
+                    value=ast.Name(id="x", ctx=ast.Load()), conversion=-1, format_spec=None
+                ),
+                ast.Constant(value="A"),
+            ]
+        )
         u = Unifier()
         e1 = ast.Expr(value=js1)
         e2 = ast.Expr(value=js2)
@@ -107,10 +157,14 @@ class TestUnifierMoreBranches(unittest.TestCase):
 
     def test_constant_consistency_counts_and_alignment(self):
         # Different counts for value 3 vs 2 cause inconsistency -> reject
-        blk_a = [ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=2)),
-                 ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2))]
-        blk_b = [ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=3)),
-                 ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2))]
+        blk_a = [
+            ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=2)),
+            ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2)),
+        ]
+        blk_b = [
+            ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=3)),
+            ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2)),
+        ]
         for seq in (blk_a, blk_b):
             m = ast.Module(body=list(seq), type_ignores=[])
             ast.fix_missing_locations(m)
@@ -119,10 +173,14 @@ class TestUnifierMoreBranches(unittest.TestCase):
         self.assertIsNone(res1)
 
         # Alignment case: both positions differ consistently -> allow parameterization
-        blk_c = [ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=2)),
-                 ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2))]
-        blk_d = [ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=3)),
-                 ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=3))]
+        blk_c = [
+            ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=2)),
+            ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2)),
+        ]
+        blk_d = [
+            ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=3)),
+            ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=3)),
+        ]
         for seq in (blk_c, blk_d):
             m = ast.Module(body=list(seq), type_ignores=[])
             ast.fix_missing_locations(m)

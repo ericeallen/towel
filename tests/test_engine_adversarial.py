@@ -105,11 +105,13 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         # Parse and find calls to extracted function
         tree = ast.parse(new_src)
         calls = []
+
         class CallFinder(ast.NodeVisitor):
             def visit_Call(self, node: ast.Call):
                 if isinstance(node.func, ast.Name) and node.func.id.startswith("extracted_func"):
                     calls.append(node)
                 self.generic_visit(node)
+
         CallFinder().visit(tree)
         # There should be two calls (one in each function) and none should include a __param_* standing in for the augmented target
         self.assertEqual(len(calls), 2)
@@ -207,14 +209,17 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         # Extract the class body and assert no triple blank lines
         lines = out.splitlines()
         import ast as _ast
+
         mod = _ast.parse(out)
         cls_nodes = [n for n in mod.body if isinstance(n, _ast.ClassDef) and n.name == "C"]
         self.assertTrue(cls_nodes)
         cls = cls_nodes[0]
         start = cls.lineno - 1
         end = getattr(cls, "end_lineno", cls.lineno) - 1
-        class_block = "\n".join(lines[start:end+1])
-        self.assertNotIn("\n\n\n", class_block, "Should not contain triple blank lines inside class body")
+        class_block = "\n".join(lines[start : end + 1])
+        self.assertNotIn(
+            "\n\n\n", class_block, "Should not contain triple blank lines inside class body"
+        )
 
     def test_local_function_insertion_into_enclosing_function_scope(self):
         # Duplicate blocks exist inside two sibling inner functions; extracted helper
@@ -267,7 +272,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 found_local_insertion = True
                 break
 
-        self.assertTrue(found_local_insertion, "Did not find a proposal inserting helper into outer()")
+        self.assertTrue(
+            found_local_insertion, "Did not find a proposal inserting helper into outer()"
+        )
 
     def test_deepest_common_enclosing_function_is_chosen(self):
         # Mixed-depth nesting: f.inner1.deep and f.inner2 share common ancestor f but not inner1/inner2.
@@ -315,7 +322,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 new_src = out
                 break
 
-        self.assertIsNotNone(picked, "No proposal inserted helper into the deepest common ancestor f")
+        self.assertIsNotNone(
+            picked, "No proposal inserted helper into the deepest common ancestor f"
+        )
         ns2 = {}
         exec(new_src, ns2)
         self.assertEqual(orig, ns2["f"](5))
@@ -356,12 +365,22 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         for p in proposals:
             new_src = engine.apply_refactoring(str(m.path), p)
             mod = ast.parse(new_src)
-            outers = [n for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "outer"]
+            outers = [
+                n
+                for n in mod.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "outer"
+            ]
             if not outers:
                 continue
             outer_fn = outers[0]
-            inner_names = {n.name for n in outer_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-            top_level_names = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            inner_names = {
+                n.name
+                for n in outer_fn.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            top_level_names = {
+                n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
             if "extracted_func" in inner_names and "extracted_func" not in top_level_names:
                 ns2 = {}
                 exec(new_src, ns2)
@@ -370,7 +389,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 found_local_insertion = True
                 break
 
-        self.assertTrue(found_local_insertion, "Did not find a proposal inserting helper into async outer()")
+        self.assertTrue(
+            found_local_insertion, "Did not find a proposal inserting helper into async outer()"
+        )
 
     def test_dce_with_class_method_nested_functions_inserts_into_method_scope(self):
         # Inner functions inside a class method share a duplicate block; helper should be
@@ -399,7 +420,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
-        self.assertTrue(proposals, "Expected a proposal for duplicate inner function bodies in a method")
+        self.assertTrue(
+            proposals, "Expected a proposal for duplicate inner function bodies in a method"
+        )
 
         found_method_insertion = False
         picked_src = None
@@ -410,14 +433,28 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             if not classes:
                 continue
             cls = classes[0]
-            methods = [n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "m"]
+            methods = [
+                n
+                for n in cls.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "m"
+            ]
             if not methods:
                 continue
             m_fn = methods[0]
-            inner_names = {n.name for n in m_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-            class_level_names = {n.name for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-            top_level_names = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-            if "extracted_func" in inner_names and "extracted_func" not in class_level_names and "extracted_func" not in top_level_names:
+            inner_names = {
+                n.name for n in m_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            class_level_names = {
+                n.name for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            top_level_names = {
+                n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            if (
+                "extracted_func" in inner_names
+                and "extracted_func" not in class_level_names
+                and "extracted_func" not in top_level_names
+            ):
                 ns2 = {}
                 exec(new_src, ns2)
                 new_val = ns2["C"]().m(2, 5)
@@ -426,7 +463,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 picked_src = new_src
                 break
 
-        self.assertTrue(found_method_insertion, "Did not find a proposal inserting helper into method scope C.m")
+        self.assertTrue(
+            found_method_insertion, "Did not find a proposal inserting helper into method scope C.m"
+        )
 
     def test_deepest_common_enclosing_inner_function_is_chosen(self):
         # Deepest common ancestor is an inner function (not the outermost):
@@ -465,13 +504,23 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             if not fns:
                 continue
             f_node = fns[0]
-            commons = [n for n in f_node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "common"]
+            commons = [
+                n
+                for n in f_node.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "common"
+            ]
             if not commons:
                 continue
             common_fn = commons[0]
             # Helper should be in 'common' body
-            inner_names = {n.name for n in common_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-            top_level = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            inner_names = {
+                n.name
+                for n in common_fn.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            top_level = {
+                n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
             if "extracted_func" in inner_names and "extracted_func" not in top_level:
                 ns2 = {}
                 exec(out, ns2)
@@ -479,7 +528,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 found_common_insertion = True
                 break
 
-        self.assertTrue(found_common_insertion, "No proposal inserted helper into the inner common ancestor function")
+        self.assertTrue(
+            found_common_insertion,
+            "No proposal inserted helper into the inner common ancestor function",
+        )
 
     def test_dce_mixed_async_sync_within_same_async_outer(self):
         # Mixed async/sync inner functions under an async outer. The shared block should extract
@@ -517,12 +569,22 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         for p in props:
             out = engine.apply_refactoring(str(m.path), p)
             mod = ast.parse(out)
-            outers = [n for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "outer"]
+            outers = [
+                n
+                for n in mod.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "outer"
+            ]
             if not outers:
                 continue
             outer_fn = outers[0]
-            inner_names = {n.name for n in outer_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-            top_level = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            inner_names = {
+                n.name
+                for n in outer_fn.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            top_level = {
+                n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
             if "extracted_func" in inner_names and "extracted_func" not in top_level:
                 ns2 = {}
                 exec(out, ns2)
@@ -530,7 +592,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 found_insertion = True
                 break
 
-        self.assertTrue(found_insertion, "No proposal inserted helper into async outer() for mixed async/sync case")
+        self.assertTrue(
+            found_insertion,
+            "No proposal inserted helper into async outer() for mixed async/sync case",
+        )
 
     def test_dce_multiple_candidates_interleaved_defs(self):
         # Multiple duplicate pairs interleaved at different depths; ensure at least one proposal
@@ -580,8 +645,14 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             if not outers:
                 continue
             outer_fn = outers[0]
-            inner_names = {n.name for n in outer_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-            top_level = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            inner_names = {
+                n.name
+                for n in outer_fn.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            top_level = {
+                n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
             if "extracted_func" in inner_names and "extracted_func" not in top_level:
                 found_outer = True
                 new_src = out
@@ -653,15 +724,23 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             if not outers:
                 continue
             outer_fn = outers[0]
-            inner_names = {n.name for n in outer_fn.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-            top_level = {n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            inner_names = {
+                n.name
+                for n in outer_fn.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            top_level = {
+                n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
             if "extracted_func" in inner_names and "extracted_func" not in top_level:
                 ns2 = {}
                 exec(out, ns2)
                 self.assertEqual(orig, ns2["outer"](5))
                 found = True
                 break
-        self.assertTrue(found, "Expected a proposal inserting helper with global injection into outer()")
+        self.assertTrue(
+            found, "Expected a proposal inserting helper with global injection into outer()"
+        )
 
 
 class TestUnifierExtractorCalleeThunk(unittest.TestCase):
@@ -743,7 +822,10 @@ class TestCrossFileImports(unittest.TestCase):
                 encoding="utf-8",
             )
             engine = UnificationRefactorEngine(
-                max_parameters=5, min_lines=2, parameterize_constants=True, prefer_absolute_imports=True
+                max_parameters=5,
+                min_lines=2,
+                parameterize_constants=True,
+                prefer_absolute_imports=True,
             )
             props = engine.analyze_directory(str(pkg), recursive=False)
             self.assertTrue(props, "Expected a cross-file proposal between a.py and b.py")
@@ -754,36 +836,49 @@ class TestCrossFileImports(unittest.TestCase):
 
     def test_cross_file_runtime_equivalence_after_refactor(self):
         import sys, importlib
+
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             a = base / "a.py"
             b = base / "b.py"
-            a.write_text(textwrap.dedent(
-                """
+            a.write_text(
+                textwrap.dedent(
+                    """
                 def fa(x):
                     y = x + 1
                     z = y * 2
                     return z - 3
                 """
-            ).strip()+"\n", encoding="utf-8")
-            b.write_text(textwrap.dedent(
-                """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            b.write_text(
+                textwrap.dedent(
+                    """
                 def fb(x):
                     y = x + 1
                     z = y * 2
                     return z - 3
                 """
-            ).strip()+"\n", encoding="utf-8")
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
             sys.path.insert(0, str(base))
             try:
                 a_mod = importlib.import_module("a")
                 b_mod = importlib.import_module("b")
-                orig_a = [a_mod.fa(i) for i in (0,1,5)]
-                orig_b = [b_mod.fb(i) for i in (0,1,5)]
+                orig_a = [a_mod.fa(i) for i in (0, 1, 5)]
+                orig_b = [b_mod.fb(i) for i in (0, 1, 5)]
 
-                engine = UnificationRefactorEngine(max_parameters=5, min_lines=2, parameterize_constants=True)
+                engine = UnificationRefactorEngine(
+                    max_parameters=5, min_lines=2, parameterize_constants=True
+                )
                 props = engine.analyze_directory(str(base), recursive=False)
-                self.assertTrue(props, "Expected a cross-file proposal between a.py and b.py in same directory")
+                self.assertTrue(
+                    props, "Expected a cross-file proposal between a.py and b.py in same directory"
+                )
                 modified = engine.apply_refactoring_multi_file(props[0])
                 # Write modifications to disk
                 for fpath, content in modified.items():
@@ -794,8 +889,8 @@ class TestCrossFileImports(unittest.TestCase):
                         del sys.modules[name]
                 a_mod2 = importlib.import_module("a")
                 b_mod2 = importlib.import_module("b")
-                new_a = [a_mod2.fa(i) for i in (0,1,5)]
-                new_b = [b_mod2.fb(i) for i in (0,1,5)]
+                new_a = [a_mod2.fa(i) for i in (0, 1, 5)]
+                new_b = [b_mod2.fb(i) for i in (0, 1, 5)]
                 self.assertEqual(orig_a, new_a)
                 self.assertEqual(orig_b, new_b)
             finally:
@@ -891,7 +986,8 @@ class TestExtractorDeclarations(unittest.TestCase):
         extractor = HygienicExtractor()
         fn, _ = extractor.extract_function(
             template_block=block,
-            substitution=Unifier(max_parameters=1).unify_blocks([block, block], [{}, {}]) or __import__('types').SimpleNamespace(param_expressions={}),
+            substitution=Unifier(max_parameters=1).unify_blocks([block, block], [{}, {}])
+            or __import__("types").SimpleNamespace(param_expressions={}),
             free_variables=set(),
             enclosing_names=set(),
             is_value_producing=False,

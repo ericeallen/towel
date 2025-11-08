@@ -9,7 +9,10 @@ class TestExtractorMorePaths(unittest.TestCase):
     def test_generate_call_variants(self):
         # Template block: simple assign then return
         block = [
-            ast.Assign(targets=[ast.Name(id="a", ctx=ast.Store())], value=ast.Name(id="__param_0", ctx=ast.Load())),
+            ast.Assign(
+                targets=[ast.Name(id="a", ctx=ast.Store())],
+                value=ast.Name(id="__param_0", ctx=ast.Load()),
+            ),
             ast.Return(value=ast.Name(id="a", ctx=ast.Load())),
         ]
 
