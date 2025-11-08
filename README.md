@@ -255,6 +255,16 @@ just test-returns     # Return value propagation
 just test-fstrings    # F-string handling
 just test-orphans     # Orphan variable detection
 just test-engine      # End-to-end refactoring
+
+### Fast Smoke Suite
+
+During inner-loop development you can run a curated fast subset (proposal generation, stability, and observational equivalence on representative examples) instead of the full suite:
+
+```bash
+just test-smoke
+```
+
+Use this for quick validation (< a few minutes). Run the full suite (`just test` or `just test-all`) before pushing or releasing.
 ```
 
 ## Project Structure

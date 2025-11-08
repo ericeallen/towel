@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1,
+    "title": "Profile smoke suite",
+    "description": "Run just test-smoke under cProfile to gather hotspots",
+    "status": "completed"
+  },
+  {
+    "id": 2,
+    "title": "Analyze profiler data",
+    "description": "Summarize top time-consuming functions and their call stacks",
+    "status": "completed"
+  },
+  {
+    "id": 3,
+    "title": "Recommend optimizations",
+    "description": "Propose safe optimization/memoization opportunities based on findings",
+    "status": "completed"
+  },
+  {
+    "id": 4,
+    "title": "Cache _get_used_names",
+    "description": "Memoize _get_used_names results keyed by AST node to avoid repeat visitors",
+    "status": "not-started"
+  },
+  {
+    "id": 5,
+    "title": "Enhance signature prefilter",
+    "description": "Extend block signature with identifier histograms and prune candidate pairs earlier",
+    "status": "not-started"
+  }
+]

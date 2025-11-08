@@ -217,7 +217,14 @@ python3 test_with_temp_files.py
 
 # Run comprehensive test suite
 just test-all
+
+# Fast smoke suite (curated stability + equivalence subset)
+just test-smoke
 ```
+
+### Smoke suite vs full suite
+
+Use `just test-smoke` for rapid feedback while changing unifier, extractor, or proposal filtering logic. It executes a representative subset plus stability/equivalence checks (≈2–3 minutes vs full suite). Before pushing or releasing, run `just test` (or `just test-all` if you need exhaustive coverage). If the smoke suite fails, escalate immediately to the full suite to see whether the issue is localized or systemic.
 
 ## Summary
 

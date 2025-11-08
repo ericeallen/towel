@@ -77,6 +77,29 @@ test-engine:
 test-observational:
     source venv/bin/activate && python -m unittest tests.test_observational_equivalence -v
 
+# Fast smoke tests exercising signature gate, pairing, unifier, extractor, and
+# regression stability without running the entire 600+ test suite
+test-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running smoke test suite (fast subset)..."
+    PY="venv/bin/python"
+    if [ ! -x "$PY" ]; then
+        echo "Error: venv not initialized (missing venv/bin/python). Run: just install-dev" >&2
+        exit 2
+    fi
+    # Regression stability on expected outputs
+    "$PY" -m unittest tests.test_regression.TestSingleFileRegression -q
+    # Observational equivalence harness (single-file)
+    "$PY" -m unittest tests.test_observational_equivalence -q
+    # Engine orchestration / pairing coverage
+    "$PY" -m unittest tests.test_refactor_engine_comprehensive -q
+    # Core unifier correctness
+    "$PY" -m unittest tests.test_unifier_core -q
+    # Extractor end-to-end behaviors
+    "$PY" -m unittest tests.test_extractor_comprehensive -q
+    echo "\n✓ Smoke suite passed"
+
 # Run regression tests
 test-regression:
     source venv/bin/activate && python -m unittest tests.test_regression -v
@@ -375,6 +398,7 @@ help:
     @echo "  test-orphans          Test orphan variable detection"
     @echo "  test-engine           Test refactoring engine end-to-end"
     @echo "  test-observational    Test observational equivalence (refactored = original behavior)"
+    @echo "  test-smoke            Run fast smoke set (regression + equivalence + engine + core unifier + extractor)"
     @echo "  regenerate-baseline   ⚠️  DANGER: Regenerate regression baseline (asks for confirmation)"
     @echo "  bump-version <ver>    Bump project version in pyproject.toml to <ver>"
     @echo "  release <ver>         Run checks, bump, commit, tag, update release log, and push"
