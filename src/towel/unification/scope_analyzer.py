@@ -3,7 +3,7 @@ Analyze identifier bindings and scopes in Python code.
 """
 
 import ast
-from typing import Dict, Set, List, Optional
+from typing import Dict, Set, List, Optional, Tuple
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 
@@ -62,6 +62,9 @@ class ScopeAnalyzer(ast.NodeVisitor):
         # Maps scope_id -> set of variable names
         self.global_vars: Dict[int, Set[str]] = {}
         self.nonlocal_vars: Dict[int, Set[str]] = {}
+
+        # Cache for free-variable analysis (keyed by node identity tuple)
+        self._free_var_cache: Dict[Tuple[int, ...], Set[str]] = {}
 
     def analyze(self, tree: ast.AST) -> Scope:
         """Analyze an AST and return the root scope."""
@@ -553,6 +556,12 @@ class ScopeAnalyzer(ast.NodeVisitor):
                     imports.add(name)
                 self._add_current_scope_bindings(imports)
 
+        cache_key = tuple(id(node) for node in nodes)
+        if cache_key:
+            cached = self._free_var_cache.get(cache_key)
+            if cached is not None:
+                return set(cached)
+
         # Collect uses and bindings
         walker = ScopeRespectingWalker()
         for node in nodes:
@@ -575,6 +584,8 @@ class ScopeAnalyzer(ast.NodeVisitor):
         # Filter out Python builtins
         free_vars = filter_builtins(free_vars)
 
+        if cache_key:
+            self._free_var_cache[cache_key] = set(free_vars)
         return free_vars
 
     def get_binding_for_name(self, name_node: ast.Name) -> Optional[Binding]:

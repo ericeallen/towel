@@ -301,6 +301,16 @@ simple_proposals = [p for p in proposals if p.parameters_count <= 2]
 - Check that module names are correct (based on file names)
 - Consider using relative imports for packages
 
+## Fast local testing
+
+When developing or iterating on changes, run the fast smoke suite to validate core behavior and output stability without the cost of the full test run:
+
+```
+just test-smoke
+```
+
+Use this during inner-loop development; reserve the full suite for pre-commit or release gating.
+
 ## Advanced Usage
 
 ### Custom Filtering

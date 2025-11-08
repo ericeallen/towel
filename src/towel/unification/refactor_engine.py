@@ -10,7 +10,8 @@ This orchestrates the entire refactoring process:
 """
 
 import ast
-from typing import List, Tuple, Dict, Set, Optional
+from typing import List, Tuple, Dict, Set, Optional, FrozenSet
+from weakref import WeakKeyDictionary
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -20,6 +21,7 @@ from .extractor import HygienicExtractor, is_value_producing
 from .orphan_detector import has_orphaned_variables
 from .assignment_analyzer import analyze_assignments, has_reassignments_without_bindings
 from .project_layout import ProjectLayout
+from .block_signature import extract_block_signature, quick_filter
 
 
 @dataclass
@@ -104,6 +106,10 @@ class UnificationRefactorEngine:
         # Default behavior: allow safe handling of globals/nonlocals by not parameterizing
         # them and promoting necessary declarations into the extracted function when needed.
 
+        # Memoization caches keyed by the identity of AST nodes parsed for this engine run.
+        self._assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]] = WeakKeyDictionary()
+        self._used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
+
     def analyze_file(self, file_path: str) -> List[RefactoringProposal]:
         """
         Analyze a Python file and find refactoring opportunities.
@@ -179,6 +185,15 @@ class UnificationRefactorEngine:
                 python_files.append(str(py_file))
 
         return sorted(python_files)
+
+    def _get_assignment_reuse(self, func: ast.FunctionDef) -> Dict[int, bool]:
+        """Return (and cache) assignment analysis for a function definition."""
+        cached = self._assignment_cache.get(func)
+        if cached is not None:
+            return cached
+        analysis = analyze_assignments(func)
+        self._assignment_cache[func] = analysis
+        return analysis
 
     def analyze_files(
         self,
@@ -506,7 +521,11 @@ class UnificationRefactorEngine:
         Returns:
             Set of variable names that are read in the node
         """
-        used = set()
+        cached = self._used_names_cache.get(node)
+        if cached is not None:
+            return set(cached)
+
+        used: Set[str] = set()
 
         class NameCollector(ast.NodeVisitor):
             def visit_Name(self, n):
@@ -524,7 +543,10 @@ class UnificationRefactorEngine:
 
         collector = NameCollector()
         collector.visit(node)
-        return used
+
+        frozen = frozenset(used)
+        self._used_names_cache[node] = frozen
+        return set(frozen)
 
     def _find_block_pairs_multi_file(
         self,
@@ -567,12 +589,18 @@ class UnificationRefactorEngine:
                     encl2 = None
                     anc2 = []
                 # Extract all code blocks from each function
-                blocks1 = self._extract_code_blocks(func1)
-                blocks2 = self._extract_code_blocks(func2)
+                blocks1 = [
+                    (block_range, block_nodes, extract_block_signature(block_nodes))
+                    for block_range, block_nodes in self._extract_code_blocks(func1)
+                ]
+                blocks2 = [
+                    (block_range, block_nodes, extract_block_signature(block_nodes))
+                    for block_range, block_nodes in self._extract_code_blocks(func2)
+                ]
 
                 # Compare all pairs of blocks
-                for block1_range, block1_nodes in blocks1:
-                    for block2_range, block2_nodes in blocks2:
+                for block1_range, block1_nodes, sig1 in blocks1:
+                    for block2_range, block2_nodes, sig2 in blocks2:
                         # Must have same number of statements for unification
                         if len(block1_nodes) != len(block2_nodes):
                             continue
@@ -583,6 +611,9 @@ class UnificationRefactorEngine:
                         if (end1 - start1 + 1) < self.min_lines or (
                             end2 - start2 + 1
                         ) < self.min_lines:
+                            continue
+
+                        if not quick_filter(sig1, sig2):
                             continue
 
                         # Create pair with all necessary context
@@ -672,8 +703,8 @@ class UnificationRefactorEngine:
         # is outside the block. Such extractions are fundamentally unsound.
         if func1 and func2:
             # Analyze assignments in both functions
-            reassignments1 = analyze_assignments(func1)
-            reassignments2 = analyze_assignments(func2)
+            reassignments1 = self._get_assignment_reuse(func1)
+            reassignments2 = self._get_assignment_reuse(func2)
 
             # Check if block1 contains reassignments without bindings
             has_unsafe1, problematic_vars1 = has_reassignments_without_bindings(
