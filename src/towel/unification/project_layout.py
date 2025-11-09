@@ -88,6 +88,9 @@ class ProjectLayout:
         except Exception:
             pass
 
+        start_resolved = start_path.resolve()
+        start_dir = start_resolved.parent if start_resolved.is_file() else start_resolved
+
         # If no explicit mapping was found, default to treating the entire project root
         # as the import anchor. We intentionally DO NOT auto-add conventional directories
         # like "src" or "lib" as source roots when pyproject mapping is absent, because
@@ -96,6 +99,24 @@ class ProjectLayout:
         # component (e.g., "src.data_processor"), which fails if we strip it as a source root.
         if not source_roots:
             source_roots = [project_root]
+
+        # Prefer source roots that actually contain the starting directory. When none of the
+        # discovered roots include the path we're analyzing (common for test fixtures copied
+        # outside the main package tree), fall back to treating the starting directory as the
+        # root so relative imports remain valid.
+        filtered_roots: List[Path] = []
+        for root in source_roots:
+            try:
+                start_dir.relative_to(root)
+                filtered_roots.append(root)
+            except ValueError:
+                continue
+
+        if filtered_roots:
+            source_roots = filtered_roots
+        elif start_dir != project_root:
+            project_root = start_dir
+            source_roots = [start_dir]
 
         return cls(
             project_root=project_root,
@@ -146,11 +167,15 @@ def _find_project_root(start_path: Path) -> Path:
     start = start_path.resolve()
     base_dir = start.parent if start.is_file() else start
 
-    # Prefer treating the provided directory as the project root unless it
-    # itself contains explicit packaging markers. This avoids accidentally
-    # hoisting to a monorepo root (with a pyproject.toml) for nested example
-    # projects and keeps imports scoped within the subtree we're refactoring.
+    # Prefer a nearby directory containing packaging markers, but fall back to
+    # the provided directory when none are found while walking upward.
     markers = {"pyproject.toml", "setup.cfg", "setup.py"}
-    if any((base_dir / m).exists() for m in markers):
-        return base_dir
+    current = base_dir
+    while True:
+        if any((current / m).exists() for m in markers) or (current / ".git").exists():
+            return current
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
     return base_dir
