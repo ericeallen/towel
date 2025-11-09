@@ -1,10 +1,15 @@
+import ast
 import os
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from src.towel.unification.refactor_engine import (
+    RefactoringProposal,
+    UnificationRefactorEngine,
+    filter_overlapping_proposals,
+)
 
 
 class TestRefactorEngineTargetedBranches(unittest.TestCase):
@@ -173,6 +178,171 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             self.assertFalse(proposals, "Expected no proposals when nonlocal variables present")
         finally:
             os.remove(path)
+
+    def test_apply_refactoring_multi_file_inserts_method_and_rewrites_calls(self):
+        code = textwrap.dedent(
+            """
+            class Example:
+                def method(self, value):
+                    interim = value + 1
+                    return interim
+            """
+        )
+        path = self._write_temp(code)
+        try:
+            engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+
+            helper_func = ast.parse(
+                "def helper(value):\n    return value + 1\n"
+            ).body[0]
+            call_node = ast.parse("return helper(self, value)").body[0]
+
+            proposal = RefactoringProposal(
+                file_path=path,
+                extracted_function=helper_func,
+                replacements=[((3, 4), call_node, path, "Example")],
+                description="Insert helper method",
+                parameters_count=1,
+            )
+            proposal.insert_into_class = "Example"
+
+            modified = engine.apply_refactoring_multi_file(proposal)
+            updated_code = modified[path]
+
+            self.assertIn("def _helper(self, value):", updated_code)
+            self.assertIn("return self._helper(value)", updated_code)
+        finally:
+            os.remove(path)
+
+    def test_apply_refactoring_multi_file_adds_crossfile_import(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_path = Path(tmpdir) / "pkg"
+            pkg_path.mkdir()
+            (pkg_path / "__init__.py").write_text("", encoding="utf-8")
+
+            source_a = pkg_path / "source_a.py"
+            source_a.write_text(
+                """
+def target(value):
+    total = value + 1
+    return total
+""".lstrip(),
+                encoding="utf-8",
+            )
+
+            source_b = pkg_path / "source_b.py"
+            source_b.write_text(
+                """
+def consumer(data):
+    result = data + 2
+    return result
+""".lstrip(),
+                encoding="utf-8",
+            )
+
+            engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+
+            helper_func = ast.parse("def helper(value):\n    return value\n").body[0]
+            repl_a = ast.parse("return helper(value)").body[0]
+            repl_b = ast.parse("return helper(data)").body[0]
+
+            proposal = RefactoringProposal(
+                file_path=str(source_a),
+                extracted_function=helper_func,
+                replacements=[
+                    ((2, 3), repl_a),
+                    ((2, 2), repl_b, str(source_b)),
+                ],
+                description="Cross-file helper",
+                parameters_count=1,
+            )
+
+            modified = engine.apply_refactoring_multi_file(proposal)
+            updated_a = modified[str(source_a)]
+            updated_b = modified[str(source_b)]
+
+            self.assertIn("def helper(value):", updated_a)
+            self.assertIn("return helper(value)", updated_a)
+            import_line_present = any(
+                candidate in updated_b for candidate in [
+                    "from pkg.source_a import helper",
+                    "from source_a import helper",
+                ]
+            )
+            self.assertTrue(import_line_present)
+            self.assertIn("return helper(data)", updated_b)
+
+    def test_refactor_directory_to_fixed_point_uses_stubbed_results(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_dir = Path(tmpdir) / "in_dir"
+            output_dir = Path(tmpdir) / "out_dir"
+            input_dir.mkdir()
+
+            module_path = input_dir / "module.py"
+            module_path.write_text("print('hi')\n", encoding="utf-8")
+
+            class StubEngine(UnificationRefactorEngine):
+                def __init__(self, output_root: Path):
+                    super().__init__(max_parameters=1, min_lines=1)
+                    self.output_root = output_root
+                    self._calls = 0
+                    self.applied = 0
+
+                def analyze_directory(self, directory: str, **kwargs):
+                    if Path(directory) == self.output_root and self._calls == 0:
+                        self._calls += 1
+                        func = ast.parse("def helper():\n    pass\n").body[0]
+                        proposal = RefactoringProposal(
+                            file_path=str(self.output_root / "module.py"),
+                            extracted_function=func,
+                            replacements=[],
+                            description="stub",
+                            parameters_count=0,
+                        )
+                        return [proposal]
+                    return []
+
+                def apply_refactoring_multi_file(self, proposal):
+                    self.applied += 1
+                    return {proposal.file_path: "# updated\n"}
+
+            engine = StubEngine(output_dir)
+            results = engine.refactor_directory_to_fixed_point(
+                str(input_dir), str(output_dir), max_iterations=2
+            )
+
+            target_path = str(output_dir / "module.py")
+            self.assertIn(target_path, results)
+            count, descriptions = results[target_path]
+            self.assertEqual(count, 1)
+            self.assertEqual(descriptions, ["stub"])
+            self.assertEqual(engine.applied, 1)
+
+            written = (output_dir / "module.py").read_text(encoding="utf-8")
+            self.assertEqual(written, "# updated\n")
+
+    def test_filter_overlapping_proposals_prefers_larger_spans(self):
+        func = ast.parse("def helper():\n    pass\n").body[0]
+        stmt = ast.parse("x = 1").body[0]
+
+        big = RefactoringProposal(
+            file_path="a.py",
+            extracted_function=func,
+            replacements=[((1, 4), stmt)],
+            description="big",
+            parameters_count=0,
+        )
+        small = RefactoringProposal(
+            file_path="a.py",
+            extracted_function=func,
+            replacements=[((2, 3), stmt)],
+            description="small",
+            parameters_count=0,
+        )
+
+        selected = filter_overlapping_proposals([small, big])
+        self.assertEqual(selected, [big])
+        self.assertEqual(filter_overlapping_proposals([]), [])
 
 
 if __name__ == "__main__":
