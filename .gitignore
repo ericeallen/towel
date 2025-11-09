@@ -63,6 +63,7 @@ tmp.py
 tmp_*
 tmp_out_*/
 tmp_out_*
+scripts/_*.py
 
 # Temporary test output directories (not the legitimate test_examples/)
 test_all/
