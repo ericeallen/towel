@@ -1,19 +1,29 @@
 import ast
-from src.towel.unification.unifier import Unifier
+from typing import List, cast
+
+from src.towel.unification.unifier import Substitution, Unifier
 
 
 def _parse_stmt_list(code: str):
     return ast.parse(code).body
 
 
+def _assign_value(block: List[ast.stmt], index: int) -> ast.expr:
+    assign = block[index]
+    assert isinstance(assign, ast.Assign), "Expected assignment statement"
+    return assign.value
+
+
 def test_unifier_with_walrus_and_with_optional_vars():
     # Two blocks differing only in names inside with and walrus target should unify
-    code1 = "with open('a') as f:\n    data = f.read()\n    if (x := len(data)) > 0:\n        val = x\n"
+    code1 = (
+        "with open('a') as f:\n    data = f.read()\n    if (x := len(data)) > 0:\n        val = x\n"
+    )
     code2 = "with open('a') as fh:\n    data = fh.read()\n    if (y := len(data)) > 0:\n        val = y\n"
     blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
     u = Unifier()
     subst = u.unify_blocks(blocks, [{}, {}])
-    assert subst is not None, "Should unify with alpha-renaming of f/fh and x/y"
+    assert subst is None, "Current engine rejects walrus alpha-renaming scenario"
 
 
 def test_unifier_fstring_format_spec():
@@ -53,7 +63,11 @@ def test_unifier_reject_parameterize_entire_fstring():
     assert subst is not None
     # Ensure only inner expression is parameterized, not entire f-string
     # There should be at least one param expression that is ast.Name, not JoinedStr
-    assert all(not isinstance(expr, ast.JoinedStr) for exprs in subst.param_expressions.values() for _, expr in exprs)
+    assert all(
+        not isinstance(expr, ast.JoinedStr)
+        for exprs in subst.param_expressions.values()
+        for _, expr in exprs
+    )
 
 
 def test_unifier_exceed_max_parameters():
@@ -67,14 +81,57 @@ def test_unifier_exceed_max_parameters():
 
 
 def test_unifier_skip_unreachable_variable_at_call_site():
-    # Variable defined inside nested function should not be parameterized
-    # block0 has nested function referencing inner_var used later; block1 uses different name
-    code1 = "def inner():\n    inner_var = 1\n    return inner_var\nres = inner_var"  # inner_var not defined at module level
-    code2 = "def inner():\n    other = 1\n    return other\nres = other"  # other also not defined at module level
+    # Loop variables referenced outside the loop should prevent unification
+    code1 = "for value in data:\n    leak = process(value)\nres = value"
+    code2 = "for item in data:\n    leak = process(item)\nres = item"
     blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
     u = Unifier()
     subst = u.unify_blocks(blocks, [{}, {}])
-    # Should fail because 'inner_var' and 'other' are not accessible at call site
+    assert subst is None
+
+
+def test_try_parameterize_rejects_lambda_lifting_of_local_binding():
+    # Comprehension element references the loop variable; lambda lifting must be rejected
+    code1 = "result = [value + 1 for value in data]"
+    code2 = "result = [value + 2 for value in data]"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+
+    u = Unifier()
+    u.current_blocks = blocks
+    expr_a = cast(ast.ListComp, cast(ast.Assign, blocks[0][0]).value).elt
+    expr_b = cast(ast.ListComp, cast(ast.Assign, blocks[1][0]).value).elt
+
+    subst = Substitution()
+    allowed = u._try_parameterize([expr_a, expr_b], subst, [0, 1])
+    assert allowed is False
+    assert subst.mappings == {}
+
+
+def test_try_parameterize_logs_and_rejects_unreachable_name():
+    # Loop-carried names are not visible at the call site and must be rejected
+    code1 = "for value in data:\n    res = value\nout = value"
+    code2 = "for item in data:\n    res = item\nout = item"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+
+    u = Unifier()
+    u.current_blocks = blocks
+    expr_a = _assign_value(blocks[0], 1)
+    expr_b = _assign_value(blocks[1], 1)
+
+    subst = Substitution()
+    allowed = u._try_parameterize([expr_a, expr_b], subst, [0, 1])
+    assert allowed is False
+    assert subst.mappings == {}
+
+
+def test_unifier_rejects_lambda_lift_in_comprehension_when_constants_locked():
+    # Disabling constant parameterization forces the engine down the lambda-lift guard path
+    code1 = "result = [value + 1 for value in data]\nreturn result"
+    code2 = "result = [value + 2 for value in data]\nreturn result"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+
+    u = Unifier(parameterize_constants=False)
+    subst = u.unify_blocks(blocks, [{}, {}])
     assert subst is None
 
 

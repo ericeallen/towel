@@ -6,12 +6,13 @@ This is intended to be executed under coverage run --append.
 from pathlib import Path
 import sys
 
-# Ensure project root is on sys.path so tests/* modules can be imported
+# Ensure project root is on sys.path so tests/* modules can be imported BEFORE local imports
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester  # noqa: E402
+from src.towel.unification.refactor_engine import UnificationRefactorEngine  # noqa: E402
 
 
 def main() -> None:
