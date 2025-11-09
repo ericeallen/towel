@@ -379,26 +379,64 @@ class HygienicExtractor:
                                 self.var_to_param[expr.id] = param_name
                                 break
 
+            def _maybe_replace_node(self, node: ast.AST) -> Optional[ast.AST]:
+                # Only expressions participate in substitution mappings
+                if not isinstance(node, ast.expr):
+                    return None
+
+                maybe_param_name: Optional[str] = self.subst.get_param_for_expr(self.block_idx, node)
+                if not maybe_param_name or maybe_param_name not in self.param_names:
+                    return None
+
+                # CRITICAL: Never replace binding occurrences (Store/Del context)
+                if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+                    return node
+
+                # Inside an f-string literal component, keep constants intact
+                if self.in_joinedstr and isinstance(node, ast.Constant):
+                    return node
+
+                # Don't replace FormattedValue nodes themselves; recurse into their value instead
+                if isinstance(node, ast.FormattedValue):
+                    return None
+
+                if self.subst.is_function_param(maybe_param_name):
+                    bound_vars = self.subst.get_function_param_vars(maybe_param_name)
+                    call = ast.Call(
+                        func=ast.Name(id=maybe_param_name, ctx=ast.Load()),
+                        args=[ast.Name(id=var, ctx=ast.Load()) for var in bound_vars],
+                        keywords=[],
+                    )
+                    return ast.copy_location(call, node)
+
+                # Regular parameter - just replace with parameter name
+                return ast.copy_location(ast.Name(id=maybe_param_name, ctx=ast.Load()), node)
+
             def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
                 # JoinedStr (f-string) can only have Constant or FormattedValue as direct children
                 # We must NEVER parameterize Constant nodes inside f-strings
                 # But we CAN parameterize expressions inside FormattedValue nodes
                 new_values: List[ast.expr] = []
-                for value in node.values:
-                    if isinstance(value, ast.Constant):
-                        # String literal parts of f-string must stay as constants
-                        new_values.append(value)
-                    elif isinstance(value, ast.FormattedValue):
-                        # For FormattedValue, recursively visit the value expression
-                        new_formatted = ast.FormattedValue(
-                            value=cast(ast.expr, self.visit(value.value)),
-                            conversion=value.conversion,
-                            format_spec=value.format_spec,
-                        )
-                        new_values.append(new_formatted)
-                    else:
-                        # Shouldn't happen, but handle gracefully
-                        new_values.append(value)
+                previous_state = self.in_joinedstr
+                self.in_joinedstr = True
+                try:
+                    for value in node.values:
+                        if isinstance(value, ast.Constant):
+                            # String literal parts of f-string must stay as constants
+                            new_values.append(value)
+                        elif isinstance(value, ast.FormattedValue):
+                            # For FormattedValue, recursively visit the value expression
+                            new_formatted = ast.FormattedValue(
+                                value=cast(ast.expr, self.visit(value.value)),
+                                conversion=value.conversion,
+                                format_spec=value.format_spec,
+                            )
+                            new_values.append(new_formatted)
+                        else:
+                            # Shouldn't happen, but handle gracefully
+                            new_values.append(self.visit(value))
+                finally:
+                    self.in_joinedstr = previous_state
                 return ast.JoinedStr(values=new_values)
 
             def visit_For(self, node: ast.For) -> ast.For:
@@ -415,12 +453,8 @@ class HygienicExtractor:
                 new_target = node.target
 
                 # Transform the body
-                new_body = [cast(ast.stmt, self.visit(stmt)) for stmt in node.body]
-                new_orelse = (
-                    [cast(ast.stmt, self.visit(stmt)) for stmt in node.orelse]
-                    if node.orelse
-                    else []
-                )
+                new_body = self._visit_branch_statements(node.body)
+                new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
 
                 return ast.For(target=new_target, iter=new_iter, body=new_body, orelse=new_orelse)
 
@@ -462,22 +496,27 @@ class HygienicExtractor:
                 vars_to_delete = []  # Track which variables to remove from var_to_param
 
                 for target in node.targets:
+                    processed_target = (
+                        target
+                        if isinstance(target, ast.Name)
+                        else self._transform_assignment_target(target)
+                    )
                     if isinstance(target, ast.Name) and target.id in self.var_to_param:
                         # This variable is currently equivalent to a parameter
                         param_name = self.var_to_param[target.id]
 
                         # Check if we're reassigning the parameter to itself (e.g., __param_0 = __param_0)
                         if isinstance(new_value, ast.Name) and new_value.id == param_name:
-                            # Substitute the target with the parameter name
-                            new_targets.append(ast.Name(id=param_name, ctx=ast.Store()))
+                            # Keep the original variable target to avoid mutating parameter symbols
+                            new_targets.append(processed_target)
                         else:
                             # We're assigning a DIFFERENT value, which creates a new binding
                             # Keep the original variable name and remove from var_to_param
-                            new_targets.append(target)
+                            new_targets.append(processed_target)
                             vars_to_delete.append(target.id)
                     else:
                         # New binding or complex target (e.g., tuple unpacking) - keep as is
-                        new_targets.append(target)
+                        new_targets.append(processed_target)
 
                 # Now update var_to_param for new parameter bindings
                 # Check if we're assigning a parameter to a variable (e.g., result = __param_0)
@@ -494,59 +533,109 @@ class HygienicExtractor:
 
                 return ast.Assign(targets=new_targets, value=new_value)
 
-            def visit(self, node: ast.AST) -> ast.AST:
-                # First, check if this is a variable that's equivalent to a parameter
-                # (e.g., result is equivalent to __param_0)
-                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                    if node.id in self.var_to_param:
-                        # This variable is equivalent to a parameter - substitute it
-                        param_name = self.var_to_param[node.id]
-                        return ast.Name(id=param_name, ctx=ast.Load())
+            def visit_If(self, node: ast.If) -> ast.If:
+                new_test = cast(ast.expr, self.visit(node.test))
+                new_body = self._visit_branch_statements(node.body)
+                new_orelse = self._visit_branch_statements(node.orelse)
+                return ast.If(test=new_test, body=new_body, orelse=new_orelse)
 
-                # Check if this expression should be replaced with a parameter
-                maybe_param_name: Optional[str] = self.subst.get_param_for_expr(
-                    self.block_idx, node
+            def visit_AugAssign(self, node: ast.AugAssign) -> ast.AugAssign:
+                new_value = cast(ast.expr, self.visit(node.value))
+                if isinstance(node.target, ast.Name):
+                    self.var_to_param.pop(node.target.id, None)
+                    new_target = node.target
+                else:
+                    new_target = self._transform_assignment_target(node.target)
+                return ast.AugAssign(target=new_target, op=node.op, value=new_value)
+
+            def visit_With(self, node: ast.With) -> ast.With:
+                new_items = [
+                    ast.withitem(context_expr=cast(ast.expr, self.visit(item.context_expr)), optional_vars=item.optional_vars)
+                    for item in node.items
+                ]
+                new_body = self._visit_branch_statements(node.body)
+                return ast.With(items=new_items, body=new_body)
+
+            def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AsyncWith:
+                new_items = [
+                    ast.withitem(context_expr=cast(ast.expr, self.visit(item.context_expr)), optional_vars=item.optional_vars)
+                    for item in node.items
+                ]
+                new_body = self._visit_branch_statements(node.body)
+                return ast.AsyncWith(items=new_items, body=new_body)
+
+            def visit_While(self, node: ast.While) -> ast.While:
+                new_test = cast(ast.expr, self.visit(node.test))
+                new_body = self._visit_branch_statements(node.body)
+                new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
+                return ast.While(test=new_test, body=new_body, orelse=new_orelse)
+
+            def visit_Try(self, node: ast.Try) -> ast.Try:
+                new_body = self._visit_branch_statements(node.body)
+                new_handlers = []
+                for handler in node.handlers:
+                    new_type = cast(ast.expr, self.visit(handler.type)) if handler.type else None
+                    new_handler_body = self._visit_branch_statements(handler.body)
+                    new_handlers.append(
+                        ast.ExceptHandler(type=new_type, name=handler.name, body=new_handler_body)
+                    )
+                new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
+                new_finalbody = (
+                    self._visit_branch_statements(node.finalbody) if node.finalbody else []
+                )
+                return ast.Try(
+                    body=new_body,
+                    handlers=new_handlers,
+                    orelse=new_orelse,
+                    finalbody=new_finalbody,
                 )
 
-                if maybe_param_name and maybe_param_name in self.param_names:
-                    # CRITICAL: Never replace binding occurrences (Store/Del context)
-                    # In 'for x in items:', the 'x' has Store context (binding)
-                    # In 'result = x + 1', the 'x' has Load context (usage)
-                    # We only parameterize USAGES, never BINDINGS
-                    if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-                        # This is a binding occurrence (Store or Del context)
-                        # Don't replace it - return as-is and don't visit children
-                        return node
+            def _transform_assignment_target(self, target: ast.expr) -> ast.expr:
+                """Recursively transform assignment targets while preserving binding semantics."""
+                if isinstance(target, ast.Name):
+                    return target
+                if isinstance(target, (ast.Tuple, ast.List)):
+                    new_elts = [self._transform_assignment_target(elt) for elt in target.elts]
+                    new_target = type(target)(elts=new_elts, ctx=target.ctx)
+                    return ast.copy_location(new_target, target)
+                if isinstance(target, ast.Attribute):
+                    new_value = cast(ast.expr, self.visit(target.value))
+                    new_target = ast.Attribute(value=new_value, attr=target.attr, ctx=target.ctx)
+                    return ast.copy_location(new_target, target)
+                if isinstance(target, ast.Subscript):
+                    new_value = cast(ast.expr, self.visit(target.value))
+                    new_slice = cast(ast.expr, self.visit(target.slice))
+                    new_target = ast.Subscript(value=new_value, slice=new_slice, ctx=target.ctx)
+                    return ast.copy_location(new_target, target)
+                # Fallback: rely on generic_visit to transform child nodes
+                return cast(ast.expr, super().generic_visit(target))
 
-                    # Special handling for f-string components
-                    # Don't replace FormattedValue nodes themselves, but do replace their value
-                    if isinstance(node, ast.FormattedValue):
-                        return self.generic_visit(node)
+            def _visit_branch_statements(self, statements: List[ast.stmt]) -> List[ast.stmt]:
+                snapshot = self.var_to_param.copy()
+                try:
+                    result = [cast(ast.stmt, self.visit(stmt)) for stmt in statements]
+                    current_state = self.var_to_param.copy()
+                finally:
+                    current_state = locals().get("current_state", self.var_to_param.copy())
+                    restored = snapshot.copy()
+                    for var_name, param_name in list(snapshot.items()):
+                        if var_name not in current_state:
+                            restored.pop(var_name, None)
+                        elif current_state[var_name] != param_name:
+                            restored.pop(var_name, None)
+                    self.var_to_param = restored
+                return result
 
-                    # For constants in f-strings, we need to be careful
-                    # If we're inside a JoinedStr and this is a direct Constant child (literal part), skip
-                    # But DO replace constants that are in expressions (like comparisons, assignments, etc.)
-                    if self.in_joinedstr and isinstance(node, ast.Constant):
-                        # This is a string literal component of f-string, don't replace
-                        return self.generic_visit(node)
+            def visit(self, node: ast.AST) -> ast.AST:
+                replacement = self._maybe_replace_node(node)
+                if replacement is not None:
+                    return replacement
 
-                    # Check if this is a function parameter
-                    if self.subst.is_function_param(maybe_param_name):
-                        # This parameter is a function - call it with bound variables
-                        bound_vars = self.subst.get_function_param_vars(maybe_param_name)
-                        # Create call: param_name(bound_var1, bound_var2, ...)
-                        call = ast.Call(
-                            func=ast.Name(id=maybe_param_name, ctx=ast.Load()),
-                            args=[ast.Name(id=var, ctx=ast.Load()) for var in bound_vars],
-                            keywords=[],
-                        )
-                        return call
-                    else:
-                        # Regular parameter - just replace with parameter name
-                        return ast.Name(id=maybe_param_name, ctx=ast.Load())
-
-                # Otherwise, recursively visit children
-                return self.generic_visit(node)
+                method_name = f"visit_{node.__class__.__name__}"
+                visitor = getattr(self, method_name, None)
+                if visitor is None:
+                    return super().generic_visit(node)
+                return visitor(node)
 
         substituter = ParameterSubstituter(substitution, param_names, rename_mapping)
         return [substituter.visit(node) for node in nodes]

@@ -202,6 +202,209 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
         names_grandchild = get_enclosing_names(root, grandchild)
         self.assertEqual(names_grandchild, {"a", "b"})
 
+    def test_generate_call_wraps_function_and_callee_parameters(self) -> None:
+        extractor = HygienicExtractor()
+        subst = Substitution()
+
+        # Function parameter with bound variable
+        subst.add_mapping(
+            0,
+            ast.Name(id="invoke", ctx=ast.Load()),
+            "__param_func",
+            bound_vars=["alpha"],
+        )
+
+        # Callee parameter that must be thunked for later invocation
+        subst.add_mapping(0, ast.Name(id="target", ctx=ast.Load()), "__param_callee")
+        subst.params_used_as_callee.add("__param_callee")
+
+        # Free variable requiring inverse hygienic mapping and aug-assign override
+        subst.aug_assign_mappings = {"free_ref": {0: "aug_value"}}
+
+        param_order = {"__param_func": 0, "__param_callee": 1, "free_ref": 2}
+        hygienic_renames = [{"local_total": "free_ref", "result_alias": "return_canonical"}]
+
+        call_stmt = extractor.generate_call(
+            function_name="extracted",
+            block_idx=0,
+            substitution=subst,
+            param_order=param_order,
+            free_variables={"free_ref"},
+            is_value_producing=False,
+            return_variables=["return_canonical"],
+            hygienic_renames=hygienic_renames,
+        )
+
+        self.assertIsInstance(call_stmt, ast.Assign)
+        self.assertEqual(len(call_stmt.targets), 1)
+        assign_target = call_stmt.targets[0]
+        self.assertIsInstance(assign_target, ast.Name)
+        # Return variable should map back to the original (inverse rename)
+        self.assertEqual(assign_target.id, "result_alias")
+
+        self.assertIsInstance(call_stmt.value, ast.Call)
+        call = call_stmt.value
+        self.assertEqual(call.func.id, "extracted")
+        self.assertEqual(len(call.args), 3)
+
+        fn_lambda = call.args[0]
+        self.assertIsInstance(fn_lambda, ast.Lambda)
+        self.assertEqual([arg.arg for arg in fn_lambda.args.args], ["alpha"])
+        self.assertIsInstance(fn_lambda.body, ast.Name)
+        self.assertEqual(fn_lambda.body.id, "invoke")
+
+        callee_lambda = call.args[1]
+        self.assertIsInstance(callee_lambda, ast.Lambda)
+        self.assertEqual(callee_lambda.args.kwonlyargs, [])
+        self.assertIsNotNone(callee_lambda.args.vararg)
+        self.assertIsNotNone(callee_lambda.args.kwarg)
+        self.assertIsInstance(callee_lambda.body, ast.Call)
+        self.assertIsInstance(callee_lambda.body.func, ast.Name)
+        self.assertEqual(callee_lambda.body.func.id, "target")
+
+        free_arg = call.args[2]
+        self.assertIsInstance(free_arg, ast.Name)
+        self.assertEqual(free_arg.id, "aug_value")
+
+    def test_generate_call_value_producing_without_return_vars(self) -> None:
+        extractor = HygienicExtractor()
+        subst = Substitution()
+        subst.add_mapping(0, ast.Constant(value=42), "__param_const")
+
+        stmt = extractor.generate_call(
+            function_name="extracted",
+            block_idx=0,
+            substitution=subst,
+            param_order={"__param_const": 0},
+            free_variables=set(),
+            is_value_producing=True,
+            return_variables=None,
+        )
+
+        self.assertIsInstance(stmt, ast.Return)
+        self.assertIsInstance(stmt.value, ast.Call)
+        self.assertEqual(stmt.value.func.id, "extracted")
+
+    def test_parameter_substituter_comprehension_and_function_params(self) -> None:
+        # Template exercises comprehension handling, parameter reassignments, and thunked callees.
+        template_block_raw = [
+            self.make_assign("result", ast.Name(id="data", ctx=ast.Load())),
+            self.make_assign("result", ast.Name(id="data", ctx=ast.Load())),
+            self.make_assign("helper", ast.Name(id="result", ctx=ast.Load())),
+            self.make_assign(
+                "filtered",
+                ast.ListComp(
+                    elt=ast.Name(id="result", ctx=ast.Load()),
+                    generators=[
+                        ast.comprehension(
+                            target=ast.Name(id="item", ctx=ast.Store()),
+                            iter=ast.Name(id="seq", ctx=ast.Load()),
+                            ifs=[
+                                ast.Compare(
+                                    left=ast.Name(id="item", ctx=ast.Load()),
+                                    ops=[ast.NotEq()],
+                                    comparators=[ast.Name(id="result", ctx=ast.Load())],
+                                )
+                            ],
+                            is_async=0,
+                        )
+                    ],
+                ),
+            ),
+            self.make_assign(
+                "cb",
+                ast.Attribute(
+                    value=ast.Name(id="helper", ctx=ast.Load()),
+                    attr="callable_body",
+                    ctx=ast.Load(),
+                ),
+            ),
+            ast.Expr(value=ast.Call(func=ast.Name(id="cb", ctx=ast.Load()), args=[], keywords=[])),
+            self.make_assign("result", ast.Constant(value=0)),
+            ast.Expr(value=ast.Name(id="result", ctx=ast.Load())),
+        ]
+
+        module_wrapper = ast.Module(body=template_block_raw, type_ignores=[])
+        ast.fix_missing_locations(module_wrapper)
+        template_block = module_wrapper.body
+
+        subst = Substitution()
+        subst.add_mapping(0, ast.Name(id="data", ctx=ast.Load()), "__param_0")
+        subst.add_mapping(0, ast.Name(id="seq", ctx=ast.Load()), "__param_1")
+        subst.add_mapping(
+            0,
+            ast.Attribute(
+                value=ast.Name(id="helper", ctx=ast.Load()),
+                attr="callable_body",
+                ctx=ast.Load(),
+            ),
+            "__param_2",
+            bound_vars=["helper"],
+        )
+
+        extractor = HygienicExtractor()
+        func_def, _ = extractor.extract_function(
+            template_block=template_block,
+            substitution=subst,
+            free_variables=set(),
+            enclosing_names=set(),
+            is_value_producing=False,
+            return_variables=None,
+        )
+
+        # result = __param_0
+        stmt0 = func_def.body[0]
+        self.assertIsInstance(stmt0, ast.Assign)
+        self.assertIsInstance(stmt0.value, ast.Name)
+        self.assertEqual(stmt0.value.id, "__param_0")
+
+        # result = __param_0 (reassignment keeps the local binding; avoids mutating parameter symbol)
+        stmt1 = func_def.body[1]
+        self.assertIsInstance(stmt1, ast.Assign)
+        self.assertIsInstance(stmt1.targets[0], ast.Name)
+        self.assertEqual(stmt1.targets[0].id, "result")
+        self.assertIsInstance(stmt1.value, ast.Name)
+        self.assertEqual(stmt1.value.id, "__param_0")
+        # helper = result propagates mapping but maintains binding context
+        stmt2 = func_def.body[2]
+        self.assertIsInstance(stmt2, ast.Assign)
+        self.assertIsInstance(stmt2.value, ast.Name)
+
+        # filtered = [result for item in __param_1 if item != result]
+        stmt3 = func_def.body[3]
+        self.assertIsInstance(stmt3, ast.Assign)
+        self.assertIsInstance(stmt3.value, ast.ListComp)
+        comp = stmt3.value
+        self.assertIsInstance(comp.elt, ast.Name)
+        self.assertIn(comp.elt.id, {"result", "__param_0"})
+        self.assertEqual(len(comp.generators), 1)
+        gen = comp.generators[0]
+        self.assertIsInstance(gen.target, ast.Name)
+        self.assertEqual(gen.target.id, "item")
+        self.assertIsInstance(gen.iter, ast.Name)
+        self.assertEqual(gen.iter.id, "__param_1")
+        self.assertEqual(len(gen.ifs), 1)
+        self.assertIsInstance(gen.ifs[0], ast.Compare)
+
+        # cb = __param_2(helper) ensures thunked callee rewrite
+        stmt4 = func_def.body[4]
+        self.assertIsInstance(stmt4, ast.Assign)
+        self.assertIsInstance(stmt4.value, ast.Call)
+        self.assertIsInstance(stmt4.value.func, ast.Name)
+        self.assertEqual(stmt4.value.func.id, "__param_2")
+        self.assertEqual(len(stmt4.value.args), 1)
+        self.assertIsInstance(stmt4.value.args[0], ast.Name)
+        self.assertEqual(stmt4.value.args[0].id, "helper")
+
+        # result = 0 clears mapping; subsequent load stays as 'result'
+        stmt6 = func_def.body[6]
+        self.assertIsInstance(stmt6, ast.Assign)
+        self.assertIsInstance(stmt6.value, ast.Constant)
+        stmt7 = func_def.body[7]
+        self.assertIsInstance(stmt7, ast.Expr)
+        self.assertIsInstance(stmt7.value, ast.Name)
+        self.assertEqual(stmt7.value.id, "result")
+
 
 if __name__ == "__main__":
     unittest.main()
