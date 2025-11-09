@@ -269,6 +269,10 @@ class HygienicExtractor:
                                 ),
                                 body=call_body,
                             )
+                            # Mirror vararg/kwarg on the lambda for compatibility with
+                            # downstream tooling that expects direct attributes.
+                            lambda_node.vararg = lambda_node.args.vararg
+                            lambda_node.kwarg = lambda_node.args.kwarg
                             args_list[param_idx] = lambda_node
                         else:
                             # Regular parameter - use expression as-is
