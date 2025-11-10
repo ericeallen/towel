@@ -5,8 +5,14 @@ Nominal Unification for Python Code Blocks
 This module implements nominal unification to handle α-equivalence: code blocks
 that differ only in the names of bound variables.
 
-Based on the algorithm from "Nominal Unification" by C. Urban, A. M. Pitts, and
-M. J. Gabbay (https://arxiv.org/pdf/1012.4890).
+Based on the Nominal Unification algorithm:
+M. J. Gabbay. Urban, C., Pitts, A. M., & Gabbay, M. J. (2003).
+    Nominal unification. In *Computer Science Logic* (pp. 513-527).
+    Springer, Berlin, Heidelberg.
+Calvès, C., & Fernández, M. (2008). A polynomial nominal unification algorithm.
+    *Theoretical Computer Science*, *403*(2-3), 285-306.
+Urban, C. (2010). Nominal Unification Revisited.
+    Electronic Proceedings in Theoretical Computer Science, 42, 1–11.
 
 Example of α-equivalent blocks:
     Block 1: user = get_user(); validate(user)

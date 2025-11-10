@@ -10,6 +10,8 @@ This orchestrates the entire refactoring process:
 """
 
 import ast
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Tuple, Dict, Set, Optional, FrozenSet
 from weakref import WeakKeyDictionary
 from pathlib import Path
@@ -48,6 +50,8 @@ class CodeBlockPair:
     root_scope2: Optional["Scope"] = None
     source1: Optional[str] = None
     source2: Optional[str] = None
+    function1_node: Optional[ast.FunctionDef] = None
+    function2_node: Optional[ast.FunctionDef] = None
 
 
 @dataclass
@@ -67,6 +71,49 @@ class RefactoringProposal:
     insert_into_class: Optional[str] = None
     # If provided, insert extracted function inside this function's body (same-file only)
     insert_into_function: Optional[str] = None
+
+
+_worker_engine: Optional["UnificationRefactorEngine"] = None
+_worker_functions: Optional[
+    List[
+        Tuple[
+            str,
+            ast.FunctionDef,
+            str,
+            "ScopeAnalyzer",
+            "Scope",
+            Optional[str],
+            Optional[str],
+            List[str],
+        ]
+    ]
+] = None
+
+
+def _initialize_pair_worker(engine_config: Dict[str, Optional[object]], functions):
+    """Initializer that primes each worker process with engine state and function context."""
+
+    global _worker_engine, _worker_functions
+
+    _worker_engine = UnificationRefactorEngine(
+        max_parameters=int(engine_config["max_parameters"]),
+        min_lines=int(engine_config["min_lines"]),
+        parameterize_constants=bool(engine_config["parameterize_constants"]),
+        prefer_absolute_imports=engine_config["prefer_absolute_imports"],
+        pep420_namespace_packages=engine_config["pep420_namespace_packages"],
+    )
+    _worker_functions = functions
+
+
+def _process_pair_in_worker(task: Tuple[int, CodeBlockPair]):
+    """Worker entry point that evaluates a single code block pair."""
+
+    if _worker_engine is None or _worker_functions is None:
+        raise RuntimeError("Worker not initialized for pair processing")
+
+    pair_index, pair = task
+    proposal = _worker_engine._try_refactor_pair_multi_file(pair, _worker_functions)
+    return pair_index, proposal
 
 
 class UnificationRefactorEngine:
@@ -306,10 +353,111 @@ class UnificationRefactorEngine:
             total_pairs = len(block_pairs)
             print(f"Evaluating {total_pairs} candidate block pair(s)...")
 
-        # Process each pair - try unification
+        proposals = self._process_block_pairs(
+            block_pairs,
+            all_functions,
+            verbose=verbose,
+            progress=progress,
+        )
+
+        # Prefer larger extractions and de-duplicate overlaps greedily
+        proposals = filter_overlapping_proposals(proposals)
+        if verbose:
+            print(f"Found {len(proposals)} non-overlapping proposal(s)")
+        return proposals
+
+    def _process_block_pairs(
+        self,
+        block_pairs: List[CodeBlockPair],
+        all_functions: List[
+            Tuple[
+                str,
+                ast.FunctionDef,
+                str,
+                ScopeAnalyzer,
+                Scope,
+                Optional[str],
+                Optional[str],
+                List[str],
+            ]
+        ],
+        *,
+        verbose: bool,
+        progress: str,
+    ) -> List[RefactoringProposal]:
+        if not block_pairs:
+            return []
+
+        if self._should_use_parallel(len(block_pairs)):
+            try:
+                return self._evaluate_pairs_parallel(
+                    block_pairs,
+                    all_functions,
+                    verbose=verbose,
+                    progress=progress,
+                )
+            except Exception:
+                if verbose:
+                    print("Parallel pair evaluation failed; falling back to serial execution")
+                # Fall back to serial evaluation if multiprocessing encounters an issue
+                return self._evaluate_pairs_serial(
+                    block_pairs,
+                    all_functions,
+                    verbose=verbose,
+                    progress=progress,
+                )
+
+        return self._evaluate_pairs_serial(
+            block_pairs,
+            all_functions,
+            verbose=verbose,
+            progress=progress,
+        )
+
+    def _should_use_parallel(self, pair_count: int) -> bool:
+        if pair_count <= 1:
+            return False
+        if os.getenv("TOWEL_DISABLE_MULTIPROC"):
+            return False
+        cpu_count = os.cpu_count() or 1
+        return cpu_count > 1
+
+    @staticmethod
+    def _function_contains_nonlocal(func: ast.FunctionDef) -> bool:
+        """Return True if the function body contains any nonlocal declarations."""
+
+        for stmt in func.body:
+            # Skip nested definitions; only consider nonlocal statements that belong
+            # to the function itself. Nonlocals inside nested functions do not impact
+            # whether the outer function may be safely extracted.
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            for node in ast.walk(stmt):
+                if isinstance(node, ast.Nonlocal):
+                    return True
+        return False
+
+    def _evaluate_pairs_serial(
+        self,
+        block_pairs: List[CodeBlockPair],
+        all_functions: List[
+            Tuple[
+                str,
+                ast.FunctionDef,
+                str,
+                ScopeAnalyzer,
+                Scope,
+                Optional[str],
+                Optional[str],
+                List[str],
+            ]
+        ],
+        *,
+        verbose: bool,
+        progress: str,
+    ) -> List[RefactoringProposal]:
         proposals: List[RefactoringProposal] = []
 
-        # Choose progress style
         use_tqdm = False
         tqdm_iter = None
         if verbose and progress in ("auto", "tqdm"):
@@ -334,33 +482,124 @@ class UnificationRefactorEngine:
                 proposal = self._try_refactor_pair_multi_file(pair, all_functions)
                 if proposal:
                     proposals.append(proposal)
-        else:
-            # Fallback: inline single-line bar using carriage returns (no extra deps)
-            use_inline_bar = verbose and progress in ("auto", "tqdm") and len(block_pairs) > 0
-            last_pct = -1
+            return proposals
+
+        use_inline_bar = verbose and progress in ("auto", "tqdm") and len(block_pairs) > 0
+        last_pct = -1
+        if use_inline_bar:
+            print("Analyzing candidate pairs:", end=" ", flush=True)
+
+        for idx, pair in enumerate(block_pairs, 1):
+            proposal = self._try_refactor_pair_multi_file(pair, all_functions)
+            if proposal:
+                proposals.append(proposal)
             if use_inline_bar:
-                # Initial line
-                print("Analyzing candidate pairs:", end=" ", flush=True)
-            for idx, pair in enumerate(block_pairs, 1):
-                proposal = self._try_refactor_pair_multi_file(pair, all_functions)
+                pct = int(100 * idx / len(block_pairs))
+                if pct != last_pct:
+                    last_pct = pct
+                    bar_len = 24
+                    filled = (pct * bar_len) // 100
+                    bar = "#" * filled + "-" * (bar_len - filled)
+                    print(f"\rAnalyzing candidate pairs: [{bar}] {pct}%", end="", flush=True)
+
+        if use_inline_bar:
+            print()
+
+        return proposals
+
+    def _evaluate_pairs_parallel(
+        self,
+        block_pairs: List[CodeBlockPair],
+        all_functions: List[
+            Tuple[
+                str,
+                ast.FunctionDef,
+                str,
+                ScopeAnalyzer,
+                Scope,
+                Optional[str],
+                Optional[str],
+                List[str],
+            ]
+        ],
+        *,
+        verbose: bool,
+        progress: str,
+    ) -> List[RefactoringProposal]:
+        pair_count = len(block_pairs)
+        cpu_count = os.cpu_count() or 1
+        max_workers = min(cpu_count, pair_count)
+        if max_workers <= 1:
+            return self._evaluate_pairs_serial(
+                block_pairs,
+                all_functions,
+                verbose=verbose,
+                progress=progress,
+            )
+
+        engine_config: Dict[str, Optional[object]] = {
+            "max_parameters": self.max_parameters,
+            "min_lines": self.min_lines,
+            "parameterize_constants": self.parameterize_constants,
+            "prefer_absolute_imports": self.prefer_absolute_imports,
+            "pep420_namespace_packages": self.pep420_namespace_packages,
+        }
+
+        tasks = [(idx, pair) for idx, pair in enumerate(block_pairs)]
+        ordered_results: List[Optional[RefactoringProposal]] = [None] * pair_count
+
+        use_tqdm = False
+        tqdm_wrapper = None
+        if verbose and progress in ("auto", "tqdm"):
+            try:
+                import importlib
+
+                _tqdm_mod = importlib.import_module("tqdm.auto")
+                tqdm_wrapper = getattr(_tqdm_mod, "tqdm")
+                use_tqdm = True
+            except Exception:
+                use_tqdm = False
+
+        use_inline_bar = verbose and not use_tqdm and progress in ("auto", "tqdm")
+        last_pct = -1
+        completed = 0
+        if use_inline_bar:
+            print("Analyzing candidate pairs:", end=" ", flush=True)
+
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_initialize_pair_worker,
+            initargs=(engine_config, all_functions),
+        ) as executor:
+            futures = [executor.submit(_process_pair_in_worker, task) for task in tasks]
+            iterator = as_completed(futures)
+            if use_tqdm and tqdm_wrapper is not None:
+                iterator = tqdm_wrapper(
+                    iterator,
+                    total=pair_count,
+                    desc="Analyzing candidate pairs",
+                    unit="pair",
+                    leave=False,
+                )
+
+            for future in iterator:
+                pair_index, proposal = future.result()
                 if proposal:
-                    proposals.append(proposal)
+                    ordered_results[pair_index] = proposal
+                completed += 1
                 if use_inline_bar:
-                    pct = int(100 * idx / len(block_pairs))
+                    pct = int(100 * completed / pair_count)
                     if pct != last_pct:
                         last_pct = pct
                         bar_len = 24
                         filled = (pct * bar_len) // 100
                         bar = "#" * filled + "-" * (bar_len - filled)
                         print(f"\rAnalyzing candidate pairs: [{bar}] {pct}%", end="", flush=True)
-            if use_inline_bar:
-                print()  # newline after bar
 
-        # Prefer larger extractions and de-duplicate overlaps greedily
-        proposals = filter_overlapping_proposals(proposals)
-        if verbose:
-            print(f"Found {len(proposals)} non-overlapping proposal(s)")
-        return proposals
+        if use_inline_bar:
+            print()
+
+        return [proposal for proposal in ordered_results if proposal is not None]
 
     def _extract_code_blocks(
         self, function: ast.FunctionDef
@@ -660,6 +899,8 @@ class UnificationRefactorEngine:
                             root_scope2=scope2,
                             source1=source1,
                             source2=source2,
+                            function1_node=func1,
+                            function2_node=func2,
                         )
                         pairs.append(pair)
 
@@ -700,22 +941,47 @@ class UnificationRefactorEngine:
             print(f"Block1 range: {pair.block1_range}")
             print(f"Block2 range: {pair.block2_range}")
 
-        # Use stored context from pair
-        scope_analyzer = pair.scope_analyzer1
-        root_scope = pair.root_scope1
+        # Resolve contextual analyzers and scopes from the aggregated function list
+        func1 = pair.function1_node
+        func2 = pair.function2_node
+        scope_analyzer1: Optional[ScopeAnalyzer] = None
+        scope_analyzer2: Optional[ScopeAnalyzer] = None
+        root_scope1: Optional[Scope] = None
+        root_scope2: Optional[Scope] = None
 
-        # Find the function definitions for context
-        func1 = None
-        func2 = None
         for entry in all_functions:
-            file_path, func = entry[0], entry[1]
-            if file_path == pair.file_path and func.name == pair.function1_name:
+            (
+                file_path,
+                func,
+                _source,
+                analyzer,
+                root_scope_entry,
+                _class_name,
+                _enclosing_func,
+                _ancestry,
+            ) = entry
+            if func1 is None and file_path == pair.file_path and func.name == pair.function1_name:
                 func1 = func
+                scope_analyzer1 = analyzer
+                root_scope1 = root_scope_entry
             if (
-                file_path == (pair.file_path2 or pair.file_path)
+                func2 is None
+                and file_path == (pair.file_path2 or pair.file_path)
                 and func.name == pair.function2_name
             ):
                 func2 = func
+                scope_analyzer2 = analyzer
+                root_scope2 = root_scope_entry
+            if func1 is not None and func2 is not None:
+                break
+
+        # Fallback to the pair-provided analyzers/scopes when discovery fails
+        scope_analyzer = scope_analyzer1 or pair.scope_analyzer1
+        root_scope = root_scope1 or pair.root_scope1
+        if scope_analyzer2 is None and pair.scope_analyzer2 is not None:
+            scope_analyzer2 = pair.scope_analyzer2
+        if root_scope2 is None and pair.root_scope2 is not None:
+            root_scope2 = pair.root_scope2
 
         # DEBUG logging
         import os
@@ -1116,11 +1382,11 @@ class UnificationRefactorEngine:
         # Compute free variables for both blocks (variables used but not defined in each block)
         # Use block1's free variables to derive parameters for the extracted function,
         # but validate incomplete lifetimes independently for each block.
-        free_vars1 = scope_analyzer.get_free_variables(pair.block1_nodes)
+        free_vars1 = (
+            scope_analyzer.get_free_variables(pair.block1_nodes) if scope_analyzer else set()
+        )
         free_vars2 = (
-            pair.scope_analyzer2.get_free_variables(pair.block2_nodes)
-            if pair.scope_analyzer2
-            else set()
+            scope_analyzer2.get_free_variables(pair.block2_nodes) if scope_analyzer2 else set()
         )
 
         # CRITICAL VALIDATION: Reject proposals with incomplete variable lifetimes
@@ -1463,16 +1729,22 @@ class UnificationRefactorEngine:
         try:
             nonlocal_in_func1 = False
             nonlocal_in_func2 = False
-            if pair.scope_analyzer1 and func1 is not None:
-                scope_id1 = pair.scope_analyzer1.node_scopes.get(func1)
+            if scope_analyzer1 and func1 is not None:
+                scope_id1 = scope_analyzer1.node_scopes.get(func1)
                 if scope_id1:
-                    nlv1 = pair.scope_analyzer1.nonlocal_vars.get(scope_id1.scope_id, set())
+                    nlv1 = scope_analyzer1.nonlocal_vars.get(scope_id1.scope_id, set())
                     nonlocal_in_func1 = bool(nlv1)
-            if pair.scope_analyzer2 and func2 is not None:
-                scope_id2 = pair.scope_analyzer2.node_scopes.get(func2)
+            elif func1 is not None:
+                nonlocal_in_func1 = self._function_contains_nonlocal(func1)
+
+            if scope_analyzer2 and func2 is not None:
+                scope_id2 = scope_analyzer2.node_scopes.get(func2)
                 if scope_id2:
-                    nlv2 = pair.scope_analyzer2.nonlocal_vars.get(scope_id2.scope_id, set())
+                    nlv2 = scope_analyzer2.nonlocal_vars.get(scope_id2.scope_id, set())
                     nonlocal_in_func2 = bool(nlv2)
+            elif func2 is not None:
+                nonlocal_in_func2 = self._function_contains_nonlocal(func2)
+
             if nonlocal_in_func1 or nonlocal_in_func2:
                 return None
         except Exception:

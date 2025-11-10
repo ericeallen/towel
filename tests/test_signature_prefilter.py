@@ -1,5 +1,10 @@
 import ast
-from src.towel.unification.block_signature import extract_block_signature, quick_filter, evaluate_signature, IDENT_COUNT_TOLERANCE
+from src.towel.unification.block_signature import (
+    extract_block_signature,
+    quick_filter,
+    evaluate_signature,
+    IDENT_COUNT_TOLERANCE,
+)
 
 
 def _block(code: str):
@@ -22,14 +27,16 @@ def test_quick_filter_rejects_first_last_mismatch():
 
 def test_quick_filter_within_name_and_call_tolerance_passes():
     # Create blocks with close counts of loads/stores/calls
-    b1 = _block("""
+    b1 = _block(
+        """
 foo = a + b
 bar = foo + c
 if cond:
     bar = bar + d
 """
     )
-    b2 = _block("""
+    b2 = _block(
+        """
 foo = a + b
 bar = foo + c
 bar = bar + d
@@ -48,11 +55,13 @@ x = z
 
 def test_extract_block_signature_skips_nested_defs():
     # Calls and names inside nested defs/classes should not contribute
-    b_outer = _block("""
+    b_outer = _block(
+        """
 value = top(a)
 """
     )
-    b_nested = _block("""
+    b_nested = _block(
+        """
 value = top(a)
 
 def inner():

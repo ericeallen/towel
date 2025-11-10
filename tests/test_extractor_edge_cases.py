@@ -221,7 +221,9 @@ for i in items:
     )
     loop = next((n for n in func_def.body if isinstance(n, ast.For)), None)
     assert loop is not None, "Expected a for-loop in extracted body"
-    assert isinstance(loop.target, ast.Name) and loop.target.id == "i", "Binding target should not be replaced"
+    assert (
+        isinstance(loop.target, ast.Name) and loop.target.id == "i"
+    ), "Binding target should not be replaced"
     # Iterator should be parameterized
     assert isinstance(loop.iter, ast.Name) and loop.iter.id == "__param_0"
 
@@ -281,7 +283,9 @@ def test_comprehension_binding_target_not_parameterized():
     comp = assign.value
     assert isinstance(comp, ast.ListComp)
     # Iterable should be parameterized
-    assert isinstance(comp.generators[0].iter, ast.Name) and comp.generators[0].iter.id == "__param_0"
+    assert (
+        isinstance(comp.generators[0].iter, ast.Name) and comp.generators[0].iter.id == "__param_0"
+    )
     # Target should remain original binding name
     target = comp.generators[0].target
     assert isinstance(target, ast.Name) and target.id == "x"
