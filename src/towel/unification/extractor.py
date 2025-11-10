@@ -10,7 +10,7 @@ Generates extracted functions while ensuring:
 
 import ast
 import copy
-from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, cast
+from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, Callable, cast
 from .unifier import Substitution
 
 if TYPE_CHECKING:
@@ -269,10 +269,6 @@ class HygienicExtractor:
                                 ),
                                 body=call_body,
                             )
-                            # Mirror vararg/kwarg on the lambda for compatibility with
-                            # downstream tooling that expects direct attributes.
-                            lambda_node.vararg = lambda_node.args.vararg
-                            lambda_node.kwarg = lambda_node.args.kwarg
                             args_list[param_idx] = lambda_node
                         else:
                             # Regular parameter - use expression as-is
@@ -388,7 +384,9 @@ class HygienicExtractor:
                 if not isinstance(node, ast.expr):
                     return None
 
-                maybe_param_name: Optional[str] = self.subst.get_param_for_expr(self.block_idx, node)
+                maybe_param_name: Optional[str] = self.subst.get_param_for_expr(
+                    self.block_idx, node
+                )
                 if not maybe_param_name or maybe_param_name not in self.param_names:
                     return None
 
@@ -438,7 +436,7 @@ class HygienicExtractor:
                             new_values.append(new_formatted)
                         else:
                             # Shouldn't happen, but handle gracefully
-                            new_values.append(self.visit(value))
+                            new_values.append(cast(ast.expr, self.visit(value)))
                 finally:
                     self.in_joinedstr = previous_state
                 return ast.JoinedStr(values=new_values)
@@ -500,11 +498,10 @@ class HygienicExtractor:
                 vars_to_delete = []  # Track which variables to remove from var_to_param
 
                 for target in node.targets:
-                    processed_target = (
-                        target
-                        if isinstance(target, ast.Name)
-                        else self._transform_assignment_target(target)
-                    )
+                    if isinstance(target, ast.Name):
+                        processed_target: ast.expr = target
+                    else:
+                        processed_target = self._transform_assignment_target(target)
                     if isinstance(target, ast.Name) and target.id in self.var_to_param:
                         # This variable is currently equivalent to a parameter
                         param_name = self.var_to_param[target.id]
@@ -547,14 +544,20 @@ class HygienicExtractor:
                 new_value = cast(ast.expr, self.visit(node.value))
                 if isinstance(node.target, ast.Name):
                     self.var_to_param.pop(node.target.id, None)
-                    new_target = node.target
+                    new_target: ast.Name | ast.Attribute | ast.Subscript = node.target
                 else:
-                    new_target = self._transform_assignment_target(node.target)
+                    new_target = cast(
+                        ast.Attribute | ast.Subscript,
+                        self._transform_assignment_target(node.target),
+                    )
                 return ast.AugAssign(target=new_target, op=node.op, value=new_value)
 
             def visit_With(self, node: ast.With) -> ast.With:
                 new_items = [
-                    ast.withitem(context_expr=cast(ast.expr, self.visit(item.context_expr)), optional_vars=item.optional_vars)
+                    ast.withitem(
+                        context_expr=cast(ast.expr, self.visit(item.context_expr)),
+                        optional_vars=item.optional_vars,
+                    )
                     for item in node.items
                 ]
                 new_body = self._visit_branch_statements(node.body)
@@ -562,7 +565,10 @@ class HygienicExtractor:
 
             def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AsyncWith:
                 new_items = [
-                    ast.withitem(context_expr=cast(ast.expr, self.visit(item.context_expr)), optional_vars=item.optional_vars)
+                    ast.withitem(
+                        context_expr=cast(ast.expr, self.visit(item.context_expr)),
+                        optional_vars=item.optional_vars,
+                    )
                     for item in node.items
                 ]
                 new_body = self._visit_branch_statements(node.body)
@@ -600,17 +606,27 @@ class HygienicExtractor:
                     return target
                 if isinstance(target, (ast.Tuple, ast.List)):
                     new_elts = [self._transform_assignment_target(elt) for elt in target.elts]
-                    new_target = type(target)(elts=new_elts, ctx=target.ctx)
-                    return ast.copy_location(new_target, target)
+                    return cast(
+                        ast.expr,
+                        ast.copy_location(type(target)(elts=new_elts, ctx=target.ctx), target),
+                    )
                 if isinstance(target, ast.Attribute):
                     new_value = cast(ast.expr, self.visit(target.value))
-                    new_target = ast.Attribute(value=new_value, attr=target.attr, ctx=target.ctx)
-                    return ast.copy_location(new_target, target)
+                    return cast(
+                        ast.expr,
+                        ast.copy_location(
+                            ast.Attribute(value=new_value, attr=target.attr, ctx=target.ctx), target
+                        ),
+                    )
                 if isinstance(target, ast.Subscript):
                     new_value = cast(ast.expr, self.visit(target.value))
                     new_slice = cast(ast.expr, self.visit(target.slice))
-                    new_target = ast.Subscript(value=new_value, slice=new_slice, ctx=target.ctx)
-                    return ast.copy_location(new_target, target)
+                    return cast(
+                        ast.expr,
+                        ast.copy_location(
+                            ast.Subscript(value=new_value, slice=new_slice, ctx=target.ctx), target
+                        ),
+                    )
                 # Fallback: rely on generic_visit to transform child nodes
                 return cast(ast.expr, super().generic_visit(target))
 
@@ -638,8 +654,10 @@ class HygienicExtractor:
                 method_name = f"visit_{node.__class__.__name__}"
                 visitor = getattr(self, method_name, None)
                 if visitor is None:
-                    return super().generic_visit(node)
-                return visitor(node)
+                    generic_result = super().generic_visit(node)
+                    return generic_result
+                visit_callable = cast(Callable[[ast.AST], ast.AST], visitor)
+                return visit_callable(node)
 
         substituter = ParameterSubstituter(substitution, param_names, rename_mapping)
         return [substituter.visit(node) for node in nodes]

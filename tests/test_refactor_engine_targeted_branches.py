@@ -192,9 +192,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
 
-            helper_func = ast.parse(
-                "def helper(value):\n    return value + 1\n"
-            ).body[0]
+            helper_func = ast.parse("def helper(value):\n    return value + 1\n").body[0]
             call_node = ast.parse("return helper(self, value)").body[0]
 
             proposal = RefactoringProposal(
@@ -264,7 +262,8 @@ def consumer(data):
             self.assertIn("def helper(value):", updated_a)
             self.assertIn("return helper(value)", updated_a)
             import_line_present = any(
-                candidate in updated_b for candidate in [
+                candidate in updated_b
+                for candidate in [
                     "from pkg.source_a import helper",
                     "from source_a import helper",
                 ]
