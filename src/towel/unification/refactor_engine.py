@@ -12,6 +12,7 @@ This orchestrates the entire refactoring process:
 import ast
 import copy
 import os
+from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Tuple, Dict, Set, Optional, FrozenSet, Literal
 from weakref import WeakKeyDictionary
@@ -60,6 +61,26 @@ class MethodInfo:
     """Describes how a function participates as a method within a class."""
 
     kind: Optional[Literal["instance", "classmethod", "staticmethod"]]
+    implicit_param: Optional[str]
+
+
+@dataclass
+class ClassInfo:
+    """Summarizes class definitions discovered during analysis."""
+
+    name: str
+    qualname: str
+    file_path: str
+    bases: List[str]
+
+
+@dataclass
+class ClassInsertionPlan:
+    """Describes where an extracted helper should be inserted within a class hierarchy."""
+
+    class_name: str
+    file_path: str
+    method_kind: Literal["instance", "classmethod", "staticmethod"]
     implicit_param: Optional[str]
 
 
@@ -160,12 +181,13 @@ _worker_functions: Optional[
         ]
     ]
 ] = None
+_worker_class_infos: Optional[List[ClassInfo]] = None
 
 
-def _initialize_pair_worker(engine_config: Dict[str, Optional[object]], functions):
+def _initialize_pair_worker(engine_config: Dict[str, Optional[object]], functions, class_infos):
     """Initializer that primes each worker process with engine state and function context."""
 
-    global _worker_engine, _worker_functions
+    global _worker_engine, _worker_functions, _worker_class_infos
 
     _worker_engine = UnificationRefactorEngine(
         max_parameters=int(engine_config["max_parameters"]),
@@ -175,16 +197,19 @@ def _initialize_pair_worker(engine_config: Dict[str, Optional[object]], function
         pep420_namespace_packages=engine_config["pep420_namespace_packages"],
     )
     _worker_functions = functions
+    _worker_class_infos = class_infos
 
 
 def _process_pair_in_worker(task: Tuple[int, CodeBlockPair]):
     """Worker entry point that evaluates a single code block pair."""
 
-    if _worker_engine is None or _worker_functions is None:
+    if _worker_engine is None or _worker_functions is None or _worker_class_infos is None:
         raise RuntimeError("Worker not initialized for pair processing")
 
     pair_index, pair = task
-    proposal = _worker_engine._try_refactor_pair_multi_file(pair, _worker_functions)
+    proposal = _worker_engine._try_refactor_pair_multi_file(
+        pair, _worker_functions, _worker_class_infos
+    )
     return pair_index, proposal
 
 
@@ -344,6 +369,7 @@ class UnificationRefactorEngine:
                 List[str],
             ]
         ] = []
+        class_infos: List[ClassInfo] = []
 
         for file_path in file_paths:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -357,6 +383,33 @@ class UnificationRefactorEngine:
             # Analyze scopes
             scope_analyzer = ScopeAnalyzer()
             root_scope = scope_analyzer.analyze(tree)
+
+            class ClassCollector(ast.NodeVisitor):
+                def __init__(self):
+                    self.class_stack: List[str] = []
+
+                def visit_ClassDef(self, node: ast.ClassDef):
+                    qualname = (
+                        ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
+                    )
+                    bases: List[str] = []
+                    for base in node.bases:
+                        resolved = UnificationRefactorEngine._resolve_base_name(base)
+                        if resolved:
+                            bases.append(resolved)
+                    class_infos.append(
+                        ClassInfo(
+                            name=node.name,
+                            qualname=qualname,
+                            file_path=file_path,
+                            bases=bases,
+                        )
+                    )
+                    self.class_stack.append(node.name)
+                    self.generic_visit(node)
+                    self.class_stack.pop()
+
+            ClassCollector().visit(tree)
 
             # Walk the tree to collect functions at all nesting levels and capture enclosing class/function context
             class _FuncCollector(ast.NodeVisitor):
@@ -428,6 +481,7 @@ class UnificationRefactorEngine:
         proposals = self._process_block_pairs(
             block_pairs,
             all_functions,
+            class_infos,
             verbose=verbose,
             progress=progress,
         )
@@ -453,6 +507,7 @@ class UnificationRefactorEngine:
                 List[str],
             ]
         ],
+        class_infos: List[ClassInfo],
         *,
         verbose: bool,
         progress: str,
@@ -465,6 +520,7 @@ class UnificationRefactorEngine:
                 return self._evaluate_pairs_parallel(
                     block_pairs,
                     all_functions,
+                    class_infos,
                     verbose=verbose,
                     progress=progress,
                 )
@@ -475,6 +531,7 @@ class UnificationRefactorEngine:
                 return self._evaluate_pairs_serial(
                     block_pairs,
                     all_functions,
+                    class_infos,
                     verbose=verbose,
                     progress=progress,
                 )
@@ -482,6 +539,7 @@ class UnificationRefactorEngine:
         return self._evaluate_pairs_serial(
             block_pairs,
             all_functions,
+            class_infos,
             verbose=verbose,
             progress=progress,
         )
@@ -537,7 +595,9 @@ class UnificationRefactorEngine:
         """Remove any decorator whose resolved name matches ``name``."""
 
         fn.decorator_list = [
-            dec for dec in fn.decorator_list if UnificationRefactorEngine._decorator_name(dec) != name
+            dec
+            for dec in fn.decorator_list
+            if UnificationRefactorEngine._decorator_name(dec) != name
         ]
 
     @staticmethod
@@ -656,7 +716,9 @@ class UnificationRefactorEngine:
         return result
 
     @staticmethod
-    def _drop_implicit_keyword(keywords: List[ast.keyword], implicit_name: str) -> List[ast.keyword]:
+    def _drop_implicit_keyword(
+        keywords: List[ast.keyword], implicit_name: str
+    ) -> List[ast.keyword]:
         """Drop the first keyword argument whose name matches ``implicit_name``."""
 
         result: List[ast.keyword] = []
@@ -698,6 +760,184 @@ class UnificationRefactorEngine:
 
         return MethodInfo(kind=kind, implicit_param=implicit_param)
 
+    @staticmethod
+    def _resolve_base_name(expr: ast.expr) -> Optional[str]:
+        """Resolve a base-class expression into its dotted name when feasible."""
+
+        if isinstance(expr, ast.Name):
+            return expr.id
+        if isinstance(expr, ast.Attribute):
+            parts: List[str] = []
+            current: ast.expr = expr
+            while isinstance(current, ast.Attribute):
+                parts.append(current.attr)
+                current = current.value
+            if isinstance(current, ast.Name):
+                parts.append(current.id)
+                return ".".join(reversed(parts))
+        return None
+
+    @staticmethod
+    def _class_info_key(info: ClassInfo) -> Tuple[str, str]:
+        """Return a stable identifier for a class definition."""
+
+        return (info.file_path, info.qualname)
+
+    def _find_class_info_by_name(
+        self, class_infos: List[ClassInfo], file_path: str, class_name: str
+    ) -> Optional[ClassInfo]:
+        """Locate class metadata using its defining file and simple name."""
+
+        matches = [
+            info for info in class_infos if info.file_path == file_path and info.name == class_name
+        ]
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return matches[0]
+
+        # Prefer the innermost definition (longest qualname) when duplicates exist.
+        matches.sort(key=lambda info: info.qualname.count("."), reverse=True)
+        return matches[0]
+
+    def _find_class_info_for_base(
+        self,
+        class_infos: List[ClassInfo],
+        base_name: str,
+        *,
+        prefer_file: Optional[str] = None,
+    ) -> Optional[ClassInfo]:
+        """Resolve a base-class reference to known class metadata when possible."""
+
+        # Exact qualname match first (covers nested classes written as Outer.Inner)
+        qual_matches = [info for info in class_infos if info.qualname == base_name]
+        if prefer_file is not None:
+            for info in qual_matches:
+                if info.file_path == prefer_file:
+                    return info
+        if qual_matches:
+            return qual_matches[0]
+
+        simple_name = base_name.split(".")[-1]
+        simple_matches = [info for info in class_infos if info.name == simple_name]
+        if prefer_file is not None:
+            for info in simple_matches:
+                if info.file_path == prefer_file:
+                    return info
+        if len(simple_matches) == 1:
+            return simple_matches[0]
+        return None
+
+    def _collect_class_ancestors(
+        self, class_info: ClassInfo, class_infos: List[ClassInfo]
+    ) -> List[ClassInfo]:
+        """Return ancestors starting from the nearest base class."""
+
+        ancestors: List[Tuple[int, ClassInfo]] = []
+        visited: Set[Tuple[str, str]] = set()
+        queue: deque[Tuple[ClassInfo, int]] = deque([(class_info, 0)])
+
+        while queue:
+            current, depth = queue.popleft()
+            for base_name in current.bases:
+                base_info = self._find_class_info_for_base(
+                    class_infos, base_name, prefer_file=current.file_path
+                )
+                if base_info is None:
+                    continue
+                key = self._class_info_key(base_info)
+                if key in visited:
+                    continue
+                visited.add(key)
+                ancestors.append((depth + 1, base_info))
+                queue.append((base_info, depth + 1))
+
+        ancestors.sort(key=lambda item: item[0])
+        return [info for _depth, info in ancestors]
+
+    def _find_common_ancestor(
+        self,
+        class1: Tuple[str, str],
+        class2: Tuple[str, str],
+        class_infos: List[ClassInfo],
+    ) -> Optional[ClassInfo]:
+        """Return the nearest shared ancestor class for two class definitions."""
+
+        file1, name1 = class1
+        file2, name2 = class2
+
+        info1 = self._find_class_info_by_name(class_infos, file1, name1)
+        info2 = self._find_class_info_by_name(class_infos, file2, name2)
+        if info1 is None or info2 is None:
+            return None
+
+        key1 = self._class_info_key(info1)
+        key2 = self._class_info_key(info2)
+
+        chain1 = [info1] + self._collect_class_ancestors(info1, class_infos)
+        chain2 = [info2] + self._collect_class_ancestors(info2, class_infos)
+        lookup2 = {self._class_info_key(info): info for info in chain2}
+
+        for info in chain1:
+            key = self._class_info_key(info)
+            if key in lookup2:
+                if key == key1 and key == key2:
+                    # Identical class; handled elsewhere.
+                    continue
+                return lookup2[key]
+        return None
+
+    def _choose_class_insertion(
+        self,
+        pair: CodeBlockPair,
+        method_info1: MethodInfo,
+        method_info2: MethodInfo,
+        class_infos: List[ClassInfo],
+    ) -> Optional[ClassInsertionPlan]:
+        """Determine whether the helper should be inserted into a class context."""
+
+        if method_info1.kind != method_info2.kind or method_info1.kind is None:
+            return None
+        if pair.class1_name is None or pair.class2_name is None:
+            return None
+
+        file1 = pair.file_path
+        file2 = pair.file_path2 or pair.file_path
+
+        if file1 == file2 and pair.class1_name == pair.class2_name:
+            implicit_param = method_info1.implicit_param or method_info2.implicit_param
+            if method_info1.kind == "instance" and not implicit_param:
+                implicit_param = "self"
+            if method_info1.kind == "classmethod" and not implicit_param:
+                implicit_param = "cls"
+            return ClassInsertionPlan(
+                class_name=pair.class1_name,
+                file_path=file1,
+                method_kind=method_info1.kind,
+                implicit_param=implicit_param,
+            )
+
+        ancestor = self._find_common_ancestor(
+            (file1, pair.class1_name),
+            (file2, pair.class2_name),
+            class_infos,
+        )
+        if ancestor is None:
+            return None
+
+        implicit_param = method_info1.implicit_param or method_info2.implicit_param
+        if method_info1.kind == "instance" and not implicit_param:
+            implicit_param = "self"
+        if method_info1.kind == "classmethod" and not implicit_param:
+            implicit_param = "cls"
+
+        return ClassInsertionPlan(
+            class_name=ancestor.name,
+            file_path=ancestor.file_path,
+            method_kind=method_info1.kind,
+            implicit_param=implicit_param,
+        )
+
     def _evaluate_pairs_serial(
         self,
         block_pairs: List[CodeBlockPair],
@@ -713,6 +953,7 @@ class UnificationRefactorEngine:
                 List[str],
             ]
         ],
+        class_infos: List[ClassInfo],
         *,
         verbose: bool,
         progress: str,
@@ -740,7 +981,7 @@ class UnificationRefactorEngine:
 
         if use_tqdm and tqdm_iter is not None:
             for pair in tqdm_iter:
-                proposal = self._try_refactor_pair_multi_file(pair, all_functions)
+                proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
                 if proposal:
                     proposals.append(proposal)
             return proposals
@@ -751,7 +992,7 @@ class UnificationRefactorEngine:
             print("Analyzing candidate pairs:", end=" ", flush=True)
 
         for idx, pair in enumerate(block_pairs, 1):
-            proposal = self._try_refactor_pair_multi_file(pair, all_functions)
+            proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
             if proposal:
                 proposals.append(proposal)
             if use_inline_bar:
@@ -783,6 +1024,7 @@ class UnificationRefactorEngine:
                 List[str],
             ]
         ],
+        class_infos: List[ClassInfo],
         *,
         verbose: bool,
         progress: str,
@@ -794,6 +1036,7 @@ class UnificationRefactorEngine:
             return self._evaluate_pairs_serial(
                 block_pairs,
                 all_functions,
+                class_infos,
                 verbose=verbose,
                 progress=progress,
             )
@@ -830,7 +1073,7 @@ class UnificationRefactorEngine:
         with ProcessPoolExecutor(
             max_workers=max_workers,
             initializer=_initialize_pair_worker,
-            initargs=(engine_config, all_functions),
+            initargs=(engine_config, all_functions, class_infos),
         ) as executor:
             futures = [executor.submit(_process_pair_in_worker, task) for task in tasks]
             iterator = as_completed(futures)
@@ -1182,6 +1425,7 @@ class UnificationRefactorEngine:
                 List[str],
             ]
         ],
+        class_infos: List[ClassInfo],
     ) -> Optional[RefactoringProposal]:
         """
         Try to refactor a pair of code blocks using unification (cross-file support).
@@ -1189,6 +1433,7 @@ class UnificationRefactorEngine:
         Args:
             pair: Code block pair (may be cross-file)
             all_functions: All functions being analyzed
+            class_infos: Metadata about classes discovered in analyzed files
 
         Returns:
             Refactoring proposal or None
@@ -1943,9 +2188,8 @@ class UnificationRefactorEngine:
                 )
             except Exception:
                 return None
-
         # Determine canonical file for extracted function
-        # For cross-file: choose first file
+        # Default to the first file, but this may change if we insert into an ancestor class
         canonical_file = pair.file_path
 
         # Create proposal
@@ -1988,21 +2232,20 @@ class UnificationRefactorEngine:
             if dce:
                 insert_into_function = dce
 
-        # If not inserting into a function, and it's a same-file same-class method case, insert into class
-        if (
-            insert_into_function is None
-            and pair.file_path2 is not None
-            and pair.file_path2 == pair.file_path
-            and pair.class1_name
-            and pair.class2_name
-            and pair.class1_name == pair.class2_name
-        ):
-            if method_info1.kind == method_info2.kind and method_info1.kind is not None:
-                insert_into_class = pair.class1_name
-                method_kind_metadata = method_info1.kind
-                method_param_name = method_info1.implicit_param
-            else:
-                insert_into_class = None
+        class_plan: Optional[ClassInsertionPlan] = None
+        if insert_into_function is None:
+            class_plan = self._choose_class_insertion(
+                pair,
+                method_info1,
+                method_info2,
+                class_infos,
+            )
+
+        if class_plan is not None:
+            insert_into_class = class_plan.class_name
+            canonical_file = class_plan.file_path
+            method_kind_metadata = class_plan.method_kind
+            method_param_name = class_plan.implicit_param
 
         # SAFETY: Avoid refactoring across closures with nonlocal variables for now.
         # If the containing functions (func1/func2) declare any nonlocal variables, skip this proposal
@@ -2117,9 +2360,8 @@ class UnificationRefactorEngine:
                     print("Adjusting to end of file")
                     end_line = len(lines)
 
-                # If inserting into a class (same-file same-class), and this replacement came from a method
-                # in the canonical file, rewrite to self._method(...) and drop leading self arg.
-                if proposal.insert_into_class and file_path == proposal.file_path and class_name:
+                # When extracting into a class, rewrite method call sites so they use method dispatch.
+                if proposal.insert_into_class and class_name:
                     replacement_node = self._rewrite_call_for_method(
                         replacement_node,
                         original_helper_name,
@@ -2286,43 +2528,46 @@ class UnificationRefactorEngine:
 
                     lines[insert_line:insert_line] = lines_to_insert
             else:
-                # Add import statement to other files
-                # Calculate the correct module path using project layout discovery
-                from_path = Path(proposal.file_path)
-                to_path = Path(file_path)
+                if not proposal.insert_into_class:
+                    # Add import statement to other files
+                    # Calculate the correct module path using project layout discovery
+                    from_path = Path(proposal.file_path)
+                    to_path = Path(file_path)
 
-                # Use the lowest common ancestor of the canonical and importing files
-                # to scope module names within the project subtree (avoid repo-level roots)
-                from pathlib import Path as _P
+                    # Use the lowest common ancestor of the canonical and importing files
+                    # to scope module names within the project subtree (avoid repo-level roots)
+                    from pathlib import Path as _P
 
-                common_dir = _P(__import__("os").path.commonpath([str(from_path), str(to_path)]))
-                layout = ProjectLayout.discover(
-                    common_dir,
-                    prefer_absolute_imports=self.prefer_absolute_imports,
-                    pep420_namespace_packages=self.pep420_namespace_packages,
-                )
+                    common_dir = _P(
+                        __import__("os").path.commonpath([str(from_path), str(to_path)])
+                    )
+                    layout = ProjectLayout.discover(
+                        common_dir,
+                        prefer_absolute_imports=self.prefer_absolute_imports,
+                        pep420_namespace_packages=self.pep420_namespace_packages,
+                    )
 
-                abs_mod = layout.module_name_for(from_path)
-                # If preference is absolute and available, use absolute even for same-dir
-                if abs_mod and layout.prefer_absolute_imports:
-                    module_name = abs_mod
-                else:
-                    # Otherwise, keep previous behavior: same-dir stem, else best-effort abs/stem
-                    if from_path.parent == to_path.parent:
-                        module_name = from_path.stem
+                    abs_mod = layout.module_name_for(from_path)
+                    # If preference is absolute and available, use absolute even for same-dir
+                    if abs_mod and layout.prefer_absolute_imports:
+                        module_name = abs_mod
                     else:
-                        module_name = abs_mod or from_path.stem
+                        # Otherwise, keep previous behavior: same-dir stem, else best-effort abs/stem
+                        if from_path.parent == to_path.parent:
+                            module_name = from_path.stem
+                        else:
+                            module_name = abs_mod or from_path.stem
 
-                func_name = proposal.extracted_function.name
-                import_line = f"from {module_name} import {func_name}\n"
+                    func_name = proposal.extracted_function.name
+                    import_line = f"from {module_name} import {func_name}\n"
 
-                # Avoid duplicate imports if already present
-                if any(import_line.strip() == ln.strip() for ln in lines):
-                    pass
-                else:
-                    # Find position to insert import (after existing imports)
-                    import_pos = self._find_import_position(lines)
-                    lines.insert(import_pos, import_line)
+                    # Avoid duplicate imports if already present
+                    if any(import_line.strip() == ln.strip() for ln in lines):
+                        pass
+                    else:
+                        # Find position to insert import (after existing imports)
+                        import_pos = self._find_import_position(lines)
+                        lines.insert(import_pos, import_line)
 
             modified_files[file_path] = "".join(lines)
 

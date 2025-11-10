@@ -251,7 +251,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         )
         self.assertIsNotNone(helper, "Extracted helper should be present inside the class")
         self.assertTrue(
-            any(isinstance(dec, ast.Name) and dec.id == "staticmethod" for dec in helper.decorator_list),
+            any(
+                isinstance(dec, ast.Name) and dec.id == "staticmethod"
+                for dec in helper.decorator_list
+            ),
             "Extracted helper must be decorated as @staticmethod",
         )
         self.assertFalse(any(arg.arg == "self" for arg in helper.args.args))
@@ -302,10 +305,15 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         )
         self.assertIsNotNone(helper)
         self.assertTrue(
-            any(isinstance(dec, ast.Name) and dec.id == "classmethod" for dec in helper.decorator_list),
+            any(
+                isinstance(dec, ast.Name) and dec.id == "classmethod"
+                for dec in helper.decorator_list
+            ),
             "Extracted helper must be decorated as @classmethod",
         )
-        self.assertGreater(len(helper.args.args), 0, "Class helper should expose a leading parameter")
+        self.assertGreater(
+            len(helper.args.args), 0, "Class helper should expose a leading parameter"
+        )
         self.assertEqual(helper.args.args[0].arg, "cls")
 
         for method_name in ("a", "b"):
