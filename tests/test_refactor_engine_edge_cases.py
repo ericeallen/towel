@@ -71,17 +71,11 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
 
             with open(file1, "w", encoding="utf-8") as handle:
                 handle.write(
-                    "def process_a(x):\n"
-                    "    y = x * 2\n"
-                    "    z = y + 10\n"
-                    "    return z\n"
+                    "def process_a(x):\n" "    y = x * 2\n" "    z = y + 10\n" "    return z\n"
                 )
             with open(file2, "w", encoding="utf-8") as handle:
                 handle.write(
-                    "def process_b(x):\n"
-                    "    y = x * 2\n"
-                    "    z = y + 10\n"
-                    "    return z\n"
+                    "def process_b(x):\n" "    y = x * 2\n" "    z = y + 10\n" "    return z\n"
                 )
 
             proposals = self.engine.analyze_files([file1, file2])
@@ -174,9 +168,13 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         )
 
         tree = ast.parse(result)
-        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example")
+        cls = next(
+            node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example"
+        )
         helper = next(
-            node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
+            node
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
         )
         helper_name = helper.name
         self.assertFalse(helper.decorator_list, "Instance helper should have no decorators")
@@ -184,8 +182,16 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         self.assertEqual(helper.args.args[0].arg, "self")
 
         for method_name in ("alpha", "beta"):
-            method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
-            returns = [n for n in ast.walk(method) if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)]
+            method = next(
+                node
+                for node in cls.body
+                if isinstance(node, ast.FunctionDef) and node.name == method_name
+            )
+            returns = [
+                n
+                for n in ast.walk(method)
+                if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
+            ]
             self.assertTrue(returns)
             for ret in returns:
                 call = ret.value
@@ -213,9 +219,13 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         )
 
         tree = ast.parse(result)
-        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example")
+        cls = next(
+            node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example"
+        )
         helper = next(
-            node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
+            node
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
         )
         helper_name = helper.name
         decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
@@ -224,7 +234,11 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         self.assertEqual(helper.args.args[0].arg, "cls")
 
         for method_name in ("alpha", "beta"):
-            method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+            method = next(
+                node
+                for node in cls.body
+                if isinstance(node, ast.FunctionDef) and node.name == method_name
+            )
             call_sites = [n for n in ast.walk(method) if isinstance(n, ast.Call)]
             self.assertTrue(call_sites)
             for call in call_sites:
@@ -251,9 +265,13 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         )
 
         tree = ast.parse(result)
-        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example")
+        cls = next(
+            node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example"
+        )
         helper = next(
-            node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
+            node
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
         )
         helper_name = helper.name
         decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
@@ -264,13 +282,69 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         self.assertNotIn("cls", helper_args)
 
         for method_name in ("alpha", "beta"):
-            method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+            method = next(
+                node
+                for node in cls.body
+                if isinstance(node, ast.FunctionDef) and node.name == method_name
+            )
             call_sites = [n for n in ast.walk(method) if isinstance(n, ast.Call)]
             self.assertTrue(call_sites)
             for call in call_sites:
                 if isinstance(call.func, ast.Attribute) and call.func.attr == helper_name:
                     self.assertIsInstance(call.func.value, ast.Name)
                     self.assertEqual(call.func.value.id, "Example")
+
+    def test_sibling_instance_methods_promote_to_common_base(self):
+        """Sibling instance methods should extract helpers into their nearest shared base class."""
+
+        result = self._analyze_and_apply(
+            """
+            class Base:
+                pass
+
+            class First(Base):
+                def alpha(self, value):
+                    tmp = value + 1
+                    return tmp * 2
+
+            class Second(Base):
+                def beta(self, value):
+                    tmp = value + 1
+                    return tmp * 2
+            """
+        )
+
+        tree = ast.parse(result)
+        base = next(
+            node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Base"
+        )
+        helper = next(node for node in base.body if isinstance(node, ast.FunctionDef))
+        self.assertFalse(helper.decorator_list, "Base helper should default to instance semantics")
+        self.assertGreater(len(helper.args.args), 0)
+        self.assertEqual(helper.args.args[0].arg, "self")
+
+        for cls_name, method_name in (("First", "alpha"), ("Second", "beta")):
+            cls = next(
+                node
+                for node in tree.body
+                if isinstance(node, ast.ClassDef) and node.name == cls_name
+            )
+            method = next(
+                node
+                for node in cls.body
+                if isinstance(node, ast.FunctionDef) and node.name == method_name
+            )
+            helper_calls = [
+                call
+                for call in ast.walk(method)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == helper.name
+            ]
+            self.assertTrue(helper_calls)
+            for call in helper_calls:
+                self.assertIsInstance(call.func.value, ast.Name)
+                self.assertEqual(call.func.value.id, method.args.args[0].arg)
 
 
 if __name__ == "__main__":
