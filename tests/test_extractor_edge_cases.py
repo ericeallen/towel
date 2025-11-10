@@ -2,7 +2,8 @@ import ast
 from typing import Set, Dict
 
 from src.towel.unification.extractor import HygienicExtractor
-from src.towel.unification.unifier import Substitution
+from src.towel.unification.scope_analyzer import ScopeAnalyzer
+from src.towel.unification.unifier import Substitution, Unifier
 
 
 def make_substitution(param_map):
@@ -13,6 +14,45 @@ def make_substitution(param_map):
             expr = ast.parse(code, mode="eval").body
             subst.add_mapping(block_idx, expr, param_name)
     return subst
+
+
+def test_extract_with_conflicting_names():
+    analyzer = ScopeAnalyzer()
+    extractor = HygienicExtractor()
+    code = """
+param_0 = "existing"
+
+def foo():
+    x = 10
+    y = 20
+    return x + y
+
+def bar():
+    x = 30
+    y = 40
+    return x + y
+"""
+    tree = ast.parse(code)
+    analyzer.analyze(tree)
+
+    foo_func = tree.body[1]
+    bar_func = tree.body[2]
+
+    unifier = Unifier(max_parameters=5)
+    substitution = unifier.unify_blocks([foo_func.body, bar_func.body], [{}, {}])
+    assert substitution is not None
+
+    func_def, _ = extractor.extract_function(
+        template_block=foo_func.body,
+        substitution=substitution,
+        free_variables=set(),
+        enclosing_names={"param_0", "foo", "bar"},
+        is_value_producing=True,
+        function_name="extracted_func",
+    )
+
+    param_names = [arg.arg for arg in func_def.args.args]
+    assert "param_0" not in param_names
 
 
 def test_extract_function_injects_global_nonlocal_and_multi_return():
@@ -94,8 +134,10 @@ def test_generate_call_params_used_as_callee_wrapped():
     ordered_params = sorted(param_order.items(), key=lambda kv: kv[1])
     arg_for_callee = call.args[[name for name, _ in ordered_params].index("__param_0")]
     assert isinstance(arg_for_callee, ast.Lambda)
-    assert arg_for_callee.vararg.arg == "args"
-    assert arg_for_callee.kwarg.arg == "kwargs"
+    assert arg_for_callee.args.vararg is not None
+    assert arg_for_callee.args.vararg.arg == "args"
+    assert arg_for_callee.args.kwarg is not None
+    assert arg_for_callee.args.kwarg.arg == "kwargs"
 
 
 def test_generate_call_function_param_lambda_lift():

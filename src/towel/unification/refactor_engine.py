@@ -10,9 +10,10 @@ This orchestrates the entire refactoring process:
 """
 
 import ast
+import copy
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import List, Tuple, Dict, Set, Optional, FrozenSet
+from typing import List, Tuple, Dict, Set, Optional, FrozenSet, Literal
 from weakref import WeakKeyDictionary
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -55,13 +56,32 @@ class CodeBlockPair:
 
 
 @dataclass
+class MethodInfo:
+    """Describes how a function participates as a method within a class."""
+
+    kind: Optional[Literal["instance", "classmethod", "staticmethod"]]
+    implicit_param: Optional[str]
+
+
+@dataclass
+class Replacement:
+    """Represents a replacement call to the extracted function/method."""
+
+    line_range: Tuple[int, int]
+    node: ast.AST
+    file_path: Optional[str] = None
+    class_name: Optional[str] = None
+    method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+    implicit_param: Optional[str] = None
+
+
+@dataclass
 class RefactoringProposal:
     """Proposed refactoring."""
 
     file_path: str
     extracted_function: ast.FunctionDef
-    # (line_range, replacement_node) or (line_range, replacement_node, file_path)
-    replacements: List[Tuple]
+    replacements: List[Replacement]
     description: str
     parameters_count: int
     return_variables: List[str] = field(
@@ -71,6 +91,58 @@ class RefactoringProposal:
     insert_into_class: Optional[str] = None
     # If provided, insert extracted function inside this function's body (same-file only)
     insert_into_function: Optional[str] = None
+    # Method metadata (used when inserting into classes)
+    method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+    method_param_name: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Coerce legacy tuple replacements into Replacement instances."""
+
+        coerced: List[Replacement] = []
+        for item in self.replacements:
+            if isinstance(item, Replacement):
+                coerced.append(item)
+                continue
+
+            if not isinstance(item, tuple):
+                raise TypeError(
+                    "Replacement entries must be Replacement instances or tuples, "
+                    f"got {type(item)!r}"
+                )
+
+            if len(item) == 4:
+                line_range, node, file_path, class_name = item
+            elif len(item) == 3:
+                line_range, node, file_path = item
+                class_name = None
+            elif len(item) == 2:
+                line_range, node = item
+                file_path = None
+                class_name = None
+            else:
+                raise ValueError(
+                    "Replacement tuple must have length 2, 3, or 4 ("
+                    "line_range, node[, file_path[, class_name]])"
+                )
+
+            method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+            implicit_param: Optional[str] = None
+            if class_name is not None:
+                method_kind = "instance"
+                implicit_param = "self"
+
+            coerced.append(
+                Replacement(
+                    line_range=line_range,
+                    node=node,
+                    file_path=file_path,
+                    class_name=class_name,
+                    method_kind=method_kind,
+                    implicit_param=implicit_param,
+                )
+            )
+
+        self.replacements = coerced
 
 
 _worker_engine: Optional["UnificationRefactorEngine"] = None
@@ -415,12 +487,15 @@ class UnificationRefactorEngine:
         )
 
     def _should_use_parallel(self, pair_count: int) -> bool:
-        if pair_count <= 1:
-            return False
-        if os.getenv("TOWEL_DISABLE_MULTIPROC"):
-            return False
-        cpu_count = os.cpu_count() or 1
-        return cpu_count > 1
+        """Decide if multiprocessing should be used for pair evaluation.
+
+        Benchmarks run in Nov 2025 showed the ProcessPoolExecutor path to be
+        roughly 0.6× slower than the serial evaluator because the work per
+        candidate is too small to amortize process start and AST pickling cost.
+        We keep this guard so future batching/tuning work can flip the switch
+        without reworking the call site, but for now we always stay serial.
+        """
+        return False
 
     @staticmethod
     def _function_contains_nonlocal(func: ast.FunctionDef) -> bool:
@@ -436,6 +511,192 @@ class UnificationRefactorEngine:
                 if isinstance(node, ast.Nonlocal):
                     return True
         return False
+
+    @staticmethod
+    def _decorator_name(decorator: ast.expr) -> Optional[str]:
+        """Return the simple name for a decorator expression if it can be resolved."""
+
+        if isinstance(decorator, ast.Name):
+            return decorator.id
+        if isinstance(decorator, ast.Attribute):
+            return decorator.attr
+        if isinstance(decorator, ast.Call):
+            return UnificationRefactorEngine._decorator_name(decorator.func)
+        return None
+
+    @staticmethod
+    def _has_decorator(fn: ast.FunctionDef, name: str) -> bool:
+        """Return True when the function already carries a decorator with the given name."""
+
+        return any(
+            UnificationRefactorEngine._decorator_name(dec) == name for dec in fn.decorator_list
+        )
+
+    @staticmethod
+    def _strip_decorator(fn: ast.FunctionDef, name: str) -> None:
+        """Remove any decorator whose resolved name matches ``name``."""
+
+        fn.decorator_list = [
+            dec for dec in fn.decorator_list if UnificationRefactorEngine._decorator_name(dec) != name
+        ]
+
+    @staticmethod
+    def _ensure_leading_param(fn: ast.FunctionDef, param_name: str) -> None:
+        """Ensure the positional-args list starts with ``param_name`` (preserving annotations)."""
+
+        existing: Optional[ast.arg] = None
+        remaining: List[ast.arg] = []
+        for arg in fn.args.args:
+            if arg.arg == param_name and existing is None:
+                existing = arg
+                continue
+            if arg.arg == param_name:
+                # Drop duplicate occurrences beyond the first
+                continue
+            remaining.append(arg)
+
+        if existing is None:
+            existing = ast.arg(arg=param_name)
+
+        fn.args.args = [existing] + remaining
+
+    def _prepare_extracted_method_signature(
+        self,
+        fn: ast.FunctionDef,
+        method_kind: Literal["instance", "classmethod", "staticmethod"],
+        implicit_param: Optional[str],
+    ) -> None:
+        """Normalize the extracted helper so it behaves like the requested method type."""
+
+        if method_kind == "instance":
+            name = implicit_param or "self"
+            self._ensure_leading_param(fn, name)
+            # Strip any conflicting decorators that might have been synthesized earlier
+            self._strip_decorator(fn, "staticmethod")
+            self._strip_decorator(fn, "classmethod")
+        elif method_kind == "classmethod":
+            name = implicit_param or "cls"
+            self._ensure_leading_param(fn, name)
+            self._strip_decorator(fn, "staticmethod")
+            if not self._has_decorator(fn, "classmethod"):
+                fn.decorator_list.insert(0, ast.Name(id="classmethod", ctx=ast.Load()))
+        elif method_kind == "staticmethod":
+            self._strip_decorator(fn, "classmethod")
+            if not self._has_decorator(fn, "staticmethod"):
+                fn.decorator_list.insert(0, ast.Name(id="staticmethod", ctx=ast.Load()))
+        else:
+            raise ValueError(f"Unsupported method kind: {method_kind}")
+
+    def _rewrite_call_for_method(
+        self,
+        node: ast.AST,
+        original_name: str,
+        new_name: str,
+        method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]],
+        implicit_param: Optional[str],
+        class_name: Optional[str],
+    ) -> ast.AST:
+        """Rewrite calls to the extracted helper so they use method dispatch semantics."""
+
+        if method_kind is None:
+            return node
+
+        implicit_name = implicit_param or ("self" if method_kind == "instance" else "cls")
+
+        class Rewriter(ast.NodeTransformer):
+            def __init__(self, outer):
+                self.outer = outer
+
+            def visit_Call(self, n: ast.Call) -> ast.AST:
+                self.generic_visit(n)
+                if isinstance(n.func, ast.Name) and n.func.id == original_name:
+                    if method_kind == "instance":
+                        n.args = self.outer._drop_implicit_positional(n.args, implicit_name)
+                        n.keywords = self.outer._drop_implicit_keyword(n.keywords, implicit_name)
+                        attr = ast.Attribute(
+                            value=ast.Name(id=implicit_name, ctx=ast.Load()),
+                            attr=new_name,
+                            ctx=ast.Load(),
+                        )
+                        ast.copy_location(attr, n.func)
+                        n.func = attr
+                    elif method_kind == "classmethod":
+                        n.args = self.outer._drop_implicit_positional(n.args, implicit_name)
+                        n.keywords = self.outer._drop_implicit_keyword(n.keywords, implicit_name)
+                        attr = ast.Attribute(
+                            value=ast.Name(id=implicit_name, ctx=ast.Load()),
+                            attr=new_name,
+                            ctx=ast.Load(),
+                        )
+                        ast.copy_location(attr, n.func)
+                        n.func = attr
+                    elif method_kind == "staticmethod" and class_name:
+                        attr = ast.Attribute(
+                            value=ast.Name(id=class_name, ctx=ast.Load()),
+                            attr=new_name,
+                            ctx=ast.Load(),
+                        )
+                        ast.copy_location(attr, n.func)
+                        n.func = attr
+                return n
+
+        return Rewriter(self).visit(node)
+
+    @staticmethod
+    def _drop_implicit_positional(args: List[ast.expr], implicit_name: str) -> List[ast.expr]:
+        """Drop the first positional argument matching ``implicit_name`` if present."""
+
+        result: List[ast.expr] = []
+        dropped = False
+        for arg in args:
+            if not dropped and isinstance(arg, ast.Name) and arg.id == implicit_name:
+                dropped = True
+                continue
+            result.append(arg)
+        return result
+
+    @staticmethod
+    def _drop_implicit_keyword(keywords: List[ast.keyword], implicit_name: str) -> List[ast.keyword]:
+        """Drop the first keyword argument whose name matches ``implicit_name``."""
+
+        result: List[ast.keyword] = []
+        dropped = False
+        for kw in keywords:
+            if not dropped and kw.arg == implicit_name:
+                dropped = True
+                continue
+            result.append(kw)
+        return result
+
+    def _get_method_context(
+        self, func: Optional[ast.FunctionDef], class_name: Optional[str]
+    ) -> MethodInfo:
+        """Return method metadata for ``func`` when it is defined inside ``class_name``."""
+
+        if func is None or class_name is None:
+            return MethodInfo(kind=None, implicit_param=None)
+
+        kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+        for decorator in func.decorator_list:
+            name = self._decorator_name(decorator)
+            if name == "staticmethod":
+                kind = "staticmethod"
+                break
+            if name == "classmethod":
+                kind = "classmethod"
+                break
+
+        if kind is None:
+            kind = "instance"
+
+        implicit_param = None
+        if kind in {"instance", "classmethod"}:
+            if func.args.args:
+                implicit_param = func.args.args[0].arg
+            else:
+                implicit_param = "self" if kind == "instance" else "cls"
+
+        return MethodInfo(kind=kind, implicit_param=implicit_param)
 
     def _evaluate_pairs_serial(
         self,
@@ -982,6 +1243,9 @@ class UnificationRefactorEngine:
             scope_analyzer2 = pair.scope_analyzer2
         if root_scope2 is None and pair.root_scope2 is not None:
             root_scope2 = pair.root_scope2
+
+        method_info1 = self._get_method_context(func1, pair.class1_name)
+        method_info2 = self._get_method_context(func2, pair.class2_name)
 
         # DEBUG logging
         import os
@@ -1592,26 +1856,26 @@ class UnificationRefactorEngine:
 
         # Check for orphaned variables before proceeding
         # Need to find the function nodes to check for orphans
-        func1 = None
-        func2 = None
+        func1_for_orphans: Optional[ast.FunctionDef] = None
+        func2_for_orphans: Optional[ast.FunctionDef] = None
         for entry in all_functions:
             file_path, func = entry[0], entry[1]
             if file_path == pair.file_path and func.name == pair.function1_name:
-                func1 = func
+                func1_for_orphans = func
             if (
                 file_path == (pair.file_path2 or pair.file_path)
                 and func.name == pair.function2_name
             ):
-                func2 = func
+                func2_for_orphans = func
 
-        if func1 and func2:
+        if func1_for_orphans and func2_for_orphans:
             # Get block indices within their respective function bodies
-            indices1 = self._get_block_indices(func1, pair.block1_nodes)
-            indices2 = self._get_block_indices(func2, pair.block2_nodes)
+            indices1 = self._get_block_indices(func1_for_orphans, pair.block1_nodes)
+            indices2 = self._get_block_indices(func2_for_orphans, pair.block2_nodes)
 
             if indices1 and indices2:
                 # Get function bodies (skip docstring)
-                body1 = func1.body
+                body1 = func1_for_orphans.body
                 start_idx1 = 0
                 if (
                     body1
@@ -1622,7 +1886,7 @@ class UnificationRefactorEngine:
                     start_idx1 = 1
                 body1 = body1[start_idx1:]
 
-                body2 = func2.body
+                body2 = func2_for_orphans.body
                 start_idx2 = 0
                 if (
                     body2
@@ -1642,7 +1906,7 @@ class UnificationRefactorEngine:
                     return None
 
         # Generate replacement calls
-        replacements = []
+        replacements: List[Replacement] = []
 
         # Map block indices to their return variables
         return_vars_by_block = {0: list(return_variables_block1), 1: list(return_variables_block2)}
@@ -1666,7 +1930,17 @@ class UnificationRefactorEngine:
                 )
                 # Store file_path and class context
                 class_name = pair.class1_name if block_idx == 0 else pair.class2_name
-                replacements.append((block_range, call_node, file_path, class_name))
+                method_info = method_info1 if block_idx == 0 else method_info2
+                replacements.append(
+                    Replacement(
+                        line_range=block_range,
+                        node=call_node,
+                        file_path=file_path,
+                        class_name=class_name,
+                        method_kind=method_info.kind,
+                        implicit_param=method_info.implicit_param,
+                    )
+                )
             except Exception:
                 return None
 
@@ -1686,6 +1960,8 @@ class UnificationRefactorEngine:
         # Default to module-level insertion; when possible insert into deepest common enclosing function.
         insert_into_class = None
         insert_into_function = None
+        method_kind_metadata: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+        method_param_name: Optional[str] = None
 
         # Consider pairs from the same file even if file_path2 is None (same-file pairing)
         same_file = (pair.file_path2 is None) or (pair.file_path2 == pair.file_path)
@@ -1721,7 +1997,12 @@ class UnificationRefactorEngine:
             and pair.class2_name
             and pair.class1_name == pair.class2_name
         ):
-            insert_into_class = pair.class1_name
+            if method_info1.kind == method_info2.kind and method_info1.kind is not None:
+                insert_into_class = pair.class1_name
+                method_kind_metadata = method_info1.kind
+                method_param_name = method_info1.implicit_param
+            else:
+                insert_into_class = None
 
         # SAFETY: Avoid refactoring across closures with nonlocal variables for now.
         # If the containing functions (func1/func2) declare any nonlocal variables, skip this proposal
@@ -1760,6 +2041,8 @@ class UnificationRefactorEngine:
             return_variables=list(return_variables_block1),
             insert_into_class=insert_into_class,
             insert_into_function=insert_into_function,
+            method_kind=method_kind_metadata,
+            method_param_name=method_param_name,
         )
 
         return proposal
@@ -1791,26 +2074,13 @@ class UnificationRefactorEngine:
             Dict mapping file paths to modified source code
         """
         # Group replacements by file
-        replacements_by_file = {}
-        for item in proposal.replacements:
-            if len(item) == 4:
-                (start_line, end_line), replacement_node, file_path, class_name = item
-            elif len(item) == 3:
-                (start_line, end_line), replacement_node, file_path = item
-                class_name = None
-            else:
-                (start_line, end_line), replacement_node = item
-                file_path = proposal.file_path
-                class_name = None
-
-            if file_path not in replacements_by_file:
-                replacements_by_file[file_path] = []
-            replacements_by_file[file_path].append(
-                ((start_line, end_line), replacement_node, class_name)
-            )
+        replacements_by_file: Dict[str, List[Replacement]] = {}
+        for repl in proposal.replacements:
+            file_path = repl.file_path or proposal.file_path
+            replacements_by_file.setdefault(file_path, []).append(repl)
 
         # Process each file
-        modified_files = {}
+        modified_files: Dict[str, str] = {}
 
         for file_path, replacements in replacements_by_file.items():
             # Read original source
@@ -1818,7 +2088,7 @@ class UnificationRefactorEngine:
                 lines = f.readlines()
 
             # Sort replacements by line number (reverse order)
-            replacements = sorted(replacements, key=lambda r: r[0][0], reverse=True)
+            replacements = sorted(replacements, key=lambda r: r.line_range[0], reverse=True)
 
             # Apply replacements
             # Determine final function/method name for this proposal
@@ -1826,7 +2096,12 @@ class UnificationRefactorEngine:
             if proposal.insert_into_class and not final_func_name.startswith("_"):
                 final_func_name = f"_{final_func_name}"
 
-            for (start_line, end_line), replacement_node, class_name in replacements:
+            original_helper_name = proposal.extracted_function.name
+
+            for repl in replacements:
+                start_line, end_line = repl.line_range
+                replacement_node = copy.deepcopy(repl.node)
+                class_name = repl.class_name
                 # Validate line numbers
                 if start_line < 1 or start_line > len(lines):
                     print(
@@ -1845,8 +2120,13 @@ class UnificationRefactorEngine:
                 # If inserting into a class (same-file same-class), and this replacement came from a method
                 # in the canonical file, rewrite to self._method(...) and drop leading self arg.
                 if proposal.insert_into_class and file_path == proposal.file_path and class_name:
-                    replacement_node = self._rewrite_call_to_method(
-                        replacement_node, proposal.extracted_function.name, final_func_name
+                    replacement_node = self._rewrite_call_for_method(
+                        replacement_node,
+                        original_helper_name,
+                        final_func_name,
+                        repl.method_kind or proposal.method_kind,
+                        repl.implicit_param or proposal.method_param_name,
+                        class_name,
                     )
 
                 replacement_code = ast.unparse(replacement_node)
@@ -1935,8 +2215,12 @@ class UnificationRefactorEngine:
                     # Rename function for method insertion
                     if not proposal.extracted_function.name.startswith("_"):
                         proposal.extracted_function.name = f"_{proposal.extracted_function.name}"
-                    # Ensure 'self' as first arg
-                    self._ensure_self_param(proposal.extracted_function)
+                    method_kind = proposal.method_kind or "instance"
+                    self._prepare_extracted_method_signature(
+                        proposal.extracted_function,
+                        method_kind,
+                        proposal.method_param_name,
+                    )
 
                     func_code = ast.unparse(proposal.extracted_function)
                     method_lines = [line + "\n" for line in func_code.split("\n")]
@@ -2104,29 +2388,6 @@ class UnificationRefactorEngine:
 
         # Empty file - insert at beginning
         return 0
-
-    def _ensure_self_param(self, fn: ast.FunctionDef) -> None:
-        """Ensure 'self' is the first positional parameter of function definition."""
-        args = fn.args
-        # Remove duplicates of 'self' from args.args
-        new_args = [a for a in args.args if a.arg != "self"]
-        args.args = [ast.arg(arg="self")] + new_args
-
-    def _rewrite_call_to_method(self, node: ast.AST, original_name: str, new_name: str) -> ast.AST:
-        """Rewrite calls from original_name(...) to self.new_name(...), dropping leading self arg."""
-
-        class Rewriter(ast.NodeTransformer):
-            def visit_Call(self, n: ast.Call) -> ast.AST:
-                self.generic_visit(n)
-                if isinstance(n.func, ast.Name) and n.func.id == original_name:
-                    # Drop any 'self' positional argument; method receives it implicitly
-                    n.args = [a for a in n.args if not (isinstance(a, ast.Name) and a.id == "self")]
-                    n.func = ast.Attribute(
-                        value=ast.Name(id="self", ctx=ast.Load()), attr=new_name, ctx=ast.Load()
-                    )
-                return n
-
-        return Rewriter().visit(node)
 
     def _find_class_insert_position(
         self, source: str, class_name: str
@@ -2477,20 +2738,10 @@ def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
     Returns:
         Set of (file_path, line_number) tuples that would be modified
     """
-    affected = set()
-    for item in proposal.replacements:
-        # Support multiple replacement tuple shapes:
-        # - ((start, end), node)
-        # - ((start, end), node, file_path)
-        # - ((start, end), node, file_path, class_name)
-        if len(item) == 4:
-            (start_line, end_line), _, file_path, _ = item
-        elif len(item) == 3:
-            (start_line, end_line), _, file_path = item
-        else:
-            (start_line, end_line), _ = item
-            file_path = proposal.file_path
-
+    affected: Set[Tuple[str, int]] = set()
+    for repl in proposal.replacements:
+        file_path = repl.file_path or proposal.file_path
+        start_line, end_line = repl.line_range
         for line_num in range(start_line, end_line + 1):
             affected.add((file_path, line_num))
 
@@ -2525,13 +2776,8 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
     def proposal_size(p: RefactoringProposal) -> int:
         """Calculate total lines affected by a proposal."""
         total_lines = 0
-        for item in p.replacements:
-            if len(item) == 4:
-                (start_line, end_line), _, _, _ = item
-            elif len(item) == 3:
-                (start_line, end_line), _, _ = item
-            else:
-                (start_line, end_line), _ = item
+        for repl in p.replacements:
+            start_line, end_line = repl.line_range
             total_lines += end_line - start_line + 1
         return total_lines
 

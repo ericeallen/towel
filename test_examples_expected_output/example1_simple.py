@@ -11,7 +11,7 @@ def process_user_data(user_id):
     user = {"id": user_id, "name": "John", "email": "john@example.com"}
 
     # Validate user data
-    __extracted_func_2(user)
+    extracted_func(user)
 
     print(f"Processing user: {user['name']}")
     return user
@@ -22,8 +22,8 @@ def process_admin_data(admin_id):
     # Fetch admin
     admin = {"id": admin_id, "name": "Admin", "email": "admin@example.com"}
 
-    # Validate user data (DUPLICATE!)
-    __extracted_func_2(admin)
+    # Validate admin data (DUPLICATE!)
+    extracted_func(admin)
 
     print(f"Processing admin: {admin['name']}")
     return admin
@@ -35,22 +35,24 @@ def process_guest_data(guest_id):
     guest = {"id": guest_id, "name": "Guest", "email": "guest@example.com"}
 
     # Validate user data (DUPLICATE!)
-    extracted_func(guest)
+    __extracted_func_1(guest)
 
     print(f"Processing guest: {guest['name']}")
     return guest
 
 
-def __extracted_func_2(__param_0):
-    extracted_func(__param_0)
-
-
 def extracted_func(__param_0):
+    __extracted_func_1(__param_0)
+
+
+def __extracted_func_1(__param_0):
     if not __param_0.get('id'):
         raise ValueError('User ID is required')
     if not __param_0.get('name'):
         raise ValueError('User name is required')
     if len(__param_0.get('name', '')) < 2:
         raise ValueError('User name too short')
+
+
 
 

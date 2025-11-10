@@ -108,8 +108,7 @@ class TestCrossFileAndValidation(unittest.TestCase):
             self.assertTrue(any("fa" in p.description and "fb" in p.description for p in props))
             # And replacements should span both files
             has_both_files = any(
-                len({(r[2] if len(r) >= 3 else p.file_path) for r in p.replacements}) > 1
-                for p in props
+                len({(r.file_path or p.file_path) for r in p.replacements}) > 1 for p in props
             )
             self.assertTrue(has_both_files, "Expected replacements across both files")
 
