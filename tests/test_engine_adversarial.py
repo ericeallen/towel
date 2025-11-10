@@ -337,6 +337,306 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                     "Implicit class binder should not be passed explicitly",
                 )
 
+    def test_cross_file_shared_base_instance_methods(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_path = Path(tmpdir) / "shared.py"
+            first_path = Path(tmpdir) / "first.py"
+            second_path = Path(tmpdir) / "second.py"
+
+            base_path.write_text(
+                textwrap.dedent(
+                    """
+                    class Shared:
+                        pass
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            first_path.write_text(
+                textwrap.dedent(
+                    """
+                    from shared import Shared
+
+                    class First(Shared):
+                        def alpha(self, value):
+                            tmp = value + 1
+                            return tmp * 2
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            second_path.write_text(
+                textwrap.dedent(
+                    """
+                    from shared import Shared
+
+                    class Second(Shared):
+                        def beta(self, value):
+                            tmp = value + 1
+                            return tmp * 2
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            engine = self._engine(min_lines=2)
+            proposals = engine.analyze_files([str(base_path), str(first_path), str(second_path)])
+            target = next((p for p in proposals if p.insert_into_class == "Shared"), None)
+            self.assertIsNotNone(target, "Expected helper to be inserted into Shared base class")
+            self.assertEqual(target.file_path, str(base_path))
+
+            result = engine.apply_refactoring_multi_file(target)
+            shared_src = result[target.file_path]
+            first_src = result[str(first_path)]
+            second_src = result[str(second_path)]
+
+            shared_mod = ast.parse(shared_src)
+            shared_cls = next(
+                node
+                for node in shared_mod.body
+                if isinstance(node, ast.ClassDef) and node.name == "Shared"
+            )
+            helper = next(
+                (
+                    n
+                    for n in shared_cls.body
+                    if isinstance(n, ast.FunctionDef) and n.name.startswith("_extracted_func")
+                ),
+                None,
+            )
+            self.assertIsNotNone(helper, "Shared class should gain extracted helper")
+            self.assertFalse(helper.decorator_list, "Instance helper should not add decorators")
+            self.assertGreater(len(helper.args.args), 0)
+            self.assertEqual(helper.args.args[0].arg, "self")
+
+            for src, cls_name, method_name in (
+                (first_src, "First", "alpha"),
+                (second_src, "Second", "beta"),
+            ):
+                mod = ast.parse(src)
+                cls_node = next(
+                    node
+                    for node in mod.body
+                    if isinstance(node, ast.ClassDef) and node.name == cls_name
+                )
+                method = next(
+                    node
+                    for node in cls_node.body
+                    if isinstance(node, ast.FunctionDef) and node.name == method_name
+                )
+                calls = [
+                    call
+                    for call in ast.walk(method)
+                    if isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == helper.name
+                ]
+                self.assertTrue(calls, f"{cls_name}.{method_name} should call shared helper")
+                for call in calls:
+                    self.assertIsInstance(call.func.value, ast.Name)
+                    self.assertEqual(call.func.value.id, method.args.args[0].arg)
+
+                self.assertNotIn("from shared import _", src)
+
+    def test_cross_file_shared_base_classmethods(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_path = Path(tmpdir) / "shared.py"
+            first_path = Path(tmpdir) / "first.py"
+            second_path = Path(tmpdir) / "second.py"
+
+            base_path.write_text(
+                textwrap.dedent(
+                    """
+                    class Shared:
+                        pass
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            first_path.write_text(
+                textwrap.dedent(
+                    """
+                    from shared import Shared
+
+                    class First(Shared):
+                        @classmethod
+                        def alpha(cls, value):
+                            tmp = value + 1
+                            return tmp * 2
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            second_path.write_text(
+                textwrap.dedent(
+                    """
+                    from shared import Shared
+
+                    class Second(Shared):
+                        @classmethod
+                        def beta(cls, value):
+                            tmp = value + 1
+                            return tmp * 2
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            engine = self._engine(min_lines=2)
+            proposals = engine.analyze_files([str(base_path), str(first_path), str(second_path)])
+            target = next((p for p in proposals if p.insert_into_class == "Shared"), None)
+            self.assertIsNotNone(target, "Expected classmethod helper to be inserted into Shared")
+            self.assertEqual(target.file_path, str(base_path))
+
+            result = engine.apply_refactoring_multi_file(target)
+            shared_src = result[target.file_path]
+            first_src = result[str(first_path)]
+
+            shared_mod = ast.parse(shared_src)
+            shared_cls = next(
+                node
+                for node in shared_mod.body
+                if isinstance(node, ast.ClassDef) and node.name == "Shared"
+            )
+            helper = next(
+                (
+                    n
+                    for n in shared_cls.body
+                    if isinstance(n, ast.FunctionDef) and n.name.startswith("_extracted_func")
+                ),
+                None,
+            )
+            self.assertIsNotNone(helper)
+            decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
+            self.assertIn("classmethod", decorator_ids)
+            self.assertGreater(len(helper.args.args), 0)
+            self.assertEqual(helper.args.args[0].arg, "cls")
+
+            first_mod = ast.parse(first_src)
+            first_cls = next(
+                node
+                for node in first_mod.body
+                if isinstance(node, ast.ClassDef) and node.name == "First"
+            )
+            method = next(
+                node
+                for node in first_cls.body
+                if isinstance(node, ast.FunctionDef) and node.name == "alpha"
+            )
+            calls = [
+                call
+                for call in ast.walk(method)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == helper.name
+            ]
+            self.assertTrue(calls)
+            for call in calls:
+                self.assertIsInstance(call.func.value, ast.Name)
+                self.assertEqual(call.func.value.id, method.args.args[0].arg)
+                self.assertTrue(
+                    all(
+                        not (isinstance(arg, ast.Name) and arg.id == method.args.args[0].arg)
+                        for arg in call.args
+                    ),
+                    "Class binder should not be passed explicitly",
+                )
+
+            self.assertNotIn("from shared import _", first_src)
+
+    def test_multilevel_ancestor_selection_targets_nearest_shared_class(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_path = Path(tmpdir) / "hierarchy.py"
+            first_path = Path(tmpdir) / "first.py"
+            second_path = Path(tmpdir) / "second.py"
+
+            base_path.write_text(
+                textwrap.dedent(
+                    """
+                    class Root:
+                        pass
+
+                    class Intermediate(Root):
+                        pass
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            first_path.write_text(
+                textwrap.dedent(
+                    """
+                    from hierarchy import Intermediate
+
+                    class LeafOne(Intermediate):
+                        def alpha(self, value):
+                            tmp = value + 1
+                            return tmp * 2
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            second_path.write_text(
+                textwrap.dedent(
+                    """
+                    from hierarchy import Intermediate
+
+                    class LeafTwo(Intermediate):
+                        def beta(self, value):
+                            tmp = value + 1
+                            return tmp * 2
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            engine = self._engine(min_lines=2)
+            proposals = engine.analyze_files([str(base_path), str(first_path), str(second_path)])
+            target = next((p for p in proposals if p.insert_into_class == "Intermediate"), None)
+            self.assertIsNotNone(
+                target, "Expected helper to target nearest shared ancestor Intermediate"
+            )
+            self.assertEqual(target.file_path, str(base_path))
+
+            result = engine.apply_refactoring_multi_file(target)
+            hierarchy_src = result[target.file_path]
+            hierarchy_mod = ast.parse(hierarchy_src)
+            intermediate_cls = next(
+                node
+                for node in hierarchy_mod.body
+                if isinstance(node, ast.ClassDef) and node.name == "Intermediate"
+            )
+            helper = next(
+                (
+                    n
+                    for n in intermediate_cls.body
+                    if isinstance(n, ast.FunctionDef) and n.name.startswith("_extracted_func")
+                ),
+                None,
+            )
+            self.assertIsNotNone(helper, "Helper should live inside Intermediate, not Root")
+
+            root_cls = next(
+                node
+                for node in hierarchy_mod.body
+                if isinstance(node, ast.ClassDef) and node.name == "Root"
+            )
+            self.assertFalse(
+                any(
+                    isinstance(n, ast.FunctionDef) and n.name.startswith("_extracted_func")
+                    for n in root_cls.body
+                ),
+                "Root should remain unchanged by nearest-ancestor selection",
+            )
+
     def test_local_function_insertion_into_enclosing_function_scope(self):
         # Duplicate blocks exist inside two sibling inner functions; extracted helper
         # should be inserted into the most specific common enclosing scope (the outer function),

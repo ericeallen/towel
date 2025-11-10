@@ -136,6 +136,24 @@ Demonstrates best practices:
 - Cross-file refactoring with temp copies
 - Verification that originals are unchanged
 
+### Class-Aware Method Extraction
+
+**Problem**
+- Duplicate methods appearing in unrelated subclasses forced helpers to live at module scope
+- Cross-file refactors could not lift shared logic into a common ancestor, leaving duplicated call rewrites and imports
+- Decorators (`@classmethod`, `@staticmethod`) and implicit binders were easy to break during promotion
+
+**Solution**
+- Engine builds a class table while scanning files, recording fully qualified names and inheritance chains
+- When two methods unify, the engine selects the nearest shared ancestor class as the insertion target when safe
+- Extracted helper is emitted inside that ancestor (even across files), preserving decorators and adjusting implicit parameters (`self` / `cls`)
+- Call sites are rewritten to dispatch via the helper, and cross-file refactors avoid duplicating imports when the helper lives in a shared base module
+
+**Result**
+- Instance, class, and static methods now share helpers without duplicating code across siblings
+- Multi-level hierarchies promote helpers to the closest ancestor instead of defaulting to module scope
+- New stress tests cover cross-file promotions and ensure rewritten calls keep implicit binders intact
+
 ## Updated Commands
 
 ### justfile Commands

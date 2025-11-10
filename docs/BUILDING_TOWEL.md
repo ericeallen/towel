@@ -282,6 +282,10 @@ Our comprehensive edge case testing (using `EdgeCaseValues` class) revealed:
 
 You can't optimize what you don't understand. The human's insight that "extreme float values shouldn't cause hanging" forced us to identify the **real** bottleneck: large collection comparison, not special values.
 
+### 5. Class Hierarchies Need Respect
+
+Once helper promotion started operating across modules, duplicate methods exposed a blind spot: everything ended up at module scope even when classes clearly shared behavior. We now build a class inheritance graph during analysis, choose the nearest common ancestor that safely owns the helper, and emit the extracted method there. That keeps decorators intact, preserves implicit `self`/`cls` semantics, and rewrites every caller—sometimes across files—to dispatch through the new shared implementation.
+
 ## The Results
 
 After two phases of development:

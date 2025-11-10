@@ -2322,6 +2322,9 @@ class UnificationRefactorEngine:
             file_path = repl.file_path or proposal.file_path
             replacements_by_file.setdefault(file_path, []).append(repl)
 
+        # Ensure canonical file is always processed so extracted helper is emitted
+        replacements_by_file.setdefault(proposal.file_path, [])
+
         # Process each file
         modified_files: Dict[str, str] = {}
 
