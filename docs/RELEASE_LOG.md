@@ -1,3 +1,18 @@
+## 2025-11-10
+
+- Version: 0.6.6
+- Commit: c9a7e0a
+- Summary:
+  - Engine: Ensured canonical source files are always processed during multi-file refactors so promoted helpers are emitted in their shared base classes without missing insertions.
+  - Tests: Added cross-file adversarial suites covering instance, classmethod, and multilevel hierarchies to confirm helpers land in the nearest safe ancestor and maintain implicit binders.
+  - Documentation: Updated README and deep-dive docs to highlight class-aware helper promotion, plus improved release log references to the improvements summary.
+  - Packaging: Bumped project version to 0.6.6 to capture the class-aware method promotion work.
+- Status: All tests green
+  - Unit/integration tests: 702 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
+
+---
+
 ## 2025-11-09
 
 - Version: 0.6.4
