@@ -1,7 +1,7 @@
 ## 2025-11-09
 
 - Version: 0.6.4
-- Commit: (pending)
+- Commit: d55b83e
 - Summary:
   - Engine: Promoted `Replacement` to a dataclass with method metadata; preserved method dispatch when rewriting calls and avoided shared AST mutation during multi-file application.
   - Safety: Auto-coerce legacy tuple replacements, restoring compatibility across tests and overlap filtering utilities.
