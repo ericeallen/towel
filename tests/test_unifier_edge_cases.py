@@ -14,6 +14,60 @@ def _assign_value(block: List[ast.stmt], index: int) -> ast.expr:
     return assign.value
 
 
+def test_unify_dict_literals():
+    code1 = "config = {'key': 'value1', 'timeout': 10}"
+    code2 = "config = {'key': 'value2', 'timeout': 20}"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+    u = Unifier(max_parameters=5, parameterize_constants=True)
+    subst = u.unify_blocks(blocks, [{}, {}])
+    assert subst is not None
+
+
+def test_unify_list_literals():
+    code1 = "items = [1, 2, 3]"
+    code2 = "items = [4, 5, 6]"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+    u = Unifier(max_parameters=5, parameterize_constants=True)
+    subst = u.unify_blocks(blocks, [{}, {}])
+    assert subst is not None
+
+
+def test_unify_set_literals():
+    code1 = "values = {1, 2, 3}"
+    code2 = "values = {4, 5, 6}"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+    u = Unifier(max_parameters=5, parameterize_constants=True)
+    subst = u.unify_blocks(blocks, [{}, {}])
+    assert subst is not None
+
+
+def test_unify_tuple_literals():
+    code1 = "point = (1, 2)"
+    code2 = "point = (3, 4)"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+    u = Unifier(max_parameters=5, parameterize_constants=True)
+    subst = u.unify_blocks(blocks, [{}, {}])
+    assert subst is not None
+
+
+def test_unify_lambda_expressions():
+    code1 = "func = lambda x: x * 2"
+    code2 = "func = lambda y: y * 3"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+    u = Unifier(max_parameters=5, parameterize_constants=True)
+    subst = u.unify_blocks(blocks, [{}, {}])
+    assert subst is not None
+
+
+def test_unify_assert_statements():
+    code1 = "assert x > 0"
+    code2 = "assert y > 0"
+    blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
+    u = Unifier(max_parameters=5, parameterize_constants=True)
+    subst = u.unify_blocks(blocks, [{}, {}])
+    assert subst is not None
+
+
 def test_unifier_with_walrus_and_with_optional_vars():
     # Two blocks differing only in names inside with and walrus target should unify
     code1 = (

@@ -221,6 +221,114 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             "\n\n\n", class_block, "Should not contain triple blank lines inside class body"
         )
 
+    def test_staticmethod_extraction_produces_static_helper(self):
+        code = """
+        class C:
+            @staticmethod
+            def a(x):
+                y = x + 1
+                return y * 2
+
+            @staticmethod
+            def b(x):
+                y = x + 1
+                return y * 2
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+        engine = self._engine(min_lines=2)
+        proposals = engine.analyze_file(str(m.path))
+        target = next((p for p in proposals if p.insert_into_class == "C"), None)
+        self.assertIsNotNone(target, "Expected a class-level extraction proposal")
+        out = engine.apply_refactoring(str(m.path), target)
+        mod = ast.parse(out)
+        cls_nodes = [n for n in mod.body if isinstance(n, ast.ClassDef) and n.name == "C"]
+        self.assertTrue(cls_nodes)
+        cls = cls_nodes[0]
+        helper = next(
+            (n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_extracted_func"),
+            None,
+        )
+        self.assertIsNotNone(helper, "Extracted helper should be present inside the class")
+        self.assertTrue(
+            any(isinstance(dec, ast.Name) and dec.id == "staticmethod" for dec in helper.decorator_list),
+            "Extracted helper must be decorated as @staticmethod",
+        )
+        self.assertFalse(any(arg.arg == "self" for arg in helper.args.args))
+
+        for method_name in ("a", "b"):
+            method = next(
+                n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == method_name
+            )
+            call_targets = [
+                call.func
+                for call in ast.walk(method)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "_extracted_func"
+            ]
+            self.assertTrue(call_targets, f"Method {method_name} should call the helper")
+            for attr in call_targets:
+                self.assertIsInstance(attr.value, ast.Name)
+                self.assertEqual(attr.value.id, "C")
+
+    def test_classmethod_extraction_uses_cls_dispatch(self):
+        code = """
+        class C:
+            @classmethod
+            def a(cls, x):
+                y = x + 1
+                return y * 2
+
+            @classmethod
+            def b(cls, x):
+                y = x + 1
+                return y * 2
+        """
+        m = TempModule(code)
+        self.addCleanup(m.cleanup)
+        engine = self._engine(min_lines=2)
+        proposals = engine.analyze_file(str(m.path))
+        target = next((p for p in proposals if p.insert_into_class == "C"), None)
+        self.assertIsNotNone(target, "Expected a class-level extraction proposal")
+        out = engine.apply_refactoring(str(m.path), target)
+        mod = ast.parse(out)
+        cls_nodes = [n for n in mod.body if isinstance(n, ast.ClassDef) and n.name == "C"]
+        self.assertTrue(cls_nodes)
+        cls = cls_nodes[0]
+        helper = next(
+            (n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_extracted_func"),
+            None,
+        )
+        self.assertIsNotNone(helper)
+        self.assertTrue(
+            any(isinstance(dec, ast.Name) and dec.id == "classmethod" for dec in helper.decorator_list),
+            "Extracted helper must be decorated as @classmethod",
+        )
+        self.assertGreater(len(helper.args.args), 0, "Class helper should expose a leading parameter")
+        self.assertEqual(helper.args.args[0].arg, "cls")
+
+        for method_name in ("a", "b"):
+            method = next(
+                n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == method_name
+            )
+            binder_name = method.args.args[0].arg
+            call_targets = [
+                call
+                for call in ast.walk(method)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "_extracted_func"
+            ]
+            self.assertTrue(call_targets, f"Method {method_name} should call the helper")
+            for call in call_targets:
+                self.assertIsInstance(call.func.value, ast.Name)
+                self.assertEqual(call.func.value.id, binder_name)
+                self.assertFalse(
+                    any(isinstance(arg, ast.Name) and arg.id == binder_name for arg in call.args),
+                    "Implicit class binder should not be passed explicitly",
+                )
+
     def test_local_function_insertion_into_enclosing_function_scope(self):
         # Duplicate blocks exist inside two sibling inner functions; extracted helper
         # should be inserted into the most specific common enclosing scope (the outer function),

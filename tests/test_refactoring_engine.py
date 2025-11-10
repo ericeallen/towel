@@ -227,9 +227,12 @@ class TestDirectoryAnalysis(unittest.TestCase):
         # Should find cross-file duplicates
         self.assertGreater(len(proposals), 0, "Should find cross-file duplicates")
 
-        # Check if any proposal is cross-file
-        # Replacements may be tuples of 3 (range, node, file_path) or 4 (adds class_name)
-        cross_file_proposals = [p for p in proposals if any(len(r) >= 3 for r in p.replacements)]
+        # Check if any proposal is cross-file (replacement targeting a different file)
+        cross_file_proposals = [
+            p
+            for p in proposals
+            if any((r.file_path or p.file_path) != p.file_path for r in p.replacements)
+        ]
 
         self.assertGreater(
             len(cross_file_proposals), 0, "Should find at least one cross-file proposal"

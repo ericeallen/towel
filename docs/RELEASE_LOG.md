@@ -1,3 +1,18 @@
+## 2025-11-09
+
+- Version: 0.6.4
+- Commit: (pending)
+- Summary:
+  - Engine: Promoted `Replacement` to a dataclass with method metadata; preserved method dispatch when rewriting calls and avoided shared AST mutation during multi-file application.
+  - Safety: Auto-coerce legacy tuple replacements, restoring compatibility across tests and overlap filtering utilities.
+  - Fixtures: Restored pristine `test_examples` sources, added `.templates/` snapshots, and refreshed single-file/cross-file baselines via fixed-point regeneration.
+  - Tests: Split the monolithic comprehensive coverage file into focused suites, expanding extractor/unifier edge-case coverage and adding adversarial method tests.
+- Status: All tests green
+  - Unit/integration tests: 695 tests OK (0 skipped)
+  - Observational equivalence: 3/3 cross-file projects passed (100%)
+
+---
+
 ## 2025-11-05
 
 - Version: 0.6.0
