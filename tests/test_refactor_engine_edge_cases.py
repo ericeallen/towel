@@ -8,6 +8,8 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+import textwrap
+import ast
 
 from src.towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import assert_file_not_modified
@@ -139,6 +141,136 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
             self.assertEqual(len(proposals), 0)
         finally:
             os.unlink(temp_path)
+
+    def _analyze_and_apply(self, source: str) -> str:
+        """Analyze temporary module source, apply first proposal, and return code."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as handle:
+            handle.write(textwrap.dedent(source))
+            handle.flush()
+            temp_path = handle.name
+
+        try:
+            proposals = self.engine.analyze_file(temp_path)
+            self.assertTrue(proposals, "Expected at least one proposal")
+            proposal = proposals[0]
+            return self.engine.apply_refactoring(str(temp_path), proposal)
+        finally:
+            os.unlink(temp_path)
+
+    def test_instance_methods_extracted_into_class(self):
+        """Duplicate instance methods should extract helper into the same class."""
+
+        result = self._analyze_and_apply(
+            """
+            class Example:
+                def alpha(self, value):
+                    tmp = value + 1
+                    return tmp * 2
+
+                def beta(self, value):
+                    tmp = value + 1
+                    return tmp * 2
+            """
+        )
+
+        tree = ast.parse(result)
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example")
+        helper = next(
+            node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
+        )
+        helper_name = helper.name
+        self.assertFalse(helper.decorator_list, "Instance helper should have no decorators")
+        self.assertGreater(len(helper.args.args), 0)
+        self.assertEqual(helper.args.args[0].arg, "self")
+
+        for method_name in ("alpha", "beta"):
+            method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+            returns = [n for n in ast.walk(method) if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)]
+            self.assertTrue(returns)
+            for ret in returns:
+                call = ret.value
+                self.assertIsInstance(call.func, ast.Attribute)
+                self.assertIsInstance(call.func.value, ast.Name)
+                self.assertEqual(call.func.value.id, "self")
+                self.assertEqual(call.func.attr, helper_name)
+
+    def test_classmethods_extracted_into_class(self):
+        """Duplicate class methods should place helper inside the class with @classmethod."""
+
+        result = self._analyze_and_apply(
+            """
+            class Example:
+                @classmethod
+                def alpha(cls, value):
+                    tmp = value + 1
+                    return tmp * 2
+
+                @classmethod
+                def beta(cls, value):
+                    tmp = value + 1
+                    return tmp * 2
+            """
+        )
+
+        tree = ast.parse(result)
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example")
+        helper = next(
+            node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
+        )
+        helper_name = helper.name
+        decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
+        self.assertIn("classmethod", decorator_ids)
+        self.assertGreater(len(helper.args.args), 0)
+        self.assertEqual(helper.args.args[0].arg, "cls")
+
+        for method_name in ("alpha", "beta"):
+            method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+            call_sites = [n for n in ast.walk(method) if isinstance(n, ast.Call)]
+            self.assertTrue(call_sites)
+            for call in call_sites:
+                if isinstance(call.func, ast.Attribute) and call.func.attr == helper_name:
+                    self.assertIsInstance(call.func.value, ast.Name)
+                    self.assertEqual(call.func.value.id, method.args.args[0].arg)
+
+    def test_staticmethods_extracted_into_class(self):
+        """Duplicate static methods should place helper inside the class with @staticmethod."""
+
+        result = self._analyze_and_apply(
+            """
+            class Example:
+                @staticmethod
+                def alpha(value):
+                    tmp = value + 1
+                    return tmp * 2
+
+                @staticmethod
+                def beta(value):
+                    tmp = value + 1
+                    return tmp * 2
+            """
+        )
+
+        tree = ast.parse(result)
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example")
+        helper = next(
+            node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
+        )
+        helper_name = helper.name
+        decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
+        self.assertIn("staticmethod", decorator_ids)
+        helper_args = [arg.arg for arg in helper.args.args]
+        self.assertTrue(helper_args, "Static helper should retain explicit parameters")
+        self.assertNotIn("self", helper_args)
+        self.assertNotIn("cls", helper_args)
+
+        for method_name in ("alpha", "beta"):
+            method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+            call_sites = [n for n in ast.walk(method) if isinstance(n, ast.Call)]
+            self.assertTrue(call_sites)
+            for call in call_sites:
+                if isinstance(call.func, ast.Attribute) and call.func.attr == helper_name:
+                    self.assertIsInstance(call.func.value, ast.Name)
+                    self.assertEqual(call.func.value.id, "Example")
 
 
 if __name__ == "__main__":
