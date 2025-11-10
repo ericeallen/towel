@@ -152,6 +152,7 @@ def extracted_func(param_0, param_1, param_2):
 - `ALPHA_RENAMING_FIX.md` - Detailed technical explanation
 - `CONSTANT_PARAMETERIZATION.md` - Constant parameterization feature
 - `FIXES_SUMMARY.md` - This file
+- `IMPROVEMENTS_SUMMARY.md` - Latest engine enhancements, including class-aware method extraction
 
 ## What's Next
 

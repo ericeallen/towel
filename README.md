@@ -68,6 +68,11 @@ python3 dry.py <input> <output>
   - Constant parameterization (different numbers/strings become parameters)
   - Structural comparison (only extracts truly similar code)
   - Max parameter limits (prevents over-parameterization)
+- **Class-Aware Method Extraction**:
+  - Promotes duplicate methods into the nearest shared base class when possible
+  - Preserves decorators (`@classmethod`, `@staticmethod`) and implicit binders (`self`/`cls`)
+  - Rewrites call sites across files to dispatch through the new helper correctly
+  - Falls back gracefully when no safe shared ancestor exists
 - **Cross-File Support**: Automatically handles duplicates spanning multiple files
 - **Comprehensive Testing**:
   - 175/175 refactoring proposals pass observational equivalence testing
@@ -182,23 +187,30 @@ The tool ensures safe refactorings by:
 
 ## Recent Improvements (Latest)
 
-**Orphan Variable Detection** - Prevents unsafe extractions that would create undefined variables:
+**Class-Aware Helper Promotion** – Duplicate instance, class, or static methods can now be lifted into their nearest shared base class, even when the originals live in different files. The refactor engine:
+
+- Builds an inheritance table while scanning the project
+- Chooses the most specific shared ancestor for the extracted helper
+- Preserves method semantics (decorators, implicit parameters, and call dispatch)
+- Emits the helper in the ancestor class and rewrites original methods to dispatch through it, inserting imports only when needed
+
+**Orphan Variable Detection** – Prevents unsafe extractions that would create undefined variables:
 ```python
 # Before fix: Would extract lines 1-3, leaving 'total' undefined
 def compute():
-    x = 10
-    y = 20
-    total = x + y
-    return total  # ERROR: 'total' undefined!
+  x = 10
+  y = 20
+  total = x + y
+  return total  # ERROR: 'total' undefined!
 
 # After fix: Rejects partial extraction, only allows full function extraction
 ```
 
-**Return Value Propagation** - Detects returns anywhere in block (not just at end):
+**Return Value Propagation** – Detects returns anywhere in block (not just at end):
 ```python
 # Now correctly generates: return extracted_func()
 if x > 100:
-    return y * 2  # Nested return detected
+  return y * 2  # Nested return detected
 ```
 
 **Alpha-Renaming for Loop Variables** - Treats `i`, `j`, `k` as equivalent:
