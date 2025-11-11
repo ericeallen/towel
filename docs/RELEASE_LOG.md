@@ -1,12 +1,12 @@
 ## 2025-11-10
 
 - Version: 0.6.7
-- Commit: (pending)
+- Commit: 66ba8b9
 - Summary:
   - Architecture: Introduced a compiler-style pipeline (`models.py`, `pipeline.py`, `visitors.py`) and redirected the refactor engine to delegate analysis through explicit phases with shared dataclasses.
   - Documentation: Authored `docs/PIPELINE.md` describing each phase, data artifact, and invariants for the new architecture.
   - Testing: Added `tests/test_pipeline_api.py` to validate pipeline parity, and wired flake8/mypy into CI while expanding strict typing coverage to the new modules.
-  - Tooling: Added dev extras installation plus flake8/mypy gates to the CI workflow to keep lint/type checks enforced automatically.
+  - Tooling: Added dev extras installation plus flake8/mypy gates to the CI workflow to keep lint/type checks enforced automatically, and aligned package metadata with the Apache 2.0 license.
 - Status: All tests green
   - Unit/integration tests: 705 tests OK (0 skipped)
   - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
