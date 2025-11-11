@@ -14,10 +14,9 @@ import copy
 import os
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import List, Tuple, Dict, Set, Optional, FrozenSet, Literal
+from typing import List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Union
 from weakref import WeakKeyDictionary
 from pathlib import Path
-from dataclasses import dataclass, field
 
 from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier
@@ -26,152 +25,33 @@ from .orphan_detector import has_orphaned_variables
 from .assignment_analyzer import analyze_assignments, has_reassignments_without_bindings
 from .project_layout import ProjectLayout
 from .block_signature import extract_block_signature, quick_filter
+from .models import (
+    CodeBlockPair,
+    MethodInfo,
+    ClassInfo,
+    ClassInsertionPlan,
+    Replacement,
+    RefactoringProposal,
+)
+from .pipeline import run_pipeline
+from .visitors import (
+    MethodCallRewriter,
+    LoopReturnFinder,
+    NameCollector,
+    AugAssignFinder,
+    AssignTargetVisitor,
+    ClassLocator,
+    FuncLocator,
+)
 
-
-@dataclass
-class CodeBlockPair:
-    """Represents a pair of potentially duplicate code blocks."""
-
-    file_path: str
-    function1_name: str
-    function2_name: str
-    block1_range: Tuple[int, int]  # (start_line, end_line)
-    block2_range: Tuple[int, int]
-    block1_nodes: List[ast.AST]
-    block2_nodes: List[ast.AST]
-    file_path2: Optional[str] = None  # For cross-file pairs
-    class1_name: Optional[str] = None  # Enclosing class name if method
-    class2_name: Optional[str] = None
-    enclosing_function1_name: Optional[str] = None  # Nearest enclosing function (if nested)
-    enclosing_function2_name: Optional[str] = None
-    function1_ancestry: Optional[List[str]] = None  # Outermost->innermost enclosing function names
-    function2_ancestry: Optional[List[str]] = None
-    scope_analyzer1: Optional["ScopeAnalyzer"] = None
-    scope_analyzer2: Optional["ScopeAnalyzer"] = None
-    root_scope1: Optional["Scope"] = None
-    root_scope2: Optional["Scope"] = None
-    source1: Optional[str] = None
-    source2: Optional[str] = None
-    function1_node: Optional[ast.FunctionDef] = None
-    function2_node: Optional[ast.FunctionDef] = None
-
-
-@dataclass
-class MethodInfo:
-    """Describes how a function participates as a method within a class."""
-
-    kind: Optional[Literal["instance", "classmethod", "staticmethod"]]
-    implicit_param: Optional[str]
-
-
-@dataclass
-class ClassInfo:
-    """Summarizes class definitions discovered during analysis."""
-
-    name: str
-    qualname: str
-    file_path: str
-    bases: List[str]
-
-
-@dataclass
-class ClassInsertionPlan:
-    """Describes where an extracted helper should be inserted within a class hierarchy."""
-
-    class_name: str
-    file_path: str
-    method_kind: Literal["instance", "classmethod", "staticmethod"]
-    implicit_param: Optional[str]
-
-
-@dataclass
-class Replacement:
-    """Represents a replacement call to the extracted function/method."""
-
-    line_range: Tuple[int, int]
-    node: ast.AST
-    file_path: Optional[str] = None
-    class_name: Optional[str] = None
-    method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
-    implicit_param: Optional[str] = None
-
-
-@dataclass
-class RefactoringProposal:
-    """Proposed refactoring."""
-
-    file_path: str
-    extracted_function: ast.FunctionDef
-    replacements: List[Replacement]
-    description: str
-    parameters_count: int
-    return_variables: List[str] = field(
-        default_factory=list
-    )  # Variables that extracted function returns
-    # If provided, insert extracted function as a method of this class (same-file only)
-    insert_into_class: Optional[str] = None
-    # If provided, insert extracted function inside this function's body (same-file only)
-    insert_into_function: Optional[str] = None
-    # Method metadata (used when inserting into classes)
-    method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
-    method_param_name: Optional[str] = None
-
-    def __post_init__(self) -> None:
-        """Coerce legacy tuple replacements into Replacement instances."""
-
-        coerced: List[Replacement] = []
-        for item in self.replacements:
-            if isinstance(item, Replacement):
-                coerced.append(item)
-                continue
-
-            if not isinstance(item, tuple):
-                raise TypeError(
-                    "Replacement entries must be Replacement instances or tuples, "
-                    f"got {type(item)!r}"
-                )
-
-            if len(item) == 4:
-                line_range, node, file_path, class_name = item
-            elif len(item) == 3:
-                line_range, node, file_path = item
-                class_name = None
-            elif len(item) == 2:
-                line_range, node = item
-                file_path = None
-                class_name = None
-            else:
-                raise ValueError(
-                    "Replacement tuple must have length 2, 3, or 4 ("
-                    "line_range, node[, file_path[, class_name]])"
-                )
-
-            method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
-            implicit_param: Optional[str] = None
-            if class_name is not None:
-                method_kind = "instance"
-                implicit_param = "self"
-
-            coerced.append(
-                Replacement(
-                    line_range=line_range,
-                    node=node,
-                    file_path=file_path,
-                    class_name=class_name,
-                    method_kind=method_kind,
-                    implicit_param=implicit_param,
-                )
-            )
-
-        self.replacements = coerced
-
+FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 _worker_engine: Optional["UnificationRefactorEngine"] = None
 _worker_functions: Optional[
     List[
         Tuple[
             str,
-            ast.FunctionDef,
+            FunctionNode,
             str,
             "ScopeAnalyzer",
             "Scope",
@@ -330,7 +210,7 @@ class UnificationRefactorEngine:
 
         return sorted(python_files)
 
-    def _get_assignment_reuse(self, func: ast.FunctionDef) -> Dict[int, bool]:
+    def _get_assignment_reuse(self, func: FunctionNode) -> Dict[int, bool]:
         """Return (and cache) assignment analysis for a function definition."""
         cached = self._assignment_cache.get(func)
         if cached is not None:
@@ -346,151 +226,9 @@ class UnificationRefactorEngine:
         verbose: bool = False,
         progress: str = "auto",
     ) -> List[RefactoringProposal]:
-        """
-        Analyze multiple Python files and find refactoring opportunities.
-
-        Args:
-            file_paths: List of paths to Python files
-
-        Returns:
-            List of refactoring proposals
-        """
-        # Parse all files
-        # List items are tuples: (file_path, function_node, source, scope_analyzer, root_scope, class_name, enclosing_function_name, function_ancestry)
-        all_functions: List[
-            Tuple[
-                str,
-                ast.FunctionDef,
-                str,
-                ScopeAnalyzer,
-                Scope,
-                Optional[str],
-                Optional[str],
-                List[str],
-            ]
-        ] = []
-        class_infos: List[ClassInfo] = []
-
-        for file_path in file_paths:
-            with open(file_path, "r", encoding="utf-8") as f:
-                source = f.read()
-
-            try:
-                tree = ast.parse(source)
-            except SyntaxError:
-                continue
-
-            # Analyze scopes
-            scope_analyzer = ScopeAnalyzer()
-            root_scope = scope_analyzer.analyze(tree)
-
-            class ClassCollector(ast.NodeVisitor):
-                def __init__(self):
-                    self.class_stack: List[str] = []
-
-                def visit_ClassDef(self, node: ast.ClassDef):
-                    qualname = (
-                        ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
-                    )
-                    bases: List[str] = []
-                    for base in node.bases:
-                        resolved = UnificationRefactorEngine._resolve_base_name(base)
-                        if resolved:
-                            bases.append(resolved)
-                    class_infos.append(
-                        ClassInfo(
-                            name=node.name,
-                            qualname=qualname,
-                            file_path=file_path,
-                            bases=bases,
-                        )
-                    )
-                    self.class_stack.append(node.name)
-                    self.generic_visit(node)
-                    self.class_stack.pop()
-
-            ClassCollector().visit(tree)
-
-            # Walk the tree to collect functions at all nesting levels and capture enclosing class/function context
-            class _FuncCollector(ast.NodeVisitor):
-                def __init__(self):
-                    self.class_stack: list[Optional[str]] = [None]
-                    self.func_stack: list[Optional[str]] = [None]
-
-                def visit_ClassDef(self, node: ast.ClassDef):
-                    self.class_stack.append(node.name)
-                    self.generic_visit(node)
-                    self.class_stack.pop()
-
-                def visit_FunctionDef(self, node: ast.FunctionDef):
-                    # Record this function
-                    ancestry = [n for n in self.func_stack if n is not None]
-                    all_functions.append(
-                        (
-                            file_path,
-                            node,
-                            source,
-                            scope_analyzer,
-                            root_scope,
-                            self.class_stack[-1],
-                            self.func_stack[-1],
-                            ancestry,
-                        )
-                    )
-                    # Recurse with this as enclosing function
-                    self.func_stack.append(node.name)
-                    self.generic_visit(node)
-                    self.func_stack.pop()
-
-                def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
-                    # Treat similarly to FunctionDef
-                    ancestry = [n for n in self.func_stack if n is not None]
-                    all_functions.append(
-                        (
-                            file_path,
-                            node,  # type: ignore[arg-type]
-                            source,
-                            scope_analyzer,
-                            root_scope,
-                            self.class_stack[-1],
-                            self.func_stack[-1],
-                            ancestry,
-                        )
-                    )
-                    self.func_stack.append(node.name)  # type: ignore[attr-defined]
-                    self.generic_visit(node)
-                    self.func_stack.pop()
-
-            _FuncCollector().visit(tree)
-
-        if len(all_functions) < 2:
-            return []
-
-        if verbose:
-            print(
-                f"Parsed {len(all_functions)} functions (including nested) from {len(file_paths)} file(s)"
-            )
-
-        # Find pairs of code blocks across all functions (including cross-file)
-        block_pairs = self._find_block_pairs_multi_file(all_functions)
-
-        if verbose:
-            total_pairs = len(block_pairs)
-            print(f"Evaluating {total_pairs} candidate block pair(s)...")
-
-        proposals = self._process_block_pairs(
-            block_pairs,
-            all_functions,
-            class_infos,
-            verbose=verbose,
-            progress=progress,
-        )
-
-        # Prefer larger extractions and de-duplicate overlaps greedily
-        proposals = filter_overlapping_proposals(proposals)
-        if verbose:
-            print(f"Found {len(proposals)} non-overlapping proposal(s)")
-        return proposals
+        """Analyze multiple files using the compiler-style pipeline and return proposals."""
+        # Delegate to the pipeline for analysis while preserving existing behavior
+        return run_pipeline(file_paths, engine=self, verbose=verbose, progress=progress)
 
     def _process_block_pairs(
         self,
@@ -661,46 +399,16 @@ class UnificationRefactorEngine:
         if method_kind is None:
             return node
 
-        implicit_name = implicit_param or ("self" if method_kind == "instance" else "cls")
-
-        class Rewriter(ast.NodeTransformer):
-            def __init__(self, outer):
-                self.outer = outer
-
-            def visit_Call(self, n: ast.Call) -> ast.AST:
-                self.generic_visit(n)
-                if isinstance(n.func, ast.Name) and n.func.id == original_name:
-                    if method_kind == "instance":
-                        n.args = self.outer._drop_implicit_positional(n.args, implicit_name)
-                        n.keywords = self.outer._drop_implicit_keyword(n.keywords, implicit_name)
-                        attr = ast.Attribute(
-                            value=ast.Name(id=implicit_name, ctx=ast.Load()),
-                            attr=new_name,
-                            ctx=ast.Load(),
-                        )
-                        ast.copy_location(attr, n.func)
-                        n.func = attr
-                    elif method_kind == "classmethod":
-                        n.args = self.outer._drop_implicit_positional(n.args, implicit_name)
-                        n.keywords = self.outer._drop_implicit_keyword(n.keywords, implicit_name)
-                        attr = ast.Attribute(
-                            value=ast.Name(id=implicit_name, ctx=ast.Load()),
-                            attr=new_name,
-                            ctx=ast.Load(),
-                        )
-                        ast.copy_location(attr, n.func)
-                        n.func = attr
-                    elif method_kind == "staticmethod" and class_name:
-                        attr = ast.Attribute(
-                            value=ast.Name(id=class_name, ctx=ast.Load()),
-                            attr=new_name,
-                            ctx=ast.Load(),
-                        )
-                        ast.copy_location(attr, n.func)
-                        n.func = attr
-                return n
-
-        return Rewriter(self).visit(node)
+        rewriter = MethodCallRewriter(
+            self._drop_implicit_positional,
+            self._drop_implicit_keyword,
+            original_name=original_name,
+            new_name=new_name,
+            method_kind=method_kind,
+            implicit_name=implicit_param,
+            class_name=class_name,
+        )
+        return rewriter.visit(node)
 
     @staticmethod
     def _drop_implicit_positional(args: List[ast.expr], implicit_name: str) -> List[ast.expr]:
@@ -1227,37 +935,6 @@ class UnificationRefactorEngine:
             True if there are returns inside loop statements
         """
 
-        class LoopReturnFinder(ast.NodeVisitor):
-            def __init__(self):
-                self.has_loop_return = False
-                self.in_loop = False
-
-            def visit_For(self, node):
-                # Enter loop context
-                old_in_loop = self.in_loop
-                self.in_loop = True
-                self.generic_visit(node)
-                self.in_loop = old_in_loop
-
-            def visit_While(self, node):
-                # Enter loop context
-                old_in_loop = self.in_loop
-                self.in_loop = True
-                self.generic_visit(node)
-                self.in_loop = old_in_loop
-
-            def visit_Return(self, node):
-                if self.in_loop:
-                    self.has_loop_return = True
-
-            def visit_FunctionDef(self, node):
-                # Don't descend into nested functions
-                pass
-
-            def visit_AsyncFunctionDef(self, node):
-                # Don't descend into nested async functions
-                pass
-
         finder = LoopReturnFinder()
         for stmt in block:
             finder.visit(stmt)
@@ -1279,26 +956,10 @@ class UnificationRefactorEngine:
         if cached is not None:
             return set(cached)
 
-        used: Set[str] = set()
-
-        class NameCollector(ast.NodeVisitor):
-            def visit_Name(self, n):
-                if isinstance(n.ctx, ast.Load):
-                    used.add(n.id)
-                self.generic_visit(n)
-
-            def visit_FunctionDef(self, n):
-                # Don't descend into nested functions
-                pass
-
-            def visit_AsyncFunctionDef(self, n):
-                # Don't descend into nested async functions
-                pass
-
         collector = NameCollector()
         collector.visit(node)
 
-        frozen = frozenset(used)
+        frozen = frozenset(collector.used)
         self._used_names_cache[node] = frozen
         return set(frozen)
 
@@ -1921,23 +1582,6 @@ class UnificationRefactorEngine:
         # Find all variables used in augmented assignments in block1
         # These variables MUST be passed as parameters even if they appear in substitution
         # because augmented assignments (total += x) READ the variable before writing it
-        class AugAssignFinder(ast.NodeVisitor):
-            def __init__(self):
-                self.aug_assign_targets = set()
-
-            def visit_AugAssign(self, node):
-                if isinstance(node.target, ast.Name):
-                    self.aug_assign_targets.add(node.target.id)
-                self.generic_visit(node)
-
-            def visit_FunctionDef(self, node):
-                # Don't descend into nested functions
-                pass
-
-            def visit_AsyncFunctionDef(self, node):
-                # Don't descend into nested async functions
-                pass
-
         aug_finder = AugAssignFinder()
         for node in pair.block1_nodes:
             aug_finder.visit(node)
@@ -2018,48 +1662,14 @@ class UnificationRefactorEngine:
             problematic = free_vars & (global_vars | nonlocal_vars)
 
             # Collect assignment targets and explicit decls inside the template blocks
-            assigned_names: Set[str] = set()
-            declared_global_in_block: Set[str] = set()
-            declared_nonlocal_in_block: Set[str] = set()
-
-            class AssignTargetVisitor(ast.NodeVisitor):
-                def visit_Assign(self, node):
-                    for t in node.targets:
-                        if isinstance(t, ast.Name):
-                            assigned_names.add(t.id)
-                    self.generic_visit(node)
-
-                def visit_AugAssign(self, node):
-                    if isinstance(node.target, ast.Name):
-                        assigned_names.add(node.target.id)
-                    self.generic_visit(node)
-
-                def visit_AnnAssign(self, node):
-                    if isinstance(node.target, ast.Name):
-                        assigned_names.add(node.target.id)
-                    self.generic_visit(node)
-
-                def visit_Global(self, node):
-                    for n in node.names:
-                        declared_global_in_block.add(n)
-
-                def visit_Nonlocal(self, node):
-                    for n in node.names:
-                        declared_nonlocal_in_block.add(n)
-
-                def visit_FunctionDef(self, node):
-                    # Don't descend into nested functions
-                    pass
-
-                def visit_AsyncFunctionDef(self, node):
-                    # Don't descend into nested async functions
-                    pass
-
             v = AssignTargetVisitor()
             for n in pair.block1_nodes:
                 v.visit(n)
             for n in pair.block2_nodes:
                 v.visit(n)
+            assigned_names = v.assigned_names
+            declared_global_in_block = v.declared_global_in_block
+            declared_nonlocal_in_block = v.declared_nonlocal_in_block
 
             # Names that are assigned within the block and are global/nonlocal in the enclosing function
             # MUST be declared in the extracted helper to preserve assignment semantics,
@@ -2650,19 +2260,7 @@ class UnificationRefactorEngine:
         except SyntaxError:
             return None
 
-        class ClassLocator(ast.NodeVisitor):
-            def __init__(self):
-                self.result: Optional[Tuple[int, str]] = None
-
-            def visit_ClassDef(self, node: ast.ClassDef):
-                if node.name == class_name and hasattr(node, "end_lineno"):
-                    lines = source.splitlines()
-                    class_line = lines[node.lineno - 1]
-                    indent = class_line[: len(class_line) - len(class_line.lstrip())]
-                    self.result = (node.end_lineno - 1, indent)
-                self.generic_visit(node)
-
-        locator = ClassLocator()
+        locator = ClassLocator(source, class_name)
         locator.visit(tree)
         return locator.result
 
@@ -2682,79 +2280,7 @@ class UnificationRefactorEngine:
         except SyntaxError:
             return None
 
-        class FuncLocator(ast.NodeVisitor):
-            def __init__(self):
-                self.result: Optional[Tuple[int, str]] = None
-
-            def visit_FunctionDef(self, node: ast.FunctionDef):
-                if node.name == function_name:
-                    lines = source.splitlines()
-                    fn_line = lines[node.lineno - 1]
-                    indent = fn_line[: len(fn_line) - len(fn_line.lstrip())]
-                    # Determine start of body after optional docstring
-                    body = list(node.body)
-                    start_idx = 0
-                    if (
-                        body
-                        and isinstance(body[0], ast.Expr)
-                        and isinstance(body[0].value, ast.Constant)
-                        and isinstance(body[0].value.value, str)
-                    ):
-                        start_idx = 1
-                    # Advance past any leading nested defs
-                    insert_line = None
-                    last_def_end = None
-                    for i, stmt in enumerate(body[start_idx:], start=start_idx):
-                        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                            last_def_end = getattr(stmt, "end_lineno", stmt.lineno)
-                            continue
-                        # First non-def statement: insert before it
-                        insert_line = stmt.lineno - 1  # 0-based index
-                        break
-                    if insert_line is None:
-                        # All are defs or empty; insert after the last def or after signature line
-                        if last_def_end is not None:
-                            insert_line = last_def_end  # after last def
-                        else:
-                            # Insert at first body line (after signature), conservatively at node.lineno
-                            insert_line = node.lineno  # line after def header
-                    self.result = (insert_line, indent)
-                else:
-                    # Continue search in nested functions as well
-                    self.generic_visit(node)
-
-            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
-                if node.name == function_name:
-                    lines = source.splitlines()
-                    fn_line = lines[node.lineno - 1]
-                    indent = fn_line[: len(fn_line) - len(fn_line.lstrip())]
-                    body = list(node.body)
-                    start_idx = 0
-                    if (
-                        body
-                        and isinstance(body[0], ast.Expr)
-                        and isinstance(body[0].value, ast.Constant)
-                        and isinstance(body[0].value.value, str)
-                    ):
-                        start_idx = 1
-                    insert_line = None
-                    last_def_end = None
-                    for i, stmt in enumerate(body[start_idx:], start=start_idx):
-                        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                            last_def_end = getattr(stmt, "end_lineno", stmt.lineno)
-                            continue
-                        insert_line = stmt.lineno - 1
-                        break
-                    if insert_line is None:
-                        if last_def_end is not None:
-                            insert_line = last_def_end
-                        else:
-                            insert_line = node.lineno
-                    self.result = (insert_line, indent)
-                else:
-                    self.generic_visit(node)
-
-        locator = FuncLocator()
+        locator = FuncLocator(source, function_name)
         locator.visit(tree)
         return locator.result
 

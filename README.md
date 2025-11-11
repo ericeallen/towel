@@ -163,7 +163,7 @@ The tool uses **unification** from automated theorem proving to detect and param
 
 1. **Parsing**: Parses Python files into ASTs using the `ast` module
 2. **Block Extraction**: Extracts all contiguous code blocks from functions
-3. **Unification**: Uses a Robinson-style unification algorithm to find blocks that can be unified:
+3. **Unification**: Uses a nominal unification algorithm to find blocks that can be unified:
    - Matches AST structure recursively
    - Allows alpha-renaming of loop variables (`i` ≈ `j`)
    - Parameterizes differing constants and expressions
@@ -285,7 +285,7 @@ Use this for quick validation (< a few minutes). Run the full suite (`just test`
 src/towel/          # Core package (towel for compatibility)
 └── unification/           # Unification-based refactoring system
     ├── refactor_engine.py # Main refactoring engine
-    ├── unifier.py         # Robinson-style unification algorithm
+    ├── unifier.py         # Nominal unification algorithm
     ├── extractor.py       # Hygienic function extraction
     ├── scope_analyzer.py  # Variable scope analysis
     ├── orphan_detector.py # Orphan variable detection
@@ -356,7 +356,7 @@ just refactor-example3
 
 ## Python API - Unification-Based Approach
 
-The tool now uses a unification-based approach for more principled refactoring:
+The tool uses a unification-based approach for principled refactoring:
 
 ```python
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -391,4 +391,4 @@ See [USAGE_GUIDE.md](USAGE_GUIDE.md) for complete API documentation.
 
 ## License
 
-MIT
+Apache 2.0

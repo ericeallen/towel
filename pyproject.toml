@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "towel"
-version = "0.6.6"
+version = "0.6.7"
 description = "A Python tool that DRYs your code - finds and refactors repeated code using unification-based analysis"
 authors = [
     {name = "Eric Allen"}
@@ -70,6 +70,9 @@ files = [
     "src/towel/unification/ast_pretty_printer.py",
     "src/towel/unification/ast_normalizer.py",
     "src/towel/unification/binding_detector.py",
+    "src/towel/unification/models.py",
+    "src/towel/unification/pipeline.py",
+    "src/towel/unification/visitors.py",
 ]
 
 [tool.flake8]
