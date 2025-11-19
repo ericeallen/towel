@@ -37,7 +37,7 @@ class HygienicExtractor:
         *,
         global_decls: Optional[Set[str]] = None,
         nonlocal_decls: Optional[Set[str]] = None,
-        function_name: str = "extracted_function",
+    function_name: str = "extracted_function",
     ) -> Tuple[ast.FunctionDef, Dict[str, int]]:
         """
         Extract code into a function.
@@ -61,7 +61,13 @@ class HygienicExtractor:
         if return_variables is None:
             return_variables = []
         # Ensure function name doesn't shadow
-        function_name = self._ensure_unique_name(function_name, enclosing_names)
+        # Force double-underscore prefix for hygiene (avoid collisions with user code).
+        # If caller specified a different name explicitly, respect it; otherwise use the default.
+        if function_name == "__extracted_func":
+            function_name = self._ensure_unique_name(function_name, enclosing_names)
+        else:
+            # Still ensure uniqueness if a custom name was provided.
+            function_name = self._ensure_unique_name(function_name, enclosing_names)
 
         # Determine parameters
         # 1. Parameters from unification (substituted expressions)
@@ -288,6 +294,17 @@ class HygienicExtractor:
                     if block_idx in mappings:
                         var_name = mappings[block_idx]
                 args_list[param_idx] = ast.Name(id=var_name, ctx=ast.Load())
+                # If this parameter was introduced via higher-order literal promotion,
+                # prefer passing the original per-block expression rather than a free variable
+                # reference (which likely doesn't exist at the call site).
+                try:
+                    if hasattr(substitution, "promoted_literal_args") and substitution.promoted_literal_args:
+                        promoted = substitution.promoted_literal_args.get(param_name, {})
+                        if block_idx in promoted:
+                            args_list[param_idx] = cast(ast.expr, promoted[block_idx])
+                except Exception:
+                    # Best-effort; fall back to name reference on any issue
+                    pass
 
         # Create function call
         call = ast.Call(

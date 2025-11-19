@@ -20,14 +20,10 @@ def process_xml_data(data):
 def process_csv_data(data):
     """Process CSV data."""
     # Data processing logic (DUPLICATE!)
-    return __extracted_func_1(data)
+    return extracted_func(data)
 
 
 def extracted_func(data):
-    return __extracted_func_1(data)
-
-
-def __extracted_func_1(data):
     result = {}
     for key, value in data.items():
         if isinstance(value, str):
@@ -39,7 +35,5 @@ def __extracted_func_1(data):
         else:
             result[key] = str(value)
     return result
-
-
 
 

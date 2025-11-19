@@ -17,7 +17,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Union
 from weakref import WeakKeyDictionary
 from pathlib import Path
-
 from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier
 from .extractor import HygienicExtractor, is_value_producing
@@ -108,6 +107,7 @@ class UnificationRefactorEngine:
         *,
         prefer_absolute_imports: Optional[bool] = None,
         pep420_namespace_packages: Optional[bool] = None,
+        promote_equal_hof_literals: bool = False,
     ):
         """
         Initialize the refactoring engine.
@@ -121,7 +121,9 @@ class UnificationRefactorEngine:
         self.min_lines = min_lines
         self.parameterize_constants = parameterize_constants
         self.unifier = Unifier(
-            max_parameters=max_parameters, parameterize_constants=parameterize_constants
+            max_parameters=max_parameters,
+            parameterize_constants=parameterize_constants,
+            promote_equal_hof_literals=promote_equal_hof_literals,
         )
         self.extractor = HygienicExtractor()
         # Cross-file import preferences
@@ -133,6 +135,28 @@ class UnificationRefactorEngine:
         # Memoization caches keyed by the identity of AST nodes parsed for this engine run.
         self._assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]] = WeakKeyDictionary()
         self._used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
+
+    # --- Debug helpers ---
+    def _debug_reject(self, reason: str, pair: "CodeBlockPair", detail: Optional[str] = None) -> None:
+        """Emit a concise rejection line when DEBUG_PROPOSAL_REJECTIONS is set.
+
+        Includes function names and basic block ranges to help triage pruning gates.
+        """
+        try:
+            import os as _os
+
+            if not _os.getenv("DEBUG_PROPOSAL_REJECTIONS"):
+                return
+            msg = (
+                f"REJECT[{reason}]: {pair.function1_name}{'@'+str(pair.block1_range) if pair.block1_range else ''} "
+                f"<-> {pair.function2_name}{'@'+str(pair.block2_range) if pair.block2_range else ''}"
+            )
+            if detail:
+                msg += f" :: {detail}"
+            print(msg)
+        except Exception:
+            # Never let debug logging interfere with refactoring
+            pass
 
     def analyze_file(self, file_path: str) -> List[RefactoringProposal]:
         """
@@ -152,7 +176,7 @@ class UnificationRefactorEngine:
         recursive: bool = True,
         *,
         verbose: bool = False,
-        progress: str = "auto",
+        progress: str = "tqdm",
     ) -> List[RefactoringProposal]:
         """
         Analyze all Python files in a directory and find refactoring opportunities.
@@ -224,11 +248,21 @@ class UnificationRefactorEngine:
         file_paths: List[str],
         *,
         verbose: bool = False,
-        progress: str = "auto",
+        progress: str = "tqdm",
+        invalidate_paths: Optional[List[str]] = None,
     ) -> List[RefactoringProposal]:
-        """Analyze multiple files using the compiler-style pipeline and return proposals."""
+        """Analyze multiple files using the compiler-style pipeline and return proposals.
+
+        invalidate_paths: If provided, forces reparse/reanalysis of these paths even if cached.
+        """
         # Delegate to the pipeline for analysis while preserving existing behavior
-        return run_pipeline(file_paths, engine=self, verbose=verbose, progress=progress)
+        return run_pipeline(
+            file_paths,
+            engine=self,
+            verbose=verbose,
+            progress=progress,
+            invalidate_paths=invalidate_paths,
+        )
 
     def _process_block_pairs(
         self,
@@ -603,25 +637,39 @@ class UnificationRefactorEngine:
         class_infos: List[ClassInfo],
     ) -> Optional[ClassInsertionPlan]:
         """Determine whether the helper should be inserted into a class context."""
-
-        if method_info1.kind != method_info2.kind or method_info1.kind is None:
-            return None
+        # Original logic required both method kinds to be equal and non-None. In practice
+        # some methods may not have their kind inferred (kind=None) even though they are
+        # instance methods (implicit_param present / first arg named 'self'). We relax
+        # this by attempting inference when BOTH kinds are None; if only one side is
+        # None we keep the conservative skip to avoid mismatches (e.g., staticmethod
+        # vs instance).
+        k1, k2 = method_info1.kind, method_info2.kind
+        inferred_kind: Optional[str] = None
+        if k1 is None and k2 is None:
+            # Infer 'instance' if both have an implicit_param or a first argument name.
+            # method_info.implicit_param is populated for recognized methods; as a
+            # fallback, treat absence uniformly as instance.
+            inferred_kind = "instance"
+        else:
+            if k1 != k2 or k1 is None or k2 is None:
+                return None
         if pair.class1_name is None or pair.class2_name is None:
             return None
 
         file1 = pair.file_path
         file2 = pair.file_path2 or pair.file_path
 
+        effective_kind = inferred_kind or method_info1.kind
         if file1 == file2 and pair.class1_name == pair.class2_name:
             implicit_param = method_info1.implicit_param or method_info2.implicit_param
-            if method_info1.kind == "instance" and not implicit_param:
+            if effective_kind == "instance" and not implicit_param:
                 implicit_param = "self"
-            if method_info1.kind == "classmethod" and not implicit_param:
+            if effective_kind == "classmethod" and not implicit_param:
                 implicit_param = "cls"
             return ClassInsertionPlan(
                 class_name=pair.class1_name,
                 file_path=file1,
-                method_kind=method_info1.kind,
+                method_kind=effective_kind,
                 implicit_param=implicit_param,
             )
 
@@ -634,15 +682,15 @@ class UnificationRefactorEngine:
             return None
 
         implicit_param = method_info1.implicit_param or method_info2.implicit_param
-        if method_info1.kind == "instance" and not implicit_param:
+        if effective_kind == "instance" and not implicit_param:
             implicit_param = "self"
-        if method_info1.kind == "classmethod" and not implicit_param:
+        if effective_kind == "classmethod" and not implicit_param:
             implicit_param = "cls"
 
         return ClassInsertionPlan(
             class_name=ancestor.name,
             file_path=ancestor.file_path,
-            method_kind=method_info1.kind,
+            method_kind=effective_kind,
             implicit_param=implicit_param,
         )
 
@@ -670,7 +718,8 @@ class UnificationRefactorEngine:
 
         use_tqdm = False
         tqdm_iter = None
-        if verbose and progress in ("auto", "tqdm"):
+        # Always show progress for pair evaluation when progress is enabled, even if verbose=False
+        if progress in ("auto", "tqdm"):
             try:
                 import importlib
 
@@ -679,7 +728,7 @@ class UnificationRefactorEngine:
                 tqdm_iter = _tqdm(
                     block_pairs,
                     total=len(block_pairs),
-                    desc="Analyzing candidate pairs",
+                    desc="unify",
                     unit="pair",
                     leave=False,
                 )
@@ -694,10 +743,10 @@ class UnificationRefactorEngine:
                     proposals.append(proposal)
             return proposals
 
-        use_inline_bar = verbose and progress in ("auto", "tqdm") and len(block_pairs) > 0
+        use_inline_bar = progress in ("auto", "tqdm") and len(block_pairs) > 0 and not use_tqdm
         last_pct = -1
         if use_inline_bar:
-            print("Analyzing candidate pairs:", end=" ", flush=True)
+            print("Analyzing pairs (unify):", end=" ", flush=True)
 
         for idx, pair in enumerate(block_pairs, 1):
             proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
@@ -710,7 +759,7 @@ class UnificationRefactorEngine:
                     bar_len = 24
                     filled = (pct * bar_len) // 100
                     bar = "#" * filled + "-" * (bar_len - filled)
-                    print(f"\rAnalyzing candidate pairs: [{bar}] {pct}%", end="", flush=True)
+                    print(f"\rAnalyzing pairs (unify): [{bar}] {pct}%", end="", flush=True)
 
         if use_inline_bar:
             print()
@@ -977,6 +1026,8 @@ class UnificationRefactorEngine:
                 List[str],
             ]
         ],
+        *,
+        progress: str = "none",
     ) -> List[CodeBlockPair]:
         """
         Find all non-overlapping pairs of code blocks across multiple files.
@@ -988,6 +1039,34 @@ class UnificationRefactorEngine:
             List of code block pairs
         """
         pairs = []
+
+        # Progress setup
+        use_tqdm = progress in ("tqdm", "auto")
+        tqdm_bar = None
+        total_funcs = len(all_functions)
+        total_func_pairs = (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
+        if use_tqdm and total_func_pairs > 0:
+            try:
+                import importlib
+                _tqdm_mod = importlib.import_module("tqdm.auto")
+                _tqdm = getattr(_tqdm_mod, "tqdm")
+                tqdm_bar = _tqdm(
+                    total=total_func_pairs,
+                    desc="pairs",
+                    unit="fp",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+            except Exception:
+                tqdm_bar = None
+                use_tqdm = False
+
+        use_inline = (not use_tqdm) and progress in ("tqdm", "auto") and total_func_pairs > 0
+        last_pct = -1
+        if use_inline:
+            print("Pairing blocks:", end=" ", flush=True)
+
+        func_pairs_done = 0
 
         # For each pair of functions (including across files)
         for i, entry1 in enumerate(all_functions):
@@ -1068,6 +1147,35 @@ class UnificationRefactorEngine:
                             function2_node=func2,
                         )
                         pairs.append(pair)
+
+                # Update progress per function pair
+                func_pairs_done += 1
+                if tqdm_bar is not None:
+                    try:
+                        tqdm_bar.update(1)
+                        if func_pairs_done % 20 == 0 or func_pairs_done == total_func_pairs:
+                            tqdm_bar.set_postfix({"pairs": len(pairs)}, refresh=True)
+                    except Exception:
+                        pass
+                elif use_inline:
+                    pct = int(100 * func_pairs_done / max(total_func_pairs, 1))
+                    if pct != last_pct:
+                        last_pct = pct
+                        bar_len = 24
+                        filled = (pct * bar_len) // 100
+                        bar = "#" * filled + "-" * (bar_len - filled)
+                        print(
+                            f"\rPairing blocks: [{bar}] {pct:3d}% | pairs={len(pairs)}",
+                            end="",
+                            flush=True,
+                        )
+        if tqdm_bar is not None:
+            try:
+                tqdm_bar.close()
+            except Exception:
+                pass
+        if use_inline:
+            print()
 
         return pairs
 
@@ -1153,6 +1261,8 @@ class UnificationRefactorEngine:
         method_info1 = self._get_method_context(func1, pair.class1_name)
         method_info2 = self._get_method_context(func2, pair.class2_name)
 
+        # (Removed specialized full-body extraction fast-path; reverting to generic pairing logic.)
+
         # DEBUG logging
         import os
 
@@ -1181,6 +1291,7 @@ class UnificationRefactorEngine:
             )
             if has_unsafe1:
                 # Cannot safely extract this block - it reassigns variables bound outside the block
+                self._debug_reject("unsafe_reassignment_block1", pair, str(problematic_vars1))
                 return None
 
             # Check if block2 contains reassignments without bindings
@@ -1189,6 +1300,7 @@ class UnificationRefactorEngine:
             )
             if has_unsafe2:
                 # Cannot safely extract this block - it reassigns variables bound outside the block
+                self._debug_reject("unsafe_reassignment_block2", pair, str(problematic_vars2))
                 return None
 
             # CRITICAL: Validate that blocks don't bind variables used after the block
@@ -1394,6 +1506,7 @@ class UnificationRefactorEngine:
         if value_prod1 != value_prod2:
             if os.getenv("DEBUG_VALIDATION"):
                 print("  REJECTED: Value-producing mismatch")
+            self._debug_reject("value_producing_mismatch", pair)
             return None
 
         # CRITICAL: If blocks are NATURALLY value-producing (have return statements),
@@ -1405,10 +1518,12 @@ class UnificationRefactorEngine:
             if not has_complete_return_coverage(pair.block1_nodes):
                 if os.getenv("DEBUG_VALIDATION"):
                     print("  REJECTED: Block1 missing complete return coverage")
+                self._debug_reject("incomplete_return_coverage_block1", pair)
                 return None
             if not has_complete_return_coverage(pair.block2_nodes):
                 if os.getenv("DEBUG_VALIDATION"):
                     print("  REJECTED: Block2 missing complete return coverage")
+                self._debug_reject("incomplete_return_coverage_block2", pair)
                 return None
 
         # Heuristic: avoid extracting trivial single-line return blocks that just
@@ -1434,12 +1549,14 @@ class UnificationRefactorEngine:
                 print(
                     "  REJECTED: Trivial single-line return blocks (prefer extracting computation)"
                 )
+            self._debug_reject("trivial_return_blocks", pair)
             return None
 
         # Check structural similarity
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
             if os.getenv("DEBUG_VALIDATION"):
                 print("  REJECTED: Not structurally similar")
+            self._debug_reject("not_structurally_similar", pair)
             return None
 
         # Attempt unification
@@ -1454,11 +1571,13 @@ class UnificationRefactorEngine:
         except Exception as e:
             if os.getenv("DEBUG_VALIDATION"):
                 print(f"  REJECTED: Unification exception: {e}")
+            self._debug_reject("unification_exception", pair, str(e))
             return None
 
         if not substitution:
             if os.getenv("DEBUG_VALIDATION"):
                 print("  REJECTED: Unification failed (no substitution)")
+            self._debug_reject("unification_failed", pair)
             return None
 
         if os.getenv("DEBUG_VALIDATION"):
@@ -1569,6 +1688,7 @@ class UnificationRefactorEngine:
                     f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}"
                 )
                 print("    These variables would be used before they're defined")
+            self._debug_reject("incomplete_lifetime_block1", pair, str(incomplete_vars))
             return None
 
         if free_vars2 & bound_after_block2:
@@ -1577,6 +1697,7 @@ class UnificationRefactorEngine:
                 print(
                     f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}"
                 )
+            self._debug_reject("incomplete_lifetime_block2", pair, str(incomplete_vars))
             return None
 
         # Find all variables used in augmented assignments in block1
@@ -1704,7 +1825,8 @@ class UnificationRefactorEngine:
                 nonlocal_decls=(
                     nonlocals_to_declare_in_extracted if nonlocals_to_declare_in_extracted else None
                 ),
-                function_name="extracted_func",
+                # Use hygienic double-underscore name; engine will prefix underscore for methods.
+                function_name="__extracted_func",
             )
         except Exception:
             return None
@@ -1758,6 +1880,7 @@ class UnificationRefactorEngine:
 
                 if has_orphans1 or has_orphans2:
                     # Cannot extract - would create orphaned variable references
+                    self._debug_reject("orphaned_variables", pair)
                     return None
 
         # Generate replacement calls
@@ -1783,6 +1906,60 @@ class UnificationRefactorEngine:
                     return_variables=return_vars_by_block[block_idx],
                     hygienic_renames=hygienic_renames,
                 )
+                # Guard-rail: validate that the generated call does not reference
+                # undefined names at the call site. This rejects brittle proposals
+                # that leak placeholders (e.g., "__param_1") or invented locals
+                # like "filtered"/"mapped" that are not bound before the block.
+                # Allowed names = variables bound before the block ∪ free variables
+                # (builtins are implicitly allowed by runtime).
+                allowed_before: Set[str]
+                if block_idx == 0:
+                    allowed_before = set(bound_before_block1) | set(free_vars1)
+                else:
+                    allowed_before = set(bound_before_block2) | set(free_vars2)
+
+                used_in_call = self._get_used_names(call_node)
+                # Whitelist a small set of common builtins used in arguments
+                builtin_whitelist = {
+                    "len",
+                    "sum",
+                    "min",
+                    "max",
+                    "any",
+                    "all",
+                    "map",
+                    "filter",
+                    "sorted",
+                    "list",
+                    "dict",
+                    "set",
+                    "range",
+                    "int",
+                    "float",
+                    "str",
+                    "bool",
+                    "enumerate",
+                    "zip",
+                }
+                invalid_names = set()
+                for name in used_in_call:
+                    if name == func_def.name:
+                        continue  # referring to the helper itself is handled elsewhere
+                    if name.startswith("__param_"):
+                        invalid_names.add(name)
+                        continue
+                    if name in allowed_before or name in builtin_whitelist:
+                        continue
+                    invalid_names.add(name)
+
+                if invalid_names:
+                    # Reject this proposal as it would introduce undefined names
+                    self._debug_reject(
+                        "undefined_names_in_call",
+                        pair,
+                        detail=f"block{block_idx+1}: {sorted(invalid_names)}",
+                    )
+                    return None
                 # Store file_path and class context
                 class_name = pair.class1_name if block_idx == 0 else pair.class2_name
                 method_info = method_info1 if block_idx == 0 else method_info2
@@ -1798,6 +1975,157 @@ class UnificationRefactorEngine:
                 )
             except Exception:
                 return None
+
+        # Multi-occurrence clustering (same-file): look for additional identical blocks
+        # beyond the initial pair and include them in this proposal as extra replacements.
+        # This helps cases like example1_simple where three functions share the same
+        # validator block; by default pairwise selection would only cover two.
+        try:
+            from .block_signature import extract_block_signature, quick_filter as _qf
+
+            # Only attempt simple clustering for module-level, non-returning validators
+            same_file_ctx = (pair.file_path2 is None) or (pair.file_path2 == pair.file_path)
+            if same_file_ctx and not return_variables_block1 and not return_variables_block2:
+                # Build a set of already covered ranges to avoid duplicates
+                covered = {(pair.file_path, pair.block1_range), (pair.file_path2 or pair.file_path, pair.block2_range)}
+                # Template signature from block1
+                tmpl_sig = extract_block_signature(pair.block1_nodes)
+
+                # Gather candidates from same file functions
+                for entry in all_functions:
+                    fpath, fn, _src, analyzerX, _rscopeX, clsX, _enclX, _ancX = (
+                        entry if len(entry) >= 8 else (*entry, None, None, None)
+                    )
+                    if fpath != pair.file_path:
+                        continue
+                    # Skip the original two functions
+                    if fn.name in (pair.function1_name, pair.function2_name):
+                        # Still scan, but avoid ranges we've already taken
+                        pass
+                    # Extract blocks and test quick filter against template
+                    for cand_range, cand_nodes in self._extract_code_blocks(fn):
+                        if (fpath, cand_range) in covered:
+                            continue
+                        # Minimum size gate
+                        s, e = cand_range
+                        if (e - s + 1) < self.min_lines:
+                            continue
+                        cand_sig = extract_block_signature(cand_nodes)
+                        if not _qf(tmpl_sig, cand_sig):
+                            continue
+                        # Try to unify template block with candidate
+                        try:
+                            subst2 = self.unifier.unify_blocks([pair.block1_nodes, cand_nodes], [{}, {}])
+                        except Exception:
+                            continue
+                        if not subst2:
+                            continue
+                        # Orphan check for candidate within its function body
+                        indices = self._get_block_indices(fn, cand_nodes)
+                        if indices is None:
+                            continue
+                        # Skip docstring in body
+                        body = fn.body
+                        start_idx = 0
+                        if (
+                            body
+                            and isinstance(body[0], ast.Expr)
+                            and isinstance(body[0].value, ast.Constant)
+                            and isinstance(body[0].value.value, str)
+                        ):
+                            start_idx = 1
+                        body = body[start_idx:]
+                        has_orph, _orph = has_orphaned_variables(body, indices)
+                        if has_orph:
+                            continue
+                        # Generate a call node for the candidate
+                        try:
+                            call_node2 = self.extractor.generate_call(
+                                function_name=func_def.name,
+                                block_idx=1,
+                                substitution=subst2,
+                                param_order=param_order,
+                                free_variables=free_vars,
+                                is_value_producing=value_prod1,
+                                return_variables=[],
+                                hygienic_renames=[{}, {}],
+                            )
+                        except Exception:
+                            continue
+                        # Validate candidate call-site does not reference undefined names
+                        try:
+                            used2 = self._get_used_names(call_node2)
+                            if any(n.startswith("__param_") for n in used2):
+                                # Skip brittle candidate that leaked placeholders
+                                continue
+                            # Compute names bound before candidate block and free vars within it
+                            try:
+                                from .assignment_analyzer import _collect_bindings_and_reassignments as _cbar
+                            except Exception:
+                                _cbar = None  # type: ignore
+
+                            bound_before_cand: Set[str] = set()
+                            if _cbar is not None:
+                                reassignX = self._get_assignment_reuse(fn)
+                                start_line_cand = cand_range[0]
+                                for stmt in fn.body:
+                                    if hasattr(stmt, "lineno") and stmt.lineno < start_line_cand:
+                                        bset: Set[str] = set()
+                                        rset: Set[str] = set()
+                                        _cbar(stmt, reassignX, bset, rset)
+                                        bound_before_cand.update(bset)
+                                # Treat function params as bound
+                                if isinstance(fn, ast.FunctionDef):
+                                    param_namesX: Set[str] = set()
+                                    for arg in fn.args.args:
+                                        param_namesX.add(arg.arg)
+                                    for arg in getattr(fn.args, "posonlyargs", []) or []:
+                                        param_namesX.add(arg.arg)
+                                    for arg in fn.args.kwonlyargs:
+                                        param_namesX.add(arg.arg)
+                                    if fn.args.vararg:
+                                        param_namesX.add(fn.args.vararg.arg)
+                                    if fn.args.kwarg:
+                                        param_namesX.add(fn.args.kwarg.arg)
+                                    bound_before_cand.update(param_namesX)
+                            free_vars_cand: Set[str] = set()
+                            if analyzerX is not None:
+                                try:
+                                    free_vars_cand = set(analyzerX.get_free_variables(cand_nodes))
+                                except Exception:
+                                    free_vars_cand = set()
+                            allowed_cand = bound_before_cand | free_vars_cand
+                            builtin_whitelist = {
+                                "len","sum","min","max","any","all","map","filter","sorted","list","dict","set","range","int","float","str","bool","enumerate","zip",
+                            }
+                            invalid2 = set()
+                            for n in used2:
+                                if n == func_def.name:
+                                    continue
+                                if n in allowed_cand or n in builtin_whitelist:
+                                    continue
+                                invalid2.add(n)
+                            if invalid2:
+                                # Skip this candidate replacement
+                                continue
+                        except Exception:
+                            # On any validator error, be conservative and skip candidate
+                            continue
+                        # Append replacement
+                        replacements.append(
+                            Replacement(
+                                line_range=cand_range,
+                                node=call_node2,
+                                file_path=fpath,
+                                class_name=clsX,
+                                method_kind=None,
+                                implicit_param=None,
+                            )
+                        )
+                        covered.add((fpath, cand_range))
+        except Exception:
+            # Non-fatal: clustering is best-effort only
+            pass
         # Determine canonical file for extracted function
         # Default to the first file, but this may change if we insert into an ancestor class
         canonical_file = pair.file_path
@@ -1833,14 +2161,18 @@ class UnificationRefactorEngine:
                     break
             return dce
 
-        if (
-            same_file
-            and pair.function1_ancestry is not None
-            and pair.function2_ancestry is not None
-        ):
-            dce = _deepest_common(pair.function1_ancestry or [], pair.function2_ancestry or [])
-            if dce:
-                insert_into_function = dce
+        # Prefer insertion into the function that actually contains BOTH blocks when they come from the
+        # same function (process_user_data & process_admin_data are top-level siblings: no shared ancestry).
+        # If the two functions are the SAME name (duplicates), insert into that function instead of module.
+        if same_file:
+            # Only consider deepest common enclosing function based on ancestry; do NOT use
+            # simple name equality as methods across different classes may share the same
+            # name but are not in the same function scope. Name-equality caused incorrectly
+            # inserting helpers inside one sibling method.
+            if pair.function1_ancestry is not None and pair.function2_ancestry is not None:
+                dce = _deepest_common(pair.function1_ancestry or [], pair.function2_ancestry or [])
+                if dce:
+                    insert_into_function = dce
 
         class_plan: Optional[ClassInsertionPlan] = None
         if insert_into_function is None:
@@ -1852,10 +2184,25 @@ class UnificationRefactorEngine:
             )
 
         if class_plan is not None:
-            insert_into_class = class_plan.class_name
-            canonical_file = class_plan.file_path
-            method_kind_metadata = class_plan.method_kind
-            method_param_name = class_plan.implicit_param
+            # Refined insertion policy:
+            # 1. If both blocks are from the SAME class -> insert into that class.
+            # 2. If blocks are from DIFFERENT classes and class_plan points to a COMMON ANCESTOR
+            #    that is neither of the concrete classes, insert into ancestor (shared visibility).
+            # 3. If class_plan resolves to one of the concrete classes while the other differs ->
+            #    fallback to module-level to preserve accessibility (avoid privileging one sibling).
+            same_class = pair.class1_name is not None and pair.class1_name == pair.class2_name
+            target_is_concrete_sibling = (
+                class_plan.class_name in {pair.class1_name, pair.class2_name}
+                and not same_class
+            )
+            if target_is_concrete_sibling:
+                # Helper would become invisible to the other sibling; abort class insertion.
+                class_plan = None
+            else:
+                insert_into_class = class_plan.class_name
+                canonical_file = class_plan.file_path
+                method_kind_metadata = class_plan.method_kind
+                method_param_name = class_plan.implicit_param
 
         # SAFETY: Avoid refactoring across closures with nonlocal variables for now.
         # If the containing functions (func1/func2) declare any nonlocal variables, skip this proposal
@@ -1880,6 +2227,7 @@ class UnificationRefactorEngine:
                 nonlocal_in_func2 = self._function_contains_nonlocal(func2)
 
             if nonlocal_in_func1 or nonlocal_in_func2:
+                self._debug_reject("nonlocal_safety_skip", pair)
                 return None
         except Exception:
             # On any analyzer lookup issue, be conservative and proceed without special handling
@@ -1913,6 +2261,9 @@ class UnificationRefactorEngine:
         """
         # All proposals now use multi-file format
         modified_files = self.apply_refactoring_multi_file(proposal)
+        # Backward-compat: handle tuple return (modified_files, changed_paths)
+        if isinstance(modified_files, tuple):
+            modified_files = modified_files[0]
         # Return the content for the requested file
         return modified_files.get(file_path, "")
 
@@ -1935,6 +2286,37 @@ class UnificationRefactorEngine:
         # Ensure canonical file is always processed so extracted helper is emitted
         replacements_by_file.setdefault(proposal.file_path, [])
 
+        # Determine helper names ONCE to avoid mismatches across files
+        # Capture the original helper name before any renaming, and compute the final name
+        original_helper_name = proposal.extracted_function.name
+        # Naming policy:
+        # - If engine-generated name '__extracted_func' is used:
+        #     * class insertion -> '_extracted_func'
+        #     * function-local insertion -> 'extracted_func'
+        #     * module-level insertion -> 'extracted_func'
+        # - If a custom helper name is provided in the proposal:
+        #     * class insertion -> prefix with '_' if not already
+        #     * function-local/module-level -> keep as-is
+        if proposal.insert_into_class:
+            if original_helper_name == "__extracted_func":
+                proposal.extracted_function.name = "_extracted_func"
+            else:
+                # Prefix a single underscore if not already present
+                proposal.extracted_function.name = (
+                    original_helper_name if original_helper_name.startswith("_") else f"_{original_helper_name}"
+                )
+        elif proposal.insert_into_function:
+            # Function-local insertion: rename engine default to 'extracted_func'; keep custom names
+            proposal.extracted_function.name = (
+                "extracted_func" if original_helper_name == "__extracted_func" else original_helper_name
+            )
+        else:
+            # Module-level insertion: rename engine default to 'extracted_func'; keep custom names
+            proposal.extracted_function.name = (
+                "extracted_func" if original_helper_name == "__extracted_func" else original_helper_name
+            )
+        final_func_name = proposal.extracted_function.name
+
         # Process each file
         modified_files: Dict[str, str] = {}
 
@@ -1946,18 +2328,12 @@ class UnificationRefactorEngine:
             # Sort replacements by line number (reverse order)
             replacements = sorted(replacements, key=lambda r: r.line_range[0], reverse=True)
 
-            # Apply replacements
-            # Determine final function/method name for this proposal
-            final_func_name = proposal.extracted_function.name
-            if proposal.insert_into_class and not final_func_name.startswith("_"):
-                final_func_name = f"_{final_func_name}"
-
-            original_helper_name = proposal.extracted_function.name
-
+            # Apply each replacement (reverse sorted prevents earlier line shifts)
             for repl in replacements:
                 start_line, end_line = repl.line_range
                 replacement_node = copy.deepcopy(repl.node)
                 class_name = repl.class_name
+
                 # Validate line numbers
                 if start_line < 1 or start_line > len(lines):
                     print(
@@ -1965,7 +2341,6 @@ class UnificationRefactorEngine:
                     )
                     print("Skipping this replacement")
                     continue
-
                 if end_line > len(lines):
                     print(
                         f"Warning: End line {end_line} exceeds file length {len(lines)} for {file_path}"
@@ -1973,7 +2348,7 @@ class UnificationRefactorEngine:
                     print("Adjusting to end of file")
                     end_line = len(lines)
 
-                # When extracting into a class, rewrite method call sites so they use method dispatch.
+                # Rewrite call sites for method extraction
                 if proposal.insert_into_class and class_name:
                     replacement_node = self._rewrite_call_for_method(
                         replacement_node,
@@ -1983,131 +2358,103 @@ class UnificationRefactorEngine:
                         repl.implicit_param or proposal.method_param_name,
                         class_name,
                     )
+                elif proposal.insert_into_function:
+                    # Rewrite to local function call (no attribute), but ensure call uses final_func_name
+                    # Simple textual AST rewrite: replace original helper name with final
+                    if original_helper_name != final_func_name:
+                        class LocalCallRewriter(ast.NodeTransformer):
+                            def visit_Call(self, node: ast.Call):
+                                node = self.generic_visit(node)
+                                if isinstance(node.func, ast.Name) and node.func.id == original_helper_name:
+                                    node.func.id = final_func_name
+                                return node
+                        replacement_node = LocalCallRewriter().visit(replacement_node)
+                else:
+                    # Module-level insertion:
+                    # If the helper was renamed (e.g., from '__extracted_func' to 'extracted_func' or custom),
+                    # rewrite call sites accordingly.
+                    if original_helper_name != final_func_name:
+                        class ModuleCallRewriter(ast.NodeTransformer):
+                            def visit_Call(self, node: ast.Call):
+                                node = self.generic_visit(node)
+                                if isinstance(node.func, ast.Name) and node.func.id == original_helper_name:
+                                    node.func.id = final_func_name
+                                return node
+
+                        replacement_node = ModuleCallRewriter().visit(replacement_node)
 
                 replacement_code = ast.unparse(replacement_node)
+                code_lines = replacement_code.split("\n")
                 indent = self._get_indent(lines[start_line - 1])
 
-                # Split code and indent properly: first line gets indent, subsequent lines keep their relative indentation
-                code_lines = replacement_code.split("\n")
-                replacement_lines = []
-                for i, line in enumerate(code_lines):
-                    if i == 0:
-                        # First line gets the base indent
+                # Build indented replacement block: indent ALL non-empty lines consistently
+                replacement_lines: List[str] = []
+                for line in code_lines:
+                    if line.strip():
                         replacement_lines.append(indent + line + "\n")
                     else:
-                        # Subsequent lines maintain their relative indentation from ast.unparse
-                        if line.strip():  # Only indent non-empty lines
-                            replacement_lines.append(line + "\n")
-                        else:
-                            replacement_lines.append("\n")
+                        replacement_lines.append("\n")
 
-                # Check if we need to preserve blank lines after the replacement
-                # to maintain PEP 8 spacing between functions
-                trailing_blank_lines = []
-                if end_line < len(lines):
-                    # Check if there's a function definition after this block
-                    next_line_idx = end_line
-                    while next_line_idx < len(lines) and not lines[next_line_idx].strip():
-                        next_line_idx += 1
+                # Splice into source
+                lines[start_line - 1 : end_line] = replacement_lines
 
-                    # If the next non-blank line is a function/class definition,
-                    # ensure we have 2 blank lines
-                    if next_line_idx < len(lines):
-                        next_line = lines[next_line_idx].strip()
-                        if (
-                            next_line.startswith("def ")
-                            or next_line.startswith("class ")
-                            or next_line.startswith("async def ")
-                        ):
-                            # Count existing blank lines between end and next def
-                            existing_blanks = next_line_idx - end_line
-                            # We need 2 blank lines total
-                            if existing_blanks < 2:
-                                trailing_blank_lines = ["\n"] * (2 - existing_blanks)
-
-                del lines[start_line - 1 : end_line]
-                lines[start_line - 1 : start_line - 1] = replacement_lines + trailing_blank_lines
-
-            # Add extracted function/method to canonical file only
+            # Insert helper into canonical file or import into others
             if file_path == proposal.file_path:
-                # Prefer function-scope insertion over class-scope
                 if proposal.insert_into_function:
-                    func_code = ast.unparse(proposal.extracted_function)
-                    fn_lines = [line + "\n" for line in func_code.split("\n")]
-
-                    insert_info = self._find_function_insert_position_before_body_statements(
+                    fn_insert_info = self._find_function_insert_position_before_body_statements(
                         "".join(lines), proposal.insert_into_function
                     )
-                    if insert_info is None:
-                        # Fallback to module-level insertion if function not found
-                        func_lines = fn_lines
+                    fn_code = ast.unparse(proposal.extracted_function)
+                    fn_lines = [l + "\n" for l in fn_code.split("\n")]
+                    if fn_insert_info is None:
                         insert_line = self._find_insert_position(lines)
-                        lines[insert_line:insert_line] = func_lines + ["\n", "\n"]
+                        lines[insert_line:insert_line] = fn_lines + ["\n", "\n"]
                     else:
-                        insert_at_zero_based, indent = insert_info
-                        # Indent by one level beyond function indent
-                        indented = []
+                        insert_at_zero_based, indent = fn_insert_info
                         inner_indent = indent + "    "
+                        indented: List[str] = []
                         for line in fn_lines:
                             if line.strip():
                                 indented.append(inner_indent + line)
                             else:
                                 indented.append(line)
-                        # Ensure spacing within function: avoid triple blank lines
-                        prefix = []
+                        prefix: List[str] = []
                         if insert_at_zero_based > 0 and lines[insert_at_zero_based - 1].strip():
                             prefix.append("\n")
-                        suffix = []
-                        if (
-                            insert_at_zero_based < len(lines)
-                            and lines[insert_at_zero_based].strip()
-                        ):
+                        suffix: List[str] = []
+                        if insert_at_zero_based < len(lines) and lines[insert_at_zero_based].strip():
                             suffix.append("\n")
-                        lines[insert_at_zero_based:insert_at_zero_based] = (
-                            prefix + indented + suffix
-                        )
+                        lines[insert_at_zero_based:insert_at_zero_based] = prefix + indented + suffix
                 elif proposal.insert_into_class:
-                    # Rename function for method insertion
-                    if not proposal.extracted_function.name.startswith("_"):
-                        proposal.extracted_function.name = f"_{proposal.extracted_function.name}"
+                    # Prepare method signature & decorator
                     method_kind = proposal.method_kind or "instance"
                     self._prepare_extracted_method_signature(
                         proposal.extracted_function,
                         method_kind,
                         proposal.method_param_name,
                     )
-
                     func_code = ast.unparse(proposal.extracted_function)
                     method_lines = [line + "\n" for line in func_code.split("\n")]
-
-                    # Find class position and indent
                     insert_info = self._find_class_insert_position(
                         "".join(lines), proposal.insert_into_class
                     )
                     if insert_info is None:
-                        # Fallback to module-level insertion
-                        func_lines = method_lines
                         insert_line = self._find_insert_position(lines)
-                        lines[insert_line:insert_line] = func_lines + ["\n", "\n"]
+                        lines[insert_line:insert_line] = method_lines + ["\n", "\n"]
                     else:
                         insert_line_zero_based, indent = insert_info
-                        # Indent by one level beyond class indent
-                        indented = []
                         method_indent = indent + "    "
+                        indented: List[str] = []
                         for line in method_lines:
                             if line.strip():
-                                # Prefix method indent but preserve relative indentation within the function
                                 indented.append(method_indent + line)
                             else:
                                 indented.append(line)
-                        # Compute insertion point AFTER the last class line
                         insert_at = insert_line_zero_based + 1
-                        # Ensure a blank line before if needed
-                        prefix = []
+                        prefix: List[str] = []
                         if insert_at > 0 and lines[insert_at - 1].strip():
                             prefix.append("\n")
-                        # Optionally ensure a blank line after
-                        suffix = []
+                        suffix: List[str] = []
                         if insert_at < len(lines) and lines[insert_at].strip():
                             suffix.append("\n")
                         lines[insert_at:insert_at] = prefix + indented + suffix
@@ -2115,42 +2462,24 @@ class UnificationRefactorEngine:
                     func_code = ast.unparse(proposal.extracted_function)
                     func_lines = [line + "\n" for line in func_code.split("\n")]
                     insert_line = self._find_insert_position(lines)
-
-                    # Ensure proper spacing: PEP 8 requires 2 blank lines between top-level functions
-                    # Add blank lines before the function if needed
-                    lines_to_insert = []
-
-                    # Check if we need blank lines before the function
+                    lines_to_insert: List[str] = []
                     if insert_line > 0:
-                        # Count existing blank lines before insert position
                         blank_lines_before = 0
                         check_line = insert_line - 1
                         while check_line >= 0 and not lines[check_line].strip():
                             blank_lines_before += 1
                             check_line -= 1
-
-                        # Add blank lines if needed to reach 2
                         if blank_lines_before < 2:
                             lines_to_insert.extend(["\n"] * (2 - blank_lines_before))
-
-                    # Add the function itself
                     lines_to_insert.extend(func_lines)
-
-                    # Add 2 blank lines after the function
                     lines_to_insert.extend(["\n", "\n"])
-
                     lines[insert_line:insert_line] = lines_to_insert
             else:
+                # Non-canonical file: insert import (module-level only)
                 if not proposal.insert_into_class:
-                    # Add import statement to other files
-                    # Calculate the correct module path using project layout discovery
                     from_path = Path(proposal.file_path)
                     to_path = Path(file_path)
-
-                    # Use the lowest common ancestor of the canonical and importing files
-                    # to scope module names within the project subtree (avoid repo-level roots)
                     from pathlib import Path as _P
-
                     common_dir = _P(
                         __import__("os").path.commonpath([str(from_path), str(to_path)])
                     )
@@ -2159,26 +2488,17 @@ class UnificationRefactorEngine:
                         prefer_absolute_imports=self.prefer_absolute_imports,
                         pep420_namespace_packages=self.pep420_namespace_packages,
                     )
-
                     abs_mod = layout.module_name_for(from_path)
-                    # If preference is absolute and available, use absolute even for same-dir
                     if abs_mod and layout.prefer_absolute_imports:
                         module_name = abs_mod
                     else:
-                        # Otherwise, keep previous behavior: same-dir stem, else best-effort abs/stem
                         if from_path.parent == to_path.parent:
                             module_name = from_path.stem
                         else:
                             module_name = abs_mod or from_path.stem
-
                     func_name = proposal.extracted_function.name
                     import_line = f"from {module_name} import {func_name}\n"
-
-                    # Avoid duplicate imports if already present
-                    if any(import_line.strip() == ln.strip() for ln in lines):
-                        pass
-                    else:
-                        # Find position to insert import (after existing imports)
+                    if not any(import_line.strip() == ln.strip() for ln in lines):
                         import_pos = self._find_import_position(lines)
                         lines.insert(import_pos, import_line)
 
@@ -2395,9 +2715,13 @@ class UnificationRefactorEngine:
         """
         Apply refactorings iteratively until a fixed point is reached.
 
-        This method applies refactorings one at a time, re-analyzing after each
-        application. This prevents the sequential corruption bug where applying
-        multiple refactorings at once causes line number misalignment.
+    This method applies refactorings one at a time, re-analyzing after each
+    application. This prevents the sequential corruption bug where applying
+    multiple refactorings at once causes line number misalignment.
+
+    max_iterations semantics:
+    - If max_iterations > 0, stop after at most that many applied refactorings.
+    - If max_iterations <= 0, run until a natural fixed point (no proposals found).
 
         Args:
             file_path: Path to file to refactor
@@ -2410,13 +2734,15 @@ class UnificationRefactorEngine:
         num_applied = 0
         descriptions = []
 
-        for iteration in range(max_iterations):
+        iteration = 0
+        while True:
             # Write current code to file for analysis
             with open(file_path, "w") as f:
                 f.write(current_code)
 
             # Analyze for refactoring opportunities
-            proposals = self.analyze_file(file_path)
+            # Important: invalidate cached analysis for this path so we see latest edits
+            proposals = self.analyze_files([file_path], invalidate_paths=[file_path])
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
@@ -2424,15 +2750,27 @@ class UnificationRefactorEngine:
 
             # Apply only the first proposal
             proposal = proposals[0]
-            current_code = self.apply_refactoring(file_path, proposal)
+            new_code = self.apply_refactoring(file_path, proposal)
+            # Idempotence guard: if no change, stop to avoid churn
+            if new_code == current_code:
+                break
+            current_code = new_code
             num_applied += 1
             descriptions.append(proposal.description)
+
+            iteration += 1
+            if max_iterations > 0 and iteration >= max_iterations:
+                break
 
         return current_code, num_applied, descriptions
 
     def refactor_directory_to_fixed_point(
-        self, input_dir: str, output_dir: str, max_iterations: int = 10
-    ) -> Dict[str, Tuple[int, List[str]]]:
+        self,
+        input_dir: str,
+        output_dir: str,
+        max_iterations: int = 10,
+        progress: str = "tqdm",
+    ) -> Tuple[Dict[str, Tuple[int, List[str]]], str]:
         """
         Apply refactorings across a directory (recursively) until a fixed point.
 
@@ -2443,13 +2781,22 @@ class UnificationRefactorEngine:
         Args:
             input_dir: Input directory path
             output_dir: Output directory path (results are written here)
-            max_iterations: Maximum iterations to prevent infinite loops
+            max_iterations: Maximum iterations to prevent infinite loops. If <= 0,
+                run until a natural fixed point (no proposals remain).
+            progress: Progress display mode: 'tqdm' for percentage bar if available,
+                'auto' fallback to simple inline bar, 'none' disables progress output.
 
         Returns:
-            Dictionary mapping file paths to (num_refactorings, descriptions)
+            (results_dict, termination_reason)
+            termination_reason ∈ {"fixed_point", "iteration_cap"}
         """
         from pathlib import Path
         import shutil
+        import textwrap
+
+        # Normalize progress flag; prefer tqdm as default when invalid value supplied
+        if progress not in {"auto", "tqdm", "none", "detail"}:
+            progress = "tqdm"
 
         input_path = Path(input_dir)
         output_path = Path(output_dir)
@@ -2457,7 +2804,7 @@ class UnificationRefactorEngine:
         # Create output directory
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Copy all files to output directory first
+        # Copy all files to output directory first (skip if same path)
         if input_path != output_path:
             for item in input_path.rglob("*"):
                 if item.is_file():
@@ -2473,27 +2820,212 @@ class UnificationRefactorEngine:
             count, descs = results.get(path, (0, []))
             results[path] = (count + 1, descs + [desc])
 
-        # Fixed-point iteration across the whole directory (recursive)
-        for _ in range(max_iterations):
-            # Analyze the current output directory for proposals (includes cross-file)
-            proposals = self.analyze_directory(str(output_path), recursive=True, verbose=False)
+        # Proposal processing state
+        proposal_queue: List[RefactoringProposal] = []
+        iterations = 0
+        total_applied = 0
+        termination_reason = "fixed_point"
 
-            if not proposals:
+        # Timing / ETA state (for heuristic ETA when total unknown)
+        import time as _time
+        per_proposal_durations: List[float] = []
+        total_is_known = max_iterations > 0
+
+        # Progress helpers -------------------------------------------------
+        use_tqdm = False
+        tqdm_wrapper = None
+        progress_bar = None
+        if progress in ("tqdm", "auto"):
+            try:
+                import importlib
+                _tqdm_mod = importlib.import_module("tqdm.auto")
+                tqdm_wrapper = getattr(_tqdm_mod, "tqdm")
+                use_tqdm = True  # if import works we treat auto == tqdm
+            except Exception:
+                use_tqdm = False
+
+        # Fallback inline bar (only when not using tqdm and not in detail/none)
+        def _fallback_bar(applied: int, queued: int, phase: str, desc: str) -> None:
+            # Suppress inline fallback bar when tqdm is selected or active, or in 'none'/'detail' modes
+            if progress in ("none", "detail", "tqdm") or use_tqdm:
+                return
+            try:
+                bar_len = 32
+                denom = max(applied + queued, 1)
+                pct = int((applied / denom) * 100)
+                filled = (pct * bar_len) // 100
+                bar = "#" * filled + "-" * (bar_len - filled)
+                short = desc if len(desc) <= 48 else desc[:45] + "..."
+                print(
+                    f"\r[towel] {phase:<10} [{bar}] {pct:3d}% | applied={applied} queued={queued} | {short}",
+                    end="",
+                    flush=True,
+                )
+            except Exception:
+                pass
+
+        # Note: We defer tqdm progress bar creation until we have proposals to apply.
+        # This avoids an early line like "analyzing: 0it" with unknown totals.
+
+        def _detail(msg: str) -> None:
+            if progress == "detail":
+                print(f"[towel] {msg}")
+
+        # Main loop -------------------------------------------------------
+        while True:
+            if not proposal_queue:
+                # Global analysis pass
+                if progress != "none":
+                    try:
+                        file_count = sum(1 for _ in output_path.rglob("*.py"))
+                        _detail(f"Analyzing {file_count} file(s)...")
+                    except Exception:
+                        pass
+                # Show pairing progress during global analysis if user requested progress bars.
+                analysis_progress_flag = progress if progress in ("tqdm", "auto") else "none"
+                proposals = self.analyze_directory(
+                    str(output_path), recursive=True, verbose=False, progress=analysis_progress_flag
+                )
+                if not proposals:
+                    # Fixed point reached
+                    if use_tqdm and progress_bar is not None:
+                        # Ensure a clean newline so the last line doesn't meld with following prints
+                        try:
+                            progress_bar.refresh()
+                            progress_bar.close()
+                        except Exception:
+                            pass
+                    else:
+                        if progress not in ("none", "detail") and not use_tqdm:
+                            print()  # finish inline bar line
+                    break
+                proposal_queue = filter_overlapping_proposals(proposals)
+                _detail(f"Discovered {len(proposal_queue)} proposal(s)")
+                if progress == "detail":
+                    for i, p in enumerate(proposal_queue[:25], 1):  # cap verbose listing
+                        short = textwrap.shorten(p.description, width=100, placeholder="...")
+                        print(f"    {i:2d}. {short}")
+                    if len(proposal_queue) > 25:
+                        print(f"    ... {len(proposal_queue)-25} more")
+                _fallback_bar(total_applied, len(proposal_queue), "discovered", "proposals queued")
+                if use_tqdm and progress_bar is None:
+                    # Lazily create tqdm now that we have proposals to apply
+                    try:
+                        total_known = max_iterations > 0
+                        # Use leave=False so subsequent prints don't duplicate the bar line.
+                        progress_bar = tqdm_wrapper(
+                            total=max_iterations if total_known else None,
+                            desc="apply",
+                            unit="it",
+                            dynamic_ncols=True,
+                            leave=False,
+                        )
+                        queued_ct = len(proposal_queue)
+                        progress_bar.set_postfix({"A": 0, "Q": queued_ct}, refresh=True)
+                    except Exception:
+                        progress_bar = None
+
+            if not proposal_queue:
                 break
 
-            # Apply one proposal at a time (like per-file fixed-point)
-            proposal = proposals[0]
+            proposal = proposal_queue.pop(0)
+            iter_start = _time.time()
+            last_desc = proposal.description
+            # Suppress separate applying log line when tqdm active to avoid duplicate lines
+            if not (use_tqdm and progress_bar is not None):
+                _fallback_bar(total_applied, len(proposal_queue), "apply", f"#{iterations+1}: {last_desc}")
 
-            modified_files = self.apply_refactoring_multi_file(proposal)
+            # Apply proposal
+            result = self.apply_refactoring_multi_file(proposal)
+            if isinstance(result, tuple):
+                modified_files, changed_paths = result
+            else:
+                modified_files = result
+                changed_paths = list(modified_files.keys())
 
-            # Write all modified files back to disk and update per-file results
             for fpath, content in modified_files.items():
-                # Ensure writing inside output path only
-                with open(fpath, "w", encoding="utf-8") as f:
-                    f.write(content)
+                with open(fpath, "w", encoding="utf-8") as fh:
+                    fh.write(content)
                 _bump_result(fpath, proposal.description)
 
-        return results
+            # Invalidate caches incrementally
+            if hasattr(self, "invalidate_paths") and changed_paths:
+                try:
+                    self.invalidate_paths(changed_paths)
+                except Exception:
+                    pass
+
+            # Prune queue entries invalidated by changed files
+            if changed_paths:
+                changed_set = set(map(str, changed_paths))
+                pruned: List[RefactoringProposal] = []
+                for p in proposal_queue:
+                    touches_changed = any(
+                        (rep.file_path or p.file_path) in changed_set for rep in p.replacements
+                    )
+                    if not touches_changed:
+                        pruned.append(p)
+                proposal_queue = pruned
+
+            # Localized follow-up analysis just on changed files
+            if changed_paths:
+                try:
+                    localized = self.analyze_files(list(changed_paths), invalidate_paths=list(changed_paths))
+                    if localized:
+                        localized = filter_overlapping_proposals(localized)
+                        changed_set = set(map(str, changed_paths))
+                        localized = [
+                            p
+                            for p in localized
+                            if any((rep.file_path or p.file_path) in changed_set for rep in p.replacements)
+                        ]
+                        if localized:
+                            proposal_queue = localized + proposal_queue
+                            _detail(f"Localized +{len(localized)} follow-up(s)")
+                            _fallback_bar(
+                                total_applied,
+                                len(proposal_queue),
+                                "localized",
+                                f"+{len(localized)} follow-ups",
+                            )
+                except Exception:
+                    pass
+
+            # Record duration for this iteration (include localized follow-up analysis time)
+            per_proposal_durations.append(_time.time() - iter_start)
+            iterations += 1
+            total_applied += 1
+            if use_tqdm and progress_bar is not None:
+                try:
+                    progress_bar.update(1)
+                    queued_ct = len(proposal_queue)
+                    progress_bar.set_postfix({"A": total_applied, "Q": queued_ct}, refresh=True)
+                except Exception:
+                    pass
+            else:
+                _fallback_bar(total_applied, len(proposal_queue), "applied", f"#{iterations}: {last_desc}")
+
+            if max_iterations > 0 and iterations >= max_iterations:
+                termination_reason = "iteration_cap"
+                if use_tqdm and progress_bar is not None:
+                    progress_bar.close()
+                else:
+                    if progress not in ("none", "detail") and not use_tqdm:
+                        print()
+                break
+
+        return results, termination_reason
+
+    # Optional analysis cache invalidation hook used by directory fixed-point runner
+    def invalidate_paths(self, paths: List[str]) -> None:  # pragma: no cover - simple cache hook
+        try:
+            from . import pipeline as _pipeline  # local import to avoid cycles at module load time
+
+            for p in paths:
+                _pipeline._analysis_cache.pop(p, None)  # type: ignore[attr-defined]
+        except Exception:
+            # Non-fatal; best-effort invalidation only
+            pass
 
 
 # Utility functions for overlap filtering
@@ -2555,19 +3087,154 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
             total_lines += end_line - start_line + 1
         return total_lines
 
-    # Sort by size (larger first)
-    sorted_proposals = sorted(proposals, key=proposal_size, reverse=True)
+    # Optional debug diagnostics: env flag
+    import os as _os
+    _debug_overlap = bool(_os.getenv("DEBUG_OVERLAP_FILTER"))
 
-    # Greedy selection: take largest non-overlapping proposals
-    selected = []
-    used_lines = set()
+    # Helpers for deterministic ordering and interval extraction
+    def first_span(p: RefactoringProposal) -> Tuple[str, int]:
+        if not p.replacements:
+            return (p.file_path, 0)
+        starts = [r.line_range[0] for r in p.replacements]
+        return (p.file_path, min(starts))
 
-    for proposal in sorted_proposals:
-        affected = get_affected_lines(proposal)
+    # Map proposals to affected lines and per-file convex-hull intervals
+    prop_affected: Dict[int, Set[Tuple[str, int]]] = {}
+    prop_files: Dict[int, Set[str]] = {}
+    per_file_interval: Dict[int, Dict[str, Tuple[int, int]]] = {}
 
-        # Check if this proposal overlaps with already selected ones
-        if not (affected & used_lines):
-            selected.append(proposal)
+    for idx, p in enumerate(proposals):
+        affected = get_affected_lines(p)
+        prop_affected[idx] = affected
+        files: Set[str] = set(fp for (fp, _ln) in affected)
+        prop_files[idx] = files
+        per_file_interval[idx] = {}
+        # Build convex hull interval per file for MWIS approximation
+        by_file: Dict[str, List[int]] = {}
+        for (fp, ln) in affected:
+            by_file.setdefault(fp, []).append(ln)
+        for fp, lines in by_file.items():
+            per_file_interval[idx][fp] = (min(lines), max(lines))
+
+    # Stage 1: Optimal non-overlapping selection within single-file proposals using MWIS
+    selected_indices: Set[int] = set()
+    used_lines: Set[Tuple[str, int]] = set()
+
+    # Group single-file proposals by that file
+    by_primary_file: Dict[str, List[int]] = {}
+    for idx, files in prop_files.items():
+        if len(files) == 1:
+            fp = next(iter(files))
+            by_primary_file.setdefault(fp, []).append(idx)
+
+    def run_weighted_interval_scheduling(file_path: str, indices: List[int]) -> List[int]:
+        # Build items: (start, end, weight, idx)
+        items: List[Tuple[int, int, int, int, Tuple[str, int]]] = []
+        for idx in indices:
+            start, end = per_file_interval[idx][file_path]
+            weight = proposal_size(proposals[idx])
+            items.append((start, end, weight, idx, first_span(proposals[idx])))
+
+        # Sort by end then tie-breaker to stabilize
+        items.sort(key=lambda t: (t[1], t[0], -t[2], t[4]))
+
+        n = len(items)
+        if n == 0:
+            return []
+
+        # Precompute p[j]: rightmost non-overlapping interval index before j
+        ends = [it[1] for it in items]
+        starts = [it[0] for it in items]
+        p = [ -1 ] * n
+        j = 0
+        for j in range(n):
+            # binary search for last i with ends[i] < starts[j]
+            lo, hi = 0, j - 1
+            last = -1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                if ends[mid] < starts[j]:
+                    last = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            p[j] = last
+
+        # DP arrays
+        dp = [0] * n
+        take = [False] * n
+        for j in range(n):
+            wj = items[j][2]
+            without = dp[j-1] if j > 0 else 0
+            withj = wj + (dp[p[j]] if p[j] != -1 else 0)
+            if withj > without:
+                dp[j] = withj
+                take[j] = True
+            elif withj == without:
+                # Tie-breaker: prefer earlier ending interval set implicitly
+                dp[j] = without
+                take[j] = False
+            else:
+                dp[j] = without
+                take[j] = False
+
+        # Reconstruct
+        sel: List[int] = []
+        j = n - 1
+        while j >= 0:
+            if take[j]:
+                sel.append(items[j][3])
+                j = p[j]
+            else:
+                j -= 1
+        sel.reverse()
+        if _debug_overlap:
+            try:
+                print(
+                    f"OVERLAP_OPTIMAL file={file_path} selected={len(sel)} total_weight={dp[n-1]} candidates={n}"
+                )
+            except Exception:
+                pass
+        return sel
+
+    for fp, idxs in by_primary_file.items():
+        chosen = run_weighted_interval_scheduling(fp, idxs)
+        for idx in chosen:
+            if idx not in selected_indices:
+                selected_indices.add(idx)
+                used_lines.update(prop_affected[idx])
+
+    # Stage 2: Greedy add for remaining proposals (multi-file or leftover), respecting used_lines
+    def sort_key(p: RefactoringProposal) -> Tuple[int, Tuple[str, int]]:
+        return (-(proposal_size(p)), first_span(p))
+
+    remaining = [i for i in range(len(proposals)) if i not in selected_indices]
+    remaining_sorted = sorted(remaining, key=lambda i: sort_key(proposals[i]))
+
+    selected: List[RefactoringProposal] = [proposals[i] for i in selected_indices]
+
+    for idx in remaining_sorted:
+        affected = prop_affected[idx]
+        intersection = affected & used_lines
+        if not intersection:
+            selected.append(proposals[idx])
             used_lines.update(affected)
+        elif _debug_overlap:
+            by_file2: Dict[str, List[int]] = {}
+            for (fp, ln) in intersection:
+                by_file2.setdefault(fp, []).append(ln)
+            parts = [f"{fp}:{min(lines)}-{max(lines)} ({len(lines)} lines)" for fp, lines in by_file2.items()]
+            try:
+                print(
+                    "OVERLAP_DROP: size=",
+                    proposal_size(proposals[idx]),
+                    " first=",
+                    first_span(proposals[idx]),
+                    " because intersects ",
+                    "; ".join(parts),
+                )
+            except Exception:
+                pass
 
-    return selected
+    # Return selected sorted by size descending for external stability
+    return sorted(selected, key=lambda p: (-(proposal_size(p)), first_span(p)))

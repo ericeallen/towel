@@ -36,12 +36,14 @@ def calculate_discount_tier2(price, customer_level):
 
 def transform_data_format_a(data, processor):
     """Format A: Nested method calls and indexing."""
-    return __extracted_func_1('values', lambda *args, **kwargs: processor.normalize(data['values']).upper(*args, **kwargs), data, processor)
+    result = processor.normalize(data["values"]).upper().strip()
+    return extracted_func(processor, result)
 
 
 def transform_data_format_b(data, processor):
     """Format B: Different nested calls, same pattern."""
-    return __extracted_func_1('items', lambda *args, **kwargs: processor.normalize(data['items']).lower(*args, **kwargs), data, processor)
+    result = processor.normalize(data["items"]).lower().strip()
+    return extracted_func(processor, result)
 
 
 def compute_metrics_slow(dataset, multiplier, offset):
@@ -69,8 +71,7 @@ def extracted_func(__param_0, __param_1, __param_2, __param_3, customer_level, p
     return base
 
 
-def __extracted_func_1(__param_0, __param_1, data, processor):
-    result = __param_1().strip()
+def extracted_func(processor, result):
     validated = processor.validate(result)
     if validated:
         processor.store(result)

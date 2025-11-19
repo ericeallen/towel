@@ -9,33 +9,33 @@ data validation, ETL pipelines, error handling, and logging.
 def handle_api_request_v1(request, auth, rate_limiter, logger):
     """Version 1: Complete API request handling."""
     # Authentication and rate limiting
-    return __extracted_func_6(100, __extracted_func_5, auth, logger, rate_limiter, request)
+    return extracted_func(100, auth, extracted_func, logger, rate_limiter, request)
 
 
 def handle_api_request_v2(request, auth, rate_limiter, logger):
     """Version 2: Different rate limit, same handling pattern."""
     # Same pattern, different limit
-    return __extracted_func_6(200, __extracted_func_5, auth, logger, rate_limiter, request)
+    return extracted_func(200, auth, extracted_func, logger, rate_limiter, request)
 
 
 def etl_pipeline_extract_a(source, config, logger):
     """Version A: ETL extract phase."""
-    return __extracted_func_2(30, config, logger, source)
+    return extracted_func(30, config, logger, source)
 
 
 def etl_pipeline_extract_b(source, config, logger):
     """Version B: Different timeout, same extraction pattern."""
-    return __extracted_func_2(60, config, logger, source)
+    return extracted_func(60, config, logger, source)
 
 
 def validate_business_rules_v1(data, rules_engine, audit_log):
     """Version 1: Business rule validation."""
-    return __extracted_func_1(10000, audit_log, data, rules_engine)
+    return extracted_func(10000, audit_log, data, rules_engine)
 
 
 def validate_business_rules_v2(data, rules_engine, audit_log):
     """Version 2: Different amount threshold, same validation."""
-    return __extracted_func_1(5000, audit_log, data, rules_engine)
+    return extracted_func(5000, audit_log, data, rules_engine)
 
 
 def process_batch_with_errors_a(items, processor, error_handler, metrics):
@@ -43,7 +43,7 @@ def process_batch_with_errors_a(items, processor, error_handler, metrics):
     processed = []
     failed = []
 
-    __extracted_func_4('validation_failures', 'processed', 'processing_errors', error_handler, failed, items, metrics, processed, processor)
+    extracted_func('validation_failures', 'processed', 'processing_errors', error_handler, failed, items, metrics, processed, processor)
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -53,7 +53,7 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
     processed = []
     failed = []
 
-    __extracted_func_4('invalid_items', 'success_count', 'error_count', error_handler, failed, items, metrics, processed, processor)
+    extracted_func('invalid_items', 'success_count', 'error_count', error_handler, failed, items, metrics, processed, processor)
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -61,13 +61,13 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
 def cache_with_fallback_v1(key, cache, database, ttl):
     """Version 1: Cache with database fallback."""
     # Try cache first
-    return __extracted_func_3(3600, cache, database, key)
+    return extracted_func(3600, cache, database, key)
 
 
 def cache_with_fallback_v2(key, cache, database, ttl):
     """Version 2: Different TTL, same caching pattern."""
     # Same pattern, different TTL
-    return __extracted_func_3(7200, cache, database, key)
+    return extracted_func(7200, cache, database, key)
 
 
 def aggregate_metrics_a(events, time_window, aggregator):
@@ -94,7 +94,7 @@ def extracted_func(__param_0, events, time_window):
     return {k: {'count': v['count'], 'sum': v['sum'], 'avg': v['sum'] / v['count'] if v['count'] > 0 else 0} for k, v in buckets.items()}
 
 
-def __extracted_func_1(__param_0, audit_log, data, rules_engine):
+def extracted_func(__param_0, audit_log, data, rules_engine):
     errors = []
     warnings = []
     required = ['customer_id', 'amount', 'currency']
@@ -111,7 +111,7 @@ def __extracted_func_1(__param_0, audit_log, data, rules_engine):
     return {'valid': len(errors) == 0, 'errors': errors, 'warnings': warnings}
 
 
-def __extracted_func_2(__param_0, config, logger, source):
+def extracted_func(__param_0, config, logger, source):
     logger.info('Starting extract phase')
     max_retries = 3
     retry_count = 0
@@ -130,7 +130,7 @@ def __extracted_func_2(__param_0, config, logger, source):
     return data
 
 
-def __extracted_func_3(__param_0, cache, database, key):
+def extracted_func(__param_0, cache, database, key):
     cached = cache.get(key)
     if cached is not None:
         cache.increment_hits()
@@ -148,7 +148,7 @@ def __extracted_func_3(__param_0, cache, database, key):
     return None
 
 
-def __extracted_func_4(__param_0, __param_1, __param_2, error_handler, failed, items, metrics, processed, processor):
+def extracted_func(__param_0, __param_1, __param_2, error_handler, failed, items, metrics, processed, processor):
     for i, item in enumerate(items):
         try:
             validated = processor.validate(item)
@@ -166,7 +166,7 @@ def __extracted_func_4(__param_0, __param_1, __param_2, error_handler, failed, i
             metrics.increment(__param_2)
 
 
-def __extracted_func_5(auth, logger, request):
+def extracted_func(auth, logger, request):
     data = request.json()
     validated = auth.validate_payload(data)
     if not validated:
@@ -176,14 +176,14 @@ def __extracted_func_5(auth, logger, request):
     return ({'status': 'success'}, 200)
 
 
-def __extracted_func_6(__param_0, __extracted_func_5, auth, logger, rate_limiter, request):
+def extracted_func(__param_0, auth, extracted_func, logger, rate_limiter, request):
     if not auth.verify_token(request.headers.get('Authorization')):
         logger.warn('Invalid token')
         return ({'error': 'Unauthorized'}, 401)
     if not rate_limiter.check(request.user_id, limit=__param_0):
         logger.warn(f'Rate limit exceeded for user {request.user_id}')
         return ({'error': 'Too many requests'}, 429)
-    return __extracted_func_5(auth, logger, request)
+    return extracted_func(auth, logger, request)
 
 
 

@@ -44,12 +44,7 @@ class PushNotificationProcessor:
     def process(self):
         """Process push notification."""
         # Validation logic (DUPLICATE!)
-        if not self.device_id:
-            raise ValueError("Email is required")
-        if "@" not in self.device_id:
-            raise ValueError("Invalid email format")
-        if len(self.device_id) < 5:
-            raise ValueError("Email too short")
+        extracted_func(self.device_id, self)
 
         print(f"Processing push: {self.device_id}")
         return True

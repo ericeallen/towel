@@ -28,12 +28,12 @@ def log_admin(admin_id, name):
 
 def format_number_a(value):
     """F-string with formatting."""
-    return __extracted_func_1(value)
+    return extracted_func(value)
 
 
 def format_number_b(value):
     """F-string with formatting (same literal - should unify)."""
-    return __extracted_func_1(value)
+    return extracted_func(value)
 
 
 def const_parameterization_a(item):
@@ -48,12 +48,12 @@ def const_parameterization_b(item):
 
 def string_const_a(name):
     """String constants."""
-    return __extracted_func_2('Mr. ', ' Esq.', name)
+    return extracted_func('Mr. ', ' Esq.', name)
 
 
 def string_const_b(name):
     """String constants (different values)."""
-    return __extracted_func_2('Dr. ', ' PhD', name)
+    return extracted_func('Dr. ', ' PhD', name)
 
 
 def mixed_fstring_a(x, y):
@@ -76,13 +76,13 @@ def extracted_func(__param_0, __param_1, item):
     return 0
 
 
-def __extracted_func_1(value):
+def extracted_func(value):
     precision = 2
     result = f'Value: {value:.{precision}f}'
     return result
 
 
-def __extracted_func_2(__param_0, __param_1, name):
+def extracted_func(__param_0, __param_1, name):
     prefix = __param_0
     suffix = __param_1
     return prefix + name + suffix

@@ -92,11 +92,11 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
         # Apply refactorings to fixed point across the project into the output directory
         project_output = output_dir / project_dir.name
         try:
-            results = engine.refactor_directory_to_fixed_point(
+            results, termination_reason = engine.refactor_directory_to_fixed_point(
                 str(project_dir), str(project_output), max_iterations=10
             )
-            total = sum(v[0] for v in results.values()) if results else 0
-            print(f"    Applied {total} refactoring(s) across project to fixed point")
+            total = sum(count for count, _ in results.values()) if results else 0
+            print(f"    Applied {total} refactoring(s) across project (termination={termination_reason})")
         except Exception as e:
             print(f"    Fixed-point cross-file refactoring failed: {e}")
 

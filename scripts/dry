@@ -73,13 +73,31 @@ def copy_to_output(input_path: str, output_path: str) -> None:
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze and apply unification-based refactorings to file(s) or directories."
+        ,
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  just dry src/ cleaned/                         # Refactor directory until fixed point\n"
+            "  just dry file.py file_out.py --non-interactive # Non-interactive (skip prompt)\n"
+            "  just dry src/ out/ --max-iterations 50         # Cap at 50 applied refactorings\n"
+            "  just dry src/ out/ --progress detail           # Verbose per-phase and queue listing\n"
+            "\n"
+            "Options:\n"
+            "  --non-interactive              Proceed without interactive confirmation (non-interactive)\n"
+            "  --max-iterations N             Maximum refactorings to apply (0 = unlimited until fixed point)\n"
+            "  --progress {tqdm,auto,none,detail}  Progress display mode (detail prints per-phase messages)\n"
+            "  --prefer-absolute-imports      Prefer absolute imports for cross-file helpers\n"
+            "  --no-prefer-absolute-imports   Prefer relative/local imports when possible\n"
+            "  --pep420                       Treat dirs as namespace packages when deriving modules\n"
+            "  --no-pep420                    Require __init__.py for packages when deriving modules\n"
+        ),
     )
     parser.add_argument("input", help="Input file or directory")
     parser.add_argument("output", help="Output file or directory (can be same as input)")
     parser.add_argument(
-        "--yes",
+        "--non-interactive",
         action="store_true",
-        help="Proceed without interactive confirmation",
+        help="Run without interactive confirmation (skip prompt)",
     )
     pref_group = parser.add_mutually_exclusive_group()
     pref_group.add_argument(
@@ -110,6 +128,28 @@ def main():
         help="Require __init__.py for packages when deriving module paths",
     )
     parser.set_defaults(pep420=None)
+
+    # Control how many proposals we apply in fixed-point mode
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=0,
+        help=(
+            "Maximum refactorings to apply (0 = unlimited until fixed point, default: 0). "
+            "Use a positive integer to cap iterations for faster feedback or CI."
+        ),
+    )
+
+    # Progress display
+    parser.add_argument(
+        "--progress",
+        choices=["auto", "tqdm", "none", "detail"],
+        default="tqdm",
+        help=(
+            "Progress display mode: 'tqdm' shows bars, 'auto' falls back if tqdm unavailable, "
+            "'none' disables output, 'detail' prints per-phase and top-of-queue summaries."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -168,7 +208,7 @@ def main():
     print("Extracted functions will be placed at the end of files.")
     print()
 
-    if not args.yes:
+    if not args.non_interactive:
         response = input("Proceed? (y/N): ").strip().lower()
         if response != 'y':
             print("Aborted.")
@@ -182,7 +222,7 @@ def main():
         print(f"Refactoring file: {output_path}")
         final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
             output_path,
-            max_iterations=10
+            max_iterations=args.max_iterations,
         )
 
         # Write final result
@@ -198,15 +238,17 @@ def main():
     else:
         # Directory
         print(f"Refactoring directory: {output_path}")
-        results = engine.refactor_directory_to_fixed_point(
+        results, termination_reason = engine.refactor_directory_to_fixed_point(
             output_path,
             output_path,  # In-place since we already copied
-            max_iterations=10
+            max_iterations=args.max_iterations,
+            progress=args.progress,
         )
 
         if results:
             total_refactorings = sum(count for count, _ in results.values())
-            print(f"\n✓ Applied {total_refactorings} refactoring(s) across {len(results)} file(s):")
+            print(f"\n✓ Applied {total_refactorings} refactoring(s) across {len(results)} file(s) ")
+            print(f"  Termination: {termination_reason}")
             for file_path, (count, descriptions) in sorted(results.items()):
                 print(f"\n  {file_path}: {count} refactoring(s)")
                 for desc in descriptions[:3]:  # Show first 3
@@ -214,7 +256,7 @@ def main():
                 if len(descriptions) > 3:
                     print(f"    ... and {len(descriptions) - 3} more")
         else:
-            print("\nNo refactorings found!")
+            print("\nNo refactorings found!  Termination: fixed_point")
 
 
 if __name__ == "__main__":

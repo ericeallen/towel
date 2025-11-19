@@ -35,6 +35,7 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
+    "tqdm>=4.66.0",
 ]
 
 # No console_scripts exposed yet; scripts are provided under scripts/ for development

@@ -48,7 +48,10 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             # Apply first proposal and ensure extracted function inserted inside outer, not module-level only
             modified = engine.apply_refactoring(path, proposals[0])
             # Extracted helper should appear inside outer before the return statement
-            self.assertIn("def extracted_func", modified)
+            # Accept either standard or hygienic naming depending on policy
+            self.assertTrue(
+                ("def extracted_func" in modified) or ("def __extracted_func" in modified)
+            )
             # Ensure it's indented exactly one level inside outer (outer + 4 spaces)
             lines = modified.splitlines()
             outer_indent = None
@@ -56,7 +59,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             for ln in lines:
                 if ln.strip().startswith("def outer"):
                     outer_indent = ln[: len(ln) - len(ln.lstrip())]
-                if ln.strip().startswith("def extracted_func"):
+                if ln.strip().startswith("def __extracted_func") or ln.strip().startswith("def extracted_func"):
                     extracted_indent = ln[: len(ln) - len(ln.lstrip())]
             self.assertIsNotNone(outer_indent)
             self.assertIsNotNone(extracted_indent)
@@ -142,10 +145,10 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             if "global G" in modified:
                 self.assertIn("global G", modified)
             else:
-                # Fallback: ensure extracted function still references G and it remains a parameter or free variable.
-                self.assertIn("def extracted_func", modified)
+                # Fallback: ensure helper exists referencing G
+                self.assertTrue(("def extracted_func" in modified) or ("def __extracted_func" in modified))
                 # Extracted function signature should include G or body should assign to G.
-                self.assertRegex(modified, r"def extracted_func\([^)]*G[^)]*\):|G = G \+")
+                self.assertRegex(modified, r"def (?:__)?extracted_func\([^)]*G[^)]*\):|G = G \+")
         finally:
             os.remove(path)
 
@@ -306,7 +309,7 @@ def consumer(data):
                     return {proposal.file_path: "# updated\n"}
 
             engine = StubEngine(output_dir)
-            results = engine.refactor_directory_to_fixed_point(
+            results, termination_reason = engine.refactor_directory_to_fixed_point(
                 str(input_dir), str(output_dir), max_iterations=2
             )
 
@@ -316,6 +319,7 @@ def consumer(data):
             self.assertEqual(count, 1)
             self.assertEqual(descriptions, ["stub"])
             self.assertEqual(engine.applied, 1)
+            self.assertEqual(termination_reason, "fixed_point")
 
             written = (output_dir / "module.py").read_text(encoding="utf-8")
             self.assertEqual(written, "# updated\n")

@@ -24,8 +24,19 @@ install-dev:
 # === User Commands ===
 
 # Detect and fix duplicates in file or directory (interactive, writes to output)
-dry INPUT OUTPUT:
-    source venv/bin/activate && python scripts/dry {{INPUT}} {{OUTPUT}}
+dry INPUT OUTPUT +ARGS="":
+    # Flags:
+    #   --non-interactive       Skip confirmation prompt
+    #   --max-iterations N      Stop after N refactorings (0 = unlimited, default 0)
+    #   --progress {tqdm,auto,none}  Control progress bars (default: tqdm)
+    #   --prefer-absolute-imports / --no-prefer-absolute-imports
+    #   --pep420 / --no-pep420
+    # Examples:
+    #   just dry src/ cleaned/                           # Unlimited until fixed point
+    #   just dry src/ cleaned/ --max-iterations 50       # Cap at 50
+    #   just dry file.py file_out.py --non-interactive   # Non-interactive single file
+    #   just dry src/ out/ --progress none               # Disable progress display
+    source venv/bin/activate && python scripts/dry {{INPUT}} {{OUTPUT}} {{ARGS}}
 
 # Preview duplicates in file or directory (read-only)
 preview TARGET:

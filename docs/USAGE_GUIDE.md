@@ -59,6 +59,38 @@ for proposal in proposals:
     for file_path, content in modified_files.items():
         with open(file_path, 'w') as f:
             f.write(content)
+
+## Progress Modes & Termination Reason
+
+When using the fixed-point directory refactoring loop (`refactor_directory_to_fixed_point`) or the `dry` CLI, you can control progress output:
+
+| Mode    | Behavior |
+|---------|----------|
+| `tqdm`  | Rich progress bar showing applied count & queue length. |
+| `auto`  | Attempts `tqdm`, falls back to a textual single-line bar. |
+| `none`  | Suppresses all progress output (quiet for CI). |
+| `detail`| Verbose listing of discovered proposals (first 25) and localized follow-ups after each application. |
+
+Call signature returns `(results_dict, termination_reason)` where `termination_reason` is:
+
+* `fixed_point` – No further proposals remain.
+* `iteration_cap` – Stopped because `max_iterations` limit was reached.
+
+Set `max_iterations=0` for unlimited iterations until a fixed point.
+
+### Example (detail mode)
+
+```python
+engine = UnificationRefactorEngine()
+results, reason = engine.refactor_directory_to_fixed_point(
+    "my_project", "my_project_out", max_iterations=0, progress="detail"
+)
+print("Termination:", reason)
+```
+
+### Localized Follow-Ups
+
+After each applied proposal, the engine re-analyzes only the changed files to enqueue *localized* follow-up proposals immediately. This accelerates chained extractions without rescanning the entire project every iteration.
 ```
 
 ## Command-Line Usage

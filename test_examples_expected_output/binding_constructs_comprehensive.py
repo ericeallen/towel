@@ -10,32 +10,32 @@ Tests that Towel correctly handles free variable analysis for:
 
 def test_walrus_basic_a(items):
     """Walrus operator in if condition."""
-    return __extracted_func_3(items)
+    return extracted_func(items)
 
 
 def test_walrus_basic_b(items):
     """Duplicate with walrus operator."""
-    return __extracted_func_3(items)
+    return extracted_func(items)
 
 
 def test_with_statement_a(filename):
     """With statement binding."""
-    return __extracted_func_4(filename)
+    return extracted_func(filename)
 
 
 def test_with_statement_b(filename):
     """Duplicate with statement."""
-    return __extracted_func_4(filename)
+    return extracted_func(filename)
 
 
 def test_with_multiple_a(file1, file2):
     """Multiple context managers."""
-    return __extracted_func_5(file1, file2)
+    return extracted_func(file1, file2)
 
 
 def test_with_multiple_b(file1, file2):
     """Duplicate multiple context managers."""
-    return __extracted_func_5(file1, file2)
+    return extracted_func(file1, file2)
 
 
 def test_walrus_in_comprehension_a(items):
@@ -53,12 +53,12 @@ def test_walrus_in_comprehension_b(items):
 
 def test_nested_with_a(outer_file, inner_file):
     """Nested with statements."""
-    return __extracted_func_1(inner_file, outer_file)
+    return extracted_func(inner_file, outer_file)
 
 
 def test_nested_with_b(outer_file, inner_file):
     """Duplicate nested with statements."""
-    return __extracted_func_1(inner_file, outer_file)
+    return extracted_func(inner_file, outer_file)
 
 
 def test_exception_handler_binding_a(data):
@@ -73,12 +73,12 @@ def test_exception_handler_binding_b(data):
 
 def test_walrus_while_a(items):
     """Walrus in while loop condition."""
-    return __extracted_func_2(items)
+    return extracted_func(items)
 
 
 def test_walrus_while_b(items):
     """Duplicate walrus in while loop."""
-    return __extracted_func_2(items)
+    return extracted_func(items)
 
 
 def extracted_func(data):
@@ -91,7 +91,7 @@ def extracted_func(data):
     return errors
 
 
-def __extracted_func_1(inner_file, outer_file):
+def extracted_func(inner_file, outer_file):
     result = []
     with open(outer_file) as f1:
         result.append(f1.readline())
@@ -100,7 +100,7 @@ def __extracted_func_1(inner_file, outer_file):
     return result
 
 
-def __extracted_func_2(items):
+def extracted_func(items):
     results = []
     idx = 0
     while (item := (items[idx] if idx < len(items) else None)) is not None:
@@ -109,7 +109,7 @@ def __extracted_func_2(items):
     return results
 
 
-def __extracted_func_3(items):
+def extracted_func(items):
     result = []
     if (n := len(items)) > 0:
         result.append(n)
@@ -117,7 +117,7 @@ def __extracted_func_3(items):
     return result
 
 
-def __extracted_func_4(filename):
+def extracted_func(filename):
     lines = []
     with open(filename) as f:
         for line in f:
@@ -125,7 +125,7 @@ def __extracted_func_4(filename):
     return lines
 
 
-def __extracted_func_5(file1, file2):
+def extracted_func(file1, file2):
     data = []
     with open(file1) as f1, open(file2) as f2:
         data.append(f1.read())

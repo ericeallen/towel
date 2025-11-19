@@ -8,42 +8,42 @@ when extracting code with try/except/finally blocks.
 
 def safe_divide_a(x, y):
     """Division with exception handling."""
-    return __extracted_func_4(x, y)
+    return extracted_func(x, y)
 
 
 def safe_divide_b(a, b):
     """Similar division pattern."""
-    return __extracted_func_4(a, b)
+    return extracted_func(a, b)
 
 
 def parse_int_or_default_a(s, default=0):
     """Parse int with fallback."""
-    return __extracted_func_5(default, s)
+    return extracted_func(default, s)
 
 
 def parse_int_or_default_b(text, fallback=0):
     """Similar parse pattern."""
-    return __extracted_func_5(fallback, text)
+    return extracted_func(fallback, text)
 
 
 def process_with_cleanup_a(items):
     """Process with finally cleanup."""
-    return __extracted_func_2(items)
+    return extracted_func(items)
 
 
 def process_with_cleanup_b(values):
     """Similar cleanup pattern."""
-    return __extracted_func_2(values)
+    return extracted_func(values)
 
 
 def nested_exception_a(data):
     """Nested exception handling."""
-    return __extracted_func_3(data)
+    return extracted_func(data)
 
 
 def nested_exception_b(input_val):
     """Similar nested exception pattern."""
-    return __extracted_func_3(input_val)
+    return extracted_func(input_val)
 
 
 def exception_with_else_a(items):
@@ -80,12 +80,12 @@ def reraise_exception_b(y):
 
 def multiple_except_a(data):
     """Multiple except clauses."""
-    return __extracted_func_1(data)
+    return extracted_func(data)
 
 
 def multiple_except_b(input_val):
     """Similar multiple except pattern."""
-    return __extracted_func_1(input_val)
+    return extracted_func(input_val)
 
 
 def extracted_func(__param_0):
@@ -101,7 +101,7 @@ def extracted_func(__param_0):
     return (results, error)
 
 
-def __extracted_func_1(__param_0):
+def extracted_func(__param_0):
     result = None
     try:
         result = int(__param_0) / len(__param_0)
@@ -114,7 +114,7 @@ def __extracted_func_1(__param_0):
     return result
 
 
-def __extracted_func_2(__param_0):
+def extracted_func(__param_0):
     results = []
     count = 0
     try:
@@ -126,7 +126,7 @@ def __extracted_func_2(__param_0):
     return results
 
 
-def __extracted_func_3(__param_0):
+def extracted_func(__param_0):
     result = 0
     try:
         try:
@@ -138,7 +138,7 @@ def __extracted_func_3(__param_0):
     return result
 
 
-def __extracted_func_4(__param_0, __param_1):
+def extracted_func(__param_0, __param_1):
     result = 0
     try:
         result = __param_0 / __param_1
@@ -147,7 +147,7 @@ def __extracted_func_4(__param_0, __param_1):
     return result
 
 
-def __extracted_func_5(__param_0, __param_1):
+def extracted_func(__param_0, __param_1):
     value = __param_0
     try:
         value = int(__param_1)

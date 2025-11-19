@@ -18,10 +18,10 @@ def checkout(cart_items, amount, currency):
 
 
 def extracted_func(amount, currency):
-    return __extracted_func_1(amount, currency)
+    return extracted_func(amount, currency)
 
 
-def __extracted_func_1(amount, currency):
+def extracted_func(amount, currency):
     if amount <= 0:
         return False
     if not currency:

@@ -1,5 +1,9 @@
 # Towel
 
+[![CI](https://github.com/ericeallen/towel/actions/workflows/ci.yml/badge.svg)](https://github.com/ericeallen/towel/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/ericeallen/towel/branch/main/graph/badge.svg)](https://codecov.io/gh/ericeallen/towel)
+[![PyPI](https://img.shields.io/pypi/v/towel.svg)](https://pypi.org/project/towel/)
+
 **A Python tool that DRYs your code.**
 
 Towel automatically detects and refactors violations of the DRY (Don't Repeat Yourself) principle in Python codebases using unification algorithms from automated theorem proving.
@@ -135,6 +139,8 @@ python3 dry.py my_code.py my_code_clean.py
 
 # Refactor in-place (overwrites original)
 python3 dry.py src/ src/
+python3 dry.py src/ src/ --progress detail --max-iterations 0  # verbose unlimited
+python3 dry.py src/ src/ --progress none --max-iterations 100  # quiet capped
 ```
 
 ### Examples
@@ -220,6 +226,31 @@ for j in range(10):  # this block
 ```
 
 **Test Coverage**: 91% coverage with 97 comprehensive unit tests
+
+### Progress & Iteration Feedback
+
+The directory fixed-point refactoring loop supports progress modes via `--progress`:
+
+| Mode    | Description |
+|---------|-------------|
+| `tqdm`  | Rich progress bar (applied count + queued proposals). |
+| `auto`  | Attempts `tqdm`; falls back to single-line textual bar. |
+| `none`  | Suppresses progress output (quiet / CI). |
+| `detail`| Verbose: lists discovered proposals (first 25) and localized follow-ups. |
+
+`refactor_directory_to_fixed_point` returns `(results_dict, termination_reason)` where `termination_reason` is `fixed_point` (no proposals remain) or `iteration_cap` (stopped due to `--max-iterations N`). Use `--max-iterations 0` (default) for unlimited iterations until a fixed point.
+
+Example (detail mode):
+
+```text
+[towel] Analyzing 26 file(s)...
+[towel] Discovered 128 proposal(s)
+  1. Extract common code from state_machine_pattern_v1 and state_machine_pattern_v2
+  2. Extract common code from deeply_nested_computation_v1 and deeply_nested_computation_v2
+  ...
+```
+
+Localized follow-ups: after each applied proposal the engine re-analyzes only changed files and prepends new opportunities to the queue for faster chained extraction.
 
 ## Testing
 

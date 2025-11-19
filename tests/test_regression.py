@@ -28,35 +28,50 @@ def normalize_generated_names(code: str) -> str:
     """
     Normalize generated function and parameter names for alpha-equivalence checking.
 
-    Replaces __extracted_func_<N> and __param_<N> with canonical names
-    (__extracted_func_0, __param_0, etc.) in order of first appearance.
+    Historically, extracted helper and parameter names have varied across versions, e.g.:
+      - __extracted_func_0, __extracted_func_1, ...
+      - __extracted_func, _extracted_func, extracted_func
+      - extracted_function (older extractor default)
+    and parameters like:
+      - __param_0, __param_1, ... (sometimes seen without numeric suffixes)
 
-    This allows comparison of semantically equivalent code that differs only
-    in the numeric suffixes of generated names.
+    This function canonicalizes all such variants to stable placeholders
+    (__extracted_func_0, __extracted_func_1, ... and __param_0, __param_1, ...)
+    in order of first appearance so semantically equivalent outputs compare equal.
     """
     # Track mappings from original names to normalized names
-    func_mapping = {}
-    param_mapping = {}
+    func_mapping: dict[str, str] = {}
+    param_mapping: dict[str, str] = {}
 
-    # Find all function names and create canonical mapping
-    func_names = re.findall(r"__extracted_func_\d+", code)
-    for func_name in func_names:
-        if func_name not in func_mapping:
-            func_mapping[func_name] = f"__extracted_func_{len(func_mapping)}"
+    result = code
 
-    # Find all parameter names and create canonical mapping
-    param_names = re.findall(r"__param_\d+", code)
-    for param_name in param_names:
-        if param_name not in param_mapping:
-            param_mapping[param_name] = f"__param_{len(param_mapping)}"
+    # Regex capturing common helper name variants with optional underscores, optional "tion",
+    # and optional numeric suffixes (e.g., __extracted_func_2, _extracted_func, extracted_function)
+    func_pattern = re.compile(r"\b_{0,2}extracted_func(?:tion)?(?:_\d+)?\b")
+
+    # Regex capturing parameter name variants: __param or __param_#
+    param_pattern = re.compile(r"\b__param(?:_\d+)?\b")
+
+    # Build mapping for function names by order of appearance
+    func_index = 0
+    for match in func_pattern.finditer(code):
+        name = match.group(0)
+        if name not in func_mapping:
+            func_mapping[name] = f"__extracted_func_{func_index}"
+            func_index += 1
+
+    # Build mapping for parameter names by order of appearance
+    param_index = 0
+    for match in param_pattern.finditer(code):
+        name = match.group(0)
+        if name not in param_mapping:
+            param_mapping[name] = f"__param_{param_index}"
+            param_index += 1
 
     # Apply replacements (sort by length descending to avoid partial replacements)
-    result = code
     for original, normalized in sorted(func_mapping.items(), key=lambda x: len(x[0]), reverse=True):
         result = result.replace(original, normalized)
-    for original, normalized in sorted(
-        param_mapping.items(), key=lambda x: len(x[0]), reverse=True
-    ):
+    for original, normalized in sorted(param_mapping.items(), key=lambda x: len(x[0]), reverse=True):
         result = result.replace(original, normalized)
 
     return result

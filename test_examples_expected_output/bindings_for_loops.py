@@ -7,12 +7,12 @@ Tests alpha-renaming: different loop variable names (i vs j) should unify.
 
 def process_list_a(items):
     """Process list with loop variable 'i'."""
-    return __extracted_func_1(items)
+    return extracted_func(items)
 
 
 def process_list_b(items):
     """Process list with loop variable 'j' (should unify with i)."""
-    return __extracted_func_1(items)
+    return extracted_func(items)
 
 
 def nested_loops_a(matrix):
@@ -27,12 +27,12 @@ def nested_loops_b(matrix):
 
 def tuple_unpacking_a(pairs):
     """For loop with tuple unpacking."""
-    return __extracted_func_2(pairs)
+    return extracted_func(pairs)
 
 
 def tuple_unpacking_b(pairs):
     """For loop with tuple unpacking (different var names)."""
-    return __extracted_func_2(pairs)
+    return extracted_func(pairs)
 
 
 def extracted_func(matrix):
@@ -44,7 +44,7 @@ def extracted_func(matrix):
     return total
 
 
-def __extracted_func_1(items):
+def extracted_func(items):
     result = []
     for i in range(len(items)):
         if items[i] > 0:
@@ -52,7 +52,7 @@ def __extracted_func_1(items):
     return result
 
 
-def __extracted_func_2(pairs):
+def extracted_func(pairs):
     result = {}
     for key, value in pairs:
         if value is not None:
