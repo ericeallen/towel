@@ -1,3 +1,17 @@
+## 2025-11-19
+
+- Version: 0.6.8
+- Commit: (this commit)
+- Summary:
+  - Regression safeguards: Expanded `tests/test_regression.py` normalization so helper naming variants (`__extracted_func`, `_extracted_func`, `extracted_function`) map to canonical identifiers, preventing cosmetic diffs from failing stability checks.
+  - Baselines: Regenerated all single-file and cross-file expected outputs via fixed-point refactoring to capture the new naming policies, and introduced `tests/conftest.py` to keep pytest from traversing generated dirs.
+  - Engine hygiene: Added targeted tests for ancestor insertion, detail progress output, Option B literal promotion, and formatting preservation to guard future refactors; also introduced `scripts/bench_refactor.py` for incremental vs. naïve benchmarking.
+- Status: All tests green
+  - Unit/integration tests: 713 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
+
+---
+
 ## 2025-11-10
 
 - Version: 0.6.7
