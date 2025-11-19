@@ -99,6 +99,39 @@ def test_option_b_promotes_equal_literals_in_higher_order_factories(tmp_path):
     called_with_param = any(isinstance(c.args[0], ast.Name) and c.args[0].id.startswith("__param_") for c in calls if c.args)
     assert called_with_param, "make_validator should receive a promoted parameter argument"
 
-    # And the original functions' calls should pass the literal 5 to the helper
-    # Just check the source contains a call where ', 5)' appears among arguments to the helper
-    assert "(5)" in out or ")\n" in out  # weak but guards presence of literal passing; AST-based check may be brittle here
+    # And ensure literal 5 was removed from helper body (threaded as parameter instead)
+    literals = [node.value for node in ast.walk(helper) if isinstance(node, ast.Constant)]
+    assert 5 not in literals, "Literal 5 should be threaded as a parameter when promotion enabled"
+
+
+def test_option_b_disabled_keeps_equal_literals_inline(tmp_path):
+    src = """
+    def c(data):
+        def make_validator(limit):
+            return lambda x: x > limit
+        validator = make_validator(5)
+        return list(filter(validator, data))
+
+    def d(data):
+        def make_validator(limit):
+            return lambda x: x > limit
+        validator = make_validator(5)
+        return list(filter(validator, data))
+    """
+    engine = _engine(min_lines=2, promote_equal_hof_literals=False)
+    file_path = tmp_path / "mod.py"
+    file_path.write_text(textwrap.dedent(src).strip() + "\n", encoding="utf-8")
+    props = engine.analyze_files([str(file_path)])
+    assert props, "Expected a proposal for identical higher-order patterns"
+    out = engine.apply_refactoring(str(file_path), props[0])
+
+    mod = ast.parse(out)
+    helpers = [n for n in mod.body if isinstance(n, ast.FunctionDef) and n.name == "extracted_func"]
+    assert helpers, "Helper should exist"
+    helper = helpers[0]
+    # With Option B disabled, literal 5 stays inline in helper body
+    literals = [node.value for node in ast.walk(helper) if isinstance(node, ast.Constant)]
+    assert 5 in literals, "Literal 5 should remain inline when promotion disabled"
+
+    # Helper should not introduce extra parameters beyond the data argument
+    assert all(arg.arg != "__param_0" for arg in helper.args.args)

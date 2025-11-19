@@ -67,6 +67,39 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
         finally:
             os.remove(path)
 
+    def test_preserves_reasonable_spacing_when_inserting_helper(self):
+        code = textwrap.dedent(
+            """
+            def foo():
+                x = 1
+                y = x + 2
+                return y
+
+            def bar():
+                x = 1
+                y = x + 2
+                return y
+            """
+        ).lstrip("\n")
+        path = self._write_temp(code)
+        try:
+            engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+            proposals = engine.analyze_file(path)
+            self.assertTrue(proposals, "Expected proposal for identical module-level functions")
+            modified = engine.apply_refactoring(path, proposals[0])
+            self.assertTrue(modified.endswith("\n"))
+            # No runaway blank-line sequences anywhere in output
+            self.assertNotIn(
+                "\n\n\n\n",
+                modified,
+                "Helper insertion should not introduce excessive blank lines",
+            )
+            # Ensure EOF blank lines are capped (≤3 newlines at end)
+            trailing = len(modified) - len(modified.rstrip("\n"))
+            self.assertLessEqual(trailing, 3)
+        finally:
+            os.remove(path)
+
     def test_trivial_single_line_return_blocks_rejected(self):
         code = textwrap.dedent(
             """
