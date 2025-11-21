@@ -17,11 +17,7 @@ if proposals:
         print(f"  Extracted function: {fn.name}")
         print(f"  Parameter count: {prop.parameters_count}")
         # Replacement ranges
-        ranges = []
-        for r in prop.replacements:
-            # Each replacement tuple has at least (line_range, node,...)
-            if r and isinstance(r[0], tuple):
-                ranges.append(r[0])
+        ranges = [r.line_range for r in prop.replacements]
         print(f"  Replacement line ranges: {ranges}")
         # Return variables (if any)
         if prop.return_variables:

@@ -33,10 +33,10 @@ def test_module_level_helper_call_from_class_uses_direct_name(tmp_path):
     new_src = engine.apply_refactoring(str(file_path), proposals[0])
 
     # Helper should be defined at module level with standard name
-    assert "def extracted_func" in new_src
+    assert "def __extracted_func_" in new_src
 
-    # Calls inside class methods should reference extracted_func directly (no mangling needed)
-    assert "extracted_func(" in new_src
+    # Calls inside class methods should reference the helper directly (no mangling needed)
+    assert "__extracted_func_" in new_src
 
 
 def test_undefined_name_validation_blocks_brittle_pipeline(tmp_path):
@@ -87,7 +87,11 @@ def test_option_b_promotes_equal_literals_in_higher_order_factories(tmp_path):
 
     # Extracted helper should take a parameter (e.g., __param_0) and use it when calling make_validator
     mod = ast.parse(out)
-    fn_defs = [n for n in mod.body if isinstance(n, ast.FunctionDef) and n.name == "extracted_func"]
+    fn_defs = [
+        n
+        for n in mod.body
+        if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+    ]
     assert fn_defs, "Extracted helper not found"
     helper = fn_defs[0]
     # There should be at least one parameter
@@ -126,7 +130,11 @@ def test_option_b_disabled_keeps_equal_literals_inline(tmp_path):
     out = engine.apply_refactoring(str(file_path), props[0])
 
     mod = ast.parse(out)
-    helpers = [n for n in mod.body if isinstance(n, ast.FunctionDef) and n.name == "extracted_func"]
+    helpers = [
+        n
+        for n in mod.body
+        if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+    ]
     assert helpers, "Helper should exist"
     helper = helpers[0]
     # With Option B disabled, literal 5 stays inline in helper body

@@ -87,12 +87,12 @@ def accumulator_b(values):
 # These should NOT be extractable because they capture different variables
 def multiplier_a(x, factor):
     """Multiplier with captured factor."""
-    return extracted_func(x, factor)
+    return __extracted_func_0(x, factor)
 
 
 def multiplier_b(y, multiplier):
     """Similar pattern but captures different variable names."""
-    return extracted_func(y, multiplier)
+    return __extracted_func_0(y, multiplier)
 
 
 # Variable shadowing edge case
@@ -112,7 +112,7 @@ def shadow_test_b(y):
     return output
 
 
-def extracted_func(__param_0, __param_1):
+def __extracted_func_0(__param_0, __param_1):
     result = 0
     for i in range(__param_0):
         result += __param_1

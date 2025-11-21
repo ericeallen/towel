@@ -58,7 +58,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             if new_src and "def f2(" in new_src:
                 # ensure no injected return call under f2
                 f2_block = new_src.split("def f2")[1]
-                self.assertNotIn("return extracted_func", f2_block)
+                self.assertNotIn("return __extracted_func", f2_block)
                 modified_any = True
         # proposals may be empty or unrelated; test is chiefly that mismatch paths don't sneak a return
         self.assertTrue(True if proposals is not None else True)
@@ -108,7 +108,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         class CallFinder(ast.NodeVisitor):
             def visit_Call(self, node: ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id.startswith("extracted_func"):
+                if isinstance(node.func, ast.Name) and node.func.id.startswith("__extracted_func"):
                     calls.append(node)
                 self.generic_visit(node)
 
@@ -177,10 +177,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         out = engine.apply_refactoring(str(m.path), proposals[0])
         # Extracted method should be inserted inside class with leading underscore
         self.assertIn("class C:", out)
-        self.assertIn("def _extracted_func", out)
-        # Calls should be rewritten to self._extracted_func and not pass self explicitly
-        self.assertIn("return self._extracted_func(", out)
-        self.assertNotIn("self, self._extracted_func", out)
+        self.assertIn("def __extracted_func", out)
+        # Calls should be rewritten to self.__extracted_func and not pass self explicitly
+        self.assertIn("return self.__extracted_func_", out)
+        self.assertNotIn("self, self.__extracted_func_", out)
 
     def test_decorators_preserved_and_no_triple_blank_lines_in_class(self):
         code = """
@@ -246,7 +246,11 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.assertTrue(cls_nodes)
         cls = cls_nodes[0]
         helper = next(
-            (n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_extracted_func"),
+            (
+                n
+                for n in cls.body
+                if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+            ),
             None,
         )
         self.assertIsNotNone(helper, "Extracted helper should be present inside the class")
@@ -268,7 +272,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 for call in ast.walk(method)
                 if isinstance(call, ast.Call)
                 and isinstance(call.func, ast.Attribute)
-                and call.func.attr == "_extracted_func"
+                and call.func.attr.startswith("__extracted_func")
             ]
             self.assertTrue(call_targets, f"Method {method_name} should call the helper")
             for attr in call_targets:
@@ -300,7 +304,11 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.assertTrue(cls_nodes)
         cls = cls_nodes[0]
         helper = next(
-            (n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_extracted_func"),
+            (
+                n
+                for n in cls.body
+                if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+            ),
             None,
         )
         self.assertIsNotNone(helper)
@@ -326,7 +334,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 for call in ast.walk(method)
                 if isinstance(call, ast.Call)
                 and isinstance(call.func, ast.Attribute)
-                and call.func.attr == "_extracted_func"
+                and call.func.attr.startswith("__extracted_func")
             ]
             self.assertTrue(call_targets, f"Method {method_name} should call the helper")
             for call in call_targets:
@@ -403,7 +411,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 (
                     n
                     for n in shared_cls.body
-                    if isinstance(n, ast.FunctionDef) and n.name.startswith("_extracted_func")
+                    if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
                 ),
                 None,
             )
@@ -508,7 +516,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 (
                     n
                     for n in shared_cls.body
-                    if isinstance(n, ast.FunctionDef) and n.name.startswith("_extracted_func")
+                    if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
                 ),
                 None,
             )
@@ -618,7 +626,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 (
                     n
                     for n in intermediate_cls.body
-                    if isinstance(n, ast.FunctionDef) and n.name.startswith("_extracted_func")
+                    if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
                 ),
                 None,
             )
@@ -631,7 +639,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             )
             self.assertFalse(
                 any(
-                    isinstance(n, ast.FunctionDef) and n.name.startswith("_extracted_func")
+                    isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
                     for n in root_cls.body
                 ),
                 "Root should remain unchanged by nearest-ancestor selection",
@@ -679,7 +687,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             outer_fn = outers[0]
             inner_names = {n.name for n in outer_fn.body if isinstance(n, ast.FunctionDef)}
             top_level_names = {n.name for n in mod.body if isinstance(n, ast.FunctionDef)}
-            if "extracted_func" in inner_names and "extracted_func" not in top_level_names:
+            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
+                name.startswith("__extracted_func") for name in top_level_names
+            ):
                 # Runtime equivalence: calling outer should still work and match original
                 ns2 = {}
                 exec(new_src, ns2)
@@ -733,7 +743,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             f_node = fns[0]
             inner_names = {n.name for n in f_node.body if isinstance(n, ast.FunctionDef)}
             top_level = {n.name for n in mod.body if isinstance(n, ast.FunctionDef)}
-            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
+                name.startswith("__extracted_func") for name in top_level
+            ):
                 picked = p
                 new_src = out
                 break
@@ -797,7 +809,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level_names = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if "extracted_func" in inner_names and "extracted_func" not in top_level_names:
+            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
+                name.startswith("__extracted_func") for name in top_level_names
+            ):
                 ns2 = {}
                 exec(new_src, ns2)
                 new_val = asyncio.run(ns2["outer"](2, 5))
@@ -866,11 +880,14 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level_names = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if (
-                "extracted_func" in inner_names
-                and "extracted_func" not in class_level_names
-                and "extracted_func" not in top_level_names
-            ):
+            inner_has_helper = any(name.startswith("__extracted_func") for name in inner_names)
+            class_has_helper = any(
+                name.startswith("__extracted_func") for name in class_level_names
+            )
+            top_level_has_helper = any(
+                name.startswith("__extracted_func") for name in top_level_names
+            )
+            if inner_has_helper and not class_has_helper and not top_level_has_helper:
                 ns2 = {}
                 exec(new_src, ns2)
                 new_val = ns2["C"]().m(2, 5)
@@ -937,7 +954,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
+                name.startswith("__extracted_func") for name in top_level
+            ):
                 ns2 = {}
                 exec(out, ns2)
                 self.assertEqual(orig, ns2["f"](5))
@@ -1001,7 +1020,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
+                name.startswith("__extracted_func") for name in top_level
+            ):
                 ns2 = {}
                 exec(out, ns2)
                 self.assertEqual(orig, asyncio.run(ns2["outer"](2, 5)))
@@ -1069,7 +1090,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
+                name.startswith("__extracted_func") for name in top_level
+            ):
                 found_outer = True
                 new_src = out
                 break
@@ -1148,7 +1171,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if "extracted_func" in inner_names and "extracted_func" not in top_level:
+            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
+                name.startswith("__extracted_func") for name in top_level
+            ):
                 ns2 = {}
                 exec(out, ns2)
                 self.assertEqual(orig, ns2["outer"](5))
@@ -1247,8 +1272,10 @@ class TestCrossFileImports(unittest.TestCase):
             self.assertTrue(props, "Expected a cross-file proposal between a.py and b.py")
             modified = engine.apply_refactoring_multi_file(props[0])
             # At least one file should gain an import of the extracted function
-            has_import = any("import extracted_func" in content for content in modified.values())
-            self.assertTrue(has_import, "Expected an import of extracted_func in one modified file")
+            has_import = any(
+                "import __extracted_func" in content for content in modified.values()
+            )
+            self.assertTrue(has_import, "Expected an import of __extracted_func in one modified file")
 
     def test_cross_file_runtime_equivalence_after_refactor(self):
         import sys, importlib

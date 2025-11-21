@@ -54,7 +54,7 @@ def b(m, n):
             f2_content = mod_files[f2]
             self.assertIn("from f1 import", f2_content)
             # Replacement in f2 should contain a return calling extracted function
-            self.assertIn("return extracted", f2_content)
+            self.assertIn("return __extracted_func_", f2_content)
 
     def test_same_file_deepest_common_insert_into_function(self):
         with tempfile.TemporaryDirectory() as td:
@@ -82,12 +82,12 @@ def outer():
             # Helper should be inserted inside outer(), look for indentation before def name
             lines = modified.splitlines()
             joined = "\n".join(lines)
-            self.assertIn("    def extracted_func(", joined)
+            self.assertIn("    def __extracted_func_", joined)
 
     def test_filter_overlapping_keeps_largest(self):
         # Build two dummy proposals overlapping on same file
         dummy_func = ast.FunctionDef(
-            name="extracted_func",
+            name="__extracted_func_0",
             args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
             body=[ast.Pass()],
             decorator_list=[],

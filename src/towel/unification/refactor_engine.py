@@ -12,6 +12,7 @@ This orchestrates the entire refactoring process:
 import ast
 import copy
 import os
+import re
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Union
@@ -135,6 +136,8 @@ class UnificationRefactorEngine:
         # Memoization caches keyed by the identity of AST nodes parsed for this engine run.
         self._assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]] = WeakKeyDictionary()
         self._used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
+        # Track helper name allocation per canonical file so helpers remain unique.
+        self._helper_name_counters: Dict[str, int] = {}
 
     # --- Debug helpers ---
     def _debug_reject(self, reason: str, pair: "CodeBlockPair", detail: Optional[str] = None) -> None:
@@ -391,6 +394,33 @@ class UnificationRefactorEngine:
             existing = ast.arg(arg=param_name)
 
         fn.args.args = [existing] + remaining
+
+    def _allocate_helper_name(self, file_path: str) -> str:
+        """Return a unique helper name for the given canonical file."""
+
+        counter = self._helper_name_counters.get(file_path)
+        if counter is None:
+            counter = self._discover_helper_counter_seed(file_path)
+        helper_name = f"__extracted_func_{counter}"
+        self._helper_name_counters[file_path] = counter + 1
+        return helper_name
+
+    def _discover_helper_counter_seed(self, file_path: str) -> int:
+        """Prime the helper counter based on existing helper names in a file."""
+
+        try:
+            content = Path(file_path).read_text(encoding="utf-8")
+        except Exception:
+            return 0
+
+        pattern = re.compile(r"__extracted_func(?:_(\d+))?")
+        max_seen = -1
+        for match in pattern.finditer(content):
+            suffix = match.group(1)
+            idx = int(suffix) if suffix is not None else 0
+            if idx > max_seen:
+                max_seen = idx
+        return max_seen + 1
 
     def _prepare_extracted_method_signature(
         self,
@@ -2289,32 +2319,11 @@ class UnificationRefactorEngine:
         # Determine helper names ONCE to avoid mismatches across files
         # Capture the original helper name before any renaming, and compute the final name
         original_helper_name = proposal.extracted_function.name
-        # Naming policy:
-        # - If engine-generated name '__extracted_func' is used:
-        #     * class insertion -> '_extracted_func'
-        #     * function-local insertion -> 'extracted_func'
-        #     * module-level insertion -> 'extracted_func'
-        # - If a custom helper name is provided in the proposal:
-        #     * class insertion -> prefix with '_' if not already
-        #     * function-local/module-level -> keep as-is
-        if proposal.insert_into_class:
-            if original_helper_name == "__extracted_func":
-                proposal.extracted_function.name = "_extracted_func"
-            else:
-                # Prefix a single underscore if not already present
-                proposal.extracted_function.name = (
-                    original_helper_name if original_helper_name.startswith("_") else f"_{original_helper_name}"
-                )
-        elif proposal.insert_into_function:
-            # Function-local insertion: rename engine default to 'extracted_func'; keep custom names
-            proposal.extracted_function.name = (
-                "extracted_func" if original_helper_name == "__extracted_func" else original_helper_name
-            )
-        else:
-            # Module-level insertion: rename engine default to 'extracted_func'; keep custom names
-            proposal.extracted_function.name = (
-                "extracted_func" if original_helper_name == "__extracted_func" else original_helper_name
-            )
+        if original_helper_name == "__extracted_func":
+            proposal.extracted_function.name = self._allocate_helper_name(proposal.file_path)
+        elif proposal.insert_into_class and not original_helper_name.startswith("_"):
+            # Preserve user-provided helper names but keep them non-public inside classes
+            proposal.extracted_function.name = f"_{original_helper_name}"
         final_func_name = proposal.extracted_function.name
 
         # Process each file

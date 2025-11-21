@@ -28,32 +28,32 @@ def log_admin(admin_id, name):
 
 def format_number_a(value):
     """F-string with formatting."""
-    return extracted_func(value)
+    return __extracted_func_1(value)
 
 
 def format_number_b(value):
     """F-string with formatting (same literal - should unify)."""
-    return extracted_func(value)
+    return __extracted_func_1(value)
 
 
 def const_parameterization_a(item):
     """Test constant parameterization."""
-    return extracted_func(100, 2, item)
+    return __extracted_func_0(100, 2, item)
 
 
 def const_parameterization_b(item):
     """Test constant parameterization (different constants)."""
-    return extracted_func(200, 3, item)
+    return __extracted_func_0(200, 3, item)
 
 
 def string_const_a(name):
     """String constants."""
-    return extracted_func('Mr. ', ' Esq.', name)
+    return __extracted_func_2('Mr. ', ' Esq.', name)
 
 
 def string_const_b(name):
     """String constants (different values)."""
-    return extracted_func('Dr. ', ' PhD', name)
+    return __extracted_func_2('Dr. ', ' PhD', name)
 
 
 def mixed_fstring_a(x, y):
@@ -68,7 +68,7 @@ def mixed_fstring_b(x, y):
     return result
 
 
-def extracted_func(__param_0, __param_1, item):
+def __extracted_func_0(__param_0, __param_1, item):
     threshold = __param_0
     multiplier = __param_1
     if item > threshold:
@@ -76,13 +76,13 @@ def extracted_func(__param_0, __param_1, item):
     return 0
 
 
-def extracted_func(value):
+def __extracted_func_1(value):
     precision = 2
     result = f'Value: {value:.{precision}f}'
     return result
 
 
-def extracted_func(__param_0, __param_1, name):
+def __extracted_func_2(__param_0, __param_1, name):
     prefix = __param_0
     suffix = __param_1
     return prefix + name + suffix

@@ -49,9 +49,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             modified = engine.apply_refactoring(path, proposals[0])
             # Extracted helper should appear inside outer before the return statement
             # Accept either standard or hygienic naming depending on policy
-            self.assertTrue(
-                ("def extracted_func" in modified) or ("def __extracted_func" in modified)
-            )
+            self.assertIn("def __extracted_func", modified)
             # Ensure it's indented exactly one level inside outer (outer + 4 spaces)
             lines = modified.splitlines()
             outer_indent = None
@@ -59,7 +57,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             for ln in lines:
                 if ln.strip().startswith("def outer"):
                     outer_indent = ln[: len(ln) - len(ln.lstrip())]
-                if ln.strip().startswith("def __extracted_func") or ln.strip().startswith("def extracted_func"):
+                if ln.strip().startswith("def __extracted_func"):
                     extracted_indent = ln[: len(ln) - len(ln.lstrip())]
             self.assertIsNotNone(outer_indent)
             self.assertIsNotNone(extracted_indent)
@@ -179,7 +177,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 self.assertIn("global G", modified)
             else:
                 # Fallback: ensure helper exists referencing G
-                self.assertTrue(("def extracted_func" in modified) or ("def __extracted_func" in modified))
+                self.assertIn("def __extracted_func", modified)
                 # Extracted function signature should include G or body should assign to G.
                 self.assertRegex(modified, r"def (?:__)?extracted_func\([^)]*G[^)]*\):|G = G \+")
         finally:

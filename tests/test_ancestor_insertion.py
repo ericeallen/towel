@@ -56,12 +56,12 @@ class TestAncestorInsertion(unittest.TestCase):
             modified = engine.apply_refactoring(path, proposal)
             if ancestor_proposals:
                 self.assertIn("class BaseProcessor", modified)
-                self.assertRegex(modified, r"class BaseProcessor[\s\S]*def _extracted_func\(self")
-                self.assertIn("self._extracted_func(", modified)
+                self.assertRegex(modified, r"class BaseProcessor[\s\S]*def __extracted_func")
+                self.assertIn("self.__extracted_func_", modified)
             else:
                 # Module-level insertion path: ensure extracted function present and call sites rewritten.
-                self.assertIn("def extracted_func(", modified)
-                self.assertIn("return extracted_func(", modified)
+                self.assertIn("def __extracted_func", modified)
+                self.assertIn("return __extracted_func(", modified)
         finally:
             os.remove(path)
 

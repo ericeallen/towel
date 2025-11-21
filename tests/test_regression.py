@@ -14,6 +14,7 @@ import tempfile
 import shutil
 import re
 from pathlib import Path
+from typing import Dict
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -77,6 +78,31 @@ def normalize_generated_names(code: str) -> str:
     return result
 
 
+def find_duplicate_helpers(root: Path) -> list[str]:
+    """Return human-readable entries for files containing duplicate helper names."""
+
+    if not root.exists():
+        return []
+
+    helper_pattern = re.compile(r"^\s*def\s+(__extracted_func(?:_\d+)?)\b", re.MULTILINE)
+    duplicates: list[str] = []
+
+    for py_file in sorted(root.rglob("*.py")):
+        text = py_file.read_text(encoding="utf-8")
+        names = helper_pattern.findall(text)
+        if not names:
+            continue
+        counts: Dict[str, int] = {}
+        for name in names:
+            counts[name] = counts.get(name, 0) + 1
+        dup_names = [name for name, count in counts.items() if count > 1]
+        if dup_names:
+            rel_path = py_file.relative_to(root)
+            duplicates.append(f"{rel_path}: {', '.join(sorted(dup_names))}")
+
+    return duplicates
+
+
 class TestSingleFileRegression(unittest.TestCase):
     """
     Regression tests for single-file refactorings.
@@ -99,6 +125,18 @@ class TestSingleFileRegression(unittest.TestCase):
             f"Expected output directory not found: {self.expected_output}\n"
             "Run: python tests/generate_baseline.py",
         )
+
+    def test_expected_output_helper_names_unique(self):
+        """Ensure no fixed-point file defines the same helper name twice."""
+
+        duplicates = find_duplicate_helpers(self.expected_output)
+        if duplicates:
+            formatted = "\n".join(f"  - {entry}" for entry in duplicates)
+            self.fail(
+                "Duplicate extracted helper names detected in expected output files:\n"
+                f"{formatted}\n"
+                "Regenerate baselines or audit the engine to ensure helper names remain unique."
+            )
 
     def test_observational_equivalence_all_examples(self):
         """
@@ -234,6 +272,18 @@ class TestCrossFileRegression(unittest.TestCase):
             f"Expected cross-file output directory not found: {self.expected_output}\n"
             "Run: python tests/generate_baseline.py",
         )
+
+    def test_crossfile_expected_output_helper_names_unique(self):
+        """Ensure cross-file outputs do not reuse helper names in the same module."""
+
+        duplicates = find_duplicate_helpers(self.expected_output)
+        if duplicates:
+            formatted = "\n".join(f"  - {entry}" for entry in duplicates)
+            self.fail(
+                "Duplicate extracted helper names detected in cross-file expected outputs:\n"
+                f"{formatted}\n"
+                "Regenerate baselines or audit the engine to ensure helper names remain unique."
+            )
 
     def test_crossfile_observational_equivalence(self):
         """

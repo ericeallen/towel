@@ -8,22 +8,22 @@ Tests: Same-file duplicate detection with loops and complex logic.
 def process_json_data(data):
     """Process JSON data."""
     # Data processing logic
-    return extracted_func(data)
+    return __extracted_func_0(data)
 
 
 def process_xml_data(data):
     """Process XML data."""
     # Data processing logic (DUPLICATE!)
-    return extracted_func(data)
+    return __extracted_func_0(data)
 
 
 def process_csv_data(data):
     """Process CSV data."""
     # Data processing logic (DUPLICATE!)
-    return extracted_func(data)
+    return __extracted_func_0(data)
 
 
-def extracted_func(data):
+def __extracted_func_0(data):
     result = {}
     for key, value in data.items():
         if isinstance(value, str):

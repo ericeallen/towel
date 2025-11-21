@@ -136,9 +136,9 @@ def fb(x):
         # With prefer_absolute_imports=True and src-layout package, expect absolute import
         # Module should be pkg.mod.alpha if alpha.py is the canonical file
         if canonical.name == "alpha.py":
-            expected_prefix = "from pkg.mod.alpha import extracted_func"
+            expected_prefix = "from pkg.mod.alpha import __extracted_func"
         else:
-            expected_prefix = "from pkg.mod.beta import extracted_func"
+            expected_prefix = "from pkg.mod.beta import __extracted_func"
 
         assert (
             expected_prefix in content

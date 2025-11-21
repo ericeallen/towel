@@ -11,7 +11,7 @@ def process_user_data(user_id):
     user = {"id": user_id, "name": "John", "email": "john@example.com"}
 
     # Validate user data (DUPLICATE!)
-    extracted_func(user)
+    __extracted_func_0(user)
 
     print(f"Processing user: {user['name']}")
     return user
@@ -23,7 +23,7 @@ def process_admin_data(admin_id):
     admin = {"id": admin_id, "name": "Admin", "email": "admin@example.com"}
 
     # Validate admin data (DUPLICATE!)
-    extracted_func(admin)
+    __extracted_func_0(admin)
 
     print(f"Processing admin: {admin['name']}")
     return admin
@@ -35,13 +35,13 @@ def process_guest_data(guest_id):
     guest = {"id": guest_id, "name": "Guest", "email": "guest@example.com"}
 
     # Validate guest data (DUPLICATE!)
-    extracted_func(guest)
+    __extracted_func_0(guest)
 
     print(f"Processing guest: {guest['name']}")
     return guest
 
 
-def extracted_func(__param_0):
+def __extracted_func_0(__param_0):
     if not __param_0.get('id'):
         raise ValueError('User ID is required')
     if not __param_0.get('name'):

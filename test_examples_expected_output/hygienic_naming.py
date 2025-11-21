@@ -9,23 +9,23 @@ collide with variables in the surrounding scope or in the calling context.
 def process_with_temp_var_v1(data, result):
     """Version 1: Uses 'result' in outer scope, 'x' in duplicate block."""
     result = []
-    return extracted_func(2, data, extracted_func, result)
+    return __extracted_func_4(2, __extracted_func_3, data, result)
 
 
 def process_with_temp_var_v2(data, result):
     """Version 2: Same pattern but 'result' is a parameter name."""
     result = []
-    return extracted_func(3, data, extracted_func, result)
+    return __extracted_func_4(3, __extracted_func_3, data, result)
 
 
 def calculate_nested_scope_a(values, x, y):
     """Uses x and y as parameters - extracted function must avoid these."""
-    return extracted_func(5, values, x, y)
+    return __extracted_func_0(5, values, x, y)
 
 
 def calculate_nested_scope_b(values, x, y):
     """Same outer variable names - extracted function needs hygienic naming."""
-    return extracted_func(10, values, x, y)
+    return __extracted_func_0(10, values, x, y)
 
 
 def transform_with_shadowing_v1(data, temp, cache):
@@ -36,7 +36,7 @@ def transform_with_shadowing_v1(data, temp, cache):
     for key, value in data.items():
         # Block that modifies outer 'temp' and 'cache'
         processed = value.upper()
-        extracted_func(5, cache, key, processed, temp)
+        __extracted_func_2(5, cache, key, processed, temp)
 
     return temp, cache
 
@@ -49,7 +49,7 @@ def transform_with_shadowing_v2(data, temp, cache):
     for key, value in data.items():
         # Same pattern, different validation condition
         processed = value.lower()
-        extracted_func(3, cache, key, processed, temp)
+        __extracted_func_2(3, cache, key, processed, temp)
 
     return temp, cache
 
@@ -74,23 +74,23 @@ def compute_with_param_collision_b(items, param1, param2, param3):
         # Different computation but same structure
         step1 = item - param1
         step2 = step1 / param2
-        extracted_func(step2, param3, results)
+        __extracted_func_5(step2, param3, results)
     return results
 
 
 def nested_function_scope_v1(data, helper, processor):
     """Defines nested functions - extracted code must not collide."""
 
-    return extracted_func(2, 100, data, extracted_func)
+    return __extracted_func_7(2, 100, __extracted_func_1, __extracted_func_6, data)
 
 
 def nested_function_scope_v2(data, helper, processor):
     """Same nested function names, different computation."""
 
-    return extracted_func(3, 200, data, extracted_func)
+    return __extracted_func_7(3, 200, __extracted_func_1, __extracted_func_6, data)
 
 
-def extracted_func(__param_0, values, x, y):
+def __extracted_func_0(__param_0, values, x, y):
     output = []
     for val in values:
         a = val + x
@@ -100,7 +100,7 @@ def extracted_func(__param_0, values, x, y):
     return output
 
 
-def extracted_func():
+def __extracted_func_1():
 
     def helper(x):
         return x * 2
@@ -109,42 +109,42 @@ def extracted_func():
         return x + 5
 
 
-def extracted_func(__param_0, cache, key, processed, temp):
+def __extracted_func_2(__param_0, cache, key, processed, temp):
     validated = len(processed) > __param_0
     if validated:
         temp.append(processed)
         cache[key] = processed
 
 
-def extracted_func(result, x):
-    extracted_func(x, 10, result)
+def __extracted_func_3(result, x):
+    __extracted_func_5(x, 10, result)
 
 
-def extracted_func(__param_0, data, extracted_func, result):
+def __extracted_func_4(__param_0, __extracted_func_3, data, result):
     for item in data:
         x = item * __param_0
-        extracted_func(result, x)
+        __extracted_func_3(result, x)
     return result
 
 
-def extracted_func(__param_0, __param_1, __param_2):
+def __extracted_func_5(__param_0, __param_1, __param_2):
     step3 = __param_0 + __param_1
     final = step3 ** 2
     __param_2.append(final)
 
 
-def extracted_func(__param_0, a, results):
+def __extracted_func_6(__param_0, a, results):
     b = a + __param_0
     c = b * 3
     results.append(c)
 
 
-def extracted_func(__param_0, __param_1, data, extracted_func):
-    extracted_func()
+def __extracted_func_7(__param_0, __param_1, __extracted_func_1, __extracted_func_6, data):
+    __extracted_func_1()
     results = []
     for item in data:
         a = item ** __param_0
-        extracted_func(__param_1, a, results)
+        __extracted_func_6(__param_1, a, results)
     return results
 
 

@@ -1,3 +1,17 @@
+## 2025-11-21
+
+- Version: 0.6.9
+- Commit: (this commit)
+- Summary:
+  - Hygiene: Ensured extracted helper functions get unique, per-file names by seeding helper counters from each canonical file, updated import rewriting, and taught the refactor engine to preserve uniqueness when promoting helpers across files.
+  - Regression coverage: Added duplicate-helper detection to `tests/test_regression.py` plus numerous targeted assertions so observational-equivalence suites accept the new suffixing scheme without brittle expectations.
+  - Baselines: Regenerated every single-file and cross-file expected output to capture the helper naming changes and keep regression comparisons stable.
+- Status: All tests green
+  - Unit/integration tests: 715 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
+
+---
+
 ## 2025-11-19
 
 - Version: 0.6.8
