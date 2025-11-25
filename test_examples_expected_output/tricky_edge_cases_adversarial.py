@@ -162,7 +162,7 @@ def __extracted_func_2(__param_0, __param_1):
     result = __param_0 * 2
     if result > __param_1:
         return result
-    result = result + 10
+    result += 10
     return result
 
 
@@ -185,14 +185,14 @@ def __extracted_func_4(__param_0, __param_1):
 def __extracted_func_5(__param_0, __param_1):
     message = ''
     message = f'Name: {__param_0}'
-    message = message + f', Age: {__param_1}'
+    message += f', Age: {__param_1}'
     return message
 
 
 def __extracted_func_6(__param_0, __param_1):
     result = 0
     result = __param_0 if __param_0 > __param_1 else __param_1
-    result = result * 2
+    result *= 2
     return result
 
 
@@ -206,14 +206,14 @@ def __extracted_func_7(__param_0, __param_1, __param_2):
 def __extracted_func_8(__param_0, __param_1, __param_2):
     result = []
     result = __param_0[__param_1:__param_2]
-    result = result + [999]
+    result += [999]
     return len(result)
 
 
 def __extracted_func_9(__param_0, __param_1):
     result = set()
     result = __param_0 | __param_1
-    result = result & {1, 2, 3}
+    result &= {1, 2, 3}
     return len(result)
 
 

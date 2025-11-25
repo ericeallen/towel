@@ -96,7 +96,7 @@ def function_with_docstring():
         )
 
     def test_extract_blocks_with_nested_functions(self):
-        """Test extracting blocks containing nested function definitions."""
+        """Blocks that include nested defs should now be skipped entirely."""
         code = """
 def outer():
     def inner1():
@@ -112,14 +112,19 @@ def outer():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        blocks = self.engine._extract_code_blocks(func)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+        blocks = engine._extract_code_blocks(func)
 
-        # Full body block should contain both nested functions
-        full_body = blocks[0][1]
-        nested_funcs = [stmt for stmt in full_body if isinstance(stmt, ast.FunctionDef)]
-        self.assertEqual(
-            len(nested_funcs), 2, "Full body should contain both nested function definitions"
-        )
+        self.assertGreater(len(blocks), 0, "Should still extract blocks after nested defs")
+
+        for _, block in blocks:
+            self.assertTrue(
+                all(
+                    not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                    for stmt in block
+                ),
+                "Extracted blocks must exclude nested function/class definitions",
+            )
 
 
 class TestStructuralSimilarity(unittest.TestCase):
@@ -417,24 +422,18 @@ def outer2(data, threshold):
                 len(relevant_proposals), 0, "Should have proposals involving both outer functions"
             )
 
-            # Check if any proposal includes both nested functions as definitions
-            found_both_nested = False
+            # Extracted helpers should now omit nested function definitions entirely
             for prop in relevant_proposals:
                 if isinstance(prop.extracted_function, ast.FunctionDef):
-                    func_def = prop.extracted_function
                     nested_defs = [
-                        stmt for stmt in func_def.body if isinstance(stmt, ast.FunctionDef)
+                        stmt for stmt in prop.extracted_function.body
+                        if isinstance(stmt, ast.FunctionDef)
                     ]
-                    nested_names = {func.name for func in nested_defs}
-
-                    if "make_validator" in nested_names and "make_transformer" in nested_names:
-                        found_both_nested = True
-                        break
-
-            self.assertTrue(
-                found_both_nested,
-                "Should have at least one proposal with both nested functions as definitions",
-            )
+                    self.assertEqual(
+                        nested_defs,
+                        [],
+                        "Extracted helper should not contain nested function definitions",
+                    )
 
         finally:
             os.unlink(temp_path)

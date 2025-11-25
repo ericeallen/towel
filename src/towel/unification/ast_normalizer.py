@@ -162,6 +162,37 @@ def normalize_assigns_to_augassigns(tree: ast.AST) -> ast.AST:
     return cast(ast.AST, normalizer.visit(tree))
 
 
+class ArithmeticCanonicalizer(ast.NodeTransformer):
+    """Canonicalize arithmetic expressions for easier unification."""
+
+    generic_visit = make_defensive_generic_visit("ArithmeticCanonicalizer")
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.AST:  # noqa: N802
+        node = cast(ast.UnaryOp, self.generic_visit(node))
+        if isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
+            value = node.operand.value
+            if isinstance(value, (int, float, complex)):
+                return ast.copy_location(ast.Constant(value=-value), node)
+        return node
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:  # noqa: N802
+        node = cast(ast.BinOp, self.generic_visit(node))
+        if isinstance(node.op, ast.Sub) and isinstance(node.right, ast.Constant):
+            value = node.right.value
+            if isinstance(value, (int, float, complex)):
+                new_const = ast.Constant(value=-value)
+                new_node = ast.BinOp(left=node.left, op=ast.Add(), right=new_const)
+                return ast.copy_location(new_node, node)
+        return node
+
+
+def canonicalize_arithmetic(tree: ast.AST) -> ast.AST:
+    """Apply arithmetic canonicalization for additive/subtractive expressions."""
+
+    canon = ArithmeticCanonicalizer()
+    return cast(ast.AST, canon.visit(tree))
+
+
 def normalize_code(code: str) -> str:
     """
     Normalize Python code by converting assignments to augmented assignments.
@@ -174,4 +205,5 @@ def normalize_code(code: str) -> str:
     """
     tree = ast.parse(code)
     normalized_tree = normalize_assigns_to_augassigns(tree)
+    normalized_tree = canonicalize_arithmetic(normalized_tree)
     return ast.unparse(normalized_tree)

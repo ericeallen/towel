@@ -15,7 +15,7 @@ The top-level run_pipeline() wires these phases.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, cast
 import ast
 from pathlib import Path
 
@@ -28,6 +28,7 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .visitors import FunctionCollector
+from .ast_normalizer import normalize_assigns_to_augassigns, canonicalize_arithmetic
 if TYPE_CHECKING:  # pragma: no cover
     from .refactor_engine import UnificationRefactorEngine
 
@@ -44,6 +45,8 @@ def parse_modules(paths: Sequence[str]) -> List[ParsedModule]:
         try:
             src = Path(p).read_text(encoding="utf-8")
             tree = ast.parse(src)
+            tree = normalize_assigns_to_augassigns(tree)
+            tree = canonicalize_arithmetic(tree)
         except Exception:
             # Skip unreadable or syntactically invalid files
             continue
@@ -270,7 +273,8 @@ def filter_overlaps(proposals: List[RefactoringProposal]) -> List[RefactoringPro
 
 
 # Simple analysis cache keyed by file path
-_analysis_cache = {}
+_analysis_cache: Dict[str, Dict[str, Any]] = {}
+_ANALYSIS_CACHE_VERSION = 2
 
 def run_pipeline(
     paths: Sequence[str],
@@ -315,14 +319,17 @@ def run_pipeline(
     if inline_parse:
         print("Parsing files:", end=" ", flush=True)
     for idx, p in enumerate(paths, 1):
-        if p in _analysis_cache:
-            mods.append(_analysis_cache[p]["mod"])
+        cache_entry = _analysis_cache.get(p)
+        if cache_entry and cache_entry.get("version") == _ANALYSIS_CACHE_VERSION:
+            mods.append(cache_entry["mod"])
         else:
             try:
                 src = Path(p).read_text(encoding="utf-8")
                 tree = ast.parse(src)
+                tree = normalize_assigns_to_augassigns(tree)
+                tree = canonicalize_arithmetic(tree)
                 mod = ParsedModule(file_path=p, source=src, tree=tree)
-                _analysis_cache[p] = {"mod": mod}
+                _analysis_cache[p] = {"mod": mod, "version": _ANALYSIS_CACHE_VERSION}
                 mods.append(mod)
             except Exception:
                 continue

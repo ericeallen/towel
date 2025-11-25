@@ -1,3 +1,17 @@
+## 2025-11-25
+
+- Version: 0.6.10
+- Commit: (this commit)
+- Summary:
+  - Pipeline: Versioned the parse/analysis cache and routed cached modules through assign→augassign plus arithmetic canonicalization so fresh engine runs always see normalized ASTs without manual cache busts.
+  - Engine coverage: With canonicalized inputs, the refactor engine now extracts the `process_user_score_v1/2` helper in `complex_expressions.py`, matching manual unifier expectations.
+  - Baselines/tests: Regenerated all single-file and cross-file expected outputs to capture the new helper and canonicalized subtraction forms, and re-ran targeted normalizer + engine pytest suites (58 tests) to keep focused coverage green.
+- Status: Targeted suites green
+  - Unit/integration tests: 58 tests OK (0 skipped)
+  - Cross-file observational equivalence: not re-run (unchanged behavior outside normalization)
+
+---
+
 ## 2025-11-21
 
 - Version: 0.6.9

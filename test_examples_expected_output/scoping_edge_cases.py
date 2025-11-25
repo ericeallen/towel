@@ -28,31 +28,37 @@ def with_nested_func_b(items):
     def processor(x):
         return x * 2
 
-    return __extracted_func_1(items, processor)
+    return __extracted_func_0(items, processor)
 
 
 def with_lambda_a(items):
     """Lambda expression."""
     processor = lambda x: x * 2
-    return __extracted_func_1(items, processor)
+    return __extracted_func_0(items, processor)
 
 
 def with_lambda_b(items):
     """Lambda expression (duplicate)."""
     processor = lambda y: y * 2
-    return __extracted_func_1(items, processor)
+    return __extracted_func_0(items, processor)
 
 
 def closure_a(multiplier):
     """Function that creates closure."""
 
-    return __extracted_func_0(multiplier)
+    def process(items):
+        return __extracted_func_1(items, multiplier)
+
+    return process
 
 
 def closure_b(multiplier):
     """Function that creates closure (duplicate)."""
 
-    return __extracted_func_0(multiplier)
+    def process(items):
+        return __extracted_func_1(items, multiplier)
+
+    return process
 
 
 def shadowing_a(x):
@@ -83,22 +89,19 @@ def builtin_override_b(items):
     return __extracted_func_2(items)
 
 
-def __extracted_func_0(multiplier):
-
-    def process(items):
-        result = []
-        for item in items:
-            if item > 0:
-                result.append(item * multiplier)
-        return result
-    return process
-
-
-def __extracted_func_1(items, processor):
+def __extracted_func_0(items, processor):
     result = []
     for item in items:
         if item > 0:
             result.append(processor(item))
+    return result
+
+
+def __extracted_func_1(items, multiplier):
+    result = []
+    for item in items:
+        if item > 0:
+            result.append(item * multiplier)
     return result
 
 

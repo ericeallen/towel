@@ -12,6 +12,7 @@ from src.towel.unification.ast_normalizer import (
     AssignToAugAssignNormalizer,
     normalize_assigns_to_augassigns,
     normalize_code,
+    canonicalize_arithmetic,
 )
 
 
@@ -382,6 +383,42 @@ def foo():
 
         self.assertIsInstance(aug_stmt, ast.AugAssign, "Should remain augmented assignment")
         self.assertIsInstance(assign_stmt, ast.AugAssign, "Should convert to augmented assignment")
+
+
+class TestArithmeticCanonicalization(unittest.TestCase):
+    """Test canonicalization of additive/subtractive expressions."""
+
+    def test_subtraction_with_constant_becomes_add_negative(self):
+        code = """
+def foo(x):
+    return x * 3 - 5
+"""
+        tree = ast.parse(code)
+        canon = canonicalize_arithmetic(tree)
+
+        func = canon.body[0]
+        ret = func.body[0]
+        expr = ret.value
+
+        self.assertIsInstance(expr, ast.BinOp, "Expression should remain BinOp")
+        self.assertIsInstance(expr.op, ast.Add, "Subtraction should convert to addition")
+        self.assertIsInstance(expr.right, ast.Constant, "Right operand should be folded constant")
+        self.assertEqual(expr.right.value, -5)
+
+    def test_unary_minus_constant_folded_into_constant(self):
+        code = """
+def foo():
+    return -10
+"""
+        tree = ast.parse(code)
+        canon = canonicalize_arithmetic(tree)
+
+        func = canon.body[0]
+        ret = func.body[0]
+        expr = ret.value
+
+        self.assertIsInstance(expr, ast.Constant, "Unary minus constant should fold into Constant")
+        self.assertEqual(expr.value, -10)
 
 
 class TestBitwiseOperators(unittest.TestCase):

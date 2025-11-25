@@ -914,6 +914,15 @@ class UnificationRefactorEngine:
                 for start in range(len(body) - length + 1):
                     block = body[start : start + length]
 
+                    # Do not extract blocks that contain nested function/class definitions.
+                    # These statements establish new scopes whose bindings must remain in the
+                    # original function so later statements can reference them.
+                    if any(
+                        isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                        for stmt in block
+                    ):
+                        continue
+
                     if not block:
                         continue
 

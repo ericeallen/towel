@@ -597,7 +597,7 @@ def __extracted_func_0(__param_0):
 def __extracted_func_1(__param_0):
     result = __param_0
     try:
-        result = result / __param_0
+        result /= __param_0
     except ZeroDivisionError:
         result = 0
     except Exception as e:
@@ -635,33 +635,33 @@ def __extracted_func_3(__param_0):
 
 def __extracted_func_4(__param_0):
     result = __param_0 + 42
-    result = result + 3.14
-    result = result + 1j
-    result = result + len('string')
-    result = result + len(b'bytes')
-    result = result + (1 if True else 0)
-    result = result + (0 if None else 1)
+    result += 3.14
+    result += 1j
+    result += len('string')
+    result += len(b'bytes')
+    result += 1 if True else 0
+    result += 0 if None else 1
     return result
 
 
 def __extracted_func_5(__param_0, __param_1):
     result = __param_0 + __param_1
-    result = result - __param_1
-    result = result * 2
-    result = result / 2
-    result = result // 2
-    result = result % 3
-    result = result ** 2
+    result -= __param_1
+    result *= 2
+    result /= 2
+    result //= 2
+    result %= 3
+    result **= 2
     return result
 
 
 def __extracted_func_6(__param_0, __param_1):
     result = __param_0 & __param_1
-    result = result | __param_1
-    result = result ^ __param_1
+    result |= __param_1
+    result ^= __param_1
     result = ~result
-    result = result << 1
-    result = result >> 1
+    result <<= 1
+    result >>= 1
     return result
 
 
