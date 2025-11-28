@@ -9,12 +9,13 @@ Usage:
 import sys
 import ast
 from pathlib import Path
+from typing import Optional, Tuple, List, Union
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 4:
         print("Usage: python scripts/debug_pair.py <file.py> <func1> <func2>")
         sys.exit(2)
@@ -42,7 +43,9 @@ def main():
     ]
 
     # Extract full body blocks (skip docstring)
-    def body_range(f):
+    def body_range(
+        f: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    ) -> Optional[Tuple[Tuple[int, int], List[ast.stmt]]]:
         body = f.body
         if (
             body

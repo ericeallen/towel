@@ -13,6 +13,7 @@ Phases (in order):
 
 The top-level run_pipeline() wires these phases.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, cast
@@ -29,6 +30,7 @@ from .models import (
 from .scope_analyzer import ScopeAnalyzer
 from .visitors import FunctionCollector
 from .ast_normalizer import normalize_assigns_to_augassigns, canonicalize_arithmetic
+
 if TYPE_CHECKING:  # pragma: no cover
     from .refactor_engine import UnificationRefactorEngine
 
@@ -44,7 +46,7 @@ def parse_modules(paths: Sequence[str]) -> List[ParsedModule]:
     for p in paths:
         try:
             src = Path(p).read_text(encoding="utf-8")
-            tree = ast.parse(src)
+            tree: ast.AST = ast.parse(src)
             tree = normalize_assigns_to_augassigns(tree)
             tree = canonicalize_arithmetic(tree)
         except Exception:
@@ -84,9 +86,7 @@ def collect_classes(mods: Sequence[ParsedModule]) -> List[ClassInfo]:
             self.class_stack: List[str] = []
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-            qualname = (
-                ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
-            )
+            qualname = ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
             bases: List[str] = []
             for b in node.bases:
                 resolved = resolve_base_name(b)
@@ -153,7 +153,7 @@ def pair_blocks(
     packed = [
         (
             f.file_path,
-            cast(ast.FunctionDef, f.node),
+            f.node,
             f.source,
             f.scope_analyzer,
             f.root_scope,
@@ -175,6 +175,7 @@ def pair_blocks(
     if progress in {"tqdm", "auto"}:
         try:
             import importlib
+
             _tqdm_mod = importlib.import_module("tqdm.auto")
             _tqdm_cls = getattr(_tqdm_mod, "tqdm")
             tqdm_bar = _tqdm_cls(
@@ -208,7 +209,9 @@ def pair_blocks(
                     tqdm_bar.update(1)
                     # Keep postfix compact to avoid wrapping
                     if func_pairs_examined % 50 == 0 or func_pairs_examined == total_func_pairs:
-                        tqdm_bar.set_postfix({"fp": f"{func_pairs_examined}/{total_func_pairs}"}, refresh=True)
+                        tqdm_bar.set_postfix(
+                            {"fp": f"{func_pairs_examined}/{total_func_pairs}"}, refresh=True
+                        )
                 except Exception:
                     pass
             elif use_inline:
@@ -251,7 +254,7 @@ def unify_blocks(
     packed = [
         (
             f.file_path,
-            cast(ast.FunctionDef, f.node),
+            f.node,
             f.source,
             f.scope_analyzer,
             f.root_scope,
@@ -261,7 +264,9 @@ def unify_blocks(
         )
         for f in funcs
     ]
-    return engine._process_block_pairs(list(pairs), packed, list(classes), verbose=verbose, progress=progress)
+    return engine._process_block_pairs(
+        list(pairs), packed, list(classes), verbose=verbose, progress=progress
+    )
 
 
 def filter_overlaps(proposals: List[RefactoringProposal]) -> List[RefactoringProposal]:
@@ -271,10 +276,10 @@ def filter_overlaps(proposals: List[RefactoringProposal]) -> List[RefactoringPro
     return _filter(proposals)
 
 
-
 # Simple analysis cache keyed by file path
 _analysis_cache: Dict[str, Dict[str, Any]] = {}
 _ANALYSIS_CACHE_VERSION = 2
+
 
 def run_pipeline(
     paths: Sequence[str],
@@ -291,6 +296,7 @@ def run_pipeline(
     # Lazy import to avoid circular import at module load time
     if engine is None:
         from .refactor_engine import UnificationRefactorEngine as _Engine  # local import
+
         eng: "UnificationRefactorEngine" = _Engine()
     else:
         eng = engine
@@ -306,9 +312,12 @@ def run_pipeline(
     if use_progress:
         try:
             import importlib
+
             _tqdm_mod = importlib.import_module("tqdm.auto")
             _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            parse_bar = _tqdm_cls(total=len(paths), desc="parse", unit="file", dynamic_ncols=True, leave=False)
+            parse_bar = _tqdm_cls(
+                total=len(paths), desc="parse", unit="file", dynamic_ncols=True, leave=False
+            )
         except Exception:
             parse_bar = None
     else:
@@ -325,7 +334,7 @@ def run_pipeline(
         else:
             try:
                 src = Path(p).read_text(encoding="utf-8")
-                tree = ast.parse(src)
+                tree: ast.AST = ast.parse(src)
                 tree = normalize_assigns_to_augassigns(tree)
                 tree = canonicalize_arithmetic(tree)
                 mod = ParsedModule(file_path=p, source=src, tree=tree)
@@ -358,9 +367,12 @@ def run_pipeline(
     if use_progress:
         try:
             import importlib
+
             _tqdm_mod = importlib.import_module("tqdm.auto")
             _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            scope_bar = _tqdm_cls(total=len(mods), desc="scope", unit="mod", dynamic_ncols=True, leave=False)
+            scope_bar = _tqdm_cls(
+                total=len(mods), desc="scope", unit="mod", dynamic_ncols=True, leave=False
+            )
         except Exception:
             scope_bar = None
     else:
@@ -405,9 +417,12 @@ def run_pipeline(
     if use_progress:
         try:
             import importlib
+
             _tqdm_mod = importlib.import_module("tqdm.auto")
             _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            class_bar = _tqdm_cls(total=len(mods), desc="class", unit="mod", dynamic_ncols=True, leave=False)
+            class_bar = _tqdm_cls(
+                total=len(mods), desc="class", unit="mod", dynamic_ncols=True, leave=False
+            )
         except Exception:
             class_bar = None
     else:
@@ -444,7 +459,7 @@ def run_pipeline(
     if inline_class:
         print()
 
-    classes = []
+    classes: List[ClassInfo] = []
     for m in mods:
         classes.extend(m.class_infos or [])
 
@@ -452,9 +467,12 @@ def run_pipeline(
     if use_progress:
         try:
             import importlib
+
             _tqdm_mod = importlib.import_module("tqdm.auto")
             _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            func_bar = _tqdm_cls(total=len(mods), desc="func", unit="mod", dynamic_ncols=True, leave=False)
+            func_bar = _tqdm_cls(
+                total=len(mods), desc="func", unit="mod", dynamic_ncols=True, leave=False
+            )
         except Exception:
             func_bar = None
     else:
@@ -473,7 +491,16 @@ def run_pipeline(
             try:
                 func_bar.update(1)
                 if idx == len(mods):
-                    func_bar.set_postfix({"total": sum(len(_analysis_cache[x]["funcs"]) for x in _analysis_cache if "funcs" in _analysis_cache[x])}, refresh=True)
+                    func_bar.set_postfix(
+                        {
+                            "total": sum(
+                                len(_analysis_cache[x]["funcs"])
+                                for x in _analysis_cache
+                                if "funcs" in _analysis_cache[x]
+                            )
+                        },
+                        refresh=True,
+                    )
             except Exception:
                 pass
         elif inline_func:

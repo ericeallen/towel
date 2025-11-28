@@ -182,5 +182,3 @@ Notes:
 
 #### Notes
 - The stability diffs were expected due to insertion scope/hygiene improvements; baselines regenerated accordingly.
-
-

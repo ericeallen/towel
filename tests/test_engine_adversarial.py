@@ -1272,10 +1272,10 @@ class TestCrossFileImports(unittest.TestCase):
             self.assertTrue(props, "Expected a cross-file proposal between a.py and b.py")
             modified = engine.apply_refactoring_multi_file(props[0])
             # At least one file should gain an import of the extracted function
-            has_import = any(
-                "import __extracted_func" in content for content in modified.values()
+            has_import = any("import __extracted_func" in content for content in modified.values())
+            self.assertTrue(
+                has_import, "Expected an import of __extracted_func in one modified file"
             )
-            self.assertTrue(has_import, "Expected an import of __extracted_func in one modified file")
 
     def test_cross_file_runtime_equivalence_after_refactor(self):
         import sys, importlib

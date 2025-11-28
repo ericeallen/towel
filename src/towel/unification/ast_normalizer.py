@@ -25,7 +25,7 @@ class AssignToAugAssignNormalizer(ast.NodeTransformer):
         output = output - 5   →  output -= 5
     """
 
-    generic_visit = make_defensive_generic_visit("AssignToAugAssignNormalizer")
+    generic_visit = make_defensive_generic_visit("AssignToAugAssignNormalizer")  # type: ignore[assignment]
 
     def __init__(self) -> None:
         self.scopes: list[Set[str]] = [set()]  # Stack of scopes
@@ -58,7 +58,7 @@ class AssignToAugAssignNormalizer(ast.NodeTransformer):
         4. Value is a BinOp where one operand is the target variable
         """
         # Visit children first
-        node = self.generic_visit(node)
+        node = cast(ast.Assign, self.generic_visit(node))
 
         # Check if we have a single target
         if len(node.targets) != 1:
@@ -165,7 +165,7 @@ def normalize_assigns_to_augassigns(tree: ast.AST) -> ast.AST:
 class ArithmeticCanonicalizer(ast.NodeTransformer):
     """Canonicalize arithmetic expressions for easier unification."""
 
-    generic_visit = make_defensive_generic_visit("ArithmeticCanonicalizer")
+    generic_visit = make_defensive_generic_visit("ArithmeticCanonicalizer")  # type: ignore[assignment]
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.AST:  # noqa: N802
         node = cast(ast.UnaryOp, self.generic_visit(node))

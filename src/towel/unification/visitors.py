@@ -4,6 +4,7 @@ Top-level AST visitors used by the refactoring engine.
 These classes were extracted from nested definitions in refactor_engine.py to improve
 readability and enable a clearer compiler-like pipeline structure.
 """
+
 from __future__ import annotations
 
 import ast
@@ -109,21 +110,36 @@ class MethodCallRewriter(ast.NodeTransformer):
     def visit_Call(self, n: ast.Call) -> ast.AST:
         self.generic_visit(n)
         if isinstance(n.func, ast.Name) and n.func.id == self.original_name and self.method_kind:
-            implicit_name = self.implicit_name or ("self" if self.method_kind == "instance" else "cls")
+            implicit_name = self.implicit_name or (
+                "self" if self.method_kind == "instance" else "cls"
+            )
             if self.method_kind in {"instance", "classmethod"}:
                 n.args = self.drop_positional(n.args, implicit_name)
                 n.keywords = self.drop_keyword(n.keywords, implicit_name)
-                attr = ast.Attribute(value=ast.Name(id=implicit_name, ctx=ast.Load()), attr=self.new_name, ctx=ast.Load())
+                attr = ast.Attribute(
+                    value=ast.Name(id=implicit_name, ctx=ast.Load()),
+                    attr=self.new_name,
+                    ctx=ast.Load(),
+                )
                 ast.copy_location(attr, n.func)
                 n.func = attr
             elif self.method_kind == "staticmethod" and self.class_name:
-                attr = ast.Attribute(value=ast.Name(id=self.class_name, ctx=ast.Load()), attr=self.new_name, ctx=ast.Load())
+                attr = ast.Attribute(
+                    value=ast.Name(id=self.class_name, ctx=ast.Load()),
+                    attr=self.new_name,
+                    ctx=ast.Load(),
+                )
                 ast.copy_location(attr, n.func)
                 n.func = attr
         return n
 
 
 class LoopReturnFinder(ast.NodeVisitor):
+    """Detect whether a code block contains return statements inside loops.
+
+    Used to identify control flow patterns that may prevent safe refactoring.
+    """
+
     def __init__(self) -> None:
         self.has_loop_return = False
         self.in_loop = False
@@ -152,6 +168,11 @@ class LoopReturnFinder(ast.NodeVisitor):
 
 
 class NameCollector(ast.NodeVisitor):
+    """Collect all names referenced in Load context within a code block.
+
+    Stops at nested function boundaries to avoid capturing scopes outside the block.
+    """
+
     def __init__(self) -> None:
         self.used: Set[str] = set()
 
@@ -168,6 +189,11 @@ class NameCollector(ast.NodeVisitor):
 
 
 class AugAssignFinder(ast.NodeVisitor):
+    """Find all variables modified by augmented assignment operators (+=, -=, etc.).
+
+    Stops at nested function boundaries to avoid capturing scopes outside the block.
+    """
+
     def __init__(self) -> None:
         self.aug_assign_targets: Set[str] = set()
 
@@ -184,6 +210,12 @@ class AugAssignFinder(ast.NodeVisitor):
 
 
 class AssignTargetVisitor(ast.NodeVisitor):
+    """Collect all assignment targets and global/nonlocal declarations in a block.
+
+    Tracks simple name assignments from Assign, AugAssign, and AnnAssign nodes,
+    plus global and nonlocal declarations. Stops at nested function boundaries.
+    """
+
     def __init__(self) -> None:
         self.assigned_names: Set[str] = set()
         self.declared_global_in_block: Set[str] = set()
@@ -221,6 +253,12 @@ class AssignTargetVisitor(ast.NodeVisitor):
 
 
 class ClassLocator(ast.NodeVisitor):
+    """Locate a class definition by name and determine its insertion point.
+
+    Returns the line number and indentation suitable for inserting a new method
+    at the end of the target class body.
+    """
+
     def __init__(self, source: str, target_name: str) -> None:
         self.source = source
         self.target_name = target_name
@@ -241,6 +279,13 @@ class ClassLocator(ast.NodeVisitor):
 
 
 class FuncLocator(ast.NodeVisitor):
+    """Locate a function definition by name and determine its helper insertion point.
+
+    Returns the line number and indentation suitable for inserting a new helper
+    function inside the target function, after any existing nested definitions
+    but before the first executable statement.
+    """
+
     def __init__(self, source: str, function_name: str) -> None:
         self.source = source
         self.function_name = function_name

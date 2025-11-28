@@ -12,13 +12,14 @@ This module provides edge case values to stress test observational equivalence:
 
 import sys
 import math
+from typing import List, Dict, Any, Set, Tuple, Optional
 
 
 class EdgeCaseValues:
     """Generate comprehensive edge case values for testing."""
 
     @staticmethod
-    def integers():
+    def integers() -> List[int]:
         """
         Edge case integers.
 
@@ -50,7 +51,7 @@ class EdgeCaseValues:
         ]
 
     @staticmethod
-    def floats():
+    def floats() -> List[float]:
         """
         Edge case floats.
 
@@ -87,7 +88,7 @@ class EdgeCaseValues:
         ]
 
     @staticmethod
-    def strings():
+    def strings() -> List[str]:
         """
         Edge case strings.
 
@@ -127,7 +128,7 @@ class EdgeCaseValues:
         ]
 
     @staticmethod
-    def bytes_values():
+    def bytes_values() -> List[bytes]:
         """
         Edge case bytes.
 
@@ -147,7 +148,7 @@ class EdgeCaseValues:
         ]
 
     @staticmethod
-    def lists():
+    def lists() -> List[Any]:
         """
         Edge case lists.
 
@@ -184,7 +185,7 @@ class EdgeCaseValues:
         ]
 
     @staticmethod
-    def dicts():
+    def dicts() -> List[Dict[Any, Any]]:
         """
         Edge case dictionaries.
 
@@ -216,7 +217,7 @@ class EdgeCaseValues:
         ]
 
     @staticmethod
-    def tuples():
+    def tuples() -> List[Tuple[Any, ...]]:
         """
         Edge case tuples.
 
@@ -248,7 +249,7 @@ class EdgeCaseValues:
         ]
 
     @staticmethod
-    def sets():
+    def sets() -> List[Set[Any]]:
         """
         Edge case sets.
 
@@ -271,7 +272,7 @@ class EdgeCaseValues:
         ]
 
     @staticmethod
-    def booleans():
+    def booleans() -> List[bool]:
         """
         Edge case booleans.
 
@@ -281,7 +282,7 @@ class EdgeCaseValues:
         return [True, False]
 
     @staticmethod
-    def none_values():
+    def none_values() -> List[None]:
         """
         None values.
 
@@ -291,7 +292,7 @@ class EdgeCaseValues:
         return [None]
 
     @classmethod
-    def get_edge_cases_for_type(cls, type_hint):
+    def get_edge_cases_for_type(cls, type_hint: Any) -> List[Any]:
         """
         Get edge cases for a specific type.
 
@@ -339,7 +340,7 @@ class EdgeCaseValues:
             ]
 
     @classmethod
-    def get_comprehensive_test_values(cls):
+    def get_comprehensive_test_values(cls) -> Dict[str, List[Any]]:
         """
         Get a comprehensive set of test values across all types.
 

@@ -37,7 +37,7 @@ class HygienicExtractor:
         *,
         global_decls: Optional[Set[str]] = None,
         nonlocal_decls: Optional[Set[str]] = None,
-    function_name: str = "extracted_function",
+        function_name: str = "extracted_function",
     ) -> Tuple[ast.FunctionDef, Dict[str, int]]:
         """
         Extract code into a function.
@@ -298,7 +298,10 @@ class HygienicExtractor:
                 # prefer passing the original per-block expression rather than a free variable
                 # reference (which likely doesn't exist at the call site).
                 try:
-                    if hasattr(substitution, "promoted_literal_args") and substitution.promoted_literal_args:
+                    if (
+                        hasattr(substitution, "promoted_literal_args")
+                        and substitution.promoted_literal_args
+                    ):
                         promoted = substitution.promoted_literal_args.get(param_name, {})
                         if block_idx in promoted:
                             args_list[param_idx] = cast(ast.expr, promoted[block_idx])

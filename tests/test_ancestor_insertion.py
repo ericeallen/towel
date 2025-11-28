@@ -47,7 +47,9 @@ class TestAncestorInsertion(unittest.TestCase):
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
             proposals = engine.analyze_file(path)
-            self.assertTrue(proposals, "Expected at least one proposal for duplicated validation blocks")
+            self.assertTrue(
+                proposals, "Expected at least one proposal for duplicated validation blocks"
+            )
             # Find a proposal that targets both subclasses (>=2 replacements) and chooses ancestor insertion
             # If ancestor insertion not chosen (insert_into_class None), fall back to asserting
             # module-level helper extraction still occurs; otherwise verify ancestor placement.

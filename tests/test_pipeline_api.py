@@ -28,7 +28,7 @@ def test_run_pipeline_smoke_single_file():
 
 def test_run_pipeline_matches_engine_counts_multi_file():
     # Compare proposal counts between new pipeline and legacy engine API
-    files = example_paths(["example1_simple.py", "example2_classes.py"]) 
+    files = example_paths(["example1_simple.py", "example2_classes.py"])
     eng = UnificationRefactorEngine()
 
     pipeline_props = run_pipeline(files, engine=eng)

@@ -96,7 +96,9 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
                 str(project_dir), str(project_output), max_iterations=10
             )
             total = sum(count for count, _ in results.values()) if results else 0
-            print(f"    Applied {total} refactoring(s) across project (termination={termination_reason})")
+            print(
+                f"    Applied {total} refactoring(s) across project (termination={termination_reason})"
+            )
         except Exception as e:
             print(f"    Fixed-point cross-file refactoring failed: {e}")
 

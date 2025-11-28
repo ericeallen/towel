@@ -13,9 +13,9 @@ import sys
 def verify_test_integrity():
     """Verify all test examples match their templates."""
 
-    print("="*70)
+    print("=" * 70)
     print("TEST FILE INTEGRITY CHECK")
-    print("="*70)
+    print("=" * 70)
     print()
 
     templates_dir = Path(".templates")
@@ -46,7 +46,7 @@ def verify_test_integrity():
         example_path = examples_dir / template_path.name
 
         # Read template
-        with open(template_path, 'r') as f:
+        with open(template_path, "r") as f:
             template_content = f.read()
 
         # Check if example exists
@@ -58,7 +58,7 @@ def verify_test_integrity():
             continue
 
         # Read example
-        with open(example_path, 'r') as f:
+        with open(example_path, "r") as f:
             example_content = f.read()
 
         # Compare
@@ -71,8 +71,8 @@ def verify_test_integrity():
             mismatches.append(template_path.name)
 
             # Show differences
-            template_lines = template_content.split('\n')
-            example_lines = example_content.split('\n')
+            template_lines = template_content.split("\n")
+            example_lines = example_content.split("\n")
 
             if len(template_lines) != len(example_lines):
                 print(f"  Template: {len(template_lines)} lines")
@@ -87,7 +87,7 @@ def verify_test_integrity():
                     break
 
     print()
-    print("="*70)
+    print("=" * 70)
 
     if all_match:
         print("✓ ALL TEST FILES MATCH TEMPLATES")

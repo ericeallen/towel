@@ -6,7 +6,10 @@ import ast
 import os
 
 
-def make_defensive_generic_visit(visitor_class_name: str):
+from typing import Any, Callable
+
+
+def make_defensive_generic_visit(visitor_class_name: str) -> Callable[[Any, ast.AST], Any]:
     """
     Create a defensive generic_visit method that catches unhandled AST nodes.
 
@@ -31,7 +34,7 @@ def make_defensive_generic_visit(visitor_class_name: str):
                 return node
     """
 
-    def generic_visit(self, node):
+    def generic_visit(self: Any, node: ast.AST) -> Any:
         """
         Fallback for unhandled nodes. In DEBUG mode, raises an error.
         In production, delegates to parent.

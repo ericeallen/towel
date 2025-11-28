@@ -19,12 +19,14 @@ from pathlib import Path
 from towel.unification.refactor_engine import (
     UnificationRefactorEngine,
     RefactoringProposal,
-    filter_overlapping_proposals
+    filter_overlapping_proposals,
 )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Preview unification-based refactoring opportunities.")
+    parser = argparse.ArgumentParser(
+        description="Preview unification-based refactoring opportunities."
+    )
     parser.add_argument("target", help="File or directory to analyze")
     pref_group = parser.add_mutually_exclusive_group()
     pref_group.add_argument(
@@ -84,7 +86,7 @@ def main():
 
     # Analyze based on type
     if is_file:
-        if not target.endswith('.py'):
+        if not target.endswith(".py"):
             print(f"Note: '{target}' is not a Python file (.py)")
             print()
 
@@ -92,7 +94,9 @@ def main():
         all_proposals = engine.analyze_file(target)
     else:
         print(f"Analyzing directory: {target}")
-        all_proposals = engine.analyze_directory(target, recursive=True, verbose=True, progress="tqdm")
+        all_proposals = engine.analyze_directory(
+            target, recursive=True, verbose=True, progress="tqdm"
+        )
 
     print(f"\nFound {len(all_proposals)} refactoring opportunities")
 
@@ -107,9 +111,9 @@ def main():
         print(f"Filtered to {len(proposals)} non-overlapping proposals")
         print(f"(Removed {len(all_proposals) - len(proposals)} overlapping proposals)")
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("REFACTORING OPPORTUNITIES")
-    print("="*70)
+    print("=" * 70)
 
     for i, prop in enumerate(proposals[:10], 1):  # Show first 10
         print(f"\n{i}. {prop.description}")
@@ -134,7 +138,7 @@ def main():
         print(f"\n   Extracted function preview:")
         try:
             func_code = ast.unparse(prop.extracted_function)
-            lines = func_code.split('\n')
+            lines = func_code.split("\n")
             for line in lines[:8]:
                 print(f"      {line}")
             if len(lines) > 8:
@@ -147,7 +151,7 @@ def main():
     if len(proposals) > 10:
         print(f"\n... and {len(proposals) - 10} more proposals")
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("\nTo apply these refactorings, run:")
     if is_file:
         print(f"  python3 scripts/dry {target} <output> [--yes]")

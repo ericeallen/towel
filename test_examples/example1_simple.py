@@ -54,5 +54,3 @@ def process_guest_data(guest_id):
 
     print(f"Processing guest: {guest['name']}")
     return guest
-
-

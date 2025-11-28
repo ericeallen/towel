@@ -46,7 +46,7 @@ def _format_proposal(p: RefactoringProposal) -> str:
     return "; ".join(parts)
 
 
-def trace_file(file_path: str, *, max_iterations: int = 10, min_lines: int | None = None):
+def trace_file(file_path: str, *, max_iterations: int = 10, min_lines: int | None = None) -> None:
     engine_kwargs = {}
     if min_lines is not None:
         engine_kwargs["min_lines"] = min_lines

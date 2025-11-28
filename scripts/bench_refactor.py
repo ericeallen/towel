@@ -17,7 +17,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Tuple
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.refactor_engine import filter_overlapping_proposals
@@ -37,18 +37,24 @@ def copy_tree(src: Path, dst: Path) -> None:
             shutil.copy2(item, out)
 
 
-def run_incremental(engine: UnificationRefactorEngine, input_dir: Path, max_iters: int) -> Tuple[float, int, Path]:
+def run_incremental(
+    engine: UnificationRefactorEngine, input_dir: Path, max_iters: int
+) -> Tuple[float, int, Path]:
     tmp_root = Path(tempfile.mkdtemp(prefix="towel_bench_inc_"))
     out_dir = tmp_root / "out"
     # Let engine copy files from input -> out
     t0 = time.perf_counter()
-    results, termination_reason = engine.refactor_directory_to_fixed_point(str(input_dir), str(out_dir), max_iterations=max_iters)
+    results, termination_reason = engine.refactor_directory_to_fixed_point(
+        str(input_dir), str(out_dir), max_iterations=max_iters
+    )
     dt = time.perf_counter() - t0
     total_applied = sum(v[0] for v in results.values())
     return dt, total_applied, out_dir
 
 
-def run_naive(engine: UnificationRefactorEngine, input_dir: Path, max_iters: int) -> Tuple[float, int, Path]:
+def run_naive(
+    engine: UnificationRefactorEngine, input_dir: Path, max_iters: int
+) -> Tuple[float, int, Path]:
     tmp_root = Path(tempfile.mkdtemp(prefix="towel_bench_naive_"))
     work_dir = tmp_root / "work"
     copy_tree(input_dir, work_dir)

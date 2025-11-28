@@ -72,7 +72,9 @@ def normalize_generated_names(code: str) -> str:
     # Apply replacements (sort by length descending to avoid partial replacements)
     for original, normalized in sorted(func_mapping.items(), key=lambda x: len(x[0]), reverse=True):
         result = result.replace(original, normalized)
-    for original, normalized in sorted(param_mapping.items(), key=lambda x: len(x[0]), reverse=True):
+    for original, normalized in sorted(
+        param_mapping.items(), key=lambda x: len(x[0]), reverse=True
+    ):
         result = result.replace(original, normalized)
 
     return result

@@ -77,11 +77,18 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 
 3. Install development dependencies:
    ```bash
-   pip install -e .
-   pip install pytest
+   pip install -e ".[dev]"
    ```
 
-4. Verify the setup:
+4. Install pre-commit hooks (enforces code quality):
+   ```bash
+   pre-commit install
+   ```
+
+   Pre-commit hooks will automatically run Black formatting, flake8 linting,
+   mypy type checking, and other quality checks before each commit.
+
+5. Verify the setup:
    ```bash
    pytest
    ```
@@ -94,6 +101,9 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 - Keep functions focused and reasonably sized
 - Add type hints where appropriate
 - Comment complex logic
+- Code is automatically formatted with Black (line length 100)
+- All code must pass flake8 linting
+- Type checking with mypy is enforced on core modules
 
 ## Testing
 

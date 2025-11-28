@@ -35,6 +35,8 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "pydocstyle>=6.0.0",
     "tqdm>=4.66.0",
 ]
 
@@ -48,7 +50,7 @@ where = ["src"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312', 'py313']
+target-version = ['py39', 'py310', 'py311', 'py312']
 
 [tool.mypy]
 python_version = "3.11"
@@ -66,6 +68,8 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 files = [
+    "src/towel/__init__.py",
+    "src/towel/unification/__init__.py",
     "src/towel/unification/unifier.py",
     "src/towel/unification/extractor.py",
     "src/towel/unification/ast_pretty_printer.py",
@@ -74,12 +78,38 @@ files = [
     "src/towel/unification/models.py",
     "src/towel/unification/pipeline.py",
     "src/towel/unification/visitors.py",
+    "src/towel/unification/orphan_detector.py",
+    "src/towel/unification/assignment_analyzer.py",
+    "src/towel/unification/nominal_unifier.py",
+    "src/towel/unification/builtins.py",
+    "src/towel/unification/visitor_utils.py",
+    "src/towel/unification/block_signature.py",
+    "src/towel/unification/project_layout.py",
+    "src/towel/unification/scope_analyzer.py",
+    "src/towel/unification/exceptions.py",
+    "src/towel/unification/refactor_engine.py",
+    "tests/test_helpers.py",
+    "tests/edge_case_values.py",
 ]
+
+# Scripts use sys.path manipulation, so check them separately
+[[tool.mypy.overrides]]
+module = [
+    "scripts.bench_refactor",
+    "scripts.debug_pair",
+    "scripts.report_net_benefit_diff",
+    "scripts.trace_proposals",
+    "scripts._debug_global_case",
+]
+ignore_errors = false
 
 [tool.flake8]
 max-line-length = 100
 exclude = ["venv", "env", "__pycache__", "tests"]
-ignore = ["E501", "W503", "E203", "F541"]
+# E501: Line too long (we use Black's 100 char limit, not PEP8's 79)
+# W503: Line break before binary operator (Black style)
+# E203: Whitespace before ':' (Black vs flake8 conflict in slices)
+ignore = ["E501", "W503", "E203"]
 
 [tool.coverage.run]
 source = ["src/towel"]

@@ -5,6 +5,8 @@ Tracks Python builtin functions and names that should never be treated
 as free variables or parameterized.
 """
 
+from typing import Set
+
 # Python builtin functions and constants
 # These should never be parameterized or treated as free variables
 PYTHON_BUILTINS = {
@@ -180,7 +182,7 @@ def is_builtin(name: str) -> bool:
     return name in PYTHON_BUILTINS
 
 
-def filter_builtins(names: set) -> set:
+def filter_builtins(names: Set[str]) -> Set[str]:
     """
     Filter out builtin names from a set of names.
 

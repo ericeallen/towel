@@ -49,54 +49,54 @@ def get_bound_variables(nodes: List[ast.AST]) -> Set[str]:
     """
 
     class BindingCollector(ast.NodeVisitor):
-        def __init__(self):
-            self.bindings = set()
-            self.in_comprehension = False
+        def __init__(self) -> None:
+            self.bindings: Set[str] = set()
+            self.in_comprehension: bool = False
 
-        def visit_Assign(self, node):
+        def visit_Assign(self, node: ast.Assign) -> None:
             for target in node.targets:
                 self._collect_names(target)
             self.generic_visit(node)
 
-        def visit_AnnAssign(self, node):
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
             if node.target:
                 self._collect_names(node.target)
             self.generic_visit(node)
 
-        def visit_AugAssign(self, node):
+        def visit_AugAssign(self, node: ast.AugAssign) -> None:
             self._collect_names(node.target)
             self.generic_visit(node)
 
-        def visit_For(self, node):
+        def visit_For(self, node: ast.For) -> None:
             self._collect_names(node.target)
             self.generic_visit(node)
 
-        def visit_FunctionDef(self, node):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             self.bindings.add(node.name)
             # Don't visit inside nested functions
 
-        def visit_AsyncFunctionDef(self, node):
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
             self.bindings.add(node.name)
             # Don't visit inside nested functions
 
-        def visit_ClassDef(self, node):
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
             self.bindings.add(node.name)
             # Don't visit inside nested classes
 
-        def visit_ListComp(self, node):
+        def visit_ListComp(self, node: ast.ListComp) -> None:
             # Comprehension variables are local, don't collect them
             pass
 
-        def visit_SetComp(self, node):
+        def visit_SetComp(self, node: ast.SetComp) -> None:
             pass
 
-        def visit_DictComp(self, node):
+        def visit_DictComp(self, node: ast.DictComp) -> None:
             pass
 
-        def visit_GeneratorExp(self, node):
+        def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
             pass
 
-        def _collect_names(self, node):
+        def _collect_names(self, node: ast.AST) -> None:
             """Collect all name nodes from a target."""
             if isinstance(node, ast.Name):
                 self.bindings.add(node.id)
@@ -117,10 +117,10 @@ def get_used_variables(nodes: List[ast.AST]) -> Set[str]:
     """
 
     class UsageCollector(ast.NodeVisitor):
-        def __init__(self):
-            self.uses = set()
+        def __init__(self) -> None:
+            self.uses: Set[str] = set()
 
-        def visit_Name(self, node):
+        def visit_Name(self, node: ast.Name) -> None:
             if isinstance(node.ctx, ast.Load):
                 self.uses.add(node.id)
             self.generic_visit(node)

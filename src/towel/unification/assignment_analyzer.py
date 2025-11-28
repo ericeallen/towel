@@ -11,10 +11,10 @@ This is critical for safe code extraction:
 """
 
 import ast
-from typing import Dict, Set
+from typing import Dict, List, Set, Tuple, Union
 
 
-def analyze_assignments(func: ast.FunctionDef) -> Dict[int, bool]:
+def analyze_assignments(func: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> Dict[int, bool]:
     """
     Analyze assignments in a function to identify reassignments.
 
@@ -45,11 +45,11 @@ class AssignmentAnalyzer(ast.NodeVisitor):
     Handles scoping correctly for nested functions, comprehensions, etc.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.bound_vars: Set[str] = set()
         self.reassignments: Dict[int, bool] = {}  # node id -> is_reassignment
 
-    def visit_FunctionDef(self, node: ast.FunctionDef):
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """
         Visit function definition.
 
@@ -81,11 +81,12 @@ class AssignmentAnalyzer(ast.NodeVisitor):
                 self.visit(stmt)
         # else: Don't descend into nested functions (different scope)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         """Visit async function definition (same as FunctionDef)."""
-        self.visit_FunctionDef(node)
+        # Type ignore needed because mypy doesn't recognize structural compatibility
+        self.visit_FunctionDef(node)  # type: ignore[arg-type]
 
-    def visit_Assign(self, node: ast.Assign):
+    def visit_Assign(self, node: ast.Assign) -> None:
         """
         Visit assignment statement.
 
@@ -122,7 +123,7 @@ class AssignmentAnalyzer(ast.NodeVisitor):
                 # Mark all names as bound
                 self.bound_vars.update(names)
 
-    def visit_AugAssign(self, node: ast.AugAssign):
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
         """
         Visit augmented assignment (+=, -=, etc.).
 
@@ -137,7 +138,7 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         self.visit(node.target)
         self.visit(node.value)
 
-    def visit_For(self, node: ast.For):
+    def visit_For(self, node: ast.For) -> None:
         """
         Visit for loop.
 
@@ -166,7 +167,7 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         for stmt in node.orelse:
             self.visit(stmt)
 
-    def visit_With(self, node: ast.With):
+    def visit_With(self, node: ast.With) -> None:
         """
         Visit with statement.
 
@@ -188,7 +189,7 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
 
-    def visit_comprehension(self, node: ast.comprehension):
+    def visit_comprehension(self, node: ast.comprehension) -> None:
         """
         Visit comprehension (in list/dict/set comprehension or generator).
 
@@ -197,19 +198,19 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         # Don't analyze comprehension targets as they create their own scope
         pass
 
-    def visit_ListComp(self, node: ast.ListComp):
+    def visit_ListComp(self, node: ast.ListComp) -> None:
         """Don't descend into list comprehensions (own scope)."""
         pass
 
-    def visit_DictComp(self, node: ast.DictComp):
+    def visit_DictComp(self, node: ast.DictComp) -> None:
         """Don't descend into dict comprehensions (own scope)."""
         pass
 
-    def visit_SetComp(self, node: ast.SetComp):
+    def visit_SetComp(self, node: ast.SetComp) -> None:
         """Don't descend into set comprehensions (own scope)."""
         pass
 
-    def visit_GeneratorExp(self, node: ast.GeneratorExp):
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
         """Don't descend into generator expressions (own scope)."""
         pass
 
@@ -223,10 +224,10 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         - obj.attr = ... -> set()  # Not a variable binding
         - lst[i] = ... -> set()  # Not a variable binding
         """
-        names = set()
+        names: Set[str] = set()
 
         class NameCollector(ast.NodeVisitor):
-            def visit_Name(self, node):
+            def visit_Name(self, node: ast.Name) -> None:
                 if isinstance(node.ctx, ast.Store):
                     names.add(node.id)
 
@@ -236,8 +237,10 @@ class AssignmentAnalyzer(ast.NodeVisitor):
 
 
 def has_reassignments_without_bindings(
-    func: ast.FunctionDef, block_nodes: list[ast.AST], reassignments: Dict[int, bool]
-) -> tuple[bool, Set[str]]:
+    func: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    block_nodes: List[ast.AST],
+    reassignments: Dict[int, bool],
+) -> Tuple[bool, Set[str]]:
     """
     Check if a code block contains reassignments without initial bindings.
 
@@ -268,10 +271,10 @@ def has_reassignments_without_bindings(
           but initially bound on line 2 (outside the block)
     """
     # Collect all variables bound within the block
-    bound_in_block = set()
+    bound_in_block: Set[str] = set()
 
     # Collect all variables reassigned within the block
-    reassigned_in_block = set()
+    reassigned_in_block: Set[str] = set()
 
     for node in block_nodes:
         _collect_bindings_and_reassignments(
@@ -299,7 +302,7 @@ def has_reassignments_without_bindings(
 
 def _collect_bindings_and_reassignments(
     node: ast.AST, reassignments: Dict[int, bool], bound_vars: Set[str], reassigned_vars: Set[str]
-):
+) -> None:
     """
     Recursively collect variables bound and reassigned in a node.
 
@@ -311,7 +314,7 @@ def _collect_bindings_and_reassignments(
     """
 
     class BindingCollector(ast.NodeVisitor):
-        def visit_Assign(self, node):
+        def visit_Assign(self, node: ast.Assign) -> None:
             is_reassignment = reassignments.get(id(node), False)
 
             for target in node.targets:
@@ -324,20 +327,20 @@ def _collect_bindings_and_reassignments(
 
             self.generic_visit(node)
 
-        def visit_AugAssign(self, node):
+        def visit_AugAssign(self, node: ast.AugAssign) -> None:
             # Augmented assignments are always reassignments
             if isinstance(node.target, ast.Name):
                 reassigned_vars.add(node.target.id)
             self.generic_visit(node)
 
-        def visit_For(self, node):
+        def visit_For(self, node: ast.For) -> None:
             # For loop variables are initial bindings
             if isinstance(node.target, ast.Name):
                 bound_vars.add(node.target.id)
             else:
                 # Complex target
                 class NameCollector(ast.NodeVisitor):
-                    def visit_Name(self, n):
+                    def visit_Name(self, n: ast.Name) -> None:
                         if isinstance(n.ctx, ast.Store):
                             bound_vars.add(n.id)
 
@@ -346,7 +349,7 @@ def _collect_bindings_and_reassignments(
 
             self.generic_visit(node)
 
-        def visit_With(self, node):
+        def visit_With(self, node: ast.With) -> None:
             # With statement 'as' clauses create bindings
             for item in node.items:
                 if item.optional_vars:
@@ -354,11 +357,11 @@ def _collect_bindings_and_reassignments(
                         bound_vars.add(item.optional_vars.id)
             self.generic_visit(node)
 
-        def visit_FunctionDef(self, node):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             # Don't descend into nested functions
             pass
 
-        def visit_AsyncFunctionDef(self, node):
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
             # Don't descend into nested async functions
             pass
 

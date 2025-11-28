@@ -10,10 +10,11 @@ import shutil
 import os
 from pathlib import Path
 from contextlib import contextmanager
+from typing import Generator
 
 
 @contextmanager
-def temporary_test_directory():
+def temporary_test_directory() -> Generator[Path, None, None]:
     """
     Context manager that creates a temporary directory for test output.
 
@@ -41,7 +42,7 @@ def temporary_test_directory():
 
 
 @contextmanager
-def temporary_copy_of_examples():
+def temporary_copy_of_examples() -> Generator[Path, None, None]:
     """
     Context manager that creates a temporary copy of test_examples.
 
@@ -112,7 +113,7 @@ def get_test_example_path(example_name: str) -> Path:
 
 
 @contextmanager
-def temporary_output_directory():
+def temporary_output_directory() -> Generator[Path, None, None]:
     """
     Context manager for temporary output directory with better naming.
 
@@ -133,7 +134,7 @@ def temporary_output_directory():
         yield output_dir
 
 
-def assert_file_not_modified(file_path: Path, original_content: str):
+def assert_file_not_modified(file_path: Path, original_content: str) -> None:
     """
     Assert that a file has not been modified.
 

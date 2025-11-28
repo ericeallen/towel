@@ -95,8 +95,9 @@ def main() -> int:
 
     # Summary by file
     from collections import defaultdict
+    from typing import DefaultDict
 
-    by_file = defaultdict(int)
+    by_file: DefaultDict[str, int] = defaultdict(int)
     for file_name, *_ in rows:
         by_file[file_name] += 1
 

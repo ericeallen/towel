@@ -26,7 +26,7 @@ use the correct variable names:
 """
 
 import ast
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Dict, List, Set, Optional, Tuple, cast
 from dataclasses import dataclass, field
 
 from .binding_detector import detect_bindings
@@ -79,7 +79,7 @@ class NominalUnificationContext:
         # Maps (block_idx, var_name) → list of AST nodes where variable is bound
         self.binding_sites: Dict[Tuple[int, str], List[ast.AST]] = {}
 
-    def add_correspondence(self, canonical_name: str, block_idx: int, original_name: str):
+    def add_correspondence(self, canonical_name: str, block_idx: int, original_name: str) -> None:
         """
         Record that 'original_name' in block 'block_idx' corresponds to 'canonical_name'.
 
@@ -128,7 +128,7 @@ class NominalUnificationContext:
                 return corr.canonical_name
         return None
 
-    def detect_bindings_in_blocks(self, blocks: List[List[ast.AST]]):
+    def detect_bindings_in_blocks(self, blocks: List[List[ast.AST]]) -> None:
         """
         Analyze all code blocks to detect bound variables.
 
@@ -137,7 +137,7 @@ class NominalUnificationContext:
         """
         for block_idx, block in enumerate(blocks):
             # Create a module to contain the block for analysis
-            module = ast.Module(body=block, type_ignores=[])
+            module = ast.Module(body=cast(List[ast.stmt], block), type_ignores=[])
 
             # Detect all bindings in this block
             bindings = detect_bindings(module)
@@ -163,7 +163,7 @@ class NominalUnificationContext:
         Returns:
             List of dictionaries, one per block, mapping original → canonical names
         """
-        hygienic_renames = [{} for _ in range(self.num_blocks)]
+        hygienic_renames: List[Dict[str, str]] = [{} for _ in range(self.num_blocks)]
 
         for corr in self.correspondences.values():
             for block_idx, original_name in corr.block_to_original.items():
@@ -339,7 +339,7 @@ def _get_variables_in_order(block: List[ast.AST]) -> List[str]:
     ordered = []
 
     class VariableCollector(ast.NodeVisitor):
-        def visit_Name(self, node: ast.Name):
+        def visit_Name(self, node: ast.Name) -> None:
             if node.id not in seen:
                 seen.add(node.id)
                 ordered.append(node.id)

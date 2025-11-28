@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
-def _load_pyproject(project_root: Path) -> dict:
+def _load_pyproject(project_root: Path) -> Dict[str, Any]:
     """Best-effort load of pyproject.toml with stdlib only.
 
     Returns an empty dict if parsing fails or file does not exist.
@@ -23,7 +23,7 @@ def _load_pyproject(project_root: Path) -> dict:
 
     # Python 3.11+: tomllib in stdlib; earlier versions won't have it.
     try:
-        import tomllib  # type: ignore
+        import tomllib
 
         with pyproject_path.open("rb") as f:
             return tomllib.load(f)
@@ -47,6 +47,12 @@ def _is_package_dir(path: Path, pep420: bool) -> bool:
 
 @dataclass
 class ProjectLayout:
+    """Represents the directory structure and import configuration of a Python project.
+
+    Discovers project root markers (pyproject.toml, setup.py, .git) and source
+    roots from package configuration to generate correct import paths for refactored code.
+    """
+
     project_root: Path
     source_roots: List[Path]
     prefer_absolute_imports: bool = True

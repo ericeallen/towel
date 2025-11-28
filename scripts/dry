@@ -18,11 +18,13 @@ from typing import Dict, Set
 from towel.unification.refactor_engine import (
     UnificationRefactorEngine,
     RefactoringProposal,
-    filter_overlapping_proposals
+    filter_overlapping_proposals,
 )
 
 
-def create_path_mapping(input_path: str, output_path: str, analyzed_files: Set[str]) -> Dict[str, str]:
+def create_path_mapping(
+    input_path: str, output_path: str, analyzed_files: Set[str]
+) -> Dict[str, str]:
     """Create mapping from input file paths to output file paths."""
     input_path = os.path.abspath(input_path)
     output_path = os.path.abspath(output_path)
@@ -72,8 +74,7 @@ def copy_to_output(input_path: str, output_path: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze and apply unification-based refactorings to file(s) or directories."
-        ,
+        description="Analyze and apply unification-based refactorings to file(s) or directories.",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=(
             "Examples:\n"
@@ -171,10 +172,10 @@ def main():
 
     # Check input file extension for single files
     if is_file:
-        if not input_path.endswith('.py'):
+        if not input_path.endswith(".py"):
             print(f"Warning: '{input_path}' is not a Python file (.py)")
             response = input("Analyze anyway? (y/N): ").strip().lower()
-            if response != 'y':
+            if response != "y":
                 return
 
     # Copy input to output
@@ -210,7 +211,7 @@ def main():
 
     if not args.non_interactive:
         response = input("Proceed? (y/N): ").strip().lower()
-        if response != 'y':
+        if response != "y":
             print("Aborted.")
             return
 
@@ -226,7 +227,7 @@ def main():
         )
 
         # Write final result
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             f.write(final_code)
 
         if num_applied > 0:

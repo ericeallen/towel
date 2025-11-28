@@ -15,7 +15,7 @@ import os
 import re
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Union
+from typing import Any, List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Union, cast
 from weakref import WeakKeyDictionary
 from pathlib import Path
 from .scope_analyzer import ScopeAnalyzer, Scope
@@ -44,6 +44,12 @@ from .visitors import (
     FuncLocator,
 )
 
+# Configuration defaults
+DEFAULT_MAX_PARAMETERS = 5
+DEFAULT_MIN_LINES = 4
+DEFAULT_SIMILARITY_THRESHOLD = 0.6
+DEFAULT_MAX_ITERATIONS = 0  # Unlimited
+
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 _worker_engine: Optional["UnificationRefactorEngine"] = None
@@ -64,23 +70,33 @@ _worker_functions: Optional[
 _worker_class_infos: Optional[List[ClassInfo]] = None
 
 
-def _initialize_pair_worker(engine_config: Dict[str, Optional[object]], functions, class_infos):
+def _initialize_pair_worker(
+    engine_config: Dict[str, Any],
+    functions: List[
+        Tuple[str, FunctionNode, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]
+    ],
+    class_infos: List[ClassInfo],
+) -> None:
     """Initializer that primes each worker process with engine state and function context."""
 
     global _worker_engine, _worker_functions, _worker_class_infos
 
+    max_params = engine_config["max_parameters"]
+    min_ln = engine_config["min_lines"]
     _worker_engine = UnificationRefactorEngine(
-        max_parameters=int(engine_config["max_parameters"]),
-        min_lines=int(engine_config["min_lines"]),
+        max_parameters=int(max_params) if max_params is not None else DEFAULT_MAX_PARAMETERS,
+        min_lines=int(min_ln) if min_ln is not None else DEFAULT_MIN_LINES,
         parameterize_constants=bool(engine_config["parameterize_constants"]),
-        prefer_absolute_imports=engine_config["prefer_absolute_imports"],
-        pep420_namespace_packages=engine_config["pep420_namespace_packages"],
+        prefer_absolute_imports=engine_config.get("prefer_absolute_imports"),
+        pep420_namespace_packages=engine_config.get("pep420_namespace_packages"),
     )
     _worker_functions = functions
     _worker_class_infos = class_infos
 
 
-def _process_pair_in_worker(task: Tuple[int, CodeBlockPair]):
+def _process_pair_in_worker(
+    task: Tuple[int, CodeBlockPair],
+) -> Tuple[int, Optional[RefactoringProposal]]:
     """Worker entry point that evaluates a single code block pair."""
 
     if _worker_engine is None or _worker_functions is None or _worker_class_infos is None:
@@ -102,8 +118,8 @@ class UnificationRefactorEngine:
 
     def __init__(
         self,
-        max_parameters: int = 5,
-        min_lines: int = 4,
+        max_parameters: int = DEFAULT_MAX_PARAMETERS,
+        min_lines: int = DEFAULT_MIN_LINES,
         parameterize_constants: bool = True,
         *,
         prefer_absolute_imports: Optional[bool] = None,
@@ -114,8 +130,8 @@ class UnificationRefactorEngine:
         Initialize the refactoring engine.
 
         Args:
-            max_parameters: Maximum parameters for extracted functions
-            min_lines: Minimum lines for a code block
+            max_parameters: Maximum parameters for extracted functions (default: 5)
+            min_lines: Minimum lines for a code block (default: 4)
             parameterize_constants: Whether to parameterize differing constants
         """
         self.max_parameters = max_parameters
@@ -140,7 +156,9 @@ class UnificationRefactorEngine:
         self._helper_name_counters: Dict[str, int] = {}
 
     # --- Debug helpers ---
-    def _debug_reject(self, reason: str, pair: "CodeBlockPair", detail: Optional[str] = None) -> None:
+    def _debug_reject(
+        self, reason: str, pair: "CodeBlockPair", detail: Optional[str] = None
+    ) -> None:
         """Emit a concise rejection line when DEBUG_PROPOSAL_REJECTIONS is set.
 
         Includes function names and basic block ranges to help triage pruning gates.
@@ -273,7 +291,7 @@ class UnificationRefactorEngine:
         all_functions: List[
             Tuple[
                 str,
-                ast.FunctionDef,
+                FunctionNode,
                 str,
                 ScopeAnalyzer,
                 Scope,
@@ -331,7 +349,7 @@ class UnificationRefactorEngine:
         return False
 
     @staticmethod
-    def _function_contains_nonlocal(func: ast.FunctionDef) -> bool:
+    def _function_contains_nonlocal(func: FunctionNode) -> bool:
         """Return True if the function body contains any nonlocal declarations."""
 
         for stmt in func.body:
@@ -472,7 +490,7 @@ class UnificationRefactorEngine:
             implicit_name=implicit_param,
             class_name=class_name,
         )
-        return rewriter.visit(node)
+        return rewriter.visit(node)  # type: ignore[no-any-return]
 
     @staticmethod
     def _drop_implicit_positional(args: List[ast.expr], implicit_name: str) -> List[ast.expr]:
@@ -503,7 +521,7 @@ class UnificationRefactorEngine:
         return result
 
     def _get_method_context(
-        self, func: Optional[ast.FunctionDef], class_name: Optional[str]
+        self, func: Optional[FunctionNode], class_name: Optional[str]
     ) -> MethodInfo:
         """Return method metadata for ``func`` when it is defined inside ``class_name``."""
 
@@ -674,7 +692,7 @@ class UnificationRefactorEngine:
         # None we keep the conservative skip to avoid mismatches (e.g., staticmethod
         # vs instance).
         k1, k2 = method_info1.kind, method_info2.kind
-        inferred_kind: Optional[str] = None
+        inferred_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
         if k1 is None and k2 is None:
             # Infer 'instance' if both have an implicit_param or a first argument name.
             # method_info.implicit_param is populated for recognized methods; as a
@@ -689,7 +707,10 @@ class UnificationRefactorEngine:
         file1 = pair.file_path
         file2 = pair.file_path2 or pair.file_path
 
-        effective_kind = inferred_kind or method_info1.kind
+        # At this point we know effective_kind is valid because we've already validated k1/k2
+        effective_kind: Literal["instance", "classmethod", "staticmethod"] = cast(
+            Literal["instance", "classmethod", "staticmethod"], inferred_kind or method_info1.kind
+        )
         if file1 == file2 and pair.class1_name == pair.class2_name:
             implicit_param = method_info1.implicit_param or method_info2.implicit_param
             if effective_kind == "instance" and not implicit_param:
@@ -730,7 +751,7 @@ class UnificationRefactorEngine:
         all_functions: List[
             Tuple[
                 str,
-                ast.FunctionDef,
+                FunctionNode,
                 str,
                 ScopeAnalyzer,
                 Scope,
@@ -802,7 +823,7 @@ class UnificationRefactorEngine:
         all_functions: List[
             Tuple[
                 str,
-                ast.FunctionDef,
+                FunctionNode,
                 str,
                 ScopeAnalyzer,
                 Scope,
@@ -857,11 +878,13 @@ class UnificationRefactorEngine:
         if use_inline_bar:
             print("Analyzing candidate pairs:", end=" ", flush=True)
 
-        with ProcessPoolExecutor(
-            max_workers=max_workers,
-            initializer=_initialize_pair_worker,
-            initargs=(engine_config, all_functions, class_infos),
-        ) as executor:
+        # ProcessPoolExecutor type stubs are restrictive; cast to Any for initializer/initargs
+        executor_kwargs: Dict[str, Any] = {
+            "max_workers": max_workers,
+            "initializer": _initialize_pair_worker,
+            "initargs": (engine_config, all_functions, class_infos),
+        }
+        with ProcessPoolExecutor(**executor_kwargs) as executor:
             futures = [executor.submit(_process_pair_in_worker, task) for task in tasks]
             iterator = as_completed(futures)
             if use_tqdm and tqdm_wrapper is not None:
@@ -893,7 +916,7 @@ class UnificationRefactorEngine:
         return [proposal for proposal in ordered_results if proposal is not None]
 
     def _extract_code_blocks(
-        self, function: ast.FunctionDef
+        self, function: FunctionNode
     ) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
         """
         Extract all contiguous code blocks from a function body, including nested bodies.
@@ -929,13 +952,13 @@ class UnificationRefactorEngine:
                     start_line = block[0].lineno
                     end_line = (
                         block[-1].end_lineno
-                        if hasattr(block[-1], "end_lineno")
+                        if hasattr(block[-1], "end_lineno") and block[-1].end_lineno is not None
                         else block[-1].lineno
                     )
                     line_count = end_line - start_line + 1
 
                     if line_count >= self.min_lines:
-                        results.append(((start_line, end_line), block))
+                        results.append(((start_line, end_line), cast(List[ast.AST], block)))
 
             # Recurse into nested bodies for control-flow/container statements
             for stmt in body:
@@ -1056,7 +1079,7 @@ class UnificationRefactorEngine:
         all_functions: List[
             Tuple[
                 str,
-                ast.FunctionDef,
+                FunctionNode,
                 str,
                 ScopeAnalyzer,
                 Scope,
@@ -1087,6 +1110,7 @@ class UnificationRefactorEngine:
         if use_tqdm and total_func_pairs > 0:
             try:
                 import importlib
+
                 _tqdm_mod = importlib.import_module("tqdm.auto")
                 _tqdm = getattr(_tqdm_mod, "tqdm")
                 tqdm_bar = _tqdm(
@@ -1224,7 +1248,7 @@ class UnificationRefactorEngine:
         all_functions: List[
             Tuple[
                 str,
-                ast.FunctionDef,
+                FunctionNode,
                 str,
                 ScopeAnalyzer,
                 Scope,
@@ -1256,8 +1280,8 @@ class UnificationRefactorEngine:
             print(f"Block2 range: {pair.block2_range}")
 
         # Resolve contextual analyzers and scopes from the aggregated function list
-        func1 = pair.function1_node
-        func2 = pair.function2_node
+        func1: Optional[FunctionNode] = pair.function1_node
+        func2: Optional[FunctionNode] = pair.function2_node
         scope_analyzer1: Optional[ScopeAnalyzer] = None
         scope_analyzer2: Optional[ScopeAnalyzer] = None
         root_scope1: Optional[Scope] = None
@@ -1314,8 +1338,8 @@ class UnificationRefactorEngine:
         # CRITICAL: Validate that blocks don't contain reassignments without initial bindings
         # Initialize return_variables tracking
         # This will be populated if we find variables that need to be returned
-        return_variables_block1 = set()
-        return_variables_block2 = set()
+        return_variables_block1: Set[str] = set()
+        return_variables_block2: Set[str] = set()
 
         # This prevents extracting code like "result = result + 10" when "result = x * 2"
         # is outside the block. Such extractions are fundamentally unsound.
@@ -1352,21 +1376,21 @@ class UnificationRefactorEngine:
             from .assignment_analyzer import _collect_bindings_and_reassignments
 
             # Check block1
-            bound_in_block1 = set()
-            reassigned_in_block1 = set()
+            bound_in_block1: Set[str] = set()
+            reassigned_in_block1: Set[str] = set()
             for node in pair.block1_nodes:
                 _collect_bindings_and_reassignments(
                     node, reassignments1, bound_in_block1, reassigned_in_block1
                 )
 
             # Find variables bound BEFORE the block starts
-            bound_before_block1 = set()
+            bound_before_block1: Set[str] = set()
             block_start_line = pair.block1_range[0]
             for stmt in func1.body:
                 if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
                     # Collect bindings from statements before the block
-                    stmt_bound = set()
-                    stmt_reassigned = set()
+                    stmt_bound: Set[str] = set()
+                    stmt_reassigned: Set[str] = set()
                     _collect_bindings_and_reassignments(
                         stmt, reassignments1, stmt_bound, stmt_reassigned
                     )
@@ -1452,24 +1476,24 @@ class UnificationRefactorEngine:
                     print(f"Block1 requires returning: {return_variables_block1}")
 
             # Same check for block2
-            bound_in_block2 = set()
-            reassigned_in_block2 = set()
+            bound_in_block2: Set[str] = set()
+            reassigned_in_block2: Set[str] = set()
             for node in pair.block2_nodes:
                 _collect_bindings_and_reassignments(
                     node, reassignments2, bound_in_block2, reassigned_in_block2
                 )
 
             # Find variables bound BEFORE block2 starts
-            bound_before_block2 = set()
+            bound_before_block2: Set[str] = set()
             block_start_line = pair.block2_range[0]
             for stmt in func2.body:
                 if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
-                    stmt_bound = set()
-                    stmt_reassigned = set()
+                    stmt_bound2: Set[str] = set()
+                    stmt_reassigned2: Set[str] = set()
                     _collect_bindings_and_reassignments(
-                        stmt, reassignments2, stmt_bound, stmt_reassigned
+                        stmt, reassignments2, stmt_bound2, stmt_reassigned2
                     )
-                    bound_before_block2.update(stmt_bound)
+                    bound_before_block2.update(stmt_bound2)
 
             # Treat function parameters as bound before the block
             if isinstance(func2, ast.FunctionDef):
@@ -1532,8 +1556,12 @@ class UnificationRefactorEngine:
         # Check if both blocks are value-producing or both are not
         # Blocks with return_variables are treated as value-producing because
         # we will add return statements for those variables
-        value_prod1 = is_value_producing(pair.block1_nodes) or bool(return_variables_block1)
-        value_prod2 = is_value_producing(pair.block2_nodes) or bool(return_variables_block2)
+        value_prod1 = is_value_producing(cast(List[ast.stmt], pair.block1_nodes)) or bool(
+            return_variables_block1
+        )
+        value_prod2 = is_value_producing(cast(List[ast.stmt], pair.block2_nodes)) or bool(
+            return_variables_block2
+        )
 
         if os.getenv("DEBUG_VALIDATION"):
             print(f"  Value-producing check: block1={value_prod1}, block2={value_prod2}")
@@ -1554,12 +1582,12 @@ class UnificationRefactorEngine:
         if value_prod1 and not return_variables_block1:  # Naturally value-producing
             from .extractor import has_complete_return_coverage
 
-            if not has_complete_return_coverage(pair.block1_nodes):
+            if not has_complete_return_coverage(cast(List[ast.stmt], pair.block1_nodes)):
                 if os.getenv("DEBUG_VALIDATION"):
                     print("  REJECTED: Block1 missing complete return coverage")
                 self._debug_reject("incomplete_return_coverage_block1", pair)
                 return None
-            if not has_complete_return_coverage(pair.block2_nodes):
+            if not has_complete_return_coverage(cast(List[ast.stmt], pair.block2_nodes)):
                 if os.getenv("DEBUG_VALIDATION"):
                     print("  REJECTED: Block2 missing complete return coverage")
                 self._debug_reject("incomplete_return_coverage_block2", pair)
@@ -1568,7 +1596,9 @@ class UnificationRefactorEngine:
         # Heuristic: avoid extracting trivial single-line return blocks that just
         # return a previously bound local name (e.g., `return result`). Prefer
         # extracting the preceding computation that produces the value.
-        def _is_trivial_return_of_bound_name(block_nodes, bound_before_block, bound_in_block):
+        def _is_trivial_return_of_bound_name(
+            block_nodes: List[ast.AST], bound_before_block: Set[str], bound_in_block: Set[str]
+        ) -> bool:
             if len(block_nodes) != 1:
                 return False
             stmt = block_nodes[0]
@@ -1600,7 +1630,7 @@ class UnificationRefactorEngine:
 
         # Attempt unification
         blocks = [pair.block1_nodes, pair.block2_nodes]
-        hygienic_renames = [{}, {}]
+        hygienic_renames: List[Dict[str, str]] = [{}, {}]
 
         if os.getenv("DEBUG_VALIDATION"):
             print("  Attempting unification...")
@@ -1750,7 +1780,7 @@ class UnificationRefactorEngine:
         # Handle augmented assignment variables specially
         # 1) Remove them from substitution so they remain as free variables/parameters
         # 2) Record the name mapping per block for call generation later
-        aug_assign_param_mappings = {}
+        aug_assign_param_mappings: Dict[str, Dict[int, str]] = {}
         params_to_remove = []
         for param_name, exprs in list(substitution.param_expressions.items()):
             for block_idx, expr in exprs:
@@ -1761,13 +1791,14 @@ class UnificationRefactorEngine:
             if 0 in aug_assign_param_mappings.get(param_name, {}):
                 params_to_remove.append(param_name)
 
-        # Store the mappings in the substitution object for later use
+        # Store the mappings in the substitution object for later use (dynamic attribute)
         if not hasattr(substitution, "aug_assign_mappings"):
-            substitution.aug_assign_mappings = {}
+            setattr(substitution, "aug_assign_mappings", {})
+        aug_mappings = cast(Dict[str, Dict[int, str]], getattr(substitution, "aug_assign_mappings"))
         for param_name, block_mappings in aug_assign_param_mappings.items():
             if 0 in block_mappings:
                 block1_var_name = block_mappings[0]
-                substitution.aug_assign_mappings[block1_var_name] = block_mappings
+                aug_mappings[block1_var_name] = block_mappings
 
         # Remove the augmented assignment parameters from substitution
         for param_name in params_to_remove:
@@ -1804,6 +1835,7 @@ class UnificationRefactorEngine:
         # If a free variable is global/nonlocal, we cannot parameterize it
         # because you cannot have a parameter that is also declared global/nonlocal
         # This would create: SyntaxError: name 'x' is parameter and global
+        assert scope_analyzer is not None
         func1_scope_id = None
         for node, scope in scope_analyzer.node_scopes.items():
             if isinstance(node, ast.FunctionDef) and node.name == pair.function1_name:
@@ -1872,8 +1904,8 @@ class UnificationRefactorEngine:
 
         # Check for orphaned variables before proceeding
         # Need to find the function nodes to check for orphans
-        func1_for_orphans: Optional[ast.FunctionDef] = None
-        func2_for_orphans: Optional[ast.FunctionDef] = None
+        func1_for_orphans: Optional[FunctionNode] = None
+        func2_for_orphans: Optional[FunctionNode] = None
         for entry in all_functions:
             file_path, func = entry[0], entry[1]
             if file_path == pair.file_path and func.name == pair.function1_name:
@@ -1914,8 +1946,12 @@ class UnificationRefactorEngine:
                 body2 = body2[start_idx2:]
 
                 # Check for orphaned variables in both blocks
-                has_orphans1, orphans1 = has_orphaned_variables(body1, indices1)
-                has_orphans2, orphans2 = has_orphaned_variables(body2, indices2)
+                has_orphans1, orphans1 = has_orphaned_variables(
+                    cast(List[ast.AST], body1), indices1
+                )
+                has_orphans2, orphans2 = has_orphaned_variables(
+                    cast(List[ast.AST], body2), indices2
+                )
 
                 if has_orphans1 or has_orphans2:
                     # Cannot extract - would create orphaned variable references
@@ -2026,7 +2062,10 @@ class UnificationRefactorEngine:
             same_file_ctx = (pair.file_path2 is None) or (pair.file_path2 == pair.file_path)
             if same_file_ctx and not return_variables_block1 and not return_variables_block2:
                 # Build a set of already covered ranges to avoid duplicates
-                covered = {(pair.file_path, pair.block1_range), (pair.file_path2 or pair.file_path, pair.block2_range)}
+                covered = {
+                    (pair.file_path, pair.block1_range),
+                    (pair.file_path2 or pair.file_path, pair.block2_range),
+                }
                 # Template signature from block1
                 tmpl_sig = extract_block_signature(pair.block1_nodes)
 
@@ -2046,15 +2085,17 @@ class UnificationRefactorEngine:
                         if (fpath, cand_range) in covered:
                             continue
                         # Minimum size gate
-                        s, e = cand_range
-                        if (e - s + 1) < self.min_lines:
+                        start_line, end_line = cand_range
+                        if (end_line - start_line + 1) < self.min_lines:
                             continue
                         cand_sig = extract_block_signature(cand_nodes)
                         if not _qf(tmpl_sig, cand_sig):
                             continue
                         # Try to unify template block with candidate
                         try:
-                            subst2 = self.unifier.unify_blocks([pair.block1_nodes, cand_nodes], [{}, {}])
+                            subst2 = self.unifier.unify_blocks(
+                                [pair.block1_nodes, cand_nodes], [{}, {}]
+                            )
                         except Exception:
                             continue
                         if not subst2:
@@ -2074,7 +2115,7 @@ class UnificationRefactorEngine:
                         ):
                             start_idx = 1
                         body = body[start_idx:]
-                        has_orph, _orph = has_orphaned_variables(body, indices)
+                        has_orph, _orph = has_orphaned_variables(cast(List[ast.AST], body), indices)
                         if has_orph:
                             continue
                         # Generate a call node for the candidate
@@ -2099,7 +2140,9 @@ class UnificationRefactorEngine:
                                 continue
                             # Compute names bound before candidate block and free vars within it
                             try:
-                                from .assignment_analyzer import _collect_bindings_and_reassignments as _cbar
+                                from .assignment_analyzer import (
+                                    _collect_bindings_and_reassignments as _cbar,
+                                )
                             except Exception:
                                 _cbar = None  # type: ignore
 
@@ -2135,15 +2178,33 @@ class UnificationRefactorEngine:
                                     free_vars_cand = set()
                             allowed_cand = bound_before_cand | free_vars_cand
                             builtin_whitelist = {
-                                "len","sum","min","max","any","all","map","filter","sorted","list","dict","set","range","int","float","str","bool","enumerate","zip",
+                                "len",
+                                "sum",
+                                "min",
+                                "max",
+                                "any",
+                                "all",
+                                "map",
+                                "filter",
+                                "sorted",
+                                "list",
+                                "dict",
+                                "set",
+                                "range",
+                                "int",
+                                "float",
+                                "str",
+                                "bool",
+                                "enumerate",
+                                "zip",
                             }
                             invalid2 = set()
-                            for n in used2:
-                                if n == func_def.name:
+                            for name in used2:
+                                if name == func_def.name:
                                     continue
-                                if n in allowed_cand or n in builtin_whitelist:
+                                if name in allowed_cand or name in builtin_whitelist:
                                     continue
-                                invalid2.add(n)
+                                invalid2.add(name)
                             if invalid2:
                                 # Skip this candidate replacement
                                 continue
@@ -2174,6 +2235,7 @@ class UnificationRefactorEngine:
 
         desc = f"Extract common code from {pair.function1_name}"
         if is_cross_file:
+            assert pair.file_path2 is not None
             desc += f" ({Path(pair.file_path).name}) and {pair.function2_name} ({Path(pair.file_path2).name})"
         else:
             desc += f" and {pair.function2_name}"
@@ -2231,8 +2293,7 @@ class UnificationRefactorEngine:
             #    fallback to module-level to preserve accessibility (avoid privileging one sibling).
             same_class = pair.class1_name is not None and pair.class1_name == pair.class2_name
             target_is_concrete_sibling = (
-                class_plan.class_name in {pair.class1_name, pair.class2_name}
-                and not same_class
+                class_plan.class_name in {pair.class1_name, pair.class2_name} and not same_class
             )
             if target_is_concrete_sibling:
                 # Helper would become invisible to the other sibling; abort class insertion.
@@ -2380,22 +2441,31 @@ class UnificationRefactorEngine:
                     # Rewrite to local function call (no attribute), but ensure call uses final_func_name
                     # Simple textual AST rewrite: replace original helper name with final
                     if original_helper_name != final_func_name:
+
                         class LocalCallRewriter(ast.NodeTransformer):
-                            def visit_Call(self, node: ast.Call):
-                                node = self.generic_visit(node)
-                                if isinstance(node.func, ast.Name) and node.func.id == original_helper_name:
+                            def visit_Call(self, node: ast.Call) -> ast.AST:
+                                node = cast(ast.Call, self.generic_visit(node))
+                                if (
+                                    isinstance(node.func, ast.Name)
+                                    and node.func.id == original_helper_name
+                                ):
                                     node.func.id = final_func_name
                                 return node
+
                         replacement_node = LocalCallRewriter().visit(replacement_node)
                 else:
                     # Module-level insertion:
                     # If the helper was renamed (e.g., from '__extracted_func' to 'extracted_func' or custom),
                     # rewrite call sites accordingly.
                     if original_helper_name != final_func_name:
+
                         class ModuleCallRewriter(ast.NodeTransformer):
-                            def visit_Call(self, node: ast.Call):
-                                node = self.generic_visit(node)
-                                if isinstance(node.func, ast.Name) and node.func.id == original_helper_name:
+                            def visit_Call(self, node: ast.Call) -> ast.AST:
+                                node = cast(ast.Call, self.generic_visit(node))
+                                if (
+                                    isinstance(node.func, ast.Name)
+                                    and node.func.id == original_helper_name
+                                ):
                                     node.func.id = final_func_name
                                 return node
 
@@ -2440,9 +2510,14 @@ class UnificationRefactorEngine:
                         if insert_at_zero_based > 0 and lines[insert_at_zero_based - 1].strip():
                             prefix.append("\n")
                         suffix: List[str] = []
-                        if insert_at_zero_based < len(lines) and lines[insert_at_zero_based].strip():
+                        if (
+                            insert_at_zero_based < len(lines)
+                            and lines[insert_at_zero_based].strip()
+                        ):
                             suffix.append("\n")
-                        lines[insert_at_zero_based:insert_at_zero_based] = prefix + indented + suffix
+                        lines[insert_at_zero_based:insert_at_zero_based] = (
+                            prefix + indented + suffix
+                        )
                 elif proposal.insert_into_class:
                     # Prepare method signature & decorator
                     method_kind = proposal.method_kind or "instance"
@@ -2462,20 +2537,20 @@ class UnificationRefactorEngine:
                     else:
                         insert_line_zero_based, indent = insert_info
                         method_indent = indent + "    "
-                        indented: List[str] = []
+                        indented_method: List[str] = []
                         for line in method_lines:
                             if line.strip():
-                                indented.append(method_indent + line)
+                                indented_method.append(method_indent + line)
                             else:
-                                indented.append(line)
+                                indented_method.append(line)
                         insert_at = insert_line_zero_based + 1
-                        prefix: List[str] = []
+                        method_prefix: List[str] = []
                         if insert_at > 0 and lines[insert_at - 1].strip():
-                            prefix.append("\n")
-                        suffix: List[str] = []
+                            method_prefix.append("\n")
+                        method_suffix: List[str] = []
                         if insert_at < len(lines) and lines[insert_at].strip():
-                            suffix.append("\n")
-                        lines[insert_at:insert_at] = prefix + indented + suffix
+                            method_suffix.append("\n")
+                        lines[insert_at:insert_at] = method_prefix + indented_method + method_suffix
                 else:
                     func_code = ast.unparse(proposal.extracted_function)
                     func_lines = [line + "\n" for line in func_code.split("\n")]
@@ -2498,6 +2573,7 @@ class UnificationRefactorEngine:
                     from_path = Path(proposal.file_path)
                     to_path = Path(file_path)
                     from pathlib import Path as _P
+
                     common_dir = _P(
                         __import__("os").path.commonpath([str(from_path), str(to_path)])
                     )
@@ -2545,6 +2621,7 @@ class UnificationRefactorEngine:
                 continue
 
             if in_docstring:
+                assert docstring_char is not None
                 if docstring_char in stripped:
                     in_docstring = False
                     after_docstring = i + 1
@@ -2623,7 +2700,7 @@ class UnificationRefactorEngine:
         return locator.result
 
     def _get_block_indices(
-        self, function: ast.FunctionDef, block_nodes: List[ast.AST]
+        self, function: FunctionNode, block_nodes: List[ast.AST]
     ) -> Optional[Tuple[int, int]]:
         """
         Find the indices of a block within a function body.
@@ -2651,11 +2728,13 @@ class UnificationRefactorEngine:
         body = body[start_idx:]
 
         # Match by line numbers
-        block_start_line = block_nodes[0].lineno
+        first_node = cast(Union[ast.stmt, ast.expr], block_nodes[0])
+        last_node = cast(Union[ast.stmt, ast.expr], block_nodes[-1])
+        block_start_line = first_node.lineno
         block_end_line = (
-            block_nodes[-1].end_lineno
-            if hasattr(block_nodes[-1], "end_lineno")
-            else block_nodes[-1].lineno
+            last_node.end_lineno
+            if hasattr(last_node, "end_lineno") and last_node.end_lineno is not None
+            else last_node.lineno
         )
 
         # Find matching range in body
@@ -2675,7 +2754,10 @@ class UnificationRefactorEngine:
         return None
 
     def _are_structurally_similar(
-        self, block1: List[ast.AST], block2: List[ast.AST], threshold: float = 0.6
+        self,
+        block1: List[ast.AST],
+        block2: List[ast.AST],
+        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     ) -> bool:
         """
         Check if two blocks are structurally similar enough to attempt unification.
@@ -2685,7 +2767,7 @@ class UnificationRefactorEngine:
         Args:
             block1: First block
             block2: Second block
-            threshold: Similarity threshold (0.0 to 1.0)
+            threshold: Similarity threshold (0.0 to 1.0, default: 0.6)
 
         Returns:
             True if blocks are similar enough
@@ -2731,22 +2813,22 @@ class UnificationRefactorEngine:
         self, file_path: str, max_iterations: int = 10
     ) -> Tuple[str, int, List[str]]:
         """
-        Apply refactorings iteratively until a fixed point is reached.
+            Apply refactorings iteratively until a fixed point is reached.
 
-    This method applies refactorings one at a time, re-analyzing after each
-    application. This prevents the sequential corruption bug where applying
-    multiple refactorings at once causes line number misalignment.
+        This method applies refactorings one at a time, re-analyzing after each
+        application. This prevents the sequential corruption bug where applying
+        multiple refactorings at once causes line number misalignment.
 
-    max_iterations semantics:
-    - If max_iterations > 0, stop after at most that many applied refactorings.
-    - If max_iterations <= 0, run until a natural fixed point (no proposals found).
+        max_iterations semantics:
+        - If max_iterations > 0, stop after at most that many applied refactorings.
+        - If max_iterations <= 0, run until a natural fixed point (no proposals found).
 
-        Args:
-            file_path: Path to file to refactor
-            max_iterations: Maximum iterations to prevent infinite loops
+            Args:
+                file_path: Path to file to refactor
+                max_iterations: Maximum iterations to prevent infinite loops
 
-        Returns:
-            Tuple of (final_code, num_refactorings_applied, descriptions)
+            Returns:
+                Tuple of (final_code, num_refactorings_applied, descriptions)
         """
         current_code = Path(file_path).read_text()
         num_applied = 0
@@ -2834,7 +2916,7 @@ class UnificationRefactorEngine:
         # Aggregate results per file
         results: Dict[str, Tuple[int, List[str]]] = {}
 
-        def _bump_result(path: str, desc: str):
+        def _bump_result(path: str, desc: str) -> None:
             count, descs = results.get(path, (0, []))
             results[path] = (count + 1, descs + [desc])
 
@@ -2846,8 +2928,8 @@ class UnificationRefactorEngine:
 
         # Timing / ETA state (for heuristic ETA when total unknown)
         import time as _time
+
         per_proposal_durations: List[float] = []
-        total_is_known = max_iterations > 0
 
         # Progress helpers -------------------------------------------------
         use_tqdm = False
@@ -2856,6 +2938,7 @@ class UnificationRefactorEngine:
         if progress in ("tqdm", "auto"):
             try:
                 import importlib
+
                 _tqdm_mod = importlib.import_module("tqdm.auto")
                 tqdm_wrapper = getattr(_tqdm_mod, "tqdm")
                 use_tqdm = True  # if import works we treat auto == tqdm
@@ -2928,6 +3011,7 @@ class UnificationRefactorEngine:
                 _fallback_bar(total_applied, len(proposal_queue), "discovered", "proposals queued")
                 if use_tqdm and progress_bar is None:
                     # Lazily create tqdm now that we have proposals to apply
+                    assert tqdm_wrapper is not None
                     try:
                         total_known = max_iterations > 0
                         # Use leave=False so subsequent prints don't duplicate the bar line.
@@ -2951,7 +3035,9 @@ class UnificationRefactorEngine:
             last_desc = proposal.description
             # Suppress separate applying log line when tqdm active to avoid duplicate lines
             if not (use_tqdm and progress_bar is not None):
-                _fallback_bar(total_applied, len(proposal_queue), "apply", f"#{iterations+1}: {last_desc}")
+                _fallback_bar(
+                    total_applied, len(proposal_queue), "apply", f"#{iterations+1}: {last_desc}"
+                )
 
             # Apply proposal
             result = self.apply_refactoring_multi_file(proposal)
@@ -2988,14 +3074,19 @@ class UnificationRefactorEngine:
             # Localized follow-up analysis just on changed files
             if changed_paths:
                 try:
-                    localized = self.analyze_files(list(changed_paths), invalidate_paths=list(changed_paths))
+                    localized = self.analyze_files(
+                        list(changed_paths), invalidate_paths=list(changed_paths)
+                    )
                     if localized:
                         localized = filter_overlapping_proposals(localized)
                         changed_set = set(map(str, changed_paths))
                         localized = [
                             p
                             for p in localized
-                            if any((rep.file_path or p.file_path) in changed_set for rep in p.replacements)
+                            if any(
+                                (rep.file_path or p.file_path) in changed_set
+                                for rep in p.replacements
+                            )
                         ]
                         if localized:
                             proposal_queue = localized + proposal_queue
@@ -3021,7 +3112,9 @@ class UnificationRefactorEngine:
                 except Exception:
                     pass
             else:
-                _fallback_bar(total_applied, len(proposal_queue), "applied", f"#{iterations}: {last_desc}")
+                _fallback_bar(
+                    total_applied, len(proposal_queue), "applied", f"#{iterations}: {last_desc}"
+                )
 
             if max_iterations > 0 and iterations >= max_iterations:
                 termination_reason = "iteration_cap"
@@ -3040,7 +3133,9 @@ class UnificationRefactorEngine:
             from . import pipeline as _pipeline  # local import to avoid cycles at module load time
 
             for p in paths:
-                _pipeline._analysis_cache.pop(p, None)  # type: ignore[attr-defined]
+                if hasattr(_pipeline, "_analysis_cache"):
+                    cache = cast(Dict[str, Any], getattr(_pipeline, "_analysis_cache"))
+                    cache.pop(p, None)
         except Exception:
             # Non-fatal; best-effort invalidation only
             pass
@@ -3107,6 +3202,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
 
     # Optional debug diagnostics: env flag
     import os as _os
+
     _debug_overlap = bool(_os.getenv("DEBUG_OVERLAP_FILTER"))
 
     # Helpers for deterministic ordering and interval extraction
@@ -3129,7 +3225,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
         per_file_interval[idx] = {}
         # Build convex hull interval per file for MWIS approximation
         by_file: Dict[str, List[int]] = {}
-        for (fp, ln) in affected:
+        for fp, ln in affected:
             by_file.setdefault(fp, []).append(ln)
         for fp, lines in by_file.items():
             per_file_interval[idx][fp] = (min(lines), max(lines))
@@ -3163,7 +3259,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
         # Precompute p[j]: rightmost non-overlapping interval index before j
         ends = [it[1] for it in items]
         starts = [it[0] for it in items]
-        p = [ -1 ] * n
+        p = [-1] * n
         j = 0
         for j in range(n):
             # binary search for last i with ends[i] < starts[j]
@@ -3183,7 +3279,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
         take = [False] * n
         for j in range(n):
             wj = items[j][2]
-            without = dp[j-1] if j > 0 else 0
+            without = dp[j - 1] if j > 0 else 0
             withj = wj + (dp[p[j]] if p[j] != -1 else 0)
             if withj > without:
                 dp[j] = withj
@@ -3239,9 +3335,12 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
             used_lines.update(affected)
         elif _debug_overlap:
             by_file2: Dict[str, List[int]] = {}
-            for (fp, ln) in intersection:
+            for fp, ln in intersection:
                 by_file2.setdefault(fp, []).append(ln)
-            parts = [f"{fp}:{min(lines)}-{max(lines)} ({len(lines)} lines)" for fp, lines in by_file2.items()]
+            parts = [
+                f"{fp}:{min(lines)}-{max(lines)} ({len(lines)} lines)"
+                for fp, lines in by_file2.items()
+            ]
             try:
                 print(
                     "OVERLAP_DROP: size=",

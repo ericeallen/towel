@@ -426,7 +426,8 @@ def outer2(data, threshold):
             for prop in relevant_proposals:
                 if isinstance(prop.extracted_function, ast.FunctionDef):
                     nested_defs = [
-                        stmt for stmt in prop.extracted_function.body
+                        stmt
+                        for stmt in prop.extracted_function.body
                         if isinstance(stmt, ast.FunctionDef)
                     ]
                     self.assertEqual(

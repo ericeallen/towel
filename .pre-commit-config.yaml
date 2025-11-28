@@ -1,0 +1,78 @@
+# Pre-commit hooks for Towel
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # Code formatting with Black
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        args: [--line-length=100]
+        language_version: python3.11
+        exclude: ^(test_examples|\.templates/)
+
+  # Linting with flake8
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        args: [--config=.flake8]
+        exclude: ^(venv/|env/|__pycache__/|tests/|test_examples|\.templates/|scripts/dry|scripts/preview|scripts/verify-examples)
+
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        args: [--config-file=pyproject.toml]
+        files: ^src/towel/
+        exclude: ^scripts/
+        additional_dependencies: []
+
+  # General pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      # Remove trailing whitespace
+      - id: trailing-whitespace
+        exclude: ^test_examples.*_expected_output/
+
+      # Ensure files end with newline
+      - id: end-of-file-fixer
+        exclude: ^test_examples.*_expected_output/
+
+      # Check YAML syntax
+      - id: check-yaml
+
+      # Prevent large files from being committed
+      - id: check-added-large-files
+        args: [--maxkb=500]
+
+      # Check for merge conflicts
+      - id: check-merge-conflict
+
+      # Check TOML syntax
+      - id: check-toml
+
+      # Check for Python syntax errors
+      - id: check-ast
+
+      # Check for debugger imports
+      - id: debug-statements
+
+  # Docstring checking with pydocstyle (disabled for pre-commit, run manually)
+  # - repo: https://github.com/pycqa/pydocstyle
+  #   rev: 6.3.0
+  #   hooks:
+  #     - id: pydocstyle
+  #       args: [--config=setup.cfg]
+  #       exclude: ^(tests/|test_examples|\.templates/|scripts/)
+
+  # Security scanning with bandit
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.6
+    hooks:
+      - id: bandit
+        args: [-ll]
+        exclude: ^(tests/|test_examples/|\.templates/|scripts/)

@@ -50,5 +50,3 @@ def __extracted_func_0(__param_0):
         raise ValueError('User name too short')
 
 
-
-

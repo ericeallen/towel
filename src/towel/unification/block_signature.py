@@ -23,6 +23,12 @@ IDENT_COUNT_TOLERANCE = 2
 
 @dataclass(frozen=True)
 class BlockSignature:
+    """Structural fingerprint of a code block for fast similarity pre-filtering.
+
+    Contains conservative metrics (statement count, control flow presence, name/call counts)
+    used to quickly reject obviously dissimilar blocks before expensive unification.
+    """
+
     stmt_count: int
     stmt_seq: Tuple[str, ...]
     has_with: bool

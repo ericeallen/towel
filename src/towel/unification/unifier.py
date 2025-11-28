@@ -609,7 +609,9 @@ class Unifier:
         num_blocks = len(blocks)
 
         # Utility: collect whether a variable is used later in a Call context (as a callee or as an argument)
-        def is_used_as_callable_or_value_later(block: List[ast.AST], start_stmt_idx: int, var_name: str) -> bool:
+        def is_used_as_callable_or_value_later(
+            block: List[ast.AST], start_stmt_idx: int, var_name: str
+        ) -> bool:
             class CallContextFinder(ast.NodeVisitor):
                 def __init__(self) -> None:
                     self.found = False
@@ -623,7 +625,11 @@ class Unifier:
                         if isinstance(arg, ast.Name) and arg.id == var_name:
                             self.found = True
                     for kw in node.keywords:
-                        if kw.arg is not None and isinstance(kw.value, ast.Name) and kw.value.id == var_name:
+                        if (
+                            kw.arg is not None
+                            and isinstance(kw.value, ast.Name)
+                            and kw.value.id == var_name
+                        ):
                             self.found = True
                     self.generic_visit(node)
 
@@ -645,28 +651,28 @@ class Unifier:
             return False
 
         # Utility: yield all (path, call_node) pairs within a statement in block 0
-        def iter_calls_with_paths(stmt: ast.AST) -> List[Tuple[Tuple, ast.Call]]:
-            result: List[Tuple[Tuple, ast.Call]] = []
+        def iter_calls_with_paths(stmt: ast.AST) -> List[Tuple[Tuple[Any, ...], ast.Call]]:
+            result: List[Tuple[Tuple[Any, ...], ast.Call]] = []
 
-            def walk(node: ast.AST, path: Tuple) -> None:
+            def walk(node: ast.AST, path: Tuple[Any, ...]) -> None:
                 if isinstance(node, ast.Call):
                     result.append((path, node))
-                for field in getattr(node, "_fields", ()): 
-                    if field in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
+                for field_name in getattr(node, "_fields", ()):
+                    if field_name in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
                         continue
-                    value = getattr(node, field, None)
+                    value = getattr(node, field_name, None)
                     if isinstance(value, list):
                         for i, item in enumerate(value):
                             if isinstance(item, ast.AST):
-                                walk(item, path + (field, i))
+                                walk(item, path + (field_name, i))
                     elif isinstance(value, ast.AST):
-                        walk(value, path + (field,))
+                        walk(value, path + (field_name,))
 
             walk(stmt, ("$root",))
             return result
 
         # Utility: follow a path within a statement to retrieve the corresponding node
-        def get_node_by_path(stmt: ast.AST, path: Tuple) -> Optional[ast.AST]:
+        def get_node_by_path(stmt: ast.AST, path: Tuple[Any, ...]) -> Optional[ast.AST]:
             node: ast.AST = stmt
             # path starts with ("$root",), skip first marker
             for p in path[1:]:
@@ -684,7 +690,7 @@ class Unifier:
             return node
 
         # Utility: get child by (field, index) sequence from current node
-        def get_node_by_field_index_path(stmt: ast.AST, path: Tuple) -> Optional[ast.AST]:
+        def get_node_by_field_index_path(stmt: ast.AST, path: Tuple[Any, ...]) -> Optional[ast.AST]:
             node: ast.AST = stmt
             # Skip "$root"
             idx = 1
@@ -775,9 +781,12 @@ class Unifier:
                 if missing or len(per_block_exprs) != num_blocks:
                     continue
 
+                # At this point, all per_block_exprs are non-None (validated above)
+                valid_exprs = cast(List[ast.AST], per_block_exprs)
+
                 # Skip if any of these expressions are already parameterized
                 already_param = False
-                for bidx, expr_b in enumerate(per_block_exprs):
+                for bidx, expr_b in enumerate(valid_exprs):
                     if subst.get_param_for_expr(bidx, expr_b) is not None:
                         already_param = True
                         break
@@ -788,14 +797,14 @@ class Unifier:
                 param_name = f"__param_{self.param_counter}"
                 self.param_counter += 1
 
-                for bidx, expr_b in enumerate(per_block_exprs):
+                for bidx, expr_b in enumerate(valid_exprs):
                     subst.add_mapping(bidx, expr_b, param_name, bound_vars=None)
 
                 # Also store per-block expr under promoted_literal_args for clarity
                 if hasattr(subst, "promoted_literal_args"):
                     if param_name not in subst.promoted_literal_args:
                         subst.promoted_literal_args[param_name] = {}
-                    for bidx, expr_b in enumerate(per_block_exprs):
+                    for bidx, expr_b in enumerate(valid_exprs):
                         subst.promoted_literal_args[param_name][bidx] = expr_b
 
     def _unify_nodes(

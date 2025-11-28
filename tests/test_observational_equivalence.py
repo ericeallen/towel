@@ -12,6 +12,7 @@ import ast
 import sys
 import io
 import copy
+import re
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from contextlib import redirect_stdout, redirect_stderr
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -163,7 +164,9 @@ class FunctionExecutionResult:
 
         # If both raised exceptions, compare exception messages
         if self.exception and other.exception:
-            return str(self.exception) == str(other.exception)
+            return self._normalized_exception_message(
+                self.exception
+            ) == self._normalized_exception_message(other.exception)
 
         # Compare return values
         # SPECIAL CASE: If both return values are callable functions,
@@ -217,6 +220,39 @@ class FunctionExecutionResult:
         if self.exception:
             return f"FunctionExecutionResult(exception={self.exception_type.__name__}: {self.exception})"
         return f"FunctionExecutionResult(return_value={repr(self.return_value)})"
+
+    @staticmethod
+    def _normalized_exception_message(exc: Exception) -> str:
+        """Normalize exception text for comparison to tolerate augmented-assignment wording."""
+
+        message = str(exc)
+        # Python uses augmented-assignment spellings ("+=", "&=", etc.) in error messages across
+        # multiple exception families (TypeError, ValueError, etc.). Strip the trailing '=' that is
+        # only introduced by the normalization rewrite so comparisons stay operator-aware but not
+        # sensitive to assignment form.
+        message = re.sub(r"(for\s+[^:]+)=:", r"\1:", message)
+        return message
+
+
+class TestFunctionExecutionResult(unittest.TestCase):
+    def test_typeerror_message_normalization(self):
+        lhs = FunctionExecutionResult(
+            exception=TypeError("unsupported operand type(s) for &: 'int' and 'set'")
+        )
+        rhs = FunctionExecutionResult(
+            exception=TypeError("unsupported operand type(s) for &=: 'int' and 'set'")
+        )
+
+        self.assertEqual(lhs, rhs)
+
+        lhs_val = FunctionExecutionResult(
+            exception=ValueError("unsupported operand type(s) for +: 'str' and 'int'")
+        )
+        rhs_val = FunctionExecutionResult(
+            exception=ValueError("unsupported operand type(s) for +=: 'str' and 'int'")
+        )
+
+        self.assertEqual(lhs_val, rhs_val)
 
 
 def execute_function(

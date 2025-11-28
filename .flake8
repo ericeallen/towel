@@ -1,0 +1,9 @@
+[flake8]
+max-line-length = 100
+exclude = venv,env,__pycache__,tests
+# E501: Line too long (we use Black's 100 char limit, not PEP8's 79)
+# W503: Line break before binary operator (Black style)
+# E203: Whitespace before ':' (Black vs flake8 conflict in slices)
+# E226: Missing whitespace around arithmetic operator (intentional for readability)
+# E741: Ambiguous variable name (contextually clear in usage)
+ignore = E501,W503,E203,E226,E741

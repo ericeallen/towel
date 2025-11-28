@@ -1,3 +1,11 @@
+"""Data models for the unification-based refactoring system.
+
+This module defines the core data structures used throughout the refactoring engine:
+- Code block pairs for comparison
+- Method information for class context
+- Refactoring proposals
+- Function context for analysis
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,8 +37,8 @@ class CodeBlockPair:
     root_scope2: Optional["Scope"] = None
     source1: Optional[str] = None
     source2: Optional[str] = None
-    function1_node: Optional[ast.FunctionDef] = None
-    function2_node: Optional[ast.FunctionDef] = None
+    function1_node: Optional[Union[ast.FunctionDef, ast.AsyncFunctionDef]] = None
+    function2_node: Optional[Union[ast.FunctionDef, ast.AsyncFunctionDef]] = None
 
 
 @dataclass

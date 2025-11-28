@@ -29,7 +29,9 @@ def test_module_level_helper_call_from_class_uses_direct_name(tmp_path):
     file_path = tmp_path / "mod.py"
     file_path.write_text(textwrap.dedent(code).strip() + "\n", encoding="utf-8")
     proposals = engine.analyze_files([str(file_path)])
-    assert proposals, "Expected at least one proposal for identical methods across unrelated classes"
+    assert (
+        proposals
+    ), "Expected at least one proposal for identical methods across unrelated classes"
     new_src = engine.apply_refactoring(str(file_path), proposals[0])
 
     # Helper should be defined at module level with standard name
@@ -98,9 +100,19 @@ def test_option_b_promotes_equal_literals_in_higher_order_factories(tmp_path):
     assert helper.args.args, "Helper should expose parameters after promotion"
 
     # Helper body should include a call make_validator(__param_X)
-    calls = [n for n in ast.walk(helper) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "make_validator"]
+    calls = [
+        n
+        for n in ast.walk(helper)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "make_validator"
+    ]
     assert calls, "Helper should call make_validator"
-    called_with_param = any(isinstance(c.args[0], ast.Name) and c.args[0].id.startswith("__param_") for c in calls if c.args)
+    called_with_param = any(
+        isinstance(c.args[0], ast.Name) and c.args[0].id.startswith("__param_")
+        for c in calls
+        if c.args
+    )
     assert called_with_param, "make_validator should receive a promoted parameter argument"
 
     # And ensure literal 5 was removed from helper body (threaded as parameter instead)
