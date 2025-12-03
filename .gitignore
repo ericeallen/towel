@@ -53,6 +53,10 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
+# Environment and secrets
+.env
+.env.*
+
 # Project specific
 /tmp/refactored_*.py
 test_examples_copy/
