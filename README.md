@@ -212,9 +212,9 @@ The tool ensures safe refactorings by:
 - **Comprehension Scoping**: Respects that comprehension variables are local to the comprehension
 - **Structural Similarity**: Only unifies blocks with >60% structural similarity
 
-## Recent Improvements (Latest)
+## Advanced Features
 
-**Class-Aware Helper Promotion** – Duplicate instance, class, or static methods can now be lifted into their nearest shared base class, even when the originals live in different files. The refactor engine:
+**Class-Aware Helper Promotion** – Duplicate instance, class, or static methods are automatically lifted into their nearest shared base class, even across different files:
 
 - Builds an inheritance table while scanning the project
 - Chooses the most specific shared ancestor for the extracted helper
@@ -223,30 +223,26 @@ The tool ensures safe refactorings by:
 
 **Orphan Variable Detection** – Prevents unsafe extractions that would create undefined variables:
 ```python
-# Before fix: Would extract lines 1-3, leaving 'total' undefined
+# Rejects this unsafe extraction:
 def compute():
   x = 10
   y = 20
   total = x + y
-  return total  # ERROR: 'total' undefined!
-
-# After fix: Rejects partial extraction, only allows full function extraction
+  return total  # Would leave 'total' undefined if lines 1-3 extracted alone
 ```
 
-**Return Value Propagation** – Detects returns anywhere in block (not just at end):
+**Return Value Propagation** – Detects returns anywhere in code blocks:
 ```python
-# Now correctly generates: return extracted_func()
+# Correctly generates: return extracted_func()
 if x > 100:
-  return y * 2  # Nested return detected
+  return y * 2  # Nested return automatically detected
 ```
 
-**Alpha-Renaming for Loop Variables** - Treats `i`, `j`, `k` as equivalent:
+**Alpha-Renaming for Loop Variables** - Treats `i`, `j`, `k` as equivalent binding variables:
 ```python
 for i in range(10):  # Unifies with
 for j in range(10):  # this block
 ```
-
-**Test Coverage**: 91% coverage with 97 comprehensive unit tests
 
 ### Progress & Iteration Feedback
 

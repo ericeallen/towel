@@ -21,7 +21,7 @@ Towel implements a unification-based approach to detect and refactor duplicate c
 
 3. **Hygienic Code Extraction** (`towel/unification/extractor.py`)
    - Extracts code into functions while maintaining hygiene
-   - **Handles f-strings correctly** (fixed ast.unparse errors)
+   - **Handles f-strings correctly** with proper AST structure preservation
    - Ensures no shadowing of enclosing scope identifiers
    - Preserves referential transparency
 
@@ -41,43 +41,34 @@ Towel implements a unification-based approach to detect and refactor duplicate c
    - F-strings: ✓ No errors
    - Valid Python output: ✓ All tests pass
 
-## Key Bug Fixes
+## Key Features
 
-### 1. F-String Unparsing Error (FIXED)
-**Problem:** `ValueError: Unexpected node inside JoinedStr`
-- When substituting parameters inside f-strings, bare Name nodes were created
-- JoinedStr nodes require specific child types (Constant, FormattedValue)
+### 1. F-String Handling
+Towel correctly handles Python f-strings with proper AST structure preservation:
+- Preserves JoinedStr node structure with proper child types (Constant, FormattedValue)
+- Substitutes parameters in expressions while maintaining f-string semantics
+- Generates valid Python code with correctly formatted f-strings
 
-**Solution:** Special handling for JoinedStr nodes in `ParameterSubstituter`
-- Don't replace direct children of JoinedStr
-- Allow replacement of expressions deeper in the tree
-- Preserve f-string structure
+### 2. Smart Docstring Handling
+Docstrings are intelligently excluded from duplication analysis:
+- Automatically detects string Expr nodes at function start
+- Excludes docstrings from block extraction
+- Prevents spurious parameterization of documentation strings
+- Preserves function documentation in extracted code
 
-### 2. Docstring Parameterization (FIXED)
-**Problem:** Docstrings were being treated as code and parameterized
-- 'Process user data.' vs 'Process admin data.' created spurious parameters
+### 3. Constant Preservation
+Constants must match exactly for unification to succeed:
+- Only parameterizes identifier (Name node) differences
+- Rejects blocks where constants differ (e.g., `'John'` vs `'Jane'`)
+- Ensures extracted functions have consistent behavior
+- Prevents over-parameterization of literal values
 
-**Solution:** Skip docstrings in `_extract_code_blocks`
-- Check for string Expr nodes at function start
-- Exclude them from block extraction
-
-### 3. Constant Parameterization (FIXED)
-**Problem:** Constants with different values were being parameterized
-- 'John' vs 'Jane' created parameters
-- 'Processing user:' vs 'Processing admin:' created parameters
-
-**Solution:** Reject mismatched constants in `_unify_nodes`
-- Only parameterize identifier (Name node) differences
-- Require all constants to be identical for unification to succeed
-
-### 4. Free Variable Analysis (FIXED)
-**Problem:** Different variable names treated as "different free variables"
-- `user_id` vs `admin_id` rejected as different free variables
-- Should have been unified as parameters instead
-
-**Solution:** Remove strict free variable check
-- Let unification handle all identifier differences
-- Free variables now only includes shared references (like `len`, `ValueError`)
+### 4. Intelligent Variable Analysis
+Free variable analysis focuses on truly shared references:
+- Parameterizes different variable names (e.g., `user_id` vs `admin_id`)
+- Preserves references to shared bindings (e.g., `len`, `ValueError`)
+- Uses unification to handle identifier differences systematically
+- Maintains referential transparency across extractions
 
 ## Architecture
 
