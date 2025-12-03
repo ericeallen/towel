@@ -356,6 +356,6 @@ Missing tools will be skipped with a message.
 
 ## See Also
 
-- [README.md](README.md) - Main documentation
+- [README.md](../README.md) - Main documentation
 - [USAGE_GUIDE.md](USAGE_GUIDE.md) - Complete usage guide
 - [CROSS_FILE_REFACTORING.md](CROSS_FILE_REFACTORING.md) - Cross-file details

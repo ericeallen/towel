@@ -430,16 +430,16 @@ for proposal in proposals:
             f.write(content)
 ```
 
-See [USAGE_GUIDE.md](USAGE_GUIDE.md) for complete API documentation.
+See [docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md) for complete API documentation.
 
 ## Documentation
 
-- **[USAGE_GUIDE.md](USAGE_GUIDE.md)** - Complete usage guide
-- **[CROSS_FILE_REFACTORING.md](CROSS_FILE_REFACTORING.md)** - Cross-file refactoring details
-- **[README_DIRECTORY_USAGE.md](README_DIRECTORY_USAGE.md)** - Directory analysis guide
-- **[UNIFICATION_IMPLEMENTATION.md](UNIFICATION_IMPLEMENTATION.md)** - Implementation details
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
-- **[JUSTFILE_REFERENCE.md](JUSTFILE_REFERENCE.md)** - Complete justfile command reference
+- **[docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md)** - Complete usage guide
+- **[docs/CROSS_FILE_REFACTORING.md](docs/CROSS_FILE_REFACTORING.md)** - Cross-file refactoring details
+- **[docs/README_DIRECTORY_USAGE.md](docs/README_DIRECTORY_USAGE.md)** - Directory analysis guide
+- **[docs/UNIFICATION_IMPLEMENTATION.md](docs/UNIFICATION_IMPLEMENTATION.md)** - Implementation details
+- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[docs/JUSTFILE_REFERENCE.md](docs/JUSTFILE_REFERENCE.md)** - Complete justfile command reference
 
 ## License
 
