@@ -92,6 +92,71 @@ The good news: This affects less than 0.5% of proposals (1 out of 209 test cases
 
 ---
 
+### 2. Complex Lambda Parameters
+
+**Status**: Known Limitation (conservatively rejected)
+
+**Description**:
+
+Towel fully supports standard lambda expressions with simple parameters:
+```python
+# ✅ Fully supported - these WILL be unified:
+map_a = lambda x: x * 2
+map_b = lambda y: y * 2
+
+filter_a = lambda x, threshold: x > threshold
+filter_b = lambda y, limit: y > limit
+```
+
+However, Towel currently does not support unifying lambda expressions that use Python's advanced parameter features:
+- Positional-only parameters (`/` syntax, Python 3.8+)
+- Keyword-only parameters (`*` syntax)
+- Variable positional arguments (`*args`)
+- Variable keyword arguments (`**kwargs`)
+
+**Examples of Unsupported Cases**:
+
+```python
+# ❌ Not currently unified:
+process_a = lambda x, *, key=None: x if key else -x
+process_b = lambda y, *, key=None: y if key else -y
+
+# ❌ Not currently unified:
+compute_a = lambda *args: sum(args) + 10
+compute_b = lambda *args: sum(args) + 20
+
+# ❌ Not currently unified:
+func_a = lambda x, /, **kwargs: x + sum(kwargs.values())
+func_b = lambda y, /, **kwargs: y + sum(kwargs.values())
+```
+
+**Rationale**:
+
+These advanced parameter types require more sophisticated alpha-renaming and parameter mapping logic. Since they are relatively uncommon in typical duplicate code patterns (most lambda expressions use simple parameters), Towel conservatively rejects these cases rather than risk incorrect unification.
+
+**Workaround**:
+
+Convert complex lambdas to named functions before running Towel:
+
+```python
+# Before:
+process_a = lambda *args, **kwargs: helper(*args, **kwargs) + 10
+process_b = lambda *args, **kwargs: helper(*args, **kwargs) + 20
+
+# After conversion (can be unified):
+def process_a(*args, **kwargs):
+    return helper(*args, **kwargs) + 10
+
+def process_b(*args, **kwargs):
+    return helper(*args, **kwargs) + 20
+```
+
+Regular functions with these parameter types ARE fully supported by Towel - only lambda expressions with these features are affected.
+
+**Implementation Reference**: `src/towel/unification/unifier.py:1454`
+
+---
+
 ## Statistics
 
 **Overall Success Rate**: 99.5% (208/209 proposals pass observational equivalence tests)

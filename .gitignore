@@ -91,3 +91,10 @@ my_test2_out/
 
 # Local Claude
 CLAUDE_local*.*
+
+# Internal documentation
+docs/docs_local/
+
+# Temporary debug files
+*.txt
+!requirements.txt

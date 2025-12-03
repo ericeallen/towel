@@ -77,7 +77,7 @@ just test-crossfile
 ### Manual Testing
 
 ```bash
-cd /Users/ericeallen/Documents/Code/towel-repo
+cd /path/to/towel
 source venv/bin/activate
 
 python -c "

@@ -1,3 +1,17 @@
+# Copyright 2025 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Main refactoring engine using unification.
 
@@ -15,14 +29,20 @@ import os
 import re
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import Any, List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Union, cast
+from dataclasses import dataclass
+from typing import Any, List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Union, Sequence, cast
 from weakref import WeakKeyDictionary
 from pathlib import Path
 from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier
 from .extractor import HygienicExtractor, is_value_producing
 from .orphan_detector import has_orphaned_variables
-from .assignment_analyzer import analyze_assignments, has_reassignments_without_bindings
+from .assignment_analyzer import (
+    analyze_assignments,
+    has_reassignments_without_bindings,
+    _collect_block_binding_stats,
+    _collect_bindings_and_reassignments,
+)
 from .project_layout import ProjectLayout
 from .block_signature import extract_block_signature, quick_filter
 from .models import (
@@ -51,6 +71,18 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.6
 DEFAULT_MAX_ITERATIONS = 0  # Unlimited
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
+
+
+@dataclass(frozen=True)
+class BlockBindingSnapshot:
+    """Summarized binding data for a block, mirroring DRY helper structure."""
+
+    bound_in_block: Set[str]
+    reassigned_in_block: Set[str]
+    bound_before_block: Set[str]
+    bound_after_block: Set[str]
+    initially_bound: Set[str]
+
 
 _worker_engine: Optional["UnificationRefactorEngine"] = None
 _worker_functions: Optional[
@@ -349,6 +381,69 @@ class UnificationRefactorEngine:
         return False
 
     @staticmethod
+    def _load_tqdm_wrapper() -> Optional[Any]:
+        """Best-effort tqdm importer (mirrors DRY run helper, see docs/DRY_RUN_2025-11-28.md)."""
+
+        try:
+            import importlib
+
+            module = importlib.import_module("tqdm.auto")
+            return getattr(module, "tqdm")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _start_inline_status(label: str, enabled: bool) -> None:
+        """Emit the leading inline progress label when requested (DRY helper)."""
+
+        if enabled:
+            print(label, end=" ", flush=True)
+
+    @staticmethod
+    def _render_inline_bar(pct: int, bar_len: int = 24) -> str:
+        """Render a textual progress bar reused across inline progress sites."""
+
+        filled = (pct * bar_len) // 100
+        return "#" * filled + "-" * (bar_len - filled)
+
+    @classmethod
+    def _update_inline_status(
+        cls, label: str, pct: int, *, bar_len: int = 24, suffix: str = ""
+    ) -> None:
+        """Print an inline progress update with consistent formatting."""
+
+        bar = cls._render_inline_bar(pct, bar_len=bar_len)
+        suffix_text = f" {suffix}" if suffix else ""
+        print(f"\r{label} [{bar}] {pct:3d}%{suffix_text}", end="", flush=True)
+
+    @staticmethod
+    def _finish_inline_status(enabled: bool) -> None:
+        """Terminate the inline status line so subsequent logs stay readable."""
+
+        if enabled:
+            print()
+
+    @staticmethod
+    def _pop_next_proposal(queue: List[RefactoringProposal]) -> Optional[RefactoringProposal]:
+        """Remove and return the oldest queued proposal (DRY helper; see docs/DRY_RUN_2025-11-28.md)."""
+
+        if not queue:
+            return None
+        return queue.pop(0)
+
+    def _resolve_progress_backend(self, progress: str) -> Tuple[str, Optional[Any], bool]:
+        """Normalize progress flag and load tqdm when available (mirrors DRY helper guidance)."""
+
+        allowed = {"auto", "tqdm", "none", "detail"}
+        normalized = progress if progress in allowed else "tqdm"
+        use_tqdm = normalized in {"auto", "tqdm"}
+        tqdm_cls: Optional[Any] = None
+        if use_tqdm:
+            tqdm_cls = self._load_tqdm_wrapper()
+            use_tqdm = tqdm_cls is not None
+        return normalized, tqdm_cls, use_tqdm
+
+    @staticmethod
     def _function_contains_nonlocal(func: FunctionNode) -> bool:
         """Return True if the function body contains any nonlocal declarations."""
 
@@ -412,6 +507,64 @@ class UnificationRefactorEngine:
             existing = ast.arg(arg=param_name)
 
         fn.args.args = [existing] + remaining
+
+    @staticmethod
+    def _retarget_helper_calls(node: ast.AST, original_name: str, final_name: str) -> ast.AST:
+        """Rewrite helper call-sites when the extracted helper is renamed (DRY helper parity)."""
+
+        if original_name == final_name:
+            return node
+
+        class _CallRenamer(ast.NodeTransformer):
+            def __init__(self, old: str, new: str) -> None:
+                self.old = old
+                self.new = new
+
+            def visit_Call(
+                self, call: ast.Call
+            ) -> ast.AST:  # pragma: no cover - simple AST rewrite
+                updated = cast(ast.Call, self.generic_visit(call))
+                if isinstance(updated.func, ast.Name) and updated.func.id == self.old:
+                    updated.func.id = self.new
+                return updated
+
+        return _CallRenamer(original_name, final_name).visit(node)
+
+    @staticmethod
+    def _scan_module_docstring_and_imports(lines: List[str]) -> Tuple[int, int]:
+        """Return last import line and docstring boundary (DRY helper parity)."""
+
+        in_docstring = False
+        docstring_char: Optional[str] = None
+        last_import_line = 0
+        after_docstring = 0
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+
+            if i == 0 and (stripped.startswith('"""') or stripped.startswith("'''")):
+                docstring_char = stripped[:3]
+                if stripped.count(docstring_char) < 2:
+                    in_docstring = True
+                else:
+                    after_docstring = i + 1
+                continue
+
+            if in_docstring:
+                assert docstring_char is not None
+                if docstring_char in stripped:
+                    in_docstring = False
+                    after_docstring = i + 1
+                continue
+
+            if stripped.startswith("import ") or stripped.startswith("from "):
+                last_import_line = i + 1
+                continue
+
+            if last_import_line > 0 and stripped and not stripped.startswith("#"):
+                break
+
+        return last_import_line, after_docstring
 
     def _allocate_helper_name(self, file_path: str) -> str:
         """Return a unique helper name for the given canonical file."""
@@ -767,25 +920,17 @@ class UnificationRefactorEngine:
     ) -> List[RefactoringProposal]:
         proposals: List[RefactoringProposal] = []
 
-        use_tqdm = False
+        progress_mode, tqdm_cls, use_tqdm = self._resolve_progress_backend(progress)
         tqdm_iter = None
         # Always show progress for pair evaluation when progress is enabled, even if verbose=False
-        if progress in ("auto", "tqdm"):
-            try:
-                import importlib
-
-                _tqdm_mod = importlib.import_module("tqdm.auto")
-                _tqdm = getattr(_tqdm_mod, "tqdm")
-                tqdm_iter = _tqdm(
-                    block_pairs,
-                    total=len(block_pairs),
-                    desc="unify",
-                    unit="pair",
-                    leave=False,
-                )
-                use_tqdm = True
-            except Exception:
-                use_tqdm = False
+        if use_tqdm and tqdm_cls is not None:
+            tqdm_iter = tqdm_cls(
+                block_pairs,
+                total=len(block_pairs),
+                desc="unify",
+                unit="pair",
+                leave=False,
+            )
 
         if use_tqdm and tqdm_iter is not None:
             for pair in tqdm_iter:
@@ -794,10 +939,9 @@ class UnificationRefactorEngine:
                     proposals.append(proposal)
             return proposals
 
-        use_inline_bar = progress in ("auto", "tqdm") and len(block_pairs) > 0 and not use_tqdm
+        use_inline_bar = progress_mode in ("auto", "tqdm") and len(block_pairs) > 0 and not use_tqdm
         last_pct = -1
-        if use_inline_bar:
-            print("Analyzing pairs (unify):", end=" ", flush=True)
+        self._start_inline_status("Analyzing pairs (unify):", use_inline_bar)
 
         for idx, pair in enumerate(block_pairs, 1):
             proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
@@ -807,13 +951,9 @@ class UnificationRefactorEngine:
                 pct = int(100 * idx / len(block_pairs))
                 if pct != last_pct:
                     last_pct = pct
-                    bar_len = 24
-                    filled = (pct * bar_len) // 100
-                    bar = "#" * filled + "-" * (bar_len - filled)
-                    print(f"\rAnalyzing pairs (unify): [{bar}] {pct}%", end="", flush=True)
+                    self._update_inline_status("Analyzing pairs (unify):", pct)
 
-        if use_inline_bar:
-            print()
+        self._finish_inline_status(use_inline_bar)
 
         return proposals
 
@@ -837,6 +977,8 @@ class UnificationRefactorEngine:
         verbose: bool,
         progress: str,
     ) -> List[RefactoringProposal]:
+        progress_mode, tqdm_cls, tqdm_available = self._resolve_progress_backend(progress)
+
         pair_count = len(block_pairs)
         cpu_count = os.cpu_count() or 1
         max_workers = min(cpu_count, pair_count)
@@ -860,23 +1002,13 @@ class UnificationRefactorEngine:
         tasks = [(idx, pair) for idx, pair in enumerate(block_pairs)]
         ordered_results: List[Optional[RefactoringProposal]] = [None] * pair_count
 
-        use_tqdm = False
-        tqdm_wrapper = None
-        if verbose and progress in ("auto", "tqdm"):
-            try:
-                import importlib
+        use_tqdm = verbose and tqdm_available and tqdm_cls is not None
+        tqdm_wrapper = tqdm_cls if use_tqdm else None
 
-                _tqdm_mod = importlib.import_module("tqdm.auto")
-                tqdm_wrapper = getattr(_tqdm_mod, "tqdm")
-                use_tqdm = True
-            except Exception:
-                use_tqdm = False
-
-        use_inline_bar = verbose and not use_tqdm and progress in ("auto", "tqdm")
+        use_inline_bar = verbose and not use_tqdm and progress_mode in ("auto", "tqdm")
         last_pct = -1
         completed = 0
-        if use_inline_bar:
-            print("Analyzing candidate pairs:", end=" ", flush=True)
+        self._start_inline_status("Analyzing candidate pairs:", use_inline_bar)
 
         # ProcessPoolExecutor type stubs are restrictive; cast to Any for initializer/initargs
         executor_kwargs: Dict[str, Any] = {
@@ -905,15 +1037,46 @@ class UnificationRefactorEngine:
                     pct = int(100 * completed / pair_count)
                     if pct != last_pct:
                         last_pct = pct
-                        bar_len = 24
-                        filled = (pct * bar_len) // 100
-                        bar = "#" * filled + "-" * (bar_len - filled)
-                        print(f"\rAnalyzing candidate pairs: [{bar}] {pct}%", end="", flush=True)
+                        self._update_inline_status("Analyzing candidate pairs:", pct)
 
-        if use_inline_bar:
-            print()
+        self._finish_inline_status(use_inline_bar)
 
         return [proposal for proposal in ordered_results if proposal is not None]
+
+    @staticmethod
+    def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:
+        """Return the (start_line, end_line) span for a contiguous block of statements."""
+
+        if not block:
+            return None
+
+        start_node = block[0]
+        end_node = block[-1]
+
+        start_line = getattr(start_node, "lineno", None)
+        end_line = getattr(end_node, "end_lineno", None) or getattr(end_node, "lineno", None)
+        if start_line is None or end_line is None:
+            return None
+
+        return int(start_line), int(end_line)
+
+    @staticmethod
+    def _body_without_docstring(body: Sequence[ast.stmt]) -> List[ast.stmt]:
+        """Return body statements with a leading docstring removed when present."""
+
+        body_list = list(body)
+        if not body_list:
+            return []
+
+        first_stmt = body_list[0]
+        if (
+            isinstance(first_stmt, ast.Expr)
+            and isinstance(first_stmt.value, ast.Constant)
+            and isinstance(first_stmt.value.value, str)
+        ):
+            return body_list[1:]
+
+        return body_list
 
     def _extract_code_blocks(
         self, function: FunctionNode
@@ -946,15 +1109,10 @@ class UnificationRefactorEngine:
                     ):
                         continue
 
-                    if not block:
+                    span = self._block_line_span(block)
+                    if span is None:
                         continue
-
-                    start_line = block[0].lineno
-                    end_line = (
-                        block[-1].end_lineno
-                        if hasattr(block[-1], "end_lineno") and block[-1].end_lineno is not None
-                        else block[-1].lineno
-                    )
+                    start_line, end_line = span
                     line_count = end_line - start_line + 1
 
                     if line_count >= self.min_lines:
@@ -985,16 +1143,7 @@ class UnificationRefactorEngine:
             return results
 
         # Prepare top-level body (skip docstring)
-        body = function.body
-        start_idx = 0
-        if (
-            body
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)
-        ):
-            start_idx = 1
-        body = body[start_idx:]
+        body = self._body_without_docstring(function.body)
 
         return extract_from_body(body)
 
@@ -1012,19 +1161,7 @@ class UnificationRefactorEngine:
         Returns:
             True if there's code after the block
         """
-        body = function.body
-
-        # Skip docstring if present
-        start_idx = 0
-        if (
-            body
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)
-        ):
-            start_idx = 1
-
-        body = body[start_idx:]
+        body = self._body_without_docstring(function.body)
 
         # Check if any statement starts after block_end_line
         for stmt in body:
@@ -1074,6 +1211,133 @@ class UnificationRefactorEngine:
         self._used_names_cache[node] = frozen
         return set(frozen)
 
+    def _collect_parameter_names(self, func: FunctionNode) -> Set[str]:
+        """Return all argument names for a function (including pos-only and varargs)."""
+
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return set()
+
+        params: Set[str] = set()
+        args = func.args
+
+        for arg in getattr(args, "posonlyargs", []) or []:
+            params.add(arg.arg)
+        for arg in args.args:
+            params.add(arg.arg)
+        for arg in args.kwonlyargs:
+            params.add(arg.arg)
+        if args.vararg:
+            params.add(args.vararg.arg)
+        if args.kwarg:
+            params.add(args.kwarg.arg)
+
+        return params
+
+    def _deepest_common_ancestry(
+        self, anc1: Optional[List[str]], anc2: Optional[List[str]]
+    ) -> Optional[str]:
+        """Return deepest shared symbol in two ancestry chains (DRY helper \u00a7ref docs/DRY_RUN_2025-11-28.md)."""
+
+        if not anc1 or not anc2:
+            return None
+
+        dce: Optional[str] = None
+        for left, right in zip(anc1, anc2):
+            if left == right:
+                dce = left
+            else:
+                break
+        return dce
+
+    def _build_block_binding_snapshot(
+        self,
+        func: FunctionNode,
+        block_nodes: List[ast.AST],
+        block_range: Tuple[int, int],
+        reassignments: Dict[int, bool],
+    ) -> BlockBindingSnapshot:
+        """Aggregate binding stats for a block (DRY helper import, see docs/DRY_RUN_2025-11-28.md)."""
+
+        bound_in_block, reassigned_in_block = _collect_block_binding_stats(
+            block_nodes, reassignments
+        )
+
+        bound_before_block: Set[str] = set()
+        block_start_line = block_range[0]
+        for stmt in func.body:
+            if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
+                stmt_bound: Set[str] = set()
+                stmt_reassigned: Set[str] = set()
+                _collect_bindings_and_reassignments(
+                    stmt, reassignments, stmt_bound, stmt_reassigned
+                )
+                bound_before_block.update(stmt_bound)
+
+        bound_before_block.update(self._collect_parameter_names(func))
+
+        bound_after_block: Set[str] = set()
+        block_end_line = block_range[1]
+        for stmt in func.body:
+            if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
+                stmt_bound = set()
+                stmt_reassigned = set()
+                _collect_bindings_and_reassignments(
+                    stmt, reassignments, stmt_bound, stmt_reassigned
+                )
+                bound_after_block.update(stmt_bound)
+
+        initially_bound = bound_in_block - bound_before_block
+
+        return BlockBindingSnapshot(
+            bound_in_block=bound_in_block,
+            reassigned_in_block=reassigned_in_block,
+            bound_before_block=bound_before_block,
+            bound_after_block=bound_after_block,
+            initially_bound=initially_bound,
+        )
+
+    def _find_return_variables(
+        self,
+        func: FunctionNode,
+        block_range: Tuple[int, int],
+        initially_bound: Set[str],
+        *,
+        debug_label: Optional[str] = None,
+    ) -> Set[str]:
+        """
+        Determine which newly-bound variables are read after the block (DRY helper parity).
+        """
+
+        if not initially_bound:
+            return set()
+
+        block_end_line = block_range[1]
+        result: Set[str] = set()
+        debug_enabled = bool(os.getenv("DEBUG_VALIDATION"))
+
+        for stmt in func.body:
+            if not hasattr(stmt, "lineno") or stmt.lineno <= block_end_line:
+                continue
+
+            uses = self._get_used_names(stmt)
+            if debug_enabled and debug_label:
+                print(
+                    f"  {debug_label}: stmt@{stmt.lineno} ({stmt.__class__.__name__}) uses {uses}"
+                )
+
+            overlap = uses & initially_bound
+            if overlap:
+                result.update(overlap)
+                if debug_enabled and debug_label:
+                    print(
+                        f"    RETURN NEEDED ({debug_label}): Variable(s) {overlap} will be returned from extracted function"
+                    )
+
+        if debug_enabled and debug_label and result:
+            print(f"{debug_label} requires returning: {result}")
+
+        return result
+
     def _find_block_pairs_multi_file(
         self,
         all_functions: List[
@@ -1108,26 +1372,21 @@ class UnificationRefactorEngine:
         total_funcs = len(all_functions)
         total_func_pairs = (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
         if use_tqdm and total_func_pairs > 0:
-            try:
-                import importlib
-
-                _tqdm_mod = importlib.import_module("tqdm.auto")
-                _tqdm = getattr(_tqdm_mod, "tqdm")
-                tqdm_bar = _tqdm(
+            tqdm_cls = self._load_tqdm_wrapper()
+            if tqdm_cls is not None:
+                tqdm_bar = tqdm_cls(
                     total=total_func_pairs,
                     desc="pairs",
                     unit="fp",
                     dynamic_ncols=True,
                     leave=False,
                 )
-            except Exception:
-                tqdm_bar = None
+            else:
                 use_tqdm = False
 
         use_inline = (not use_tqdm) and progress in ("tqdm", "auto") and total_func_pairs > 0
         last_pct = -1
-        if use_inline:
-            print("Pairing blocks:", end=" ", flush=True)
+        self._start_inline_status("Pairing blocks:", use_inline)
 
         func_pairs_done = 0
 
@@ -1224,21 +1483,17 @@ class UnificationRefactorEngine:
                     pct = int(100 * func_pairs_done / max(total_func_pairs, 1))
                     if pct != last_pct:
                         last_pct = pct
-                        bar_len = 24
-                        filled = (pct * bar_len) // 100
-                        bar = "#" * filled + "-" * (bar_len - filled)
-                        print(
-                            f"\rPairing blocks: [{bar}] {pct:3d}% | pairs={len(pairs)}",
-                            end="",
-                            flush=True,
+                        self._update_inline_status(
+                            "Pairing blocks:",
+                            pct,
+                            suffix=f"| pairs={len(pairs)}",
                         )
         if tqdm_bar is not None:
             try:
                 tqdm_bar.close()
             except Exception:
                 pass
-        if use_inline:
-            print()
+        self._finish_inline_status(use_inline)
 
         return pairs
 
@@ -1341,6 +1596,16 @@ class UnificationRefactorEngine:
         return_variables_block1: Set[str] = set()
         return_variables_block2: Set[str] = set()
 
+        bound_in_block1: Set[str] = set()
+        bound_before_block1: Set[str] = set()
+        bound_after_block1: Set[str] = set()
+        initially_bound1: Set[str] = set()
+
+        bound_in_block2: Set[str] = set()
+        bound_before_block2: Set[str] = set()
+        bound_after_block2: Set[str] = set()
+        initially_bound2: Set[str] = set()
+
         # This prevents extracting code like "result = result + 10" when "result = x * 2"
         # is outside the block. Such extractions are fundamentally unsound.
         if func1 and func2:
@@ -1353,7 +1618,6 @@ class UnificationRefactorEngine:
                 func1, pair.block1_nodes, reassignments1
             )
             if has_unsafe1:
-                # Cannot safely extract this block - it reassigns variables bound outside the block
                 self._debug_reject("unsafe_reassignment_block1", pair, str(problematic_vars1))
                 return None
 
@@ -1362,75 +1626,29 @@ class UnificationRefactorEngine:
                 func2, pair.block2_nodes, reassignments2
             )
             if has_unsafe2:
-                # Cannot safely extract this block - it reassigns variables bound outside the block
                 self._debug_reject("unsafe_reassignment_block2", pair, str(problematic_vars2))
                 return None
 
-            # CRITICAL: Validate that blocks don't bind variables used after the block
-            # This prevents extracting partial lifetimes like:
-            #   result = 1          # Initial binding (extracted)
-            #   result += 2         # Reassignment (extracted)
-            #   return result       # Use after block (NOT extracted) - ERROR!
-            # The extracted function would create a LOCAL `result` that's never available outside
-            # This applies to BOTH value-producing and non-value-producing blocks
-            from .assignment_analyzer import _collect_bindings_and_reassignments
+            # Consolidated helper mirrors DRY's _refactor_engine_helper_2 (docs/DRY_RUN_2025-11-28.md)
+            block1_snapshot = self._build_block_binding_snapshot(
+                func1, pair.block1_nodes, pair.block1_range, reassignments1
+            )
+            block2_snapshot = self._build_block_binding_snapshot(
+                func2, pair.block2_nodes, pair.block2_range, reassignments2
+            )
 
-            # Check block1
-            bound_in_block1: Set[str] = set()
-            reassigned_in_block1: Set[str] = set()
-            for node in pair.block1_nodes:
-                _collect_bindings_and_reassignments(
-                    node, reassignments1, bound_in_block1, reassigned_in_block1
-                )
+            bound_in_block1 = block1_snapshot.bound_in_block
+            bound_before_block1 = block1_snapshot.bound_before_block
+            bound_after_block1 = block1_snapshot.bound_after_block
+            initially_bound1 = block1_snapshot.initially_bound
 
-            # Find variables bound BEFORE the block starts
-            bound_before_block1: Set[str] = set()
-            block_start_line = pair.block1_range[0]
-            for stmt in func1.body:
-                if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
-                    # Collect bindings from statements before the block
-                    stmt_bound: Set[str] = set()
-                    stmt_reassigned: Set[str] = set()
-                    _collect_bindings_and_reassignments(
-                        stmt, reassignments1, stmt_bound, stmt_reassigned
-                    )
-                    bound_before_block1.update(stmt_bound)
+            bound_in_block2 = block2_snapshot.bound_in_block
+            bound_before_block2 = block2_snapshot.bound_before_block
+            bound_after_block2 = block2_snapshot.bound_after_block
+            initially_bound2 = block2_snapshot.initially_bound
 
-            # Treat function parameters as bound before the block
-            if isinstance(func1, ast.FunctionDef):
-                param_names1 = set()
-                for arg in func1.args.args:
-                    param_names1.add(arg.arg)
-                for arg in getattr(func1.args, "posonlyargs", []) or []:
-                    param_names1.add(arg.arg)
-                for arg in func1.args.kwonlyargs:
-                    param_names1.add(arg.arg)
-                if func1.args.vararg:
-                    param_names1.add(func1.args.vararg.arg)
-                if func1.args.kwarg:
-                    param_names1.add(func1.args.kwarg.arg)
-                bound_before_block1.update(param_names1)
-
-            # Find variables bound AFTER the block ends
-            bound_after_block1 = set()
-            block_end_line = pair.block1_range[1]
-            for stmt in func1.body:
-                if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
-                    stmt_bound = set()
-                    stmt_reassigned = set()
-                    _collect_bindings_and_reassignments(
-                        stmt, reassignments1, stmt_bound, stmt_reassigned
-                    )
-                    bound_after_block1.update(stmt_bound)
-
-            # Variables that are bound in the block but DON'T exist before
-            # These are the "newly introduced" variables
-            initially_bound1 = bound_in_block1 - bound_before_block1
-
-            # DEBUG logging
-            import os
-
-            if os.getenv("DEBUG_VALIDATION"):
+            debug_enabled = bool(os.getenv("DEBUG_VALIDATION"))
+            if debug_enabled:
                 print("\n=== Block1 Validation Debug ===")
                 print(f"Function: {pair.function1_name}")
                 print(f"Block lines: {pair.block1_range}")
@@ -1438,120 +1656,27 @@ class UnificationRefactorEngine:
                 print(f"Bound before block: {bound_before_block1}")
                 print(f"Newly bound in block: {initially_bound1}")
 
-            # Track variables that need to be returned from the extracted function
-            # These are variables initially bound in the block but used after the block
-            return_variables_block1 = set()
+            return_variables_block1 = self._find_return_variables(
+                func1,
+                pair.block1_range,
+                initially_bound1,
+                debug_label="Block1 Validation Debug" if debug_enabled else None,
+            )
 
-            # Check if any initially bound variables are used after the block
-            if initially_bound1:
-                # Find the position of the block in the function
-                block_end_line = pair.block1_range[1]
+            if debug_enabled:
+                print("\n=== Block2 Validation Debug ===")
+                print(f"Function: {pair.function2_name}")
+                print(f"Block lines: {pair.block2_range}")
+                print(f"Bound in block: {bound_in_block2}")
+                print(f"Bound before block: {bound_before_block2}")
+                print(f"Newly bound in block: {initially_bound2}")
 
-                if os.getenv("DEBUG_VALIDATION"):
-                    print(f"Block ends at line {block_end_line}")
-                    print(f"Checking statements after line {block_end_line}:")
-
-                # Check if any of these variables are used after the block
-                for stmt in func1.body:
-                    if hasattr(stmt, "lineno"):
-                        if os.getenv("DEBUG_VALIDATION"):
-                            print(f"  Statement at line {stmt.lineno}: {stmt.__class__.__name__}")
-
-                        if stmt.lineno > block_end_line:
-                            # Check if stmt uses any of the initially bound variables
-                            uses = self._get_used_names(stmt)
-                            if os.getenv("DEBUG_VALIDATION"):
-                                print(f"    Uses: {uses}")
-
-                            if uses & initially_bound1:
-                                # Variable is bound in block and used after
-                                # This is recoverable - we'll make the extracted function return these variables
-                                return_variables_block1.update(uses & initially_bound1)
-                                if os.getenv("DEBUG_VALIDATION"):
-                                    print(
-                                        f"    RETURN NEEDED: Variable(s) {uses & initially_bound1} will be returned from extracted function"
-                                    )
-
-                if os.getenv("DEBUG_VALIDATION") and return_variables_block1:
-                    print(f"Block1 requires returning: {return_variables_block1}")
-
-            # Same check for block2
-            bound_in_block2: Set[str] = set()
-            reassigned_in_block2: Set[str] = set()
-            for node in pair.block2_nodes:
-                _collect_bindings_and_reassignments(
-                    node, reassignments2, bound_in_block2, reassigned_in_block2
-                )
-
-            # Find variables bound BEFORE block2 starts
-            bound_before_block2: Set[str] = set()
-            block_start_line = pair.block2_range[0]
-            for stmt in func2.body:
-                if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
-                    stmt_bound2: Set[str] = set()
-                    stmt_reassigned2: Set[str] = set()
-                    _collect_bindings_and_reassignments(
-                        stmt, reassignments2, stmt_bound2, stmt_reassigned2
-                    )
-                    bound_before_block2.update(stmt_bound2)
-
-            # Treat function parameters as bound before the block
-            if isinstance(func2, ast.FunctionDef):
-                param_names2 = set()
-                for arg in func2.args.args:
-                    param_names2.add(arg.arg)
-                for arg in getattr(func2.args, "posonlyargs", []) or []:
-                    param_names2.add(arg.arg)
-                for arg in func2.args.kwonlyargs:
-                    param_names2.add(arg.arg)
-                if func2.args.vararg:
-                    param_names2.add(func2.args.vararg.arg)
-                if func2.args.kwarg:
-                    param_names2.add(func2.args.kwarg.arg)
-                bound_before_block2.update(param_names2)
-
-            # Find variables bound AFTER block2 ends
-            bound_after_block2 = set()
-            block_end_line = pair.block2_range[1]
-            for stmt in func2.body:
-                if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
-                    stmt_bound = set()
-                    stmt_reassigned = set()
-                    _collect_bindings_and_reassignments(
-                        stmt, reassignments2, stmt_bound, stmt_reassigned
-                    )
-                    bound_after_block2.update(stmt_bound)
-
-            # Variables that are bound in the block but DON'T exist before
-            initially_bound2 = bound_in_block2 - bound_before_block2
-
-            # Track variables that need to be returned for block2
-            return_variables_block2 = set()
-
-            if initially_bound2:
-                block_end_line = pair.block2_range[1]
-
-                if os.getenv("DEBUG_VALIDATION"):
-                    print("\n=== Block2 Validation Debug ===")
-                    print(f"Function: {pair.function2_name}")
-                    print(f"Block lines: {pair.block2_range}")
-                    print(f"Bound in block: {bound_in_block2}")
-                    print(f"Bound before block: {bound_before_block2}")
-                    print(f"Newly bound in block: {initially_bound2}")
-
-                for stmt in func2.body:
-                    if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
-                        uses = self._get_used_names(stmt)
-                        if uses & initially_bound2:
-                            # Variable is bound in block and used after - will be returned
-                            return_variables_block2.update(uses & initially_bound2)
-                            if os.getenv("DEBUG_VALIDATION"):
-                                print(
-                                    f"    RETURN NEEDED: Variable(s) {uses & initially_bound2} will be returned from extracted function"
-                                )
-
-                if os.getenv("DEBUG_VALIDATION") and return_variables_block2:
-                    print(f"Block2 requires returning: {return_variables_block2}")
+            return_variables_block2 = self._find_return_variables(
+                func2,
+                pair.block2_range,
+                initially_bound2,
+                debug_label="Block2 Validation Debug" if debug_enabled else None,
+            )
 
         # Check if both blocks are value-producing or both are not
         # Blocks with return_variables are treated as value-producing because
@@ -1657,25 +1782,9 @@ class UnificationRefactorEngine:
         dce_insert_func: Optional[str] = None
         try:
             same_file_ctx = pair.file_path2 is not None and pair.file_path2 == pair.file_path
-            if (
-                same_file_ctx
-                and pair.function1_ancestry is not None
-                and pair.function2_ancestry is not None
-            ):
-
-                def _deepest_common_pre(anc1: List[str], anc2: List[str]) -> Optional[str]:
-                    if not anc1 or not anc2:
-                        return None
-                    dce = None
-                    for a, b in zip(anc1, anc2):
-                        if a == b:
-                            dce = a
-                        else:
-                            break
-                    return dce
-
-                dce_insert_func = _deepest_common_pre(
-                    pair.function1_ancestry or [], pair.function2_ancestry or []
+            if same_file_ctx:
+                dce_insert_func = self._deepest_common_ancestry(
+                    pair.function1_ancestry, pair.function2_ancestry
                 )
         except Exception:
             dce_insert_func = None
@@ -1702,22 +1811,9 @@ class UnificationRefactorEngine:
                 pair.file_path2 is not None and pair.file_path2 == pair.file_path
             )
 
-            def _deepest_common_local(
-                anc1: List[str] | None, anc2: List[str] | None
-            ) -> Optional[str]:
-                if not anc1 or not anc2:
-                    return None
-                dce_name = None
-                for a, b in zip(anc1, anc2):
-                    if a == b:
-                        dce_name = a
-                    else:
-                        break
-                return dce_name
-
             target_insert_fn: Optional[str] = None
             if same_file_for_hygiene:
-                target_insert_fn = _deepest_common_local(
+                target_insert_fn = self._deepest_common_ancestry(
                     pair.function1_ancestry, pair.function2_ancestry
                 )
             if target_insert_fn:
@@ -2105,16 +2201,7 @@ class UnificationRefactorEngine:
                         if indices is None:
                             continue
                         # Skip docstring in body
-                        body = fn.body
-                        start_idx = 0
-                        if (
-                            body
-                            and isinstance(body[0], ast.Expr)
-                            and isinstance(body[0].value, ast.Constant)
-                            and isinstance(body[0].value.value, str)
-                        ):
-                            start_idx = 1
-                        body = body[start_idx:]
+                        body = self._body_without_docstring(fn.body)
                         has_orph, _orph = has_orphaned_variables(cast(List[ast.AST], body), indices)
                         if has_orph:
                             continue
@@ -2249,19 +2336,6 @@ class UnificationRefactorEngine:
         # Consider pairs from the same file even if file_path2 is None (same-file pairing)
         same_file = (pair.file_path2 is None) or (pair.file_path2 == pair.file_path)
 
-        # Compute deepest common enclosing function (DCE) if same file and both have ancestry
-        def _deepest_common(anc1: List[str], anc2: List[str]) -> Optional[str]:
-            if not anc1 or not anc2:
-                return None
-            # Common prefix of outer->inner list; return the last element of common prefix
-            dce = None
-            for a, b in zip(anc1, anc2):
-                if a == b:
-                    dce = a
-                else:
-                    break
-            return dce
-
         # Prefer insertion into the function that actually contains BOTH blocks when they come from the
         # same function (process_user_data & process_admin_data are top-level siblings: no shared ancestry).
         # If the two functions are the SAME name (duplicates), insert into that function instead of module.
@@ -2271,7 +2345,9 @@ class UnificationRefactorEngine:
             # name but are not in the same function scope. Name-equality caused incorrectly
             # inserting helpers inside one sibling method.
             if pair.function1_ancestry is not None and pair.function2_ancestry is not None:
-                dce = _deepest_common(pair.function1_ancestry or [], pair.function2_ancestry or [])
+                dce = self._deepest_common_ancestry(
+                    pair.function1_ancestry, pair.function2_ancestry
+                )
                 if dce:
                     insert_into_function = dce
 
@@ -2441,35 +2517,21 @@ class UnificationRefactorEngine:
                     # Rewrite to local function call (no attribute), but ensure call uses final_func_name
                     # Simple textual AST rewrite: replace original helper name with final
                     if original_helper_name != final_func_name:
-
-                        class LocalCallRewriter(ast.NodeTransformer):
-                            def visit_Call(self, node: ast.Call) -> ast.AST:
-                                node = cast(ast.Call, self.generic_visit(node))
-                                if (
-                                    isinstance(node.func, ast.Name)
-                                    and node.func.id == original_helper_name
-                                ):
-                                    node.func.id = final_func_name
-                                return node
-
-                        replacement_node = LocalCallRewriter().visit(replacement_node)
+                        replacement_node = self._retarget_helper_calls(
+                            replacement_node,
+                            original_helper_name,
+                            final_func_name,
+                        )
                 else:
                     # Module-level insertion:
                     # If the helper was renamed (e.g., from '__extracted_func' to 'extracted_func' or custom),
                     # rewrite call sites accordingly.
                     if original_helper_name != final_func_name:
-
-                        class ModuleCallRewriter(ast.NodeTransformer):
-                            def visit_Call(self, node: ast.Call) -> ast.AST:
-                                node = cast(ast.Call, self.generic_visit(node))
-                                if (
-                                    isinstance(node.func, ast.Name)
-                                    and node.func.id == original_helper_name
-                                ):
-                                    node.func.id = final_func_name
-                                return node
-
-                        replacement_node = ModuleCallRewriter().visit(replacement_node)
+                        replacement_node = self._retarget_helper_calls(
+                            replacement_node,
+                            original_helper_name,
+                            final_func_name,
+                        )
 
                 replacement_code = ast.unparse(replacement_node)
                 code_lines = replacement_code.split("\n")
@@ -2602,44 +2664,8 @@ class UnificationRefactorEngine:
 
     def _find_import_position(self, lines: List[str]) -> int:
         """Find position to insert a new import statement."""
-        in_docstring = False
-        docstring_char = None
-        last_import_line = 0
-        after_docstring = 0
-
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-
-            # Track module docstring
-            if i == 0 and (stripped.startswith('"""') or stripped.startswith("'''")):
-                docstring_char = stripped[:3]
-                if stripped.count(docstring_char) < 2:
-                    in_docstring = True
-                else:
-                    # Single-line docstring
-                    after_docstring = i + 1
-                continue
-
-            if in_docstring:
-                assert docstring_char is not None
-                if docstring_char in stripped:
-                    in_docstring = False
-                    after_docstring = i + 1
-                continue
-
-            # Track imports
-            if stripped.startswith("import ") or stripped.startswith("from "):
-                last_import_line = i + 1
-                continue
-
-            # If we're past docstring and imports, stop
-            if last_import_line > 0 and stripped and not stripped.startswith("#"):
-                break
-
-        # Insert after last import, or after docstring if no imports
-        if last_import_line > 0:
-            return last_import_line
-        return after_docstring
+        last_import_line, after_docstring = self._scan_module_docstring_and_imports(lines)
+        return last_import_line if last_import_line > 0 else after_docstring
 
     def _get_indent(self, line: str) -> str:
         """Get the indentation of a line."""
@@ -2716,16 +2742,7 @@ class UnificationRefactorEngine:
             return None
 
         # Get function body (skip docstring)
-        body = function.body
-        start_idx = 0
-        if (
-            body
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)
-        ):
-            start_idx = 1
-        body = body[start_idx:]
+        body = self._body_without_docstring(function.body)
 
         # Match by line numbers
         first_node = cast(Union[ast.stmt, ast.expr], block_nodes[0])
@@ -2894,9 +2911,7 @@ class UnificationRefactorEngine:
         import shutil
         import textwrap
 
-        # Normalize progress flag; prefer tqdm as default when invalid value supplied
-        if progress not in {"auto", "tqdm", "none", "detail"}:
-            progress = "tqdm"
+        progress_mode, tqdm_wrapper, use_tqdm = self._resolve_progress_backend(progress)
 
         input_path = Path(input_dir)
         output_path = Path(output_dir)
@@ -2932,30 +2947,17 @@ class UnificationRefactorEngine:
         per_proposal_durations: List[float] = []
 
         # Progress helpers -------------------------------------------------
-        use_tqdm = False
-        tqdm_wrapper = None
         progress_bar = None
-        if progress in ("tqdm", "auto"):
-            try:
-                import importlib
-
-                _tqdm_mod = importlib.import_module("tqdm.auto")
-                tqdm_wrapper = getattr(_tqdm_mod, "tqdm")
-                use_tqdm = True  # if import works we treat auto == tqdm
-            except Exception:
-                use_tqdm = False
 
         # Fallback inline bar (only when not using tqdm and not in detail/none)
         def _fallback_bar(applied: int, queued: int, phase: str, desc: str) -> None:
             # Suppress inline fallback bar when tqdm is selected or active, or in 'none'/'detail' modes
-            if progress in ("none", "detail", "tqdm") or use_tqdm:
+            if progress_mode in ("none", "detail", "tqdm") or use_tqdm:
                 return
             try:
-                bar_len = 32
                 denom = max(applied + queued, 1)
                 pct = int((applied / denom) * 100)
-                filled = (pct * bar_len) // 100
-                bar = "#" * filled + "-" * (bar_len - filled)
+                bar = self._render_inline_bar(pct, bar_len=32)
                 short = desc if len(desc) <= 48 else desc[:45] + "..."
                 print(
                     f"\r[towel] {phase:<10} [{bar}] {pct:3d}% | applied={applied} queued={queued} | {short}",
@@ -2965,25 +2967,96 @@ class UnificationRefactorEngine:
             except Exception:
                 pass
 
+        def _update_progress_postfix(applied: int, queued: int) -> None:
+            """Keep tqdm postfix updates consistent (see docs/DRY_RUN_2025-11-28.md)."""
+            if not (use_tqdm and progress_bar is not None):
+                return
+            try:
+                progress_bar.set_postfix({"A": applied, "Q": queued}, refresh=True)
+            except Exception:
+                pass
+
+        def _apply_proposal_and_refresh_queue(
+            proposal: RefactoringProposal, queue: List[RefactoringProposal]
+        ) -> List[RefactoringProposal]:
+            """Apply proposal, update caches, and refresh queue (DRY helper)."""
+            result = self.apply_refactoring_multi_file(proposal)
+            if isinstance(result, tuple):
+                modified_files, changed_paths = result
+            else:
+                modified_files = result
+                changed_paths = list(modified_files.keys())
+
+            for fpath, content in modified_files.items():
+                with open(fpath, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                _bump_result(fpath, proposal.description)
+
+            if hasattr(self, "invalidate_paths") and changed_paths:
+                try:
+                    self.invalidate_paths(changed_paths)
+                except Exception:
+                    pass
+
+            if changed_paths:
+                changed_set = set(map(str, changed_paths))
+                queue = [
+                    p
+                    for p in queue
+                    if not any(
+                        (rep.file_path or p.file_path) in changed_set for rep in p.replacements
+                    )
+                ]
+
+                try:
+                    localized = self.analyze_files(
+                        list(changed_paths), invalidate_paths=list(changed_paths)
+                    )
+                    if localized:
+                        localized = filter_overlapping_proposals(localized)
+                        localized = [
+                            p
+                            for p in localized
+                            if any(
+                                (rep.file_path or p.file_path) in changed_set
+                                for rep in p.replacements
+                            )
+                        ]
+                        if localized:
+                            queue = localized + queue
+                            _detail(f"Localized +{len(localized)} follow-up(s)")
+                            _fallback_bar(
+                                total_applied,
+                                len(queue),
+                                "localized",
+                                f"+{len(localized)} follow-ups",
+                            )
+                except Exception:
+                    pass
+
+            return queue
+
         # Note: We defer tqdm progress bar creation until we have proposals to apply.
         # This avoids an early line like "analyzing: 0it" with unknown totals.
 
         def _detail(msg: str) -> None:
-            if progress == "detail":
+            if progress_mode == "detail":
                 print(f"[towel] {msg}")
 
         # Main loop -------------------------------------------------------
         while True:
             if not proposal_queue:
                 # Global analysis pass
-                if progress != "none":
+                if progress_mode != "none":
                     try:
                         file_count = sum(1 for _ in output_path.rglob("*.py"))
                         _detail(f"Analyzing {file_count} file(s)...")
                     except Exception:
                         pass
                 # Show pairing progress during global analysis if user requested progress bars.
-                analysis_progress_flag = progress if progress in ("tqdm", "auto") else "none"
+                analysis_progress_flag = (
+                    progress_mode if progress_mode in ("tqdm", "auto") else "none"
+                )
                 proposals = self.analyze_directory(
                     str(output_path), recursive=True, verbose=False, progress=analysis_progress_flag
                 )
@@ -2997,12 +3070,12 @@ class UnificationRefactorEngine:
                         except Exception:
                             pass
                     else:
-                        if progress not in ("none", "detail") and not use_tqdm:
+                        if progress_mode not in ("none", "detail") and not use_tqdm:
                             print()  # finish inline bar line
                     break
                 proposal_queue = filter_overlapping_proposals(proposals)
                 _detail(f"Discovered {len(proposal_queue)} proposal(s)")
-                if progress == "detail":
+                if progress_mode == "detail":
                     for i, p in enumerate(proposal_queue[:25], 1):  # cap verbose listing
                         short = textwrap.shorten(p.description, width=100, placeholder="...")
                         print(f"    {i:2d}. {short}")
@@ -3023,14 +3096,16 @@ class UnificationRefactorEngine:
                             leave=False,
                         )
                         queued_ct = len(proposal_queue)
-                        progress_bar.set_postfix({"A": 0, "Q": queued_ct}, refresh=True)
+                        _update_progress_postfix(0, queued_ct)
                     except Exception:
                         progress_bar = None
 
             if not proposal_queue:
                 break
 
-            proposal = proposal_queue.pop(0)
+            proposal = self._pop_next_proposal(proposal_queue)
+            if proposal is None:
+                break
             iter_start = _time.time()
             last_desc = proposal.description
             # Suppress separate applying log line when tqdm active to avoid duplicate lines
@@ -3040,65 +3115,7 @@ class UnificationRefactorEngine:
                 )
 
             # Apply proposal
-            result = self.apply_refactoring_multi_file(proposal)
-            if isinstance(result, tuple):
-                modified_files, changed_paths = result
-            else:
-                modified_files = result
-                changed_paths = list(modified_files.keys())
-
-            for fpath, content in modified_files.items():
-                with open(fpath, "w", encoding="utf-8") as fh:
-                    fh.write(content)
-                _bump_result(fpath, proposal.description)
-
-            # Invalidate caches incrementally
-            if hasattr(self, "invalidate_paths") and changed_paths:
-                try:
-                    self.invalidate_paths(changed_paths)
-                except Exception:
-                    pass
-
-            # Prune queue entries invalidated by changed files
-            if changed_paths:
-                changed_set = set(map(str, changed_paths))
-                pruned: List[RefactoringProposal] = []
-                for p in proposal_queue:
-                    touches_changed = any(
-                        (rep.file_path or p.file_path) in changed_set for rep in p.replacements
-                    )
-                    if not touches_changed:
-                        pruned.append(p)
-                proposal_queue = pruned
-
-            # Localized follow-up analysis just on changed files
-            if changed_paths:
-                try:
-                    localized = self.analyze_files(
-                        list(changed_paths), invalidate_paths=list(changed_paths)
-                    )
-                    if localized:
-                        localized = filter_overlapping_proposals(localized)
-                        changed_set = set(map(str, changed_paths))
-                        localized = [
-                            p
-                            for p in localized
-                            if any(
-                                (rep.file_path or p.file_path) in changed_set
-                                for rep in p.replacements
-                            )
-                        ]
-                        if localized:
-                            proposal_queue = localized + proposal_queue
-                            _detail(f"Localized +{len(localized)} follow-up(s)")
-                            _fallback_bar(
-                                total_applied,
-                                len(proposal_queue),
-                                "localized",
-                                f"+{len(localized)} follow-ups",
-                            )
-                except Exception:
-                    pass
+            proposal_queue = _apply_proposal_and_refresh_queue(proposal, proposal_queue)
 
             # Record duration for this iteration (include localized follow-up analysis time)
             per_proposal_durations.append(_time.time() - iter_start)
@@ -3108,9 +3125,10 @@ class UnificationRefactorEngine:
                 try:
                     progress_bar.update(1)
                     queued_ct = len(proposal_queue)
-                    progress_bar.set_postfix({"A": total_applied, "Q": queued_ct}, refresh=True)
                 except Exception:
                     pass
+                else:
+                    _update_progress_postfix(total_applied, queued_ct)
             else:
                 _fallback_bar(
                     total_applied, len(proposal_queue), "applied", f"#{iterations}: {last_desc}"
@@ -3121,7 +3139,7 @@ class UnificationRefactorEngine:
                 if use_tqdm and progress_bar is not None:
                     progress_bar.close()
                 else:
-                    if progress not in ("none", "detail") and not use_tqdm:
+                    if progress_mode not in ("none", "detail") and not use_tqdm:
                         print()
                 break
 
@@ -3139,6 +3157,12 @@ class UnificationRefactorEngine:
         except Exception:
             # Non-fatal; best-effort invalidation only
             pass
+
+
+def _refactor_engine_helper_2(self, all_functions, block_pairs, class_infos, progress, verbose):
+    return self._evaluate_pairs_serial(
+        block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
+    )
 
 
 # Utility functions for overlap filtering

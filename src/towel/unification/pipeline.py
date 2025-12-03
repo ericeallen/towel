@@ -1,3 +1,17 @@
+# Copyright 2025 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Compiler-style refactoring pipeline: sequential phases that transform ASTs and
 carry auxiliary analysis artifacts forward.
@@ -16,7 +30,7 @@ The top-level run_pipeline() wires these phases.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 import ast
 from pathlib import Path
 
@@ -45,10 +59,7 @@ def parse_modules(paths: Sequence[str]) -> List[ParsedModule]:
     modules: List[ParsedModule] = []
     for p in paths:
         try:
-            src = Path(p).read_text(encoding="utf-8")
-            tree: ast.AST = ast.parse(src)
-            tree = normalize_assigns_to_augassigns(tree)
-            tree = canonicalize_arithmetic(tree)
+            src, tree = _read_and_normalize_module(p)
         except Exception:
             # Skip unreadable or syntactically invalid files
             continue
@@ -172,22 +183,20 @@ def pair_blocks(
     total_func_pairs = (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
     use_tqdm = False
     tqdm_bar = None
-    if progress in {"tqdm", "auto"}:
-        try:
-            import importlib
-
-            _tqdm_mod = importlib.import_module("tqdm.auto")
-            _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            tqdm_bar = _tqdm_cls(
-                total=total_func_pairs,
-                desc="pairing",
-                unit="func-pair",
-                dynamic_ncols=True,
-                leave=False,
-            )
-            use_tqdm = True
-        except Exception:
-            use_tqdm = False
+    if progress in {"tqdm", "auto"} and total_func_pairs > 0:
+        tqdm_cls = _get_tqdm_class()
+        if tqdm_cls is not None:
+            try:
+                tqdm_bar = tqdm_cls(
+                    total=total_func_pairs,
+                    desc="pairing",
+                    unit="func-pair",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+                use_tqdm = True
+            except Exception:
+                tqdm_bar = None
 
     # Inline fallback bar -------------------------------------------------
     use_inline = (not use_tqdm) and progress in {"tqdm", "auto"} and total_func_pairs > 0
@@ -218,9 +227,7 @@ def pair_blocks(
                 pct = int(100 * func_pairs_examined / max(total_func_pairs, 1))
                 if pct != last_pct:
                     last_pct = pct
-                    bar_len = 24
-                    filled = (pct * bar_len) // 100
-                    bar = "#" * filled + "-" * (bar_len - filled)
+                    bar = _render_inline_bar(pct)
                     print(
                         f"\rPairing function pairs: [{bar}] {pct:3d}% | scanned={func_pairs_examined}/{total_func_pairs}",
                         end="",
@@ -232,10 +239,7 @@ def pair_blocks(
     if use_inline:
         print()
     if use_tqdm and tqdm_bar is not None:
-        try:
-            tqdm_bar.close()
-        except Exception:
-            pass
+        _close_progress_bar(tqdm_bar)
 
     # Now perform actual pairing using engine logic (single call for correctness)
     # Defer to engine pairing (now instrumented internally for progress)
@@ -281,6 +285,54 @@ _analysis_cache: Dict[str, Dict[str, Any]] = {}
 _ANALYSIS_CACHE_VERSION = 2
 
 
+def _read_and_normalize_module(path: str) -> Tuple[str, ast.AST]:
+    """Read a module from disk and apply canonical AST normalizations."""
+    src = Path(path).read_text(encoding="utf-8")
+    tree: ast.AST = ast.parse(src)
+    tree = normalize_assigns_to_augassigns(tree)
+    tree = canonicalize_arithmetic(tree)
+    return src, tree
+
+
+def _get_tqdm_class():
+    """Dynamically import tqdm.auto.tqdm if available."""
+    try:
+        import importlib
+
+        tqdm_mod = importlib.import_module("tqdm.auto")
+        return getattr(tqdm_mod, "tqdm")
+    except Exception:
+        return None
+
+
+def _create_progress_bar(use_progress: bool, total: int, desc: str, unit: str):
+    """Return a tqdm-style bar if available (see docs/DRY_RUN_2025-11-28.md)."""
+    if not use_progress or total <= 0:
+        return None
+    tqdm_cls = _get_tqdm_class()
+    if tqdm_cls is None:
+        return None
+    try:
+        return tqdm_cls(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=False)
+    except Exception:
+        return None
+
+
+def _render_inline_bar(pct: int, bar_len: int = 24) -> str:
+    pct = max(0, min(100, pct))
+    filled = (pct * bar_len) // 100
+    return "#" * filled + "-" * (bar_len - filled)
+
+
+def _close_progress_bar(bar) -> None:
+    if bar is None:
+        return
+    try:
+        bar.close()
+    except Exception:
+        pass
+
+
 def run_pipeline(
     paths: Sequence[str],
     *,
@@ -309,19 +361,7 @@ def run_pipeline(
     use_progress = progress in {"tqdm", "auto"}
     # --------------------- Phase 1: parse modules ---------------------
     mods = []
-    if use_progress:
-        try:
-            import importlib
-
-            _tqdm_mod = importlib.import_module("tqdm.auto")
-            _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            parse_bar = _tqdm_cls(
-                total=len(paths), desc="parse", unit="file", dynamic_ncols=True, leave=False
-            )
-        except Exception:
-            parse_bar = None
-    else:
-        parse_bar = None
+    parse_bar = _create_progress_bar(use_progress, len(paths), "parse", "file")
 
     last_pct = -1
     inline_parse = use_progress and parse_bar is None and len(paths) > 0
@@ -333,10 +373,7 @@ def run_pipeline(
             mods.append(cache_entry["mod"])
         else:
             try:
-                src = Path(p).read_text(encoding="utf-8")
-                tree: ast.AST = ast.parse(src)
-                tree = normalize_assigns_to_augassigns(tree)
-                tree = canonicalize_arithmetic(tree)
+                src, tree = _read_and_normalize_module(p)
                 mod = ParsedModule(file_path=p, source=src, tree=tree)
                 _analysis_cache[p] = {"mod": mod, "version": _ANALYSIS_CACHE_VERSION}
                 mods.append(mod)
@@ -351,32 +388,14 @@ def run_pipeline(
             pct = int(100 * idx / len(paths))
             if pct != last_pct:
                 last_pct = pct
-                bar_len = 24
-                filled = (pct * bar_len) // 100
-                bar = "#" * filled + "-" * (bar_len - filled)
+                bar = _render_inline_bar(pct)
                 print(f"\rParsing files: [{bar}] {pct:3d}%", end="", flush=True)
-    if parse_bar is not None:
-        try:
-            parse_bar.close()
-        except Exception:
-            pass
+    _close_progress_bar(parse_bar)
     if inline_parse:
         print()
 
     # --------------------- Phase 2: scope analysis ---------------------
-    if use_progress:
-        try:
-            import importlib
-
-            _tqdm_mod = importlib.import_module("tqdm.auto")
-            _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            scope_bar = _tqdm_cls(
-                total=len(mods), desc="scope", unit="mod", dynamic_ncols=True, leave=False
-            )
-        except Exception:
-            scope_bar = None
-    else:
-        scope_bar = None
+    scope_bar = _create_progress_bar(use_progress, len(mods), "scope", "mod")
     inline_scope = use_progress and scope_bar is None and len(mods) > 0
     last_pct = -1
     if inline_scope:
@@ -401,9 +420,7 @@ def run_pipeline(
             pct = int(100 * idx / len(mods))
             if pct != last_pct:
                 last_pct = pct
-                bar_len = 24
-                filled = (pct * bar_len) // 100
-                bar = "#" * filled + "-" * (bar_len - filled)
+                bar = _render_inline_bar(pct)
                 print(f"\rAnalyzing scopes: [{bar}] {pct:3d}%", end="", flush=True)
     if scope_bar is not None:
         try:
@@ -414,19 +431,7 @@ def run_pipeline(
         print()
 
     # --------------------- Phase 3: class collection ---------------------
-    if use_progress:
-        try:
-            import importlib
-
-            _tqdm_mod = importlib.import_module("tqdm.auto")
-            _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            class_bar = _tqdm_cls(
-                total=len(mods), desc="class", unit="mod", dynamic_ncols=True, leave=False
-            )
-        except Exception:
-            class_bar = None
-    else:
-        class_bar = None
+    class_bar = _create_progress_bar(use_progress, len(mods), "class", "mod")
     inline_class = use_progress and class_bar is None and len(mods) > 0
     last_pct = -1
     if inline_class:
@@ -447,9 +452,7 @@ def run_pipeline(
             pct = int(100 * idx / len(mods))
             if pct != last_pct:
                 last_pct = pct
-                bar_len = 24
-                filled = (pct * bar_len) // 100
-                bar = "#" * filled + "-" * (bar_len - filled)
+                bar = _render_inline_bar(pct)
                 print(f"\rCollecting classes: [{bar}] {pct:3d}%", end="", flush=True)
     if class_bar is not None:
         try:
@@ -464,19 +467,7 @@ def run_pipeline(
         classes.extend(m.class_infos or [])
 
     # --------------------- Phase 4: function collection ---------------------
-    if use_progress:
-        try:
-            import importlib
-
-            _tqdm_mod = importlib.import_module("tqdm.auto")
-            _tqdm_cls = getattr(_tqdm_mod, "tqdm")
-            func_bar = _tqdm_cls(
-                total=len(mods), desc="func", unit="mod", dynamic_ncols=True, leave=False
-            )
-        except Exception:
-            func_bar = None
-    else:
-        func_bar = None
+    func_bar = _create_progress_bar(use_progress, len(mods), "func", "mod")
     inline_func = use_progress and func_bar is None and len(mods) > 0
     last_pct = -1
     if inline_func:

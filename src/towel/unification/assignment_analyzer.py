@@ -1,3 +1,17 @@
+# Copyright 2025 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Assignment analyzer for distinguishing initial bindings from reassignments.
 
@@ -62,19 +76,8 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         """
         # If this is the first function we're visiting, analyze it
         if not self.bound_vars:
-            # Parameters are initially bound
-            for arg in node.args.args:
-                self.bound_vars.add(arg.arg)
-
-            # Also handle keyword-only args, varargs, etc.
-            if node.args.vararg:
-                self.bound_vars.add(node.args.vararg.arg)
-            if node.args.kwarg:
-                self.bound_vars.add(node.args.kwarg.arg)
-            for arg in node.args.posonlyargs:
-                self.bound_vars.add(arg.arg)
-            for arg in node.args.kwonlyargs:
-                self.bound_vars.add(arg.arg)
+            _record_function_parameters(node.args, self.bound_vars)
+            _record_kwonly_parameters(node.args, self.bound_vars)
 
             # Visit function body
             for stmt in node.body:
@@ -160,12 +163,7 @@ class AssignmentAnalyzer(ast.NodeVisitor):
             self.bound_vars.update(names)
 
         # Visit loop body
-        for stmt in node.body:
-            self.visit(stmt)
-
-        # Visit else clause if present
-        for stmt in node.orelse:
-            self.visit(stmt)
+        _visit_body_and_orelse(self, node)
 
     def visit_With(self, node: ast.With) -> None:
         """
@@ -270,16 +268,7 @@ def has_reassignments_without_bindings(
         - Returns (True, {'result'}) because 'result' is reassigned on line 5
           but initially bound on line 2 (outside the block)
     """
-    # Collect all variables bound within the block
-    bound_in_block: Set[str] = set()
-
-    # Collect all variables reassigned within the block
-    reassigned_in_block: Set[str] = set()
-
-    for node in block_nodes:
-        _collect_bindings_and_reassignments(
-            node, reassignments, bound_in_block, reassigned_in_block
-        )
+    bound_in_block, reassigned_in_block = _collect_block_binding_stats(block_nodes, reassignments)
 
     # Find variables that are reassigned but not initially bound in the block
     problematic_vars = reassigned_in_block - bound_in_block
@@ -329,8 +318,7 @@ def _collect_bindings_and_reassignments(
 
         def visit_AugAssign(self, node: ast.AugAssign) -> None:
             # Augmented assignments are always reassignments
-            if isinstance(node.target, ast.Name):
-                reassigned_vars.add(node.target.id)
+            _add_augassign_target(node.target, reassigned_vars)
             self.generic_visit(node)
 
         def visit_For(self, node: ast.For) -> None:
@@ -367,3 +355,49 @@ def _collect_bindings_and_reassignments(
 
     collector = BindingCollector()
     collector.visit(node)
+
+
+def _collect_block_binding_stats(
+    block_nodes: List[ast.AST], reassignments: Dict[int, bool]
+) -> Tuple[Set[str], Set[str]]:
+    """Return (bound_in_block, reassigned_in_block) for the given nodes."""
+    bound_in_block: Set[str] = set()
+    reassigned_in_block: Set[str] = set()
+    for node in block_nodes:
+        _collect_bindings_and_reassignments(
+            node, reassignments, bound_in_block, reassigned_in_block
+        )
+    return bound_in_block, reassigned_in_block
+
+
+def _record_function_parameters(args: ast.arguments, target: Set[str]) -> None:
+    """Add positional, vararg, and kwarg parameters to ``target``."""
+    for arg in args.args:
+        target.add(arg.arg)
+    if args.vararg:
+        target.add(args.vararg.arg)
+    if args.kwarg:
+        target.add(args.kwarg.arg)
+
+
+def _record_kwonly_parameters(args: ast.arguments, target: Set[str]) -> None:
+    """Add positional-only and keyword-only parameters to ``target``."""
+    for arg in args.posonlyargs:
+        target.add(arg.arg)
+    for arg in args.kwonlyargs:
+        target.add(arg.arg)
+
+
+def _add_augassign_target(target: ast.AST, reassigned_vars: Set[str]) -> None:
+    """Track Name targets that appear on the LHS of an augmented assignment."""
+    if isinstance(target, ast.Name):
+        reassigned_vars.add(target.id)
+
+
+def _visit_body_and_orelse(  # pragma: no cover - exercised via AssignmentAnalyzer
+    visitor: ast.NodeVisitor, node: ast.AST
+) -> None:
+    for stmt in getattr(node, "body", []):
+        visitor.visit(stmt)
+    for stmt in getattr(node, "orelse", []):
+        visitor.visit(stmt)

@@ -1,3 +1,17 @@
+# Copyright 2025 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Unification algorithm for finding parameterizable differences in AST nodes.
 
@@ -6,7 +20,7 @@ adapted for AST comparison.
 """
 
 import ast
-from typing import Dict, Optional, List, Tuple, Set, Any, cast, Sequence
+from typing import Callable, Dict, Optional, List, Tuple, Set, Any, cast, Sequence, Union, Iterator
 from dataclasses import dataclass, field
 
 
@@ -163,24 +177,15 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                 return set()
 
         def visit_For(self, node: ast.For) -> None:
-            # Check if target is in this for loop
             if self._contains_target(node):
-                # Extract loop variable(s)
-                loop_vars = self._get_binding_vars(node.target)
-                # Push binding context
-                self.binding_stack.append(loop_vars)
-                self.generic_visit(node)
-                self.binding_stack.pop()
+                self._visit_binding_target(node, lambda: self.generic_visit(node))
             else:
                 self.generic_visit(node)
 
         def visit_comprehension(self, node: ast.comprehension) -> None:
             # comprehension node (part of generators list in ListComp, etc.)
             if self._contains_target(node):
-                comp_vars = self._get_binding_vars(node.target)
-                self.binding_stack.append(comp_vars)
-                self.generic_visit(node)
-                self.binding_stack.pop()
+                self._visit_binding_target(node, lambda: self.generic_visit(node))
             else:
                 self.generic_visit(node)
 
@@ -188,190 +193,50 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             # CRITICAL: Comprehension variables must be bound when visiting elt
             # [r.get_value() for r in results] - 'r' must be bound before visiting r.get_value()
             if self._contains_target(node):
-                # Collect all comprehension variables from generators
-                for gen in node.generators:
-                    comp_vars = self._get_binding_vars(gen.target)
-                    self.binding_stack.append(comp_vars)
-
-                # Visit generators (for iter and ifs)
-                for gen in node.generators:
-                    self.visit(gen.iter)
-                    for if_clause in gen.ifs:
-                        self.visit(if_clause)
-
-                # Visit the element expression with comprehension vars bound
-                self.visit(node.elt)
-
-                # Pop bindings
-                for _ in node.generators:
-                    self.binding_stack.pop()
+                self._visit_comprehension_node(node, lambda: self.visit(node.elt))
             else:
                 self.generic_visit(node)
 
         def visit_SetComp(self, node: ast.SetComp) -> None:
             # CRITICAL: Comprehension variables must be bound when visiting elt
             if self._contains_target(node):
-                for gen in node.generators:
-                    comp_vars = self._get_binding_vars(gen.target)
-                    self.binding_stack.append(comp_vars)
-
-                for gen in node.generators:
-                    self.visit(gen.iter)
-                    for if_clause in gen.ifs:
-                        self.visit(if_clause)
-
-                self.visit(node.elt)
-
-                for _ in node.generators:
-                    self.binding_stack.pop()
+                self._visit_comprehension_node(node, lambda: self.visit(node.elt))
             else:
                 self.generic_visit(node)
 
         def visit_DictComp(self, node: ast.DictComp) -> None:
             # CRITICAL: Comprehension variables must be bound when visiting key and value
             if self._contains_target(node):
-                for gen in node.generators:
-                    comp_vars = self._get_binding_vars(gen.target)
-                    self.binding_stack.append(comp_vars)
 
-                for gen in node.generators:
-                    self.visit(gen.iter)
-                    for if_clause in gen.ifs:
-                        self.visit(if_clause)
+                def visit_entries() -> None:
+                    self.visit(node.key)
+                    self.visit(node.value)
 
-                self.visit(node.key)
-                self.visit(node.value)
-
-                for _ in node.generators:
-                    self.binding_stack.pop()
+                self._visit_comprehension_node(node, visit_entries)
             else:
                 self.generic_visit(node)
 
         def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
             # CRITICAL: Comprehension variables must be bound when visiting elt
             if self._contains_target(node):
-                for gen in node.generators:
-                    comp_vars = self._get_binding_vars(gen.target)
-                    self.binding_stack.append(comp_vars)
-
-                for gen in node.generators:
-                    self.visit(gen.iter)
-                    for if_clause in gen.ifs:
-                        self.visit(if_clause)
-
-                self.visit(node.elt)
-
-                for _ in node.generators:
-                    self.binding_stack.pop()
+                self._visit_comprehension_node(node, lambda: self.visit(node.elt))
             else:
                 self.generic_visit(node)
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             # Function creates a new scope - save current assignments and start fresh
-            if self._contains_target(node):
-                # Save current assignments
-                saved_assignments = self.assignments.copy()
-                # Function name is bound in outer scope
-                self.assignments.add(node.name)
-
-                # Push function name and parameters for the function body
-                self.binding_stack.append({node.name})
-                params: Set[str] = set()
-                for arg in node.args.args:
-                    params.add(arg.arg)
-                for arg in node.args.posonlyargs:
-                    params.add(arg.arg)
-                for arg in node.args.kwonlyargs:
-                    params.add(arg.arg)
-                if node.args.vararg:
-                    params.add(node.args.vararg.arg)
-                if node.args.kwarg:
-                    params.add(node.args.kwarg.arg)
-                if params:
-                    self.binding_stack.append(params)
-
-                # Clear assignments for function body (fresh scope)
-                self.assignments = set()
-
-                # Visit body
-                for stmt in node.body:
-                    self.visit(stmt)
-
-                # Restore outer scope assignments
-                self.assignments = saved_assignments
-
-                if params:
-                    self.binding_stack.pop()
-                self.binding_stack.pop()
-            else:
-                # Target not in function - function name is bound in outer scope
-                self.assignments.add(node.name)
+            self._visit_function_like(node)
 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
             # Same as FunctionDef
             # Async functions mirror FunctionDef handling but use AsyncFunctionDef fields
-            if self._contains_target(node):
-                # Save current assignments
-                saved_assignments = self.assignments.copy()
-                # Function name is bound in outer scope
-                self.assignments.add(node.name)
-
-                # Push function name and parameters for the function body
-                self.binding_stack.append({node.name})
-                params: Set[str] = set()
-                for arg in node.args.args:
-                    params.add(arg.arg)
-                for arg in node.args.posonlyargs:
-                    params.add(arg.arg)
-                for arg in node.args.kwonlyargs:
-                    params.add(arg.arg)
-                if node.args.vararg:
-                    params.add(node.args.vararg.arg)
-                if node.args.kwarg:
-                    params.add(node.args.kwarg.arg)
-                if params:
-                    self.binding_stack.append(params)
-
-                # Clear assignments for function body (fresh scope)
-                self.assignments = set()
-
-                # Visit body
-                for stmt in node.body:
-                    self.visit(stmt)
-
-                # Restore outer scope assignments
-                self.assignments = saved_assignments
-
-                if params:
-                    self.binding_stack.pop()
-                self.binding_stack.pop()
-            else:
-                # Target not in function - function name is bound in outer scope
-                self.assignments.add(node.name)
+            self._visit_function_like(node)
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
             # Class creates a new scope - save current assignments and start fresh
             if self._contains_target(node):
-                # Save current assignments
-                saved_assignments = self.assignments.copy()
-                # Class name is bound in outer scope
-                self.assignments.add(node.name)
-
-                self.binding_stack.append({node.name})
-
-                # Clear assignments for class body (fresh scope)
-                self.assignments = set()
-
-                # Visit body
-                for stmt in node.body:
-                    self.visit(stmt)
-
-                # Restore outer scope assignments
-                self.assignments = saved_assignments
-
-                self.binding_stack.pop()
+                self._visit_class_scope(node)
             else:
-                # Target not in class - class name is bound in outer scope
                 self.assignments.add(node.name)
 
         def visit_Lambda(self, node: ast.Lambda) -> None:
@@ -410,9 +275,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                     if item.optional_vars:
                         with_vars.update(self._get_binding_vars(item.optional_vars))
                 if with_vars:
-                    self.binding_stack.append(with_vars)
-                    self.generic_visit(node)
-                    self.binding_stack.pop()
+                    self._with_binding(with_vars, lambda: self.generic_visit(node))
                 else:
                     self.generic_visit(node)
             else:
@@ -436,9 +299,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             if self._contains_target(node):
                 # The target of := is a binding
                 named_vars = self._get_binding_vars(node.target)
-                self.binding_stack.append(named_vars)
-                self.generic_visit(node)
-                self.binding_stack.pop()
+                self._with_binding(named_vars, lambda: self.generic_visit(node))
             else:
                 self.generic_visit(node)
 
@@ -452,6 +313,100 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                     self.bound_vars.update(bound_set)
                 self.bound_vars.update(self.assignments)
             ast.NodeVisitor.generic_visit(self, node)
+
+        def _with_binding(self, names: Set[str], visit: Callable[[], None]) -> None:
+            if not names:
+                visit()
+                return
+            self.binding_stack.append(names)
+            try:
+                visit()
+            finally:
+                self.binding_stack.pop()
+
+        def _visit_binding_target(
+            self, node: Union[ast.For, ast.comprehension], visit: Callable[[], None]
+        ) -> None:
+            loop_vars = self._get_binding_vars(node.target)
+            self._with_binding(loop_vars, visit)
+
+        def _visit_comprehension_node(
+            self,
+            node: Union[ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp],
+            visit_expression: Callable[[], None],
+        ) -> None:
+            def _visit_generators() -> None:
+                for gen in node.generators:
+                    self.visit(gen.iter)
+                    for if_clause in gen.ifs:
+                        self.visit(if_clause)
+
+            for gen in node.generators:
+                comp_vars = self._get_binding_vars(gen.target)
+                self.binding_stack.append(comp_vars)
+
+            try:
+                _visit_generators()
+                visit_expression()
+            finally:
+                for _ in node.generators:
+                    self.binding_stack.pop()
+
+        def _collect_param_names(self, args: ast.arguments) -> Set[str]:
+            names: Set[str] = set()
+            for arg in args.args:
+                names.add(arg.arg)
+            for arg in args.posonlyargs:
+                names.add(arg.arg)
+            for arg in args.kwonlyargs:
+                names.add(arg.arg)
+            if args.vararg:
+                names.add(args.vararg.arg)
+            if args.kwarg:
+                names.add(args.kwarg.arg)
+            return names
+
+        def _visit_function_like(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+            if not self._contains_target(node):
+                self.assignments.add(node.name)
+                return
+
+            saved_assignments = self.assignments.copy()
+            self.assignments.add(node.name)
+            self.binding_stack.append({node.name})
+            try:
+                param_names = self._collect_param_names(node.args)
+                if param_names:
+                    self._with_binding(
+                        param_names,
+                        lambda: self._visit_function_body(node, saved_assignments),
+                    )
+                else:
+                    self._visit_function_body(node, saved_assignments)
+            finally:
+                self.binding_stack.pop()
+
+        def _visit_function_body(
+            self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef], saved_assignments: Set[str]
+        ) -> None:
+            self.assignments = set()
+            try:
+                for stmt in node.body:
+                    self.visit(stmt)
+            finally:
+                self.assignments = saved_assignments
+
+        def _visit_class_scope(self, node: ast.ClassDef) -> None:
+            saved_assignments = self.assignments.copy()
+            self.assignments.add(node.name)
+            self.binding_stack.append({node.name})
+            try:
+                self.assignments = set()
+                for stmt in node.body:
+                    self.visit(stmt)
+            finally:
+                self.assignments = saved_assignments
+                self.binding_stack.pop()
 
     finder = BindingContextFinder(target_expr)
     finder.visit(node)
@@ -492,10 +447,9 @@ class Unifier:
             parameterize_constants: Whether to parameterize differing constants
         """
         self.max_parameters = max_parameters
-        self.parameterize_constants = parameterize_constants
         # Feature flag: when True, enable Option B promotion of equal literals in
         # higher-order factory calls (thread as parameters even when equal).
-        self.promote_equal_hof_literals = promote_equal_hof_literals
+        self._set_feature_flags(parameterize_constants, promote_equal_hof_literals)
         self.param_counter = 0
         # Track alpha-equivalence mappings for bound variables
         # Maps (block_idx, original_name) -> canonical_name
@@ -530,10 +484,7 @@ class Unifier:
         # Reset per-unification state to avoid cross-pair contamination
         # Alpha-renamings and parameter counters must start fresh for each call
         self.alpha_renamings = {}
-        self.param_counter = 0
-
-        # Store blocks for context analysis
-        self.current_blocks = blocks
+        self._reset_unification_state(blocks)
 
         # Collect all constant positions for consistency checking
         self._collect_constant_positions(blocks)
@@ -657,10 +608,7 @@ class Unifier:
             def walk(node: ast.AST, path: Tuple[Any, ...]) -> None:
                 if isinstance(node, ast.Call):
                     result.append((path, node))
-                for field_name in getattr(node, "_fields", ()):
-                    if field_name in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
-                        continue
-                    value = getattr(node, field_name, None)
+                for field_name, value in self._iter_child_fields(node):
                     if isinstance(value, list):
                         for i, item in enumerate(value):
                             if isinstance(item, ast.AST):
@@ -1054,34 +1002,38 @@ class Unifier:
         establish temporary alpha-renamings using the first block as canonical,
         unify all generators under those mappings, then unify the element.
         """
-        # All nodes must have same number of generators
-        gen_lists = [n.generators for n in nodes]
-        if not all(len(g) == len(gen_lists[0]) for g in gen_lists):
+        if not nodes:
             return False
 
-        # Save the current alpha-renamings so we can restore on exit
-        saved_alpha = dict(self.alpha_renamings)
-
-        try:
-            # Unify generators sequentially so inner generators can use earlier bindings
-            num_gens = len(gen_lists[0])
-            for gen_idx in range(num_gens):
-                comps = [g[gen_idx] for g in gen_lists]
-                if not self._unify_single_comprehension(comps, subst, block_indices):
-                    return False
-
-            # Unify the element under established alpha-renamings
-            return self._unify_nodes([n.elt for n in nodes], subst, block_indices)
-        finally:
-            # Restore previous mappings
-            self.alpha_renamings = saved_alpha
+        return self._unify_comprehension_core(
+            nodes,
+            subst,
+            block_indices,
+            lambda: self._unify_nodes([n.elt for n in nodes], subst, block_indices),
+        )
 
     def _unify_set_comp(
         self, nodes: List[ast.SetComp], subst: Substitution, block_indices: List[int]
     ) -> bool:
-        # Mirror ListComp logic
+        if not nodes:
+            return False
+
+        return self._unify_comprehension_core(
+            nodes,
+            subst,
+            block_indices,
+            lambda: self._unify_nodes([n.elt for n in nodes], subst, block_indices),
+        )
+
+    def _unify_comprehension_core(
+        self,
+        nodes: Sequence[Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]],
+        subst: Substitution,
+        block_indices: List[int],
+        finalize: Callable[[], bool],
+    ) -> bool:
         gen_lists = [n.generators for n in nodes]
-        if not all(len(g) == len(gen_lists[0]) for g in gen_lists):
+        if not gen_lists or not all(len(g) == len(gen_lists[0]) for g in gen_lists):
             return False
 
         saved_alpha = dict(self.alpha_renamings)
@@ -1091,52 +1043,36 @@ class Unifier:
                 comps = [g[gen_idx] for g in gen_lists]
                 if not self._unify_single_comprehension(comps, subst, block_indices):
                     return False
-
-            return self._unify_nodes([n.elt for n in nodes], subst, block_indices)
+            return finalize()
         finally:
             self.alpha_renamings = saved_alpha
 
     def _unify_dict_comp(
         self, nodes: List[ast.DictComp], subst: Substitution, block_indices: List[int]
     ) -> bool:
-        # Mirror ListComp logic but unify key and value
-        gen_lists = [n.generators for n in nodes]
-        if not all(len(g) == len(gen_lists[0]) for g in gen_lists):
+        if not nodes:
             return False
 
-        saved_alpha = dict(self.alpha_renamings)
-        try:
-            num_gens = len(gen_lists[0])
-            for gen_idx in range(num_gens):
-                comps = [g[gen_idx] for g in gen_lists]
-                if not self._unify_single_comprehension(comps, subst, block_indices):
-                    return False
-
-            return self._unify_nodes(
-                [n.key for n in nodes], subst, block_indices
-            ) and self._unify_nodes([n.value for n in nodes], subst, block_indices)
-        finally:
-            self.alpha_renamings = saved_alpha
+        return self._unify_comprehension_core(
+            nodes,
+            subst,
+            block_indices,
+            lambda: self._unify_nodes([n.key for n in nodes], subst, block_indices)
+            and self._unify_nodes([n.value for n in nodes], subst, block_indices),
+        )
 
     def _unify_generator_exp(
         self, nodes: List[ast.GeneratorExp], subst: Substitution, block_indices: List[int]
     ) -> bool:
-        # Mirror ListComp logic
-        gen_lists = [n.generators for n in nodes]
-        if not all(len(g) == len(gen_lists[0]) for g in gen_lists):
+        if not nodes:
             return False
 
-        saved_alpha = dict(self.alpha_renamings)
-        try:
-            num_gens = len(gen_lists[0])
-            for gen_idx in range(num_gens):
-                comps = [g[gen_idx] for g in gen_lists]
-                if not self._unify_single_comprehension(comps, subst, block_indices):
-                    return False
-
-            return self._unify_nodes([n.elt for n in nodes], subst, block_indices)
-        finally:
-            self.alpha_renamings = saved_alpha
+        return self._unify_comprehension_core(
+            nodes,
+            subst,
+            block_indices,
+            lambda: self._unify_nodes([n.elt for n in nodes], subst, block_indices),
+        )
 
     def _unify_with(
         self, nodes: List[ast.With], subst: Substitution, block_indices: List[int]
@@ -1351,6 +1287,18 @@ class Unifier:
             and self._unify_lists([c.ifs for c in comps], subst, block_indices)
         )
 
+    def _unify_loop_components(
+        self,
+        nodes: Sequence[ast.For],
+        subst: Substitution,
+        block_indices: Sequence[int],
+    ) -> bool:
+        return (
+            self._unify_nodes([n.iter for n in nodes], subst, block_indices)
+            and self._unify_lists([n.body for n in nodes], subst, block_indices)
+            and self._unify_lists([n.orelse for n in nodes], subst, block_indices)
+        )
+
     def _unify_for_loop(
         self, nodes: List[ast.For], subst: Substitution, block_indices: List[int]
     ) -> bool:
@@ -1392,11 +1340,7 @@ class Unifier:
         # Check if all loop variables have the same name
         if len(set(loop_var_names)) == 1:
             # Same loop variable name - just unify normally
-            return (
-                self._unify_nodes([n.iter for n in nodes], subst, block_indices)
-                and self._unify_lists([n.body for n in nodes], subst, block_indices)
-                and self._unify_lists([n.orelse for n in nodes], subst, block_indices)
-            )
+            return self._unify_loop_components(nodes, subst, block_indices)
 
         # Different loop variable names (i vs j) - establish alpha-equivalence
         # Use the first block's variable name as canonical
@@ -1404,39 +1348,22 @@ class Unifier:
 
         # Establish alpha-renaming mappings for all blocks
         # Save old mappings to restore later
-        old_mappings = {}
+        old_mappings: Dict[Tuple[int, str], str] = {}
         for idx, block_idx in enumerate(block_indices):
             var_name = loop_var_names[idx]
             key = (block_idx, var_name)
-            if key in self.alpha_renamings:
-                old_mappings[key] = self.alpha_renamings[key]
-            # Map this block's loop var to the canonical name
-            self.alpha_renamings[key] = canonical_var
+            self._assign_alpha_mapping(key, canonical_var, old_mappings)
 
         try:
             # Unify the iterator
-            if not self._unify_nodes([n.iter for n in nodes], subst, block_indices):
-                return False
-
-            # Unify the body (with alpha-renaming in effect)
-            if not self._unify_lists([n.body for n in nodes], subst, block_indices):
-                return False
-
-            # Unify orelse
-            if not self._unify_lists([n.orelse for n in nodes], subst, block_indices):
-                return False
-
-            return True
+            return self._unify_loop_components(nodes, subst, block_indices)
 
         finally:
             # Restore old mappings or remove new ones
             for idx, block_idx in enumerate(block_indices):
                 var_name = loop_var_names[idx]
                 key = (block_idx, var_name)
-                if key in old_mappings:
-                    self.alpha_renamings[key] = old_mappings[key]
-                else:
-                    self.alpha_renamings.pop(key, None)
+                self._restore_alpha_mapping(key, old_mappings)
 
     def _unify_for_loop_with_tuple_targets(
         self, nodes: List[ast.For], subst: Substitution, block_indices: List[int]
@@ -1488,11 +1415,7 @@ class Unifier:
 
         if all_same:
             # All tuple unpacking uses same variable names - just unify normally
-            return (
-                self._unify_nodes([n.iter for n in nodes], subst, block_indices)
-                and self._unify_lists([n.body for n in nodes], subst, block_indices)
-                and self._unify_lists([n.orelse for n in nodes], subst, block_indices)
-            )
+            return self._unify_loop_components(nodes, subst, block_indices)
 
         # Different variable names - establish alpha-equivalence for each position
         # Use the first block's variable names as canonical
@@ -1500,30 +1423,16 @@ class Unifier:
 
         # Establish alpha-renaming mappings for all positions and blocks
         # Save old mappings to restore later
-        old_mappings = {}
+        old_mappings: Dict[Tuple[int, str], str] = {}
         for pos_idx, canonical_var in enumerate(canonical_vars):
             for idx, block_idx in enumerate(block_indices):
                 var_name = var_names[pos_idx][idx]
                 key = (block_idx, var_name)
-                if key in self.alpha_renamings:
-                    old_mappings[key] = self.alpha_renamings[key]
-                # Map this block's variable to the canonical name
-                self.alpha_renamings[key] = canonical_var
+                self._assign_alpha_mapping(key, canonical_var, old_mappings)
 
         try:
             # Unify the iterator
-            if not self._unify_nodes([n.iter for n in nodes], subst, block_indices):
-                return False
-
-            # Unify the body (with alpha-renaming in effect)
-            if not self._unify_lists([n.body for n in nodes], subst, block_indices):
-                return False
-
-            # Unify orelse
-            if not self._unify_lists([n.orelse for n in nodes], subst, block_indices):
-                return False
-
-            return True
+            return self._unify_loop_components(nodes, subst, block_indices)
 
         finally:
             # Restore old mappings or remove new ones
@@ -1531,10 +1440,7 @@ class Unifier:
                 for idx, block_idx in enumerate(block_indices):
                     var_name = var_names[pos_idx][idx]
                     key = (block_idx, var_name)
-                    if key in old_mappings:
-                        self.alpha_renamings[key] = old_mappings[key]
-                    else:
-                        self.alpha_renamings.pop(key, None)
+                    self._restore_alpha_mapping(key, old_mappings)
 
     def _unify_lambda(
         self, nodes: List[ast.Lambda], subst: Substitution, block_indices: List[int]
@@ -1564,8 +1470,8 @@ class Unifier:
         # Check that all other parameter types are empty (no *args, **kwargs, etc.)
         for node in nodes:
             if node.args.posonlyargs or node.args.kwonlyargs or node.args.vararg or node.args.kwarg:
-                # Complex lambda parameters - for now, don't unify
-                # TODO: Add full support for all parameter types
+                # Complex lambda parameters - not currently supported
+                # See docs/KNOWN_LIMITATIONS.md for details
                 return False
 
         # Get parameter names from each lambda
@@ -1588,13 +1494,7 @@ class Unifier:
                     block_idx = block_indices[idx]
                     actual_param = node.args.args[param_idx].arg
                     key = (block_idx, actual_param)
-
-                    # Save old mapping if it exists
-                    if key in self.alpha_renamings:
-                        old_mappings[key] = self.alpha_renamings[key]
-
-                    # Set new mapping: actual_param -> canonical_param
-                    self.alpha_renamings[key] = canonical_param
+                    self._assign_alpha_mapping(key, canonical_param, old_mappings)
 
             # Unify lambda bodies with alpha-renaming in effect
             return self._unify_nodes([n.body for n in nodes], subst, block_indices)
@@ -1606,10 +1506,7 @@ class Unifier:
                     block_idx = block_indices[idx]
                     actual_param = node.args.args[param_idx].arg
                     key = (block_idx, actual_param)
-                    if key in old_mappings:
-                        self.alpha_renamings[key] = old_mappings[key]
-                    else:
-                        self.alpha_renamings.pop(key, None)
+                    self._restore_alpha_mapping(key, old_mappings)
 
     def _unify_joined_str(
         self, nodes: List[ast.JoinedStr], subst: Substitution, block_indices: List[int]
@@ -1838,12 +1735,7 @@ class Unifier:
             self.constant_positions[key].append(path)
 
         # Recursively visit children
-        for field_name in node._fields:
-            if field_name in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
-                continue
-
-            field_value = getattr(node, field_name, None)
-
+        for field_name, field_value in self._iter_child_fields(node):
             if isinstance(field_value, list):
                 for i, item in enumerate(field_value):
                     if isinstance(item, ast.AST):
@@ -1852,6 +1744,14 @@ class Unifier:
             elif isinstance(field_value, ast.AST):
                 child_path = path + (field_name,)
                 self._record_constants_in_tree(field_value, child_path, block_idx)
+
+    @staticmethod
+    def _iter_child_fields(node: ast.AST) -> Iterator[Tuple[str, Any]]:
+        """Yield (field_name, value) pairs skipping location metadata fields."""
+        for field_name in getattr(node, "_fields", ()):  # pragma: no branch - simple iteration
+            if field_name in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
+                continue
+            yield field_name, getattr(node, field_name, None)
 
     def _find_all_occurrences(self, value: Any, block: List[ast.AST]) -> List[ast.AST]:
         """
@@ -2196,3 +2096,33 @@ class Unifier:
     def reset(self) -> None:
         """Reset the parameter counter."""
         self.param_counter = 0
+
+    def _set_feature_flags(
+        self, parameterize_constants: bool, promote_equal_hof_literals: bool
+    ) -> None:
+        self.parameterize_constants = parameterize_constants
+        self.promote_equal_hof_literals = promote_equal_hof_literals
+
+    def _reset_unification_state(self, blocks: List[List[ast.AST]]) -> None:
+        self.param_counter = 0
+        self.current_blocks = blocks
+
+    def _assign_alpha_mapping(
+        self,
+        key: Tuple[int, str],
+        canonical: str,
+        old_mappings: Dict[Tuple[int, str], str],
+    ) -> None:
+        if key in self.alpha_renamings:
+            old_mappings[key] = self.alpha_renamings[key]
+        self.alpha_renamings[key] = canonical
+
+    def _restore_alpha_mapping(
+        self,
+        key: Tuple[int, str],
+        old_mappings: Dict[Tuple[int, str], str],
+    ) -> None:
+        if key in old_mappings:
+            self.alpha_renamings[key] = old_mappings[key]
+        else:
+            self.alpha_renamings.pop(key, None)

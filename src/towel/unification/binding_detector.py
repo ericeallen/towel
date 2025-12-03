@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Binding Detector for Nominal Unification
 
@@ -16,7 +30,7 @@ role (both are bound variables with identical usage patterns).
 """
 
 import ast
-from typing import Set, List, Optional
+from typing import List, Optional, Set, Union
 from dataclasses import dataclass
 from enum import Enum
 
@@ -154,9 +168,7 @@ class BindingDetector(ast.NodeVisitor):
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         """Handle exception binding: except Exception as e:"""
-        if node.name:
-            # In Python 3, node.name is a string, not an ast.Name
-            self._add_binding(node.name, BindingKind.EXCEPTION, node)
+        self._add_optional_binding(node.name, BindingKind.EXCEPTION, node)
         self.generic_visit(node)
 
     # Context managers
@@ -172,102 +184,16 @@ class BindingDetector(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Handle function definitions: def foo(x, y):"""
-        # The function name itself is a binding in the enclosing scope
-        self._add_binding(node.name, BindingKind.FUNCTION_DEF, node)
-
-        # Enter the function scope for processing parameters and body
-        self.scope_stack.append(node)
-
-        # Function parameters are bindings in the function scope
-        for arg in node.args.args:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        # Handle vararg (*args) and kwarg (**kwargs)
-        if node.args.vararg:
-            self._add_binding(node.args.vararg.arg, BindingKind.FUNCTION_PARAM, node.args.vararg)
-        if node.args.kwarg:
-            self._add_binding(node.args.kwarg.arg, BindingKind.FUNCTION_PARAM, node.args.kwarg)
-
-        # Handle keyword-only arguments
-        for arg in node.args.kwonlyargs:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        # Handle positional-only arguments (Python 3.8+)
-        for arg in node.args.posonlyargs:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        # Visit function body
-        for stmt in node.body:
-            self.visit(stmt)
-
-        # Exit function scope
-        self.scope_stack.pop()
-
-        # Visit decorators (in the enclosing scope)
-        for decorator in node.decorator_list:
-            self.visit(decorator)
+        self._visit_function_definition(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         """Handle async function definitions: async def foo():"""
-        # Mirror FunctionDef handling without calling visit_FunctionDef to satisfy type checker
-        self._add_binding(node.name, BindingKind.FUNCTION_DEF, node)
-
-        # Enter the function scope for processing parameters and body
-        self.scope_stack.append(node)
-
-        # Function parameters are bindings in the function scope
-        for arg in node.args.args:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        # Handle vararg (*args) and kwarg (**kwargs)
-        if node.args.vararg:
-            self._add_binding(node.args.vararg.arg, BindingKind.FUNCTION_PARAM, node.args.vararg)
-        if node.args.kwarg:
-            self._add_binding(node.args.kwarg.arg, BindingKind.FUNCTION_PARAM, node.args.kwarg)
-
-        # Handle keyword-only arguments
-        for arg in node.args.kwonlyargs:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        # Handle positional-only arguments (Python 3.8+)
-        for arg in node.args.posonlyargs:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        # Visit function body
-        for stmt in node.body:
-            self.visit(stmt)
-
-        # Exit function scope
-        self.scope_stack.pop()
-
-        # Visit decorators (in the enclosing scope)
-        for decorator in node.decorator_list:
-            self.visit(decorator)
+        self._visit_function_definition(node)
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         """Handle lambda expressions: lambda x, y: x + y"""
-        # Enter lambda scope
-        self.scope_stack.append(node)
-
-        # Lambda parameters
-        for arg in node.args.args:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        if node.args.vararg:
-            self._add_binding(node.args.vararg.arg, BindingKind.FUNCTION_PARAM, node.args.vararg)
-        if node.args.kwarg:
-            self._add_binding(node.args.kwarg.arg, BindingKind.FUNCTION_PARAM, node.args.kwarg)
-
-        for arg in node.args.kwonlyargs:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        for arg in node.args.posonlyargs:
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-
-        # Visit lambda body
+        self._enter_function_like_scope(node)
         self.visit(node.body)
-
-        # Exit lambda scope
         self.scope_stack.pop()
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -279,11 +205,7 @@ class BindingDetector(ast.NodeVisitor):
         self.scope_stack.append(node)
 
         # Visit class body
-        for stmt in node.body:
-            self.visit(stmt)
-
-        # Exit class scope
-        self.scope_stack.pop()
+        self._visit_body_and_pop(node)
 
         # Visit decorators and bases (in enclosing scope)
         for decorator in node.decorator_list:
@@ -306,11 +228,9 @@ class BindingDetector(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Handle from-import statements: from x import y, from x import y as z"""
         for alias in node.names:
-            if alias.name == "*":
-                # from x import * - skip, as it's non-specific
-                continue
-            name = alias.asname if alias.asname else alias.name
-            self._add_binding(name, BindingKind.IMPORT, node)
+            resolved = _resolve_import_alias(alias)
+            if resolved:
+                self._add_binding(resolved, BindingKind.IMPORT, node)
         self.generic_visit(node)
 
     # Match statements (Python 3.10+)
@@ -335,9 +255,7 @@ class BindingDetector(ast.NodeVisitor):
         """Extract variable bindings from match patterns."""
         if isinstance(pattern, ast.MatchAs):
             # case pattern as x:
-            if pattern.name:
-                # Create a pseudo-node for the binding
-                self._add_binding(pattern.name, BindingKind.MATCH_CASE, pattern)
+            self._add_optional_binding(pattern.name, BindingKind.MATCH_CASE, pattern)
             if pattern.pattern:
                 self._extract_pattern_bindings(pattern.pattern)
 
@@ -371,6 +289,40 @@ class BindingDetector(ast.NodeVisitor):
                 self._add_binding(pattern.name, BindingKind.MATCH_CASE, pattern)
 
         # Other patterns (MatchValue, MatchSingleton) don't bind variables
+
+    def _visit_function_definition(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
+    ) -> None:
+        self._add_binding(node.name, BindingKind.FUNCTION_DEF, node)
+        self._enter_function_like_scope(node)
+        self._visit_body_and_pop(node)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+
+    def _enter_function_like_scope(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda]
+    ) -> None:
+        self.scope_stack.append(node)
+        self._bind_function_parameters(node.args)
+
+    def _visit_body_and_pop(self, node: ast.AST) -> None:
+        for stmt in getattr(node, "body", []):
+            self.visit(stmt)
+        self.scope_stack.pop()
+
+    def _bind_function_parameters(self, args: ast.arguments) -> None:
+        for arg in (*args.posonlyargs, *args.args):
+            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
+        if args.vararg:
+            self._add_binding(args.vararg.arg, BindingKind.FUNCTION_PARAM, args.vararg)
+        if args.kwarg:
+            self._add_binding(args.kwarg.arg, BindingKind.FUNCTION_PARAM, args.kwarg)
+        for arg in args.kwonlyargs:
+            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
+
+    def _add_optional_binding(self, name: Optional[str], kind: BindingKind, node: ast.AST) -> None:
+        if name:
+            self._add_binding(name, kind, node)
 
 
 def detect_bindings(tree: ast.AST) -> List[Binding]:
@@ -420,3 +372,10 @@ def get_bindings_by_kind(tree: ast.AST, kind: BindingKind) -> List[Binding]:
     """
     bindings = detect_bindings(tree)
     return [b for b in bindings if b.kind == kind]
+
+
+def _resolve_import_alias(alias: ast.alias) -> Optional[str]:
+    """Return the binding name for an import alias, or None for ``*`` imports."""
+    if alias.name == "*":
+        return None
+    return alias.asname if alias.asname else alias.name

@@ -173,7 +173,7 @@ Other bugs identified during adversarial testing:
 To test this fix:
 
 ```bash
-cd /Users/ericeallen/Documents/Code/towel-repo
+cd /path/to/towel
 source venv/bin/activate
 python -m pytest tests/test_adversarial.py -v
 ```

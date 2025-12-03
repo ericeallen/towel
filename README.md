@@ -93,7 +93,7 @@ python3 dry.py <input> <output>
 
 ```bash
 # Clone and install (zero external dependencies)
-git clone <repo>
+git clone https://github.com/ericeallen/towel.git
 cd towel
 pip install -e .
 ```
@@ -162,6 +162,27 @@ Test the tool with coverage:
 ```bash
 just coverage-unification
 ```
+
+### Promoting Extracted Helpers
+
+After running the DRY tool, extracted functions are named `__extracted_func_*` with generic parameter names like `__param_0`. You can use the `promote-helpers` tool to rename these into meaningful, human-readable names:
+
+```bash
+# List all extracted helpers
+just promote-helpers --inventory
+
+# Preview renaming (dry run)
+just promote-helpers --dry-run
+
+# Apply intelligent renaming based on docstrings and context
+just promote-helpers
+
+# Rename specific helpers or modules
+just promote-helpers --module unification/refactor_engine.py
+just promote-helpers --helper __extracted_func_7
+```
+
+The tool analyzes function docstrings and context to generate appropriate names, then updates all references throughout your codebase. It maintains a JSON mapping file to preserve manual naming decisions across runs.
 
 ## How It Works
 

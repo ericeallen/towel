@@ -42,6 +42,10 @@ dry INPUT OUTPUT +ARGS="":
 preview TARGET:
     source venv/bin/activate && python scripts/preview {{TARGET}}
 
+# Promote helper stubs (defaults to tmp_out_dry_src → src)
+promote-helpers ARGS="":
+    source venv/bin/activate && python scripts/promote_dry_helpers.py {{ARGS}}
+
 # === Testing Commands ===
 
 # Run ALL tests (unit tests + single-file + cross-file observational equivalence)

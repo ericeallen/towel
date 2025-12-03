@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Nominal Unification for Python Code Blocks
 
@@ -29,7 +43,7 @@ import ast
 from typing import Dict, List, Set, Optional, Tuple, cast
 from dataclasses import dataclass, field
 
-from .binding_detector import detect_bindings
+from .binding_detector import Binding, detect_bindings
 
 
 @dataclass
@@ -147,10 +161,7 @@ class NominalUnificationContext:
                 self.bound_variables[block_idx].add(binding.name)
 
                 # Record binding site
-                key = (block_idx, binding.name)
-                if key not in self.binding_sites:
-                    self.binding_sites[key] = []
-                self.binding_sites[key].append(binding.node)
+                _record_binding_sites(self.binding_sites, block_idx, binding)
 
     def is_bound_in_block(self, var_name: str, block_idx: int) -> bool:
         """Check if a variable is bound in a specific block."""
@@ -346,7 +357,19 @@ def _get_variables_in_order(block: List[ast.AST]) -> List[str]:
             self.generic_visit(node)
 
     collector = VariableCollector()
+    return _gather_variables_in_order(block, collector, ordered)
+
+
+def _record_binding_sites(
+    table: Dict[Tuple[int, str], List[ast.AST]], block_idx: int, binding: Binding
+) -> None:
+    key = (block_idx, binding.name)
+    table.setdefault(key, []).append(binding.node)
+
+
+def _gather_variables_in_order(
+    block: List[ast.AST], collector: ast.NodeVisitor, ordered: List[str]
+) -> List[str]:
     for stmt in block:
         collector.visit(stmt)
-
     return ordered

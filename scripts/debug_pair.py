@@ -9,10 +9,26 @@ Usage:
 import sys
 import ast
 from pathlib import Path
-from typing import Optional, Tuple, List, Union
+from typing import Optional, Tuple, List, Union, Sequence
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
+
+
+def _body_without_docstring(body: Sequence[ast.stmt]) -> List[ast.stmt]:
+    body_list = list(body)
+    if not body_list:
+        return []
+
+    first_stmt = body_list[0]
+    if (
+        isinstance(first_stmt, ast.Expr)
+        and isinstance(first_stmt.value, ast.Constant)
+        and isinstance(first_stmt.value.value, str)
+    ):
+        return body_list[1:]
+
+    return body_list
 
 
 def main() -> None:
@@ -46,14 +62,7 @@ def main() -> None:
     def body_range(
         f: Union[ast.FunctionDef, ast.AsyncFunctionDef],
     ) -> Optional[Tuple[Tuple[int, int], List[ast.stmt]]]:
-        body = f.body
-        if (
-            body
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)
-        ):
-            body = body[1:]
+        body = _body_without_docstring(f.body)
         if not body:
             return None
         start = body[0].lineno

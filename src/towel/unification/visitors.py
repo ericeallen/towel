@@ -1,3 +1,17 @@
+# Copyright 2025 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Top-level AST visitors used by the refactoring engine.
 
@@ -8,9 +22,10 @@ readability and enable a clearer compiler-like pipeline structure.
 from __future__ import annotations
 
 import ast
-from typing import Callable, List, Optional, Set, Tuple, Union, Literal
+from typing import Callable, List, Optional, Set, Tuple, Union, Literal, Sequence, TypeVar
 
 MethodKind = Literal["instance", "classmethod", "staticmethod"]
+T = TypeVar("T")
 
 
 class ClassCollector(ast.NodeVisitor):
@@ -38,9 +53,7 @@ class ClassCollector(ast.NodeVisitor):
             if resolved:
                 bases.append(resolved)
         self.sink(qualname, bases)
-        self.class_stack.append(node.name)
-        self.generic_visit(node)
-        self.class_stack.pop()
+        _push_value_and_visit(self.class_stack, node.name, self, node)
 
 
 class FunctionCollector(ast.NodeVisitor):
@@ -61,9 +74,7 @@ class FunctionCollector(ast.NodeVisitor):
         self.func_stack: List[Optional[str]] = [None]
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-        self.class_stack.append(node.name)
-        self.generic_visit(node)
-        self.class_stack.pop()
+        _push_value_and_visit(self.class_stack, node.name, self, node)
 
     def _record(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
         ancestry = [n for n in self.func_stack if n is not None]
@@ -71,15 +82,11 @@ class FunctionCollector(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
         self._record(node)
-        self.func_stack.append(node.name)
-        self.generic_visit(node)
-        self.func_stack.pop()
+        _push_value_and_visit(self.func_stack, node.name, self, node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
         self._record(node)
-        self.func_stack.append(node.name)
-        self.generic_visit(node)
-        self.func_stack.pop()
+        _push_value_and_visit(self.func_stack, node.name, self, node)
 
 
 class MethodCallRewriter(ast.NodeTransformer):
@@ -145,16 +152,10 @@ class LoopReturnFinder(ast.NodeVisitor):
         self.in_loop = False
 
     def visit_For(self, node: ast.For) -> None:  # noqa: N802
-        old_in_loop = self.in_loop
-        self.in_loop = True
-        self.generic_visit(node)
-        self.in_loop = old_in_loop
+        _visit_loop_and_restore_flag(self, node)
 
     def visit_While(self, node: ast.While) -> None:  # noqa: N802
-        old_in_loop = self.in_loop
-        self.in_loop = True
-        self.generic_visit(node)
-        self.in_loop = old_in_loop
+        _visit_loop_and_restore_flag(self, node)
 
     def visit_Return(self, node: ast.Return) -> None:  # noqa: N802
         if self.in_loop:
@@ -177,9 +178,7 @@ class NameCollector(ast.NodeVisitor):
         self.used: Set[str] = set()
 
     def visit_Name(self, n: ast.Name) -> None:  # noqa: N802
-        if isinstance(n.ctx, ast.Load):
-            self.used.add(n.id)
-        self.generic_visit(n)
+        _record_load_name_and_visit(n, self.used, self)
 
     def visit_FunctionDef(self, n: ast.FunctionDef) -> None:  # noqa: N802
         return None
@@ -198,9 +197,7 @@ class AugAssignFinder(ast.NodeVisitor):
         self.aug_assign_targets: Set[str] = set()
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:  # noqa: N802
-        if isinstance(node.target, ast.Name):
-            self.aug_assign_targets.add(node.target.id)
-        self.generic_visit(node)
+        _record_simple_assignment(node, self.aug_assign_targets, self)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
         return None
@@ -223,19 +220,14 @@ class AssignTargetVisitor(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> None:  # noqa: N802
         for t in node.targets:
-            if isinstance(t, ast.Name):
-                self.assigned_names.add(t.id)
+            _record_name_target(t, self.assigned_names)
         self.generic_visit(node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:  # noqa: N802
-        if isinstance(node.target, ast.Name):
-            self.assigned_names.add(node.target.id)
-        self.generic_visit(node)
+        _record_simple_assignment(node, self.assigned_names, self)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: N802
-        if isinstance(node.target, ast.Name):
-            self.assigned_names.add(node.target.id)
-        self.generic_visit(node)
+        _record_simple_assignment(node, self.assigned_names, self)
 
     def visit_Global(self, node: ast.Global) -> None:  # noqa: N802
         for n in node.names:
@@ -266,9 +258,7 @@ class ClassLocator(ast.NodeVisitor):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
         if node.name == self.target_name and hasattr(node, "end_lineno"):
-            lines = self.source.splitlines()
-            class_line = lines[node.lineno - 1]
-            indent = class_line[: len(class_line) - len(class_line.lstrip())]
+            indent = _compute_indent(self.source, node.lineno)
             end_lineno = getattr(node, "end_lineno", None)
             if isinstance(end_lineno, int):
                 insert_line = end_lineno - 1
@@ -292,67 +282,96 @@ class FuncLocator(ast.NodeVisitor):
         self.result: Optional[Tuple[int, str]] = None
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        if node.name == self.function_name:
-            lines = self.source.splitlines()
-            fn_line = lines[node.lineno - 1]
-            indent = fn_line[: len(fn_line) - len(fn_line.lstrip())]
-            body = list(node.body)
-            start_idx = 0
-            if (
-                body
-                and isinstance(body[0], ast.Expr)
-                and isinstance(body[0].value, ast.Constant)
-                and isinstance(body[0].value.value, str)
-            ):
-                start_idx = 1
-            insert_line: Optional[int] = None
-            last_def_end: Optional[int] = None
-            for i, stmt in enumerate(body[start_idx:], start=start_idx):
-                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    stmt_end = getattr(stmt, "end_lineno", stmt.lineno)
-                    if isinstance(stmt_end, int):
-                        last_def_end = stmt_end
-                    continue
-                insert_line = stmt.lineno - 1
-                break
-            if insert_line is None:
-                if last_def_end is not None:
-                    insert_line = last_def_end
-                else:
-                    insert_line = node.lineno
-            self.result = (insert_line, indent)
-        else:
-            self.generic_visit(node)
+        self._maybe_capture_insertion_point(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        if node.name == self.function_name:
-            lines = self.source.splitlines()
-            fn_line = lines[node.lineno - 1]
-            indent = fn_line[: len(fn_line) - len(fn_line.lstrip())]
-            body = list(node.body)
-            start_idx = 0
-            if (
-                body
-                and isinstance(body[0], ast.Expr)
-                and isinstance(body[0].value, ast.Constant)
-                and isinstance(body[0].value.value, str)
-            ):
-                start_idx = 1
-            insert_line: Optional[int] = None
-            last_def_end: Optional[int] = None
-            for i, stmt in enumerate(body[start_idx:], start=start_idx):
-                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    stmt_end = getattr(stmt, "end_lineno", stmt.lineno)
-                    if isinstance(stmt_end, int):
-                        last_def_end = stmt_end
-                    continue
-                insert_line = stmt.lineno - 1
-                break
-            if insert_line is None:
-                if last_def_end is not None:
-                    insert_line = last_def_end
-                else:
-                    insert_line = node.lineno
-            self.result = (insert_line, indent)
-        else:
+        self._maybe_capture_insertion_point(node)
+
+    def _maybe_capture_insertion_point(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
+    ) -> None:
+        if node.name != self.function_name:
             self.generic_visit(node)
+            return
+        indent = _compute_indent(self.source, node.lineno)
+        body = _body_without_docstring(node.body)
+        insert_line: Optional[int] = None
+        last_def_end: Optional[int] = None
+        for stmt in body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                stmt_end = getattr(stmt, "end_lineno", stmt.lineno)
+                if isinstance(stmt_end, int):
+                    last_def_end = stmt_end
+                continue
+            insert_line = stmt.lineno - 1
+            break
+        if insert_line is None:
+            if last_def_end is not None:
+                insert_line = last_def_end
+            else:
+                insert_line = node.lineno
+        self.result = (insert_line, indent)
+
+
+def _push_value_and_visit(
+    stack: List[T], value: T, visitor: ast.NodeVisitor, node: ast.AST
+) -> None:
+    stack.append(value)
+    try:
+        visitor.generic_visit(node)
+    finally:
+        stack.pop()
+
+
+def _visit_loop_and_restore_flag(
+    visitor: "LoopReturnFinder", node: Union[ast.For, ast.While]
+) -> None:
+    previous_flag = visitor.in_loop
+    visitor.in_loop = True
+    visitor.generic_visit(node)
+    visitor.in_loop = previous_flag
+
+
+def _record_load_name_and_visit(
+    node: ast.Name, destination: Set[str], visitor: ast.NodeVisitor
+) -> None:
+    if isinstance(node.ctx, ast.Load):
+        destination.add(node.id)
+    visitor.generic_visit(node)
+
+
+def _record_name_target(target: ast.AST, destination: Set[str]) -> None:
+    if isinstance(target, ast.Name):
+        destination.add(target.id)
+
+
+def _record_simple_assignment(
+    node: Union[ast.AnnAssign, ast.AugAssign], destination: Set[str], visitor: ast.AST
+) -> None:
+    target = getattr(node, "target", None)
+    if isinstance(target, ast.Name):
+        destination.add(target.id)
+    visitor.generic_visit(node)
+
+
+def _body_without_docstring(body: Sequence[ast.stmt]) -> List[ast.stmt]:
+    body_list = list(body)
+    if not body_list:
+        return []
+
+    first_stmt = body_list[0]
+    if (
+        isinstance(first_stmt, ast.Expr)
+        and isinstance(first_stmt.value, ast.Constant)
+        and isinstance(first_stmt.value.value, str)
+    ):
+        return body_list[1:]
+
+    return body_list
+
+
+def _compute_indent(source: str, lineno: int) -> str:
+    lines = source.splitlines()
+    index = max(0, min(len(lines) - 1, lineno - 1))
+    line = lines[index] if lines else ""
+    return line[: len(line) - len(line.lstrip())]
