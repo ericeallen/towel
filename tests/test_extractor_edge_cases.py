@@ -302,9 +302,9 @@ y = x
     v1 = assigns[1].value
     assert isinstance(t1, ast.Name) and t1.id == "x"
     assert isinstance(v1, ast.Constant) and v1.value == 42
-    # 3) y = x  -> even after reassignment, global substitution mapping still replaces load
+    # 3) y = x  -> after reassignment, substitution stops so the new binding remains local
     v2 = assigns[2].value
-    assert isinstance(v2, ast.Name) and v2.id == "__param_0"
+    assert isinstance(v2, ast.Name) and v2.id == "x"
 
 
 def test_comprehension_binding_target_not_parameterized():

@@ -40,7 +40,11 @@ dev = [
     "tqdm>=4.66.0",
 ]
 
-# No console_scripts exposed yet; scripts are provided under scripts/ for development
+[project.scripts]
+towel = "towel.cli:main"
+# Legacy entry points for backwards compatibility with existing workflows
+towel-dry = "towel.cli:dry_main"
+towel-preview = "towel.cli:preview_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

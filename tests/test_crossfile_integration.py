@@ -28,7 +28,9 @@ def get_crossfile_project_files(project_name: str) -> List[str]:
     project_dir = CROSSFILE_DIR / project_name
     if not project_dir.exists():
         return []
-    return [str(f) for f in project_dir.glob("*.py")]
+    # Include files in nested directories to support complex project layouts
+    files = [str(f) for f in project_dir.rglob("*.py") if f.is_file()]
+    return sorted(files)
 
 
 class TestCrossFileProposalStructure:

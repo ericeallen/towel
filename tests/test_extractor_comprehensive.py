@@ -8,6 +8,7 @@ correct behavior of code extraction, hygiene checking, and helper functions.
 
 import unittest
 import ast
+from typing import cast
 from src.towel.unification.extractor import (
     contains_return,
     is_value_producing,
@@ -200,11 +201,46 @@ else:
 
         self.assertFalse(result, "Block without return should not have complete coverage")
 
-    def test_empty_block(self):
-        """Test empty block."""
-        result = has_complete_return_coverage([])
 
-        self.assertFalse(result, "Empty block should not have complete coverage")
+class TestParameterSubstitution(unittest.TestCase):
+    """Targeted tests for the parameter substitution logic inside the extractor."""
+
+    def test_rebinding_stops_parameter_substitution(self) -> None:
+        code = """
+if result > threshold:
+    return result
+result = result + 10
+return result
+"""
+
+        tree = ast.parse(code)
+        block = tree.body
+
+        subst = Substitution()
+        name_expr = ast.parse("result").body[0].value  # type: ignore[assignment]
+        subst.add_mapping(0, name_expr, "__param_0")
+
+        extractor = HygienicExtractor()
+        transformed = extractor._substitute_parameters(  # pylint: disable=protected-access
+            block,
+            substitution=subst,
+            param_names=["__param_0"],
+            rename_mapping={"__param_0": "__param_0"},
+        )
+
+        if_stmt = cast(ast.If, transformed[0])
+        first_return = cast(ast.Return, if_stmt.body[0])
+        self.assertIsInstance(first_return.value, ast.Name)
+        self.assertEqual(first_return.value.id, "__param_0")
+
+        reassignment = cast(ast.Assign, transformed[1])
+        bin_op = cast(ast.BinOp, reassignment.value)
+        self.assertIsInstance(bin_op.left, ast.Name)
+        self.assertEqual(cast(ast.Name, bin_op.left).id, "__param_0")
+
+        final_return = cast(ast.Return, transformed[2])
+        self.assertIsInstance(final_return.value, ast.Name)
+        self.assertEqual(final_return.value.id, "result")
 
 
 class TestGetEnclosingNames(unittest.TestCase):

@@ -397,6 +397,10 @@ class HygienicExtractor:
                 # Track variables that are equivalent to parameters
                 # Maps variable names to parameter names
                 self.var_to_param: Dict[str, str] = {}
+                # Track canonical parameter assigned to a variable name (even if shadowed later)
+                self.param_name_by_var: Dict[str, str] = {}
+                # Track parameterized variables that have been rebound to local values
+                self.shadowed_vars: Set[str] = set()
 
                 # CRITICAL: Initialize var_to_param with variables that are parameterized
                 # For each parameter, if its expression in block 0 is a simple variable name,
@@ -411,7 +415,31 @@ class HygienicExtractor:
                                 # This parameter represents a variable in our block
                                 # Map the original variable name to the RENAMED parameter name
                                 self.var_to_param[expr.id] = param_name
+                                self.param_name_by_var[expr.id] = param_name
                                 break
+
+            def _alias_variable(self, var_name: str, param_name: str) -> None:
+                self.var_to_param[var_name] = param_name
+                self.param_name_by_var[var_name] = param_name
+                self.shadowed_vars.discard(var_name)
+
+            def _mark_shadowed(self, var_name: str) -> None:
+                if var_name in self.param_name_by_var:
+                    self.var_to_param.pop(var_name, None)
+                    self.shadowed_vars.add(var_name)
+
+            def _variables_from_target(self, target: ast.AST) -> List[str]:
+                names: List[str] = []
+
+                def _collect(node: ast.AST) -> None:
+                    if isinstance(node, ast.Name):
+                        names.append(node.id)
+                    elif isinstance(node, (ast.Tuple, ast.List)):
+                        for elt in node.elts:
+                            _collect(elt)
+
+                _collect(target)
+                return names
 
             def _maybe_replace_node(self, node: ast.AST) -> Optional[ast.AST]:
                 # Only expressions participate in substitution mappings
@@ -426,6 +454,9 @@ class HygienicExtractor:
 
                 # CRITICAL: Never replace binding occurrences (Store/Del context)
                 if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+                    return node
+
+                if isinstance(node, ast.Name) and node.id in self.shadowed_vars:
                     return node
 
                 # Inside an f-string literal component, keep constants intact
@@ -487,12 +518,25 @@ class HygienicExtractor:
 
                 # Don't transform the target (loop variable) - it's a binding
                 new_target = node.target
+                for var_name in self._variables_from_target(node.target):
+                    self._mark_shadowed(var_name)
 
                 # Transform the body
                 new_body = self._visit_branch_statements(node.body)
                 new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
 
                 return ast.For(target=new_target, iter=new_iter, body=new_body, orelse=new_orelse)
+
+            def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
+                new_iter = cast(ast.expr, self.visit(node.iter))
+                new_target = node.target
+                for var_name in self._variables_from_target(node.target):
+                    self._mark_shadowed(var_name)
+                new_body = self._visit_branch_statements(node.body)
+                new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
+                return ast.AsyncFor(
+                    target=new_target, iter=new_iter, body=new_body, orelse=new_orelse
+                )
 
             def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
                 """
@@ -505,6 +549,8 @@ class HygienicExtractor:
 
                 # Don't transform the target (comprehension variable) - it's a binding
                 new_target = node.target
+                for var_name in self._variables_from_target(node.target):
+                    self._mark_shadowed(var_name)
 
                 # Transform the filters
                 new_ifs = [cast(ast.expr, self.visit(cond)) for cond in node.ifs]
@@ -527,44 +573,21 @@ class HygienicExtractor:
                 # Transform the value expression first
                 new_value = cast(ast.expr, self.visit(node.value))
 
-                # Transform targets
+                # Transform targets while preserving binding semantics
                 new_targets: List[ast.expr] = []
-                vars_to_delete = []  # Track which variables to remove from var_to_param
-
                 for target in node.targets:
                     if isinstance(target, ast.Name):
-                        processed_target: ast.expr = target
+                        new_targets.append(target)
                     else:
-                        processed_target = self._transform_assignment_target(target)
-                    if isinstance(target, ast.Name) and target.id in self.var_to_param:
-                        # This variable is currently equivalent to a parameter
-                        param_name = self.var_to_param[target.id]
+                        new_targets.append(self._transform_assignment_target(target))
 
-                        # Check if we're reassigning the parameter to itself (e.g., __param_0 = __param_0)
-                        if isinstance(new_value, ast.Name) and new_value.id == param_name:
-                            # Keep the original variable target to avoid mutating parameter symbols
-                            new_targets.append(processed_target)
+                assigns_param = isinstance(new_value, ast.Name) and new_value.id in self.param_names
+                for target in node.targets:
+                    for var_name in self._variables_from_target(target):
+                        if assigns_param:
+                            self._alias_variable(var_name, cast(ast.Name, new_value).id)
                         else:
-                            # We're assigning a DIFFERENT value, which creates a new binding
-                            # Keep the original variable name and remove from var_to_param
-                            new_targets.append(processed_target)
-                            vars_to_delete.append(target.id)
-                    else:
-                        # New binding or complex target (e.g., tuple unpacking) - keep as is
-                        new_targets.append(processed_target)
-
-                # Now update var_to_param for new parameter bindings
-                # Check if we're assigning a parameter to a variable (e.g., result = __param_0)
-                if isinstance(new_value, ast.Name) and new_value.id in self.param_names:
-                    # Record that these target variables are equivalent to this parameter
-                    for target in node.targets:
-                        if isinstance(target, ast.Name):
-                            self.var_to_param[target.id] = new_value.id
-
-                # Delete variables that are being reassigned to non-parameter values
-                for var_name in vars_to_delete:
-                    if var_name in self.var_to_param:
-                        del self.var_to_param[var_name]
+                            self._mark_shadowed(var_name)
 
                 return ast.Assign(targets=new_targets, value=new_value)
 
@@ -577,7 +600,7 @@ class HygienicExtractor:
             def visit_AugAssign(self, node: ast.AugAssign) -> ast.AugAssign:
                 new_value = cast(ast.expr, self.visit(node.value))
                 if isinstance(node.target, ast.Name):
-                    self.var_to_param.pop(node.target.id, None)
+                    self._mark_shadowed(node.target.id)
                     new_target: ast.Name | ast.Attribute | ast.Subscript = node.target
                 else:
                     new_target = cast(
@@ -634,6 +657,28 @@ class HygienicExtractor:
                     finalbody=new_finalbody,
                 )
 
+            def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
+                new_value = cast(ast.expr, self.visit(node.value)) if node.value else None
+                if isinstance(node.target, (ast.Tuple, ast.List, ast.Attribute, ast.Subscript)):
+                    new_target = self._transform_assignment_target(node.target)
+                else:
+                    new_target = node.target
+                if isinstance(node.target, ast.Name):
+                    if (
+                        isinstance(new_value, ast.Name)
+                        and new_value is not None
+                        and new_value.id in self.param_names
+                    ):
+                        self._alias_variable(node.target.id, new_value.id)
+                    else:
+                        self._mark_shadowed(node.target.id)
+                return ast.AnnAssign(
+                    target=new_target,
+                    annotation=node.annotation,
+                    value=new_value,
+                    simple=node.simple,
+                )
+
             def _transform_assignment_target(self, target: ast.expr) -> ast.expr:
                 """Recursively transform assignment targets while preserving binding semantics."""
                 if isinstance(target, ast.Name):
@@ -666,6 +711,7 @@ class HygienicExtractor:
 
             def _visit_branch_statements(self, statements: List[ast.stmt]) -> List[ast.stmt]:
                 snapshot = self.var_to_param.copy()
+                shadow_snapshot = self.shadowed_vars.copy()
                 try:
                     result = [cast(ast.stmt, self.visit(stmt)) for stmt in statements]
                     current_state = self.var_to_param.copy()
@@ -678,6 +724,8 @@ class HygienicExtractor:
                         elif current_state[var_name] != param_name:
                             restored.pop(var_name, None)
                     self.var_to_param = restored
+                    current_shadowed = self.shadowed_vars.copy()
+                    self.shadowed_vars = shadow_snapshot | current_shadowed
                 return result
 
             def visit(self, node: ast.AST) -> ast.AST:

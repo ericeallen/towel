@@ -8,7 +8,7 @@ This document tracks known limitations and edge cases in Towel's code extraction
 
 ### 1. Variable Rebinding in Extracted Blocks
 
-**Status**: Known Bug (1 test failing out of 209 total)
+**Status**: Fixed (December 2025 release) – all 209 adversarial proposals now pass
 
 **Affected Test**: `tricky_edge_cases_adversarial.py::conditional_return_a/b`
 
@@ -47,7 +47,13 @@ def extracted_func(__param_0, __param_1):
 
 **Root Cause**:
 
-The parameter substitution logic in `extractor.py` (`ParameterSubstituter` class) doesn't track WHEN variables are bound during traversal. It makes a single pass over the AST and replaces all occurrences of a variable with its parameter name, without considering that:
+**Fix Summary**:
+
+`ParameterSubstituter` now tracks statement order and remembers which variables have been rebound while rewriting the extracted block. Once a variable (e.g., `result`) is assigned a new local value, subsequent `Name` nodes are left untouched so they continue to reference the fresh binding. The failing scenarios in `tricky_edge_cases_adversarial.py::conditional_return_a/b` are covered by both adversarial regression tests and a focused unit test in `tests/test_extractor_comprehensive.py`.
+
+**Historical Root Cause (for reference)**:
+
+The earlier substitution logic in `extractor.py` (`ParameterSubstituter` class) didn't track WHEN variables were bound during traversal. It made a single pass over the AST and replaced all occurrences of a variable with its parameter name, without considering that:
 
 1. Uses BEFORE a rebinding should be replaced with the parameter
 2. Uses AFTER a rebinding should refer to the new local variable
@@ -56,10 +62,9 @@ This requires control-flow aware analysis to track which variables have been reb
 
 **Why The Simple Fix Doesn't Work**:
 
-An attempted fix that tracked ALL bound variables and prevented their parameterization was too broad:
-- It prevented `result` from being used in the INITIAL uses (before rebinding)
-- This caused `UnboundLocalError` because `result` was never passed as a parameter
-- The fix was reverted
+**Why Previous Attempts Failed**:
+
+An earlier mitigation tried to block parameter substitution for *all* bound variables. That over-corrected the problem—initial uses (before rebinding) were never parameterized, leading to `UnboundLocalError` because the extracted helper stopped receiving the original value. The new approach only suppresses substitution *after* a rebinding statement executes at runtime, and it does so on a per-variable basis.
 
 **What Would Be Needed to Fix It Properly**:
 

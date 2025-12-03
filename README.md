@@ -46,14 +46,31 @@ just coverage-unification
 just --list
 ```
 
-### Direct Usage
+### CLI Commands
+
+After installation, Towel provides three main commands:
 
 ```bash
 # Preview duplicates (read-only)
-python3 preview.py <file_or_directory>
+towel preview <file_or_directory>
+
+# Apply refactorings
+towel dry <input> <output>
+
+# Rename extracted functions with LLM assistance
+towel rename-helpers <directory>
+```
+
+### Direct Script Usage
+
+You can also run the scripts directly without installation:
+
+```bash
+# Preview duplicates (read-only)
+python3 scripts/preview <file_or_directory>
 
 # Refactor code (writes to output location)
-python3 dry.py <input> <output>
+python3 scripts/dry <input> <output>
 ```
 
 ## Features
@@ -163,26 +180,55 @@ Test the tool with coverage:
 just coverage-unification
 ```
 
-### Promoting Extracted Helpers
+### Renaming Extracted Helpers with LLM Assistance
 
-After running the DRY tool, extracted functions are named `__extracted_func_*` with generic parameter names like `__param_0`. You can use the `promote-helpers` tool to rename these into meaningful, human-readable names:
+After running the DRY tool, extracted functions are named `__extracted_func_*` with generic parameter names like `__param_0`. Towel includes an interactive tool that uses LLM assistance to rename these into meaningful, human-readable names:
 
 ```bash
+# Interactive mode: Generate LLM prompt and apply suggestions
+towel rename-helpers src/
+
 # List all extracted helpers
-just promote-helpers --inventory
+towel rename-helpers src/ --list
 
-# Preview renaming (dry run)
-just promote-helpers --dry-run
+# Apply renamings from a JSON file
+towel rename-helpers src/ --rename-file renames.json
 
-# Apply intelligent renaming based on docstrings and context
-just promote-helpers
+# Dry run (preview only)
+towel rename-helpers src/ --dry-run
 
-# Rename specific helpers or modules
-just promote-helpers --module unification/refactor_engine.py
-just promote-helpers --helper __extracted_func_7
+# Limit to specific files or functions
+towel rename-helpers src/ --file mymodule.py
+towel rename-helpers src/ --function __extracted_func_7
 ```
 
-The tool analyzes function docstrings and context to generate appropriate names, then updates all references throughout your codebase. It maintains a JSON mapping file to preserve manual naming decisions across runs.
+#### How It Works
+
+The `rename-helpers` command works in two modes:
+
+**1. Interactive Mode (default):**
+- Analyzes all `__extracted_func_*` functions in your code
+- Generates a prompt showing each function's code
+- You paste this prompt into Claude Code, ChatGPT, or any LLM
+- The LLM suggests meaningful names based on what each function does
+- You paste the LLM's JSON response back
+- Towel automatically renames all references throughout your codebase
+
+**2. File Mode (`--rename-file`):**
+- Provide a JSON file mapping old names to new names
+- Towel applies these renamings across your entire codebase
+
+Example workflow:
+```bash
+# Run the refactoring tool
+towel dry src/ src_cleaned/
+
+# Use LLM to rename extracted functions
+towel rename-helpers src_cleaned/
+# (Follow the interactive prompts to get LLM suggestions)
+```
+
+The tool uses smart regex-based renaming to update all function definitions and calls throughout your project.
 
 ## How It Works
 
