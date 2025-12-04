@@ -538,6 +538,7 @@ class UnificationRefactorEngine:
         docstring_char: Optional[str] = None
         last_import_line = 0
         after_docstring = 0
+        in_multiline_import = False
 
         for i, line in enumerate(lines):
             stripped = line.strip()
@@ -557,8 +558,19 @@ class UnificationRefactorEngine:
                     after_docstring = i + 1
                 continue
 
+            # Check for start of multi-line import (has opening paren but no closing paren)
             if stripped.startswith("import ") or stripped.startswith("from "):
                 last_import_line = i + 1
+                # Check if this is a multi-line import
+                if "(" in line and ")" not in line:
+                    in_multiline_import = True
+                continue
+
+            # Inside a multi-line import - continue until we see closing paren
+            if in_multiline_import:
+                last_import_line = i + 1
+                if ")" in line:
+                    in_multiline_import = False
                 continue
 
             if last_import_line > 0 and stripped and not stripped.startswith("#"):
