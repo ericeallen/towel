@@ -132,6 +132,16 @@ pip install -e ".[dev]"
 pip install black flake8 mypy coverage
 ```
 
+### Optional: Enhanced Progress Bars
+
+For nicer progress bars during analysis, you can optionally install `tqdm`:
+
+```bash
+pip install tqdm
+```
+
+Without `tqdm`, Towel still works perfectly with zero dependencies - it just uses simpler progress indicators.
+
 ## Usage
 
 ### Preview Mode (Read-Only)
