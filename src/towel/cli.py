@@ -622,8 +622,17 @@ def _rename_function_in_directory(
     old_name: str,
     new_name: str,
     dry_run: bool,
+    file_filter: Optional[Path] = None,
 ) -> int:
-    """Rename a function throughout all Python files in directory."""
+    """Rename a function throughout all Python files in directory.
+
+    Args:
+        target: Directory to search in
+        old_name: Current function name
+        new_name: New function name
+        dry_run: If True, don't actually modify files
+        file_filter: If provided, only rename in this specific file
+    """
     import re
 
     # Pattern to match function definitions and calls
@@ -636,6 +645,10 @@ def _rename_function_in_directory(
     total_replacements = 0
 
     for py_file in target.rglob("*.py"):
+        # If file_filter is specified, only process that file
+        if file_filter and py_file != file_filter:
+            continue
+
         try:
             content = py_file.read_text()
             new_content = content
@@ -678,12 +691,18 @@ def _run_interactive_llm_mode(
     print("=" * 70 + "\n")
 
     print("After the LLM provides suggestions, paste the JSON response below.")
-    print("The response should be a JSON object mapping old names to new names:")
-    print(
-        'Example: {"__extracted_func_1": "calculate_total", "__extracted_func_2": "validate_input"}'
-    )
+    print("The response should be a JSON object mapping old names to new names.")
+    print("You can use file-qualified names (e.g., 'path/to/file.py:func_name') to")
+    print("rename functions only in specific files, or just the function name to rename")
+    print("across all files.")
     print()
-    print("Paste the JSON response (press Ctrl+D or Ctrl+Z when done):")
+    print("Example:")
+    print('  {"__extracted_func_1": "calculate_total"}')
+    print('  {"src/utils.py:__extracted_func_2": "validate_input"}')
+    print()
+    print(
+        "Paste the JSON response below, then press ENTER followed by Ctrl+D (or Ctrl+Z on Windows):"
+    )
     print()
 
     # Read LLM response from stdin
@@ -732,15 +751,31 @@ def _run_interactive_llm_mode(
 
     # Apply renamings
     total_changes = 0
-    for old_name, new_name in renames.items():
+    for old_name_spec, new_name in renames.items():
         if not isinstance(new_name, str) or not new_name:
-            print(f"Warning: Skipping invalid mapping {old_name} -> {new_name}")
+            print(f"Warning: Skipping invalid mapping {old_name_spec} -> {new_name}")
             continue
 
-        count = _rename_function_in_directory(target, old_name, new_name, dry_run)
+        # Parse file-qualified names (e.g., "path/to/file.py:function_name")
+        file_filter = None
+        if ":" in old_name_spec:
+            file_path_str, old_name = old_name_spec.rsplit(":", 1)
+            # Resolve file path relative to target
+            file_filter = target / file_path_str
+            if not file_filter.exists():
+                print(f"Warning: File not found: {file_filter}")
+                print(f"  Skipping: {old_name_spec} -> {new_name}")
+                continue
+        else:
+            old_name = old_name_spec
+
+        count = _rename_function_in_directory(target, old_name, new_name, dry_run, file_filter)
         if count > 0:
             total_changes += count
-            print(f"  ✓ {old_name} -> {new_name} ({count} replacement(s))")
+            if file_filter:
+                print(f"  ✓ {old_name_spec} -> {new_name} ({count} replacement(s))")
+            else:
+                print(f"  ✓ {old_name} -> {new_name} ({count} replacement(s))")
 
     if dry_run:
         print(f"\n[DRY RUN] Would make {total_changes} change(s)")
@@ -778,13 +813,18 @@ Here are the extracted functions:
 
     output_format = """
 
-Please provide your suggestions as a JSON object mapping old names to new names. For example:
+Please provide your suggestions as a JSON object mapping old names to new names.
+
+If the same function name appears in multiple files, use file-qualified names (path:function_name)
+to rename them individually. Otherwise, you can use just the function name to rename across all files.
+
+For example:
 
 ```json
 {
-  "__extracted_func_1": "calculate_total_price",
-  "__extracted_func_2": "validate_email_format",
-  "__extracted_func_3": "format_date_string"
+  "src/utils.py:__extracted_func_1": "calculate_total_price",
+  "src/validators.py:__extracted_func_1": "validate_email_format",
+  "__extracted_func_2": "format_date_string"
 }
 ```
 
