@@ -34,7 +34,7 @@ For more help on a specific command:
     parser.add_argument(
         "--version",
         action="version",
-        version="towel 1.0.1",
+        version="towel 1.0.2",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -416,7 +416,7 @@ def _run_preview(args: argparse.Namespace) -> None:
     else:
         print(f"Analyzing directory: {target}")
         all_proposals = engine.analyze_directory(
-            target, recursive=True, verbose=True, progress="tqdm"
+            target, recursive=True, verbose=True, progress="auto"
         )
 
     print(f"\nFound {len(all_proposals)} refactoring opportunities")
