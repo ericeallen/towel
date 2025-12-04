@@ -21,20 +21,20 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  code-towel preview src/                    # Preview duplicates (read-only)
-  code-towel dry src/ cleaned/               # Apply refactorings to new directory
-  code-towel dry src/ src/                   # Apply refactorings in-place
-  code-towel rename-helpers                  # Rename extracted functions with LLM assistance
+  towel preview src/                    # Preview duplicates (read-only)
+  towel dry src/ cleaned/               # Apply refactorings to new directory
+  towel dry src/ src/                   # Apply refactorings in-place
+  towel rename-helpers                  # Rename extracted functions with LLM assistance
 
 For more help on a specific command:
-  code-towel <command> --help
+  towel <command> --help
         """,
     )
 
     parser.add_argument(
         "--version",
         action="version",
-        version="towel 1.0.0",
+        version="towel 1.0.1",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -68,10 +68,10 @@ def _add_dry_parser(subparsers) -> None:
         description="Analyze and apply unification-based refactorings to file(s) or directories.",
         epilog="""
 Examples:
-  code-towel dry src/ cleaned/                         # Refactor directory until fixed point
-  code-towel dry file.py file_out.py --non-interactive # Non-interactive single file
-  code-towel dry src/ out/ --max-iterations 50         # Cap at 50 applied refactorings
-  code-towel dry src/ out/ --progress detail           # Verbose per-phase output
+  towel dry src/ cleaned/                         # Refactor directory until fixed point
+  towel dry file.py file_out.py --non-interactive # Non-interactive single file
+  towel dry src/ out/ --max-iterations 50         # Cap at 50 applied refactorings
+  towel dry src/ out/ --progress detail           # Verbose per-phase output
         """,
     )
 
@@ -196,20 +196,20 @@ The tool works in two modes:
         epilog="""
 Examples:
   # Interactive mode: generate LLM prompt and apply suggestions
-  code-towel rename-helpers src/
+  towel rename-helpers src/
 
   # List all extracted helpers
-  code-towel rename-helpers src/ --list
+  towel rename-helpers src/ --list
 
   # Apply renamings from a JSON file
-  code-towel rename-helpers src/ --rename-file renames.json
+  towel rename-helpers src/ --rename-file renames.json
 
   # Dry run (preview only)
-  code-towel rename-helpers src/ --dry-run
+  towel rename-helpers src/ --dry-run
 
   # Specify specific files or functions
-  code-towel rename-helpers src/ --file mymodule.py
-  code-towel rename-helpers src/ --function __extracted_func_7
+  towel rename-helpers src/ --file mymodule.py
+  towel rename-helpers src/ --function __extracted_func_7
         """,
     )
 
@@ -442,9 +442,9 @@ def _run_preview(args: argparse.Namespace) -> None:
 
         # Show which files are affected
         files_affected = set()
-        for item in prop.replacements:
-            if len(item) == 3:
-                files_affected.add(item[2])
+        for replacement in prop.replacements:
+            if replacement.file_path:
+                files_affected.add(replacement.file_path)
             else:
                 files_affected.add(prop.file_path)
 
@@ -474,9 +474,9 @@ def _run_preview(args: argparse.Namespace) -> None:
     print("\n" + "=" * 70)
     print("\nTo apply these refactorings, run:")
     if is_file:
-        print(f"  code-towel dry {target} <output>")
+        print(f"  towel dry {target} <output>")
     else:
-        print(f"  code-towel dry {target} <output_dir>")
+        print(f"  towel dry {target} <output_dir>")
     print()
 
 

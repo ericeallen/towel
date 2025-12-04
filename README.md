@@ -52,13 +52,13 @@ After installation, Towel provides three main commands:
 
 ```bash
 # Preview duplicates (read-only)
-code-towel preview <file_or_directory>
+towel preview <file_or_directory>
 
 # Apply refactorings
-code-towel dry <input> <output>
+towel dry <input> <output>
 
 # Rename extracted functions with LLM assistance
-code-towel rename-helpers <directory>
+towel rename-helpers <directory>
 ```
 
 ### Direct Script Usage
@@ -189,20 +189,20 @@ After running the DRY tool, extracted functions are named `__extracted_func_*` w
 
 ```bash
 # Interactive mode: Generate LLM prompt and apply suggestions
-code-towel rename-helpers src/
+towel rename-helpers src/
 
 # List all extracted helpers
-code-towel rename-helpers src/ --list
+towel rename-helpers src/ --list
 
 # Apply renamings from a JSON file
-code-towel rename-helpers src/ --rename-file renames.json
+towel rename-helpers src/ --rename-file renames.json
 
 # Dry run (preview only)
-code-towel rename-helpers src/ --dry-run
+towel rename-helpers src/ --dry-run
 
 # Limit to specific files or functions
-code-towel rename-helpers src/ --file mymodule.py
-code-towel rename-helpers src/ --function __extracted_func_7
+towel rename-helpers src/ --file mymodule.py
+towel rename-helpers src/ --function __extracted_func_7
 ```
 
 #### How It Works
@@ -224,10 +224,10 @@ The `rename-helpers` command works in two modes:
 Example workflow:
 ```bash
 # Run the refactoring tool
-code-towel dry src/ src_cleaned/
+towel dry src/ src_cleaned/
 
 # Use LLM to rename extracted functions
-code-towel rename-helpers src_cleaned/
+towel rename-helpers src_cleaned/
 # (Follow the interactive prompts to get LLM suggestions)
 ```
 
