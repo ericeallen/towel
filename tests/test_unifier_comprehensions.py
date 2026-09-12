@@ -3,7 +3,6 @@ import unittest
 
 from towel.unification.unifier import Unifier
 
-
 NESTED_A = """
 def a(matrix):
     result = [[cell * 2 for cell in row] for row in matrix]

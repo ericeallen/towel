@@ -5,6 +5,31 @@ Tests alpha-renaming: different loop variable names (i vs j) should unify.
 """
 
 
+def __extracted_func_2(pairs):
+    result = {}
+    for key, value in pairs:
+        if value is not None:
+            result[key] = value * 2
+    return result
+
+
+def __extracted_func_1(items):
+    result = []
+    for i in range(len(items)):
+        if items[i] > 0:
+            result.append(items[i] * 2)
+    return result
+
+
+def __extracted_func_0(matrix):
+    total = 0
+    for i in range(len(matrix)):
+        for j in range(len(matrix[i])):
+            if matrix[i][j] > 0:
+                total += matrix[i][j]
+    return total
+
+
 def process_list_a(items):
     """Process list with loop variable 'i'."""
     return __extracted_func_1(items)
@@ -33,34 +58,3 @@ def tuple_unpacking_a(pairs):
 def tuple_unpacking_b(pairs):
     """For loop with tuple unpacking (different var names)."""
     return __extracted_func_2(pairs)
-
-
-def __extracted_func_0(matrix):
-    total = 0
-    for i in range(len(matrix)):
-        for j in range(len(matrix[i])):
-            if matrix[i][j] > 0:
-                total += matrix[i][j]
-    return total
-
-
-def __extracted_func_1(items):
-    result = []
-    for i in range(len(items)):
-        if items[i] > 0:
-            result.append(items[i] * 2)
-    return result
-
-
-def __extracted_func_2(pairs):
-    result = {}
-    for key, value in pairs:
-        if value is not None:
-            result[key] = value * 2
-    return result
-
-
-
-
-
-

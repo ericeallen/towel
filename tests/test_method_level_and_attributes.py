@@ -41,9 +41,9 @@ class User:
 
         # Apply first proposal and validate the result compiles and contains a call
         modified = engine.apply_refactoring(str(src), proposals[0])
-        assert "def __extracted_func_" in modified
+        assert "def _extracted_func_" in modified
         # Expect method calls to be replaced with call to extracted method on self
-        assert "self.__extracted_func_" in modified
+        assert "self._extracted_func_" in modified
         # Since attribute differs (.email vs .phone), entire attribute is parameterized safely
         # Ensure both self and the attribute expression are passed or present
         assert ("self.email" in modified) or ("self.phone" in modified)

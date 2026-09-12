@@ -9,6 +9,30 @@ Tests:
 """
 
 
+def __extracted_func_2(items):
+    result = []
+    for item in items:
+        if len(item) > 0:
+            result.append(str(item))
+    return result
+
+
+def __extracted_func_1(items, multiplier):
+    result = []
+    for item in items:
+        if item > 0:
+            result.append(item * multiplier)
+    return result
+
+
+def __extracted_func_0(items, processor):
+    result = []
+    for item in items:
+        if item > 0:
+            result.append(processor(item))
+    return result
+
+
 def with_nested_func_a(items):
     """Nested function definition."""
 
@@ -87,33 +111,3 @@ def builtin_override_a(items):
 def builtin_override_b(items):
     """Don't treat builtin names as parameters (duplicate)."""
     return __extracted_func_2(items)
-
-
-def __extracted_func_0(items, processor):
-    result = []
-    for item in items:
-        if item > 0:
-            result.append(processor(item))
-    return result
-
-
-def __extracted_func_1(items, multiplier):
-    result = []
-    for item in items:
-        if item > 0:
-            result.append(item * multiplier)
-    return result
-
-
-def __extracted_func_2(items):
-    result = []
-    for item in items:
-        if len(item) > 0:
-            result.append(str(item))
-    return result
-
-
-
-
-
-

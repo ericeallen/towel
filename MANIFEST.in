@@ -1,0 +1,15 @@
+include LICENSE README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md justfile .flake8 .pre-commit-config.yaml uv.lock
+recursive-include src *.py
+recursive-include tests *.py *.md
+recursive-include test_examples *.py *.md
+recursive-include test_examples_expected_output *.py
+recursive-include test_examples_crossfile *.py *.md
+recursive-include test_examples_crossfile_expected_output *.py
+recursive-include scripts *
+recursive-include .templates *.py *.md
+recursive-include docs *.md
+prune docs/docs_local
+prune .todo
+prune .claude
+prune .vscode
+global-exclude __pycache__ *.py[cod] .env .DS_Store

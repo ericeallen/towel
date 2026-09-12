@@ -6,6 +6,66 @@ lists, dicts, comprehensions, and deeply nested expressions.
 """
 
 
+def __extracted_func_5(__param_0, data, filter_func):
+    processed = [x * __param_0 for x in data if x > 0]
+    filtered = [item for item in processed if filter_func(item)]
+    result = {'values': filtered, 'count': len(filtered), 'sum': sum(filtered)}
+    return result
+
+
+def __extracted_func_4(__param_0, item, output):
+    if isinstance(item, (int, float)):
+        output['numbers'].append(item * __param_0)
+        output['total'] += item * __param_0
+    elif isinstance(item, list):
+        output['lists'].append([x * __param_0 for x in item])
+
+
+def __extracted_func_3(__param_0, __param_1, __param_2, __param_3, config, data):
+    results = []
+    for item in data:
+        value = item[__param_0][__param_1][__param_2][__param_3]
+        adjusted = value * 1.5 + 10
+        validated = adjusted > config['min_value']
+        if validated:
+            results.append(adjusted)
+    return results
+
+
+def __extracted_func_2(__param_0, data, processor):
+    result = []
+    for item in data:
+        stage1 = {k: v * __param_0 for k, v in item.items()}
+        stage2 = {k: processor(v) for k, v in stage1.items()}
+        stage3 = [v for v in stage2.values() if v > 10]
+        if stage3:
+            result.append({'processed': stage3, 'count': len(stage3)})
+    return result
+
+
+def __extracted_func_1(__param_0, items):
+    output = {'data': [], 'meta': {'total': 0, 'categories': {}}}
+    for item in items:
+        category = item['category']
+        value = item['value'] * __param_0
+        output['data'].append({'cat': category, 'val': value})
+        output['meta']['total'] += value
+        if category not in output['meta']['categories']:
+            output['meta']['categories'][category] = 0
+        output['meta']['categories'][category] += 1
+    return output
+
+
+def __extracted_func_0(__param_0, __param_1, __param_2, dict1, dict2, merger):
+    result = {}
+    for key in dict1.keys():
+        if key in dict2:
+            result[key] = {__param_0: dict1[key][__param_2], __param_1: dict2[key][__param_2], 'merged': merger(dict1[key][__param_2], dict2[key][__param_2])}
+        else:
+            result[key] = dict1[key]
+    return result
+
+
 def process_nested_dict_v1(data, config):
     """Version 1: Nested dictionary access."""
     return __extracted_func_3('user', 'profile', 'settings', 'threshold', config, data)
@@ -42,7 +102,9 @@ def filter_nested_lists_a(matrix, threshold):
     for row in matrix:
         # Nested list comprehension and filtering
         filtered_row = [x for x in row if x > threshold]
-        __extracted_func_6(filtered_row, result)
+        processed = [x**2 for x in filtered_row]
+        if sum(processed) > 100:
+            result.append(processed)
     return result
 
 
@@ -52,7 +114,9 @@ def filter_nested_lists_b(matrix, threshold):
     for row in matrix:
         # Same nesting pattern, different operation
         filtered_row = [x for x in row if x < threshold]
-        __extracted_func_6(filtered_row, result)
+        processed = [x**2 for x in filtered_row]
+        if sum(processed) > 100:
+            result.append(processed)
     return result
 
 
@@ -100,83 +164,3 @@ def chain_nested_operations_v1(data, processor):
 def chain_nested_operations_v2(data, processor):
     """Version 2: Different multiplier, same chaining."""
     return __extracted_func_2(3, data, processor)
-
-
-def __extracted_func_0(__param_0, __param_1, __param_2, dict1, dict2, merger):
-    result = {}
-    for key in dict1.keys():
-        if key in dict2:
-            result[key] = {__param_0: dict1[key][__param_2], __param_1: dict2[key][__param_2], 'merged': merger(dict1[key][__param_2], dict2[key][__param_2])}
-        else:
-            result[key] = dict1[key]
-    return result
-
-
-def __extracted_func_1(__param_0, items):
-    output = {'data': [], 'meta': {'total': 0, 'categories': {}}}
-    for item in items:
-        category = item['category']
-        value = item['value'] * __param_0
-        output['data'].append({'cat': category, 'val': value})
-        output['meta']['total'] += value
-        if category not in output['meta']['categories']:
-            output['meta']['categories'][category] = 0
-        output['meta']['categories'][category] += 1
-    return output
-
-
-def __extracted_func_2(__param_0, data, processor):
-    result = []
-    for item in data:
-        stage1 = {k: v * __param_0 for k, v in item.items()}
-        stage2 = {k: processor(v) for k, v in stage1.items()}
-        stage3 = [v for v in stage2.values() if v > 10]
-        if stage3:
-            result.append({'processed': stage3, 'count': len(stage3)})
-    return result
-
-
-def __extracted_func_3(__param_0, __param_1, __param_2, __param_3, config, data):
-    results = []
-    for item in data:
-        value = item[__param_0][__param_1][__param_2][__param_3]
-        adjusted = value * 1.5 + 10
-        validated = adjusted > config['min_value']
-        if validated:
-            results.append(adjusted)
-    return results
-
-
-def __extracted_func_4(__param_0, item, output):
-    if isinstance(item, (int, float)):
-        output['numbers'].append(item * __param_0)
-        output['total'] += item * __param_0
-    elif isinstance(item, list):
-        output['lists'].append([x * __param_0 for x in item])
-
-
-def __extracted_func_5(__param_0, data, filter_func):
-    processed = [x * __param_0 for x in data if x > 0]
-    filtered = [item for item in processed if filter_func(item)]
-    result = {'values': filtered, 'count': len(filtered), 'sum': sum(filtered)}
-    return result
-
-
-def __extracted_func_6(filtered_row, result):
-    processed = [x ** 2 for x in filtered_row]
-    if sum(processed) > 100:
-        result.append(processed)
-
-
-
-
-
-
-
-
-
-
-
-
-
-

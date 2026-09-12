@@ -329,7 +329,7 @@ When extracting to a different file from call sites:
 3. Generate import statement: `from <module> import <function>`
 4. Insert import at top of calling file
 
-**Module Path Resolution** ([project_layout.py:98](src/towel/unification/project_layout.py#L98)):
+**Module Path Resolution** ([project_layout.py:98](../src/towel/unification/project_layout.py#L98)):
 ```python
 def compute_import_path(source_file, target_file, package_root):
     # Convert file paths to module paths
@@ -419,7 +419,7 @@ UnificationRefactorEngine(
 
 ### Custom Visitors
 
-Add new AST visitors in [visitors.py](src/towel/unification/visitors.py):
+Add new AST visitors in [visitors.py](../src/towel/unification/visitors.py):
 
 ```python
 class MyVisitor(ast.NodeVisitor):
@@ -430,7 +430,7 @@ class MyVisitor(ast.NodeVisitor):
 
 ### Custom Normalizations
 
-Extend [ast_normalizer.py](src/towel/unification/ast_normalizer.py):
+Extend [ast_normalizer.py](../src/towel/unification/ast_normalizer.py):
 
 ```python
 def my_normalization(tree: ast.AST) -> ast.AST:
@@ -442,7 +442,7 @@ Add to pipeline phase 1.
 
 ### Custom Filters
 
-Add signature checks in [block_signature.py](src/towel/unification/block_signature.py):
+Add signature checks in [block_signature.py](../src/towel/unification/block_signature.py):
 
 ```python
 def my_filter(sig1: BlockSignature, sig2: BlockSignature) -> bool:

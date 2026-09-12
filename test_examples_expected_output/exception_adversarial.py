@@ -6,6 +6,74 @@ when extracting code with try/except/finally blocks.
 """
 
 
+def __extracted_func_5(__param_0, __param_1):
+    value = __param_0
+    try:
+        value = int(__param_1)
+    except (ValueError, TypeError):
+        value = __param_0
+    return value
+
+
+def __extracted_func_4(__param_0, __param_1):
+    result = 0
+    try:
+        result = __param_0 / __param_1
+    except ZeroDivisionError:
+        result = float('inf')
+    return result
+
+
+def __extracted_func_3(__param_0):
+    result = 0
+    try:
+        try:
+            result = int(__param_0)
+        except ValueError:
+            result = float(__param_0)
+    except (ValueError, TypeError):
+        result = -1
+    return result
+
+
+def __extracted_func_2(__param_0):
+    results = []
+    count = 0
+    try:
+        for item in __param_0:
+            count += 1
+            results.append(item * 2)
+    finally:
+        results.append(count)
+    return results
+
+
+def __extracted_func_1(__param_0):
+    result = None
+    try:
+        result = int(__param_0) / len(__param_0)
+    except ValueError:
+        result = -1
+    except ZeroDivisionError:
+        result = -2
+    except TypeError:
+        result = -3
+    return result
+
+
+def __extracted_func_0(__param_0):
+    results = []
+    error = None
+    try:
+        for item in __param_0:
+            results.append(1 / item)
+    except ZeroDivisionError as e:
+        error = str(e)
+    else:
+        results.append(999)
+    return (results, error)
+
+
 def safe_divide_a(x, y):
     """Division with exception handling."""
     return __extracted_func_4(x, y)
@@ -86,83 +154,3 @@ def multiple_except_a(data):
 def multiple_except_b(input_val):
     """Similar multiple except pattern."""
     return __extracted_func_1(input_val)
-
-
-def __extracted_func_0(__param_0):
-    results = []
-    error = None
-    try:
-        for item in __param_0:
-            results.append(1 / item)
-    except ZeroDivisionError as e:
-        error = str(e)
-    else:
-        results.append(999)
-    return (results, error)
-
-
-def __extracted_func_1(__param_0):
-    result = None
-    try:
-        result = int(__param_0) / len(__param_0)
-    except ValueError:
-        result = -1
-    except ZeroDivisionError:
-        result = -2
-    except TypeError:
-        result = -3
-    return result
-
-
-def __extracted_func_2(__param_0):
-    results = []
-    count = 0
-    try:
-        for item in __param_0:
-            count += 1
-            results.append(item * 2)
-    finally:
-        results.append(count)
-    return results
-
-
-def __extracted_func_3(__param_0):
-    result = 0
-    try:
-        try:
-            result = int(__param_0)
-        except ValueError:
-            result = float(__param_0)
-    except (ValueError, TypeError):
-        result = -1
-    return result
-
-
-def __extracted_func_4(__param_0, __param_1):
-    result = 0
-    try:
-        result = __param_0 / __param_1
-    except ZeroDivisionError:
-        result = float('inf')
-    return result
-
-
-def __extracted_func_5(__param_0, __param_1):
-    value = __param_0
-    try:
-        value = int(__param_1)
-    except (ValueError, TypeError):
-        value = __param_0
-    return value
-
-
-
-
-
-
-
-
-
-
-
-

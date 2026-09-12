@@ -11,14 +11,30 @@ Tests that Towel correctly handles scope modifiers:
 counter = 0
 
 
+def __extracted_func_0(outer):
+    f = outer()
+    g = f()
+    return g()
+
+
 def test_global_modify_a():
     """Function that modifies global variable."""
-    return __extracted_func_1()
+    global counter
+    result = []
+    for i in range(5):
+        counter += 1
+        result.append(counter)
+    return result
 
 
 def test_global_modify_b():
     """Duplicate with global modification."""
-    return __extracted_func_1()
+    global counter
+    result = []
+    for i in range(5):
+        counter += 1
+        result.append(counter)
+    return result
 
 
 def test_nonlocal_a():
@@ -66,7 +82,7 @@ def test_nested_nonlocal_a():
 
         return middle
 
-    return __extracted_func_2(outer)
+    return __extracted_func_0(outer)
 
 
 def test_nested_nonlocal_b():
@@ -88,44 +104,28 @@ def test_nested_nonlocal_b():
 
         return middle
 
-    return __extracted_func_2(outer)
+    return __extracted_func_0(outer)
 
 
 def test_global_and_local_a(items):
     """Mix of global and local variables."""
-    return __extracted_func_0(items)
+    global counter
+    local_sum = 0
+
+    for item in items:
+        counter += 1
+        local_sum += item
+
+    return (counter, local_sum)
 
 
 def test_global_and_local_b(items):
     """Duplicate mix of global and local."""
-    return __extracted_func_0(items)
-
-
-def __extracted_func_0(items):
     global counter
     local_sum = 0
+
     for item in items:
         counter += 1
         local_sum += item
+
     return (counter, local_sum)
-
-
-def __extracted_func_1():
-    global counter
-    result = []
-    for i in range(5):
-        counter += 1
-        result.append(counter)
-    return result
-
-
-def __extracted_func_2(outer):
-    f = outer()
-    g = f()
-    return g()
-
-
-
-
-
-

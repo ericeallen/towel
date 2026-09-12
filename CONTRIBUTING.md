@@ -69,9 +69,9 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
    cd towel
    ```
 
-2. Create and activate a virtual environment:
+2. Use Python 3.13 for formatting/type checks and create a virtual environment:
    ```bash
-   python -m venv venv
+   python3.13 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
@@ -101,7 +101,7 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 - Keep functions focused and reasonably sized
 - Add type hints where appropriate
 - Comment complex logic
-- Code is automatically formatted with Black (line length 100)
+- Run Black explicitly to format code (line length 100); hooks check formatting
 - All code must pass flake8 linting
 - Type checking with mypy is enforced on core modules
 
@@ -128,7 +128,8 @@ pytest
 pytest tests/test_file.py
 
 # Run with coverage
-pytest --cov=src/towel
+coverage run -m pytest
+coverage report --fail-under=85
 ```
 
 ## Documentation
@@ -168,3 +169,5 @@ If you have questions, feel free to:
 - Check existing documentation and issues
 
 Thank you for contributing to Towel!
+
+For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md. CI runs the full tests and an unconditional 85% coverage gate for each supported Python version. `just release VERSION` prepares local distributions only; publication requires maintainer review of the current audit and policy decisions.

@@ -35,19 +35,20 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
 
         Reads from test_examples (read-only) and verifies no files are modified.
         """
-        # Capture original state of all Python files in test_examples
-        test_examples_dir = Path("test_examples")
-        original_contents = {}
-        for py_file in test_examples_dir.glob("*.py"):
-            original_contents[py_file] = py_file.read_text()
-
-        proposals = self.engine.analyze_directory("test_examples", recursive=False, verbose=True)
-        # Should find some duplicates
-        self.assertGreaterEqual(len(proposals), 0)
-
-        # Verify no files were modified
-        for py_file, original_content in original_contents.items():
-            assert_file_not_modified(py_file, original_content)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            top = root / "top.py"
+            nested = root / "nested"
+            nested.mkdir()
+            child = nested / "child.py"
+            source = "def example(x):\n    return x + 1\n"
+            top.write_text(source)
+            child.write_text(source)
+            self.assertEqual(self.engine._find_python_files(directory, recursive=False), [str(top)])
+            self.assertEqual(set(self.engine._find_python_files(directory)), {str(top), str(child)})
+            self.engine.analyze_directory(directory, recursive=False)
+            assert_file_not_modified(top, source)
+            assert_file_not_modified(child, source)
 
     def test_analyze_file_with_syntax_error(self):
         """Test analyzing a file with syntax errors."""

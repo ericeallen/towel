@@ -6,6 +6,54 @@ collide with variables in the surrounding scope or in the calling context.
 """
 
 
+def __extracted_func_6(__param_0, __param_1, __extracted_func_5, data):
+    results = []
+    for item in data:
+        a = item ** __param_0
+        __extracted_func_5(__param_1, a, results)
+    return results
+
+
+def __extracted_func_5(__param_0, a, results):
+    b = a + __param_0
+    c = b * 3
+    results.append(c)
+
+
+def __extracted_func_4(__param_0, __param_1, __param_2):
+    y = __param_0 + __param_1
+    z = y ** 2
+    __param_2.append(z)
+
+
+def __extracted_func_3(__param_0, __extracted_func_2, data, result):
+    for item in data:
+        x = item * __param_0
+        __extracted_func_2(result, x)
+    return result
+
+
+def __extracted_func_2(result, x):
+    __extracted_func_4(x, 10, result)
+
+
+def __extracted_func_1(__param_0, cache, key, processed, temp):
+    validated = len(processed) > __param_0
+    if validated:
+        temp.append(processed)
+        cache[key] = processed
+
+
+def __extracted_func_0(__param_0, values, x, y):
+    output = []
+    for val in values:
+        a = val + x
+        b = a * y
+        c = b - __param_0
+        output.append(c)
+    return output
+
+
 def process_with_temp_var_v1(data, result):
     """Version 1: Uses 'result' in outer scope, 'x' in duplicate block."""
     result = []
@@ -20,12 +68,12 @@ def process_with_temp_var_v2(data, result):
 
 def calculate_nested_scope_a(values, x, y):
     """Uses x and y as parameters - extracted function must avoid these."""
-    return __extracted_func_0(-5, values, x, y)
+    return __extracted_func_0(5, values, x, y)
 
 
 def calculate_nested_scope_b(values, x, y):
     """Same outer variable names - extracted function needs hygienic naming."""
-    return __extracted_func_0(-10, values, x, y)
+    return __extracted_func_0(10, values, x, y)
 
 
 def transform_with_shadowing_v1(data, temp, cache):
@@ -100,65 +148,3 @@ def nested_function_scope_v2(data, helper, processor):
         return x + 5
 
     return __extracted_func_6(3, 200, __extracted_func_5, data)
-
-
-def __extracted_func_0(__param_0, values, x, y):
-    output = []
-    for val in values:
-        a = val + x
-        b = a * y
-        c = b + __param_0
-        output.append(c)
-    return output
-
-
-def __extracted_func_1(__param_0, cache, key, processed, temp):
-    validated = len(processed) > __param_0
-    if validated:
-        temp.append(processed)
-        cache[key] = processed
-
-
-def __extracted_func_2(result, x):
-    __extracted_func_4(x, 10, result)
-
-
-def __extracted_func_3(__param_0, __extracted_func_2, data, result):
-    for item in data:
-        x = item * __param_0
-        __extracted_func_2(result, x)
-    return result
-
-
-def __extracted_func_4(__param_0, __param_1, __param_2):
-    step3 = __param_0 + __param_1
-    final = step3 ** 2
-    __param_2.append(final)
-
-
-def __extracted_func_5(__param_0, a, results):
-    b = a + __param_0
-    c = b * 3
-    results.append(c)
-
-
-def __extracted_func_6(__param_0, __param_1, __extracted_func_5, data):
-    results = []
-    for item in data:
-        a = item ** __param_0
-        __extracted_func_5(__param_1, a, results)
-    return results
-
-
-
-
-
-
-
-
-
-
-
-
-
-

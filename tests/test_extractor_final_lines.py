@@ -1,4 +1,5 @@
 import ast
+from types import SimpleNamespace
 import unittest
 
 from towel.unification.extractor import (
@@ -10,6 +11,24 @@ from towel.unification.unifier import Substitution
 
 class TestExtractorFinalLines(unittest.TestCase):
     """Target the last uncovered lines in `extractor.py` to push coverage to 100%."""
+
+    def test_augmented_attribute_and_subscript_targets_execute(self) -> None:
+        template = ast.parse("obj.value += 2\ndata['count'] += 3\n").body
+        function, _ = HygienicExtractor().extract_function(
+            template_block=template,
+            substitution=Substitution(),
+            free_variables={"obj", "data"},
+            enclosing_names=set(),
+            is_value_producing=False,
+        )
+        module = ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[]))
+        namespace = {}
+        exec(compile(module, "<augmented-target-regression>", "exec"), namespace)
+        obj = SimpleNamespace(value=10)
+        data = {"count": 20}
+        namespace[function.name](data, obj)
+        self.assertEqual(obj.value, 12)
+        self.assertEqual(data["count"], 23)
 
     def test_generate_call_hygienic_renames_fallback(self) -> None:
         """Line 199: fallback to substitution.hygienic_renames when argument missing."""
@@ -89,6 +108,27 @@ class TestExtractorFinalLines(unittest.TestCase):
         # Child value should be replaced with param name
         self.assertIsInstance(fv.value, ast.Name)
         self.assertEqual(fv.value.id, "__param_0")
+        assignment = ast.Assign(targets=[ast.Name(id="result", ctx=ast.Store())], value=expr.value)
+        module = ast.fix_missing_locations(ast.Module(body=[assignment], type_ignores=[]))
+        namespace: dict[str, object] = {"__param_0": 42}
+        exec(compile(module, "<formatted-value-regression>", "exec"), namespace)
+        self.assertEqual(namespace["result"], "42")
+
+    def test_substitution_distinguishes_formatted_value_from_fstring(self) -> None:
+        formatted = ast.FormattedValue(
+            value=ast.Name(id="value", ctx=ast.Load()), conversion=-1, format_spec=None
+        )
+        substitution = Substitution()
+        substitution.add_mapping(0, formatted, "__param_0")
+        self.assertIsNone(substitution.get_param_for_expr(0, ast.JoinedStr(values=[formatted])))
+        # Structural matches remain valid after copying/reparsing, irrespective
+        # of source coordinates attached to otherwise identical nodes.
+        copy = ast.FormattedValue(
+            value=ast.Name(id="value", ctx=ast.Load(), lineno=100, col_offset=4),
+            conversion=-1,
+            format_spec=None,
+        )
+        self.assertEqual(substitution.get_param_for_expr(0, copy), "__param_0")
 
     def test_contains_return_async_function_def(self) -> None:
         """Line 472: visiting AsyncFunctionDef should not count as a return."""

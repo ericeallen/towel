@@ -6,6 +6,13 @@ when variables are captured from enclosing scopes.
 """
 
 
+def __extracted_func_0(__param_0, __param_1):
+    result = 0
+    for i in range(__param_0):
+        result += __param_1
+    return result
+
+
 def make_adder_a(x):
     """Returns a closure that adds x."""
     total = 0
@@ -110,12 +117,3 @@ def shadow_test_b(y):
     y = y + 1
     output = output + y
     return output
-
-
-def __extracted_func_0(__param_0, __param_1):
-    result = 0
-    for i in range(__param_0):
-        result += __param_1
-    return result
-
-

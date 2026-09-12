@@ -585,8 +585,16 @@ class ScopeAnalyzer(ast.NodeVisitor):
         # So we must include such variables in free_vars.
         free_vars = (uses - bindings) | (used_before_assigned & bindings)
 
-        # Filter out Python builtins
-        free_vars = filter_builtins(free_vars)
+        # A builtin spelling can be rebound in any lexical scope. Retain names
+        # with a known binding; over-approximating shadows is safe because an
+        # unshadowed builtin can also be passed explicitly to the helper.
+        bound_names: Set[str] = set()
+        scopes = [self.root_scope] if self.root_scope is not None else []
+        while scopes:
+            scope = scopes.pop()
+            bound_names.update(scope.bindings)
+            scopes.extend(scope.children)
+        free_vars = filter_builtins(free_vars) | (free_vars & bound_names)
 
         if cache_key:
             self._free_var_cache[cache_key] = set(free_vars)

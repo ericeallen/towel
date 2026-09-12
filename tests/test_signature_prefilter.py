@@ -27,22 +27,18 @@ def test_quick_filter_rejects_first_last_mismatch():
 
 def test_quick_filter_within_name_and_call_tolerance_passes():
     # Create blocks with close counts of loads/stores/calls
-    b1 = _block(
-        """
+    b1 = _block("""
 foo = a + b
 bar = foo + c
 if cond:
     bar = bar + d
-"""
-    )
-    b2 = _block(
-        """
+""")
+    b2 = _block("""
 foo = a + b
 bar = foo + c
 bar = bar + d
 x = z
-"""
-    )
+""")
     s1, s2 = extract_block_signature(b1), extract_block_signature(b2)
     # Ensure differences are within tolerance
     assert abs(s1.name_load_count - s2.name_load_count) <= IDENT_COUNT_TOLERANCE
@@ -55,20 +51,16 @@ x = z
 
 def test_extract_block_signature_skips_nested_defs():
     # Calls and names inside nested defs/classes should not contribute
-    b_outer = _block(
-        """
+    b_outer = _block("""
 value = top(a)
-"""
-    )
-    b_nested = _block(
-        """
+""")
+    b_nested = _block("""
 value = top(a)
 
 def inner():
     q = inner_call(b)
     return q
-"""
-    )
+""")
     s_outer, s_nested = extract_block_signature(b_outer), extract_block_signature(b_nested)
     # Nested function statement remains in top-level sequence affecting stmt_count so filter rejects
     assert s_outer.name_load_count == s_nested.name_load_count

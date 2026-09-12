@@ -146,16 +146,23 @@ class FunctionExecutionResult:
         exception: Optional[Exception] = None,
         stdout: str = "",
         stderr: str = "",
+        target_invoked: bool = True,
     ):
         self.return_value = return_value
         self.exception = exception
         self.exception_type = type(exception) if exception else None
         self.stdout = stdout
         self.stderr = stderr
+        self.target_invoked = target_invoked
 
     def __eq__(self, other):
         """Compare two execution results for equivalence."""
         if not isinstance(other, FunctionExecutionResult):
+            return False
+
+        if not self.target_invoked or not other.target_invoked:
+            return False
+        if self.stdout != other.stdout or self.stderr != other.stderr:
             return False
 
         # Compare exception types
@@ -191,6 +198,9 @@ class FunctionExecutionResult:
             True if values are equivalent (including both being NaN)
         """
         import math
+
+        if type(val1) is not type(val2):
+            return False
 
         # Check if both are floats and both are NaN
         if isinstance(val1, float) and isinstance(val2, float):
@@ -278,40 +288,42 @@ def execute_function(
     if kwargs is None:
         kwargs = {}
 
-    # Create a clean namespace
-    namespace = {}
+    namespace: Dict[str, object] = {}
 
-    # Execute the code to define functions
-    try:
+    def load_and_call(*call_args: object, **call_kwargs: object) -> object:
         exec(code, namespace)
-    except Exception as e:
-        return FunctionExecutionResult(exception=e)
+        function = namespace.get(function_name)
+        if not callable(function):
+            raise NameError(f"Function '{function_name}' not found in code")
+        return function(*call_args, **call_kwargs)
 
-    # Get the function
-    if function_name not in namespace:
-        return FunctionExecutionResult(
-            exception=NameError(f"Function '{function_name}' not found in code")
-        )
+    result = execute_callable(load_and_call, args, kwargs, capture_output)
+    if function_name.startswith("__towel_audit_invoke"):
+        result.target_invoked = namespace.get(function_name + "_invoked", True) is not False
+    return result
 
-    func = namespace[function_name]
 
-    # Execute the function
+def execute_callable(
+    function: Callable[..., object],
+    args: Tuple[object, ...],
+    kwargs: Dict[str, object],
+    capture_output: bool = True,
+) -> FunctionExecutionResult:
+    """Invoke a callable and observe output even when it raises."""
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
-
     try:
         if capture_output:
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                result = func(*args, **kwargs)
+                result = function(*args, **kwargs)
         else:
-            result = func(*args, **kwargs)
-
+            result = function(*args, **kwargs)
         return FunctionExecutionResult(
             return_value=result, stdout=stdout_capture.getvalue(), stderr=stderr_capture.getvalue()
         )
-    except Exception as e:
+    except Exception as error:
         return FunctionExecutionResult(
-            exception=e, stdout=stdout_capture.getvalue(), stderr=stderr_capture.getvalue()
+            exception=error, stdout=stdout_capture.getvalue(), stderr=stderr_capture.getvalue()
         )
 
 
@@ -333,37 +345,43 @@ def compare_function_behavior(
     Returns:
         Tuple of (all_passed, differences) where differences is a list of error messages
     """
-    differences = []
+    return compare_executions(
+        lambda args, kwargs: execute_function(original_code, function_name, args, kwargs),
+        lambda args, kwargs: execute_function(refactored_code, function_name, args, kwargs),
+        test_cases,
+    )
 
-    for i, (args, kwargs) in enumerate(test_cases):
-        # IMPORTANT: Deep copy args/kwargs to prevent mutable argument pollution
-        # If the original function mutates an argument (e.g., list.append()),
-        # the refactored function must see the ORIGINAL unmutated state, not the
-        # state after the original function modified it.
-        original_args = copy.deepcopy(args)
-        original_kwargs = copy.deepcopy(kwargs)
-        refactored_args = copy.deepcopy(args)
-        refactored_kwargs = copy.deepcopy(kwargs)
 
-        # Execute original
-        original_result = execute_function(
-            original_code, function_name, original_args, original_kwargs
+def compare_executions(
+    original: Callable[[Tuple[object, ...], Dict[str, object]], FunctionExecutionResult],
+    refactored: Callable[[Tuple[object, ...], Dict[str, object]], FunctionExecutionResult],
+    test_cases: List[Tuple[Tuple[object, ...], Dict[str, object]]],
+) -> Tuple[bool, List[str]]:
+    """Compare executions and observable input mutations on independent copies."""
+    if not test_cases:
+        return False, ["No test cases were executed"]
+    differences: List[str] = []
+    value_comparator = FunctionExecutionResult()
+    for index, (args, kwargs) in enumerate(test_cases):
+        # Copy the pair together so aliases between positional and keyword arguments survive.
+        original_args, original_kwargs = copy.deepcopy((args, kwargs))
+        refactored_args, refactored_kwargs = copy.deepcopy((args, kwargs))
+        original_result = original(original_args, original_kwargs)
+        refactored_result = refactored(refactored_args, refactored_kwargs)
+        same_inputs = value_comparator._values_equal(
+            (original_args, original_kwargs), (refactored_args, refactored_kwargs)
         )
-
-        # Execute refactored
-        refactored_result = execute_function(
-            refactored_code, function_name, refactored_args, refactored_kwargs
-        )
-
-        # Compare results
-        if original_result != refactored_result:
+        if original_result != refactored_result or not same_inputs:
             differences.append(
-                f"Test case {i} with args={args}, kwargs={kwargs}:\n"
-                f"  Original:   {original_result}\n"
-                f"  Refactored: {refactored_result}"
+                f"Test case {index} with args={args}, kwargs={kwargs}:\n"
+                f"  Original:   {original_result}; "
+                f"stdout={original_result.stdout!r}, stderr={original_result.stderr!r}\n"
+                f"  Refactored: {refactored_result}; "
+                f"stdout={refactored_result.stdout!r}, stderr={refactored_result.stderr!r}\n"
+                f"  Argument mutations agree: {same_inputs}; "
+                f"targets invoked: {original_result.target_invoked}/{refactored_result.target_invoked}"
             )
-
-    return len(differences) == 0, differences
+    return not differences, differences
 
 
 class TestAutomaticObservationalEquivalence(unittest.TestCase):

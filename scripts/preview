@@ -15,10 +15,8 @@ import sys
 import os
 import ast
 import argparse
-from pathlib import Path
 from towel.unification.refactor_engine import (
     UnificationRefactorEngine,
-    RefactoringProposal,
     filter_overlapping_proposals,
 )
 
@@ -135,7 +133,7 @@ def main():
             print(f"   Type: Same file ({prop.file_path})")
 
         # Show extracted function preview
-        print(f"\n   Extracted function preview:")
+        print("\n   Extracted function preview:")
         try:
             func_code = ast.unparse(prop.extracted_function)
             lines = func_code.split("\n")

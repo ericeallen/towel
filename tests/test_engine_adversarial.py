@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ast
 import textwrap
 import unittest
@@ -108,7 +110,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         class CallFinder(ast.NodeVisitor):
             def visit_Call(self, node: ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id.startswith("__extracted_func"):
+                if isinstance(node.func, ast.Name) and node.func.id.startswith(
+                    ("_extracted_func", "__extracted_func")
+                ):
                     calls.append(node)
                 self.generic_visit(node)
 
@@ -177,10 +181,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         out = engine.apply_refactoring(str(m.path), proposals[0])
         # Extracted method should be inserted inside class with leading underscore
         self.assertIn("class C:", out)
-        self.assertIn("def __extracted_func", out)
-        # Calls should be rewritten to self.__extracted_func and not pass self explicitly
-        self.assertIn("return self.__extracted_func_", out)
-        self.assertNotIn("self, self.__extracted_func_", out)
+        self.assertIn("def _extracted_func", out)
+        # Calls should be rewritten to self._extracted_func and not pass self explicitly
+        self.assertIn("return self._extracted_func_", out)
+        self.assertNotIn("self, self._extracted_func_", out)
 
     def test_decorators_preserved_and_no_triple_blank_lines_in_class(self):
         code = """
@@ -249,7 +253,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             (
                 n
                 for n in cls.body
-                if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+                if isinstance(n, ast.FunctionDef)
+                and n.name.startswith(("_extracted_func", "__extracted_func"))
             ),
             None,
         )
@@ -272,7 +277,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 for call in ast.walk(method)
                 if isinstance(call, ast.Call)
                 and isinstance(call.func, ast.Attribute)
-                and call.func.attr.startswith("__extracted_func")
+                and call.func.attr.startswith(("_extracted_func", "__extracted_func"))
             ]
             self.assertTrue(call_targets, f"Method {method_name} should call the helper")
             for attr in call_targets:
@@ -307,7 +312,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             (
                 n
                 for n in cls.body
-                if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+                if isinstance(n, ast.FunctionDef)
+                and n.name.startswith(("_extracted_func", "__extracted_func"))
             ),
             None,
         )
@@ -334,7 +340,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 for call in ast.walk(method)
                 if isinstance(call, ast.Call)
                 and isinstance(call.func, ast.Attribute)
-                and call.func.attr.startswith("__extracted_func")
+                and call.func.attr.startswith(("_extracted_func", "__extracted_func"))
             ]
             self.assertTrue(call_targets, f"Method {method_name} should call the helper")
             for call in call_targets:
@@ -352,41 +358,32 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             second_path = Path(tmpdir) / "second.py"
 
             base_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     class Shared:
                         pass
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
             first_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     from shared import Shared
 
                     class First(Shared):
                         def alpha(self, value):
                             tmp = value + 1
                             return tmp * 2
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
             second_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     from shared import Shared
 
                     class Second(Shared):
                         def beta(self, value):
                             tmp = value + 1
                             return tmp * 2
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
 
@@ -411,7 +408,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 (
                     n
                     for n in shared_cls.body
-                    if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+                    if isinstance(n, ast.FunctionDef)
+                    and n.name.startswith(("_extracted_func", "__extracted_func"))
                 ),
                 None,
             )
@@ -456,18 +454,14 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             second_path = Path(tmpdir) / "second.py"
 
             base_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     class Shared:
                         pass
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
             first_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     from shared import Shared
 
                     class First(Shared):
@@ -475,14 +469,11 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                         def alpha(cls, value):
                             tmp = value + 1
                             return tmp * 2
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
             second_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     from shared import Shared
 
                     class Second(Shared):
@@ -490,9 +481,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                         def beta(cls, value):
                             tmp = value + 1
                             return tmp * 2
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
 
@@ -516,7 +505,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 (
                     n
                     for n in shared_cls.body
-                    if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+                    if isinstance(n, ast.FunctionDef)
+                    and n.name.startswith(("_extracted_func", "__extracted_func"))
                 ),
                 None,
             )
@@ -565,44 +555,35 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             second_path = Path(tmpdir) / "second.py"
 
             base_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     class Root:
                         pass
 
                     class Intermediate(Root):
                         pass
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
             first_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     from hierarchy import Intermediate
 
                     class LeafOne(Intermediate):
                         def alpha(self, value):
                             tmp = value + 1
                             return tmp * 2
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
             second_path.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     from hierarchy import Intermediate
 
                     class LeafTwo(Intermediate):
                         def beta(self, value):
                             tmp = value + 1
                             return tmp * 2
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
 
@@ -626,7 +607,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 (
                     n
                     for n in intermediate_cls.body
-                    if isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+                    if isinstance(n, ast.FunctionDef)
+                    and n.name.startswith(("_extracted_func", "__extracted_func"))
                 ),
                 None,
             )
@@ -639,7 +621,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             )
             self.assertFalse(
                 any(
-                    isinstance(n, ast.FunctionDef) and n.name.startswith("__extracted_func")
+                    isinstance(n, ast.FunctionDef)
+                    and n.name.startswith(("_extracted_func", "__extracted_func"))
                     for n in root_cls.body
                 ),
                 "Root should remain unchanged by nearest-ancestor selection",
@@ -687,8 +670,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             outer_fn = outers[0]
             inner_names = {n.name for n in outer_fn.body if isinstance(n, ast.FunctionDef)}
             top_level_names = {n.name for n in mod.body if isinstance(n, ast.FunctionDef)}
-            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
-                name.startswith("__extracted_func") for name in top_level_names
+            if any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in inner_names
+            ) and not any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in top_level_names
             ):
                 # Runtime equivalence: calling outer should still work and match original
                 ns2 = {}
@@ -743,8 +728,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             f_node = fns[0]
             inner_names = {n.name for n in f_node.body if isinstance(n, ast.FunctionDef)}
             top_level = {n.name for n in mod.body if isinstance(n, ast.FunctionDef)}
-            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
-                name.startswith("__extracted_func") for name in top_level
+            if any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in inner_names
+            ) and not any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in top_level
             ):
                 picked = p
                 new_src = out
@@ -809,8 +796,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level_names = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
-                name.startswith("__extracted_func") for name in top_level_names
+            if any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in inner_names
+            ) and not any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in top_level_names
             ):
                 ns2 = {}
                 exec(new_src, ns2)
@@ -880,12 +869,15 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level_names = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            inner_has_helper = any(name.startswith("__extracted_func") for name in inner_names)
+            inner_has_helper = any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in inner_names
+            )
             class_has_helper = any(
-                name.startswith("__extracted_func") for name in class_level_names
+                name.startswith(("_extracted_func", "__extracted_func"))
+                for name in class_level_names
             )
             top_level_has_helper = any(
-                name.startswith("__extracted_func") for name in top_level_names
+                name.startswith(("_extracted_func", "__extracted_func")) for name in top_level_names
             )
             if inner_has_helper and not class_has_helper and not top_level_has_helper:
                 ns2 = {}
@@ -954,8 +946,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
-                name.startswith("__extracted_func") for name in top_level
+            if any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in inner_names
+            ) and not any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in top_level
             ):
                 ns2 = {}
                 exec(out, ns2)
@@ -1020,8 +1014,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
-                name.startswith("__extracted_func") for name in top_level
+            if any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in inner_names
+            ) and not any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in top_level
             ):
                 ns2 = {}
                 exec(out, ns2)
@@ -1090,8 +1086,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
-                name.startswith("__extracted_func") for name in top_level
+            if any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in inner_names
+            ) and not any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in top_level
             ):
                 found_outer = True
                 new_src = out
@@ -1171,8 +1169,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             top_level = {
                 n.name for n in mod.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
-            if any(name.startswith("__extracted_func") for name in inner_names) and not any(
-                name.startswith("__extracted_func") for name in top_level
+            if any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in inner_names
+            ) and not any(
+                name.startswith(("_extracted_func", "__extracted_func")) for name in top_level
             ):
                 ns2 = {}
                 exec(out, ns2)
@@ -1239,27 +1239,21 @@ class TestCrossFileImports(unittest.TestCase):
             a = pkg / "a.py"
             b = pkg / "b.py"
             a.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     def fa(x):
                         y = x + 1
                         z = y * 2
                         return z
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
             b.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                     def fb(x):
                         y = x + 1
                         z = y * 2
                         return z
-                    """
-                ).strip()
-                + "\n",
+                    """).strip() + "\n",
                 encoding="utf-8",
             )
             engine = UnificationRefactorEngine(
@@ -1285,27 +1279,21 @@ class TestCrossFileImports(unittest.TestCase):
             a = base / "a.py"
             b = base / "b.py"
             a.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                 def fa(x):
                     y = x + 1
                     z = y * 2
                     return z - 3
-                """
-                ).strip()
-                + "\n",
+                """).strip() + "\n",
                 encoding="utf-8",
             )
             b.write_text(
-                textwrap.dedent(
-                    """
+                textwrap.dedent("""
                 def fb(x):
                     y = x + 1
                     z = y * 2
                     return z - 3
-                """
-                ).strip()
-                + "\n",
+                """).strip() + "\n",
                 encoding="utf-8",
             )
             sys.path.insert(0, str(base))

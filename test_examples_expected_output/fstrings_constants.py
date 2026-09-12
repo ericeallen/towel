@@ -8,6 +8,26 @@ Tests that:
 """
 
 
+def __extracted_func_2(__param_0, __param_1, name):
+    prefix = __param_0
+    suffix = __param_1
+    return prefix + name + suffix
+
+
+def __extracted_func_1(value):
+    precision = 2
+    result = f'Value: {value:.{precision}f}'
+    return result
+
+
+def __extracted_func_0(__param_0, __param_1, item):
+    threshold = __param_0
+    multiplier = __param_1
+    if item > threshold:
+        return item * multiplier
+    return 0
+
+
 def log_user(user_id, name):
     """Log user with f-string."""
     status = "active"
@@ -66,29 +86,3 @@ def mixed_fstring_b(x, y):
     """Mixed f-string and regular strings (same structure)."""
     result = f"Processing {x}" + " and " + f"also {y}"
     return result
-
-
-def __extracted_func_0(__param_0, __param_1, item):
-    threshold = __param_0
-    multiplier = __param_1
-    if item > threshold:
-        return item * multiplier
-    return 0
-
-
-def __extracted_func_1(value):
-    precision = 2
-    result = f'Value: {value:.{precision}f}'
-    return result
-
-
-def __extracted_func_2(__param_0, __param_1, name):
-    prefix = __param_0
-    suffix = __param_1
-    return prefix + name + suffix
-
-
-
-
-
-

@@ -17,17 +17,13 @@ def parse_stmts(code: str):
 
 class TestNominalUnifier(unittest.TestCase):
     def test_binding_detection_and_sites(self):
-        block0 = parse_stmts(
-            """
+        block0 = parse_stmts("""
         x = 1
         y = x + 2
-        """
-        )
-        block1 = parse_stmts(
-            """
+        """)
+        block1 = parse_stmts("""
         z = 3
-        """
-        )
+        """)
         ctx = NominalUnificationContext(num_blocks=2)
         ctx.detect_bindings_in_blocks([block0, block1])
 

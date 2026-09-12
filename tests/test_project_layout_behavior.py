@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -7,6 +9,80 @@ from src.towel.unification.project_layout import ProjectLayout, _is_package_dir
 
 
 class TestProjectLayoutBehavior(unittest.TestCase):
+    def test_conventional_setuptools_src_layout_imports_without_src_prefix(self) -> None:
+        for backend in ("", '\n[build-system]\nbuild-backend = "setuptools.build_meta"\n'):
+            with self.subTest(backend=backend), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                (root / "pyproject.toml").write_text(
+                    '[project]\nname = "conventional-layout-fixture"\nversion = "1.0"\n' + backend
+                )
+                package = root / "src" / "conventional_layout_fixture"
+                package.mkdir(parents=True)
+                (package / "__init__.py").write_text("")
+                module = package / "example.py"
+                module.write_text("VALUE = 37\n")
+                layout = ProjectLayout.discover(module)
+                name = layout.module_name_for(module)
+                self.assertEqual(name, "conventional_layout_fixture.example")
+                self.assertEqual(layout.source_roots, [(root / "src").resolve()])
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-c",
+                        "import importlib, sys; sys.path.insert(0, sys.argv[1]); "
+                        "print(importlib.import_module(sys.argv[2]).VALUE)",
+                        str(root / "src"),
+                        name,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.stdout.strip(), "37")
+
+    def test_conventional_discovery_does_not_override_explicit_configuration(self) -> None:
+        configurations = (
+            '\n[tool.setuptools]\npackages = ["src.pkg"]\n',
+            "\n[tool.setuptools]\npy-modules = []\n",
+            '\n[tool.setuptools.packages.find]\nwhere = ["."]\n',
+            '\n[tool.setuptools]\npackage-dir = {"" = "."}\n',
+            '\n[build-system]\nbuild-backend = "hatchling.build"\n',
+            '\n[build-system]\nbuild-backend = "poetry.core.masonry.api"\n',
+        )
+        for configuration in configurations:
+            with self.subTest(configuration=configuration), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                (root / "pyproject.toml").write_text(
+                    '[project]\nname = "configured-project"\nversion = "1.0"\n' + configuration
+                )
+                package = root / "src" / "pkg"
+                package.mkdir(parents=True)
+                (package / "__init__.py").write_text("")
+                module = package / "example.py"
+                module.write_text("VALUE = 37\n")
+                layout = ProjectLayout.discover(module)
+                self.assertEqual(layout.source_roots, [root.resolve()])
+                self.assertEqual(layout.module_name_for(module), "src.pkg.example")
+
+    def test_conventional_discovery_requires_unambiguous_project_metadata(self) -> None:
+        for conflict in ("setup.py", "setup.cfg", "src/__init__.py", "missing-name"):
+            with self.subTest(conflict=conflict), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                metadata = '[project]\nname = "configured-project"\nversion = "1.0"\n'
+                (root / "pyproject.toml").write_text(
+                    "[project]\nversion = '1.0'\n" if conflict == "missing-name" else metadata
+                )
+                package = root / "src" / "pkg"
+                package.mkdir(parents=True)
+                (package / "__init__.py").write_text("")
+                if conflict != "missing-name":
+                    (root / conflict).write_text("")
+                module = package / "example.py"
+                module.write_text("VALUE = 37\n")
+                layout = ProjectLayout.discover(module)
+                self.assertEqual(layout.module_name_for(module), "src.pkg.example")
+
     def test_default_layout_no_pyproject(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -31,14 +107,10 @@ class TestProjectLayoutBehavior(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             # Write pyproject mapping "" -> "src"
-            (root / "pyproject.toml").write_text(
-                textwrap.dedent(
-                    """
+            (root / "pyproject.toml").write_text(textwrap.dedent("""
                     [tool.setuptools]
                     package-dir = {"" = "src"}
-                    """
-                ).strip()
-            )
+                    """).strip())
             (root / "src" / "pkg").mkdir(parents=True)
             mod = root / "src" / "pkg" / "mod.py"
             mod.write_text("x = 1\n")
@@ -126,14 +198,10 @@ class TestProjectLayoutBehavior(unittest.TestCase):
             self.assertTrue(_is_package_dir(pkg_dir, pep420=True))
 
             # With mapping to 'src', ensure fallback handles non-.py under project root
-            (root / "pyproject.toml").write_text(
-                textwrap.dedent(
-                    """
+            (root / "pyproject.toml").write_text(textwrap.dedent("""
                     [tool.setuptools]
                     package-dir = {"" = "src"}
-                    """
-                ).strip()
-            )
+                    """).strip())
             (root / "src").mkdir(parents=True)
             (root / "other").mkdir(parents=True)
             data = root / "other" / "data.txt"
@@ -145,14 +213,10 @@ class TestProjectLayoutBehavior(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             # package-dir values include a non-string to trigger TypeError in path join
-            (root / "pyproject.toml").write_text(
-                textwrap.dedent(
-                    """
+            (root / "pyproject.toml").write_text(textwrap.dedent("""
                     [tool.setuptools]
                     package-dir = {"" = 1, "pkg" = "lib"}
-                    """
-                ).strip()
-            )
+                    """).strip())
             layout = ProjectLayout.discover(root)
             # Should fallback to project_root only due to exception
             self.assertEqual(layout.source_roots, [root.resolve()])
@@ -187,14 +251,10 @@ class TestProjectLayoutBehavior(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             # Mixed mapping: default '' -> src, plus named package 'pkg2' in lib2
-            (root / "pyproject.toml").write_text(
-                textwrap.dedent(
-                    """
+            (root / "pyproject.toml").write_text(textwrap.dedent("""
                     [tool.setuptools]
                     package-dir = {"" = "src", "pkg2" = "lib2"}
-                    """
-                ).strip()
-            )
+                    """).strip())
             (root / "src" / "alpha").mkdir(parents=True)
             (root / "lib2" / "pkg2").mkdir(parents=True)
             f1 = root / "src" / "alpha" / "beta.py"
@@ -210,6 +270,51 @@ class TestProjectLayoutBehavior(unittest.TestCase):
             # module names relative to their respective roots
             self.assertEqual(layout.module_name_for(f1), "alpha.beta")
             self.assertEqual(layout.module_name_for(f2), "pkg2.mod")
+
+    def test_source_root_fallback_on_copy(self) -> None:
+        """
+        Test that ProjectLayout correctly identifies the source root when running on a copy
+        of the source tree (e.g. 'cleaned' dir) that mirrors the structure of a configured
+        source root (e.g. 'src'), even when pyproject.toml points to the original 'src'.
+        """
+        import shutil
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Setup standard src-layout project
+            (root / "pyproject.toml").write_text(textwrap.dedent("""
+                    [tool.setuptools]
+                    package-dir = {"" = "src"}
+                    """).strip())
+
+            src_dir = root / "src"
+            pkg_dir = src_dir / "my_pkg"
+            pkg_dir.mkdir(parents=True)
+            (pkg_dir / "__init__.py").touch()
+
+            # Create a module in src
+            mod_src = pkg_dir / "module.py"
+            mod_src.write_text("x = 1\n")
+
+            # Create a 'cleaned' directory that mirrors src (simulating towel dry output)
+            cleaned_dir = root / "cleaned"
+            shutil.copytree(src_dir, cleaned_dir)
+
+            # The file we are analyzing is in the cleaned directory
+            mod_cleaned = cleaned_dir / "my_pkg" / "module.py"
+
+            # Discover layout starting from the cleaned file
+            # This should find the project root (via pyproject.toml)
+            # And then realize that 'cleaned' corresponds to the 'src' source root
+            layout = ProjectLayout.discover(mod_cleaned)
+
+            # Verify project root is correct
+            self.assertEqual(layout.project_root, root.resolve())
+
+            # Verify module name is correct (should be my_pkg.module, NOT module)
+            # If fallback fails, it might treat cleaned/my_pkg as the root and return 'module'
+            name = layout.module_name_for(mod_cleaned)
+            self.assertEqual(name, "my_pkg.module")
 
 
 if __name__ == "__main__":

@@ -56,12 +56,10 @@ def bar():
 
 
 def test_extract_function_injects_global_nonlocal_and_multi_return():
-    block = ast.parse(
-        """
+    block = ast.parse("""
 value = a + b
 other = value * 2
-"""
-    ).body
+""").body
     subst = make_substitution(
         {"__param_0": [(0, "a"), (1, "x")], "__param_1": [(0, "b"), (1, "y")]}
     )
@@ -98,11 +96,11 @@ def test_generate_call_params_used_as_callee_wrapped():
     block = ast.parse("result = foo(a)").body
     subst = Substitution()
     # Parameterize callee names across two synthetic blocks
-    subst.add_mapping(0, ast.Name(id="foo"), "__param_0")
-    subst.add_mapping(1, ast.Name(id="bar"), "__param_0")
+    subst.add_mapping(0, ast.Name(id="foo", ctx=ast.Load()), "__param_0")
+    subst.add_mapping(1, ast.Name(id="bar", ctx=ast.Load()), "__param_0")
     # Also parameterize argument so ordering is stable
-    subst.add_mapping(0, ast.Name(id="a"), "__param_1")
-    subst.add_mapping(1, ast.Name(id="a"), "__param_1")
+    subst.add_mapping(0, ast.Name(id="a", ctx=ast.Load()), "__param_1")
+    subst.add_mapping(1, ast.Name(id="a", ctx=ast.Load()), "__param_1")
 
     extractor = HygienicExtractor()
     func_def, param_order = extractor.extract_function(
@@ -179,10 +177,10 @@ def test_generate_call_aug_assign_mapping():
     subst = Substitution()
     subst.aug_assign_mappings = {"__param_2": {0: "total", 1: "output"}}
     # Provide parameter expressions for unified params 0 & 1; param2 is free variable so not in param_expressions
-    subst.add_mapping(0, ast.Name(id="a"), "__param_0")
-    subst.add_mapping(1, ast.Name(id="x"), "__param_0")
-    subst.add_mapping(0, ast.Name(id="b"), "__param_1")
-    subst.add_mapping(1, ast.Name(id="y"), "__param_1")
+    subst.add_mapping(0, ast.Name(id="a", ctx=ast.Load()), "__param_0")
+    subst.add_mapping(1, ast.Name(id="x", ctx=ast.Load()), "__param_0")
+    subst.add_mapping(0, ast.Name(id="b", ctx=ast.Load()), "__param_1")
+    subst.add_mapping(1, ast.Name(id="y", ctx=ast.Load()), "__param_1")
     extractor = HygienicExtractor()
     block = ast.parse("total = a + b\nresult = total * 2").body
     func_def, param_order = extractor.extract_function(
@@ -222,7 +220,7 @@ def test_parameter_substitution_in_fstring_preserves_literals_and_replaces_expr(
     # Build a block with an f-string containing constants and a name to be parameterized
     block = ast.parse("s = f'X {name} Y'").body
     subst = Substitution()
-    subst.add_mapping(0, ast.Name(id="name"), "__param_0")
+    subst.add_mapping(0, ast.Name(id="name", ctx=ast.Load()), "__param_0")
     extractor = HygienicExtractor()
     func_def, _ = extractor.extract_function(
         template_block=block,
@@ -245,14 +243,12 @@ def test_parameter_substitution_in_fstring_preserves_literals_and_replaces_expr(
 
 def test_for_loop_binding_target_not_parameterized():
     # Ensure `for i in items:` keeps binding target intact while iter is parameterized
-    block = ast.parse(
-        """
+    block = ast.parse("""
 for i in items:
     total += i
-"""
-    ).body
+""").body
     subst = Substitution()
-    subst.add_mapping(0, ast.Name(id="items"), "__param_0")
+    subst.add_mapping(0, ast.Name(id="items", ctx=ast.Load()), "__param_0")
     extractor = HygienicExtractor()
     func_def, _ = extractor.extract_function(
         template_block=block,
@@ -273,14 +269,12 @@ for i in items:
 def test_assign_reassignment_same_and_different_values_updates_var_to_param():
     # Initialize mapping so that x is treated as a parameter-equivalent variable
     subst = Substitution()
-    subst.add_mapping(0, ast.Name(id="x"), "__param_0")
-    block = ast.parse(
-        """
+    subst.add_mapping(0, ast.Name(id="x", ctx=ast.Load()), "__param_0")
+    block = ast.parse("""
 x = x
 x = 42
 y = x
-"""
-    ).body
+""").body
     extractor = HygienicExtractor()
     func_def, _ = extractor.extract_function(
         template_block=block,
@@ -311,7 +305,7 @@ def test_comprehension_binding_target_not_parameterized():
     # Ensure list comprehension target variable is preserved while iterable is parameterized
     block = ast.parse("vals = [x for x in items if x > 0]").body
     subst = Substitution()
-    subst.add_mapping(0, ast.Name(id="items"), "__param_0")
+    subst.add_mapping(0, ast.Name(id="items", ctx=ast.Load()), "__param_0")
     extractor = HygienicExtractor()
     func_def, _ = extractor.extract_function(
         template_block=block,

@@ -46,22 +46,18 @@ class TestUnifierBatch5(unittest.TestCase):
         self.assertEqual(len(subst.param_expressions), 1)
 
     def test_bare_except_both_present_success(self) -> None:
-        b0 = parse_block(
-            """
+        b0 = parse_block("""
         try:
             pass
         except:
             x = 1
-        """
-        )
-        b1 = parse_block(
-            """
+        """)
+        b1 = parse_block("""
         try:
             pass
         except:
             x = 2
-        """
-        )
+        """)
         uni = Unifier()
         subst = uni.unify_blocks([b0, b1], [{}, {}])
         self.assertIsNotNone(subst)

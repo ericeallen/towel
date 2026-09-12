@@ -28,14 +28,18 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
 
     def test_analyze_directory_non_recursive(self):
         """Non-recursive analysis uses read-only access to canonical fixtures."""
-        test_examples_dir = Path("test_examples")
-        original_contents = {py: py.read_text() for py in test_examples_dir.glob("*.py")}
-
-        proposals = self.engine.analyze_directory("test_examples", recursive=False, verbose=True)
-        self.assertGreaterEqual(len(proposals), 0)
-
-        for py_file, original_content in original_contents.items():
-            assert_file_not_modified(py_file, original_content)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            top = root / "top.py"
+            child = root / "nested" / "child.py"
+            child.parent.mkdir()
+            top.write_text("def one(x):\n    return x\n")
+            child.write_text("def two(x):\n    return x\n")
+            original = {path: path.read_text() for path in (top, child)}
+            self.assertEqual(self.engine._find_python_files(directory, False), [str(top)])
+            self.engine.analyze_directory(directory, recursive=False)
+            for path, contents in original.items():
+                assert_file_not_modified(path, contents)
 
     def test_analyze_file_with_syntax_error(self):
         """Engine returns no proposals when a syntax error blocks parsing."""
@@ -154,8 +158,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
     def test_instance_methods_extracted_into_class(self):
         """Duplicate instance methods should extract helper into the same class."""
 
-        result = self._analyze_and_apply(
-            """
+        result = self._analyze_and_apply("""
             class Example:
                 def alpha(self, value):
                     tmp = value + 1
@@ -164,8 +167,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 def beta(self, value):
                     tmp = value + 1
                     return tmp * 2
-            """
-        )
+            """)
 
         tree = ast.parse(result)
         cls = next(
@@ -203,8 +205,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
     def test_classmethods_extracted_into_class(self):
         """Duplicate class methods should place helper inside the class with @classmethod."""
 
-        result = self._analyze_and_apply(
-            """
+        result = self._analyze_and_apply("""
             class Example:
                 @classmethod
                 def alpha(cls, value):
@@ -215,8 +216,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 def beta(cls, value):
                     tmp = value + 1
                     return tmp * 2
-            """
-        )
+            """)
 
         tree = ast.parse(result)
         cls = next(
@@ -249,8 +249,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
     def test_staticmethods_extracted_into_class(self):
         """Duplicate static methods should place helper inside the class with @staticmethod."""
 
-        result = self._analyze_and_apply(
-            """
+        result = self._analyze_and_apply("""
             class Example:
                 @staticmethod
                 def alpha(value):
@@ -261,8 +260,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 def beta(value):
                     tmp = value + 1
                     return tmp * 2
-            """
-        )
+            """)
 
         tree = ast.parse(result)
         cls = next(
@@ -297,8 +295,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
     def test_sibling_instance_methods_promote_to_common_base(self):
         """Sibling instance methods should extract helpers into their nearest shared base class."""
 
-        result = self._analyze_and_apply(
-            """
+        result = self._analyze_and_apply("""
             class Base:
                 pass
 
@@ -311,8 +308,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 def beta(self, value):
                     tmp = value + 1
                     return tmp * 2
-            """
-        )
+            """)
 
         tree = ast.parse(result)
         base = next(

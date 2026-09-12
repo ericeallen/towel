@@ -3,6 +3,7 @@
 Run cross-file observational equivalence tests to contribute to coverage.
 This is intended to be executed under coverage run --append.
 """
+
 from pathlib import Path
 import sys
 

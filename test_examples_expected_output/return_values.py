@@ -6,6 +6,44 @@ properly propagate return values in replacement calls.
 """
 
 
+def __extracted_func_4(x):
+    result = []
+    for i in range(x):
+        result.append(i * 2)
+
+
+def __extracted_func_3(items):
+    for item in items:
+        if item > 100:
+            return item
+    return None
+
+
+def __extracted_func_2(x):
+    if x < 0:
+        return None
+    result = x * 2
+    return result
+
+
+def __extracted_func_1(x):
+    if x < 0:
+        return 'negative'
+    elif x == 0:
+        return 'zero'
+    else:
+        return 'positive'
+
+
+def __extracted_func_0(x, y):
+    if x > 0:
+        if y > 0:
+            return x + y
+        else:
+            return x
+    return 0
+
+
 def early_return_a(x):
     """Early return in if statement."""
     return __extracted_func_2(x)
@@ -56,51 +94,3 @@ def no_return_b(x):
     """Function with no explicit return (duplicate)."""
     __extracted_func_4(x)
     # No return statement
-
-
-def __extracted_func_0(x, y):
-    if x > 0:
-        if y > 0:
-            return x + y
-        else:
-            return x
-    return 0
-
-
-def __extracted_func_1(x):
-    if x < 0:
-        return 'negative'
-    elif x == 0:
-        return 'zero'
-    else:
-        return 'positive'
-
-
-def __extracted_func_2(x):
-    if x < 0:
-        return None
-    result = x * 2
-    return result
-
-
-def __extracted_func_3(items):
-    for item in items:
-        if item > 100:
-            return item
-    return None
-
-
-def __extracted_func_4(x):
-    result = []
-    for i in range(x):
-        result.append(i * 2)
-
-
-
-
-
-
-
-
-
-

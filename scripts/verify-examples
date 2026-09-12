@@ -52,7 +52,7 @@ def verify_test_integrity():
         # Check if example exists
         if not example_path.exists():
             print(f"✗ {template_path.name}")
-            print(f"  Missing in test_examples/")
+            print("  Missing in test_examples/")
             all_match = False
             mismatches.append(template_path.name)
             continue
@@ -66,7 +66,7 @@ def verify_test_integrity():
             print(f"✓ {template_path.name}")
         else:
             print(f"✗ {template_path.name}")
-            print(f"  Content differs from template")
+            print("  Content differs from template")
             all_match = False
             mismatches.append(template_path.name)
 

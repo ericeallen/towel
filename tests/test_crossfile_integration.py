@@ -18,7 +18,6 @@ import pytest
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.pipeline import run_pipeline
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 CROSSFILE_DIR = PROJECT_ROOT / "test_examples_crossfile"
 

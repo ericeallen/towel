@@ -35,10 +35,14 @@ def test_module_level_helper_call_from_class_uses_direct_name(tmp_path):
     new_src = engine.apply_refactoring(str(file_path), proposals[0])
 
     # Helper should be defined at module level with standard name
-    assert "def __extracted_func_" in new_src
+    assert "def _extracted_func_" in new_src
 
-    # Calls inside class methods should reference the helper directly (no mangling needed)
-    assert "__extracted_func_" in new_src
+    # Calls inside class methods must use the same unmangled module name.
+    assert "return _extracted_func_" in new_src
+    namespace = {}
+    exec(new_src, namespace)
+    assert namespace["A"]().m(3) == 8
+    assert namespace["B"]().m(3) == 8
 
 
 def test_undefined_name_validation_blocks_brittle_pipeline(tmp_path):

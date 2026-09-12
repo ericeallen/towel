@@ -6,6 +6,82 @@ map/filter/reduce patterns, and functional composition.
 """
 
 
+def __extracted_func_7(__param_0, base_func, modifier, values):
+    apply_modifier = lambda x: base_func(x, modifier, __param_0)
+    processed = list(map(apply_modifier, values))
+    filtered = list(filter(lambda x: x > 100, processed))
+    return {'processed': processed, 'filtered': filtered, 'count': len(filtered)}
+
+
+def __extracted_func_6(__param_0, data, multiplier):
+    transform = lambda x: x * multiplier + __param_0
+    filtered = filter(lambda x: x > 0, data)
+    result = list(map(transform, filtered))
+    if len(result) > 0:
+        return sorted(result, key=lambda x: x, reverse=True)
+    return []
+
+
+def __extracted_func_5(transformed):
+    filtered = (x for x in transformed if x > 10)
+    squared = (x ** 2 for x in filtered)
+    result = list(squared)
+    if result:
+        return sorted(result, key=lambda x: -x)[:100]
+    return []
+
+
+def __extracted_func_4(__param_0, initial, values):
+    from functools import reduce
+    result = reduce(lambda acc, x: acc + (x ** 2 if x > __param_0 else x), values, initial)
+    normalized = list(map(lambda x: x / result if result != 0 else 0, values))
+    return {'reduced': result, 'normalized': normalized}
+
+
+def __extracted_func_3(__param_0, data, filter_func, map_func):
+    step1 = filter(lambda x: x is not None and x > 0, data)
+    step2 = map(lambda x: x * __param_0, step1)
+    step3 = filter(filter_func, step2)
+    step4 = map(map_func, step3)
+    result = list(step4)
+    if result:
+        return sorted(result, key=lambda x: (x % 10, x))
+    return []
+
+
+def __extracted_func_2(__param_0, data, f, g, h):
+    compose = lambda x: h(g(f(x)))
+    results = []
+    for item in data:
+        try:
+            result = compose(item * __param_0)
+            if result is not None:
+                results.append(result)
+        except Exception:
+            continue
+    return results
+
+
+def __extracted_func_1(__param_0, data, operation, param1, param2):
+    curried = lambda a: lambda b: lambda c: operation(a, b, c)
+    stage1 = curried(param1)
+    stage2 = stage1(param2)
+    results = []
+    for item in data:
+        result = stage2(item * __param_0)
+        if result > 0:
+            results.append(result)
+    return results
+
+
+def __extracted_func_0(__param_0, data, make_transformer, make_validator):
+    validator = make_validator(__param_0)
+    transformer = make_transformer(2)
+    filtered = list(filter(validator, data))
+    transformed = list(map(transformer, filtered))
+    return transformed
+
+
 def apply_transformation_v1(data, multiplier):
     """Version 1: Lambda with captured variable."""
     # Lambda that captures multiplier
@@ -51,7 +127,7 @@ def higher_order_function_a(data, threshold):
         return lambda x: x * factor + threshold
 
     # Use the functions
-    return __extracted_func_0(data, make_transformer, make_validator)
+    return __extracted_func_0(5, data, make_transformer, make_validator)
 
 
 def higher_order_function_b(data, threshold):
@@ -65,7 +141,7 @@ def higher_order_function_b(data, threshold):
         return lambda x: x * factor + threshold
 
     # Use the functions
-    return __extracted_func_0(data, make_transformer, make_validator)
+    return __extracted_func_0(10, data, make_transformer, make_validator)
 
 
 def higher_order_function_c(data, threshold):
@@ -79,7 +155,7 @@ def higher_order_function_c(data, threshold):
         return lambda x: x * factor + threshold
 
     # Use the functions with SAME arguments as version D
-    return __extracted_func_0(data, make_transformer, make_validator)
+    return __extracted_func_0(5, data, make_transformer, make_validator)
 
 
 def higher_order_function_d(data, threshold):
@@ -93,7 +169,7 @@ def higher_order_function_d(data, threshold):
         return lambda x: x * factor + threshold
 
     # Use the functions with SAME arguments as version C
-    return __extracted_func_0(data, make_transformer, make_validator)
+    return __extracted_func_0(5, data, make_transformer, make_validator)
 
 
 def compose_functions_v1(data, f, g, h):
@@ -144,95 +220,3 @@ def generator_with_lambda_b(data, predicate):
     # Same generator pattern
     transformed = (item * 3 for item in data if predicate(item))
     return __extracted_func_5(transformed)
-
-
-def __extracted_func_0(data, make_transformer, make_validator):
-    validator = make_validator(5)
-    transformer = make_transformer(2)
-    filtered = list(filter(validator, data))
-    transformed = list(map(transformer, filtered))
-    return transformed
-
-
-def __extracted_func_1(__param_0, data, operation, param1, param2):
-    curried = lambda a: lambda b: lambda c: operation(a, b, c)
-    stage1 = curried(param1)
-    stage2 = stage1(param2)
-    results = []
-    for item in data:
-        result = stage2(item * __param_0)
-        if result > 0:
-            results.append(result)
-    return results
-
-
-def __extracted_func_2(__param_0, data, f, g, h):
-    compose = lambda x: h(g(f(x)))
-    results = []
-    for item in data:
-        try:
-            result = compose(item * __param_0)
-            if result is not None:
-                results.append(result)
-        except Exception:
-            continue
-    return results
-
-
-def __extracted_func_3(__param_0, data, filter_func, map_func):
-    step1 = filter(lambda x: x is not None and x > 0, data)
-    step2 = map(lambda x: x * __param_0, step1)
-    step3 = filter(filter_func, step2)
-    step4 = map(map_func, step3)
-    result = list(step4)
-    if result:
-        return sorted(result, key=lambda x: (x % 10, x))
-    return []
-
-
-def __extracted_func_4(__param_0, initial, values):
-    from functools import reduce
-    result = reduce(lambda acc, x: acc + (x ** 2 if x > __param_0 else x), values, initial)
-    normalized = list(map(lambda x: x / result if result != 0 else 0, values))
-    return {'reduced': result, 'normalized': normalized}
-
-
-def __extracted_func_5(transformed):
-    filtered = (x for x in transformed if x > 10)
-    squared = (x ** 2 for x in filtered)
-    result = list(squared)
-    if result:
-        return sorted(result, key=lambda x: -x)[:100]
-    return []
-
-
-def __extracted_func_6(__param_0, data, multiplier):
-    transform = lambda x: x * multiplier + __param_0
-    filtered = filter(lambda x: x > 0, data)
-    result = list(map(transform, filtered))
-    if len(result) > 0:
-        return sorted(result, key=lambda x: x, reverse=True)
-    return []
-
-
-def __extracted_func_7(__param_0, base_func, modifier, values):
-    apply_modifier = lambda x: base_func(x, modifier, __param_0)
-    processed = list(map(apply_modifier, values))
-    filtered = list(filter(lambda x: x > 100, processed))
-    return {'processed': processed, 'filtered': filtered, 'count': len(filtered)}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

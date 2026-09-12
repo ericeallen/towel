@@ -10,6 +10,7 @@ Usage:
 
 Outputs wall-clock timings, iterations applied, and result paths.
 """
+
 from __future__ import annotations
 
 import argparse

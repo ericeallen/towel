@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=65.0.0", "wheel"]
+requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,14 +10,13 @@ authors = [
     {name = "Eric Allen"}
 ]
 readme = "README.md"
-requires-python = ">=3.9"
-license = {file = "LICENSE"}
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -26,19 +25,27 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-# Zero external runtime dependencies!
-dependencies = []
+# Python 3.10 needs the TOML parser backport for project layouts.
+dependencies = ["tomli>=2.0.1; python_version < '3.11'"]
 
 [project.optional-dependencies]
 dev = [
+    "tomli>=2.0.1",
+    "pytest>=9.0.3",
+    "build>=1.0.0",
+    "bandit>=1.7.6",
     "coverage>=7.0.0",
-    "black>=23.0.0",
+    "black>=26.3.1",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
     "pre-commit>=3.0.0",
     "pydocstyle>=6.0.0",
     "tqdm>=4.66.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/ericeallen/towel"
+Issues = "https://github.com/ericeallen/towel/issues"
 
 [project.scripts]
 towel = "towel.cli:main"
@@ -49,15 +56,18 @@ towel-preview = "towel.cli:preview_main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.setuptools.package-data]
+towel = ["py.typed"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312']
+target-version = ['py310', 'py311', 'py312', 'py313']
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 # Enable strict type checking for the selected files
 strict = true
 warn_unused_configs = true
@@ -71,41 +81,7 @@ warn_return_any = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
-files = [
-    "src/towel/__init__.py",
-    "src/towel/unification/__init__.py",
-    "src/towel/unification/unifier.py",
-    "src/towel/unification/extractor.py",
-    "src/towel/unification/ast_pretty_printer.py",
-    "src/towel/unification/ast_normalizer.py",
-    "src/towel/unification/binding_detector.py",
-    "src/towel/unification/models.py",
-    "src/towel/unification/pipeline.py",
-    "src/towel/unification/visitors.py",
-    "src/towel/unification/orphan_detector.py",
-    "src/towel/unification/assignment_analyzer.py",
-    "src/towel/unification/nominal_unifier.py",
-    "src/towel/unification/builtins.py",
-    "src/towel/unification/visitor_utils.py",
-    "src/towel/unification/block_signature.py",
-    "src/towel/unification/project_layout.py",
-    "src/towel/unification/scope_analyzer.py",
-    "src/towel/unification/exceptions.py",
-    "src/towel/unification/refactor_engine.py",
-    "tests/test_helpers.py",
-    "tests/edge_case_values.py",
-]
-
-# Scripts use sys.path manipulation, so check them separately
-[[tool.mypy.overrides]]
-module = [
-    "scripts.bench_refactor",
-    "scripts.debug_pair",
-    "scripts.report_net_benefit_diff",
-    "scripts.trace_proposals",
-    "scripts._debug_global_case",
-]
-ignore_errors = false
+files = ["src/towel", "tests/test_helpers.py", "tests/edge_case_values.py"]
 
 [tool.flake8]
 max-line-length = 100
@@ -128,3 +104,6 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

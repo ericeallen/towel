@@ -8,7 +8,9 @@ This module ensures that the refactoring output remains stable over time by:
 3. Running observational equivalence tests on all proposals
 4. Failing if output differs or equivalence checks fail
 """
+
 import sys
+import ast
 import unittest
 import tempfile
 import shutil
@@ -26,58 +28,82 @@ from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
 
 
 def normalize_generated_names(code: str) -> str:
+    """Return an AST fingerprint modulo generated identifier names and formatting.
+
+    Parse both versions with the running interpreter, so unparser differences such
+    as optional tuple-target parentheses cannot masquerade as a regression. Rename
+    identifier fields only: literal values, operators, statement order and binding
+    structure remain part of the comparison. Simultaneous AST renaming also avoids
+    cascading string replacements when two helper numbers exchange positions.
     """
-    Normalize generated function and parameter names for alpha-equivalence checking.
+    function_pattern = re.compile(r"_{0,2}extracted_func(?:tion)?(?:_\d+)?")
+    parameter_pattern = re.compile(r"__param(?:_\d+)?")
+    function_mapping: dict[str, str] = {}
+    parameter_mapping: dict[str, str] = {}
 
-    Historically, extracted helper and parameter names have varied across versions, e.g.:
-      - __extracted_func_0, __extracted_func_1, ...
-      - __extracted_func, _extracted_func, extracted_func
-      - extracted_function (older extractor default)
-    and parameters like:
-      - __param_0, __param_1, ... (sometimes seen without numeric suffixes)
+    def identifier(name: str) -> str:
+        if function_pattern.fullmatch(name):
+            return function_mapping.setdefault(name, f"__extracted_func_{len(function_mapping)}")
+        if parameter_pattern.fullmatch(name):
+            return parameter_mapping.setdefault(name, f"__param_{len(parameter_mapping)}")
+        return name
 
-    This function canonicalizes all such variants to stable placeholders
-    (__extracted_func_0, __extracted_func_1, ... and __param_0, __param_1, ...)
-    in order of first appearance so semantically equivalent outputs compare equal.
-    """
-    # Track mappings from original names to normalized names
-    func_mapping: dict[str, str] = {}
-    param_mapping: dict[str, str] = {}
+    class NormalizeIdentifiers(ast.NodeTransformer):
+        def generic_visit(self, node: ast.AST) -> ast.AST:
+            for field, value in ast.iter_fields(node):
+                if field in {"id", "name", "arg", "attr", "asname"} and isinstance(value, str):
+                    setattr(node, field, identifier(value))
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                node.names = [identifier(name) for name in node.names]
+            return super().generic_visit(node)
 
-    result = code
+    tree = NormalizeIdentifiers().visit(ast.parse(code))
+    return ast.dump(tree, include_attributes=False)
 
-    # Regex capturing common helper name variants with optional underscores, optional "tion",
-    # and optional numeric suffixes (e.g., __extracted_func_2, _extracted_func, extracted_function)
-    func_pattern = re.compile(r"\b_{0,2}extracted_func(?:tion)?(?:_\d+)?\b")
 
-    # Regex capturing parameter name variants: __param or __param_#
-    param_pattern = re.compile(r"\b__param(?:_\d+)?\b")
+class TestOutputNormalization(unittest.TestCase):
+    def test_printer_parentheses_spacing_and_comments_are_ignored(self) -> None:
+        before = "for key, value in pairs:\n    f = lambda: value  # comment\n"
+        after = "for (key, value) in pairs:\n    f = lambda : value\n"
+        self.assertEqual(normalize_generated_names(before), normalize_generated_names(after))
 
-    # Build mapping for function names by order of appearance
-    func_index = 0
-    for match in func_pattern.finditer(code):
-        name = match.group(0)
-        if name not in func_mapping:
-            func_mapping[name] = f"__extracted_func_{func_index}"
-            func_index += 1
+    def test_operator_and_replacement_structure_remain_significant(self) -> None:
+        source = "def f(x):\n    value = x + 1\n    return value\n"
+        for changed in (
+            source.replace("x + 1", "x - 1"),
+            "def f(x):\n    helper(x)\n    return value\n",
+        ):
+            with self.subTest(changed=changed):
+                self.assertNotEqual(
+                    normalize_generated_names(source), normalize_generated_names(changed)
+                )
 
-    # Build mapping for parameter names by order of appearance
-    param_index = 0
-    for match in param_pattern.finditer(code):
-        name = match.group(0)
-        if name not in param_mapping:
-            param_mapping[name] = f"__param_{param_index}"
-            param_index += 1
+    def test_generated_names_in_literals_are_not_erased(self) -> None:
+        self.assertNotEqual(
+            normalize_generated_names("value = '__param_0'"),
+            normalize_generated_names("value = '__param_1'"),
+        )
 
-    # Apply replacements (sort by length descending to avoid partial replacements)
-    for original, normalized in sorted(func_mapping.items(), key=lambda x: len(x[0]), reverse=True):
-        result = result.replace(original, normalized)
-    for original, normalized in sorted(
-        param_mapping.items(), key=lambda x: len(x[0]), reverse=True
-    ):
-        result = result.replace(original, normalized)
+    def test_generated_names_inside_fstring_expressions_are_identifiers(self) -> None:
+        self.assertEqual(
+            normalize_generated_names("def f(__param_7): return f'{__param_7}'"),
+            normalize_generated_names("def f(__param_2): return f'{__param_2}'"),
+        )
 
-    return result
+    def test_alpha_renaming_preserves_distinct_helper_bindings(self) -> None:
+        source = (
+            "def __extracted_func_1(): return __extracted_func_0()\n"
+            "def __extracted_func_0(): return 3\n"
+        )
+        renamed = (
+            "def __extracted_func_8(): return __extracted_func_9()\n"
+            "def __extracted_func_9(): return 3\n"
+        )
+        self.assertEqual(normalize_generated_names(source), normalize_generated_names(renamed))
+        wrong_call = renamed.replace("return __extracted_func_9()", "return __extracted_func_8()")
+        self.assertNotEqual(
+            normalize_generated_names(source), normalize_generated_names(wrong_call)
+        )
 
 
 def find_duplicate_helpers(root: Path) -> list[str]:
@@ -86,7 +112,7 @@ def find_duplicate_helpers(root: Path) -> list[str]:
     if not root.exists():
         return []
 
-    helper_pattern = re.compile(r"^\s*def\s+(__extracted_func(?:_\d+)?)\b", re.MULTILINE)
+    helper_pattern = re.compile(r"^\s*def\s+(_{1,2}extracted_func(?:_\d+)?)\b", re.MULTILINE)
     duplicates: list[str] = []
 
     for py_file in sorted(root.rglob("*.py")):

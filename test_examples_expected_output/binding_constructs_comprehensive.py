@@ -8,6 +8,58 @@ Tests that Towel correctly handles free variable analysis for:
 """
 
 
+def __extracted_func_5(file1, file2):
+    data = []
+    with open(file1) as f1, open(file2) as f2:
+        data.append(f1.read())
+        data.append(f2.read())
+    return data
+
+
+def __extracted_func_4(filename):
+    lines = []
+    with open(filename) as f:
+        for line in f:
+            lines.append(line.strip())
+    return lines
+
+
+def __extracted_func_3(items):
+    result = []
+    if (n := len(items)) > 0:
+        result.append(n)
+        result.append(n * 2)
+    return result
+
+
+def __extracted_func_2(items):
+    results = []
+    idx = 0
+    while (item := (items[idx] if idx < len(items) else None)) is not None:
+        results.append(item * 2)
+        idx += 1
+    return results
+
+
+def __extracted_func_1(inner_file, outer_file):
+    result = []
+    with open(outer_file) as f1:
+        result.append(f1.readline())
+        with open(inner_file) as f2:
+            result.append(f2.readline())
+    return result
+
+
+def __extracted_func_0(data):
+    errors = []
+    for item in data:
+        try:
+            result = int(item)
+        except ValueError as e:
+            errors.append(str(e))
+    return errors
+
+
 def test_walrus_basic_a(items):
     """Walrus operator in if condition."""
     return __extracted_func_3(items)
@@ -79,67 +131,3 @@ def test_walrus_while_a(items):
 def test_walrus_while_b(items):
     """Duplicate walrus in while loop."""
     return __extracted_func_2(items)
-
-
-def __extracted_func_0(data):
-    errors = []
-    for item in data:
-        try:
-            result = int(item)
-        except ValueError as e:
-            errors.append(str(e))
-    return errors
-
-
-def __extracted_func_1(inner_file, outer_file):
-    result = []
-    with open(outer_file) as f1:
-        result.append(f1.readline())
-        with open(inner_file) as f2:
-            result.append(f2.readline())
-    return result
-
-
-def __extracted_func_2(items):
-    results = []
-    idx = 0
-    while (item := (items[idx] if idx < len(items) else None)) is not None:
-        results.append(item * 2)
-        idx += 1
-    return results
-
-
-def __extracted_func_3(items):
-    result = []
-    if (n := len(items)) > 0:
-        result.append(n)
-        result.append(n * 2)
-    return result
-
-
-def __extracted_func_4(filename):
-    lines = []
-    with open(filename) as f:
-        for line in f:
-            lines.append(line.strip())
-    return lines
-
-
-def __extracted_func_5(file1, file2):
-    data = []
-    with open(file1) as f1, open(file2) as f2:
-        data.append(f1.read())
-        data.append(f2.read())
-    return data
-
-
-
-
-
-
-
-
-
-
-
-

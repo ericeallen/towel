@@ -17,10 +17,11 @@ class TestCrossfileObservationalEquivalence(unittest.TestCase):
         tester = CrossFileEquivalenceTester(engine)
         results = tester.test_all_projects("test_examples_crossfile", verbose=False)
 
-        # Basic sanity checks; we don't enforce 0 failures here because the
-        # tester itself reports details and other tests cover correctness.
         self.assertGreaterEqual(results["total_projects"], 1)
         self.assertGreaterEqual(results["total_proposals_tested"], 1)
+        self.assertEqual(results["total_failed"], 0, results["project_results"])
+        for project in results["project_results"].values():
+            self.assertEqual(project["errors"], [], project)
 
 
 if __name__ == "__main__":

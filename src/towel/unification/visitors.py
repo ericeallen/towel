@@ -346,7 +346,7 @@ def _record_name_target(target: ast.AST, destination: Set[str]) -> None:
 
 
 def _record_simple_assignment(
-    node: Union[ast.AnnAssign, ast.AugAssign], destination: Set[str], visitor: ast.AST
+    node: Union[ast.AnnAssign, ast.AugAssign], destination: Set[str], visitor: ast.NodeVisitor
 ) -> None:
     target = getattr(node, "target", None)
     if isinstance(target, ast.Name):

@@ -20,6 +20,7 @@ This module defines the core data structures used throughout the refactoring eng
 - Refactoring proposals
 - Function context for analysis
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

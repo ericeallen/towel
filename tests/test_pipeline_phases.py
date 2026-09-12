@@ -21,7 +21,6 @@ from towel.unification.pipeline import (
 from towel.unification.models import ParsedModule
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 EXAMPLES_DIR = PROJECT_ROOT / "test_examples"
 

@@ -205,15 +205,13 @@ class TestAnalyzeFile(unittest.TestCase):
     def test_analyze_file_with_single_function(self):
         """Test analyzing a file with only one function."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 def function1():
     x = 1
     y = 2
     z = 3
     return x + y + z
-"""
-            )
+""")
             temp_path = f.name
 
         try:
@@ -225,8 +223,7 @@ def function1():
     def test_analyze_file_with_identical_functions(self):
         """Test analyzing a file with two identical functions."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 def function1():
     x = 1
     y = 2
@@ -238,8 +235,7 @@ def function2():
     y = 2
     z = 3
     return x + y + z
-"""
-            )
+""")
             temp_path = f.name
 
         try:
@@ -376,8 +372,7 @@ class TestFullBodyWithNestedFunctions(unittest.TestCase):
     def test_identical_functions_with_two_nested_functions(self):
         """Test that identical functions with two nested functions produce correct proposal."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 def outer1(data, threshold):
     def make_validator(limit):
         return lambda x: x > limit
@@ -403,8 +398,7 @@ def outer2(data, threshold):
     filtered = list(filter(validator, data))
     transformed = list(map(transformer, filtered))
     return transformed
-"""
-            )
+""")
             temp_path = f.name
 
         try:
@@ -488,8 +482,7 @@ def func2():
     def test_overlapping_block_prevention(self):
         """Test that overlapping blocks are not included in final proposals."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 def func1():
     x = 1
     y = 2
@@ -505,8 +498,7 @@ def func2():
     w = 4
     v = 5
     return x + y + z + w + v
-"""
-            )
+""")
             temp_path = f.name
 
         try:

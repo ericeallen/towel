@@ -6,6 +6,112 @@ data validation, ETL pipelines, error handling, and logging.
 """
 
 
+def __extracted_func_6(__param_0, __extracted_func_5, auth, logger, rate_limiter, request):
+    if not auth.verify_token(request.headers.get('Authorization')):
+        logger.warn('Invalid token')
+        return ({'error': 'Unauthorized'}, 401)
+    if not rate_limiter.check(request.user_id, limit=__param_0):
+        logger.warn(f'Rate limit exceeded for user {request.user_id}')
+        return ({'error': 'Too many requests'}, 429)
+    return __extracted_func_5(auth, logger, request)
+
+
+def __extracted_func_5(auth, logger, request):
+    data = request.json()
+    validated = auth.validate_payload(data)
+    if not validated:
+        logger.error('Invalid payload')
+        return ({'error': 'Bad request'}, 400)
+    logger.info(f'Processing request for user {request.user_id}')
+    return ({'status': 'success'}, 200)
+
+
+def __extracted_func_4(__param_0, __param_1, __param_2, error_handler, failed, items, metrics, processed, processor):
+    for i, item in enumerate(items):
+        try:
+            validated = processor.validate(item)
+            if not validated:
+                failed.append({'index': i, 'error': 'Validation failed', 'item': item})
+                metrics.increment(__param_0)
+                continue
+            result = processor.transform(item)
+            processor.enrich(result)
+            processed.append(result)
+            metrics.increment(__param_1)
+        except Exception as e:
+            error_handler.log(e, context={'index': i, 'item': item})
+            failed.append({'index': i, 'error': str(e), 'item': item})
+            metrics.increment(__param_2)
+
+
+def __extracted_func_3(__param_0, cache, database, key):
+    cached = cache.get(key)
+    if cached is not None:
+        cache.increment_hits()
+        return cached
+    cache.increment_misses()
+    try:
+        data = database.query(key)
+        if data:
+            cache.set(key, data, ttl=__param_0)
+            cache.record_fill(key)
+            return data
+    except Exception as e:
+        cache.record_error(e)
+        raise
+    return None
+
+
+def __extracted_func_2(__param_0, config, logger, source):
+    logger.info('Starting extract phase')
+    max_retries = 3
+    retry_count = 0
+    data = None
+    while retry_count < max_retries:
+        try:
+            data = source.fetch(endpoint=config['endpoint'], params=config['params'], timeout=__param_0)
+            logger.info(f'Extracted {len(data)} records')
+            break
+        except Exception as e:
+            retry_count += 1
+            logger.warn(f'Extract failed (attempt {retry_count}): {e}')
+            if retry_count >= max_retries:
+                logger.error('Extract phase failed')
+                raise
+    return data
+
+
+def __extracted_func_1(__param_0, audit_log, data, rules_engine):
+    errors = []
+    warnings = []
+    required = ['customer_id', 'amount', 'currency']
+    for field in required:
+        if field not in data or not data[field]:
+            errors.append(f'Missing required field: {field}')
+            audit_log.record('validation_error', field=field)
+    if data.get('amount', 0) > __param_0:
+        if not rules_engine.check_approval(data):
+            errors.append('Amount requires approval')
+            audit_log.record('approval_required', amount=data['amount'])
+    if data.get('currency') not in ['USD', 'EUR', 'GBP']:
+        warnings.append(f"Unusual currency: {data.get('currency')}")
+    return {'valid': len(errors) == 0, 'errors': errors, 'warnings': warnings}
+
+
+def __extracted_func_0(__param_0, events, time_window):
+    buckets = {}
+    for event in events:
+        timestamp = event['timestamp']
+        bucket_key = timestamp // time_window * time_window
+        if bucket_key not in buckets:
+            buckets[bucket_key] = {'count': 0, 'sum': 0, 'values': []}
+        value = event['value'] * __param_0
+        buckets[bucket_key]['count'] += 1
+        buckets[bucket_key]['sum'] += value
+        buckets[bucket_key]['values'].append(value)
+    return {k: {'count': v['count'], 'sum': v['sum'], 'avg': v['sum'] / v['count'] if v['count'] > 0 else 0} for k, v in buckets.items()}
+
+
 def handle_api_request_v1(request, auth, rate_limiter, logger):
     """Version 1: Complete API request handling."""
     # Authentication and rate limiting
@@ -78,123 +184,3 @@ def aggregate_metrics_a(events, time_window, aggregator):
 def aggregate_metrics_b(events, time_window, aggregator):
     """Version B: Different multiplier, same aggregation."""
     return __extracted_func_0(3, events, time_window)
-
-
-def __extracted_func_0(__param_0, events, time_window):
-    buckets = {}
-    for event in events:
-        timestamp = event['timestamp']
-        bucket_key = timestamp // time_window * time_window
-        if bucket_key not in buckets:
-            buckets[bucket_key] = {'count': 0, 'sum': 0, 'values': []}
-        value = event['value'] * __param_0
-        buckets[bucket_key]['count'] += 1
-        buckets[bucket_key]['sum'] += value
-        buckets[bucket_key]['values'].append(value)
-    return {k: {'count': v['count'], 'sum': v['sum'], 'avg': v['sum'] / v['count'] if v['count'] > 0 else 0} for k, v in buckets.items()}
-
-
-def __extracted_func_1(__param_0, audit_log, data, rules_engine):
-    errors = []
-    warnings = []
-    required = ['customer_id', 'amount', 'currency']
-    for field in required:
-        if field not in data or not data[field]:
-            errors.append(f'Missing required field: {field}')
-            audit_log.record('validation_error', field=field)
-    if data.get('amount', 0) > __param_0:
-        if not rules_engine.check_approval(data):
-            errors.append('Amount requires approval')
-            audit_log.record('approval_required', amount=data['amount'])
-    if data.get('currency') not in ['USD', 'EUR', 'GBP']:
-        warnings.append(f"Unusual currency: {data.get('currency')}")
-    return {'valid': len(errors) == 0, 'errors': errors, 'warnings': warnings}
-
-
-def __extracted_func_2(__param_0, config, logger, source):
-    logger.info('Starting extract phase')
-    max_retries = 3
-    retry_count = 0
-    data = None
-    while retry_count < max_retries:
-        try:
-            data = source.fetch(endpoint=config['endpoint'], params=config['params'], timeout=__param_0)
-            logger.info(f'Extracted {len(data)} records')
-            break
-        except Exception as e:
-            retry_count += 1
-            logger.warn(f'Extract failed (attempt {retry_count}): {e}')
-            if retry_count >= max_retries:
-                logger.error('Extract phase failed')
-                raise
-    return data
-
-
-def __extracted_func_3(__param_0, cache, database, key):
-    cached = cache.get(key)
-    if cached is not None:
-        cache.increment_hits()
-        return cached
-    cache.increment_misses()
-    try:
-        data = database.query(key)
-        if data:
-            cache.set(key, data, ttl=__param_0)
-            cache.record_fill(key)
-            return data
-    except Exception as e:
-        cache.record_error(e)
-        raise
-    return None
-
-
-def __extracted_func_4(__param_0, __param_1, __param_2, error_handler, failed, items, metrics, processed, processor):
-    for i, item in enumerate(items):
-        try:
-            validated = processor.validate(item)
-            if not validated:
-                failed.append({'index': i, 'error': 'Validation failed', 'item': item})
-                metrics.increment(__param_0)
-                continue
-            result = processor.transform(item)
-            processor.enrich(result)
-            processed.append(result)
-            metrics.increment(__param_1)
-        except Exception as e:
-            error_handler.log(e, context={'index': i, 'item': item})
-            failed.append({'index': i, 'error': str(e), 'item': item})
-            metrics.increment(__param_2)
-
-
-def __extracted_func_5(auth, logger, request):
-    data = request.json()
-    validated = auth.validate_payload(data)
-    if not validated:
-        logger.error('Invalid payload')
-        return ({'error': 'Bad request'}, 400)
-    logger.info(f'Processing request for user {request.user_id}')
-    return ({'status': 'success'}, 200)
-
-
-def __extracted_func_6(__param_0, __extracted_func_5, auth, logger, rate_limiter, request):
-    if not auth.verify_token(request.headers.get('Authorization')):
-        logger.warn('Invalid token')
-        return ({'error': 'Unauthorized'}, 401)
-    if not rate_limiter.check(request.user_id, limit=__param_0):
-        logger.warn(f'Rate limit exceeded for user {request.user_id}')
-        return ({'error': 'Too many requests'}, 429)
-    return __extracted_func_5(auth, logger, request)
-
-
-
-
-
-
-
-
-
-
-
-
-
-

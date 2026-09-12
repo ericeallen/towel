@@ -5,6 +5,15 @@ Tests: Same-file duplicate detection in simple functions.
 """
 
 
+def __extracted_func_0(__param_0):
+    if not __param_0.get('id'):
+        raise ValueError('User ID is required')
+    if not __param_0.get('name'):
+        raise ValueError('User name is required')
+    if len(__param_0.get('name', '')) < 2:
+        raise ValueError('User name too short')
+
+
 def process_user_data(user_id):
     """Process user data."""
     # Fetch user
@@ -39,14 +48,3 @@ def process_guest_data(guest_id):
 
     print(f"Processing guest: {guest['name']}")
     return guest
-
-
-def __extracted_func_0(__param_0):
-    if not __param_0.get('id'):
-        raise ValueError('User ID is required')
-    if not __param_0.get('name'):
-        raise ValueError('User name is required')
-    if len(__param_0.get('name', '')) < 2:
-        raise ValueError('User name too short')
-
-

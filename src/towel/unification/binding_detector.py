@@ -29,6 +29,8 @@ These blocks are α-equivalent if 'user' and 'admin' play the same structural
 role (both are bound variables with identical usage patterns).
 """
 
+from __future__ import annotations
+
 import ast
 from typing import List, Optional, Set, Union
 from dataclasses import dataclass
@@ -220,8 +222,9 @@ class BindingDetector(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         """Handle import statements: import x, import y as z"""
         for alias in node.names:
-            # Use the alias if provided, otherwise the module name
-            name = alias.asname if alias.asname else alias.name
+            # An unaliased dotted import binds its first component; an alias
+            # binds the requested module directly under that alias instead.
+            name = alias.asname if alias.asname else alias.name.split(".")[0]
             self._add_binding(name, BindingKind.IMPORT, node)
         self.generic_visit(node)
 

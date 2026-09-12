@@ -1,4 +1,5 @@
 import ast
+import sys
 import textwrap
 import unittest
 
@@ -140,6 +141,7 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         lambda_params = get_bound_variables(tree, scope_node=lambda_node)
         self.assertTrue({"x", "y", "z", "kw"}.issubset(lambda_params))
 
+    @unittest.skipUnless(sys.version_info >= (3, 10), "Pattern matching requires Python 3.10")
     def test_match_statement_bindings(self) -> None:
         code = """
         def matchy(value):
@@ -166,6 +168,7 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
             {"x", "y", "b", "rest", "px", "py", "tail", "u", "whole"}.issubset(names_in_func)
         )
 
+    @unittest.skipUnless(sys.version_info >= (3, 10), "Pattern matching requires Python 3.10")
     def test_exotic_match_and_line_numbers_and_scopes(self) -> None:
         code = """
         def outer(a, b):
@@ -231,6 +234,7 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
             self.assertEqual(lp.scope_node.lineno, lam_node.lineno)
             self.assertEqual(lp.line_number, getattr(lp.node, "lineno", -1))
 
+    @unittest.skipUnless(sys.version_info >= (3, 10), "Pattern matching requires Python 3.10")
     def test_match_negative_patterns_no_bindings(self) -> None:
         code = """
         def f(x):
@@ -303,6 +307,7 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         self.assertNotIn("dec1", foo_scope_names)
         self.assertNotIn("dec2", foo_scope_names)
 
+    @unittest.skipUnless(sys.version_info >= (3, 10), "Pattern matching requires Python 3.10")
     def test_async_params_and_decorator_and_match_guard(self) -> None:
         code = """
         def d(fn):

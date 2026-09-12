@@ -10,6 +10,7 @@ This script:
 WARNING: This script should NOT be run directly!
 Use: just regenerate-baseline
 """
+
 import sys
 import shutil
 import argparse
@@ -59,7 +60,7 @@ def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: P
                 print(f"    No proposals found (fixed point)")
         except Exception as e:
             print(f"    Fixed-point refactoring failed: {e}")
-            final_code = py_file.read_text()
+            raise
         finally:
             try:
                 tmp_path.unlink(missing_ok=True)
@@ -92,15 +93,19 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
         # Apply refactorings to fixed point across the project into the output directory
         project_output = output_dir / project_dir.name
         try:
-            results, termination_reason = engine.refactor_directory_to_fixed_point(
-                str(project_dir), str(project_output), max_iterations=10
-            )
+            with tempfile.TemporaryDirectory(prefix="towel-baseline-") as temporary:
+                staged_output = Path(temporary) / project_dir.name
+                results, termination_reason = engine.refactor_directory_to_fixed_point(
+                    str(project_dir), str(staged_output), max_iterations=10
+                )
+                shutil.copytree(staged_output, project_output, dirs_exist_ok=True)
             total = sum(count for count, _ in results.values()) if results else 0
             print(
                 f"    Applied {total} refactoring(s) across project (termination={termination_reason})"
             )
         except Exception as e:
             print(f"    Fixed-point cross-file refactoring failed: {e}")
+            raise
 
 
 def main():

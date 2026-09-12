@@ -10,6 +10,7 @@ Environment flags (optional):
   DEBUG_SIGNATURE_FILTER=1            # print signature filter stats
   SIGNATURE_FILTER_VALIDATE=1        # validate filtered pairs via unify
 """
+
 from __future__ import annotations
 
 import sys

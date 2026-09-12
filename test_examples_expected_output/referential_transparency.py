@@ -6,6 +6,41 @@ and don't accidentally capture or modify variables incorrectly.
 """
 
 
+def __extracted_func_3(__param_0, counter):
+    counter['total'] += __param_0
+    counter['processed'] += 1
+    result = counter['total'] / counter['processed']
+    print(f'Current average: {result}')
+
+
+def __extracted_func_2(accumulator, multiplier, value):
+    processed = value * multiplier
+    validated = processed > 0
+    if validated:
+        accumulator.append(processed)
+    return processed
+
+
+def __extracted_func_1(data, outer_var, processor):
+    inner_var = 50
+    for item in data:
+        step1 = item + outer_var
+        step2 = step1 - inner_var
+        step3 = step2 * 2
+        processor.add(step3)
+
+
+def __extracted_func_0(__param_0, cache, data, metrics):
+    for key, value in data.items():
+        processed = value * __param_0
+        cache[key] = processed
+        metrics['count'] += 1
+        metrics['total'] += processed
+        if processed > 100:
+            metrics['high_value'] += 1
+    return (cache, metrics)
+
+
 def update_mutable_state_v1(items, counter):
     """Version 1: Modifies mutable state within block."""
     counter = {"total": 0, "processed": 0}
@@ -208,46 +243,3 @@ def modify_external_state_a(data, cache, metrics):
 def modify_external_state_b(data, cache, metrics):
     """Version B: Different multiplier, same modification pattern."""
     return __extracted_func_0(3, cache, data, metrics)
-
-
-def __extracted_func_0(__param_0, cache, data, metrics):
-    for key, value in data.items():
-        processed = value * __param_0
-        cache[key] = processed
-        metrics['count'] += 1
-        metrics['total'] += processed
-        if processed > 100:
-            metrics['high_value'] += 1
-    return (cache, metrics)
-
-
-def __extracted_func_1(data, outer_var, processor):
-    inner_var = 50
-    for item in data:
-        step1 = item + outer_var
-        step2 = step1 - inner_var
-        step3 = step2 * 2
-        processor.add(step3)
-
-
-def __extracted_func_2(accumulator, multiplier, value):
-    processed = value * multiplier
-    validated = processed > 0
-    if validated:
-        accumulator.append(processed)
-    return processed
-
-
-def __extracted_func_3(__param_0, counter):
-    counter['total'] += __param_0
-    counter['processed'] += 1
-    result = counter['total'] / counter['processed']
-    print(f'Current average: {result}')
-
-
-
-
-
-
-
-

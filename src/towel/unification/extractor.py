@@ -24,7 +24,7 @@ Generates extracted functions while ensuring:
 
 import ast
 import copy
-from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, Callable, cast
+from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
 from .unifier import Substitution
 
 if TYPE_CHECKING:
@@ -601,10 +601,10 @@ class HygienicExtractor:
                 new_value = cast(ast.expr, self.visit(node.value))
                 if isinstance(node.target, ast.Name):
                     self._mark_shadowed(node.target.id)
-                    new_target: ast.Name | ast.Attribute | ast.Subscript = node.target
+                    new_target: Union[ast.Name, ast.Attribute, ast.Subscript] = node.target
                 else:
                     new_target = cast(
-                        ast.Attribute | ast.Subscript,
+                        Union[ast.Attribute, ast.Subscript],
                         self._transform_assignment_target(node.target),
                     )
                 return ast.AugAssign(target=new_target, op=node.op, value=new_value)
@@ -672,6 +672,8 @@ class HygienicExtractor:
                         self._alias_variable(node.target.id, new_value.id)
                     else:
                         self._mark_shadowed(node.target.id)
+                if not isinstance(new_target, (ast.Name, ast.Attribute, ast.Subscript)):
+                    raise ValueError("Annotated assignment requires a single assignable target")
                 return ast.AnnAssign(
                     target=new_target,
                     annotation=node.annotation,

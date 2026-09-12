@@ -83,26 +83,18 @@ class TestCrossFileAndValidation(unittest.TestCase):
         with temporary_test_directory() as tmp:
             file1 = Path(tmp) / "mod1.py"
             file2 = Path(tmp) / "mod2.py"
-            file1.write_text(
-                textwrap.dedent(
-                    """
+            file1.write_text(textwrap.dedent("""
                     def fa():
                         x = 1
                         y = 2
                         return x + y
-                    """
-                ).strip()
-            )
-            file2.write_text(
-                textwrap.dedent(
-                    """
+                    """).strip())
+            file2.write_text(textwrap.dedent("""
                     def fb():
                         x = 1
                         y = 2
                         return x + y
-                    """
-                ).strip()
-            )
+                    """).strip())
             props = eng.analyze_files([str(file1), str(file2)])
             # Should include a proposal that mentions both fa and fb
             self.assertTrue(any("fa" in p.description and "fb" in p.description for p in props))
@@ -119,9 +111,7 @@ class TestCrossFileAndValidation(unittest.TestCase):
         eng = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=False)
         with temporary_test_directory() as tmp:
             path = Path(tmp) / "trivial.py"
-            path.write_text(
-                textwrap.dedent(
-                    """
+            path.write_text(textwrap.dedent("""
                     def a():
                         res = 1
                         return res
@@ -129,9 +119,7 @@ class TestCrossFileAndValidation(unittest.TestCase):
                     def b():
                         res = 2
                         return res
-                    """
-                ).strip()
-            )
+                    """).strip())
             props = eng.analyze_file(str(path))
             # No proposals should be returned (trivial single-line return rejected)
             self.assertEqual(len(props), 0)
@@ -142,9 +130,7 @@ class TestCrossFileAndValidation(unittest.TestCase):
         eng = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
         with temporary_test_directory() as tmp:
             path = Path(tmp) / "augassign.py"
-            path.write_text(
-                textwrap.dedent(
-                    """
+            path.write_text(textwrap.dedent("""
                     def a(v, total):
                         total += v
                         return total
@@ -152,9 +138,7 @@ class TestCrossFileAndValidation(unittest.TestCase):
                     def b(v, acc):
                         acc += v
                         return acc
-                    """
-                ).strip()
-            )
+                    """).strip())
             props = eng.analyze_file(str(path))
             self.assertEqual(
                 len(props),

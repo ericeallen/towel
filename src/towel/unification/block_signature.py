@@ -31,7 +31,6 @@ import ast
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Any
 
-
 IDENT_COUNT_TOLERANCE = 2
 
 

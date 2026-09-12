@@ -30,8 +30,21 @@ The top-level run_pipeline() wires these phases.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    cast,
+    Protocol,
+    Mapping,
+    TypedDict,
+)
 import ast
+import sys
 from pathlib import Path
 
 from .models import (
@@ -43,7 +56,6 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .visitors import FunctionCollector
-from .ast_normalizer import normalize_assigns_to_augassigns, canonicalize_arithmetic
 
 if TYPE_CHECKING:  # pragma: no cover
     from .refactor_engine import UnificationRefactorEngine
@@ -60,8 +72,8 @@ def parse_modules(paths: Sequence[str]) -> List[ParsedModule]:
     for p in paths:
         try:
             src, tree = _read_and_normalize_module(p)
-        except Exception:
-            # Skip unreadable or syntactically invalid files
+        except (OSError, UnicodeError, SyntaxError) as error:
+            print(f"Skipping {p}: {error}", file=sys.stderr)
             continue
         modules.append(ParsedModule(file_path=p, source=src, tree=tree))
     return modules
@@ -69,7 +81,7 @@ def parse_modules(paths: Sequence[str]) -> List[ParsedModule]:
 
 def analyze_scopes(mods: Sequence[ParsedModule]) -> None:
     for m in mods:
-        analyzer = cast("ScopeAnalyzer", cast(Any, ScopeAnalyzer)())
+        analyzer = ScopeAnalyzer()
         m.root_scope = analyzer.analyze(m.tree)
         m.scope_analyzer = analyzer
 
@@ -175,74 +187,6 @@ def pair_blocks(
         for f in funcs
     ]
 
-    # Delegate to engine when progress disabled for minimal overhead
-    if progress not in {"tqdm", "auto"}:
-        return engine._find_block_pairs_multi_file(packed)
-
-    total_funcs = len(packed)
-    total_func_pairs = (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
-    use_tqdm = False
-    tqdm_bar = None
-    if progress in {"tqdm", "auto"} and total_func_pairs > 0:
-        tqdm_cls = _get_tqdm_class()
-        if tqdm_cls is not None:
-            try:
-                tqdm_bar = tqdm_cls(
-                    total=total_func_pairs,
-                    desc="pairing",
-                    unit="func-pair",
-                    dynamic_ncols=True,
-                    leave=False,
-                )
-                use_tqdm = True
-            except Exception:
-                tqdm_bar = None
-
-    # Inline fallback bar -------------------------------------------------
-    use_inline = (not use_tqdm) and progress in {"tqdm", "auto"} and total_func_pairs > 0
-    last_pct = -1
-    if use_inline:
-        print("Pairing function pairs:", end=" ", flush=True)
-
-    # Instrumented pairing: we use a light wrapper around the engine's implementation
-    # to stream progress metrics. We avoid deep changes inside the engine for stability.
-    func_pairs_examined = 0
-    for i in range(total_funcs):
-        file1, func1, source1, analyzer1, scope1, class1, encl1, anc1 = packed[i]
-        for j in range(i + 1, total_funcs):
-            _ = packed[j]
-            # We do not attempt to replicate pairing work here; this loop is only for progress.
-            func_pairs_examined += 1
-            if use_tqdm and tqdm_bar is not None:
-                try:
-                    tqdm_bar.update(1)
-                    # Keep postfix compact to avoid wrapping
-                    if func_pairs_examined % 50 == 0 or func_pairs_examined == total_func_pairs:
-                        tqdm_bar.set_postfix(
-                            {"fp": f"{func_pairs_examined}/{total_func_pairs}"}, refresh=True
-                        )
-                except Exception:
-                    pass
-            elif use_inline:
-                pct = int(100 * func_pairs_examined / max(total_func_pairs, 1))
-                if pct != last_pct:
-                    last_pct = pct
-                    bar = _render_inline_bar(pct)
-                    print(
-                        f"\rPairing function pairs: [{bar}] {pct:3d}% | scanned={func_pairs_examined}/{total_func_pairs}",
-                        end="",
-                        flush=True,
-                    )
-        # We intentionally do not attempt partial block pairing here to avoid duplicating logic.
-        # Full construction performed once at end via engine call.
-    # Finish inline bar line
-    if use_inline:
-        print()
-    if use_tqdm and tqdm_bar is not None:
-        _close_progress_bar(tqdm_bar)
-
-    # Now perform actual pairing using engine logic (single call for correctness)
-    # Defer to engine pairing (now instrumented internally for progress)
     return engine._find_block_pairs_multi_file(packed, progress=progress)
 
 
@@ -280,32 +224,63 @@ def filter_overlaps(proposals: List[RefactoringProposal]) -> List[RefactoringPro
     return _filter(proposals)
 
 
-# Simple analysis cache keyed by file path
-_analysis_cache: Dict[str, Dict[str, Any]] = {}
+class AnalysisCacheEntry(TypedDict, total=False):
+    mod: ParsedModule
+    version: int
+    scoped: bool
+    classes: List[ClassInfo]
+    funcs: List[FunctionArtifact]
+
+
+# Entries are reused only while the source text still matches.
+_analysis_cache: Dict[str, AnalysisCacheEntry] = {}
 _ANALYSIS_CACHE_VERSION = 2
+_cache_directory = Path.cwd()
 
 
 def _read_and_normalize_module(path: str) -> Tuple[str, ast.AST]:
-    """Read a module from disk and apply canonical AST normalizations."""
+    """Read a module without changing Python operator or mutation semantics."""
     src = Path(path).read_text(encoding="utf-8")
     tree: ast.AST = ast.parse(src)
-    tree = normalize_assigns_to_augassigns(tree)
-    tree = canonicalize_arithmetic(tree)
     return src, tree
 
 
-def _get_tqdm_class():
+class ProgressBar(Protocol):
+    def update(self, n: int = 1) -> object:
+        """Advance the displayed progress."""
+        ...
+
+    def close(self) -> object:
+        """Finish the progress display."""
+        ...
+
+    def set_postfix(self, ordered_dict: Mapping[str, object], refresh: bool = True) -> object:
+        """Display compact progress details."""
+        ...
+
+
+class ProgressFactory(Protocol):
+    def __call__(
+        self, *, total: int, desc: str, unit: str, dynamic_ncols: bool, leave: bool
+    ) -> ProgressBar:
+        """Construct a progress display without requiring tqdm at runtime."""
+        ...
+
+
+def _get_tqdm_class() -> Optional[ProgressFactory]:
     """Dynamically import tqdm.auto.tqdm if available."""
     try:
         import importlib
 
         tqdm_mod = importlib.import_module("tqdm.auto")
-        return getattr(tqdm_mod, "tqdm")
+        return cast(ProgressFactory, getattr(tqdm_mod, "tqdm"))
     except Exception:
         return None
 
 
-def _create_progress_bar(use_progress: bool, total: int, desc: str, unit: str):
+def _create_progress_bar(
+    use_progress: bool, total: int, desc: str, unit: str
+) -> Optional[ProgressBar]:
     """Return a tqdm-style bar if available (see docs/DRY_RUN_2025-11-28.md)."""
     if not use_progress or total <= 0:
         return None
@@ -324,7 +299,7 @@ def _render_inline_bar(pct: int, bar_len: int = 24) -> str:
     return "#" * filled + "-" * (bar_len - filled)
 
 
-def _close_progress_bar(bar) -> None:
+def _close_progress_bar(bar: Optional[ProgressBar]) -> None:
     if bar is None:
         return
     try:
@@ -353,6 +328,12 @@ def run_pipeline(
     else:
         eng = engine
 
+    global _cache_directory
+    directory = Path.cwd()
+    if directory != _cache_directory:
+        _analysis_cache.clear()
+        _cache_directory = directory
+
     # Invalidate cache for changed files
     if invalidate_paths:
         for p in invalidate_paths:
@@ -369,15 +350,27 @@ def run_pipeline(
         print("Parsing files:", end=" ", flush=True)
     for idx, p in enumerate(paths, 1):
         cache_entry = _analysis_cache.get(p)
-        if cache_entry and cache_entry.get("version") == _ANALYSIS_CACHE_VERSION:
+        try:
+            current_source = Path(p).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            print(f"Skipping {p}: {error}", file=sys.stderr)
+            _analysis_cache.pop(p, None)
+            continue
+        if (
+            cache_entry
+            and cache_entry.get("version") == _ANALYSIS_CACHE_VERSION
+            and cache_entry["mod"].source == current_source
+        ):
             mods.append(cache_entry["mod"])
         else:
             try:
-                src, tree = _read_and_normalize_module(p)
+                src, tree = current_source, ast.parse(current_source)
                 mod = ParsedModule(file_path=p, source=src, tree=tree)
                 _analysis_cache[p] = {"mod": mod, "version": _ANALYSIS_CACHE_VERSION}
                 mods.append(mod)
-            except Exception:
+            except (OSError, UnicodeError, SyntaxError) as error:
+                print(f"Skipping {p}: {error}", file=sys.stderr)
+                _analysis_cache.pop(p, None)
                 continue
         if parse_bar is not None:
             try:
@@ -402,7 +395,7 @@ def run_pipeline(
         print("Analyzing scopes:", end=" ", flush=True)
     for idx, m in enumerate(mods, 1):
         if "scoped" not in _analysis_cache[m.file_path]:
-            analyzer = cast("ScopeAnalyzer", cast(Any, ScopeAnalyzer)())
+            analyzer = ScopeAnalyzer()
             m.root_scope = analyzer.analyze(m.tree)
             m.scope_analyzer = analyzer
             _analysis_cache[m.file_path]["scoped"] = True

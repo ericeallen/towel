@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import argparse
+from importlib.metadata import version
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -34,7 +35,7 @@ For more help on a specific command:
     parser.add_argument(
         "--version",
         action="version",
-        version="towel 1.0.2",
+        version=f"towel {version('code-towel')}",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -52,14 +53,17 @@ For more help on a specific command:
 
     # Dispatch to appropriate handler
     if args.command == "dry":
-        _run_dry(args)
+        try:
+            _run_dry(args)
+        except (OSError, ValueError) as error:
+            parser.exit(1, f"Error: {error}\n")
     elif args.command == "preview":
         _run_preview(args)
     elif args.command == "rename-helpers":
         _run_rename_helpers(args)
 
 
-def _add_dry_parser(subparsers) -> None:
+def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add 'dry' subcommand parser."""
     parser = subparsers.add_parser(
         "dry",
@@ -129,7 +133,7 @@ Examples:
     )
 
 
-def _add_preview_parser(subparsers) -> None:
+def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add 'preview' subcommand parser."""
     parser = subparsers.add_parser(
         "preview",
@@ -170,14 +174,16 @@ def _add_preview_parser(subparsers) -> None:
     parser.set_defaults(pep420=None)
 
 
-def _add_rename_helpers_parser(subparsers) -> None:
+def _add_rename_helpers_parser(
+    subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]",
+) -> None:
     """Add 'rename-helpers' subcommand parser."""
     parser = subparsers.add_parser(
         "rename-helpers",
         help="Rename extracted functions using LLM assistance",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="""
-Rename auto-generated __extracted_func_* functions into meaningful names.
+Rename auto-generated _extracted_func_* and __extracted_func_* helpers into meaningful names.
 
 This tool analyzes the extracted functions and uses an LLM to suggest better names
 based on the code's purpose and context. You can use Claude Code, ChatGPT, or any
@@ -215,7 +221,7 @@ Examples:
 
     parser.add_argument(
         "target",
-        help="Directory containing code with __extracted_func_* functions",
+        help="Directory containing generated extracted helper functions",
     )
 
     parser.add_argument(
@@ -288,24 +294,16 @@ def _run_dry(args: argparse.Namespace) -> None:
         if response != "y":
             return
 
-    # Copy input to output
-    abs_input = os.path.abspath(input_path)
-    abs_output = os.path.abspath(output_path)
-
-    if abs_input == abs_output:
-        print(f"Modifying in place: {input_path}")
-    else:
-        print(f"Copying {input_path} -> {output_path}")
-        if is_file:
-            output_dir = os.path.dirname(output_path)
-            if output_dir:
-                os.makedirs(output_dir, exist_ok=True)
-            shutil.copy2(input_path, output_path)
-        else:
-            if os.path.exists(output_path):
-                shutil.rmtree(output_path)
-            shutil.copytree(input_path, output_path)
-    print()
+    # Resolve aliases before checking containment or creating any output.
+    source = Path(input_path).resolve()
+    destination = Path(output_path).resolve()
+    if source != destination:
+        if source in destination.parents or destination in source.parents:
+            raise ValueError("Input and output must not contain one another")
+        if destination.exists() or Path(output_path).is_symlink():
+            raise ValueError(
+                "Output already exists; choose a new path or explicitly refactor in place"
+            )
 
     # Create engine
     engine = UnificationRefactorEngine(
@@ -330,6 +328,13 @@ def _run_dry(args: argparse.Namespace) -> None:
         if response != "y":
             print("Aborted.")
             return
+
+    if source != destination:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if is_file:
+            shutil.copy2(source, destination)
+        else:
+            shutil.copytree(source, destination, symlinks=True)
 
     print()
 
@@ -496,7 +501,7 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
     helpers = _find_extracted_helpers(target, args.files, args.functions)
 
     if not helpers:
-        print(f"No __extracted_func_* functions found in {target}")
+        print(f"No extracted helper functions found in {target}")
         return
 
     # List mode
@@ -529,11 +534,11 @@ def _find_extracted_helpers(
     file_filters: Optional[List[str]],
     function_filters: Optional[List[str]],
 ) -> List[Tuple[Path, str, int, str]]:
-    """Find all __extracted_func_* functions in target directory."""
+    """Find generated helpers, including unmangled helpers used by classes."""
     import ast
     import re
 
-    helper_pattern = re.compile(r"^__extracted_func(?:_\d+)?$")
+    helper_pattern = re.compile(r"^_{1,2}extracted_func(?:_\d+)?$")
     helpers = []
 
     for py_file in target.rglob("*.py"):
@@ -605,8 +610,16 @@ def _apply_rename_file(
             print(f"Warning: Skipping invalid Python identifier: {new_name}")
             continue
 
-        # Find and replace in all Python files
-        count = _rename_function_in_directory(target, old_name, new_name, dry_run)
+        file_filter = None
+        name = old_name
+        if ":" in old_name:
+            relative_file, name = old_name.rsplit(":", 1)
+            file_filter = (target / relative_file).resolve()
+            if target.resolve() not in file_filter.parents:
+                raise ValueError("File-qualified renames must stay within the target directory")
+            if not file_filter.is_file():
+                raise ValueError(f"Rename target does not exist: {relative_file}")
+        count = _rename_function_in_directory(target, name, new_name, dry_run, file_filter)
         if count > 0:
             total_changes += count
             print(f"  {old_name} -> {new_name} ({count} replacement(s))")
@@ -633,40 +646,41 @@ def _rename_function_in_directory(
         dry_run: If True, don't actually modify files
         file_filter: If provided, only rename in this specific file
     """
-    import re
+    import io
+    import keyword
+    import tokenize
 
-    # Pattern to match function definitions and calls
-    # This is a simple regex - could be improved with AST rewriting for accuracy
-    patterns = [
-        (rf"\bdef {re.escape(old_name)}\b", f"def {new_name}"),
-        (rf"\b{re.escape(old_name)}\(", f"{new_name}("),
-    ]
-
-    total_replacements = 0
-
-    for py_file in target.rglob("*.py"):
-        # If file_filter is specified, only process that file
-        if file_filter and py_file != file_filter:
+    if not old_name.isidentifier() or not new_name.isidentifier() or keyword.iskeyword(new_name):
+        raise ValueError("Renamings must use valid, non-keyword Python identifiers")
+    changes: List[Tuple[Path, str, int]] = []
+    for py_file in sorted(target.rglob("*.py")):
+        if py_file.is_symlink() or (file_filter and py_file.resolve() != file_filter.resolve()):
             continue
-
-        try:
-            content = py_file.read_text()
-            new_content = content
-
-            for pattern, replacement in patterns:
-                new_content = re.sub(pattern, replacement, new_content)
-
-            if new_content != content:
-                replacements = sum(len(re.findall(pattern, content)) for pattern, _ in patterns)
-                total_replacements += replacements
-
-                if not dry_run:
-                    py_file.write_text(new_content)
-
-        except (UnicodeDecodeError, PermissionError):
+        content = py_file.read_text(encoding="utf-8")
+        tokens = list(tokenize.generate_tokens(io.StringIO(content).readline))
+        matches = [
+            token for token in tokens if token.type == tokenize.NAME and token.string == old_name
+        ]
+        if not matches or old_name == new_name:
             continue
-
-    return total_replacements
+        if any(token.type == tokenize.NAME and token.string == new_name for token in tokens):
+            raise ValueError(
+                f"Rename would collide with existing identifier {new_name} in {py_file}"
+            )
+        lines = content.splitlines(keepends=True)
+        # Reverse offsets preserve formatting and never touch comments or strings.
+        for token in reversed(matches):
+            line, column = token.start
+            _, end_column = token.end
+            original_line = lines[line - 1]
+            lines[line - 1] = original_line[:column] + new_name + original_line[end_column:]
+        updated = "".join(lines)
+        compile(updated, str(py_file), "exec")
+        changes.append((py_file, updated, len(matches)))
+    if not dry_run:
+        for py_file, content, _ in changes:
+            py_file.write_text(content, encoding="utf-8")
+    return sum(count for _, _, count in changes)
 
 
 def _run_interactive_llm_mode(
@@ -738,11 +752,11 @@ def _run_interactive_llm_mode(
     except json.JSONDecodeError as e:
         print(f"\nError parsing JSON response: {e}")
         print("Please ensure the response is valid JSON.")
-        return
+        sys.exit(1)
 
     if not isinstance(renames, dict):
         print("Error: Response must be a JSON object (dict)")
-        return
+        sys.exit(1)
 
     print("\n" + "=" * 70)
     print("STEP 2: APPLYING RENAMINGS")

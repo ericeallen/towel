@@ -6,6 +6,75 @@ when extracting code with early exits.
 """
 
 
+def __extracted_func_6(__param_0, __param_1):
+    results = []
+    for item in __param_0:
+        if item == __param_1:
+            return results
+        results.append(item * 2)
+    return results
+
+
+def __extracted_func_5(__param_0):
+    total = 0
+    for num in __param_0:
+        if num < 0:
+            continue
+        total += num
+    return total
+
+
+def __extracted_func_4(__param_0):
+    total = 0
+    for num in __param_0:
+        if num == 0:
+            break
+        total += num
+    return total
+
+
+def __extracted_func_3(__param_0):
+    result = None
+    for num in __param_0:
+        if num % 2 == 0:
+            result = num
+            break
+    return result
+
+
+def __extracted_func_2(__param_0):
+    result = []
+    for item in __param_0:
+        if item % 3 == 0:
+            continue
+        if item % 2 == 0:
+            result.append(item)
+    return result
+
+
+def __extracted_func_1(__param_0):
+    count = 0
+    total = 0
+    while count < __param_0:
+        count += 1
+        total += count
+        if total > 50:
+            break
+    return total
+
+
+def __extracted_func_0(__param_0):
+    found = None
+    for row in __param_0:
+        for val in row:
+            if val < 0:
+                found = val
+                break
+        if found is not None:
+            break
+    return found
+
+
 def find_first_even_a(numbers):
     """Returns first even number, or None."""
     return __extracted_func_3(numbers)
@@ -74,86 +143,3 @@ def continue_and_accumulate_a(items):
 def continue_and_accumulate_b(values):
     """Similar skip pattern."""
     return __extracted_func_2(values)
-
-
-def __extracted_func_0(__param_0):
-    found = None
-    for row in __param_0:
-        for val in row:
-            if val < 0:
-                found = val
-                break
-        if found is not None:
-            break
-    return found
-
-
-def __extracted_func_1(__param_0):
-    count = 0
-    total = 0
-    while count < __param_0:
-        count += 1
-        total += count
-        if total > 50:
-            break
-    return total
-
-
-def __extracted_func_2(__param_0):
-    result = []
-    for item in __param_0:
-        if item % 3 == 0:
-            continue
-        if item % 2 == 0:
-            result.append(item)
-    return result
-
-
-def __extracted_func_3(__param_0):
-    result = None
-    for num in __param_0:
-        if num % 2 == 0:
-            result = num
-            break
-    return result
-
-
-def __extracted_func_4(__param_0):
-    total = 0
-    for num in __param_0:
-        if num == 0:
-            break
-        total += num
-    return total
-
-
-def __extracted_func_5(__param_0):
-    total = 0
-    for num in __param_0:
-        if num < 0:
-            continue
-        total += num
-    return total
-
-
-def __extracted_func_6(__param_0, __param_1):
-    results = []
-    for item in __param_0:
-        if item == __param_1:
-            return results
-        results.append(item * 2)
-    return results
-
-
-
-
-
-
-
-
-
-
-
-
-
-

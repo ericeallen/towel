@@ -10,6 +10,85 @@ These examples test really subtle scenarios that could expose bugs:
 """
 
 
+def __extracted_func_9(__param_0, __param_1):
+    result = set()
+    result = __param_0 | __param_1
+    result = result & {1, 2, 3}
+    return len(result)
+
+
+def __extracted_func_8(__param_0, __param_1, __param_2):
+    result = []
+    result = __param_0[__param_1:__param_2]
+    result = result + [999]
+    return len(result)
+
+
+def __extracted_func_7(__param_0, __param_1, __param_2):
+    result = False
+    result = __param_0 > 0 and __param_1 > 0
+    result = result or __param_2 > 0
+    return result
+
+
+def __extracted_func_6(__param_0, __param_1):
+    result = 0
+    result = __param_0 if __param_0 > __param_1 else __param_1
+    result = result * 2
+    return result
+
+
+def __extracted_func_5(__param_0, __param_1):
+    message = ''
+    message = f'Name: {__param_0}'
+    message = message + f', Age: {__param_1}'
+    return message
+
+
+def __extracted_func_4(__param_0, __param_1):
+    result = {}
+    for key, value in __param_0.items():
+        result[key] = value
+    result.update(__param_1)
+    return len(result)
+
+
+def __extracted_func_3(__param_0, __param_1):
+    result = []
+    for item in __param_0:
+        result.append(item)
+    result.extend(__param_1)
+    return len(result)
+
+
+def __extracted_func_2(__param_0, __param_1):
+    result = __param_0 * 2
+    if result > __param_1:
+        return result
+    result = result + 10
+    return result
+
+
+def __extracted_func_1(__param_0):
+    if not __param_0:
+        return 0
+    total = 0
+    for item in __param_0:
+        total += item
+    return total
+
+
+def __extracted_func_0(__param_0):
+    result = 0
+    if isinstance(__param_0, int):
+        result = __param_0 * 2
+    elif isinstance(__param_0, str):
+        result = len(__param_0)
+    else:
+        result = -1
+    return result
+
+
 def conditional_return_a(x, threshold):
     """Multiple return points."""
     return __extracted_func_2(x, threshold)
@@ -136,102 +215,3 @@ def set_operations_a(set1, set2):
 def set_operations_b(group1, group2):
     """Similar set operations."""
     return __extracted_func_9(group1, group2)
-
-
-def __extracted_func_0(__param_0):
-    result = 0
-    if isinstance(__param_0, int):
-        result = __param_0 * 2
-    elif isinstance(__param_0, str):
-        result = len(__param_0)
-    else:
-        result = -1
-    return result
-
-
-def __extracted_func_1(__param_0):
-    if not __param_0:
-        return 0
-    total = 0
-    for item in __param_0:
-        total += item
-    return total
-
-
-def __extracted_func_2(__param_0, __param_1):
-    result = __param_0 * 2
-    if result > __param_1:
-        return result
-    result += 10
-    return result
-
-
-def __extracted_func_3(__param_0, __param_1):
-    result = []
-    for item in __param_0:
-        result.append(item)
-    result.extend(__param_1)
-    return len(result)
-
-
-def __extracted_func_4(__param_0, __param_1):
-    result = {}
-    for key, value in __param_0.items():
-        result[key] = value
-    result.update(__param_1)
-    return len(result)
-
-
-def __extracted_func_5(__param_0, __param_1):
-    message = ''
-    message = f'Name: {__param_0}'
-    message += f', Age: {__param_1}'
-    return message
-
-
-def __extracted_func_6(__param_0, __param_1):
-    result = 0
-    result = __param_0 if __param_0 > __param_1 else __param_1
-    result *= 2
-    return result
-
-
-def __extracted_func_7(__param_0, __param_1, __param_2):
-    result = False
-    result = __param_0 > 0 and __param_1 > 0
-    result = result or __param_2 > 0
-    return result
-
-
-def __extracted_func_8(__param_0, __param_1, __param_2):
-    result = []
-    result = __param_0[__param_1:__param_2]
-    result += [999]
-    return len(result)
-
-
-def __extracted_func_9(__param_0, __param_1):
-    result = set()
-    result = __param_0 | __param_1
-    result &= {1, 2, 3}
-    return len(result)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

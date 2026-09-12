@@ -6,6 +6,7 @@ refactoring on the full body blocks, printing detailed validation output.
 Usage:
   python scripts/debug_pair.py <file.py> <func1> <func2>
 """
+
 import sys
 import ast
 from pathlib import Path

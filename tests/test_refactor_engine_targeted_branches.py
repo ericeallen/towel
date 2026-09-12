@@ -21,8 +21,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
 
     def test_deepest_common_enclosing_function_insertion(self):
         # Two inner functions inside an outer function with similar multi-line blocks.
-        code = textwrap.dedent(
-            """
+        code = textwrap.dedent("""
             def outer():
                 def inner1():
                     x = 1
@@ -37,8 +36,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                     return c
 
                 return inner1() + inner2()
-            """
-        )
+            """)
         path = self._write_temp(code)
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
@@ -66,8 +64,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             os.remove(path)
 
     def test_preserves_reasonable_spacing_when_inserting_helper(self):
-        code = textwrap.dedent(
-            """
+        code = textwrap.dedent("""
             def foo():
                 x = 1
                 y = x + 2
@@ -77,8 +74,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 x = 1
                 y = x + 2
                 return y
-            """
-        ).lstrip("\n")
+            """).lstrip("\n")
         path = self._write_temp(code)
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
@@ -99,8 +95,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             os.remove(path)
 
     def test_trivial_single_line_return_blocks_rejected(self):
-        code = textwrap.dedent(
-            """
+        code = textwrap.dedent("""
             def f1():
                 result = 10
                 return result
@@ -108,8 +103,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             def f2():
                 value = 10
                 return value
-            """
-        )
+            """)
         path = self._write_temp(code)
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
@@ -123,8 +117,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
 
     def test_incomplete_return_coverage_rejection(self):
         # If block ends with an if that only returns in one branch, it's incomplete return coverage
-        code = textwrap.dedent(
-            """
+        code = textwrap.dedent("""
             def f1():
                 x = 1
                 if x > 0:
@@ -136,8 +129,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 if a > 0:
                     return 2
                 b = 3  # no return in else path
-            """
-        )
+            """)
         path = self._write_temp(code)
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
@@ -149,8 +141,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
 
     def test_global_assignment_promotes_declaration(self):
         # Global variable assigned in both blocks should be declared in extracted function
-        code = textwrap.dedent(
-            """
+        code = textwrap.dedent("""
             G = 0
             def f1():
                 G = G + 1
@@ -163,8 +154,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 a = 3
                 b = a + G
                 return b
-            """
-        )
+            """)
         path = self._write_temp(code)
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
@@ -185,8 +175,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
 
     def test_nonlocal_in_enclosing_functions_skips_proposal(self):
         # Nonlocal variables in enclosing function should cause engine to skip proposal
-        code = textwrap.dedent(
-            """
+        code = textwrap.dedent("""
             def outer():
                 x = 0
                 def inner1():
@@ -202,8 +191,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                     d = c + x
                     return d
                 return inner1() + inner2()
-            """
-        )
+            """)
         path = self._write_temp(code)
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
@@ -214,14 +202,12 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             os.remove(path)
 
     def test_apply_refactoring_multi_file_inserts_method_and_rewrites_calls(self):
-        code = textwrap.dedent(
-            """
+        code = textwrap.dedent("""
             class Example:
                 def method(self, value):
                     interim = value + 1
                     return interim
-            """
-        )
+            """)
         path = self._write_temp(code)
         try:
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
@@ -232,7 +218,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             proposal = RefactoringProposal(
                 file_path=path,
                 extracted_function=helper_func,
-                replacements=[((3, 4), call_node, path, "Example")],
+                replacements=[((4, 5), call_node, path, "Example")],
                 description="Insert helper method",
                 parameters_count=1,
             )
@@ -243,6 +229,9 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
 
             self.assertIn("def _helper(self, value):", updated_code)
             self.assertIn("return self._helper(value)", updated_code)
+            namespace = {}
+            exec(compile(updated_code, path, "exec"), namespace)
+            self.assertEqual(namespace["Example"]().method(10), 11)
         finally:
             os.remove(path)
 

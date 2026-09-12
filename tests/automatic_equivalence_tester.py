@@ -23,7 +23,7 @@ from tests.test_observational_equivalence import (
     FunctionExecutionResult,
 )
 from tests.edge_case_values import EdgeCaseValues
-
+from tests.equivalence_targets import affected_functions, invocation_definitions
 
 # Global test file paths created once and reused
 _TEST_FILES = None
@@ -432,7 +432,7 @@ def test_all_refactored_functions(
     function_names = extract_function_names_from_proposal(proposal_description)
 
     if not function_names:
-        return True, []  # No functions to test
+        return False, ["No functions identified in proposal; equivalence was not tested"]
 
     all_errors = []
 
@@ -463,6 +463,50 @@ def test_all_refactored_functions(
             )
 
     return len(all_errors) == 0, all_errors
+
+
+def prepare_target_cases(
+    source: str, target: str
+) -> Tuple[str, str, List[Tuple[Tuple[object, ...], Dict[str, object]]]]:
+    """Generate cases for an actual function or a class-method invocation adapter."""
+    adapter, name, definition, constructor = invocation_definitions(source, target)
+    method_cases = generate_test_cases_for_function(definition)
+    if not adapter:
+        return adapter, name, method_cases
+    constructor_cases = (
+        generate_test_cases_for_function(constructor) if constructor is not None else [((), {})]
+    )
+    if definition.name == "__init__":
+        method_cases = [((), {})]
+    return (
+        adapter,
+        name,
+        [
+            ((constructor_args, method_args), {})
+            for constructor_args, _ in constructor_cases
+            for method_args, _ in method_cases
+        ],
+    )
+
+
+def check_affected_functions(
+    original_code: str, refactored_code: str, targets: Tuple[str, ...]
+) -> Tuple[bool, List[str]]:
+    """Verify explicitly selected original callables without parsing descriptions."""
+    if not targets:
+        return False, ["No affected callables selected"]
+    errors: List[str] = []
+    for target in targets:
+        try:
+            adapter, callable_name, cases = prepare_target_cases(original_code, target)
+            passed, differences = compare_function_behavior(
+                original_code + adapter, refactored_code + adapter, callable_name, cases
+            )
+            if not passed:
+                errors.extend(f"{target}: {difference}" for difference in differences[:1])
+        except (ValueError, SyntaxError) as error:
+            errors.append(f"{target}: equivalence was not tested: {error}")
+    return not errors, errors
 
 
 class AutomaticEquivalenceTester:
@@ -513,10 +557,14 @@ class AutomaticEquivalenceTester:
                 failed += 1
                 continue
 
-            # Test observational equivalence
-            all_passed, errors = test_all_refactored_functions(
-                original_code, refactored_code, proposal.description
-            )
+            # Every replacement, including additional clustered occurrences, must be tested.
+            try:
+                targets = affected_functions(proposal, {Path(file_path): original_code})
+                all_passed, errors = check_affected_functions(
+                    original_code, refactored_code, targets[Path(file_path).resolve()]
+                )
+            except (ValueError, SyntaxError) as error:
+                all_passed, errors = False, [f"Equivalence was not tested: {error}"]
 
             if all_passed:
                 passed += 1

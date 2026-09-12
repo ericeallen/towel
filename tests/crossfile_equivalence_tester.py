@@ -14,13 +14,53 @@ import sys
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional
-import importlib.util
+from typing import Dict, List, Tuple, Any
+import importlib
+from contextlib import contextmanager
+from typing import Iterator
+
+from tests.test_observational_equivalence import (
+    FunctionExecutionResult,
+    compare_executions,
+    execute_callable,
+)
 
 from tests.automatic_equivalence_tester import (
-    test_all_refactored_functions,
-    extract_function_names_from_proposal,
+    prepare_target_cases,
 )
+
+from tests.equivalence_targets import affected_functions
+
+
+@contextmanager
+def _isolated_project_imports(project: Path, roots: Tuple[Path, Path]) -> Iterator[None]:
+    """Temporarily isolate project modules, including pre-existing name collisions.
+
+    The harness runs serially: sys.path and sys.modules are process-global. Restore
+    both even if importing or executing user code raises.
+    """
+    saved_path = sys.path[:]
+    saved_modules = sys.modules.copy()
+    top_level_names = {
+        path.stem if path.is_file() else path.name
+        for root in roots
+        for path in root.iterdir()
+        if not path.name.startswith(".") and (path.is_dir() or path.suffix == ".py")
+    }
+    try:
+        for name in tuple(sys.modules):
+            if name.split(".")[0] in top_level_names:
+                del sys.modules[name]
+        sys.path[:] = [str(project)] + [p for p in saved_path if p not in map(str, roots)]
+        importlib.invalidate_caches()
+        yield
+    finally:
+        sys.path[:] = saved_path
+        for name in tuple(sys.modules):
+            if name not in saved_modules:
+                del sys.modules[name]
+        sys.modules.update(saved_modules)
+        importlib.invalidate_caches()
 
 
 class CrossFileEquivalenceTester:
@@ -39,29 +79,6 @@ class CrossFileEquivalenceTester:
             engine: UnificationRefactorEngine instance
         """
         self.engine = engine
-
-    def _import_module_from_path(self, file_path: Path, module_name: str):
-        """
-        Dynamically import a Python module from a file path.
-
-        Args:
-            file_path: Path to .py file
-            module_name: Name to give the module
-
-        Returns:
-            Imported module object or None if import failed
-        """
-        try:
-            spec = importlib.util.spec_from_file_location(module_name, file_path)
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                # Add to sys.modules to support cross-module imports
-                sys.modules[module_name] = module
-                spec.loader.exec_module(module)
-                return module
-        except Exception as e:
-            print(f"Failed to import {file_path}: {e}")
-            return None
 
     def _get_all_python_files(self, directory: Path) -> List[Path]:
         """
@@ -99,90 +116,73 @@ class CrossFileEquivalenceTester:
         Returns:
             Tuple of (all_passed, error_messages)
         """
-        errors = []
-        all_passed = True
-
-        # Temporarily add directories to sys.path for imports
-        original_dir_str = str(original_dir)
-        refactored_dir_str = str(refactored_dir)
-
-        # Save original sys.path
-        original_sys_path = sys.path.copy()
-        original_modules = set(sys.modules.keys())
-
-        try:
-            for file_path, func_names in test_functions.items():
-                # Construct module name from relative path
-                rel_path = Path(file_path).relative_to(original_dir)
-                module_name = str(rel_path.with_suffix("")).replace("/", ".")
-
-                # Import from original
-                sys.path.insert(0, original_dir_str)
-                original_file = original_dir / rel_path
-                original_module = self._import_module_from_path(
-                    original_file, f"original_{module_name}"
-                )
-
-                if not original_module:
-                    errors.append(f"Failed to import original {rel_path}")
-                    all_passed = False
-                    continue
-
-                # Clean up sys.modules for fresh import
-                new_modules = set(sys.modules.keys()) - original_modules
-                for mod in new_modules:
-                    if mod in sys.modules:
-                        del sys.modules[mod]
-
-                # Import from refactored
-                sys.path[0] = refactored_dir_str
-                refactored_file = refactored_dir / rel_path
-                refactored_module = self._import_module_from_path(
-                    refactored_file, f"refactored_{module_name}"
-                )
-
-                if not refactored_module:
-                    errors.append(f"Failed to import refactored {rel_path}")
-                    all_passed = False
-                    continue
-
-                # Compare each function
-                for func_name in func_names:
-                    original_func = getattr(original_module, func_name, None)
-                    refactored_func = getattr(refactored_module, func_name, None)
-
-                    if not original_func or not refactored_func:
-                        errors.append(f"Function '{func_name}' not found in {rel_path}")
-                        all_passed = False
-                        continue
-
-                    # Use the existing test infrastructure to compare
-                    # We'll read the source and use test_all_refactored_functions
-                    original_source = original_file.read_text()
-                    refactored_source = refactored_file.read_text()
-
-                    # Create a fake proposal description for this function
-                    proposal_desc = f"Extract common code from {func_name} and {func_name}"
-
-                    passed, func_errors = test_all_refactored_functions(
-                        original_source, refactored_source, proposal_desc
+        errors: List[str] = []
+        if not test_functions or not any(test_functions.values()):
+            return False, ["No functions selected; equivalence was not tested"]
+        roots = (original_dir, refactored_dir)
+        for file_path, function_names in test_functions.items():
+            relative_path = Path(file_path).relative_to(original_dir)
+            module_name = ".".join(relative_path.with_suffix("").parts)
+            original_source = (original_dir / relative_path).read_text()
+            for function_name in function_names:
+                try:
+                    adapter, callable_name, cases = prepare_target_cases(
+                        original_source, function_name
                     )
+                except (ValueError, SyntaxError) as error:
+                    errors.append(f"{relative_path}:{function_name}: {error}")
+                    continue
 
-                    if not passed:
-                        all_passed = False
-                        errors.extend(func_errors)
+                def execute_project(
+                    project: Path, args: Tuple[object, ...], kwargs: Dict[str, object]
+                ) -> FunctionExecutionResult:
+                    with _isolated_project_imports(project, roots):
+                        # Import and execute inside the same environment: function-local imports
+                        # must resolve against the version whose behavior is being measured.
+                        loaded_function = False
+                        module_namespace: Dict[str, object] = {}
 
-        finally:
-            # Restore sys.path
-            sys.path = original_sys_path
+                        def import_and_call(*call_args: object, **call_kwargs: object) -> object:
+                            nonlocal loaded_function, module_namespace
+                            module = importlib.import_module(module_name)
+                            module_namespace = module.__dict__
+                            if adapter:
+                                exec(adapter, module.__dict__)
+                            function = getattr(module, callable_name)
+                            if not callable(function):
+                                raise TypeError(f"{module_name}.{function_name} is not callable")
+                            loaded_function = True
+                            return function(*call_args, **call_kwargs)
 
-            # Clean up imported modules
-            new_modules = set(sys.modules.keys()) - original_modules
-            for mod in new_modules:
-                if mod in sys.modules:
-                    del sys.modules[mod]
+                        result = execute_callable(import_and_call, args, kwargs)
+                        if adapter:
+                            result.target_invoked = (
+                                module_namespace.get(callable_name + "_invoked", True) is not False
+                            )
+                        if not loaded_function:
+                            raise ValueError(
+                                f"Could not load {module_name}.{function_name}: {result.exception}; "
+                                "equivalence was not tested"
+                            )
+                        if callable(result.return_value):
+                            raise ValueError(
+                                "Cross-file returned callables require persistent import isolation; "
+                                "equivalence was not tested"
+                            )
+                        return result
 
-        return all_passed, errors
+                try:
+                    _, differences = compare_executions(
+                        lambda args, kwargs: execute_project(original_dir, args, kwargs),
+                        lambda args, kwargs: execute_project(refactored_dir, args, kwargs),
+                        cases,
+                    )
+                    errors.extend(
+                        f"{relative_path}:{function_name}: {diff}" for diff in differences
+                    )
+                except ValueError as error:
+                    errors.append(f"{relative_path}:{function_name}: {error}")
+        return not errors, errors
 
     def test_project(self, project_dir: str, verbose: bool = True) -> Tuple[int, int, List[str]]:
         """
@@ -239,11 +239,7 @@ class CrossFileEquivalenceTester:
                     # Write modified files
                     for file_path, content in modified_files.items():
                         # Make path relative to project_path
-                        try:
-                            rel_path = Path(file_path).relative_to(project_path)
-                        except ValueError:
-                            # If not relative, it's an absolute path - use filename only
-                            rel_path = Path(file_path).name
+                        rel_path = Path(file_path).resolve().relative_to(project_path.resolve())
 
                         file_full_path = refactored_copy / rel_path
                         file_full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,27 +252,24 @@ class CrossFileEquivalenceTester:
                     failed += 1
                     continue
 
-                # Extract function names from proposal
-                func_names = extract_function_names_from_proposal(proposal.description)
-
-                if not func_names:
-                    # No specific functions to test, consider it passed if it applied
-                    passed += 1
+                # Resolve affected callables in the original files, before generated imports
+                # and helpers shift source positions. Descriptions are presentation only.
+                try:
+                    original_sources = {
+                        Path(replacement.file_path or proposal.file_path)
+                        .resolve(): Path(replacement.file_path or proposal.file_path)
+                        .read_text()
+                        for replacement in proposal.replacements
+                    }
+                    selected = affected_functions(proposal, original_sources)
+                    test_functions = {
+                        str(original_copy / path.relative_to(project_path.resolve())): list(names)
+                        for path, names in selected.items()
+                    }
+                except (ValueError, SyntaxError, OSError) as error:
+                    failed += 1
+                    all_errors.append(f"Proposal {i}: equivalence was not tested: {error}")
                     continue
-
-                # Build test_functions dict: map file paths to function names
-                # We need to figure out which files contain these functions
-                test_functions = {}
-                for py_file in self._get_all_python_files(refactored_copy):
-                    source = py_file.read_text()
-                    for func_name in func_names:
-                        if f"def {func_name}(" in source:
-                            # Make path relative to refactored_copy for comparison
-                            rel_path = py_file.relative_to(refactored_copy)
-                            abs_original_path = original_copy / rel_path
-                            if str(abs_original_path) not in test_functions:
-                                test_functions[str(abs_original_path)] = []
-                            test_functions[str(abs_original_path)].append(func_name)
 
                 # Compare behavior
                 all_passed, errors = self._compare_project_behavior(

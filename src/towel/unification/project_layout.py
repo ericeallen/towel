@@ -16,18 +16,24 @@
 Utilities for understanding project/package layout to generate robust import paths
 for cross-file refactorings.
 
-This module is runtime-dependency-free and uses only the standard library.
+Python 3.10 uses the TOML backport; newer versions use the standard library.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
+import sys
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 
 def _load_pyproject(project_root: Path) -> Dict[str, Any]:
-    """Best-effort load of pyproject.toml with stdlib only.
+    """Best-effort load of pyproject.toml using the available TOML parser.
 
     Returns an empty dict if parsing fails or file does not exist.
     """
@@ -35,14 +41,12 @@ def _load_pyproject(project_root: Path) -> Dict[str, Any]:
     if not pyproject_path.exists():
         return {}
 
-    # Python 3.11+: tomllib in stdlib; earlier versions won't have it.
+    # Use the platform TOML parser (tomli on Python 3.10).
     try:
-        import tomllib
-
         with pyproject_path.open("rb") as f:
             return tomllib.load(f)
-    except Exception:
-        # Silently ignore - we don't want a hard runtime dependency
+    except (OSError, ValueError):
+        # Malformed or inaccessible configuration provides no layout information.
         return {}
 
 
@@ -57,6 +61,45 @@ def _is_package_dir(path: Path, pep420: bool) -> bool:
     if pep420:
         return True
     return (path / "__init__.py").exists()
+
+
+def _setuptools_default_src_root(project_root: Path, data: Mapping[str, object]) -> Optional[Path]:
+    """Recognize conventional setuptools src discovery without overriding configuration.
+
+    A directory named src alone is insufficient evidence: it may itself be an
+    importable package, or belong to an unconfigured source tree. Require valid
+    project metadata and a classic package under src. Explicit setuptools or
+    legacy configuration, and other build backends, retain their existing rules.
+    """
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return None
+    name = project.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    build = data.get("build-system", {})
+    if not isinstance(build, dict) or build.get("build-backend") not in (
+        None,
+        "setuptools.build_meta",
+        "setuptools.build_meta:__legacy__",
+    ):
+        return None
+    tool = data.get("tool", {})
+    if not isinstance(tool, dict):
+        return None
+    setuptools = tool.get("setuptools", {})
+    if not isinstance(setuptools, dict) or any(
+        key in setuptools for key in ("package-dir", "packages", "py-modules")
+    ):
+        return None
+    if (project_root / "setup.py").exists() or (project_root / "setup.cfg").exists():
+        return None
+    source_root = project_root / "src"
+    if not source_root.is_dir() or (source_root / "__init__.py").exists():
+        return None
+    if any(child.is_dir() and (child / "__init__.py").is_file() for child in source_root.iterdir()):
+        return source_root.resolve()
+    return None
 
 
 @dataclass
@@ -111,14 +154,12 @@ class ProjectLayout:
         start_resolved = start_path.resolve()
         start_dir = start_resolved.parent if start_resolved.is_file() else start_resolved
 
-        # If no explicit mapping was found, default to treating the entire project root
-        # as the import anchor. We intentionally DO NOT auto-add conventional directories
-        # like "src" or "lib" as source roots when pyproject mapping is absent, because
-        # test scenarios import modules with sys.path pointing at the project root.
-        # In that context, absolute module names should include the top-level directory
-        # component (e.g., "src.data_processor"), which fails if we strip it as a source root.
+        # Setuptools discovers classic packages under src when project metadata
+        # leaves package discovery implicit. Unconfigured trees and other build
+        # systems retain the project-root fallback rather than guessing layout.
         if not source_roots:
-            source_roots = [project_root]
+            inferred_root = _setuptools_default_src_root(project_root, data)
+            source_roots = [inferred_root if inferred_root is not None else project_root]
 
         # Prefer source roots that actually contain the starting directory. When none of the
         # discovered roots include the path we're analyzing (common for test fixtures copied
@@ -134,9 +175,33 @@ class ProjectLayout:
 
         if filtered_roots:
             source_roots = filtered_roots
-        elif start_dir != project_root:
-            project_root = start_dir
-            source_roots = [start_dir]
+        else:
+            # Fallback: try to map start_dir to an existing source root by matching directory structure
+            # This handles cases where we are running on a copy of the source tree (e.g. 'cleaned' dir)
+            best_candidate = None
+            max_match_len = 0
+
+            start_parts = start_dir.parts
+
+            for root in source_roots:
+                # Try to find the longest suffix of start_dir that exists under root
+                for i in range(len(start_parts)):
+                    suffix = Path(*start_parts[i:])
+                    if suffix.is_absolute():
+                        continue
+
+                    if (root / suffix).exists():
+                        match_len = len(start_parts) - i
+                        if match_len > max_match_len:
+                            max_match_len = match_len
+                            best_candidate = Path(*start_parts[:i])
+                        break
+
+            if best_candidate:
+                source_roots = [best_candidate]
+            elif start_dir != project_root:
+                project_root = start_dir
+                source_roots = [start_dir]
 
         return cls(
             project_root=project_root,

@@ -14,6 +14,7 @@ Usage:
 Environment:
   Looks for test_examples/*.py and compares proposals without applying changes.
 """
+
 from __future__ import annotations
 
 import os

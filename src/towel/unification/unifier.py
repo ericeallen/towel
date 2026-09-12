@@ -69,7 +69,10 @@ class Substitution:
             param_name: Name of the parameter
             bound_vars: List of bound variables the expression references (for function parameters)
         """
-        expr_str = ast.unparse(expr)
+        # Rendered Python is not an AST identity: on Python 3.9 a bare
+        # FormattedValue and its enclosing JoinedStr unparse identically.
+        # Preserve node kinds and structure, ignoring source locations.
+        expr_str = ast.dump(expr, include_attributes=False)
         key = (block_idx, expr_str)
         self.mappings[key] = param_name
 
@@ -89,7 +92,7 @@ class Substitution:
 
     def get_param_for_expr(self, block_idx: int, expr: ast.AST) -> Optional[str]:
         """Get the parameter name for an expression."""
-        expr_str = ast.unparse(expr)
+        expr_str = ast.dump(expr, include_attributes=False)
         return self.mappings.get((block_idx, expr_str))
 
     def is_function_param(self, param_name: str) -> bool:
@@ -1485,7 +1488,7 @@ class Unifier:
         canonical_params = [nodes[0].args.args[i].arg for i in range(num_params)]
 
         # Save old alpha-renaming mappings (in case of nested lambdas)
-        old_mappings = {}
+        old_mappings: Dict[Tuple[int, str], str] = {}
         try:
             # Set up alpha-renamings for each parameter position
             for param_idx in range(num_params):

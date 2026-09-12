@@ -44,6 +44,11 @@ from .assignment_analyzer import (
     _collect_bindings_and_reassignments,
 )
 from .project_layout import ProjectLayout
+from .semantic_safety import (
+    nested_bindings_escape,
+    requires_original_frame,
+    would_create_import_cycle,
+)
 from .block_signature import extract_block_signature, quick_filter
 from .models import (
     CodeBlockPair,
@@ -276,14 +281,16 @@ class UnificationRefactorEngine:
                 # Skip common directories to ignore
                 if any(
                     part.startswith(".") or part in ["__pycache__", "venv", "env", "node_modules"]
-                    for part in py_file.parts
+                    for part in py_file.relative_to(directory_path).parts
                 ):
                     continue
-                python_files.append(str(py_file))
+                if py_file.is_file() and not py_file.is_symlink():
+                    python_files.append(str(py_file))
         else:
             # Only find .py files in this directory
             for py_file in directory_path.glob("*.py"):
-                python_files.append(str(py_file))
+                if py_file.is_file() and not py_file.is_symlink():
+                    python_files.append(str(py_file))
 
         return sorted(python_files)
 
@@ -528,7 +535,7 @@ class UnificationRefactorEngine:
                     updated.func.id = self.new
                 return updated
 
-        return _CallRenamer(original_name, final_name).visit(node)
+        return cast(ast.AST, _CallRenamer(original_name, final_name).visit(node))
 
     @staticmethod
     def _scan_module_docstring_and_imports(lines: List[str]) -> Tuple[int, int]:
@@ -578,13 +585,23 @@ class UnificationRefactorEngine:
 
         return last_import_line, after_docstring
 
-    def _allocate_helper_name(self, file_path: str) -> str:
+    def _allocate_helper_name(
+        self,
+        file_path: str,
+        *,
+        class_context: bool = False,
+        related_paths: Sequence[str] = (),
+    ) -> str:
         """Return a unique helper name for the given canonical file."""
 
-        counter = self._helper_name_counters.get(file_path)
-        if counter is None:
-            counter = self._discover_helper_counter_seed(file_path)
-        helper_name = f"__extracted_func_{counter}"
+        counter = max(
+            self._helper_name_counters.get(file_path, 0),
+            *(self._discover_helper_counter_seed(path) for path in {file_path, *related_paths}),
+        )
+        # Python mangles double-underscore names in class bodies, including
+        # references to module helpers and inherited methods from another class.
+        prefix = "_extracted_func" if class_context else "__extracted_func"
+        helper_name = f"{prefix}_{counter}"
         self._helper_name_counters[file_path] = counter + 1
         return helper_name
 
@@ -596,7 +613,7 @@ class UnificationRefactorEngine:
         except Exception:
             return 0
 
-        pattern = re.compile(r"__extracted_func(?:_(\d+))?")
+        pattern = re.compile(r"(?<!\w)_{1,2}extracted_func(?:_(\d+))?(?!\w)")
         max_seen = -1
         for match in pattern.finditer(content):
             suffix = match.group(1)
@@ -1537,6 +1554,10 @@ class UnificationRefactorEngine:
         Returns:
             Refactoring proposal or None
         """
+        if requires_original_frame(pair.block1_nodes) or requires_original_frame(pair.block2_nodes):
+            self._debug_reject("frame_sensitive_block", pair)
+            return None
+
         # DEBUG logging
         import os
 
@@ -1590,6 +1611,12 @@ class UnificationRefactorEngine:
 
         method_info1 = self._get_method_context(func1, pair.class1_name)
         method_info2 = self._get_method_context(func2, pair.class2_name)
+
+        if (func1 is not None and nested_bindings_escape(func1, pair.block1_nodes)) or (
+            func2 is not None and nested_bindings_escape(func2, pair.block2_nodes)
+        ):
+            self._debug_reject("nested_binding_escapes", pair)
+            return None
 
         # (Removed specialized full-body extraction fast-path; reverting to generic pairing logic.)
 
@@ -1939,6 +1966,33 @@ class UnificationRefactorEngine:
         # Initialize working free_vars from block1's perspective (template block)
         free_vars = set(free_vars1) - parameterized_vars
 
+        # Module data can be rebound by callbacks between two reads. Passing
+        # it as a helper argument snapshots the value; retaining a global name
+        # can instead capture a local in another caller. Reject this case until
+        # extraction can represent deferred, scope-correct lookups.
+        for block, block_analyzer in (
+            (pair.block1_nodes, scope_analyzer1 or pair.scope_analyzer1),
+            (pair.block2_nodes, scope_analyzer2 or pair.scope_analyzer2),
+        ):
+            if block_analyzer is None or block_analyzer.root_scope is None:
+                continue
+            for statement in block:
+                for node in ast.walk(statement):
+                    if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                        continue
+                    binding = block_analyzer.identifier_bindings.get(
+                        node
+                    ) or block_analyzer.root_scope.bindings.get(node.id)
+                    if (
+                        binding is not None
+                        and binding.scope_id == block_analyzer.root_scope.scope_id
+                        and isinstance(
+                            binding.node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Name)
+                        )
+                    ):
+                        self._debug_reject("module_data_lookup", pair)
+                        return None
+
         # CRITICAL: Check if any free variables are declared global or nonlocal
         # If a free variable is global/nonlocal, we cannot parameterize it
         # because you cannot have a parameter that is also declared global/nonlocal
@@ -2192,6 +2246,10 @@ class UnificationRefactorEngine:
                     for cand_range, cand_nodes in self._extract_code_blocks(fn):
                         if (fpath, cand_range) in covered:
                             continue
+                        if requires_original_frame(cand_nodes):
+                            continue
+                        if nested_bindings_escape(fn, cand_nodes):
+                            continue
                         # Minimum size gate
                         start_line, end_line = cand_range
                         if (end_line - start_line + 1) < self.min_lines:
@@ -2207,6 +2265,25 @@ class UnificationRefactorEngine:
                         except Exception:
                             continue
                         if not subst2:
+                            continue
+                        # Unifying another occurrence may require a different,
+                        # more general helper. Its parameter numbers alone do
+                        # not identify the meanings of the existing helper's
+                        # arguments. Only reuse the helper when extraction from
+                        # this substitution produces the same body/signature.
+                        candidate_helper, candidate_order = HygienicExtractor().extract_function(
+                            template_block=pair.block1_nodes,
+                            substitution=subst2,
+                            free_variables=free_vars,
+                            enclosing_names=enclosing_names,
+                            is_value_producing=value_prod1,
+                            global_decls=globals_to_declare_in_extracted or None,
+                            nonlocal_decls=nonlocals_to_declare_in_extracted or None,
+                            function_name=func_def.name,
+                        )
+                        if candidate_order != param_order or ast.dump(candidate_helper) != ast.dump(
+                            func_def
+                        ):
                             continue
                         # Orphan check for candidate within its function body
                         indices = self._get_block_indices(fn, cand_nodes)
@@ -2421,6 +2498,25 @@ class UnificationRefactorEngine:
             # On any analyzer lookup issue, be conservative and proceed without special handling
             pass
 
+        participating_paths = {canonical_file} | {
+            replacement.file_path or canonical_file for replacement in replacements
+        }
+        if len(participating_paths) > 1 and any(
+            isinstance(node, ast.Global)
+            for path, function, *_ in all_functions
+            if path in participating_paths
+            for node in ast.walk(function)
+        ):
+            self._debug_reject("cross_module_global_declaration", pair)
+            return None
+
+        if would_create_import_cycle(
+            canonical_file,
+            {replacement.file_path or canonical_file for replacement in replacements},
+        ):
+            self._debug_reject("import_cycle", pair)
+            return None
+
         proposal = RefactoringProposal(
             file_path=canonical_file,
             extracted_function=func_def,
@@ -2477,8 +2573,17 @@ class UnificationRefactorEngine:
         # Determine helper names ONCE to avoid mismatches across files
         # Capture the original helper name before any renaming, and compute the final name
         original_helper_name = proposal.extracted_function.name
-        if original_helper_name == "__extracted_func":
-            proposal.extracted_function.name = self._allocate_helper_name(proposal.file_path)
+        class_context = bool(proposal.insert_into_class) or any(
+            replacement.class_name is not None for replacement in proposal.replacements
+        )
+        if original_helper_name == "__extracted_func" or (
+            class_context and re.fullmatch(r"__extracted_func(?:_\d+)?", original_helper_name)
+        ):
+            proposal.extracted_function.name = self._allocate_helper_name(
+                proposal.file_path,
+                class_context=class_context,
+                related_paths=list(replacements_by_file),
+            )
         elif proposal.insert_into_class and not original_helper_name.startswith("_"):
             # Preserve user-provided helper names but keep them non-public inside classes
             proposal.extracted_function.name = f"_{original_helper_name}"
@@ -2651,12 +2756,15 @@ class UnificationRefactorEngine:
                     common_dir = _P(
                         __import__("os").path.commonpath([str(from_path), str(to_path)])
                     )
+
                     layout = ProjectLayout.discover(
                         common_dir,
                         prefer_absolute_imports=self.prefer_absolute_imports,
                         pep420_namespace_packages=self.pep420_namespace_packages,
                     )
+
                     abs_mod = layout.module_name_for(from_path)
+
                     if abs_mod and layout.prefer_absolute_imports:
                         module_name = abs_mod
                     else:
@@ -2664,6 +2772,7 @@ class UnificationRefactorEngine:
                             module_name = from_path.stem
                         else:
                             module_name = abs_mod or from_path.stem
+
                     func_name = proposal.extracted_function.name
                     import_line = f"from {module_name} import {func_name}\n"
                     if not any(import_line.strip() == ln.strip() for ln in lines):
@@ -2672,6 +2781,8 @@ class UnificationRefactorEngine:
 
             modified_files[file_path] = "".join(lines)
 
+        for path, content in modified_files.items():
+            compile(content, path, "exec")
         return modified_files
 
     def _find_import_position(self, lines: List[str]) -> int:
@@ -2684,21 +2795,16 @@ class UnificationRefactorEngine:
         return line[: len(line) - len(line.lstrip())]
 
     def _find_insert_position(self, lines: List[str]) -> int:
-        """
-        Find position to insert extracted function at END of file.
+        """Place a helper before the first definition, after any leading imports.
 
-        This prevents line number shifts when multiple refactorings are applied,
-        making sequential refactorings more robust.
+        Helpers have no evaluated defaults or annotations. Defining them early
+        preserves availability to module-time calls and decorators.
         """
-        # Insert at the end of the file
-        # Find the last non-blank line
-        for i in range(len(lines) - 1, -1, -1):
-            if lines[i].strip():
-                # Insert after this line
-                return i + 1
-
-        # Empty file - insert at beginning
-        return 0
+        tree = ast.parse("".join(lines))
+        for statement in tree.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                return min([statement.lineno] + [d.lineno for d in statement.decorator_list]) - 1
+        return len(lines)
 
     def _find_class_insert_position(
         self, source: str, class_name: str
@@ -2883,6 +2989,7 @@ class UnificationRefactorEngine:
             # Idempotence guard: if no change, stop to avoid churn
             if new_code == current_code:
                 break
+            compile(new_code, file_path, "exec")
             current_code = new_code
             num_applied += 1
             descriptions.append(proposal.description)
@@ -2927,14 +3034,24 @@ class UnificationRefactorEngine:
 
         input_path = Path(input_dir)
         output_path = Path(output_dir)
+        resolved_input = input_path.resolve()
+        resolved_output = output_path.resolve()
+        if resolved_input != resolved_output:
+            if (
+                resolved_input in resolved_output.parents
+                or resolved_output in resolved_input.parents
+            ):
+                raise ValueError("Input and output must not contain one another")
+            if output_path.exists() and any(output_path.iterdir()):
+                raise ValueError("Output directory must be empty")
 
         # Create output directory
         output_path.mkdir(parents=True, exist_ok=True)
 
         # Copy all files to output directory first (skip if same path)
-        if input_path != output_path:
+        if resolved_input != resolved_output:
             for item in input_path.rglob("*"):
-                if item.is_file():
+                if item.is_file() and not item.is_symlink():
                     rel_path = item.relative_to(input_path)
                     output_file = output_path / rel_path
                     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -2999,6 +3116,9 @@ class UnificationRefactorEngine:
                 modified_files = result
                 changed_paths = list(modified_files.keys())
 
+            # Validate the complete proposal before writing its first file.
+            for fpath, content in modified_files.items():
+                compile(content, fpath, "exec")
             for fpath, content in modified_files.items():
                 with open(fpath, "w", encoding="utf-8") as fh:
                     fh.write(content)
@@ -3171,7 +3291,16 @@ class UnificationRefactorEngine:
             pass
 
 
-def _refactor_engine_helper_2(self, all_functions, block_pairs, class_infos, progress, verbose):
+def _refactor_engine_helper_2(
+    self: UnificationRefactorEngine,
+    all_functions: List[
+        Tuple[str, FunctionNode, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]
+    ],
+    block_pairs: List[CodeBlockPair],
+    class_infos: List[ClassInfo],
+    progress: str,
+    verbose: bool,
+) -> List[RefactoringProposal]:
     return self._evaluate_pairs_serial(
         block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
     )

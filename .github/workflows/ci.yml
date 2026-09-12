@@ -2,96 +2,45 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen black --check src/towel tests scripts
+      - run: uv run --frozen flake8 src/towel scripts
+      - run: uv run --frozen mypy
+      - run: uv run --frozen bandit -r src/towel -ll
+      - run: uv run --frozen python -m build
+
   tests:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: [ '3.9', '3.10', '3.11', '3.12', '3.13' ]
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install .[dev] pytest coverage
-      - name: Lint (flake8)
-        run: |
-          flake8 --max-line-length 100 --extend-ignore E501,W503,E203,F541 --exclude "venv,env,__pycache__,tests" src/towel/ scripts/
-      - name: Type check (mypy)
-        run: |
-          mypy
-      - name: Run tests with coverage
-        run: |
-          coverage run -m pytest -q || coverage run -m pytest
-          coverage report -m
-          coverage xml
-      - name: Prepare coverage artifacts
-        run: |
-          cp .coverage .coverage-${{ matrix.python-version }} || true
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen coverage run -m pytest -q
+      - run: uv run --frozen coverage report --fail-under=85
+      - run: uv run --frozen coverage xml
+      - uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.python-version }}
-          path: |
-            coverage.xml
-            .coverage-${{ matrix.python-version }}
-
-  coverage-aggregate:
-    runs-on: ubuntu-latest
-    needs: tests
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Download coverage artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: coverage_artifacts
-      - name: Combine coverage
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install coverage xmltodict
-          set -e
-          # Convert all XMLs back into .coverage data isn't straightforward; instead, produce a merged XML by unioning per-file stats.
-          # Use coverage xml combining via 'coverage combine' if raw data exists. If only XML exists, keep them as artifacts.
-          if compgen -G "coverage_artifacts/**/.coverage-*" > /dev/null; then
-            # If .coverage files are present, combine them
-            find coverage_artifacts -name ".coverage-*" -exec cp {} . \;
-            python -m coverage combine || true
-            python -m coverage report -m || true
-            python -m coverage xml -o coverage-merged.xml
-          else
-            echo "No .coverage data files found; keeping per-version XMLs."
-            echo "Consider enabling 'coverage run --parallel-mode' to produce .coverage.* files for robust merging."
-          fi
-          ls -R coverage_artifacts || true
-          ls -la || true
-      - name: Enforce merged coverage threshold (85%)
-        if: ${{ hashFiles('coverage-merged.xml') != '' }}
-        run: |
-          # Requires combined .coverage data present in workspace
-          python -m coverage report --fail-under=85
-      - name: Upload merged artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-all
-          path: |
-            coverage_artifacts
-            coverage-merged.xml
-      - name: Upload to Codecov (optional)
-        uses: codecov/codecov-action@v4
-        with:
-          files: |
-            coverage-merged.xml
-            coverage_artifacts/**/coverage.xml
-          fail_ci_if_error: false
-          verbose: true
+          path: coverage.xml

@@ -10,14 +10,120 @@ ensuring the refactoring system handles all edge cases correctly.
 # =============================================================================
 
 
+def __extracted_func_9(__param_0):
+    data = [__param_0, __param_0 + 1, __param_0 + 2]
+    data = data + list((__param_0, __param_0 + 1))
+    data = data + list({__param_0, __param_0 + 1})
+    data = data + list({'a': __param_0, 'b': __param_0 + 1}.values())
+    return sum(data)
+
+
+def __extracted_func_8(__param_0):
+    result = 0
+    if (n := len(__param_0)) > 5:
+        result += n
+    if (total := sum(__param_0)) > 10:
+        result += total
+    return result
+
+
+def __extracted_func_7(__param_0, __param_1, helper):
+    result = helper(__param_0, __param_1)
+    result += helper(__param_0, __param_1, 20)
+    result += helper(__param_0, __param_1, c=30)
+    result += helper(__param_0, __param_1, 40, 50)
+    result += helper(__param_0, __param_1, d=60)
+    return result
+
+
+def __extracted_func_6(__param_0):
+    result = __param_0[0]
+    result += __param_0[-1]
+    result += sum(__param_0[1:3])
+    result += sum(__param_0[::2])
+    result += sum(__param_0[::-1])
+    return result
+
+
+def __extracted_func_5(__param_0, __param_1):
+    result = __param_0 & __param_1
+    result = result | __param_1
+    result = result ^ __param_1
+    result = ~result
+    result = result << 1
+    result = result >> 1
+    return result
+
+
+def __extracted_func_4(__param_0, __param_1):
+    result = __param_0 + __param_1
+    result = result - __param_1
+    result = result * 2
+    result = result / 2
+    result = result // 2
+    result = result % 3
+    result = result ** 2
+    return result
+
+
+def __extracted_func_3(__param_0):
+    result = __param_0 + 42
+    result = result + 3.14
+    result = result + 1j
+    result = result + len('string')
+    result = result + len(b'bytes')
+    result = result + (1 if True else 0)
+    result = result + (0 if None else 1)
+    return result
+
+
+def __extracted_func_2(__param_0):
+    result = __param_0
+    result += 10
+    result -= 5
+    result *= 2
+    result /= 2
+    result //= 2
+    result %= 3
+    result **= 2
+    return result
+
+
+def __extracted_func_1(__param_0, __param_1):
+    result = 1 if __param_0 == __param_1 else 0
+    result += 1 if __param_0 != __param_1 else 0
+    result += 1 if __param_0 < __param_1 else 0
+    result += 1 if __param_0 > __param_1 else 0
+    result += 1 if __param_0 <= __param_1 else 0
+    result += 1 if __param_0 >= __param_1 else 0
+    result += 1 if __param_0 is __param_1 else 0
+    result += 1 if __param_0 is not __param_1 else 0
+    return result
+
+
+def __extracted_func_0(__param_0):
+    result = __param_0
+    try:
+        result = result / __param_0
+    except ZeroDivisionError:
+        result = 0
+    except Exception as e:
+        result = -1
+    else:
+        result += 10
+    finally:
+        result += 1
+    return result
+
+
 def literals_a(x):
     """Test all literal types."""
-    return __extracted_func_4(x)
+    return __extracted_func_3(x)
 
 
 def literals_b(y):
     """Test all literal types."""
-    return __extracted_func_4(y)
+    return __extracted_func_3(y)
 
 
 # =============================================================================
@@ -27,20 +133,12 @@ def literals_b(y):
 
 def collections_a(x):
     """Test collection literal construction."""
-    data = [x, x + 1, x + 2]  # list
-    data = data + list((x, x + 1))  # tuple
-    data = data + list({x, x + 1})  # set
-    data = data + list({"a": x, "b": x + 1}.values())  # dict
-    return sum(data)
+    return __extracted_func_9(x)
 
 
 def collections_b(y):
     """Test collection literal construction."""
-    info = [y, y + 1, y + 2]  # list
-    info = info + list((y, y + 1))  # tuple
-    info = info + list({y, y + 1})  # set
-    info = info + list({"a": y, "b": y + 1}.values())  # dict
-    return sum(info)
+    return __extracted_func_9(y)
 
 
 # =============================================================================
@@ -50,12 +148,12 @@ def collections_b(y):
 
 def arithmetic_a(x, y):
     """Test all arithmetic operators."""
-    return __extracted_func_5(x, y)
+    return __extracted_func_4(x, y)
 
 
 def arithmetic_b(a, b):
     """Test all arithmetic operators."""
-    return __extracted_func_5(a, b)
+    return __extracted_func_4(a, b)
 
 
 # =============================================================================
@@ -65,12 +163,12 @@ def arithmetic_b(a, b):
 
 def comparisons_a(x, y):
     """Test all comparison operators."""
-    return __extracted_func_2(x, y)
+    return __extracted_func_1(x, y)
 
 
 def comparisons_b(a, b):
     """Test all comparison operators."""
-    return __extracted_func_2(a, b)
+    return __extracted_func_1(a, b)
 
 
 # =============================================================================
@@ -101,12 +199,12 @@ def logical_b(a, b):
 
 def bitwise_a(x, y):
     """Test bitwise operators."""
-    return __extracted_func_6(x, y)
+    return __extracted_func_5(x, y)
 
 
 def bitwise_b(a, b):
     """Test bitwise operators."""
-    return __extracted_func_6(a, b)
+    return __extracted_func_5(a, b)
 
 
 # =============================================================================
@@ -116,12 +214,12 @@ def bitwise_b(a, b):
 
 def augmented_a(x):
     """Test augmented assignment operators."""
-    return __extracted_func_3(x)
+    return __extracted_func_2(x)
 
 
 def augmented_b(y):
     """Test augmented assignment operators."""
-    return __extracted_func_3(y)
+    return __extracted_func_2(y)
 
 
 # =============================================================================
@@ -158,12 +256,12 @@ def unpacking_b(items):
 
 def subscript_a(data):
     """Test subscript and slice operations."""
-    return __extracted_func_7(data)
+    return __extracted_func_6(data)
 
 
 def subscript_b(items):
     """Test subscript and slice operations."""
-    return __extracted_func_7(items)
+    return __extracted_func_6(items)
 
 
 # =============================================================================
@@ -182,12 +280,18 @@ class TestClass:
 
 def attributes_a(obj):
     """Test attribute access."""
-    return __extracted_func_0(obj)
+    result = obj.value
+    result += obj.data[0]
+    result += obj.get_value()
+    return result
 
 
 def attributes_b(thing):
     """Test attribute access."""
-    return __extracted_func_0(thing)
+    output = thing.value
+    output += thing.data[0]
+    output += thing.get_value()
+    return output
 
 
 # =============================================================================
@@ -201,12 +305,12 @@ def helper(a, b, c=10, *args, **kwargs):
 
 def calls_a(x, y):
     """Test various function call patterns."""
-    return __extracted_func_8(x, y, helper)
+    return __extracted_func_7(x, y, helper)
 
 
 def calls_b(a, b):
     """Test various function call patterns."""
-    return __extracted_func_8(a, b, helper)
+    return __extracted_func_7(a, b, helper)
 
 
 # =============================================================================
@@ -380,12 +484,12 @@ def fstring_b(a, b):
 
 def exceptions_a(x):
     """Test exception handling."""
-    return __extracted_func_1(x)
+    return __extracted_func_0(x)
 
 
 def exceptions_b(y):
     """Test exception handling."""
-    return __extracted_func_1(y)
+    return __extracted_func_0(y)
 
 
 # =============================================================================
@@ -427,12 +531,12 @@ def context_mgr_b(y):
 
 def walrus_a(data):
     """Test walrus operator."""
-    return __extracted_func_9(data)
+    return __extracted_func_8(data)
 
 
 def walrus_b(items):
     """Test walrus operator."""
-    return __extracted_func_9(items)
+    return __extracted_func_8(items)
 
 
 # =============================================================================
@@ -482,12 +586,18 @@ def short_circuit_b(a, b):
 
 def nested_a(data):
     """Test nested data structure access."""
-    return __extracted_func_0(data[0][0])
+    result = data[0][0]
+    result += data[1]["key"]
+    result += data[2][0][1]
+    return result
 
 
 def nested_b(items):
     """Test nested data structure access."""
-    return __extracted_func_0(items[0][0])
+    output = items[0][0]
+    output += items[1]["key"]
+    output += items[2][0][1]
+    return output
 
 
 # =============================================================================
@@ -543,12 +653,18 @@ def starred_b(items):
 
 def membership_a(x, data):
     """Test membership operators."""
-    return __extracted_func_0(1 if x in data else 0)
+    result = 1 if x in data else 0
+    result += 1 if x not in data else 0
+    result += 1 if "key" in {"key": x} else 0
+    return result
 
 
 def membership_b(y, items):
     """Test membership operators."""
-    return __extracted_func_0(1 if y in items else 0)
+    output = 1 if y in items else 0
+    output += 1 if y not in items else 0
+    output += 1 if "key" in {"key": y} else 0
+    return output
 
 
 # =============================================================================
@@ -558,12 +674,18 @@ def membership_b(y, items):
 
 def identity_a(x, y):
     """Test identity operators."""
-    return __extracted_func_0(1 if x is None else 0)
+    result = 1 if x is None else 0
+    result += 1 if x is not None else 0
+    result += 1 if x is y else 0
+    return result
 
 
 def identity_b(a, b):
     """Test identity operators."""
-    return __extracted_func_0(1 if a is None else 0)
+    output = 1 if a is None else 0
+    output += 1 if a is not None else 0
+    output += 1 if a is b else 0
+    return output
 
 
 # =============================================================================
@@ -585,128 +707,3 @@ def complex_expr_b(a, b, items):
     output += len([i for i in items if a < i < b])
     output += sum(map(lambda i: i**2, filter(lambda i: i > 0, items)))
     return output
-
-
-def __extracted_func_0(__param_0):
-    result = __param_0.value
-    result += __param_0.data[0]
-    result += __param_0.get_value()
-    return result
-
-
-def __extracted_func_1(__param_0):
-    result = __param_0
-    try:
-        result /= __param_0
-    except ZeroDivisionError:
-        result = 0
-    except Exception as e:
-        result = -1
-    else:
-        result += 10
-    finally:
-        result += 1
-    return result
-
-
-def __extracted_func_2(__param_0, __param_1):
-    result = 1 if __param_0 == __param_1 else 0
-    result += 1 if __param_0 != __param_1 else 0
-    result += 1 if __param_0 < __param_1 else 0
-    result += 1 if __param_0 > __param_1 else 0
-    result += 1 if __param_0 <= __param_1 else 0
-    result += 1 if __param_0 >= __param_1 else 0
-    result += 1 if __param_0 is __param_1 else 0
-    result += 1 if __param_0 is not __param_1 else 0
-    return result
-
-
-def __extracted_func_3(__param_0):
-    result = __param_0
-    result += 10
-    result -= 5
-    result *= 2
-    result /= 2
-    result //= 2
-    result %= 3
-    result **= 2
-    return result
-
-
-def __extracted_func_4(__param_0):
-    result = __param_0 + 42
-    result += 3.14
-    result += 1j
-    result += len('string')
-    result += len(b'bytes')
-    result += 1 if True else 0
-    result += 0 if None else 1
-    return result
-
-
-def __extracted_func_5(__param_0, __param_1):
-    result = __param_0 + __param_1
-    result -= __param_1
-    result *= 2
-    result /= 2
-    result //= 2
-    result %= 3
-    result **= 2
-    return result
-
-
-def __extracted_func_6(__param_0, __param_1):
-    result = __param_0 & __param_1
-    result |= __param_1
-    result ^= __param_1
-    result = ~result
-    result <<= 1
-    result >>= 1
-    return result
-
-
-def __extracted_func_7(__param_0):
-    result = __param_0[0]
-    result += __param_0[-1]
-    result += sum(__param_0[1:3])
-    result += sum(__param_0[::2])
-    result += sum(__param_0[::-1])
-    return result
-
-
-def __extracted_func_8(__param_0, __param_1, helper):
-    result = helper(__param_0, __param_1)
-    result += helper(__param_0, __param_1, 20)
-    result += helper(__param_0, __param_1, c=30)
-    result += helper(__param_0, __param_1, 40, 50)
-    result += helper(__param_0, __param_1, d=60)
-    return result
-
-
-def __extracted_func_9(__param_0):
-    result = 0
-    if (n := len(__param_0)) > 5:
-        result += n
-    if (total := sum(__param_0)) > 10:
-        result += total
-    return result
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

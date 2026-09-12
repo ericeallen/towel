@@ -19,38 +19,30 @@ class TestUnifierWithAndNamedExpr(unittest.TestCase):
         self.unifier = Unifier(max_parameters=5, parameterize_constants=True)
 
     def test_unify_with_optional_vars_alpha(self) -> None:
-        b1 = _parse_block(
-            """
+        b1 = _parse_block("""
 result = None
 with open(path) as a:
     result = a.read()
 return result
-"""
-        )
-        b2 = _parse_block(
-            """
+""")
+        b2 = _parse_block("""
 result = None
 with open(path) as alias:
     result = alias.read()
 return result
-"""
-        )
+""")
         res = self.unifier.unify_blocks([b1, b2], [{}, {}])
         self.assertIsNotNone(res)
 
     def test_unify_named_expr_alpha(self) -> None:
-        b1 = _parse_block(
-            """
+        b1 = _parse_block("""
 if (t := get()):
     x = t
-"""
-        )
-        b2 = _parse_block(
-            """
+""")
+        b2 = _parse_block("""
 if (temp := get()):
     x = temp
-"""
-        )
+""")
         # NamedExpr handling is conservative in current unifier; ensure it doesn't crash
         _ = self.unifier.unify_blocks([b1, b2], [{}, {}])
 
