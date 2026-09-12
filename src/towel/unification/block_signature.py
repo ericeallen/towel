@@ -14,22 +14,17 @@
 
 """Conservative block signature utilities used for cheap pre-filtering.
 
-This rollback version intentionally omits aggressive heuristics and telemetry.
-Only very low-risk structural gates are applied:
-  1. Same statement count
-  2. try/with presence alignment
-  3. Matching first and last statement types
-
-Anything passing these gates is considered for full unification. All other
-behavior (ratio/histogram/simhash) has been removed to restore baseline
-proposal counts and prevent false negatives introduced by over‑filtering.
+Signatures retain the structural and count gates used by quick_filter. Exact
+statement-count and try/with gates also provide a conservative candidate index;
+name/call count tolerances and optional endpoint checks remain in quick_filter.
+Indexing therefore changes comparison cost, not the set of accepted candidates.
 """
 
 from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict
 
 IDENT_COUNT_TOLERANCE = 2
 
@@ -94,6 +89,20 @@ def extract_block_signature(block: List[ast.AST]) -> BlockSignature:
     )
 
 
+BlockBucketKey = Tuple[int, bool, bool]
+
+
+def signature_bucket_key(signature: BlockSignature) -> BlockBucketKey:
+    """Return exact gates that every quick_filter-compatible pair must share.
+
+    Endpoint statement types intentionally remain outside this key: an empty
+    stmt_seq is a wildcard in the public quick_filter compatibility contract.
+    Name and call count tolerances are not equivalence relations and likewise
+    must not be partitioned into disjoint buckets.
+    """
+    return signature.stmt_count, signature.has_with, signature.has_try
+
+
 def quick_filter(sig1: BlockSignature, sig2: BlockSignature) -> bool:
     """Return True if the pair should be considered for unification.
 
@@ -116,7 +125,9 @@ def quick_filter(sig1: BlockSignature, sig2: BlockSignature) -> bool:
     return True
 
 
-def evaluate_signature(sig1: BlockSignature, sig2: BlockSignature) -> Tuple[bool, Dict[str, Any]]:
+def evaluate_signature(
+    sig1: BlockSignature, sig2: BlockSignature
+) -> Tuple[bool, Dict[str, object]]:
     """Minimal compatibility wrapper retained so refactor_engine telemetry calls
     do not break. Returns (decision, empty_info)."""
     return quick_filter(sig1, sig2), {}

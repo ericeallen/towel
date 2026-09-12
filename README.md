@@ -2,11 +2,11 @@
 
 Towel finds repeated Python code using unification and proposes helper-function extractions.
 
-**Release status: experimental.** Refactoring Python can change behavior in ways that static analysis and sampled tests do not detect. Preview first, review the diff, and run the affected project's tests before adopting generated code. See [the release audit](docs/OPEN_SOURCE_AUDIT.md) for verified results and remaining limitations. Existing version metadata is retained until a maintainer chooses the next release.
+**Release status: experimental.** Refactoring Python can change behavior in ways that static analysis and sampled tests do not detect. Preview first, review the diff, and run the affected project's tests before adopting generated code. See [the release audit](docs/OPEN_SOURCE_AUDIT.md) for verified results and remaining limitations. The prepared release candidate is `1.1.0a1`; publication has not been performed.
 
 ## Install
 
-Python 3.10 or later is supported. Python 3.11+ uses the standard library; Python 3.10 additionally installs `tomli` to read project layouts. Optional `tqdm` provides progress bars.
+Python 3.11 is the minimum. The test matrix covers Python 3.11–3.13. Local verification runs on macOS; CI is configured for Linux. Filesystem application requires POSIX semantics. The runtime uses the standard library. Optional `tqdm` provides progress bars.
 
 ```bash
 python -m pip install .
@@ -32,7 +32,11 @@ towel dry path/to/project path/to/project --non-interactive
 towel dry example.py cleaned.py --non-interactive --max-iterations 10
 ```
 
-A separate output must not already exist or overlap the input. Cancellation leaves the filesystem unchanged. Symlinked Python files are excluded from directory analysis. The API accepts an empty output directory for fixture and integration workflows. Multi-file writes are validated for Python syntax before the first write, but are not a transactional filesystem operation.
+A separate output must not already exist or overlap the input. Cancellation leaves the filesystem unchanged. Symlinked Python files are excluded from directory analysis. The API accepts an empty output directory for fixture and integration workflows. Complete changes are staged and checked before the first write. Each file is replaced atomically; caught application failures roll back, and interrupted batches retain a recovery journal. Readers can observe a partially applied batch. Keep exclusive write access to the project and its parent while applying or recovering: snapshot checks detect stale files but cannot prevent a noncooperating editor from writing in the final check/replace interval.
+
+To roll back an interrupted batch, use `towel recover /path/to/.towel-transaction-active`. Recovery refuses detected conflicting edits and keeps the journal for resolution. Review local journals before recovery; they contain original source bytes. Do not delete a journal before resolving the interrupted operation. Initial out-of-place copying is staged separately so copy errors do not leave a partial output.
+
+For detailed conservative rejection reasons, set `DEBUG_PROPOSAL_REJECTIONS=1` when running preview.
 
 `towel-dry` and `towel-preview` are compatibility entry points. `python scripts/dry` delegates to the same installed CLI. Run `towel dry --help` for import-layout, iteration, and progress options.
 
@@ -40,9 +44,9 @@ A separate output must not already exist or overlap the input. Cancellation leav
 
 The pipeline parses modules, analyzes scopes, collects functions and classes, compares candidate blocks, and constructs extraction proposals. It supports same-file and cross-file candidates, parameter differences, return propagation, and selected class-method extractions.
 
-The refactoring pipeline preserves the original Python operators. The legacy `ast_normalizer` utilities remain available for compatibility, but can change Python behavior and are not used by this pipeline. Generator/suspension operations and frame-sensitive calls such as `locals()` are conservatively rejected. Nested blocks that bind names used outside the block are rejected until full control-flow liveness is supported. Static local import cycles and cross-module global declarations are rejected. This reduces the number of proposals rather than claiming an unsupported transformation is safe.
+The refactoring pipeline preserves the original Python operators. The legacy `ast_normalizer` utilities remain available with deprecation warnings for compatibility, but can change Python behavior and are not used by this pipeline. Generator/suspension operations and frame-sensitive calls such as `locals()` are conservatively rejected. Nested blocks that bind names used outside the block are rejected until full control-flow liveness is supported. Static local import cycles and cross-module global declarations are rejected. This reduces the number of proposals rather than claiming an unsupported transformation is safe.
 
-Dynamic imports, reflection, arbitrary callbacks, runtime rebinding, metaclasses, and external side effects limit what can be established statically. The analysis cache checks source contents between calls. Analysis and the test import-isolation harness are not designed for concurrent threads sharing interpreter state.
+Dynamic imports, reflection, arbitrary callbacks, runtime rebinding, metaclasses, and external side effects limit what can be established statically. Each engine owns a bounded analysis session with content checks and isolated AST snapshots. The test import-isolation harness and an individual engine instance require sequential use. Candidates involving detected namespace rebinding, frame inspection, or comprehension assignment expressions are rejected; opaque external reflection and rebinding remain outside the supported model.
 
 ## Helper names
 
@@ -54,7 +58,7 @@ The command prints a prompt for manual use with an assistant; it does not call a
 
 ## Development and verification
 
-Use Python 3.13 for the shared formatting and typing gates. The lockfile also resolves test dependencies for the supported older interpreters. The minimum is Python 3.10 so the development toolchain can use patched releases.
+Use Python 3.13 for the shared formatting and typing gates. The lockfile also resolves test dependencies for the supported older interpreters. Python 3.11 is the minimum supported interpreter.
 
 ```bash
 uv sync --frozen --extra dev

@@ -31,6 +31,10 @@ if TYPE_CHECKING:
     from .scope_analyzer import Scope
 
 
+class UnsupportedExtraction(ValueError):
+    """A valid source construct cannot be represented by this extractor."""
+
+
 class HygienicExtractor:
     """
     Extract code into a function while maintaining hygiene and
@@ -359,6 +363,10 @@ class HygienicExtractor:
             # Non-value-producing extraction
             result_stmt = ast.Expr(value=call)
 
+        # Arguments may refer to expressions owned by the substitution. Detach
+        # them before location repair, and before returning a mutable AST to a
+        # caller that may subsequently edit it.
+        result_stmt = copy.deepcopy(result_stmt)
         ast.fix_missing_locations(result_stmt)
         return result_stmt
 
@@ -673,7 +681,9 @@ class HygienicExtractor:
                     else:
                         self._mark_shadowed(node.target.id)
                 if not isinstance(new_target, (ast.Name, ast.Attribute, ast.Subscript)):
-                    raise ValueError("Annotated assignment requires a single assignable target")
+                    raise UnsupportedExtraction(
+                        "Annotated assignment requires a single assignable target"
+                    )
                 return ast.AnnAssign(
                     target=new_target,
                     annotation=node.annotation,

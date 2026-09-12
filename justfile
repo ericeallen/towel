@@ -154,24 +154,16 @@ regenerate-baseline:
 
 # Bump project version in pyproject.toml
 bump-version VERSION:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    V="{{VERSION}}"
-    if [[ ! ${V} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "Error: VERSION must be semantic version (e.g., 0.5.3)"
-        exit 2
-    fi
-    echo "Bumping version to ${V}..."
-    # Update version in pyproject.toml (replace first matching line)
-    tmpfile=$(mktemp)
-    awk -v ver="${V}" 'BEGIN{replaced=0} { if (!replaced && $0 ~ /^version = \".*\"/) { sub(/version = \".*\"/, "version = \"" ver "\""); replaced=1 } print }' pyproject.toml > "$tmpfile"
-    mv "$tmpfile" pyproject.toml
-    echo "✓ Version updated in pyproject.toml"
+    .venv/bin/python scripts/set_version.py {{quote(VERSION)}}
+    uv lock
+    uv sync --frozen --extra dev
 
 # Prepare local artifacts; publication and tagging are separate maintainer actions.
-release VERSION: check test
-    just bump-version {{VERSION}}
-    source .venv/bin/activate && python -m build
+release VERSION:
+    just bump-version {{quote(VERSION)}}
+    just check
+    just test
+    .venv/bin/python -m build
     @echo "Local distributions built. Review the audit and artifacts before publication."
 
 # Run tests with coverage report
@@ -241,7 +233,7 @@ verify-examples:
 reset-examples:
     @echo "Restoring all example files to original state..."
     @cp .templates/*.py test_examples/
-    @echo "✓ All 18 example files reset to original state"
+    @echo "✓ Example files restored from templates"
 
 # === CI/CD Commands ===
 
@@ -252,7 +244,7 @@ ci: test check
 
 # Build package
 build:
-    python3 -m build
+    .venv/bin/python -m build
 
 # === Help ===
 

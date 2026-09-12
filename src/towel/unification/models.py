@@ -110,6 +110,7 @@ class RefactoringProposal:
     insert_into_function: Optional[str] = None
     method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
     method_param_name: Optional[str] = None
+    source_digests: Tuple[Tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         """Coerce legacy tuple replacements into :class:`Replacement` instances."""

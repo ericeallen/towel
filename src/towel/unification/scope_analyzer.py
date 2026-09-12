@@ -17,9 +17,18 @@ Analyze identifier bindings and scopes in Python code.
 """
 
 import ast
-from typing import Callable, Dict, Set, List, Optional, Tuple, Iterable, Union
+from typing import Callable, Dict, Set, List, Optional, Tuple, Iterable, Union, FrozenSet
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
+
+
+@dataclass(frozen=True)
+class ExternalBindingHazards:
+    """Module-wide binding hazards, immutable after lexical analysis completes."""
+
+    rebound: FrozenSet[Tuple[int, str]]
+    unresolved_nonlocal: bool
+    reflective: bool
 
 
 @dataclass
@@ -72,21 +81,6 @@ def _iter_argument_names(args: ast.arguments) -> Iterable[str]:
         yield arg.arg
 
 
-def _visit_node_and_iterables(
-    visitor: ast.NodeVisitor, first: ast.AST, rest: Iterable[ast.AST]
-) -> None:
-    visitor.visit(first)
-    for expr in rest:
-        visitor.visit(expr)
-
-
-def _visit_comprehension_generators(
-    visitor: ast.NodeVisitor, generators: List[ast.comprehension]
-) -> None:
-    for gen in generators:
-        visitor.visit(gen)
-
-
 class ScopeAnalyzer(ast.NodeVisitor):
     """
     Analyze scopes and identifier bindings in an AST.
@@ -96,6 +90,8 @@ class ScopeAnalyzer(ast.NodeVisitor):
     """
 
     def __init__(self) -> None:
+        self._external_binding_hazards: Optional[ExternalBindingHazards] = None
+        self.analyzed_tree: Optional[ast.AST] = None
         self.scope_counter = 0
         self.current_scope: Optional[Scope] = None
         self.root_scope: Optional[Scope] = None
@@ -116,10 +112,57 @@ class ScopeAnalyzer(ast.NodeVisitor):
 
     def analyze(self, tree: ast.AST) -> Scope:
         """Analyze an AST and return the root scope."""
+        self._external_binding_hazards = None
+        self.node_scopes.clear()
+        self.identifier_bindings.clear()
+        self.global_vars.clear()
+        self.nonlocal_vars.clear()
+        self._free_var_cache.clear()
+        self.analyzed_tree = tree
         self.root_scope = self._create_scope(None)
         self.current_scope = self.root_scope
         self.visit(tree)
+        self._external_binding_hazards = self._summarize_external_binding_hazards()
         return self.root_scope
+
+    @property
+    def external_binding_hazards(self) -> Optional[ExternalBindingHazards]:
+        return self._external_binding_hazards
+
+    def _summarize_external_binding_hazards(self) -> ExternalBindingHazards:
+        root = self.root_scope
+        assert root is not None
+        scopes = {root.scope_id: root}
+        scopes.update((item.scope_id, item) for item in self.node_scopes.values())
+        rebound: Set[Tuple[int, str]] = set()
+        unresolved = False
+        for names in self.global_vars.values():
+            rebound.update((root.scope_id, name) for name in names)
+        for scope_id, names in self.nonlocal_vars.items():
+            declaring = scopes.get(scope_id)
+            for name in names:
+                binding = declaring.parent.lookup(name) if declaring and declaring.parent else None
+                if binding is None:
+                    unresolved = True
+                else:
+                    rebound.add((binding.scope_id, name))
+
+        # Include top-level statements, not just declarations retained as bindings.
+        reflective = False
+        assert self.analyzed_tree is not None
+        for node in ast.walk(self.analyzed_tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id in {"globals", "locals", "exec", "eval"}:
+                reflective = True
+            elif node.func.id in {"getattr", "setattr", "delattr"} and node.args:
+                target = node.args[0]
+                target_binding = (
+                    self.identifier_bindings.get(target) if isinstance(target, ast.Name) else None
+                )
+                if target_binding is None or isinstance(target_binding.node, ast.Import):
+                    reflective = True
+        return ExternalBindingHazards(frozenset(rebound), unresolved, reflective)
 
     def _create_scope(self, parent: Optional[Scope]) -> Scope:
         """Create a new scope."""
@@ -252,9 +295,47 @@ class ScopeAnalyzer(ast.NodeVisitor):
 
     def visit_comprehension(self, node: ast.comprehension) -> None:
         """Visit a comprehension."""
-        # Target creates bindings (in comprehension scope)
+        self.visit(node.iter)
         self._add_assignment_bindings(node.target)
-        _visit_node_and_iterables(self, node.iter, node.ifs)
+        for condition in node.ifs:
+            self.visit(condition)
+
+    def _visit_comprehension_scope(
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        # Only the first iterable is evaluated in the containing scope.
+        if node.generators:
+            self.visit(node.generators[0].iter)
+        self._enter_scope(node)
+        for generator in node.generators:
+            self._add_assignment_bindings(generator.target)
+        for index, generator in enumerate(node.generators):
+            if index:
+                self.visit(generator.iter)
+            for condition in generator.ifs:
+                self.visit(condition)
+        if isinstance(node, ast.DictComp):
+            self.visit(node.key)
+            self.visit(node.value)
+        else:
+            self.visit(node.elt)
+        self._exit_scope()
+
+    visit_ListComp = _visit_comprehension_scope
+    visit_SetComp = _visit_comprehension_scope
+    visit_DictComp = _visit_comprehension_scope
+    visit_GeneratorExp = _visit_comprehension_scope
+
+    def visit_Import(self, node: ast.Import) -> None:
+        assert self.current_scope is not None
+        for alias in node.names:
+            self.current_scope.add_binding(alias.asname or alias.name.split(".")[0], node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        assert self.current_scope is not None
+        for alias in node.names:
+            if alias.name != "*":
+                self.current_scope.add_binding(alias.asname or alias.name, node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if node.type:
@@ -334,6 +415,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                 """
                 saved_bindings = self.bindings.copy()
                 saved_assigned = self.assigned_so_far.copy()
+                saved_uses = self.uses.copy()
 
                 self.bindings.update(new_bindings)
                 self.assigned_so_far.update(new_bindings)
@@ -343,7 +425,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                 # Remove ALL variables bound in this scope from uses
                 # This includes both new_bindings and any added during body_visitor
                 scope_bindings = self.bindings - saved_bindings
-                self.uses -= scope_bindings
+                self.uses = saved_uses | (self.uses - scope_bindings)
 
                 # Restore bindings (they don't leak out of nested scope)
                 self.bindings = saved_bindings
@@ -452,10 +534,11 @@ class ScopeAnalyzer(ast.NodeVisitor):
             def visit_comprehension(self, node: ast.comprehension) -> None:
                 # Comprehension variable binds within comprehension scope
                 # This is called from _visit_comprehension_node which handles scoping
+                self.visit(node.iter)
                 comp_vars = self._extract_binding_names(node.target)
                 self._add_current_scope_bindings(comp_vars)
-                # Visit the rest (iter, ifs)
-                self.generic_visit(node)
+                for condition in node.ifs:
+                    self.visit(condition)
 
             def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
                 # Function name binds in outer scope
@@ -497,38 +580,33 @@ class ScopeAnalyzer(ast.NodeVisitor):
 
                 self._with_new_scope(set(), visit_body)
 
-            def visit_ListComp(self, node: ast.ListComp) -> None:
-                # List comprehensions have their own scope (Python 3+)
+            def _visit_comprehension_scope(
+                self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+            ) -> None:
+                if node.generators:
+                    self.visit(node.generators[0].iter)
+
                 def visit_body() -> None:
-                    _visit_comprehension_generators(self, node.generators)
-                    self.visit(node.elt)
+                    for index, generator in enumerate(node.generators):
+                        if index:
+                            self.visit(generator.iter)
+                        self._add_current_scope_bindings(
+                            self._extract_binding_names(generator.target)
+                        )
+                        for condition in generator.ifs:
+                            self.visit(condition)
+                    if isinstance(node, ast.DictComp):
+                        self.visit(node.key)
+                        self.visit(node.value)
+                    else:
+                        self.visit(node.elt)
 
                 self._with_new_scope(set(), visit_body)
 
-            def visit_DictComp(self, node: ast.DictComp) -> None:
-                # Dict comprehensions have their own scope
-                def visit_body() -> None:
-                    _visit_comprehension_generators(self, node.generators)
-                    self.visit(node.key)
-                    self.visit(node.value)
-
-                self._with_new_scope(set(), visit_body)
-
-            def visit_SetComp(self, node: ast.SetComp) -> None:
-                # Set comprehensions have their own scope
-                def visit_body() -> None:
-                    _visit_comprehension_generators(self, node.generators)
-                    self.visit(node.elt)
-
-                self._with_new_scope(set(), visit_body)
-
-            def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
-                # Generator expressions have their own scope
-                def visit_body() -> None:
-                    _visit_comprehension_generators(self, node.generators)
-                    self.visit(node.elt)
-
-                self._with_new_scope(set(), visit_body)
+            visit_ListComp = _visit_comprehension_scope
+            visit_DictComp = _visit_comprehension_scope
+            visit_SetComp = _visit_comprehension_scope
+            visit_GeneratorExp = _visit_comprehension_scope
 
             def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
                 # Exception variable binds in current scope

@@ -25,14 +25,14 @@ Phases (in order):
 6) unify_blocks: attempt unification and construct RefactoringProposal objects
 7) filter_overlaps: remove overlapping/conflicting proposals
 
-The top-level run_pipeline() wires these phases.
+The top-level run_pipeline() wires these phases and optionally reuses isolated
+module analyses through an explicitly owned AnalysisSession.
 """
 
 from __future__ import annotations
 
 from typing import (
     TYPE_CHECKING,
-    Dict,
     List,
     Optional,
     Sequence,
@@ -41,10 +41,13 @@ from typing import (
     cast,
     Protocol,
     Mapping,
-    TypedDict,
 )
 import ast
+from collections import OrderedDict
+from copy import deepcopy
+from dataclasses import dataclass
 import sys
+import os
 from pathlib import Path
 
 from .models import (
@@ -168,10 +171,8 @@ def pair_blocks(
 ) -> List[CodeBlockPair]:
     """Enumerate candidate block pairs with optional progress display.
 
-    Shows early progress because pair enumeration can be the longest pre-unification step.
-    We only enumerate function pairs here (O(n^2)) and defer actual block pairing to the
-    engine to avoid logic duplication. This still provides a responsive bar so users see
-    movement before proposals appear.
+    The engine owns candidate generation and its progress reporting; this adapter
+    only packs the analyzed function context.
     """
     packed = [
         (
@@ -224,18 +225,99 @@ def filter_overlaps(proposals: List[RefactoringProposal]) -> List[RefactoringPro
     return _filter(proposals)
 
 
-class AnalysisCacheEntry(TypedDict, total=False):
-    mod: ParsedModule
-    version: int
-    scoped: bool
-    classes: List[ClassInfo]
-    funcs: List[FunctionArtifact]
+class SourceFileError(Exception):
+    """An expected source read, decoding or syntax failure."""
 
 
-# Entries are reused only while the source text still matches.
-_analysis_cache: Dict[str, AnalysisCacheEntry] = {}
-_ANALYSIS_CACHE_VERSION = 2
-_cache_directory = Path.cwd()
+@dataclass(frozen=True)
+class ModuleAnalysis:
+    """One internally consistent module/scope/function graph owned by its caller."""
+
+    module: ParsedModule
+    functions: Tuple[FunctionArtifact, ...]
+
+
+class AnalysisSession:
+    """Bounded analysis snapshots for one engine, with no process-global state.
+
+    Entries use absolute paths plus the caller's spelling, preserving replacement
+    paths while separating relative paths from different working directories.
+    Source content is checked on every access. The source-byte budget bounds
+    retained input, not the exact size of the Python object graph. Returned graphs
+    are independent copies: modifying proposals or analysis cannot poison reuse.
+    Sessions belong to one analysis owner and are not shared between threads.
+    """
+
+    def __init__(self, *, max_entries: int = 128, max_source_bytes: int = 8 * 1024 * 1024) -> None:
+        if max_entries < 0 or max_source_bytes < 0:
+            raise ValueError("Analysis cache limits must be nonnegative")
+        self._max_entries = max_entries
+        self._max_source_bytes = max_source_bytes
+        self._entries: OrderedDict[Tuple[str, str], ModuleAnalysis] = OrderedDict()
+        self._source_bytes = 0
+
+    @property
+    def entry_count(self) -> int:
+        return len(self._entries)
+
+    @property
+    def source_bytes(self) -> int:
+        return self._source_bytes
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._source_bytes = 0
+
+    def _discard(self, key: Tuple[str, str]) -> None:
+        previous = self._entries.pop(key, None)
+        if previous is not None:
+            self._source_bytes -= len(previous.module.source.encode("utf-8"))
+
+    def invalidate(self, paths: Sequence[str]) -> None:
+        """Discard every spelling of the selected absolute paths in this session."""
+        absolute_paths = {os.path.abspath(path) for path in paths}
+        for key in tuple(self._entries):
+            if key[0] in absolute_paths:
+                self._discard(key)
+
+    def analyze_module(self, path: str) -> ModuleAnalysis:
+        """Read current content and return an isolated, fully analyzed snapshot.
+
+        Read, decoding and parse failures become SourceFileError for diagnostics.
+        Analysis failures also propagate, because they indicate engine defects,
+        not a conservative rejection of a source file.
+        """
+        key = (os.path.abspath(path), path)
+        try:
+            source = Path(path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            self._discard(key)
+            raise SourceFileError(str(error)) from error
+        cached = self._entries.get(key)
+        if cached is not None and cached.module.source == source:
+            self._entries.move_to_end(key)
+            return deepcopy(cached)
+        self._discard(key)
+        try:
+            tree = ast.parse(source, filename=path)
+        except SyntaxError as error:
+            raise SourceFileError(str(error)) from error
+        module = ParsedModule(file_path=path, source=source, tree=tree)
+        analyze_scopes([module])
+        module.class_infos = collect_classes([module])
+        analysis = ModuleAnalysis(module, tuple(collect_functions([module])))
+        source_bytes = len(source.encode("utf-8"))
+        if self._max_entries and source_bytes <= self._max_source_bytes:
+            while self._entries and (
+                len(self._entries) >= self._max_entries
+                or self._source_bytes + source_bytes > self._max_source_bytes
+            ):
+                self._discard(next(iter(self._entries)))
+            # Snapshot before the caller can populate node-identity caches or
+            # mutate ASTs; deepcopy preserves graph identity across all artifacts.
+            self._entries[key] = deepcopy(analysis)
+            self._source_bytes += source_bytes
+        return analysis
 
 
 def _read_and_normalize_module(path: str) -> Tuple[str, ast.AST]:
@@ -312,206 +394,57 @@ def run_pipeline(
     paths: Sequence[str],
     *,
     engine: Optional["UnificationRefactorEngine"] = None,
+    session: Optional[AnalysisSession] = None,
     verbose: bool = False,
     progress: str = "auto",
     invalidate_paths: Optional[Sequence[str]] = None,
 ) -> List[RefactoringProposal]:
+    """Analyze current files and propose changes using isolated analysis graphs.
+
+    Standalone calls use a fresh session. Engines explicitly supply their own
+    bounded session to reuse unchanged files. Invalidation forces fresh analysis;
+    ordinary calls still read and compare source content before reusing an entry.
     """
-    Run the full compiler-style pipeline for the given file paths, using cached analysis results.
-    If invalidate_paths is provided, only those files are reparsed/reanalyzed; others use cached results.
-    """
-    # Lazy import to avoid circular import at module load time
     if engine is None:
-        from .refactor_engine import UnificationRefactorEngine as _Engine  # local import
+        from .refactor_engine import UnificationRefactorEngine
 
-        eng: "UnificationRefactorEngine" = _Engine()
-    else:
-        eng = engine
-
-    global _cache_directory
-    directory = Path.cwd()
-    if directory != _cache_directory:
-        _analysis_cache.clear()
-        _cache_directory = directory
-
-    # Invalidate cache for changed files
+        engine = UnificationRefactorEngine()
+    analysis_session = session if session is not None else AnalysisSession()
     if invalidate_paths:
-        for p in invalidate_paths:
-            _analysis_cache.pop(p, None)
+        analysis_session.invalidate(invalidate_paths)
 
     use_progress = progress in {"tqdm", "auto"}
-    # --------------------- Phase 1: parse modules ---------------------
-    mods = []
-    parse_bar = _create_progress_bar(use_progress, len(paths), "parse", "file")
-
-    last_pct = -1
-    inline_parse = use_progress and parse_bar is None and len(paths) > 0
-    if inline_parse:
-        print("Parsing files:", end=" ", flush=True)
-    for idx, p in enumerate(paths, 1):
-        cache_entry = _analysis_cache.get(p)
-        try:
-            current_source = Path(p).read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            print(f"Skipping {p}: {error}", file=sys.stderr)
-            _analysis_cache.pop(p, None)
-            continue
-        if (
-            cache_entry
-            and cache_entry.get("version") == _ANALYSIS_CACHE_VERSION
-            and cache_entry["mod"].source == current_source
-        ):
-            mods.append(cache_entry["mod"])
-        else:
+    bar = _create_progress_bar(use_progress, len(paths), "analyze", "file")
+    inline_progress = use_progress and bar is None and len(paths) > 0
+    if inline_progress:
+        print("Analyzing files:", end=" ", flush=True)
+    analyses: List[ModuleAnalysis] = []
+    try:
+        for index, path in enumerate(paths, 1):
             try:
-                src, tree = current_source, ast.parse(current_source)
-                mod = ParsedModule(file_path=p, source=src, tree=tree)
-                _analysis_cache[p] = {"mod": mod, "version": _ANALYSIS_CACHE_VERSION}
-                mods.append(mod)
-            except (OSError, UnicodeError, SyntaxError) as error:
-                print(f"Skipping {p}: {error}", file=sys.stderr)
-                _analysis_cache.pop(p, None)
-                continue
-        if parse_bar is not None:
-            try:
-                parse_bar.update(1)
-            except Exception:
-                pass
-        elif inline_parse:
-            pct = int(100 * idx / len(paths))
-            if pct != last_pct:
-                last_pct = pct
-                bar = _render_inline_bar(pct)
-                print(f"\rParsing files: [{bar}] {pct:3d}%", end="", flush=True)
-    _close_progress_bar(parse_bar)
-    if inline_parse:
-        print()
+                analyses.append(analysis_session.analyze_module(path))
+            except SourceFileError as error:
+                print(f"Skipping {path}: {error}", file=sys.stderr)
+            if bar is not None:
+                try:
+                    bar.update(1)
+                except Exception:
+                    # A display failure cannot change analysis outcomes.
+                    pass
+            elif inline_progress:
+                percent = int(100 * index / len(paths))
+                print(
+                    f"\rAnalyzing files: [{_render_inline_bar(percent)}] {percent:3d}%",
+                    end="",
+                    flush=True,
+                )
+    finally:
+        _close_progress_bar(bar)
+        if inline_progress:
+            print()
 
-    # --------------------- Phase 2: scope analysis ---------------------
-    scope_bar = _create_progress_bar(use_progress, len(mods), "scope", "mod")
-    inline_scope = use_progress and scope_bar is None and len(mods) > 0
-    last_pct = -1
-    if inline_scope:
-        print("Analyzing scopes:", end=" ", flush=True)
-    for idx, m in enumerate(mods, 1):
-        if "scoped" not in _analysis_cache[m.file_path]:
-            analyzer = ScopeAnalyzer()
-            m.root_scope = analyzer.analyze(m.tree)
-            m.scope_analyzer = analyzer
-            _analysis_cache[m.file_path]["scoped"] = True
-        else:
-            # Reattach analyzer/root_scope from cache for downstream phases
-            cached_mod = _analysis_cache[m.file_path]["mod"]
-            m.root_scope = cached_mod.root_scope
-            m.scope_analyzer = cached_mod.scope_analyzer
-        if scope_bar is not None:
-            try:
-                scope_bar.update(1)
-            except Exception:
-                pass
-        elif inline_scope:
-            pct = int(100 * idx / len(mods))
-            if pct != last_pct:
-                last_pct = pct
-                bar = _render_inline_bar(pct)
-                print(f"\rAnalyzing scopes: [{bar}] {pct:3d}%", end="", flush=True)
-    if scope_bar is not None:
-        try:
-            scope_bar.close()
-        except Exception:
-            pass
-    if inline_scope:
-        print()
-
-    # --------------------- Phase 3: class collection ---------------------
-    class_bar = _create_progress_bar(use_progress, len(mods), "class", "mod")
-    inline_class = use_progress and class_bar is None and len(mods) > 0
-    last_pct = -1
-    if inline_class:
-        print("Collecting classes:", end=" ", flush=True)
-    for idx, m in enumerate(mods, 1):
-        if "classes" not in _analysis_cache[m.file_path]:
-            infos = collect_classes([m])
-            m.class_infos = infos
-            _analysis_cache[m.file_path]["classes"] = infos
-        else:
-            m.class_infos = _analysis_cache[m.file_path]["classes"]
-        if class_bar is not None:
-            try:
-                class_bar.update(1)
-            except Exception:
-                pass
-        elif inline_class:
-            pct = int(100 * idx / len(mods))
-            if pct != last_pct:
-                last_pct = pct
-                bar = _render_inline_bar(pct)
-                print(f"\rCollecting classes: [{bar}] {pct:3d}%", end="", flush=True)
-    if class_bar is not None:
-        try:
-            class_bar.close()
-        except Exception:
-            pass
-    if inline_class:
-        print()
-
-    classes: List[ClassInfo] = []
-    for m in mods:
-        classes.extend(m.class_infos or [])
-
-    # --------------------- Phase 4: function collection ---------------------
-    func_bar = _create_progress_bar(use_progress, len(mods), "func", "mod")
-    inline_func = use_progress and func_bar is None and len(mods) > 0
-    last_pct = -1
-    if inline_func:
-        print("Collecting functions:", end=" ", flush=True)
-    for idx, m in enumerate(mods, 1):
-        if "funcs" not in _analysis_cache[m.file_path]:
-            funcs_list = collect_functions([m])
-            _analysis_cache[m.file_path]["funcs"] = funcs_list
-        else:
-            funcs_list = _analysis_cache[m.file_path]["funcs"]
-        if func_bar is not None:
-            try:
-                func_bar.update(1)
-                if idx == len(mods):
-                    func_bar.set_postfix(
-                        {
-                            "total": sum(
-                                len(_analysis_cache[x]["funcs"])
-                                for x in _analysis_cache
-                                if "funcs" in _analysis_cache[x]
-                            )
-                        },
-                        refresh=True,
-                    )
-            except Exception:
-                pass
-        elif inline_func:
-            pct = int(100 * idx / len(mods))
-            if pct != last_pct:
-                last_pct = pct
-                bar_len = 24
-                filled = (pct * bar_len) // 100
-                bar = "#" * filled + "-" * (bar_len - filled)
-                print(f"\rCollecting functions: [{bar}] {pct:3d}%", end="", flush=True)
-    if func_bar is not None:
-        try:
-            func_bar.close()
-        except Exception:
-            pass
-    if inline_func:
-        print()
-
-    funcs: List[FunctionArtifact] = []
-    for m in mods:
-        funcs.extend(_analysis_cache[m.file_path]["funcs"])
-
-    # Phase 5: candidate pairing (not cached; depends on all funcs)
-    pairs = pair_blocks(eng, funcs, progress=progress)
-
-    # Phase 6: unify to proposals (not cached; depends on all pairs/classes)
-    props = unify_blocks(eng, pairs, funcs, classes, verbose=verbose, progress=progress)
-
-    # Phase 7: de-overlap
-    return filter_overlaps(props)
+    functions = [function for analysis in analyses for function in analysis.functions]
+    classes = [info for analysis in analyses for info in analysis.module.class_infos]
+    pairs = pair_blocks(engine, functions, progress=progress)
+    proposals = unify_blocks(engine, pairs, functions, classes, verbose=verbose, progress=progress)
+    return filter_overlaps(proposals)

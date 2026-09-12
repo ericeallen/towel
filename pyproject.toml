@@ -4,20 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-towel"
-version = "1.0.4"
+version = "1.1.0a1"
 description = "A Python tool that DRYs your code - finds and refactors repeated code using unification-based analysis"
 authors = [
     {name = "Eric Allen"}
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Operating System :: POSIX",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -25,8 +25,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-# Python 3.10 needs the TOML parser backport for project layouts.
-dependencies = ["tomli>=2.0.1; python_version < '3.11'"]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -64,10 +63,10 @@ where = ["src"]
 
 [tool.black]
 line-length = 100
-target-version = ['py310', 'py311', 'py312', 'py313']
+target-version = ['py311', 'py312', 'py313']
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 # Enable strict type checking for the selected files
 strict = true
 warn_unused_configs = true

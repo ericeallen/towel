@@ -11,7 +11,8 @@ import sys
 import argparse
 from importlib.metadata import version
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Mapping
+from towel.changes import apply_changes, recover
 
 
 def main() -> None:
@@ -44,6 +45,8 @@ For more help on a specific command:
     _add_dry_parser(subparsers)
     _add_preview_parser(subparsers)
     _add_rename_helpers_parser(subparsers)
+    recovery = subparsers.add_parser("recover", help="Roll back an interrupted local transaction")
+    recovery.add_argument("journal", type=Path)
 
     args = parser.parse_args()
 
@@ -60,7 +63,15 @@ For more help on a specific command:
     elif args.command == "preview":
         _run_preview(args)
     elif args.command == "rename-helpers":
-        _run_rename_helpers(args)
+        try:
+            _run_rename_helpers(args)
+        except (OSError, ValueError, SyntaxError) as error:
+            parser.exit(1, f"Error: {error}\n")
+    elif args.command == "recover":
+        try:
+            recover(args.journal)
+        except (OSError, ValueError) as error:
+            parser.exit(1, f"Error: {error}\n")
 
 
 def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -268,7 +279,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     # Import here to avoid loading heavy modules if not needed
     import os
-    import shutil
+    from towel.filesystem import copy_project
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
     input_path = args.input
@@ -330,11 +341,7 @@ def _run_dry(args: argparse.Namespace) -> None:
             return
 
     if source != destination:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if is_file:
-            shutil.copy2(source, destination)
-        else:
-            shutil.copytree(source, destination, symlinks=True)
+        copy_project(source, destination)
 
     print()
 
@@ -345,9 +352,6 @@ def _run_dry(args: argparse.Namespace) -> None:
             output_path,
             max_iterations=args.max_iterations,
         )
-
-        with open(output_path, "w") as f:
-            f.write(final_code)
 
         if num_applied > 0:
             print(f"\n✓ Applied {num_applied} refactoring(s):")
@@ -583,7 +587,6 @@ def _apply_rename_file(
 ) -> None:
     """Apply renamings from a JSON file."""
     import json
-    import re
 
     # Load rename mappings
     try:
@@ -597,37 +600,30 @@ def _apply_rename_file(
         print("Error: Rename file must contain a JSON object (dict)")
         sys.exit(1)
 
-    # Apply renamings
-    total_changes = 0
+    total_changes = _apply_rename_mappings(target, renames, dry_run)
+    print(f"\n{'[DRY RUN] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
 
-    for old_name, new_name in renames.items():
-        if not isinstance(new_name, str) or not new_name:
-            print(f"Warning: Skipping invalid mapping {old_name} -> {new_name}")
-            continue
 
-        # Validate new name
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", new_name):
-            print(f"Warning: Skipping invalid Python identifier: {new_name}")
-            continue
-
+def _apply_rename_mappings(target: Path, renames: Mapping[str, object], dry_run: bool) -> int:
+    """Validate every mapping and stage the entire rename batch before any write."""
+    specifications: List[Tuple[str, str, Optional[Path]]] = []
+    for spec, new_name in renames.items():
+        if not isinstance(new_name, str):
+            raise ValueError(f"Invalid rename value for {spec}")
         file_filter = None
-        name = old_name
-        if ":" in old_name:
-            relative_file, name = old_name.rsplit(":", 1)
-            file_filter = (target / relative_file).resolve()
-            if target.resolve() not in file_filter.parents:
-                raise ValueError("File-qualified renames must stay within the target directory")
-            if not file_filter.is_file():
-                raise ValueError(f"Rename target does not exist: {relative_file}")
-        count = _rename_function_in_directory(target, name, new_name, dry_run, file_filter)
-        if count > 0:
-            total_changes += count
-            print(f"  {old_name} -> {new_name} ({count} replacement(s))")
-
-    if dry_run:
-        print(f"\n[DRY RUN] Would make {total_changes} change(s)")
-    else:
-        print(f"\n✓ Applied {total_changes} change(s)")
+        name = spec
+        if ":" in spec:
+            relative, name = spec.rsplit(":", 1)
+            file_filter = (target / relative).resolve()
+            if target.resolve() not in file_filter.parents or not file_filter.is_file():
+                raise ValueError(
+                    f"File-qualified rename must name a file within target: {relative}"
+                )
+        specifications.append((name, new_name, file_filter))
+    count = _rename_batch(target, specifications, dry_run)
+    for spec, new_name in renames.items():
+        print(f"  {spec} -> {new_name}")
+    return count
 
 
 def _rename_function_in_directory(
@@ -637,50 +633,19 @@ def _rename_function_in_directory(
     dry_run: bool,
     file_filter: Optional[Path] = None,
 ) -> int:
-    """Rename a function throughout all Python files in directory.
+    """Rename resolved module helpers using one recoverable batch."""
+    return _rename_batch(target, [(old_name, new_name, file_filter)], dry_run)
 
-    Args:
-        target: Directory to search in
-        old_name: Current function name
-        new_name: New function name
-        dry_run: If True, don't actually modify files
-        file_filter: If provided, only rename in this specific file
-    """
-    import io
-    import keyword
-    import tokenize
 
-    if not old_name.isidentifier() or not new_name.isidentifier() or keyword.iskeyword(new_name):
-        raise ValueError("Renamings must use valid, non-keyword Python identifiers")
-    changes: List[Tuple[Path, str, int]] = []
-    for py_file in sorted(target.rglob("*.py")):
-        if py_file.is_symlink() or (file_filter and py_file.resolve() != file_filter.resolve()):
-            continue
-        content = py_file.read_text(encoding="utf-8")
-        tokens = list(tokenize.generate_tokens(io.StringIO(content).readline))
-        matches = [
-            token for token in tokens if token.type == tokenize.NAME and token.string == old_name
-        ]
-        if not matches or old_name == new_name:
-            continue
-        if any(token.type == tokenize.NAME and token.string == new_name for token in tokens):
-            raise ValueError(
-                f"Rename would collide with existing identifier {new_name} in {py_file}"
-            )
-        lines = content.splitlines(keepends=True)
-        # Reverse offsets preserve formatting and never touch comments or strings.
-        for token in reversed(matches):
-            line, column = token.start
-            _, end_column = token.end
-            original_line = lines[line - 1]
-            lines[line - 1] = original_line[:column] + new_name + original_line[end_column:]
-        updated = "".join(lines)
-        compile(updated, str(py_file), "exec")
-        changes.append((py_file, updated, len(matches)))
+def _rename_batch(
+    target: Path, specifications: List[Tuple[str, str, Optional[Path]]], dry_run: bool
+) -> int:
+    from towel.renaming import plan_renames
+
+    plan, count = plan_renames(target, specifications)
     if not dry_run:
-        for py_file, content, _ in changes:
-            py_file.write_text(content, encoding="utf-8")
-    return sum(count for _, _, count in changes)
+        apply_changes(plan)
+    return count
 
 
 def _run_interactive_llm_mode(
@@ -763,38 +728,8 @@ def _run_interactive_llm_mode(
     print("=" * 70)
     print()
 
-    # Apply renamings
-    total_changes = 0
-    for old_name_spec, new_name in renames.items():
-        if not isinstance(new_name, str) or not new_name:
-            print(f"Warning: Skipping invalid mapping {old_name_spec} -> {new_name}")
-            continue
-
-        # Parse file-qualified names (e.g., "path/to/file.py:function_name")
-        file_filter = None
-        if ":" in old_name_spec:
-            file_path_str, old_name = old_name_spec.rsplit(":", 1)
-            # Resolve file path relative to target
-            file_filter = target / file_path_str
-            if not file_filter.exists():
-                print(f"Warning: File not found: {file_filter}")
-                print(f"  Skipping: {old_name_spec} -> {new_name}")
-                continue
-        else:
-            old_name = old_name_spec
-
-        count = _rename_function_in_directory(target, old_name, new_name, dry_run, file_filter)
-        if count > 0:
-            total_changes += count
-            if file_filter:
-                print(f"  ✓ {old_name_spec} -> {new_name} ({count} replacement(s))")
-            else:
-                print(f"  ✓ {old_name} -> {new_name} ({count} replacement(s))")
-
-    if dry_run:
-        print(f"\n[DRY RUN] Would make {total_changes} change(s)")
-    else:
-        print(f"\n✓ Successfully applied {total_changes} change(s)")
+    total_changes = _apply_rename_mappings(target, renames, dry_run)
+    print(f"\n{'[DRY RUN] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
 
 
 def _generate_llm_prompt(

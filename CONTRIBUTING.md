@@ -17,7 +17,7 @@ Thank you for your interest in contributing to Towel! We welcome contributions f
 
 ## Code of Conduct
 
-This project adheres to a code of conduct. By participating, you are expected to uphold this code. Please be respectful and considerate in your interactions with other contributors.
+This project follows its [Code of Conduct](CODE_OF_CONDUCT.md). Please be respectful and considerate in your interactions with other contributors.
 
 ## Getting Started
 
@@ -33,7 +33,7 @@ This project adheres to a code of conduct. By participating, you are expected to
 
 ### Reporting Bugs
 
-Before creating bug reports, please check existing issues to avoid duplicates. When you create a bug report, include as many details as possible:
+For security-sensitive reports, first read [SECURITY.md](SECURITY.md); no confidential reporting channel is currently verified. Before creating ordinary bug reports, please check existing issues to avoid duplicates. When you create a bug report, include as many details as possible:
 
 - **Use a clear and descriptive title**
 - **Describe the exact steps to reproduce the problem**
@@ -71,8 +71,8 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 
 2. Use Python 3.13 for formatting/type checks and create a virtual environment:
    ```bash
-   python3.13 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   python3.13 -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
 3. Install development dependencies:
@@ -171,3 +171,5 @@ If you have questions, feel free to:
 Thank you for contributing to Towel!
 
 For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md. CI runs the full tests and an unconditional 85% coverage gate for each supported Python version. `just release VERSION` prepares local distributions only; publication requires maintainer review of the current audit and policy decisions.
+
+Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md). Legacy AST normalization helpers are compatibility utilities, not safe preprocessing passes; do not use them to justify behavior-preservation claims.

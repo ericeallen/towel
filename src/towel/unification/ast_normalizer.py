@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-AST Normalizer - Convert assignments to augmented assignments when appropriate.
+"""Deprecated AST transforms retained for compatibility.
 
-This module provides a normalization pass that identifies assignments of the form:
-    x = x + y
-and converts them to augmented assignments:
-    x += y
-
-This helps the unification algorithm distinguish between fresh bindings and mutations.
+These transforms are not used by Towel's production analysis. They can change
+aliasing, overloaded operator dispatch, and evaluation order. Do not use them as
+a behavior-preserving normalization or equivalence oracle. Wrapper functions
+return independent ASTs; direct NodeTransformer visitors retain their usual
+in-place behavior. No removal version has been scheduled.
 """
 
 import ast
+from copy import deepcopy
+import warnings
 from typing import Set, cast
 from .visitor_utils import make_defensive_generic_visit
 
@@ -42,6 +42,12 @@ class AssignToAugAssignNormalizer(ast.NodeTransformer):
     generic_visit = make_defensive_generic_visit("AssignToAugAssignNormalizer")  # type: ignore[assignment]
 
     def __init__(self) -> None:
+        warnings.warn(
+            "AssignToAugAssignNormalizer is deprecated: assignment and augmented "
+            "assignment are not behaviorally equivalent for arbitrary Python.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.scopes: list[Set[str]] = [set()]  # Stack of scopes
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -173,11 +179,19 @@ def normalize_assigns_to_augassigns(tree: ast.AST) -> ast.AST:
         A new AST with assignments normalized to augmented assignments
     """
     normalizer = AssignToAugAssignNormalizer()
-    return cast(ast.AST, normalizer.visit(tree))
+    return cast(ast.AST, normalizer.visit(deepcopy(tree)))
 
 
 class ArithmeticCanonicalizer(ast.NodeTransformer):
-    """Canonicalize arithmetic expressions for easier unification."""
+    """Deprecated arithmetic rewriting; not safe for arbitrary operator overloads."""
+
+    def __init__(self) -> None:
+        warnings.warn(
+            "ArithmeticCanonicalizer is deprecated: arithmetic rewrites can change "
+            "overloaded operator behavior.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     generic_visit = make_defensive_generic_visit("ArithmeticCanonicalizer")  # type: ignore[assignment]
 
@@ -201,10 +215,10 @@ class ArithmeticCanonicalizer(ast.NodeTransformer):
 
 
 def canonicalize_arithmetic(tree: ast.AST) -> ast.AST:
-    """Apply arithmetic canonicalization for additive/subtractive expressions."""
+    """Return an independent AST using deprecated arithmetic rewrites."""
 
     canon = ArithmeticCanonicalizer()
-    return cast(ast.AST, canon.visit(tree))
+    return cast(ast.AST, canon.visit(deepcopy(tree)))
 
 
 def normalize_code(code: str) -> str:

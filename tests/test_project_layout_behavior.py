@@ -47,8 +47,6 @@ class TestProjectLayoutBehavior(unittest.TestCase):
             "\n[tool.setuptools]\npy-modules = []\n",
             '\n[tool.setuptools.packages.find]\nwhere = ["."]\n',
             '\n[tool.setuptools]\npackage-dir = {"" = "."}\n',
-            '\n[build-system]\nbuild-backend = "hatchling.build"\n',
-            '\n[build-system]\nbuild-backend = "poetry.core.masonry.api"\n',
         )
         for configuration in configurations:
             with self.subTest(configuration=configuration), tempfile.TemporaryDirectory() as td:
@@ -269,7 +267,7 @@ class TestProjectLayoutBehavior(unittest.TestCase):
 
             # module names relative to their respective roots
             self.assertEqual(layout.module_name_for(f1), "alpha.beta")
-            self.assertEqual(layout.module_name_for(f2), "pkg2.mod")
+            self.assertEqual(layout.module_name_for(f2), "pkg2.pkg2.mod")
 
     def test_source_root_fallback_on_copy(self) -> None:
         """

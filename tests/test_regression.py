@@ -232,22 +232,15 @@ class TestSingleFileRegression(unittest.TestCase):
 
             # Compute current fixed-point refactoring output using a temp copy
             try:
-                with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as tmp:
-                    tmp.write(py_file.read_text())
-                    tmp.flush()
-                    tmp_path = Path(tmp.name)
-
-                final_code, num_applied, _ = self.engine.refactor_to_fixed_point(str(tmp_path))
-                current_output = final_code
+                with tempfile.TemporaryDirectory(prefix="towel-regression-") as directory:
+                    tmp_path = Path(directory) / py_file.name
+                    tmp_path.write_text(py_file.read_text())
+                    final_code, num_applied, _ = self.engine.refactor_to_fixed_point(str(tmp_path))
+                    current_output = final_code
             except Exception as e:
                 differences.append(f"{py_file.name}: Fixed-point refactoring failed: {e}")
                 print("error", flush=True)
                 continue
-            finally:
-                try:
-                    tmp_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
 
             # Read baseline
             baseline_output = baseline_file.read_text()

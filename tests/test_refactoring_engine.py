@@ -57,7 +57,9 @@ class TestRefactoringEngine(unittest.TestCase):
 
         # Check that extracted function exists
         func_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
-        self.assertIn(prop.extracted_function.name, func_names)
+        self.assertEqual(prop.extracted_function.name, "__extracted_func")
+        self.assertIn("__extracted_func_0", func_names)
+        self.assertEqual(self.engine.apply_refactoring(str(example_path), prop), refactored)
 
     def test_example4_complex(self):
         """Test Example 4: Complex data processing loops.
