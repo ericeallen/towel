@@ -51,6 +51,7 @@ TRANSFORMED = {
     "r60_local_import",
     "r63_except_var_used_in_handler",
     "r74_starred_vs_plain",
+    "r80_inlined_leading_thunk",
 }
 
 

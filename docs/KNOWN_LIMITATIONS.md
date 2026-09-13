@@ -18,6 +18,9 @@ rejects, and what remains outside its model. Read it together with
   position, so it runs as often, as late, and as conditionally as before.
   Expressions that read names bound inside the block are lambda-lifted with
   those names as arguments. Expressions in call position are forwarded lazily.
+  A thunk the helper evaluates first, exactly once, and before any other
+  effect is passed eagerly after all, because the call site's evaluation is
+  then indistinguishable from the in-place one (`thunk_inlining.py`).
 - **Binding discipline.** The block may not rebind, delete, or `except ... as`
   a name bound before it; may not carry a `global`/`nonlocal` declaration the
   caller still uses; may not rebind a name a closure outside the block reads;

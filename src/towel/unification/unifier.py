@@ -44,6 +44,9 @@ class Substitution:
     # within the extracted function body. These should be passed as thunks (lambdas)
     # that perform the call to avoid eager evaluation at the call site.
     params_used_as_callee: Set[str] = field(default_factory=set)
+    # Thunk parameters the helper evaluates first, once and unconditionally;
+    # their expressions are passed eagerly by the inlining pass.
+    inlined_parameters: Set[str] = field(default_factory=set)
 
     # Optional: parameters introduced post-unification to promote literal arguments
     # of higher-order factory calls (e.g., make_validator(5)) into threaded parameters

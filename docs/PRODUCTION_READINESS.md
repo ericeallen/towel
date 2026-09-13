@@ -111,6 +111,7 @@ suite is identical before and after.
   prepares them and the maintainer approves hashes.
 - Security support policy, confidential reporting channel, and repository
   visibility remain maintainer decisions recorded in RELEASING.md.
-- Thunked arguments make helpers less readable (`__param_0()`); the
-  `rename-helpers` workflow can name them but a readability pass that inlines
-  pure single-use thunks would be a worthwhile follow-up.
+- Thunked arguments read as `__param_0()`. An inlining pass passes a thunk
+  eagerly when the helper evaluates it first, once, and unconditionally,
+  which covers the common `x = E` opening; thunks used repeatedly or after
+  an effect stay deferred. The `rename-helpers` workflow can name the rest.

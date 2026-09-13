@@ -412,7 +412,11 @@ def has_impure_eager_parameters(substitution: "Substitution") -> bool:
     helper at the original position, so any expression is acceptable there.
     Call this after extraction, which is when callee parameters are known.
     """
-    deferred = set(substitution.function_params) | set(substitution.params_used_as_callee)
+    deferred = (
+        set(substitution.function_params)
+        | set(substitution.params_used_as_callee)
+        | set(substitution.inlined_parameters)
+    )
     return any(
         not is_eagerly_evaluable(expression)
         for name, expressions in substitution.param_expressions.items()

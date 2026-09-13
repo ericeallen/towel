@@ -40,6 +40,7 @@ from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier
 from .extractor import HygienicExtractor, is_value_producing, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
+from .thunk_inlining import inline_leading_thunks
 from .exceptions import RefactoringError
 from .orphan_detector import has_orphaned_variables
 from .assignment_analyzer import (
@@ -2207,6 +2208,7 @@ class UnificationRefactorEngine:
         except UnsupportedExtraction:
             return None
 
+        inline_leading_thunks(func_def, substitution, param_order)
         if has_impure_eager_parameters(substitution):
             self._debug_reject("impure_eager_parameter", pair)
             return None
@@ -2462,6 +2464,7 @@ class UnificationRefactorEngine:
                         nonlocal_decls=nonlocals_to_declare_in_extracted or None,
                         function_name=func_def.name,
                     )
+                    inline_leading_thunks(candidate_helper, subst2, candidate_order)
                     if candidate_order != param_order or ast.dump(candidate_helper) != ast.dump(
                         func_def
                     ):

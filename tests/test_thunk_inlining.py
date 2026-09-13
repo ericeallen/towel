@@ -1,0 +1,135 @@
+"""Unit tests for eager inlining of leading thunks."""
+
+from __future__ import annotations
+
+import ast
+from typing import cast
+
+import pytest
+
+from towel.unification.thunk_inlining import inline_leading_thunks
+from towel.unification.unifier import Substitution
+
+
+def _helper(source: str) -> ast.FunctionDef:
+    return cast(ast.FunctionDef, ast.parse(source).body[0])
+
+
+def _substitution(*names: str) -> tuple[Substitution, dict[str, int]]:
+    substitution = Substitution()
+    for name in names:
+        substitution.param_expressions[name] = []
+        substitution.function_params[name] = []
+    return substitution, {name: index for index, name in enumerate(names)}
+
+
+def _inline(source: str, *names: str) -> tuple[set[str], str]:
+    helper = _helper(source)
+    substitution, order = _substitution(*names)
+    inlined = inline_leading_thunks(helper, substitution, order)
+    assert inlined == substitution.inlined_parameters
+    assert not (inlined & set(substitution.function_params))
+    return inlined, ast.unparse(helper)
+
+
+@pytest.mark.parametrize(
+    "source, names, expected",
+    [
+        (
+            "def h(__param_0):\n    x = __param_0()\n    return x + 1\n",
+            ("__param_0",),
+            {"__param_0"},
+        ),
+        ("def h(__param_0, d):\n    d[__param_0()] = 1\n", ("__param_0",), {"__param_0"}),
+        (
+            "def h(__param_0):\n    return ''.join(sorted(__param_0() | set('ab')))\n",
+            ("__param_0",),
+            {"__param_0"},
+        ),
+        (
+            "def h(__param_0, xs):\n    for x in __param_0():\n        use(x)\n",
+            ("__param_0",),
+            {"__param_0"},
+        ),
+        (
+            "def h(__param_0):\n    if __param_0():\n        return 1\n    return 2\n",
+            ("__param_0",),
+            {"__param_0"},
+        ),
+        (
+            "def h(__param_0, __param_1):\n    a = __param_0()\n    b = __param_1()\n    return a, b\n",
+            ("__param_0", "__param_1"),
+            {"__param_0", "__param_1"},
+        ),
+        (
+            "def h(__param_0, __param_1):\n    return f(__param_0(), __param_1())\n",
+            ("__param_0", "__param_1"),
+            {"__param_0", "__param_1"},
+        ),
+    ],
+)
+def test_leading_thunks_are_inlined(
+    source: str, names: tuple[str, ...], expected: set[str]
+) -> None:
+    inlined, rendered = _inline(source, *names)
+    assert inlined == expected
+    for name in expected:
+        assert f"{name}()" not in rendered
+
+
+@pytest.mark.parametrize(
+    "source, names",
+    [
+        # used twice
+        (
+            "def h(__param_0):\n    if not __param_0():\n        raise E\n    return len(__param_0())\n",
+            ("__param_0",),
+        ),
+        # an effect precedes it
+        ("def h(__param_0, counter):\n    counter['total'] += __param_0()\n", ("__param_0",)),
+        ("def h(__param_0, obj):\n    return obj.method(__param_0())\n", ("__param_0",)),
+        ("def h(__param_0):\n    print('start')\n    return __param_0()\n", ("__param_0",)),
+        # conditional or repeated evaluation
+        ("def h(__param_0, flag):\n    return flag and __param_0()\n", ("__param_0",)),
+        ("def h(__param_0, flag):\n    return 1 if flag else __param_0()\n", ("__param_0",)),
+        ("def h(__param_0, xs):\n    return [__param_0() for x in xs]\n", ("__param_0",)),
+        ("def h(__param_0):\n    while __param_0():\n        pass\n", ("__param_0",)),
+        ("def h(__param_0, a, b):\n    return a < b < __param_0()\n", ("__param_0",)),
+        ("def h(__param_0):\n    return lambda: __param_0()\n", ("__param_0",)),
+        # exception context would change where it is caught
+        (
+            "def h(__param_0):\n    try:\n        return __param_0()\n    except E:\n        return None\n",
+            ("__param_0",),
+        ),
+        ("def h(__param_0, cm):\n    with cm:\n        return __param_0()\n", ("__param_0",)),
+        # a global declaration is skipped but an effectful first statement still blocks
+        ("def h(__param_0):\n    global g\n    g = f()\n    return __param_0()\n", ("__param_0",)),
+    ],
+)
+def test_non_leading_thunks_stay_deferred(source: str, names: tuple[str, ...]) -> None:
+    inlined, rendered = _inline(source, *names)
+    assert inlined == set()
+    for name in names:
+        assert f"{name}()" in rendered
+
+
+def test_first_of_two_is_inlined_when_second_is_not_first() -> None:
+    inlined, rendered = _inline(
+        "def h(__param_0, __param_1):\n    a = __param_0()\n    print(a)\n    return __param_1()\n",
+        "__param_0",
+        "__param_1",
+    )
+    assert inlined == {"__param_0"}
+    assert "__param_1()" in rendered
+
+
+def test_later_parameter_evaluated_first_is_inlined_alone() -> None:
+    # The call site evaluates E1 eagerly, then the helper evaluates E0 in place:
+    # the same order as the original block.
+    inlined, rendered = _inline(
+        "def h(__param_0, __param_1):\n    b = __param_1()\n    a = __param_0()\n    return a, b\n",
+        "__param_0",
+        "__param_1",
+    )
+    assert inlined == {"__param_1"}
+    assert "__param_0()" in rendered and "__param_1()" not in rendered
