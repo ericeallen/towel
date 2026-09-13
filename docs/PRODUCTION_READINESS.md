@@ -3,10 +3,14 @@
 **Disposition: ready for production use as a reviewed refactoring tool.**
 Every accepted proposal is checked by a syntactic instantiation invariant,
 arguments with possible effects are evaluated inside the helper at their
-original position, and seven public projects pass their full test suites
-before and after transformation. This supersedes the alpha disposition in
-[OPEN_SOURCE_AUDIT.md](OPEN_SOURCE_AUDIT.md). Publication remains a separate
-maintainer decision; see [RELEASING.md](RELEASING.md).
+original position, and a standing 39-project ecosystem check passes every
+project's own test suite before and after transformation, apart from two
+documented frame-sensitive cases and one unsupported layout. This supersedes
+the alpha disposition in [OPEN_SOURCE_AUDIT.md](OPEN_SOURCE_AUDIT.md).
+Publication remains a separate maintainer decision; see
+[RELEASING.md](RELEASING.md). Unattended use is not claimed: every batch of
+new projects so far has found new defect classes (see below), so the failure
+rate on an unfamiliar project is unknown.
 
 Work was done on `audit/open-source-2026-09-12` in the audit checkout on
 September 12–13, 2026, starting from `97fe0a2` (the 1.1.0a1 candidate). The
@@ -92,12 +96,78 @@ Under earlier engines in this pass, pyparsing raised `TypeError` in twelve
 test modules, boltons crashed with `SyntaxError` and then `IndexError` and
 later failed 56 tests, toolz failed on overlapping replacements, and the two
 Flit projects were refused. Those are the consumer-found defects above.
-Every row in the table was rerun on the final committed engine, and every
-suite is identical before and after.
+
+## Ecosystem check
+
+`scripts/ecosystem_check.py` (run as `just ecosystem`, and weekly in CI)
+clones each project in `scripts/ecosystem/manifest.toml`, runs its suite,
+refactors a copy with the CLI defaults, runs the suite again, and compares
+exit status and the normalized summary line. The table is the final run on
+commit `e3d03e5779a9`, macOS, Python 3.13, September 13, 2026; the report,
+per-project JSON, and all logs are archived with the release evidence.
+
+| attrs `8f76777` | PASS | 4 | 11 | identical: 4 failed, 1400 passed, 7 skipped, 1 xfailed |
+| bidict `61e9827` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
+| boltons `961dcff` | PASS | 13 | 41 | identical: 519 passed |
+| cachetools `4500e3d` | PASS | 3 | 3 | identical: 333 passed |
+| click `6aabf09` | PASS | 5 | 31 | identical: 2058 passed, 25 skipped, 31000 deselected, 1 xfailed |
+| colorama `841634e` | PASS | 5 | 9 | identical: 38 passed, 14 skipped |
+| decorator `2322c7b` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
+| filelock `4efd93e` | PASS | 2 | 5 | identical: 1456 passed, 54 skipped |
+| funcy `5419a8f` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
+| glom `fd70d30` | BROKEN_KNOWN | 5 | 9 | frame-relative: test_error.py asserts literal traceback frames, and the helper adds one |
+| humanize `3201e70` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
+| idna `cd17392` | PASS | 1 | 2 | identical: 6445 passed, 1 skipped, 56 subtests passed |
+| itsdangerous `672971d` | PASS | 3 | 0 | identical: 297 passed |
+| jinja2 `5ef7011` | PASS | 6 | 82 | identical: 911 passed |
+| markdown-it-py `a5950ca` | PASS | 2 | 15 | identical: 1000 passed, 1 skipped, 1 warning |
+| marshmallow `c54aa72` | PASS | 2 | 2 | identical: 1190 passed |
+| more-itertools `9ed3dbb` | PASS | 1 | 8 | identical: OK (skipped=5) |
+| natsort `e2328c2` | PASS | 1 | 1 | identical: 355 passed |
+| packaging `10590c1` | PASS | 10 | 36 | identical: 62434 passed, 1 skipped, 427 deselected |
+| pathspec `f0fb3f4` | PASS | 6 | 5 | identical: 215 passed, 372 skipped, 280 subtests passed |
+| platformdirs `c5ef1ed` | PASS | 2 | 1 | identical: 1229 passed, 106 skipped |
+| pluggy `0744fd9` | BROKEN_KNOWN | 3 | 1 | frame-relative: _verify_all_args_are_provided warns with stacklevel through the extracted helper |
+| pycodestyle `d6c3854` | NO_CHANGE | 0 | 1 | no proposal at the default minimum |
+| pyflakes `52cb729` | PASS | 10 | 325 | identical: 748 passed, 25 skipped |
+| pygments `38f426a` | PASS | 55 | 182 | identical: 5330 passed, 16 skipped, 3 warnings |
+| pyparsing `efd56db` | PASS | 5 | 18 | identical: 2140 passed, 27 skipped, 2041 subtests passed |
+| python-dateutil `48bd1af` | PASS | 6 | 20 | identical: 41 failed, 1991 passed, 47 skipped, 17 xfailed |
+| python-slugify `fee5aa3` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
+| schema `310a123` | PASS | 1 | 2 | identical: 124 passed |
+| sortedcontainers `3ac3586` | PASS | 2 | 54 | identical: 366 passed |
+| sqlparse `60cdc64` | PASS | 2 | 3 | identical: 506 passed, 2 xfailed, 1 xpassed |
+| tabulate `268615a` | NO_CHANGE | 0 | 1 | no proposal at the default minimum |
+| tenacity `3e58094` | PASS | 2 | 2 | identical: 183 passed, 1 skipped, 15 subtests passed |
+| tomli `5a77b12` | PASS | 1 | 2 | identical: 17 passed, 1 skipped, 744 subtests passed |
+| tomlkit `4b38bec` | UNSUPPORTED | 0 | 1 | Unsupported build backend 'poetry.core.masonry.api'; cannot infer safe imports |
+| toolz `568c2b8` | PASS | 5 | 68 | identical: 1 failed, 185 passed |
+| voluptuous `44593ce` | PASS | 4 | 89 | identical: 182 passed |
+| wcwidth `17986f5` | PASS | 4 | 8 | identical: 1 failed, 1363 passed, 10 skipped |
+| wrapt `f1586a5` | PASS | 6 | 6 | identical: 1 failed, 1222 passed, 8 skipped |
+
+Totals: PASS 29, NO_CHANGE 7, BROKEN_KNOWN 2, UNSUPPORTED 1. A `BROKEN_KNOWN`
+verdict requires every newly failing test to match a failure the manifest
+names, so a documented limitation cannot hide an unrelated regression.
+Suites that already failed before transformation (attrs, python-dateutil,
+toolz, wcwidth, wrapt) fail identically after it; those failures are
+missing package metadata or environment-specific and are unchanged by the
+transformation.
+
+Earlier runs of the same check on the 1.1.0 candidate found the eight
+defects listed under "Defects found and repaired" and, on the repaired
+engine, four more (a function nested in a method taken for a method, an
+annotated assignment not counted as a binding, an `elif` extracted as a
+sibling statement, and a conditionally bound variable returned unbound),
+then three more (clustered call sites in sibling classes, and two class-body
+helpers whose first parameter or lack of one was taken for a receiver).
+Pyflakes and pygments exceeded the 30-minute limit until the safety guards,
+unification, and per-block analyses were memoized; they now complete in
+about five and three minutes.
 
 ## Verification gates on the final tree
 
-- Python 3.11, 3.12, and 3.13: 1,203 tests passed on each, plus 34 subtests.
+- Python 3.11, 3.12, and 3.13: 1,204 tests passed on each, plus 34 subtests.
   Coverage is 89% against the unconditional 85% gate.
 - Black, Flake8, strict mypy, Bandit, and all pre-commit hooks pass. Hostile
   fixtures are excluded from formatting because their layout is what they
@@ -123,3 +193,8 @@ suite is identical before and after.
   eagerly when the helper evaluates it first, once, and unconditionally,
   which covers the common `x = E` opening; thunks used repeatedly or after
   an effect stay deferred. The `rename-helpers` workflow can name the rest.
+- The ecosystem corpus is 39 libraries, none above 140,000 lines. No
+  measurement yet says how much of each transformed block its suite
+  exercises, and no large application is in the manifest. A stopping rule
+  for claiming unattended use would be a fixed run of new projects with no
+  new defect class; the current run stands at two.

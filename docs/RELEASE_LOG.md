@@ -6,10 +6,12 @@
   - Soundness: every accepted proposal is verified by instantiating the helper with each call's arguments and comparing with the replaced block up to renamed binders; arguments that are not names, literals, or containers of those are passed as thunks evaluated at the original position.
   - Guards: closure/cell sharing across the block boundary, deletion and `except ... as` of pre-bound names, moved `global`/`nonlocal` declarations, slice and starred parameters, and opaque method decorators are rejected or handled explicitly; match captures bind in scope analysis; generated parameter names avoid block identifiers; clustered replacements may not overlap.
   - Layouts: Flit projects are supported in directory mode.
-  - Evidence: seven public projects pass their full suites before and after transformation; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
+  - Evidence: a standing 39-project ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`, weekly CI) passes 29 projects' full suites identically before and after transformation, with 7 producing no proposal, 2 documented frame-sensitive cases, and 1 unsupported layout; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
+  - Renaming: `towel rename-helpers --list --json` emits an inventory for LLM-driven naming and `--rename-file` applies a batch with scope and importer checks, reporting JSON.
+  - Performance: safety guards, unification, and per-block analyses are memoized per analysis; pyflakes' 2,167-line test module analyzes in about a minute instead of exceeding nine.
 - Status: All tests green
-  - Unit/integration tests: 1,203 passed on Python 3.11, 3.12, and 3.13
-  - Consumer suites: 7/7 identical before and after (see docs/PRODUCTION_READINESS.md)
+  - Unit/integration tests: 1,204 passed on Python 3.11, 3.12, and 3.13
+  - Ecosystem check: 29 PASS, 7 NO_CHANGE, 2 BROKEN_KNOWN, 1 UNSUPPORTED of 39 (see docs/PRODUCTION_READINESS.md)
 
 ---
 

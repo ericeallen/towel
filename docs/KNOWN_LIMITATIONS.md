@@ -121,7 +121,11 @@ module reaches a fixed point in about 23 seconds; a 4,000-line package with
 its tests applied 18 extractions in about 6 minutes; an 18,000-line package
 completes in about 2.5 minutes. The worst case is a module of many small,
 similar functions: pyflakes' 2,167-line `test_other.py` forms 444,250
-candidate pairs and takes about 2.5 minutes to analyze once, after the
-safety guards were memoized per block. Progress is reported per phase. There
-is no time budget; interrupt with Ctrl-C, which leaves files unchanged. The
-ecosystem check applies a 30-minute limit per phase and reports `TIMEOUT`.
+candidate pairs. One analysis pass over it took more than nine minutes
+before the safety guards, unification, and per-block binding analyses were
+memoized per (function, block) within an analysis, and about one minute
+after; unification had been repeated for 98 percent of its calls because
+the clustering pass unifies one template against the same candidates for
+every pair that shares it. Progress is reported per phase. There is no time
+budget; interrupt with Ctrl-C, which leaves files unchanged. The ecosystem
+check applies a 30-minute limit per phase and reports `TIMEOUT`.
