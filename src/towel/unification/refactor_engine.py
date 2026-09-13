@@ -890,10 +890,17 @@ class UnificationRefactorEngine:
 
         implicit_param = None
         if kind in {"instance", "classmethod"}:
-            if func.args.args:
-                implicit_param = func.args.args[0].arg
+            positional = [*func.args.posonlyargs, *func.args.args]
+            if positional:
+                implicit_param = positional[0].arg
             else:
                 implicit_param = "self" if kind == "instance" else "cls"
+            # A function in a class body whose first parameter is not ``self``
+            # is often a plain helper called while the class body runs
+            # (pygments' ``fstring_rules(ttype)``); dispatching on that
+            # parameter would call a method on an arbitrary object.
+            if kind == "instance" and implicit_param != "self":
+                receiver_known = False
 
         return MethodInfo(kind=kind, implicit_param=implicit_param, receiver_known=receiver_known)
 

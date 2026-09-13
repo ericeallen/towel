@@ -61,6 +61,7 @@ TRANSFORMED = {
     "r87_nested_function_in_method",
     "r88_elif_branch",
     "r90_cluster_across_classes",
+    "r91_class_body_helper",
 }
 
 
