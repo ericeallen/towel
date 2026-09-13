@@ -180,3 +180,14 @@ class TestUnifierCore(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+def test_assignment_expression_is_never_parameterized() -> None:
+    import ast as _ast
+    from towel.unification.unifier import Unifier
+
+    blocks = [
+        _ast.parse("v = (m := f(s))\nuse(v)\n").body,
+        _ast.parse("v = g(s)\nuse(v)\n").body,
+    ]
+    assert Unifier().unify_blocks(blocks, [{}, {}]) is None

@@ -43,7 +43,10 @@ In summary:
   parameterized at another was substituted everywhere. Repaired by the
   instantiation check, which subsumes the unifier's internal rules.
 - Argument hoisting: attribute, subscript, operator, and call arguments were
-  evaluated once at the call site. Repaired by the eager/thunk policy.
+  evaluated once at the call site. Repaired by the eager/thunk policy. A
+  later review of that policy removed list and set displays from the eager
+  set (fresh object per evaluation) and barred assignment expressions from
+  parameterization (a thunk would bind in the wrong scope).
 - Closure cells, deletion, `except ... as`, `global` declarations, and match
   captures each produced a helper that rebinds or reads the wrong variable.
   Repaired by new guards and scope-analysis support.
@@ -86,7 +89,7 @@ suite is identical before and after.
 
 ## Verification gates on the final tree
 
-- Python 3.11, 3.12, and 3.13: 1,134 tests passed on each, plus 34 subtests.
+- Python 3.11, 3.12, and 3.13: 1,140 tests passed on each, plus 34 subtests.
   Coverage is 89% against the unconditional 85% gate.
 - Black, Flake8, strict mypy, Bandit, and all pre-commit hooks pass. Hostile
   fixtures are excluded from formatting because their layout is what they

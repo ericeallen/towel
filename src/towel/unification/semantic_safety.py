@@ -388,14 +388,17 @@ def is_eagerly_evaluable(expression: ast.AST) -> bool:
 
     A parameter argument runs once, before the block, even when the block would
     have evaluated it later, repeatedly, conditionally, or not at all. Only
-    expressions with no effects and no failure modes may move that way: local
-    names, literals, and containers of those. Attribute access can run a
-    property, subscripts and operators can call arbitrary methods, and calls
-    are effects by definition.
+    expressions with no effects, no failure modes, and no fresh identity may
+    move that way: local names, literals, and tuples of those. Attribute
+    access can run a property, subscripts and operators can call arbitrary
+    methods, calls are effects by definition, and mutable displays allocate.
     """
     if isinstance(expression, (ast.Constant, ast.Name)):
         return True
-    if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
+    # A tuple of such values is immutable, so one evaluation is as good as
+    # many. List, set and dict displays create a fresh mutable object each
+    # time they run; hoisting one out of a loop would alias every iteration.
+    if isinstance(expression, ast.Tuple):
         return all(is_eagerly_evaluable(element) for element in expression.elts)
     if isinstance(expression, ast.UnaryOp) and isinstance(expression.operand, ast.Constant):
         return isinstance(expression.op, (ast.USub, ast.UAdd, ast.Invert, ast.Not))

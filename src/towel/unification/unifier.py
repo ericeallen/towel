@@ -1857,6 +1857,11 @@ class Unifier:
         if any(isinstance(expr, (ast.Slice, ast.Starred)) for expr in exprs):
             return False
 
+        # An assignment expression binds in the scope that evaluates it. A
+        # thunk would bind it in the lambda instead of the caller.
+        if any(isinstance(node, ast.NamedExpr) for expr in exprs for node in ast.walk(expr)):
+            return False
+
         # Check if all expressions are already mapped to the same parameter
         existing_params = [
             subst.get_param_for_expr(idx, expr) for idx, expr in zip(block_indices, exprs)

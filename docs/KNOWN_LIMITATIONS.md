@@ -12,7 +12,7 @@ rejects, and what remains outside its model. Read it together with
   block it replaces up to the renaming of names the block itself binds. A
   proposal whose unification, substitution, or renaming disagree is rejected
   before it is offered. (`src/towel/unification/instantiation.py`)
-- **Argument evaluation.** Only names, literals, and containers of those are
+- **Argument evaluation.** Only names, literals, and tuples of those are
   passed eagerly. Every other differing expression is passed as a
   zero-argument thunk and evaluated inside the helper at the original
   position, so it runs as often, as late, and as conditionally as before.
