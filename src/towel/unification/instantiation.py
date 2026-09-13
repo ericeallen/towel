@@ -57,12 +57,15 @@ def instantiation_mismatch(
         return "arity"
     end = len(helper.body) - (1 if returns_variables else 0)
     body = [copy.deepcopy(statement) for statement in helper.body[preamble_length:end]]
+    inverse = _spellings_to_block_names(template_renames, block_renames)
+    shape = _statement_shape_mismatch(helper, call_statement, body, inverse, returns_variables)
+    if shape is not None:
+        return shape
     arguments = dict(zip(parameters, call.args))
     try:
         reduced = [cast(ast.stmt, _Reducer(arguments).visit(statement)) for statement in body]
     except InstantiationError as error:
         return str(error)
-    inverse = _spellings_to_block_names(template_renames, block_renames)
     restored = [_IdentifierRenamer(inverse).visit(statement) for statement in reduced]
     expected = _alpha_normalize(
         ast.Module(body=[cast(ast.stmt, copy.deepcopy(node)) for node in block], type_ignores=[])
@@ -118,6 +121,68 @@ def _spellings_to_block_names(
         if canonical in by_canonical:
             mapping[template_name] = by_canonical[canonical]
     return mapping
+
+
+def _statement_shape_mismatch(
+    helper: ast.FunctionDef,
+    call_statement: ast.stmt,
+    body: Sequence[ast.stmt],
+    inverse: Mapping[str, str],
+    returns_variables: bool,
+) -> Optional[str]:
+    """Check that the call statement carries the helper's result the same way.
+
+    A helper that returns early must be called by `return helper(...)`; a
+    helper that returns live variables must be called by an assignment whose
+    targets are those variables, in order, under the block's own spelling.
+    """
+    own_returns = [
+        node
+        for statement in body
+        for node in _walk_own_scope(statement)
+        if isinstance(node, ast.Return)
+    ]
+    if returns_variables:
+        if own_returns:
+            return "early return alongside returned variables"
+        returned = helper.body[-1]
+        if not isinstance(returned, ast.Return) or returned.value is None:
+            return "missing variable return"
+        value = returned.value
+        elements = list(value.elts) if isinstance(value, ast.Tuple) else [value]
+        if not all(isinstance(element, ast.Name) for element in elements):
+            return "variable return shape"
+        expected = [
+            inverse.get(cast(ast.Name, element).id, cast(ast.Name, element).id)
+            for element in elements
+        ]
+        if not isinstance(call_statement, ast.Assign) or len(call_statement.targets) != 1:
+            return "assignment shape"
+        target = call_statement.targets[0]
+        targets = list(target.elts) if isinstance(target, ast.Tuple) else [target]
+        if not all(isinstance(item, ast.Name) for item in targets):
+            return "assignment target shape"
+        if [cast(ast.Name, item).id for item in targets] != expected:
+            return (
+                f"assignment targets {[cast(ast.Name, item).id for item in targets]} != {expected}"
+            )
+        return None
+    if own_returns and not isinstance(call_statement, ast.Return):
+        return "early return without return call"
+    return None
+
+
+def _walk_own_scope(node: ast.AST) -> List[ast.AST]:
+    """Nodes of ``node`` without entering nested function or class scopes."""
+    found: List[ast.AST] = []
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        found.append(current)
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(current))
+    return found
 
 
 def _extract_call(statement: ast.stmt, helper_name: str) -> Optional[ast.Call]:

@@ -167,3 +167,56 @@ def test_call_shape_and_arity_are_checked(call_source: str) -> None:
         )
         is not None
     )
+
+
+def test_returned_variables_must_match_assignment_targets_in_order() -> None:
+    helper = _function("def h(items):\n    a = items[0]\n    b = items[-1]\n    return (a, b)\n")
+    block = _block("lo = items[0]\nhi = items[-1]\n")
+    renames = ({"a": "__temp_0", "b": "__temp_1"}, {"lo": "__temp_0", "hi": "__temp_1"})
+    good = _statement("lo, hi = h(items)")
+    assert (
+        instantiation_mismatch(
+            helper, good, block, *renames, preamble_length=0, returns_variables=True
+        )
+        is None
+    )
+    swapped = _statement("hi, lo = h(items)")
+    reason = instantiation_mismatch(
+        helper, swapped, block, *renames, preamble_length=0, returns_variables=True
+    )
+    assert reason is not None and "assignment targets" in reason
+
+
+def test_early_return_with_returned_variables_is_rejected() -> None:
+    helper = _function(
+        "def h(obj, self):\n    if obj is None:\n        return self\n    cls = obj.__class__\n    return cls\n"
+    )
+    call = _statement("cls = h(obj, self)")
+    block = _block("if obj is None:\n    return self\ncls = obj.__class__\n")
+    reason = instantiation_mismatch(
+        helper, call, block, {}, {}, preamble_length=0, returns_variables=True
+    )
+    assert reason is not None and "early return" in reason
+
+
+def test_early_return_requires_return_call() -> None:
+    helper = _function("def h(x):\n    if x:\n        return 1\n    return 2\n")
+    block = _block("if x:\n    return 1\nreturn 2\n")
+    assert (
+        instantiation_mismatch(
+            helper,
+            _statement("return h(x)"),
+            block,
+            {},
+            {},
+            preamble_length=0,
+            returns_variables=False,
+        )
+        is None
+    )
+    assert (
+        instantiation_mismatch(
+            helper, _statement("h(x)"), block, {}, {}, preamble_length=0, returns_variables=False
+        )
+        is not None
+    )

@@ -162,3 +162,23 @@ class TestMovesScopeDeclaration:
             "        count += 1\n    for i in items:\n        inc()\n    return count\n"
         )
         assert not moves_scope_declaration(function, _slice(function, 1, 3))
+
+
+class TestAlignReturnVariables:
+    def test_union_is_ordered_by_template_names_and_mapped(self) -> None:
+        from towel.unification.refactor_engine import _align_return_variables
+
+        renames = [{"zeta": "__temp_0", "alpha": "__temp_1"}, {"lo": "__temp_0", "hi": "__temp_1"}]
+        aligned = _align_return_variables(
+            {"zeta", "total"},
+            {"hi", "total"},
+            {"zeta", "alpha", "total"},
+            {"lo", "hi", "total"},
+            renames,
+        )
+        assert aligned == (["alpha", "total", "zeta"], ["hi", "total", "lo"])
+
+    def test_variable_unbound_in_other_block_is_rejected(self) -> None:
+        from towel.unification.refactor_engine import _align_return_variables
+
+        assert _align_return_variables({"x"}, set(), {"x"}, {"y"}, [{}, {}]) is None

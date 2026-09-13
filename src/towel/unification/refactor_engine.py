@@ -241,6 +241,9 @@ class UnificationRefactorEngine:
         self._used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
+        # Every file of the current analysis: helper names must be unique
+        # across all of them, because any module may import from any other.
+        self._analysis_paths: Tuple[str, ...] = ()
         self._signed_block_cache: WeakKeyDictionary[
             FunctionNode, List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]
         ] = WeakKeyDictionary()
@@ -369,6 +372,7 @@ class UnificationRefactorEngine:
         invalidate_paths: If provided, forces reparse/reanalysis of these paths even if cached.
         """
         self._signed_block_cache.clear()
+        self._analysis_paths = tuple(file_paths)
         try:
             return run_pipeline(
                 file_paths,
@@ -666,7 +670,10 @@ class UnificationRefactorEngine:
 
         counter = max(
             self._helper_name_counters.get(file_path, 0),
-            *(self._discover_helper_counter_seed(path) for path in {file_path, *related_paths}),
+            *(
+                self._discover_helper_counter_seed(path)
+                for path in {file_path, *related_paths, *self._analysis_paths}
+            ),
         )
         # Python mangles double-underscore names in class bodies, including
         # references to module helpers and inherited methods from another class.
@@ -1944,6 +1951,26 @@ class UnificationRefactorEngine:
             print("  ✓ Unification successful")
             print(f"  Substitution: {substitution}")
 
+        aligned = _align_return_variables(
+            return_variables_block1,
+            return_variables_block2,
+            bound_in_block1,
+            bound_in_block2,
+            hygienic_renames,
+        )
+        if aligned is None:
+            self._debug_reject("return_variables_not_aligned", pair)
+            return None
+        ordered_return_variables = aligned
+        if ordered_return_variables[0] and (
+            is_value_producing(cast(List[ast.stmt], pair.block1_nodes))
+            or is_value_producing(cast(List[ast.stmt], pair.block2_nodes))
+        ):
+            # A call statement is either `x = helper()` or `return helper()`;
+            # a block that both returns early and binds live variables needs both.
+            self._debug_reject("mixed_return_and_variables", pair)
+            return None
+
         # Pre-compute the deepest common enclosing function (for same-file cases)
         dce_insert_func: Optional[str] = None
         same_file_ctx = pair.file_path2 is not None and pair.file_path2 == pair.file_path
@@ -2167,7 +2194,7 @@ class UnificationRefactorEngine:
                 free_variables=free_vars,
                 enclosing_names=enclosing_names,
                 is_value_producing=value_prod1,
-                return_variables=list(return_variables_block1),
+                return_variables=list(ordered_return_variables[0]),
                 global_decls=(
                     globals_to_declare_in_extracted if globals_to_declare_in_extracted else None
                 ),
@@ -2246,8 +2273,11 @@ class UnificationRefactorEngine:
         # Generate replacement calls
         replacements: List[Replacement] = []
 
-        # Map block indices to their return variables
-        return_vars_by_block = {0: list(return_variables_block1), 1: list(return_variables_block2)}
+        # Map block indices to their return variables, in one shared order
+        return_vars_by_block = {
+            0: list(ordered_return_variables[0]),
+            1: list(ordered_return_variables[1]),
+        }
 
         for block_idx, (block_range, file_path) in enumerate(
             [
@@ -2327,7 +2357,7 @@ class UnificationRefactorEngine:
                     hygienic_renames[0],
                     hygienic_renames[block_idx],
                     preamble_length=helper_preamble_length,
-                    returns_variables=bool(return_variables_block1),
+                    returns_variables=bool(ordered_return_variables[0]),
                 )
                 if mismatch is not None:
                     self._debug_reject(
@@ -2666,7 +2696,7 @@ class UnificationRefactorEngine:
             replacements=replacements,  # Now includes file_path
             description=desc,
             parameters_count=len(substitution.param_expressions),
-            return_variables=list(return_variables_block1),
+            return_variables=list(ordered_return_variables[0]),
             insert_into_class=insert_into_class,
             insert_into_function=insert_into_function,
             method_kind=method_kind_metadata,
@@ -3017,9 +3047,27 @@ class UnificationRefactorEngine:
                     )
 
     def _find_import_position(self, lines: List[str]) -> int:
-        """Find position to insert a new import statement."""
-        last_import_line, after_docstring = self._scan_module_docstring_and_imports(lines)
-        return last_import_line if last_import_line > 0 else after_docstring
+        """Return the 0-based line index at which to insert a new import.
+
+        The position follows the module docstring and any leading imports,
+        determined from the parsed module so that text inside comments or
+        docstrings is never mistaken for an import.
+        """
+        body = ast.parse("".join(lines)).body
+        position = 0
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            position = body[0].end_lineno or body[0].lineno
+            body = body[1:]
+        for statement in body:
+            if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+                break
+            position = statement.end_lineno or statement.lineno
+        return position
 
     def _get_indent(self, line: str) -> str:
         """Get the indentation of a line."""
@@ -3520,6 +3568,41 @@ def _refactor_engine_helper_2(
 
 
 # Utility functions for overlap filtering
+
+
+def _align_return_variables(
+    first: Set[str],
+    second: Set[str],
+    bound_first: Set[str],
+    bound_second: Set[str],
+    renames: Sequence[Dict[str, str]],
+) -> Optional[Tuple[List[str], List[str]]]:
+    """Order both blocks' live variables so one helper return serves every call.
+
+    Each block reads its own set of names after the block, possibly under
+    different spellings unified by alpha-renaming. The helper returns the
+    union, spelled in the template's names and sorted; each call assigns the
+    same positions under its own spelling. ``None`` means a live variable of
+    one block has no binding in the other, so no single helper can return it.
+    """
+    template_renames = renames[0] if renames else {}
+    block_renames = renames[1] if len(renames) > 1 else {}
+    canonical_to_template = {canonical: name for name, canonical in template_renames.items()}
+    canonical_to_block = {canonical: name for name, canonical in block_renames.items()}
+
+    def to_template(name: str) -> str:
+        canonical = block_renames.get(name, name)
+        return canonical_to_template.get(canonical, canonical)
+
+    def to_block(name: str) -> str:
+        canonical = template_renames.get(name, name)
+        return canonical_to_block.get(canonical, canonical)
+
+    template_names = sorted(set(first) | {to_template(name) for name in second})
+    block_names = [to_block(name) for name in template_names]
+    if not set(template_names) <= bound_first or not set(block_names) <= bound_second:
+        return None
+    return template_names, block_names
 
 
 def _line_ranges_intersect(left: Tuple[int, int], right: Tuple[int, int]) -> bool:
