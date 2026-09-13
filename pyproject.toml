@@ -64,7 +64,7 @@ where = ["src"]
 [tool.black]
 line-length = 100
 # Hostile fixtures are executed as written; reformatting would change what they test.
-force-exclude = "tests/hostile_cases/"
+force-exclude = "tests/hostile_(cases|crossfile)/"
 target-version = ['py311', 'py312', 'py313']
 
 [tool.mypy]

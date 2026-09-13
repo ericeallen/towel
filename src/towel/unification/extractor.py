@@ -104,6 +104,8 @@ class HygienicExtractor:
         # Combine: unified parameters first (to preserve evaluation order),
         # then free variables
         all_param_names = param_names_unified + param_names_free
+        if len(set(all_param_names)) != len(all_param_names):
+            raise UnsupportedExtraction("Generated parameter name collides with a free variable")
 
         # Create parameter order mapping
         param_order = {name: idx for idx, name in enumerate(all_param_names)}

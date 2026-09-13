@@ -745,8 +745,7 @@ class Unifier:
                     continue
 
                 # Create fresh parameter name and record mappings for all blocks
-                param_name = f"__param_{self.param_counter}"
-                self.param_counter += 1
+                param_name = self._fresh_parameter_name()
 
                 for bidx, expr_b in enumerate(valid_exprs):
                     subst.add_mapping(bidx, expr_b, param_name, bound_vars=None)
@@ -1960,8 +1959,7 @@ class Unifier:
 
         # Create a new parameter
         # Use __ prefix to avoid name collisions (Python convention)
-        param_name = f"__param_{self.param_counter}"
-        self.param_counter += 1
+        param_name = self._fresh_parameter_name()
 
         # Add mappings for each block
         for idx, expr in zip(block_indices, exprs):
@@ -2112,6 +2110,25 @@ class Unifier:
     def _reset_unification_state(self, blocks: List[List[ast.AST]]) -> None:
         self.param_counter = 0
         self.current_blocks = blocks
+        # A helper extracted on an earlier pass already binds names such as
+        # ``__param_0``; a fresh parameter must not alias any identifier the
+        # blocks mention, or the substituted body becomes ambiguous.
+        self._reserved_parameter_names = {
+            node.id
+            for block in blocks
+            for statement in block
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Name)
+        }
+
+    def _fresh_parameter_name(self) -> str:
+        """Return the next ``__param_N`` that no block identifier already uses."""
+        reserved: Set[str] = getattr(self, "_reserved_parameter_names", set())
+        while True:
+            name = f"__param_{self.param_counter}"
+            self.param_counter += 1
+            if name not in reserved:
+                return name
 
     def _assign_alpha_mapping(
         self,
