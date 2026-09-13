@@ -62,6 +62,7 @@ TRANSFORMED = {
     "r88_elif_branch",
     "r90_cluster_across_classes",
     "r91_class_body_helper",
+    "r92_parameterless_class_body_helper",
 }
 
 

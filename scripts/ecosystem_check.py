@@ -122,7 +122,7 @@ def summarize(output: str) -> str:
     lines = [line.strip() for line in plain.splitlines() if line.strip()]
     for line in reversed(lines):
         if any(pattern.match(line) for pattern in SUMMARY_PATTERNS):
-            return re.sub(r" in [\d.]+s", "", line).strip("= ")
+            return re.sub(r" in [\d.]+s(?: \(\d+:\d+:\d+\))?", "", line).strip("= ")
     return lines[-1] if lines else ""
 
 

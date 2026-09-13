@@ -894,7 +894,11 @@ class UnificationRefactorEngine:
             if positional:
                 implicit_param = positional[0].arg
             else:
+                # Nothing to dispatch on: a parameterless function in a class
+                # body is a helper called while the body runs (pygments'
+                # ``gen_rubystrings_rules()``), not a method.
                 implicit_param = "self" if kind == "instance" else "cls"
+                receiver_known = False
             # A function in a class body whose first parameter is not ``self``
             # is often a plain helper called while the class body runs
             # (pygments' ``fstring_rules(ttype)``); dispatching on that

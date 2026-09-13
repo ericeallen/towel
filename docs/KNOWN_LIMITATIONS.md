@@ -25,7 +25,9 @@ rejects, and what remains outside its model. Read it together with
   a name bound before it; may not carry a `global`/`nonlocal` declaration the
   caller still uses; may not rebind a name a closure outside the block reads;
   and may not define a closure over a name the caller rebinds after the block.
-  Names bound in the block and read afterwards are returned.
+  Names bound in the block and read afterwards are returned, including targets
+  of annotated assignments and assignment expressions; a returned name must be
+  definitely bound where the block ends or have entered as a parameter.
 - **Frame and control flow.** Blocks containing `yield`, `await`, `async`
   loops or context managers, `locals()`, `globals()`, `vars()`, `eval`,
   `exec`, zero-argument `super()`, `break`/`continue` targeting an outer loop,
@@ -76,11 +78,16 @@ frames, names, or source.
 
 ## Method insertion
 
-A helper becomes a method only when both blocks belong to one unique
-module-level class, or to classes with a unique module-level common
-ancestor, and every decorator on the source methods is known to preserve
-the receiver. Local classes, duplicated class names, and unknown decorators
-get a module-level helper that takes the receiver explicitly.
+A helper becomes a method only when both blocks belong to functions defined
+directly in one unique module-level class, or in classes with a unique
+module-level common ancestor, every decorator on the source methods is known
+to preserve the receiver, and the methods have a first parameter named
+`self` (or the method is a `classmethod`). Local classes, duplicated class names, unknown
+decorators, functions nested inside methods, and class-body functions with
+no parameter or a first parameter other than `self` get a module-level helper that takes the
+receiver explicitly. Additional call sites gathered from the same file join
+a method helper only when they are methods of the same classes with the same
+receiver kind; other occurrences keep their code.
 
 ## Conservative rejections
 
@@ -96,8 +103,13 @@ uncertainty. Common reasons a real duplicate is not extracted:
   block boundary in a way the return analysis does not represent.
 - Lambda expressions with positional-only, keyword-only, or variadic
   parameters are not unified.
+- A block that begins at an `elif` is never extracted, because its call
+  would have to be rendered inside the preceding branch's `else`; the
+  `elif`'s own body and further branches remain candidates. This gives up a
+  valid extraction when the preceding branch always exits (tabulate).
 - Project layouts other than setuptools, Hatch, and Flit conventions are
-  refused for directory mode because import roots cannot be inferred safely.
+  refused for directory mode because import roots cannot be inferred safely;
+  the ecosystem check reports these as `UNSUPPORTED` (tomlkit, Poetry).
 
 Set `DEBUG_PROPOSAL_REJECTIONS=1` to print the reason for each rejected pair.
 
