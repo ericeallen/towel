@@ -128,6 +128,21 @@ class AssignmentAnalyzer(ast.NodeVisitor):
                 # Mark all names as bound
                 self.bound_vars.update(names)
 
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """An annotated assignment with a value binds its target like ``Assign``."""
+        if node.value is None:
+            return
+        self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            self.reassignments[id(node)] = node.target.id in self.bound_vars
+            self.bound_vars.add(node.target.id)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        """An assignment expression binds its target in the enclosing function."""
+        self.visit(node.value)
+        self.reassignments[id(node)] = node.target.id in self.bound_vars
+        self.bound_vars.add(node.target.id)
+
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         """
         Visit augmented assignment (+=, -=, etc.).
@@ -316,6 +331,23 @@ def _collect_bindings_and_reassignments(
                     else:
                         bound_vars.add(var_name)
 
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            # An annotated assignment with a value binds its target; without a
+            # value it only declares the annotation and binds nothing.
+            if node.value is not None and isinstance(node.target, ast.Name):
+                if reassignments.get(id(node), False):
+                    reassigned_vars.add(node.target.id)
+                else:
+                    bound_vars.add(node.target.id)
+            self.generic_visit(node)
+
+        def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+            if reassignments.get(id(node), False):
+                reassigned_vars.add(node.target.id)
+            else:
+                bound_vars.add(node.target.id)
             self.generic_visit(node)
 
         def visit_AugAssign(self, node: ast.AugAssign) -> None:

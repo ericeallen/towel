@@ -33,7 +33,20 @@ from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
-from typing import Any, List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Union, Sequence, cast
+from typing import (
+    Any,
+    Callable,
+    List,
+    Tuple,
+    Dict,
+    Set,
+    Optional,
+    FrozenSet,
+    Literal,
+    Union,
+    Sequence,
+    cast,
+)
 from weakref import WeakKeyDictionary
 from pathlib import Path
 from .scope_analyzer import ScopeAnalyzer, Scope
@@ -241,6 +254,9 @@ class UnificationRefactorEngine:
         # Memoization caches keyed by the identity of AST nodes parsed for this engine run.
         self._assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]] = WeakKeyDictionary()
         self._used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
+        # Block guards are pure in (guard, function, block); a block takes part
+        # in every pair it forms, so its verdicts are computed once.
+        self._block_guard_cache: Dict[Tuple[Any, ...], bool] = {}
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
         # Every file of the current analysis: helper names must be unique
@@ -351,6 +367,27 @@ class UnificationRefactorEngine:
                     python_files.append(str(py_file))
 
         return sorted(python_files)
+
+    def _block_rejected(
+        self,
+        guard: Callable[..., bool],
+        nodes: Sequence[ast.AST],
+        func: Optional[FunctionNode] = None,
+        analyzer: Optional[ScopeAnalyzer] = None,
+    ) -> bool:
+        """Evaluate a pure block guard once per (guard, function, block)."""
+        key = (guard, func, analyzer, tuple(nodes))
+        cached = self._block_guard_cache.get(key)
+        if cached is not None:
+            return cached
+        if analyzer is not None:
+            verdict = bool(guard(analyzer, func, list(nodes)))
+        elif func is not None:
+            verdict = bool(guard(func, list(nodes)))
+        else:
+            verdict = bool(guard(list(nodes)))
+        self._block_guard_cache[key] = verdict
+        return verdict
 
     def _get_assignment_reuse(self, func: FunctionNode) -> Dict[int, bool]:
         """Return (and cache) assignment analysis for a function definition."""
@@ -807,6 +844,19 @@ class UnificationRefactorEngine:
             result.append(kw)
         return result
 
+    @staticmethod
+    def _method_class(
+        func: Optional[FunctionNode],
+        class_name: Optional[str],
+        analyzer: Optional[ScopeAnalyzer],
+    ) -> Optional[str]:
+        """The class ``func`` is a method of, or None when it is merely nested in one."""
+        if func is None or class_name is None:
+            return None
+        if analyzer is not None and func in analyzer.node_scopes and not analyzer.is_method(func):
+            return None
+        return class_name
+
     def _get_method_context(
         self, func: Optional[FunctionNode], class_name: Optional[str]
     ) -> MethodInfo:
@@ -978,12 +1028,7 @@ class UnificationRefactorEngine:
         class_infos: List[ClassInfo],
     ) -> Optional[ClassInsertionPlan]:
         """Determine whether the helper should be inserted into a class context."""
-        # Original logic required both method kinds to be equal and non-None. In practice
-        # some methods may not have their kind inferred (kind=None) even though they are
-        # instance methods (implicit_param present / first arg named 'self'). We relax
-        # this by attempting inference when BOTH kinds are None; if only one side is
-        # None we keep the conservative skip to avoid mismatches (e.g., staticmethod
-        # vs instance).
+        # Both blocks must sit in methods of the same kind.
         if not (method_info1.receiver_known and method_info2.receiver_known):
             return None
         if pair.class1_name is not None and not _unique_module_level_class(
@@ -995,15 +1040,11 @@ class UnificationRefactorEngine:
         ):
             return None
         k1, k2 = method_info1.kind, method_info2.kind
-        inferred_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
-        if k1 is None and k2 is None:
-            # Infer 'instance' if both have an implicit_param or a first argument name.
-            # method_info.implicit_param is populated for recognized methods; as a
-            # fallback, treat absence uniformly as instance.
-            inferred_kind = "instance"
-        else:
-            if k1 != k2 or k1 is None or k2 is None:
-                return None
+        # A block with no method context (a function nested inside a method, or
+        # one outside any class) has no receiver to dispatch on; its helper
+        # stays at module level even when the block lexically sits in a class.
+        if k1 is None or k2 is None or k1 != k2:
+            return None
         if pair.class1_name is None or pair.class2_name is None:
             return None
 
@@ -1011,9 +1052,7 @@ class UnificationRefactorEngine:
         file2 = pair.file_path2 or pair.file_path
 
         # At this point we know effective_kind is valid because we've already validated k1/k2
-        effective_kind: Literal["instance", "classmethod", "staticmethod"] = cast(
-            Literal["instance", "classmethod", "staticmethod"], inferred_kind or method_info1.kind
-        )
+        effective_kind: Literal["instance", "classmethod", "staticmethod"] = k1
         if file1 == file2 and pair.class1_name == pair.class2_name:
             implicit_param = method_info1.implicit_param or method_info2.implicit_param
             if effective_kind == "instance" and not implicit_param:
@@ -1243,12 +1282,26 @@ class UnificationRefactorEngine:
             List of (line_range, statements) tuples
         """
 
-        def extract_from_body(body: List[ast.stmt]) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
+        def extract_from_body(
+            body: List[ast.stmt], parent: Optional[ast.stmt] = None
+        ) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
             # Extract all contiguous subsequences of minimum length from a given body
             results: List[Tuple[Tuple[int, int], List[ast.AST]]] = []
 
+            # An ``elif`` is the sole statement of its parent's ``orelse`` and
+            # shares the parent's column. It has no position of its own in the
+            # source, so a block starting there would be rendered as a sibling
+            # of the parent ``if`` and run unconditionally. Its own body and
+            # branches are still visited below.
+            is_elif = (
+                isinstance(parent, ast.If)
+                and len(body) == 1
+                and isinstance(body[0], ast.If)
+                and body[0].col_offset == parent.col_offset
+            )
+
             # Extract all contiguous subsequences
-            for length in range(len(body), 0, -1):
+            for length in range(0 if is_elif else len(body), 0, -1):
                 for start in range(len(body) - length + 1):
                     block = body[start : start + length]
 
@@ -1280,7 +1333,7 @@ class UnificationRefactorEngine:
                 if hasattr(stmt, "body") and isinstance(getattr(stmt, "body"), list):
                     results.extend(extract_from_body(getattr(stmt, "body")))
                 if hasattr(stmt, "orelse") and isinstance(getattr(stmt, "orelse"), list):
-                    results.extend(extract_from_body(getattr(stmt, "orelse")))
+                    results.extend(extract_from_body(getattr(stmt, "orelse"), stmt))
 
                 # With and AsyncWith already covered by .body
                 # Try/Except/Finally blocks
@@ -1676,7 +1729,9 @@ class UnificationRefactorEngine:
         Returns:
             Refactoring proposal or None
         """
-        if requires_original_frame(pair.block1_nodes) or requires_original_frame(pair.block2_nodes):
+        if self._block_rejected(requires_original_frame, pair.block1_nodes) or self._block_rejected(
+            requires_original_frame, pair.block2_nodes
+        ):
             self._debug_reject("frame_sensitive_block", pair)
             return None
 
@@ -1734,35 +1789,39 @@ class UnificationRefactorEngine:
         if (
             func1 is not None
             and scope_analyzer is not None
-            and snapshots_rebound_external_names(scope_analyzer, func1, pair.block1_nodes)
+            and self._block_rejected(
+                snapshots_rebound_external_names, pair.block1_nodes, func1, scope_analyzer
+            )
         ) or (
             func2 is not None
             and scope_analyzer2 is not None
-            and snapshots_rebound_external_names(scope_analyzer2, func2, pair.block2_nodes)
+            and self._block_rejected(
+                snapshots_rebound_external_names, pair.block2_nodes, func2, scope_analyzer2
+            )
         ):
             self._debug_reject("rebound_external_binding", pair)
             return None
 
-        method_info1 = self._get_method_context(func1, pair.class1_name)
-        method_info2 = self._get_method_context(func2, pair.class2_name)
+        # A function nested inside a method shares the class for name mangling
+        # but has no receiver; only a function defined directly in the class
+        # body dispatches as a method.
+        method_info1 = self._get_method_context(
+            func1, self._method_class(func1, pair.class1_name, scope_analyzer)
+        )
+        method_info2 = self._get_method_context(
+            func2, self._method_class(func2, pair.class2_name, scope_analyzer2)
+        )
 
-        if (func1 is not None and nested_bindings_escape(func1, pair.block1_nodes)) or (
-            func2 is not None and nested_bindings_escape(func2, pair.block2_nodes)
+        for guard, reason in (
+            (nested_bindings_escape, "nested_binding_escapes"),
+            (nested_scopes_cross_block_boundary, "closure_crosses_block_boundary"),
+            (moves_scope_declaration, "moves_scope_declaration"),
         ):
-            self._debug_reject("nested_binding_escapes", pair)
-            return None
-
-        if (func1 is not None and nested_scopes_cross_block_boundary(func1, pair.block1_nodes)) or (
-            func2 is not None and nested_scopes_cross_block_boundary(func2, pair.block2_nodes)
-        ):
-            self._debug_reject("closure_crosses_block_boundary", pair)
-            return None
-
-        if (func1 is not None and moves_scope_declaration(func1, pair.block1_nodes)) or (
-            func2 is not None and moves_scope_declaration(func2, pair.block2_nodes)
-        ):
-            self._debug_reject("moves_scope_declaration", pair)
-            return None
+            if (func1 is not None and self._block_rejected(guard, pair.block1_nodes, func1)) or (
+                func2 is not None and self._block_rejected(guard, pair.block2_nodes, func2)
+            ):
+                self._debug_reject(reason, pair)
+                return None
 
         # (Removed specialized full-body extraction fast-path; reverting to generic pairing logic.)
 
@@ -2435,15 +2494,17 @@ class UnificationRefactorEngine:
                         for path, taken in covered
                     ):
                         continue
-                    if requires_original_frame(cand_nodes):
+                    if self._block_rejected(requires_original_frame, cand_nodes):
                         continue
-                    if nested_bindings_escape(fn, cand_nodes):
+                    if self._block_rejected(nested_bindings_escape, cand_nodes, fn):
                         continue
-                    if snapshots_rebound_external_names(analyzerX, fn, cand_nodes):
+                    if self._block_rejected(
+                        snapshots_rebound_external_names, cand_nodes, fn, analyzerX
+                    ):
                         continue
-                    if nested_scopes_cross_block_boundary(fn, cand_nodes):
+                    if self._block_rejected(nested_scopes_cross_block_boundary, cand_nodes, fn):
                         continue
-                    if moves_scope_declaration(fn, cand_nodes):
+                    if self._block_rejected(moves_scope_declaration, cand_nodes, fn):
                         continue
                     # Minimum size gate
                     start_line, end_line = cand_range

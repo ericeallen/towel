@@ -25,7 +25,7 @@ import sys
 import time
 import tomllib
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_TEST = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
@@ -49,6 +49,7 @@ class Project:
     prepare: str = ""
     install: bool = False
     expect_broken: str = ""
+    known_failures: Tuple[str, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -87,6 +88,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             prepare=entry.get("prepare", ""),
             install=bool(entry.get("install", False)),
             expect_broken=entry.get("expect_broken", ""),
+            known_failures=tuple(entry.get("known_failures", [])),
         )
         if not only or project.name in only:
             projects.append(project)
@@ -264,13 +266,36 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
     )
     if same:
         result.verdict = "PASS"
-    elif project.expect_broken:
+        return result
+    new_failures = failed_tests(result.after.log) - failed_tests(result.baseline.log)
+    unexpected = sorted(
+        test
+        for test in new_failures
+        if not any(pattern in test for pattern in project.known_failures)
+    )
+    if project.expect_broken and new_failures and not unexpected:
+        # Every new failure is one the manifest names; the documented limitation
+        # explains the difference, and nothing else regressed.
         result.verdict = "BROKEN_KNOWN"
         result.detail = project.expect_broken
     else:
         result.verdict = "BROKEN"
         result.detail = f"before: {result.baseline.summary} | after: {result.after.summary}"
+        if unexpected:
+            result.detail = f"{len(unexpected)} unexpected: {' '.join(unexpected)[:200]}"
     return result
+
+
+FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.M)
+
+
+def failed_tests(log_path: str) -> Set[str]:
+    """Test ids reported as failed or errored in a pytest log."""
+    try:
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    return set(FAILED_LINE.findall(text))
 
 
 def main() -> int:

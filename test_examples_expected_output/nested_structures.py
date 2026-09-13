@@ -6,19 +6,11 @@ lists, dicts, comprehensions, and deeply nested expressions.
 """
 
 
-def __extracted_func_5(__param_0, data, filter_func):
+def __extracted_func_4(__param_0, data, filter_func):
     processed = [x * __param_0 for x in data if x > 0]
     filtered = [item for item in processed if filter_func(item)]
     result = {'values': filtered, 'count': len(filtered), 'sum': sum(filtered)}
     return result
-
-
-def __extracted_func_4(__param_0, item, output):
-    if isinstance(item, (int, float)):
-        output['numbers'].append(item * __param_0)
-        output['total'] += item * __param_0
-    elif isinstance(item, list):
-        output['lists'].append([x * __param_0 for x in item])
 
 
 def __extracted_func_3(__param_0, __param_1, __param_2, __param_3, config, data):
@@ -78,12 +70,12 @@ def process_nested_dict_v2(data, config):
 
 def transform_with_comprehension_a(data, filter_func):
     """Version A: List comprehension as expression."""
-    return __extracted_func_5(2, data, filter_func)
+    return __extracted_func_4(2, data, filter_func)
 
 
 def transform_with_comprehension_b(data, filter_func):
     """Version B: Different multiplier in comprehension."""
-    return __extracted_func_5(3, data, filter_func)
+    return __extracted_func_4(3, data, filter_func)
 
 
 def build_complex_structure_v1(items, metadata):
@@ -138,7 +130,11 @@ def process_mixed_types_a(data, converter):
         # Type checking and nested appends
         if isinstance(item, str):
             output["strings"].append(item.upper())
-        __extracted_func_4(2, item, output)
+        elif isinstance(item, (int, float)):
+            output["numbers"].append(item * 2)
+            output["total"] += item * 2
+        elif isinstance(item, list):
+            output["lists"].append([x * 2 for x in item])
 
     return output
 
@@ -151,7 +147,11 @@ def process_mixed_types_b(data, converter):
         # Same type checking, different multiplier
         if isinstance(item, str):
             output["strings"].append(item.lower())
-        __extracted_func_4(3, item, output)
+        elif isinstance(item, (int, float)):
+            output["numbers"].append(item * 3)
+            output["total"] += item * 3
+        elif isinstance(item, list):
+            output["lists"].append([x * 3 for x in item])
 
     return output
 

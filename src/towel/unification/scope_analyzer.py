@@ -107,8 +107,9 @@ class ScopeAnalyzer(ast.NodeVisitor):
         self.current_scope: Optional[Scope] = None
         self.root_scope: Optional[Scope] = None
 
-        # Map AST nodes to their scopes
+        # Map AST nodes to their scopes, and scopes back to the node that opened them
         self.node_scopes: Dict[ast.AST, Scope] = {}
+        self.scope_nodes: Dict[int, ast.AST] = {}
 
         # Map identifier uses to their bindings
         self.identifier_bindings: Dict[ast.Name, Optional[Binding]] = {}
@@ -187,8 +188,21 @@ class ScopeAnalyzer(ast.NodeVisitor):
         """Enter a new scope."""
         new_scope = self._create_scope(self.current_scope)
         self.node_scopes[node] = new_scope
+        self.scope_nodes[new_scope.scope_id] = node
         self.current_scope = new_scope
         return new_scope
+
+    def is_method(self, function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> bool:
+        """Whether ``function`` is defined directly in a class body.
+
+        A function nested inside a method shares the method's lexical class for
+        name mangling but has no receiver: its first parameter is an ordinary
+        argument, so it must not be dispatched as a method.
+        """
+        scope = self.node_scopes.get(function)
+        if scope is None or scope.parent is None:
+            return False
+        return isinstance(self.scope_nodes.get(scope.parent.scope_id), ast.ClassDef)
 
     def _exit_scope(self) -> None:
         """Exit the current scope."""

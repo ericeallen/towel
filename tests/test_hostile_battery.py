@@ -57,6 +57,9 @@ TRANSFORMED = {
     "r83_tab_indented_class",
     "r84_warn_stacklevel",
     "r85_conditionally_bound_parameter",
+    "r86_annotated_assignment_live",
+    "r87_nested_function_in_method",
+    "r88_elif_branch",
 }
 
 

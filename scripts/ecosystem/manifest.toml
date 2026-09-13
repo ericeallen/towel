@@ -6,7 +6,10 @@
 # to the project root), pythonpath (for the test run), deps (test-only
 # requirements installed into a private environment), test (command run from
 # the project root; {python} is the environment interpreter), prepare
-# (optional shell command run once after cloning).
+# (optional shell command run once after cloning), expect_broken (why the
+# suite is expected to differ after transformation) with known_failures (test
+# id substrings; the verdict is BROKEN_KNOWN only when every new failure
+# matches one, otherwise BROKEN).
 
 [[project]]
 name = "tabulate"
@@ -108,7 +111,7 @@ url = "https://github.com/pypa/packaging.git"
 rev = "HEAD"
 package = "src/packaging"
 pythonpath = "src"
-deps = ["pretend", "hypothesis"]
+deps = ["pretend", "hypothesis", "tomli_w", "pip"]
 
 [[project]]
 name = "pluggy"
@@ -117,6 +120,7 @@ rev = "HEAD"
 package = "src/pluggy"
 pythonpath = "src"
 expect_broken = "frame-relative: _verify_all_args_are_provided warns with stacklevel through the extracted helper"
+known_failures = ["testing/test_details.py::test_not_all_arguments_warning_points_at_the_caller"]
 
 [[project]]
 name = "cachetools"
@@ -150,7 +154,7 @@ name = "pycodestyle"
 url = "https://github.com/PyCQA/pycodestyle.git"
 rev = "HEAD"
 package = "pycodestyle.py"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "testsuite"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 
 [[project]]
 name = "pathspec"
@@ -185,6 +189,8 @@ url = "https://github.com/mahmoud/glom.git"
 rev = "HEAD"
 package = "glom"
 deps = ["attrs", "face", "boltons", "pyyaml"]
+expect_broken = "frame-relative: test_error.py asserts literal traceback frames, and the helper adds one"
+known_failures = ["glom/test/test_error.py::"]
 
 [[project]]
 name = "natsort"

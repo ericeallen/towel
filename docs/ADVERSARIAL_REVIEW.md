@@ -55,7 +55,8 @@ The final concurrent interpreter matrix exposed a test isolation defect: regress
 ## Second review — production readiness, September 13, 2026
 
 A second round of executable counterexamples, followed by seven public
-consumer projects run under the CLI defaults, found the defects below. Each
+consumer projects run under the CLI defaults and then the 39-project
+ecosystem check (`scripts/ecosystem_check.py`), found the defects below. Each
 is repaired and covered by a fixture in `tests/hostile_cases` or
 `tests/hostile_crossfile`, which execute before and after fixed-point
 refactoring and assert identical program output.
@@ -77,6 +78,18 @@ refactoring and assert identical program output.
 | A block that returned early and also bound live variables was rendered as an assignment, so `return self` became `cls = self` (boltons cachedmethod) | Such blocks are rejected; the instantiation check refuses an early return alongside returned variables and requires a `return` call for helpers that return early. |
 | A docstring line beginning with `import` placed the cross-module import inside the docstring (boltons tbutils) | Import position comes from the parsed module: after the docstring and leading imports. |
 | Two modules each defined `_extracted_func_4` because counters were seeded only from files touched by one proposal (boltons dictutils/fileutils) | Counters consider every file in the analysis, so helper names are unique across the project. |
+| A list or set display was classed as pure and hoisted eagerly, so `acc.append([])` inside a loop appended one shared list every iteration | Only tuples of names and literals are eager; every other display is a thunk evaluated in place. |
+| An assignment expression inside a parameterized expression would bind its target in the thunk's scope rather than the caller's | Expressions containing a walrus are never parameterized. |
+| Two local classes with the same name were treated as one, so a method helper landed in the wrong class (cachetools) | Method insertion requires a unique module-level class; materialization fails rather than silently falling back to module level. |
+| A tab-indented class received a space-indented method, and the file no longer compiled (pathspec) | Helpers take the class body's own indentation character and unit. |
+| A free variable bound only on some path before the block, and read only on some path inside it, was read eagerly at the call and raised `UnboundLocalError` (glom `err`) | A definite-assignment analysis passes locals that are not certainly bound as thunks. |
+| The same for a parameter whose argument was a bare local name bound only inside a `try` body (glom `cur`/`ret`) | Uncertain name arguments go through the same definite-assignment rule as free variables. |
+| A direct `warnings.warn(stacklevel=...)` inside the block reported the helper's caller one frame off (pluggy) | Direct `warnings.warn` with `stacklevel` and frame-inspection calls are rejected; pluggy's indirect case is the documented `BROKEN_KNOWN` in the ecosystem check. |
+| A queued proposal whose file an earlier application had changed aborted the whole batch with "Stale proposal" (pygments, pyflakes) | The fixed-point loop drops the stale proposal, invalidates its files, and re-analyzes them; the post-application filter considers every participating file. |
+| A function nested inside a method was treated as a method of the lexical class: its first parameter became the receiver, so `decorator(f)` produced `f._extracted_func_6(...)` (click) | A function is a method only when the scope analyzer places it directly in a class body. A nested function keeps the class for name mangling but gets no receiver, and a helper without a method context stays at module level. |
+| An annotated assignment with a value, `captured_style: Optional[X] = None`, was not counted as a binding, so the helper returned only the other variable and the caller read it unbound (wcwidth) | Annotated assignments and assignment expressions bind their targets in both the reassignment classifier and the block binding collector, so they take part in live-variable returns. |
+| A block that began at an `elif` was extracted and its call rendered as a sibling statement after the outer `if`, so the branch ran unconditionally; the generated template compiler emitted unbalanced parentheses (jinja2). The nested_structures golden had recorded the same misplacement, preserved only by mutually exclusive type tests. | An `elif` is never a block start; its body and its own branches remain candidates. The golden was regenerated. |
+| Analyzing one 2,167-line test module ran for more than nine minutes: every safety guard re-walked the whole enclosing function for each of 444,250 candidate pairs (pyflakes) | Block guards are memoized per (guard, function, block), since a block takes part in every pair it forms. |
 
 Cross-file fixtures confirm that a block reading a module-level function,
 class, import alias, or `__file__` with a different meaning in each module
