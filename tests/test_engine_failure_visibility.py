@@ -23,9 +23,12 @@ def test_unexpected_engine_error_propagates(tmp_path: Path, component: str, meth
     )
     engine = UnificationRefactorEngine(min_lines=3)
     assert engine.analyze_files([str(source)], progress="none")
+    # An unchanged file is served from the engine's caches, so the fixed-point
+    # loop's invalidation is what makes the component run again.
     with patch.object(
         getattr(engine, component), method, side_effect=RuntimeError("invariant failed")
     ):
         with pytest.raises(RuntimeError, match="invariant failed"):
-            engine.analyze_files([str(source)], progress="none")
-    assert not engine._signed_block_cache
+            engine.analyze_files([str(source)], progress="none", invalidate_paths=[str(source)])
+    # The failure leaves the engine usable: the next analysis succeeds.
+    assert engine.analyze_files([str(source)], progress="none", invalidate_paths=[str(source)])

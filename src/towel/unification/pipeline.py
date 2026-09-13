@@ -32,19 +32,20 @@ module analyses through an explicitly owned AnalysisSession.
 from __future__ import annotations
 
 from typing import (
-    TYPE_CHECKING,
+    Dict,
     List,
+    Mapping,
     Optional,
+    Protocol,
     Sequence,
+    TYPE_CHECKING,
     Tuple,
     Union,
     cast,
-    Protocol,
-    Mapping,
 )
 import ast
 from collections import OrderedDict
-from copy import deepcopy
+import hashlib
 from dataclasses import dataclass
 import sys
 import os
@@ -244,8 +245,11 @@ class AnalysisSession:
     paths while separating relative paths from different working directories.
     Source content is checked on every access. The source-byte budget bounds
     retained input, not the exact size of the Python object graph. Returned graphs
-    are independent copies: modifying proposals or analysis cannot poison reuse.
-    Sessions belong to one analysis owner and are not shared between threads.
+    are the cached objects themselves: analysis never mutates a module's AST, so
+    an engine's node-identity caches stay valid for a file across fixed-point
+    iterations that leave it unchanged. Set ``TOWEL_CHECK_AST_IMMUTABLE=1`` to
+    verify that invariant on every reuse. Sessions belong to one analysis owner
+    and are not shared between threads.
     """
 
     def __init__(self, *, max_entries: int = 128, max_source_bytes: int = 8 * 1024 * 1024) -> None:
@@ -255,6 +259,8 @@ class AnalysisSession:
         self._max_source_bytes = max_source_bytes
         self._entries: OrderedDict[Tuple[str, str], ModuleAnalysis] = OrderedDict()
         self._source_bytes = 0
+        self._check_immutable = bool(os.environ.get("TOWEL_CHECK_AST_IMMUTABLE"))
+        self._digests: Dict[Tuple[str, str], str] = {}
 
     @property
     def entry_count(self) -> int:
@@ -270,8 +276,23 @@ class AnalysisSession:
 
     def _discard(self, key: Tuple[str, str]) -> None:
         previous = self._entries.pop(key, None)
+        self._digests.pop(key, None)
         if previous is not None:
             self._source_bytes -= len(previous.module.source.encode("utf-8"))
+
+    def reusable(self, path: str) -> bool:
+        """Whether the next ``analyze_module(path)`` will return the cached graph."""
+        cached = self._entries.get((os.path.abspath(path), path))
+        if cached is None:
+            return False
+        try:
+            return Path(path).read_text(encoding="utf-8") == cached.module.source
+        except (OSError, UnicodeError):
+            return False
+
+    @staticmethod
+    def _digest(analysis: ModuleAnalysis) -> str:
+        return hashlib.sha256(ast.dump(analysis.module.tree).encode("utf-8")).hexdigest()
 
     def invalidate(self, paths: Sequence[str]) -> None:
         """Discard every spelling of the selected absolute paths in this session."""
@@ -296,7 +317,9 @@ class AnalysisSession:
         cached = self._entries.get(key)
         if cached is not None and cached.module.source == source:
             self._entries.move_to_end(key)
-            return deepcopy(cached)
+            if self._check_immutable and self._digest(cached) != self._digests[key]:
+                raise RuntimeError(f"Analysis mutated the cached AST of {path}")
+            return cached
         self._discard(key)
         try:
             tree = ast.parse(source, filename=path)
@@ -313,9 +336,9 @@ class AnalysisSession:
                 or self._source_bytes + source_bytes > self._max_source_bytes
             ):
                 self._discard(next(iter(self._entries)))
-            # Snapshot before the caller can populate node-identity caches or
-            # mutate ASTs; deepcopy preserves graph identity across all artifacts.
-            self._entries[key] = deepcopy(analysis)
+            self._entries[key] = analysis
+            if self._check_immutable:
+                self._digests[key] = self._digest(analysis)
             self._source_bytes += source_bytes
         return analysis
 

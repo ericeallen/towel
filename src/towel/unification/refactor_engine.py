@@ -30,7 +30,8 @@ from towel.changes import ChangePlan, ChangeConflict, apply_changes
 import os
 import re
 from collections import deque
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from typing import (
@@ -42,7 +43,9 @@ from typing import (
     Set,
     Optional,
     FrozenSet,
+    Iterable,
     Literal,
+    MutableMapping,
     Union,
     Sequence,
     cast,
@@ -175,43 +178,29 @@ def _preserves_receiver(decorator: ast.expr) -> bool:
     return False
 
 
-def _initialize_pair_worker(
-    engine_config: Dict[str, Any],
-    functions: List[
-        Tuple[str, FunctionNode, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]
-    ],
-    class_infos: List[ClassInfo],
-) -> None:
-    """Initializer that primes each worker process with engine state and function context."""
-
-    global _worker_engine, _worker_functions, _worker_class_infos
-
-    max_params = engine_config["max_parameters"]
-    min_ln = engine_config["min_lines"]
-    _worker_engine = UnificationRefactorEngine(
-        max_parameters=int(max_params) if max_params is not None else DEFAULT_MAX_PARAMETERS,
-        min_lines=int(min_ln) if min_ln is not None else DEFAULT_MIN_LINES,
-        parameterize_constants=bool(engine_config["parameterize_constants"]),
-        prefer_absolute_imports=engine_config.get("prefer_absolute_imports"),
-        pep420_namespace_packages=engine_config.get("pep420_namespace_packages"),
-    )
-    _worker_functions = functions
-    _worker_class_infos = class_infos
+_worker_pairs: Optional[List[CodeBlockPair]] = None
 
 
-def _process_pair_in_worker(
-    task: Tuple[int, CodeBlockPair],
-) -> Tuple[int, Optional[RefactoringProposal]]:
-    """Worker entry point that evaluates a single code block pair."""
+def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, RefactoringProposal]]:
+    """Evaluate ``_worker_pairs[start:end]`` in a forked worker.
 
+    The worker inherited the parent's engine, function context, pairs and
+    caches copy-on-write at fork time, so nothing is pickled in; only the
+    accepted proposals travel back.
+    """
     if _worker_engine is None or _worker_functions is None or _worker_class_infos is None:
         raise RuntimeError("Worker not initialized for pair processing")
-
-    pair_index, pair = task
-    proposal = _worker_engine._try_refactor_pair_multi_file(
-        pair, _worker_functions, _worker_class_infos
-    )
-    return pair_index, proposal
+    if _worker_pairs is None:
+        raise RuntimeError("Worker has no pairs to evaluate")
+    start, end = bounds
+    accepted: List[Tuple[int, RefactoringProposal]] = []
+    for index in range(start, end):
+        proposal = _worker_engine._try_refactor_pair_multi_file(
+            _worker_pairs[index], _worker_functions, _worker_class_infos
+        )
+        if proposal is not None:
+            accepted.append((index, proposal))
+    return accepted
 
 
 def _copy_substitution(substitution: Substitution) -> Substitution:
@@ -296,6 +285,12 @@ class UnificationRefactorEngine:
         # checks) depend only on the function and the block; a block takes
         # part in every pair it forms, so each is computed once per analysis.
         self._per_block_cache: Dict[Tuple[str, FunctionNode, Tuple[ast.AST, ...]], Any] = {}
+        # Every cache entry is registered under the absolute path(s) of the
+        # file(s) it describes, so a file that changes between fixed-point
+        # iterations evicts exactly its own entries and unchanged files keep
+        # theirs across iterations.
+        self._cache_entries_by_path: Dict[str, List[Tuple[MutableMapping[Any, Any], Any]]] = {}
+        self._function_paths: Dict[FunctionNode, str] = {}
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
         # Every file of the current analysis: helper names must be unique
@@ -408,12 +403,17 @@ class UnificationRefactorEngine:
         return sorted(python_files)
 
     def _unify_memoized(
-        self, blocks: List[List[ast.AST]], hygienic_renames: List[Dict[str, str]]
+        self,
+        blocks: List[List[ast.AST]],
+        hygienic_renames: List[Dict[str, str]],
+        paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
         """Unify two blocks, reusing the result for a pair already unified."""
         if len(blocks) != 2:
             return self.unifier.unify_blocks(blocks, hygienic_renames)
         key = (tuple(blocks[0]), tuple(blocks[1]))
+        if key not in self._unify_cache:
+            self._remember(paths, self._unify_cache, key)
         if key in self._unify_cache:
             cached = self._unify_cache[key]
             if cached is None:
@@ -439,12 +439,18 @@ class UnificationRefactorEngine:
         nodes: Sequence[ast.AST],
         func: Optional[FunctionNode] = None,
         analyzer: Optional[ScopeAnalyzer] = None,
+        path: Optional[str] = None,
     ) -> bool:
         """Evaluate a pure block guard once per (guard, function, block)."""
         key = (guard, func, analyzer, tuple(nodes))
         cached = self._block_guard_cache.get(key)
         if cached is not None:
             return cached
+        self._remember(
+            (self._function_paths.get(func) if func is not None else path,),
+            self._block_guard_cache,
+            key,
+        )
         if analyzer is not None:
             verdict = bool(guard(analyzer, func, list(nodes)))
         elif func is not None:
@@ -475,25 +481,44 @@ class UnificationRefactorEngine:
 
         invalidate_paths: If provided, forces reparse/reanalysis of these paths even if cached.
         """
-        self._signed_block_cache.clear()
-        self._block_guard_cache.clear()
-        self._unify_cache.clear()
-        self._per_block_cache.clear()
+        stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
+        stale.update(
+            os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)
+        )
+        for path in stale:
+            self._evict_cached_analysis(path)
         self._analysis_paths = tuple(file_paths)
-        try:
-            return run_pipeline(
-                file_paths,
-                engine=self,
-                verbose=verbose,
-                progress=progress,
-                invalidate_paths=invalidate_paths,
-                session=self.analysis_session,
-            )
-        finally:
-            self._signed_block_cache.clear()
-        self._block_guard_cache.clear()
-        self._unify_cache.clear()
-        self._per_block_cache.clear()
+        return run_pipeline(
+            file_paths,
+            engine=self,
+            verbose=verbose,
+            progress=progress,
+            invalidate_paths=invalidate_paths,
+            session=self.analysis_session,
+        )
+
+    def _remember(
+        self, paths: Iterable[Optional[str]], cache: MutableMapping[Any, Any], key: Any
+    ) -> None:
+        """Register a cache entry under the files it depends on."""
+        for path in paths:
+            if path is not None:
+                self._cache_entries_by_path.setdefault(os.path.abspath(path), []).append(
+                    (cache, key)
+                )
+
+    def _evict_cached_analysis(self, path: str) -> None:
+        """Drop every cache entry that depends on ``path``."""
+        absolute = os.path.abspath(path)
+        for cache, key in self._cache_entries_by_path.pop(absolute, ()):
+            cache.pop(key, None)
+        for function, function_path in tuple(self._function_paths.items()):
+            if os.path.abspath(function_path) == absolute:
+                del self._function_paths[function]
+
+    def _record_function_paths(self, all_functions: Sequence[Tuple[Any, ...]]) -> None:
+        for entry in all_functions:
+            self._function_paths[entry[1]] = entry[0]
 
     def _signed_blocks(
         self, function: FunctionNode
@@ -507,6 +532,9 @@ class UnificationRefactorEngine:
                 if span[1] - span[0] + 1 >= self.min_lines
             ]
             self._signed_block_cache[function] = cached
+            self._remember(
+                (self._function_paths.get(function),), self._signed_block_cache, function
+            )
         return cached
 
     def _process_block_pairs(
@@ -532,6 +560,7 @@ class UnificationRefactorEngine:
         if not block_pairs:
             return []
 
+        self._record_function_paths(all_functions)
         if self._should_use_parallel(len(block_pairs)):
             try:
                 return self._evaluate_pairs_parallel(
@@ -560,16 +589,34 @@ class UnificationRefactorEngine:
             progress=progress,
         )
 
-    def _should_use_parallel(self, pair_count: int) -> bool:
-        """Decide if multiprocessing should be used for pair evaluation.
+    #: Cold pairs below this count finish faster serially than forking a pool
+    #: costs: a fixed-point iteration re-analyzes only the files it changed, and
+    #: those localized analyses are small, so only the first, full analysis of
+    #: a large file or project forks.
+    PARALLEL_PAIR_THRESHOLD = 20000
 
-        Benchmarks run in Nov 2025 showed the ProcessPoolExecutor path to be
-        roughly 0.6× slower than the serial evaluator because the work per
-        candidate is too small to amortize process start and AST pickling cost.
-        We keep this guard so future batching/tuning work can flip the switch
-        without reworking the call site, but for now we always stay serial.
+    def _parallel_workers(self) -> int:
+        """Worker processes to use, or 1 when pair evaluation must stay serial."""
+        override = os.environ.get("TOWEL_WORKERS")
+        if override is not None:
+            try:
+                return max(1, int(override))
+            except ValueError:
+                return 1
+        if "fork" not in multiprocessing.get_all_start_methods():
+            return 1
+        return max(1, os.cpu_count() or 1)
+
+    def _should_use_parallel(self, pair_count: int) -> bool:
+        """Whether pair evaluation should fork workers.
+
+        Workers are forked after parsing, so they inherit the ASTs, the
+        function context, and every cache copy-on-write; nothing is pickled
+        in, and only accepted proposals are pickled out. That is what made the
+        earlier pool, which pickled ASTs per task, slower than serial. Pairs
+        already memoized in this engine are served serially from the cache.
         """
-        return False
+        return pair_count >= self.PARALLEL_PAIR_THRESHOLD and self._parallel_workers() > 1
 
     @staticmethod
     def _load_tqdm_wrapper() -> Optional[Any]:
@@ -1250,71 +1297,70 @@ class UnificationRefactorEngine:
         verbose: bool,
         progress: str,
     ) -> List[RefactoringProposal]:
-        progress_mode, tqdm_cls, tqdm_available = self._resolve_progress_backend(progress)
+        """Evaluate pairs in forked workers; results are ordered as the serial path orders them.
 
-        pair_count = len(block_pairs)
-        cpu_count = os.cpu_count() or 1
-        max_workers = min(cpu_count, pair_count)
-        if max_workers <= 1:
+        Pairs whose unification is already memoized are evaluated in this
+        process, where the cache lives; the rest are split into contiguous
+        chunks so pairs sharing a template block land in one worker and hit
+        that worker's own caches.
+        """
+        global _worker_engine, _worker_functions, _worker_class_infos, _worker_pairs
+
+        cold = [
+            index
+            for index, pair in enumerate(block_pairs)
+            if (tuple(pair.block1_nodes), tuple(pair.block2_nodes)) not in self._unify_cache
+        ]
+        warm = [index for index in range(len(block_pairs)) if index not in set(cold)]
+        workers = min(self._parallel_workers(), max(1, len(cold) // 64))
+        if workers <= 1 or len(cold) < self.PARALLEL_PAIR_THRESHOLD:
             return self._evaluate_pairs_serial(
-                block_pairs,
-                all_functions,
-                class_infos,
-                verbose=verbose,
-                progress=progress,
+                block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
             )
-
-        engine_config: Dict[str, Optional[object]] = {
-            "max_parameters": self.max_parameters,
-            "min_lines": self.min_lines,
-            "parameterize_constants": self.parameterize_constants,
-            "prefer_absolute_imports": self.prefer_absolute_imports,
-            "pep420_namespace_packages": self.pep420_namespace_packages,
-        }
-
-        tasks = [(idx, pair) for idx, pair in enumerate(block_pairs)]
-        ordered_results: List[Optional[RefactoringProposal]] = [None] * pair_count
-
-        use_tqdm = verbose and tqdm_available and tqdm_cls is not None
-        tqdm_wrapper = tqdm_cls if use_tqdm else None
-
-        use_inline_bar = verbose and not use_tqdm and progress_mode in ("auto", "tqdm")
-        last_pct = -1
-        completed = 0
-        self._start_inline_status("Analyzing candidate pairs:", use_inline_bar)
-
-        # ProcessPoolExecutor type stubs are restrictive; cast to Any for initializer/initargs
-        executor_kwargs: Dict[str, Any] = {
-            "max_workers": max_workers,
-            "initializer": _initialize_pair_worker,
-            "initargs": (engine_config, all_functions, class_infos),
-        }
-        with ProcessPoolExecutor(**executor_kwargs) as executor:
-            futures = [executor.submit(_process_pair_in_worker, task) for task in tasks]
-            iterator = as_completed(futures)
-            if use_tqdm and tqdm_wrapper is not None:
-                iterator = tqdm_wrapper(
-                    iterator,
-                    total=pair_count,
-                    desc="Analyzing candidate pairs",
-                    unit="pair",
-                    leave=False,
-                )
-
-            for future in iterator:
-                pair_index, proposal = future.result()
-                if proposal:
-                    ordered_results[pair_index] = proposal
-                completed += 1
-                if use_inline_bar:
-                    pct = int(100 * completed / pair_count)
-                    if pct != last_pct:
-                        last_pct = pct
-                        self._update_inline_status("Analyzing candidate pairs:", pct)
-
-        self._finish_inline_status(use_inline_bar)
-
-        return [proposal for proposal in ordered_results if proposal is not None]
+        chunk_count = workers * 4
+        chunk_size = max(1, -(-len(cold) // chunk_count))
+        chunks = [
+            (cold[offset], cold[min(offset + chunk_size, len(cold)) - 1] + 1)
+            for offset in range(0, len(cold), chunk_size)
+        ]
+        # Chunks are index ranges over ``block_pairs``; cold indices are
+        # increasing, so a range may include warm pairs, which the worker then
+        # also evaluates from its inherited cache. That keeps chunks contiguous.
+        results: Dict[int, RefactoringProposal] = {}
+        _worker_engine, _worker_functions, _worker_class_infos, _worker_pairs = (
+            self,
+            all_functions,
+            class_infos,
+            block_pairs,
+        )
+        covered: Set[int] = set()
+        try:
+            context = multiprocessing.get_context("fork")
+            with ProcessPoolExecutor(max_workers=workers, mp_context=context) as executor:
+                for (start, end), accepted in zip(
+                    chunks, executor.map(_evaluate_pair_chunk, chunks)
+                ):
+                    covered.update(range(start, end))
+                    for index, proposal in accepted:
+                        results[index] = proposal
+        except (BrokenProcessPool, OSError, RuntimeError) as error:
+            if verbose:
+                print(f"Parallel pair evaluation unavailable ({error}); evaluating serially")
+            return self._evaluate_pairs_serial(
+                block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
+            )
+        finally:
+            _worker_engine = _worker_functions = _worker_class_infos = _worker_pairs = None
+        # Warm pairs outside every chunk are evaluated here, from this process's caches.
+        for index in warm:
+            if index in covered:
+                continue
+            warm_proposal = self._try_refactor_pair_multi_file(
+                block_pairs[index], all_functions, class_infos
+            )
+            if warm_proposal is not None:
+                results[index] = warm_proposal
+        return [results[index] for index in sorted(results)]
 
     @staticmethod
     def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:
@@ -1547,6 +1593,7 @@ class UnificationRefactorEngine:
         key = (name, func, tuple(block_nodes))
         if key not in self._per_block_cache:
             self._per_block_cache[key] = compute()
+            self._remember((self._function_paths.get(func),), self._per_block_cache, key)
         return self._per_block_cache[key]
 
     def _build_block_binding_snapshot(
@@ -1683,6 +1730,8 @@ class UnificationRefactorEngine:
             List of code block pairs
         """
         from .block_signature import BlockBucketKey, BlockSignature, signature_bucket_key
+
+        self._record_function_paths(all_functions)
 
         pairs: List[CodeBlockPair] = []
         signed_blocks: List[List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]] = []
@@ -1842,8 +1891,10 @@ class UnificationRefactorEngine:
         Returns:
             Refactoring proposal or None
         """
-        if self._block_rejected(requires_original_frame, pair.block1_nodes) or self._block_rejected(
-            requires_original_frame, pair.block2_nodes
+        if self._block_rejected(
+            requires_original_frame, pair.block1_nodes, path=pair.file_path
+        ) or self._block_rejected(
+            requires_original_frame, pair.block2_nodes, path=pair.file_path2 or pair.file_path
         ):
             self._debug_reject("frame_sensitive_block", pair)
             return None
@@ -2141,7 +2192,9 @@ class UnificationRefactorEngine:
         if os.getenv("DEBUG_VALIDATION"):
             print("  Attempting unification...")
 
-        substitution = self._unify_memoized(blocks, hygienic_renames)
+        substitution = self._unify_memoized(
+            blocks, hygienic_renames, (pair.file_path, pair.file_path2 or pair.file_path)
+        )
 
         if not substitution:
             if os.getenv("DEBUG_VALIDATION"):
@@ -2649,7 +2702,7 @@ class UnificationRefactorEngine:
                         for path, taken in covered
                     ):
                         continue
-                    if self._block_rejected(requires_original_frame, cand_nodes):
+                    if self._block_rejected(requires_original_frame, cand_nodes, path=fpath):
                         continue
                     if self._block_rejected(nested_bindings_escape, cand_nodes, fn):
                         continue
@@ -2689,7 +2742,9 @@ class UnificationRefactorEngine:
                         continue
                     # Try to unify template block with candidate
                     cluster_renames: List[Dict[str, str]] = [{}, {}]
-                    subst2 = self._unify_memoized([pair.block1_nodes, cand_nodes], cluster_renames)
+                    subst2 = self._unify_memoized(
+                        [pair.block1_nodes, cand_nodes], cluster_renames, (pair.file_path, fpath)
+                    )
                     if not subst2:
                         continue
                     defer_impure_parameters(subst2, pair.block1_nodes)

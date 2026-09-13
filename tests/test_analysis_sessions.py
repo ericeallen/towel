@@ -17,14 +17,15 @@ def write_module(directory: Path, name: str = "module.py", source: str = SOURCE)
     return str(path)
 
 
-def test_reuses_parse_and_scope_work_but_copies_complete_graph(tmp_path):
+def test_reuses_parse_and_scope_work_without_copying(tmp_path):
     path = write_module(tmp_path)
     session = AnalysisSession()
     first = session.analyze_module(path)
     with patch("towel.unification.pipeline.ast.parse", side_effect=AssertionError("reparsed")):
         second = session.analyze_module(path)
-    assert first.module.tree is not second.module.tree
-    assert first.functions[0].node is not second.functions[0].node
+    # Reuse hands back the cached graph itself, so an engine's node-identity
+    # caches stay valid for the file across fixed-point iterations.
+    assert second is first
     assert second.functions[0].node is second.module.tree.body[0]
     assert second.functions[0].scope_analyzer is second.module.scope_analyzer
     assert second.functions[0].root_scope is second.module.root_scope
@@ -32,12 +33,17 @@ def test_reuses_parse_and_scope_work_but_copies_complete_graph(tmp_path):
     assert second.functions[0].node in analyzer.node_scopes
     names = [node for node in ast.walk(second.module.tree) if isinstance(node, ast.Name)]
     assert any(node in analyzer.identifier_bindings for node in names)
+    assert session.reusable(path)
+
+
+def test_reuse_detects_a_caller_that_mutates_the_cached_graph(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOWEL_CHECK_AST_IMMUTABLE", "1")
+    path = write_module(tmp_path)
+    session = AnalysisSession()
+    first = session.analyze_module(path)
     first.functions[0].node.name = "poisoned"
-    first.module.class_infos.clear()
-    first.module.scope_analyzer.node_scopes.clear()
-    third = session.analyze_module(path)
-    assert third.functions[0].node.name == "value"
-    assert third.functions[0].node in third.module.scope_analyzer.node_scopes
+    with pytest.raises(RuntimeError, match="mutated the cached AST"):
+        session.analyze_module(path)
 
 
 def test_changed_content_invalidates_even_with_same_size_and_mtime(tmp_path):
