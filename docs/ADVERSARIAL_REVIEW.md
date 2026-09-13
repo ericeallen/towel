@@ -51,3 +51,34 @@ Before the rebinding-summary optimization, a large More-itertools module produce
 Final interpreter, consumer, artifact, and scan results are recorded in [the readiness report](OPEN_SOURCE_AUDIT.md). Evidence files preserve the commands, counts, source manifests, and original counterexample paths. No claim of production stability or universal preservation is made.
 
 The final concurrent interpreter matrix exposed a test isolation defect: regression copies shared the system temporary parent and therefore its transaction lock. Each stability run now uses a private temporary directory; the runtime correctly rejected the conflicting writer.
+
+## Second review — production readiness, September 13, 2026
+
+A second round of executable counterexamples, followed by seven public
+consumer projects run under the CLI defaults, found the defects below. Each
+is repaired and covered by a fixture in `tests/hostile_cases` or
+`tests/hostile_crossfile`, which execute before and after fixed-point
+refactoring and assert identical program output.
+
+| Counterexample | Repair |
+|---|---|
+| `k in d` unified as equal while `d[k]` and `d[k + 1]` were parameterized; the template substituted the parameter at both positions | Every replacement is verified by instantiating the helper with the call's arguments and comparing against the original block up to renamed binders. Disagreement between unification, substitution, and renaming now rejects the proposal. |
+| `self.email` versus `self.phone` evaluated once at the call site instead of at each read; properties with effects and conditional reads reordered | Only names, literals, and containers of those are hoisted. Other expressions become zero-argument thunks evaluated inside the helper at the original position. |
+| A block assigned `factor`, which a closure defined earlier read through a cell; the helper assigned its own local | Reject blocks that rebind a name read by any nested scope outside the block, and blocks whose own closures read a name the caller rebinds afterwards. |
+| `del x` and `except ... as e` unbound a helper local; the caller's variable survived | Reject deletion, explicit or implicit, of a name bound before the block or declared global/nonlocal. |
+| `match` capture names were unknown to scope analysis and passed as undefined arguments | Match patterns bind in the scope analyzers and the binding collector. |
+| A block beginning with `global counter` took the declaration into the helper; the caller's later `counter += 1` became a local write | Reject blocks whose scope declarations are still referenced outside them. |
+| `seq[start:stop]` versus `seq[i]` parameterized a slice and rendered `lambda: start:stop` | Slices and starred items are never parameterized. |
+| A `_lazyclassproperty`-decorated method received `cls`; the helper was emitted as an instance method and called through the class with one argument too few (pyparsing) | Receiver dispatch is used only when every decorator is known to preserve the receiver; otherwise the helper is module-level with the receiver passed explicitly. Materialization also verifies every generated call binds to the helper's signature. |
+| Clustering added a replacement nested inside a block already replaced; the write failed with overlapping ranges (toolz) | Cluster candidates may not intersect any covered range. |
+| On a second fixed-point pass, a fresh `__param_0` collided with a helper parameter of that name; call generation raised IndexError (boltons) | Generated parameter names skip every identifier the blocks mention; duplicate signatures are refused. |
+| Flit-packaged projects were refused in directory mode (boltons, markdown-it-py) | Flit's single module is located from `[tool.flit.module]` or the project name, beside `pyproject.toml` or under `src`. |
+| Each block's live variables were an independent set, so a second call unpacked the helper's tuple in a different order or under other names that alpha-renaming had unified (boltons: 53 URL tests, traceback frames) | The union of live variables is ordered by the template's names and mapped to each block through the renames; the instantiation check compares assignment targets with the helper's return. |
+| A block that returned early and also bound live variables was rendered as an assignment, so `return self` became `cls = self` (boltons cachedmethod) | Such blocks are rejected; the instantiation check refuses an early return alongside returned variables and requires a `return` call for helpers that return early. |
+| A docstring line beginning with `import` placed the cross-module import inside the docstring (boltons tbutils) | Import position comes from the parsed module: after the docstring and leading imports. |
+| Two modules each defined `_extracted_func_4` because counters were seeded only from files touched by one proposal (boltons dictutils/fileutils) | Counters consider every file in the analysis, so helper names are unique across the project. |
+
+Cross-file fixtures confirm that a block reading a module-level function,
+class, import alias, or `__file__` with a different meaning in each module
+receives that object from the caller rather than resolving it in the helper's
+module.

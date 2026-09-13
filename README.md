@@ -2,7 +2,7 @@
 
 Towel finds repeated Python code using unification and proposes helper-function extractions.
 
-**Release status: experimental.** Refactoring Python can change behavior in ways that static analysis and sampled tests do not detect. Preview first, review the diff, and run the affected project's tests before adopting generated code. See [the release audit](docs/OPEN_SOURCE_AUDIT.md) for verified results and remaining limitations. The prepared release candidate is `1.1.0a1`; publication has not been performed.
+**Release status: 1.1.0.** Every accepted proposal is verified by instantiating the helper with each call's arguments and comparing the result with the block it replaces; arguments that could have observable effects are evaluated inside the helper at their original position. Seven public projects pass their full test suites before and after transformation under the defaults. Refactoring is still a change to your code: preview first, review the diff, and run your tests. [Known limitations](docs/KNOWN_LIMITATIONS.md) lists what is verified, what is rejected, and what remains outside the model; [the readiness report](docs/PRODUCTION_READINESS.md) records the evidence.
 
 ## Install
 
@@ -43,6 +43,8 @@ For detailed conservative rejection reasons, set `DEBUG_PROPOSAL_REJECTIONS=1` w
 ## What is analyzed
 
 The pipeline parses modules, analyzes scopes, collects functions and classes, compares candidate blocks, and constructs extraction proposals. It supports same-file and cross-file candidates, parameter differences, return propagation, and selected class-method extractions.
+
+Differing sub-expressions become helper parameters. Names, literals, and containers of those are passed eagerly; any other expression is passed as a zero-argument thunk and evaluated inside the helper where the original expression stood, so evaluation order, count, and conditionality are preserved. Expressions that read names bound inside the block are lambda-lifted with those names as arguments. Before a proposal is offered, the helper is instantiated with each call's arguments and must reproduce the original block up to renamed binders.
 
 The refactoring pipeline preserves the original Python operators. The legacy `ast_normalizer` utilities remain available with deprecation warnings for compatibility, but can change Python behavior and are not used by this pipeline. Generator/suspension operations and frame-sensitive calls such as `locals()` are conservatively rejected. Nested blocks that bind names used outside the block are rejected until full control-flow liveness is supported. Static local import cycles and cross-module global declarations are rejected. This reduces the number of proposals rather than claiming an unsupported transformation is safe.
 

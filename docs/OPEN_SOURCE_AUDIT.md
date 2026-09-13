@@ -1,5 +1,7 @@
 # Open-source readiness — 1.1.0a1
 
+> Historical record of the September 12, 2026 alpha audit. The production-readiness pass that followed, with its counterexamples, repairs, and consumer evidence, is recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md), which supersedes the disposition below.
+
 **Disposition: experimental alpha candidate; local verification complete.** The five follow-ups from the first audit have been implemented. The adversarial review found additional semantic and filesystem defects, repaired them, and added executable regressions. Publication has not occurred.
 
 The earlier audit checkpoint is local commit `6247333390a4ffb049f1959d1c4b29e36fee6b39`, based on `3bf35f2`. This work continues on `audit/open-source-2026-09-12` in the isolated audit checkout. The original checkout's user changes and index are preserved. No push, remote tag, visibility change, or package upload was performed.

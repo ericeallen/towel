@@ -1,95 +1,93 @@
-# Known Limitations
+# Known limitations
 
-## Overview
+This document states what Towel verifies about a transformation, what it
+rejects, and what remains outside its model. Read it together with
+[the production readiness report](PRODUCTION_READINESS.md) and
+[the adversarial review](ADVERSARIAL_REVIEW.md).
 
-This document tracks known limitations and edge cases in Towel's code extraction functionality. These are cases where the tool either produces incorrect refactorings or conservatively rejects valid extractions.
+## What is verified for every accepted proposal
 
-## Current Limitations
+- **Instantiation.** The helper body, with each call site's actual arguments
+  substituted for its parameters (thunks beta-reduced), must reproduce the
+  block it replaces up to the renaming of names the block itself binds. A
+  proposal whose unification, substitution, or renaming disagree is rejected
+  before it is offered. (`src/towel/unification/instantiation.py`)
+- **Argument evaluation.** Only names, literals, and containers of those are
+  passed eagerly. Every other differing expression is passed as a
+  zero-argument thunk and evaluated inside the helper at the original
+  position, so it runs as often, as late, and as conditionally as before.
+  Expressions that read names bound inside the block are lambda-lifted with
+  those names as arguments. Expressions in call position are forwarded lazily.
+- **Binding discipline.** The block may not rebind, delete, or `except ... as`
+  a name bound before it; may not carry a `global`/`nonlocal` declaration the
+  caller still uses; may not rebind a name a closure outside the block reads;
+  and may not define a closure over a name the caller rebinds after the block.
+  Names bound in the block and read afterwards are returned.
+- **Frame and control flow.** Blocks containing `yield`, `await`, `async`
+  loops or context managers, `locals()`, `globals()`, `vars()`, `eval`,
+  `exec`, zero-argument `super()`, `break`/`continue` targeting an outer loop,
+  or comprehension assignment expressions are rejected.
+- **Rendering.** Every generated file compiles, and every generated call binds
+  to the generated helper's signature after method conversion.
 
-### 1. Complex Lambda Parameters
+These checks are syntactic and local. They establish that the helper is a
+faithful generalization of each block under Python's lexical scoping. They do
+not establish behavioral equivalence for programs that observe their own
+frames, names, or source.
 
-**Status**: Known Limitation (conservatively rejected)
+## Observable differences that remain
 
-**Description**:
+- **Tracebacks, `warnings.warn(stacklevel=...)`, and frame inspection.** A
+  helper adds a frame. Code that inspects `sys._getframe`, walks tracebacks, or
+  relies on `stacklevel` to attribute a warning to a specific caller will see
+  the helper instead. Only direct calls to the frame-sensitive builtins listed
+  above are rejected; aliased or indirect inspection is not detected.
+- **Unbound-local timing.** A local that may be unbound is read at the call
+  site when passed eagerly, so an `UnboundLocalError` can move from inside a
+  branch that would not have executed to the call itself.
+- **Reflection and dynamic rebinding.** Code that rebinds module globals or
+  closure cells through `globals()[...]`, `setattr(module, ...)`, `exec`, or
+  from another thread between two reads inside a block is outside the model.
+  Direct calls to the reflection builtins are rejected; aliased or external
+  rebinding is not detected.
+- **Metaclasses and descriptors.** Method extraction into a class assumes the
+  usual descriptor protocol. Methods decorated with anything other than the
+  recognized receiver-preserving decorators receive a module-level helper with
+  the receiver passed explicitly. Custom metaclasses that alter attribute
+  lookup, `__init_subclass__` hooks, and `__slots__` interactions with added
+  methods are not modeled beyond compilation.
+- **Import-time behavior.** Helpers are inserted before the first definition
+  in a module, after imports. Cross-file helpers add a module import; static
+  local import cycles are rejected, dynamic ones are not detected.
+- **Concurrency of application.** Files are replaced atomically one at a time;
+  a batch is not atomic across files. Application requires exclusive write
+  access; a concurrent editor writing in the check/replace interval is not
+  prevented. Interrupted batches leave a recovery journal.
 
-Towel fully supports standard lambda expressions with simple parameters:
-```python
-# ✅ Fully supported - these WILL be unified:
-map_a = lambda x: x * 2
-map_b = lambda y: y * 2
+## Conservative rejections
 
-filter_a = lambda x, threshold: x > threshold
-filter_b = lambda y, limit: y > limit
-```
+Towel prefers to leave code unchanged rather than transform it under
+uncertainty. Common reasons a real duplicate is not extracted:
 
-However, Towel currently does not support unifying lambda expressions that use Python's advanced parameter features:
-- Positional-only parameters (`/` syntax, Python 3.8+)
-- Keyword-only parameters (`*` syntax)
-- Variable positional arguments (`*args`)
-- Variable keyword arguments (`**kwargs`)
+- A differing sub-expression is a slice, a starred item, or a whole f-string;
+  these are container syntax rather than values.
+- The block deletes, rebinds, or declares a name the caller keeps using.
+- A nested function or lambda shares a rebound name with the block.
+- The helper would need more than the configured maximum parameters.
+- A match capture, `with` target, or exception name would have to cross the
+  block boundary in a way the return analysis does not represent.
+- Lambda expressions with positional-only, keyword-only, or variadic
+  parameters are not unified.
+- Project layouts other than setuptools, Hatch, and Flit conventions are
+  refused for directory mode because import roots cannot be inferred safely.
 
-**Examples of Unsupported Cases**:
+Set `DEBUG_PROPOSAL_REJECTIONS=1` to print the reason for each rejected pair.
 
-```python
-# ❌ Not currently unified:
-process_a = lambda x, *, key=None: x if key else -x
-process_b = lambda y, *, key=None: y if key else -y
+## Performance
 
-# ❌ Not currently unified:
-compute_a = lambda *args: sum(args) + 10
-compute_b = lambda *args: sum(args) + 20
-
-# ❌ Not currently unified:
-func_a = lambda x, /, **kwargs: x + sum(kwargs.values())
-func_b = lambda y, /, **kwargs: y + sum(kwargs.values())
-```
-
-**Rationale**:
-
-These advanced parameter types require more sophisticated alpha-renaming and parameter mapping logic. Since they are relatively uncommon in typical duplicate code patterns (most lambda expressions use simple parameters), Towel conservatively rejects these cases rather than risk incorrect unification.
-
-**Workaround**:
-
-Convert complex lambdas to named functions before running Towel:
-
-```python
-# Before:
-process_a = lambda *args, **kwargs: helper(*args, **kwargs) + 10
-process_b = lambda *args, **kwargs: helper(*args, **kwargs) + 20
-
-# After conversion (can be unified):
-def process_a(*args, **kwargs):
-    return helper(*args, **kwargs) + 10
-
-def process_b(*args, **kwargs):
-    return helper(*args, **kwargs) + 20
-```
-
-Regular functions with these parameter types ARE fully supported by Towel - only lambda expressions with these features are affected.
-
-**Implementation Reference**: `src/towel/unification/unifier.py:1454`
-
----
-
-## Resolved Issues (Historical Reference)
-
-### Variable Rebinding in Extracted Blocks (Fixed in December 2025)
-
-- **Summary**: Earlier versions substituted parameter names even after a local rebinding (e.g., returning `__param_0` instead of the updated `result`).
-- **Resolution**: `ParameterSubstituter` now tracks statement order and stops substituting any variable once it is rebound inside the extracted block, including across branches and async constructs.
-- **Regression Coverage**: `tests/test_extractor_comprehensive.py::test_rebinding_stops_parameter_substitution` and the adversarial scenarios in `test_examples/tricky_edge_cases_adversarial.py`.
-- **Status**: Fully passing—no remaining observational-equivalence failures tied to this behavior.
-
----
-
-## Statistics
-
-**Overall Success Rate**: 100% (209/209 proposals pass observational equivalence tests)
-
-**Adversarial Test Results**:
-- control_flow_adversarial.py: 6/6 (100%)
-- exception_adversarial.py: 2/2 (100%)
-- side_effects_adversarial.py: 4/4 (100%)
-- tricky_edge_cases_adversarial.py: 3/3 (100%)
-
-**Date**: December 2025
+Analysis is quadratic in candidate blocks per file. Measured with the CLI
+defaults on September 13, 2026 (macOS, Python 3.13): a single 5,000-line
+module reaches a fixed point in about 23 seconds; a 4,000-line package with
+its tests applied 18 extractions in about 6 minutes; an 18,000-line package
+completes in about 2.5 minutes. Progress is reported per phase. There is no
+time budget; interrupt with Ctrl-C, which leaves files unchanged.

@@ -1,3 +1,18 @@
+## 2026-09-13
+
+- Version: 1.1.0
+- Commit: (this branch, `audit/open-source-2026-09-12`)
+- Summary:
+  - Soundness: every accepted proposal is verified by instantiating the helper with each call's arguments and comparing with the replaced block up to renamed binders; arguments that are not names, literals, or containers of those are passed as thunks evaluated at the original position.
+  - Guards: closure/cell sharing across the block boundary, deletion and `except ... as` of pre-bound names, moved `global`/`nonlocal` declarations, slice and starred parameters, and opaque method decorators are rejected or handled explicitly; match captures bind in scope analysis; generated parameter names avoid block identifiers; clustered replacements may not overlap.
+  - Layouts: Flit projects are supported in directory mode.
+  - Evidence: seven public projects pass their full suites before and after transformation; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
+- Status: All tests green
+  - Unit/integration tests: 1,134 passed on Python 3.11, 3.12, and 3.13
+  - Consumer suites: 7/7 identical before and after (see docs/PRODUCTION_READINESS.md)
+
+---
+
 ## 2025-11-25
 
 - Version: 0.6.10

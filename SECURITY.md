@@ -1,6 +1,6 @@
 # Security policy
 
-Towel is experimental. Review generated code and run the affected project's own tests before using it. No supported-release matrix or response-time commitment has been established for the next public release. The historical PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling; they are not a recommended installation target.
+Towel rewrites source code. Review generated code and run the affected project's own tests before adopting it; see docs/KNOWN_LIMITATIONS.md for what is verified and what is not. No supported-release matrix or response-time commitment has been established for the next public release. The historical PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling; they are not a recommended installation target.
 
 ## Reporting
 
