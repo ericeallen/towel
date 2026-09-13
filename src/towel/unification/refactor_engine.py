@@ -292,6 +292,10 @@ class UnificationRefactorEngine:
             Tuple[Tuple[ast.AST, ...], Tuple[ast.AST, ...]],
             Optional[Tuple[Substitution, List[Dict[str, str]]]],
         ] = {}
+        # Per-block analyses (binding snapshot, reassignment and unbinding
+        # checks) depend only on the function and the block; a block takes
+        # part in every pair it forms, so each is computed once per analysis.
+        self._per_block_cache: Dict[Tuple[str, FunctionNode, Tuple[ast.AST, ...]], Any] = {}
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
         # Every file of the current analysis: helper names must be unique
@@ -474,6 +478,7 @@ class UnificationRefactorEngine:
         self._signed_block_cache.clear()
         self._block_guard_cache.clear()
         self._unify_cache.clear()
+        self._per_block_cache.clear()
         self._analysis_paths = tuple(file_paths)
         try:
             return run_pipeline(
@@ -488,6 +493,7 @@ class UnificationRefactorEngine:
             self._signed_block_cache.clear()
         self._block_guard_cache.clear()
         self._unify_cache.clear()
+        self._per_block_cache.clear()
 
     def _signed_blocks(
         self, function: FunctionNode
@@ -1530,7 +1536,38 @@ class UnificationRefactorEngine:
                 break
         return dce
 
+    def _per_block(
+        self,
+        name: str,
+        func: FunctionNode,
+        block_nodes: Sequence[ast.AST],
+        compute: Callable[[], Any],
+    ) -> Any:
+        """Compute an immutable per-(function, block) result once per analysis."""
+        key = (name, func, tuple(block_nodes))
+        if key not in self._per_block_cache:
+            self._per_block_cache[key] = compute()
+        return self._per_block_cache[key]
+
     def _build_block_binding_snapshot(
+        self,
+        func: FunctionNode,
+        block_nodes: List[ast.AST],
+        block_range: Tuple[int, int],
+        reassignments: Dict[int, bool],
+    ) -> BlockBindingSnapshot:
+        """Binding statistics for a block, computed once per (function, block)."""
+        snapshot: BlockBindingSnapshot = self._per_block(
+            "snapshot",
+            func,
+            block_nodes,
+            lambda: self._compute_block_binding_snapshot(
+                func, block_nodes, block_range, reassignments
+            ),
+        )
+        return snapshot
+
+    def _compute_block_binding_snapshot(
         self,
         func: FunctionNode,
         block_nodes: List[ast.AST],
@@ -1934,16 +1971,26 @@ class UnificationRefactorEngine:
             reassignments2 = self._get_assignment_reuse(func2)
 
             # Check if block1 contains reassignments without bindings
-            has_unsafe1, problematic_vars1 = has_reassignments_without_bindings(
-                func1, pair.block1_nodes, reassignments1
+            has_unsafe1, problematic_vars1 = self._per_block(
+                "reassignments",
+                func1,
+                pair.block1_nodes,
+                lambda: has_reassignments_without_bindings(
+                    func1, pair.block1_nodes, reassignments1
+                ),
             )
             if has_unsafe1:
                 self._debug_reject("unsafe_reassignment_block1", pair, str(problematic_vars1))
                 return None
 
             # Check if block2 contains reassignments without bindings
-            has_unsafe2, problematic_vars2 = has_reassignments_without_bindings(
-                func2, pair.block2_nodes, reassignments2
+            has_unsafe2, problematic_vars2 = self._per_block(
+                "reassignments",
+                func2,
+                pair.block2_nodes,
+                lambda: has_reassignments_without_bindings(
+                    func2, pair.block2_nodes, reassignments2
+                ),
             )
             if has_unsafe2:
                 self._debug_reject("unsafe_reassignment_block2", pair, str(problematic_vars2))
@@ -1967,9 +2014,17 @@ class UnificationRefactorEngine:
             bound_after_block2 = block2_snapshot.bound_after_block
             initially_bound2 = block2_snapshot.initially_bound
 
-            if unbinds_external_name(
-                func1, pair.block1_nodes, bound_before_block1
-            ) or unbinds_external_name(func2, pair.block2_nodes, bound_before_block2):
+            if self._per_block(
+                "unbinds",
+                func1,
+                pair.block1_nodes,
+                lambda: unbinds_external_name(func1, pair.block1_nodes, bound_before_block1),
+            ) or self._per_block(
+                "unbinds",
+                func2,
+                pair.block2_nodes,
+                lambda: unbinds_external_name(func2, pair.block2_nodes, bound_before_block2),
+            ):
                 self._debug_reject("unbinds_external_name", pair)
                 return None
 
@@ -2613,12 +2668,24 @@ class UnificationRefactorEngine:
                     if not _qf(tmpl_sig, cand_sig):
                         continue
                     reassignX = self._get_assignment_reuse(fn)
-                    if has_reassignments_without_bindings(fn, cand_nodes, reassignX)[0]:
+                    if self._per_block(
+                        "reassignments",
+                        fn,
+                        cand_nodes,
+                        lambda: has_reassignments_without_bindings(fn, cand_nodes, reassignX),
+                    )[0]:
                         continue
                     candidate_snapshot = self._build_block_binding_snapshot(
                         fn, cand_nodes, cand_range, reassignX
                     )
-                    if unbinds_external_name(fn, cand_nodes, candidate_snapshot.bound_before_block):
+                    if self._per_block(
+                        "unbinds",
+                        fn,
+                        cand_nodes,
+                        lambda: unbinds_external_name(
+                            fn, cand_nodes, candidate_snapshot.bound_before_block
+                        ),
+                    ):
                         continue
                     # Try to unify template block with candidate
                     cluster_renames: List[Dict[str, str]] = [{}, {}]
