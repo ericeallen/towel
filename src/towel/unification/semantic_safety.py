@@ -5,11 +5,14 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
-from typing import Iterable, Set, Union
+from typing import TYPE_CHECKING, Iterable, Set, Union
 
 from .binding_detector import BindingDetector
 from .project_layout import ProjectLayout
-from .scope_analyzer import ScopeAnalyzer
+from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
+
+if TYPE_CHECKING:
+    from .unifier import Substitution
 
 
 def uses_class_private_names(nodes: Iterable[ast.AST]) -> bool:
@@ -257,3 +260,183 @@ def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) 
                             dependencies.update(module_files(base, [*components, alias.name]))
         pending.extend(dependencies - visited)
     return False
+
+
+def bound_names(nodes: Iterable[ast.AST]) -> Set[str]:
+    """Every name a node binds or unbinds, including inside nested scopes.
+
+    This over-approximates scope: a nested function's local counts too. The
+    guards below use it to decide whether a nested scope and the extracted
+    block could share a binding, where over-approximation only rejects.
+    """
+    names: Set[str] = set()
+    for statement in nodes:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                names.add(node.id)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                names.add(node.name)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.match_case):
+                names.update(pattern_capture_names(node.pattern))
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    if alias.name != "*":
+                        names.add(alias.asname or alias.name.split(".")[0])
+    return names
+
+
+def _deleted_names(nodes: Iterable[ast.AST]) -> Set[str]:
+    """Names a block unbinds: explicit ``del`` and implicit except-clause cleanup."""
+    names: Set[str] = set()
+    for statement in nodes:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Delete):
+                for target in node.targets:
+                    names.update(
+                        child.id
+                        for child in ast.walk(target)
+                        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Del)
+                    )
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                names.add(node.name)
+    return names
+
+
+def unbinds_external_name(
+    function: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    nodes: Iterable[ast.AST],
+    bound_before: Set[str],
+) -> bool:
+    """Whether the block deletes a binding that outlives it.
+
+    Deleting a helper parameter leaves the caller's variable bound; the
+    original raised ``UnboundLocalError`` on the next read. ``except ... as e``
+    deletes ``e`` when the handler exits, so it is a deletion too. Global and
+    nonlocal names are rejected because the helper holds no such declaration.
+    """
+    deleted = _deleted_names(nodes)
+    if not deleted:
+        return False
+    declared: Set[str] = set()
+    for node in ast.walk(function):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            declared.update(node.names)
+    return bool(deleted & (bound_before | declared))
+
+
+_NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.GeneratorExp)
+
+
+def _loaded_names(node: ast.AST) -> Set[str]:
+    return {
+        child.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+    }
+
+
+def nested_scopes_cross_block_boundary(
+    function: Union[ast.FunctionDef, ast.AsyncFunctionDef], nodes: Iterable[ast.AST]
+) -> bool:
+    """Reject extraction when a closure and the block share a mutable binding.
+
+    A nested function, lambda or generator reads its free names when it runs,
+    not when it is defined. If it is defined outside the block and the block
+    rebinds one of those names, the helper rebinds its own local instead of the
+    caller's cell. If it is defined inside the block and the caller rebinds one
+    of its free names after the block, the helper's parameter snapshot goes
+    stale. Both cases are rejected; reads of names bound only before a
+    top-level block remain eligible.
+    """
+    block = tuple(nodes)
+    extracted = {child for statement in block for child in ast.walk(statement)}
+    written_in_block = bound_names(block)
+    outside_scopes = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, _NESTED_SCOPE_TYPES) and node is not function and node not in extracted
+    ]
+    if written_in_block and any(
+        _loaded_names(scope) & written_in_block for scope in outside_scopes
+    ):
+        return True
+    inside_scopes = [node for node in extracted if isinstance(node, _NESTED_SCOPE_TYPES)]
+    if not inside_scopes:
+        return False
+    captured: Set[str] = set()
+    for scope in inside_scopes:
+        captured.update(_loaded_names(scope))
+    captured -= written_in_block
+    if not captured:
+        return False
+    top_level = all(node in function.body for node in block)
+    block_end = max(getattr(node, "end_lineno", 0) or 0 for node in block)
+    for statement in function.body:
+        if statement in extracted:
+            continue
+        if top_level and (getattr(statement, "lineno", 0) or 0) <= block_end:
+            continue
+        if bound_names([statement]) & captured:
+            return True
+    return False
+
+
+def is_eagerly_evaluable(expression: ast.AST) -> bool:
+    """Whether hoisting this expression to the call site is unobservable.
+
+    A parameter argument runs once, before the block, even when the block would
+    have evaluated it later, repeatedly, conditionally, or not at all. Only
+    expressions with no effects and no failure modes may move that way: local
+    names, literals, and containers of those. Attribute access can run a
+    property, subscripts and operators can call arbitrary methods, and calls
+    are effects by definition.
+    """
+    if isinstance(expression, (ast.Constant, ast.Name)):
+        return True
+    if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
+        return all(is_eagerly_evaluable(element) for element in expression.elts)
+    if isinstance(expression, ast.UnaryOp) and isinstance(expression.operand, ast.Constant):
+        return isinstance(expression.op, (ast.USub, ast.UAdd, ast.Invert, ast.Not))
+    return False
+
+
+def has_impure_eager_parameters(substitution: "Substitution") -> bool:
+    """Whether any eagerly passed parameter argument may be observable when hoisted.
+
+    Lambda-lifted parameters and forwarded callees are evaluated inside the
+    helper at the original position, so any expression is acceptable there.
+    Call this after extraction, which is when callee parameters are known.
+    """
+    deferred = set(substitution.function_params) | set(substitution.params_used_as_callee)
+    return any(
+        not is_eagerly_evaluable(expression)
+        for name, expressions in substitution.param_expressions.items()
+        if name not in deferred
+        for _, expression in expressions
+    )
+
+
+def defer_impure_parameters(
+    substitution: "Substitution", template_block: Iterable[ast.AST]
+) -> None:
+    """Turn parameters whose arguments cannot be hoisted into zero-argument thunks.
+
+    The helper then evaluates ``__param_n()`` at the original position, as often
+    and as conditionally as the block did. Parameters already lambda-lifted keep
+    their arguments; parameters used only as callees are forwarded lazily by
+    the extractor and need no thunk.
+    """
+    callees: Set[str] = set()
+    for statement in template_block:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Call):
+                parameter = substitution.get_param_for_expr(0, node.func)
+                if parameter is not None:
+                    callees.add(parameter)
+    for name, expressions in substitution.param_expressions.items():
+        if name in substitution.function_params or name in callees:
+            continue
+        if any(not is_eagerly_evaluable(expression) for _, expression in expressions):
+            substitution.function_params[name] = []

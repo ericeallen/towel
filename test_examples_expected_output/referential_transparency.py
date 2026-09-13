@@ -7,7 +7,7 @@ and don't accidentally capture or modify variables incorrectly.
 
 
 def __extracted_func_3(__param_0, counter):
-    counter['total'] += __param_0
+    counter['total'] += __param_0()
     counter['processed'] += 1
     result = counter['total'] / counter['processed']
     print(f'Current average: {result}')
@@ -47,7 +47,7 @@ def update_mutable_state_v1(items, counter):
 
     for item in items:
         # This block modifies mutable state
-        __extracted_func_3(item, counter)
+        __extracted_func_3(lambda: item, counter)
 
     return counter
 
@@ -58,7 +58,7 @@ def update_mutable_state_v2(items, counter):
 
     for item in items:
         # Same pattern of mutation
-        __extracted_func_3(item * 2, counter)
+        __extracted_func_3(lambda: item * 2, counter)
 
     return counter
 

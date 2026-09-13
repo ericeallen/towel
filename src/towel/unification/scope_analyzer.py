@@ -81,6 +81,17 @@ def _iter_argument_names(args: ast.arguments) -> Iterable[str]:
         yield arg.arg
 
 
+def pattern_capture_names(pattern: ast.AST) -> Set[str]:
+    """Names bound by a match pattern, including nested captures."""
+    names: Set[str] = set()
+    for node in ast.walk(pattern):
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
+    return names
+
+
 class ScopeAnalyzer(ast.NodeVisitor):
     """
     Analyze scopes and identifier bindings in an AST.
@@ -336,6 +347,21 @@ class ScopeAnalyzer(ast.NodeVisitor):
         for alias in node.names:
             if alias.name != "*":
                 self.current_scope.add_binding(alias.asname or alias.name, node)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        """Visit a match statement; capture patterns bind in the current scope."""
+        self.visit(node.subject)
+        for case in node.cases:
+            assert self.current_scope is not None
+            for name in sorted(pattern_capture_names(case.pattern)):
+                self.current_scope.add_binding(name, case.pattern)
+            for child in ast.walk(case.pattern):
+                if isinstance(child, ast.MatchValue):
+                    self.visit(child.value)
+            if case.guard:
+                self.visit(case.guard)
+            for stmt in case.body:
+                self.visit(stmt)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if node.type:
@@ -607,6 +633,19 @@ class ScopeAnalyzer(ast.NodeVisitor):
             visit_DictComp = _visit_comprehension_scope
             visit_SetComp = _visit_comprehension_scope
             visit_GeneratorExp = _visit_comprehension_scope
+
+            def visit_Match(self, node: ast.Match) -> None:
+                # Capture patterns bind in the enclosing function scope
+                self.visit(node.subject)
+                for case in node.cases:
+                    for child in ast.walk(case.pattern):
+                        if isinstance(child, ast.MatchValue):
+                            self.visit(child.value)
+                    self._add_current_scope_bindings(pattern_capture_names(case.pattern))
+                    if case.guard:
+                        self.visit(case.guard)
+                    for stmt in case.body:
+                        self.visit(stmt)
 
             def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
                 # Exception variable binds in current scope

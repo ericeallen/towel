@@ -27,6 +27,8 @@ This is critical for safe code extraction:
 import ast
 from typing import Dict, List, Set, Tuple, Union
 
+from .scope_analyzer import pattern_capture_names
+
 
 def analyze_assignments(func: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> Dict[int, bool]:
     """
@@ -343,6 +345,12 @@ def _collect_bindings_and_reassignments(
                 if item.optional_vars:
                     if isinstance(item.optional_vars, ast.Name):
                         bound_vars.add(item.optional_vars.id)
+            self.generic_visit(node)
+
+        def visit_Match(self, node: ast.Match) -> None:
+            # Capture patterns are initial bindings of the enclosing function
+            for case in node.cases:
+                bound_vars.update(pattern_capture_names(case.pattern))
             self.generic_visit(node)
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:

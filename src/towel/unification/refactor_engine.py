@@ -39,6 +39,7 @@ from pathlib import Path
 from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier
 from .extractor import HygienicExtractor, is_value_producing, UnsupportedExtraction
+from .instantiation import instantiation_mismatch
 from .orphan_detector import has_orphaned_variables
 from .assignment_analyzer import (
     analyze_assignments,
@@ -53,6 +54,10 @@ from .semantic_safety import (
     snapshots_rebound_external_names,
     requires_original_frame,
     would_create_import_cycle,
+    unbinds_external_name,
+    nested_scopes_cross_block_boundary,
+    has_impure_eager_parameters,
+    defer_impure_parameters,
 )
 from .block_signature import BlockSignature, extract_block_signature, quick_filter
 from .models import (
@@ -1681,6 +1686,12 @@ class UnificationRefactorEngine:
             self._debug_reject("nested_binding_escapes", pair)
             return None
 
+        if (func1 is not None and nested_scopes_cross_block_boundary(func1, pair.block1_nodes)) or (
+            func2 is not None and nested_scopes_cross_block_boundary(func2, pair.block2_nodes)
+        ):
+            self._debug_reject("closure_crosses_block_boundary", pair)
+            return None
+
         # (Removed specialized full-body extraction fast-path; reverting to generic pairing logic.)
 
         # DEBUG logging
@@ -1748,6 +1759,12 @@ class UnificationRefactorEngine:
             bound_before_block2 = block2_snapshot.bound_before_block
             bound_after_block2 = block2_snapshot.bound_after_block
             initially_bound2 = block2_snapshot.initially_bound
+
+            if unbinds_external_name(
+                func1, pair.block1_nodes, bound_before_block1
+            ) or unbinds_external_name(func2, pair.block2_nodes, bound_before_block2):
+                self._debug_reject("unbinds_external_name", pair)
+                return None
 
             debug_enabled = bool(os.getenv("DEBUG_VALIDATION"))
             if debug_enabled:
@@ -2087,6 +2104,8 @@ class UnificationRefactorEngine:
             # so the extracted function references the outer binding.
             free_vars -= problematic
 
+        defer_impure_parameters(substitution, pair.block1_nodes)
+
         # Extract function
         try:
             func_def, param_order = self.extractor.extract_function(
@@ -2107,6 +2126,13 @@ class UnificationRefactorEngine:
             )
         except UnsupportedExtraction:
             return None
+
+        if has_impure_eager_parameters(substitution):
+            self._debug_reject("impure_eager_parameter", pair)
+            return None
+        helper_preamble_length = int(bool(globals_to_declare_in_extracted)) + int(
+            bool(nonlocals_to_declare_in_extracted)
+        )
 
         # Check for orphaned variables before proceeding
         # Need to find the function nodes to check for orphans
@@ -2241,6 +2267,20 @@ class UnificationRefactorEngine:
                         detail=f"block{block_idx+1}: {sorted(invalid_names)}",
                     )
                     return None
+                mismatch = instantiation_mismatch(
+                    func_def,
+                    call_node,
+                    pair.block1_nodes if block_idx == 0 else pair.block2_nodes,
+                    hygienic_renames[0],
+                    hygienic_renames[block_idx],
+                    preamble_length=helper_preamble_length,
+                    returns_variables=bool(return_variables_block1),
+                )
+                if mismatch is not None:
+                    self._debug_reject(
+                        "instantiation_mismatch", pair, detail=f"block{block_idx+1}: {mismatch}"
+                    )
+                    return None
                 # Store file_path and class context
                 class_name = pair.class1_name if block_idx == 0 else pair.class2_name
                 method_info = method_info1 if block_idx == 0 else method_info2
@@ -2295,16 +2335,30 @@ class UnificationRefactorEngine:
                         continue
                     if snapshots_rebound_external_names(analyzerX, fn, cand_nodes):
                         continue
+                    if nested_scopes_cross_block_boundary(fn, cand_nodes):
+                        continue
                     # Minimum size gate
                     start_line, end_line = cand_range
                     if (end_line - start_line + 1) < self.min_lines:
                         continue
                     if not _qf(tmpl_sig, cand_sig):
                         continue
+                    reassignX = self._get_assignment_reuse(fn)
+                    if has_reassignments_without_bindings(fn, cand_nodes, reassignX)[0]:
+                        continue
+                    candidate_snapshot = self._build_block_binding_snapshot(
+                        fn, cand_nodes, cand_range, reassignX
+                    )
+                    if unbinds_external_name(fn, cand_nodes, candidate_snapshot.bound_before_block):
+                        continue
                     # Try to unify template block with candidate
-                    subst2 = self.unifier.unify_blocks([pair.block1_nodes, cand_nodes], [{}, {}])
+                    cluster_renames: List[Dict[str, str]] = [{}, {}]
+                    subst2 = self.unifier.unify_blocks(
+                        [pair.block1_nodes, cand_nodes], cluster_renames
+                    )
                     if not subst2:
                         continue
+                    defer_impure_parameters(subst2, pair.block1_nodes)
                     # Unifying another occurrence may require a different,
                     # more general helper. Its parameter numbers alone do
                     # not identify the meanings of the existing helper's
@@ -2323,6 +2377,8 @@ class UnificationRefactorEngine:
                     if candidate_order != param_order or ast.dump(candidate_helper) != ast.dump(
                         func_def
                     ):
+                        continue
+                    if has_impure_eager_parameters(subst2):
                         continue
                     # Orphan check for candidate within its function body
                     indices = self._get_block_indices(fn, cand_nodes)
@@ -2343,7 +2399,7 @@ class UnificationRefactorEngine:
                             free_variables=free_vars,
                             is_value_producing=value_prod1,
                             return_variables=[],
-                            hygienic_renames=[{}, {}],
+                            hygienic_renames=cluster_renames,
                         )
                     except UnsupportedExtraction:
                         continue
@@ -2352,35 +2408,20 @@ class UnificationRefactorEngine:
                     if any(n.startswith("__param_") for n in used2):
                         # Skip brittle candidate that leaked placeholders
                         continue
-                    # Compute names bound before candidate block and free vars within it
-                    from .assignment_analyzer import (
-                        _collect_bindings_and_reassignments as _cbar,
-                    )
-
-                    bound_before_cand: Set[str] = set()
-                    if _cbar is not None:
-                        reassignX = self._get_assignment_reuse(fn)
-                        start_line_cand = cand_range[0]
-                        for stmt in fn.body:
-                            if hasattr(stmt, "lineno") and stmt.lineno < start_line_cand:
-                                bset: Set[str] = set()
-                                rset: Set[str] = set()
-                                _cbar(stmt, reassignX, bset, rset)
-                                bound_before_cand.update(bset)
-                        # Treat function params as bound
-                        if isinstance(fn, ast.FunctionDef):
-                            param_namesX: Set[str] = set()
-                            for arg in fn.args.args:
-                                param_namesX.add(arg.arg)
-                            for arg in getattr(fn.args, "posonlyargs", []) or []:
-                                param_namesX.add(arg.arg)
-                            for arg in fn.args.kwonlyargs:
-                                param_namesX.add(arg.arg)
-                            if fn.args.vararg:
-                                param_namesX.add(fn.args.vararg.arg)
-                            if fn.args.kwarg:
-                                param_namesX.add(fn.args.kwarg.arg)
-                            bound_before_cand.update(param_namesX)
+                    if (
+                        instantiation_mismatch(
+                            func_def,
+                            call_node2,
+                            cand_nodes,
+                            cluster_renames[0],
+                            cluster_renames[1],
+                            preamble_length=helper_preamble_length,
+                            returns_variables=False,
+                        )
+                        is not None
+                    ):
+                        continue
+                    bound_before_cand: Set[str] = set(candidate_snapshot.bound_before_block)
                     free_vars_cand: Set[str] = set()
                     if analyzerX is not None:
                         free_vars_cand = set(analyzerX.get_free_variables(cand_nodes))
