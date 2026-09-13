@@ -94,25 +94,20 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
 
 
 def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, log: Path) -> Phase:
+    """Run one phase, streaming its output to ``log`` so progress is visible while it runs."""
     start = time.monotonic()
-    try:
-        completed = subprocess.run(
-            list(command),
-            cwd=cwd,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+    with log.open("w", encoding="utf-8") as handle:
+        process = subprocess.Popen(
+            list(command), cwd=cwd, env=env, stdout=handle, stderr=subprocess.STDOUT, text=True
         )
-        output = completed.stdout + completed.stderr
-        returncode = completed.returncode
-    except subprocess.TimeoutExpired as expired:
-        output = (expired.stdout or "") + (expired.stderr or "") + "\nTIMEOUT\n"
-        if isinstance(output, bytes):
-            output = output.decode("utf-8", "replace")
-        returncode = -9
-    log.write_text(output, encoding="utf-8")
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            handle.write("\nTIMEOUT\n")
+            returncode = -9
+    output = log.read_text(encoding="utf-8", errors="replace")
     return Phase(returncode, time.monotonic() - start, summarize(output), str(log))
 
 
@@ -161,6 +156,10 @@ def clone(project: Project, source: Path, log_dir: Path) -> str:
 def environment(project: Project, work: Path, source: Path) -> Path:
     env_dir = work / f"{project.name}-env"
     python = env_dir / "bin" / "python"
+    fingerprint = env_dir / "towel-deps.txt"
+    wanted = "\n".join([*sorted(project.deps), f"install={project.install}"])
+    if python.exists() and (not fingerprint.exists() or fingerprint.read_text() != wanted):
+        shutil.rmtree(env_dir)  # the manifest changed; rebuild the environment
     if not python.exists():
         subprocess.run(["uv", "venv", "-q", "-p", sys.executable, str(env_dir)], check=True)
         subprocess.run(
@@ -176,6 +175,7 @@ def environment(project: Project, work: Path, source: Path) -> Path:
                 check=True,
                 capture_output=True,
             )
+        fingerprint.write_text(wanted)
     return python
 
 
@@ -245,6 +245,10 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         timeout,
         logs / f"{project.name}-refactor.log",
     )
+    if result.refactor.returncode == -9:
+        result.verdict = "TIMEOUT"
+        result.detail = f"refactor exceeded {timeout}s"
+        return result
     if result.refactor.returncode != 0:
         result.verdict = "CRASH"
         result.detail = result.refactor.summary
@@ -341,7 +345,7 @@ def main() -> int:
         encoding="utf-8",
     )
     print("\n".join(lines[-1:]), flush=True)
-    failing = {"BROKEN", "CRASH", "HARNESS_ERROR"}
+    failing = {"BROKEN", "CRASH", "TIMEOUT", "HARNESS_ERROR"}
     return 1 if any(result.verdict in failing for result in results) else 0
 
 

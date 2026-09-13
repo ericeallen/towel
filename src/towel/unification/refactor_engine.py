@@ -3427,11 +3427,7 @@ class UnificationRefactorEngine:
             if changed_paths:
                 changed_set = set(map(str, changed_paths))
                 queue = [
-                    p
-                    for p in queue
-                    if not any(
-                        (rep.file_path or p.file_path) in changed_set for rep in p.replacements
-                    )
+                    p for p in queue if not ({path for path, _ in p.source_digests} & changed_set)
                 ]
 
                 localized = self.analyze_files(
@@ -3536,8 +3532,31 @@ class UnificationRefactorEngine:
                     total_applied, len(proposal_queue), "apply", f"#{iterations+1}: {last_desc}"
                 )
 
-            # Apply proposal
-            proposal_queue = _apply_proposal_and_refresh_queue(proposal, proposal_queue)
+            # Apply proposal. A proposal computed before an earlier application
+            # changed one of its files is stale: drop it and re-analyze those
+            # files so a fresh proposal can take its place.
+            try:
+                proposal_queue = _apply_proposal_and_refresh_queue(proposal, proposal_queue)
+            except ChangeConflict as conflict:
+                stale_paths = sorted({path for path, _ in proposal.source_digests})
+                _detail(
+                    f"Dropped stale proposal ({conflict}); re-analyzing {len(stale_paths)} file(s)"
+                )
+                if os.getenv("DEBUG_PROPOSAL_REJECTIONS"):
+                    print(
+                        f"STALE: {proposal.description} :: paths={stale_paths} :: "
+                        f"replacements={[rep.file_path or proposal.file_path for rep in proposal.replacements]}"
+                    )
+                self.invalidate_paths(stale_paths)
+                proposal_queue = [
+                    p
+                    for p in proposal_queue
+                    if not ({path for path, _ in p.source_digests} & set(stale_paths))
+                ]
+                refreshed = self.analyze_files(stale_paths, invalidate_paths=stale_paths)
+                if refreshed:
+                    proposal_queue = filter_overlapping_proposals(refreshed) + proposal_queue
+                continue
 
             # Record duration for this iteration (include localized follow-up analysis time)
             per_proposal_durations.append(_time.time() - iter_start)
@@ -3651,17 +3670,27 @@ def _thunk_uncertain_free_variables(
         canonical = template_renames.get(template_name, template_name)
         return canonical_to_block[index].get(canonical, canonical)
 
+    def uncertain(index: int, spelled: str) -> bool:
+        function, block = blocks[index]
+        if spelled not in locally_bound_names(function):
+            return False  # resolves lexically outside the function; not path-dependent
+        return spelled not in definitely_bound_before(function, cast(ast.stmt, block[0]))
+
+    # A parameter whose argument is a bare local name is read eagerly too.
+    deferred = set(substitution.function_params) | set(substitution.params_used_as_callee)
+    for parameter, expressions in substitution.param_expressions.items():
+        if parameter in deferred:
+            continue
+        if any(
+            isinstance(expression, ast.Name) and uncertain(index, expression.id)
+            for index, expression in expressions
+            if index < len(blocks)
+        ):
+            substitution.function_params[parameter] = []
+
     remaining = set(free_variables)
     for name in sorted(free_variables):
-        certain = True
-        for index, (function, block) in enumerate(blocks):
-            spelled = spelling(index, name)
-            if spelled not in locally_bound_names(function):
-                continue  # resolves lexically outside the function; not path-dependent
-            if spelled not in definitely_bound_before(function, cast(ast.stmt, block[0])):
-                certain = False
-                break
-        if certain:
+        if not any(uncertain(index, spelling(index, name)) for index in range(len(blocks))):
             continue
         parameter = _fresh_parameter_name(substitution, blocks)
         for index in range(len(blocks)):

@@ -56,6 +56,7 @@ TRANSFORMED = {
     "r82_local_classes_same_name",
     "r83_tab_indented_class",
     "r84_warn_stacklevel",
+    "r85_conditionally_bound_parameter",
 }
 
 

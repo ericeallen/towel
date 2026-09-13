@@ -240,6 +240,7 @@ url = "https://github.com/python-poetry/tomlkit.git"
 rev = "HEAD"
 package = "tomlkit"
 deps = ["pyyaml"]
+prepare = "git submodule update --init --quiet"
 
 [[project]]
 name = "platformdirs"
@@ -248,6 +249,7 @@ rev = "HEAD"
 package = "src/platformdirs"
 pythonpath = "src"
 deps = ["appdirs", "pytest-mock"]
+install = true
 
 [[project]]
 name = "filelock"
@@ -255,7 +257,7 @@ url = "https://github.com/tox-dev/filelock.git"
 rev = "HEAD"
 package = "src/filelock"
 pythonpath = "src"
-deps = ["pytest-timeout", "pytest-mock", "virtualenv"]
+deps = ["pytest-timeout", "pytest-mock", "virtualenv", "pytest-asyncio"]
 
 [[project]]
 name = "python-dateutil"
@@ -263,15 +265,15 @@ url = "https://github.com/dateutil/dateutil.git"
 rev = "HEAD"
 package = "src/dateutil"
 pythonpath = "src"
-deps = ["freezegun", "hypothesis", "six"]
+deps = ["freezegun", "hypothesis", "six", "pytest-cov"]
 
 [[project]]
 name = "decorator"
 url = "https://github.com/micheles/decorator.git"
 rev = "HEAD"
-package = "src/decorator.py"
 pythonpath = "src"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "src/tests"]
+package = "src/decorator"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 
 [[project]]
 name = "schema"
