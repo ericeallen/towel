@@ -107,5 +107,9 @@ Analysis is quadratic in candidate blocks per file. Measured with the CLI
 defaults on September 13, 2026 (macOS, Python 3.13): a single 5,000-line
 module reaches a fixed point in about 23 seconds; a 4,000-line package with
 its tests applied 18 extractions in about 6 minutes; an 18,000-line package
-completes in about 2.5 minutes. Progress is reported per phase. There is no
-time budget; interrupt with Ctrl-C, which leaves files unchanged.
+completes in about 2.5 minutes. The worst case is a module of many small,
+similar functions: pyflakes' 2,167-line `test_other.py` forms 444,250
+candidate pairs and takes about 2.5 minutes to analyze once, after the
+safety guards were memoized per block. Progress is reported per phase. There
+is no time budget; interrupt with Ctrl-C, which leaves files unchanged. The
+ecosystem check applies a 30-minute limit per phase and reports `TIMEOUT`.

@@ -113,8 +113,13 @@ def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, lo
     return Phase(returncode, time.monotonic() - start, summarize(output), str(log))
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 def summarize(output: str) -> str:
-    lines = [line.strip() for line in output.replace("\r", "\n").splitlines() if line.strip()]
+    """The suite's final tally, without color codes or elapsed time."""
+    plain = ANSI.sub("", output.replace("\r", "\n"))
+    lines = [line.strip() for line in plain.splitlines() if line.strip()]
     for line in reversed(lines):
         if any(pattern.match(line) for pattern in SUMMARY_PATTERNS):
             return re.sub(r" in [\d.]+s", "", line).strip("= ")
@@ -131,6 +136,8 @@ def base_env(pythonpath: str, python_bin: Path) -> Dict[str, str]:
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "TERM": "dumb",
+        "NO_COLOR": "1",
+        "PY_COLORS": "0",
     }
     return env
 
@@ -252,8 +259,9 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         result.detail = f"refactor exceeded {timeout}s"
         return result
     if result.refactor.returncode != 0:
-        result.verdict = "CRASH"
-        result.detail = result.refactor.summary
+        refused = _refusal(logs / f"{project.name}-refactor.log")
+        result.verdict = "UNSUPPORTED" if refused else "CRASH"
+        result.detail = refused or result.refactor.summary
         return result
     result.changed_files, result.diff_stat = changed(ready, project.package)
     if result.changed_files == 0:
@@ -284,6 +292,19 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         if unexpected:
             result.detail = f"{len(unexpected)} unexpected: {' '.join(unexpected)[:200]}"
     return result
+
+
+REFUSAL = re.compile(r"^Error: (Unsupported build backend .*|.*cannot infer safe imports.*)$", re.M)
+
+
+def _refusal(log_path: Path) -> str:
+    """The engine's own refusal message when it declined the project up front."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    match = REFUSAL.search(text)
+    return match.group(1) if match else ""
 
 
 FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.M)

@@ -264,6 +264,7 @@ rev = "HEAD"
 package = "src/filelock"
 pythonpath = "src"
 deps = ["pytest-timeout", "pytest-mock", "virtualenv", "pytest-asyncio"]
+install = true
 
 [[project]]
 name = "python-dateutil"
@@ -271,7 +272,7 @@ url = "https://github.com/dateutil/dateutil.git"
 rev = "HEAD"
 package = "src/dateutil"
 pythonpath = "src"
-deps = ["freezegun", "hypothesis", "six", "pytest-cov"]
+deps = ["freezegun", "hypothesis", "six", "pytest-cov", "pytest<9"]
 
 [[project]]
 name = "decorator"
@@ -279,7 +280,7 @@ url = "https://github.com/micheles/decorator.git"
 rev = "HEAD"
 pythonpath = "src"
 package = "src/decorator"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test.py"]
 
 [[project]]
 name = "schema"

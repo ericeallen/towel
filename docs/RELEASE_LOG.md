@@ -8,7 +8,7 @@
   - Layouts: Flit projects are supported in directory mode.
   - Evidence: seven public projects pass their full suites before and after transformation; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
 - Status: All tests green
-  - Unit/integration tests: 1,163 passed on Python 3.11, 3.12, and 3.13
+  - Unit/integration tests: 1,200 passed on Python 3.11, 3.12, and 3.13
   - Consumer suites: 7/7 identical before and after (see docs/PRODUCTION_READINESS.md)
 
 ---

@@ -43,6 +43,16 @@ def definitely_bound_before(function: Function, statement: ast.stmt) -> Set[str]
     return bound
 
 
+def definitely_bound_after(statements: Sequence[ast.stmt]) -> Optional[Set[str]]:
+    """Names bound on every path that falls through ``statements``.
+
+    ``None`` means no path falls through: every path returns, raises, breaks,
+    or continues, so nothing after the sequence can read its bindings.
+    """
+    result = _definite(statements)
+    return None if result is None else set(result)
+
+
 def locally_bound_names(function: Function) -> Set[str]:
     """Names the function's own scope binds anywhere: parameters and local statements.
 

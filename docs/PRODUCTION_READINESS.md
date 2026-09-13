@@ -61,6 +61,14 @@ In summary:
   assignment; a cross-module import landed inside a docstring; and helper
   names collided across modules. All four came from boltons and are repaired
   with checks that fail visibly.
+- The ecosystem check found eight more: two local classes with one name
+  treated as one; tab-indented classes; free variables and name arguments
+  bound only on some path read eagerly; direct `warnings.warn(stacklevel=)`
+  in a block; stale proposals aborting a batch; a function nested inside a
+  method dispatched as a method; an annotated assignment not counted as a
+  binding; and a block starting at an `elif` rendered as a sibling of its
+  `if`. Each is a fixture; the last one had also been recorded in a golden
+  output, which is regenerated.
 
 ## Consumer evidence
 
@@ -89,7 +97,7 @@ suite is identical before and after.
 
 ## Verification gates on the final tree
 
-- Python 3.11, 3.12, and 3.13: 1,163 tests passed on each, plus 34 subtests.
+- Python 3.11, 3.12, and 3.13: 1,200 tests passed on each, plus 34 subtests.
   Coverage is 89% against the unconditional 85% gate.
 - Black, Flake8, strict mypy, Bandit, and all pre-commit hooks pass. Hostile
   fixtures are excluded from formatting because their layout is what they
@@ -98,7 +106,7 @@ suite is identical before and after.
   arguments became thunks), reviewed by hand and executed. 3 cross-file
   goldens were stale relative to their inputs and the committed insertion
   policy and were regenerated.
-- Hostile batteries: 64 single-file fixtures, of which 27 are transformed and
+- Hostile batteries: 72 single-file fixtures, of which 35 are transformed and
   37 rejected, and 6 cross-file fixtures; all preserve program output.
 - Performance with the defaults: the 5,000-line `more.py` reaches a fixed
   point in 23 s. See KNOWN_LIMITATIONS.md for package-level timings.

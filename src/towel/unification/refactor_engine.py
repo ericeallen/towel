@@ -54,7 +54,11 @@ from .unifier import Unifier, Substitution
 from .extractor import HygienicExtractor, is_value_producing, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .thunk_inlining import inline_leading_thunks
-from .definite_assignment import definitely_bound_before, locally_bound_names
+from .definite_assignment import (
+    definitely_bound_after,
+    definitely_bound_before,
+    locally_bound_names,
+)
 from .exceptions import RefactoringError
 from .orphan_detector import has_orphaned_variables
 from .assignment_analyzer import (
@@ -2097,6 +2101,24 @@ class UnificationRefactorEngine:
         # CRITICAL VALIDATION: Reject proposals with incomplete variable lifetimes
         # A free variable bound AFTER the block is problematic - we'd be using it before it's defined.
         # However, free variables bound BEFORE the block are OK - they become parameters.
+        # The helper ends with ``return (v, ...)``. A variable bound only on some
+        # path through the block, such as inside a branch that raises, is unbound
+        # there unless it entered as a parameter; the original block left the
+        # caller's binding untouched on that path instead of raising.
+        for index, (nodes, entering) in enumerate(
+            ((pair.block1_nodes, free_vars1), (pair.block2_nodes, free_vars2))
+        ):
+            bound_at_exit = definitely_bound_after(cast(List[ast.stmt], nodes))
+            if bound_at_exit is None:
+                continue
+            not_definite = [
+                name
+                for name in ordered_return_variables[index]
+                if name not in entering and name not in bound_at_exit
+            ]
+            if not_definite:
+                self._debug_reject("conditionally_bound_return", pair, str(not_definite))
+                return None
         if free_vars1 & bound_after_block1:
             incomplete_vars = free_vars1 & bound_after_block1
             if os.getenv("DEBUG_VALIDATION"):
