@@ -42,6 +42,7 @@ TRANSFORMED = {
     "r38_name_two_positions",
     "r39_cluster_alpha",
     "r40_class_hierarchy",
+    "r44_cluster_nested_overlap",
 }
 
 

@@ -145,6 +145,30 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
     raise ValueError("Unsupported Hatch default package layout; cannot infer safe imports")
 
 
+def _flit_source_roots(project_root: Path, data: Dict[str, Any]) -> List[Path]:
+    """Locate the single module Flit builds, in the project root or under ``src``.
+
+    Flit packages exactly one importable module named by ``[tool.flit.module]``
+    or, failing that, by the project name. It looks for that module as a
+    package directory or a single file, first beside ``pyproject.toml`` and
+    then under ``src``. The module's parent is therefore the import root.
+    """
+    tool = data.get("tool", {})
+    flit = tool.get("flit", {}) if isinstance(tool, dict) else {}
+    module = flit.get("module", {}) if isinstance(flit, dict) else {}
+    name = module.get("name") if isinstance(module, dict) else None
+    if name is None:
+        project = data.get("project", {})
+        name = project.get("name") if isinstance(project, dict) else None
+    if not isinstance(name, str) or not name:
+        raise ValueError("Flit module name is required to infer safe imports")
+    normalized = name.replace("-", "_")
+    for root in (project_root, project_root / "src"):
+        if (root / normalized / "__init__.py").is_file() or (root / f"{normalized}.py").is_file():
+            return [root.resolve()]
+    raise ValueError("Flit module was not found beside pyproject.toml or under src")
+
+
 @dataclass
 class ProjectLayout:
     """Represents the directory structure and import configuration of a Python project.
@@ -183,6 +207,7 @@ class ProjectLayout:
             "setuptools.build_meta",
             "setuptools.build_meta:__legacy__",
             "hatchling.build",
+            "flit_core.buildapi",
         ):
             raise ValueError(f"Unsupported build backend {backend!r}; cannot infer safe imports")
 
@@ -197,7 +222,7 @@ class ProjectLayout:
         tool = data.get("tool", {})
         setuptools = tool.get("setuptools", {}) if isinstance(tool, dict) else {}
         mapping = setuptools.get("package-dir", {}) if isinstance(setuptools, dict) else {}
-        if backend != "hatchling.build" and isinstance(mapping, dict):
+        if backend not in ("hatchling.build", "flit_core.buildapi") and isinstance(mapping, dict):
             for prefix, rel in mapping.items():
                 if not isinstance(prefix, str) or not isinstance(rel, str):
                     continue
@@ -206,6 +231,8 @@ class ProjectLayout:
                     source_roots.append(root)
                     if prefix:
                         package_prefixes[root] = prefix
+        if not source_roots and backend == "flit_core.buildapi":
+            source_roots = _flit_source_roots(project_root, data)
         if not source_roots:
             source_roots = _hatch_source_roots(project_root, data)
 

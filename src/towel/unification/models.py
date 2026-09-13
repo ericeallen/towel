@@ -62,6 +62,9 @@ class MethodInfo:
 
     kind: Optional[Literal["instance", "classmethod", "staticmethod"]]
     implicit_param: Optional[str]
+    # False when a decorator or special method name makes the receiver's
+    # meaning unknowable statically; such blocks get module-level helpers.
+    receiver_known: bool = True
 
 
 @dataclass

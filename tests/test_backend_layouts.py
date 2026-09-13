@@ -149,3 +149,33 @@ def test_vcs_root_does_not_control_crossfile_imports(tmp_path, packaged):
     apply_changes(engine.plan_refactoring(proposal))
     after = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)
     assert before.stdout == after.stdout == "6 6\n"
+
+
+def test_flit_module_in_project_root(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend = "flit_core.buildapi"\n[project]\nname = "mdit-lib"\n'
+    )
+    (tmp_path / "mdit_lib").mkdir()
+    (tmp_path / "mdit_lib" / "__init__.py").write_text("")
+    layout = ProjectLayout.discover(tmp_path / "mdit_lib" / "__init__.py")
+    assert layout.source_roots == [tmp_path.resolve()]
+
+
+def test_flit_explicit_module_under_src(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend = "flit_core.buildapi"\n[project]\nname = "anything"\n'
+        '[tool.flit.module]\nname = "core"\n'
+    )
+    (tmp_path / "src" / "core").mkdir(parents=True)
+    (tmp_path / "src" / "core" / "__init__.py").write_text("")
+    layout = ProjectLayout.discover(tmp_path / "src" / "core" / "__init__.py")
+    assert layout.source_roots == [(tmp_path / "src").resolve()]
+
+
+def test_flit_missing_module_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend = "flit_core.buildapi"\n[project]\nname = "ghost"\n'
+    )
+    (tmp_path / "other.py").write_text("")
+    with pytest.raises(ValueError, match="Flit module was not found"):
+        ProjectLayout.discover(tmp_path / "other.py")

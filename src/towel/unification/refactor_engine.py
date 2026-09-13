@@ -40,6 +40,7 @@ from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier
 from .extractor import HygienicExtractor, is_value_producing, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
+from .exceptions import RefactoringError
 from .orphan_detector import has_orphaned_variables
 from .assignment_analyzer import (
     analyze_assignments,
@@ -115,6 +116,43 @@ _worker_functions: Optional[
     ]
 ] = None
 _worker_class_infos: Optional[List[ClassInfo]] = None
+
+
+# Decorators that call the decorated function with the same receiver the
+# source names. Anything else may rebind the first argument.
+_RECEIVER_PRESERVING_DECORATORS = frozenset(
+    {
+        "property",
+        "cached_property",
+        "abstractmethod",
+        "abstractproperty",
+        "lru_cache",
+        "cache",
+        "contextmanager",
+        "asynccontextmanager",
+        "overload",
+        "final",
+        "override",
+        "setter",
+        "getter",
+        "deleter",
+    }
+)
+
+# Implicit classmethods and staticmethods that carry no decorator.
+_IMPLICIT_RECEIVER_SPECIAL_METHODS = frozenset(
+    {"__new__", "__init_subclass__", "__class_getitem__"}
+)
+
+
+def _preserves_receiver(decorator: ast.expr) -> bool:
+    """Whether a decorator is known to pass the receiver through unchanged."""
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    if isinstance(target, ast.Name):
+        return target.id in _RECEIVER_PRESERVING_DECORATORS
+    if isinstance(target, ast.Attribute):
+        return target.attr in _RECEIVER_PRESERVING_DECORATORS
+    return False
 
 
 def _initialize_pair_worker(
@@ -768,6 +806,7 @@ class UnificationRefactorEngine:
             return MethodInfo(kind=None, implicit_param=None)
 
         kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+        receiver_known = func.name not in _IMPLICIT_RECEIVER_SPECIAL_METHODS
         for decorator in func.decorator_list:
             name = self._decorator_name(decorator)
             if name == "staticmethod":
@@ -776,6 +815,11 @@ class UnificationRefactorEngine:
             if name == "classmethod":
                 kind = "classmethod"
                 break
+            if not _preserves_receiver(decorator):
+                # A descriptor such as a lazy class property may pass the
+                # class where the source spells ``self`` or ``cls``. The helper
+                # must then receive that object explicitly, not by dispatch.
+                receiver_known = False
 
         if kind is None:
             kind = "instance"
@@ -787,7 +831,7 @@ class UnificationRefactorEngine:
             else:
                 implicit_param = "self" if kind == "instance" else "cls"
 
-        return MethodInfo(kind=kind, implicit_param=implicit_param)
+        return MethodInfo(kind=kind, implicit_param=implicit_param, receiver_known=receiver_known)
 
     @staticmethod
     def _resolve_base_name(expr: ast.expr) -> Optional[str]:
@@ -930,6 +974,8 @@ class UnificationRefactorEngine:
         # this by attempting inference when BOTH kinds are None; if only one side is
         # None we keep the conservative skip to avoid mismatches (e.g., staticmethod
         # vs instance).
+        if not (method_info1.receiver_known and method_info2.receiver_known):
+            return None
         k1, k2 = method_info1.kind, method_info2.kind
         inferred_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
         if k1 is None and k2 is None:
@@ -2327,7 +2373,10 @@ class UnificationRefactorEngine:
                     pass
                 # Extract blocks and test quick filter against template
                 for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
-                    if (fpath, cand_range) in covered:
+                    if any(
+                        path == fpath and _line_ranges_intersect(cand_range, taken)
+                        for path, taken in covered
+                    ):
                         continue
                     if requires_original_frame(cand_nodes):
                         continue
@@ -2914,7 +2963,49 @@ class UnificationRefactorEngine:
 
         for path, content in modified_files.items():
             compile(content, path, "exec")
+        self._verify_helper_call_arity(modified_files, final_func_name, proposal.method_kind)
         return modified_files
+
+    @staticmethod
+    def _verify_helper_call_arity(
+        modified_files: Dict[str, str],
+        helper_name: str,
+        method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]],
+    ) -> None:
+        """Fail loudly if any generated call cannot bind to the generated helper.
+
+        Method conversion and receiver removal happen after the instantiation
+        check, so this compares the rendered helper signature with every call
+        that names it. Bound calls omit the receiver; static calls do not.
+        """
+        parameters: Optional[int] = None
+        for source in modified_files.values():
+            for node in ast.walk(ast.parse(source)):
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == helper_name
+                ):
+                    parameters = len(node.args.posonlyargs) + len(node.args.args)
+        if parameters is None:
+            raise RefactoringError(f"Helper {helper_name} was not emitted")
+        for path, source in modified_files.items():
+            for node in ast.walk(ast.parse(source)):
+                if not isinstance(node, ast.Call):
+                    continue
+                function = node.func
+                if isinstance(function, ast.Name) and function.id == helper_name:
+                    expected = parameters
+                elif isinstance(function, ast.Attribute) and function.attr == helper_name:
+                    expected = parameters if method_kind == "staticmethod" else parameters - 1
+                else:
+                    continue
+                if node.keywords or any(isinstance(arg, ast.Starred) for arg in node.args):
+                    continue
+                if len(node.args) != expected:
+                    raise RefactoringError(
+                        f"Generated call to {helper_name} passes {len(node.args)} arguments "
+                        f"but the helper binds {expected}: {path}"
+                    )
 
     def _find_import_position(self, lines: List[str]) -> int:
         """Find position to insert a new import statement."""
@@ -3420,6 +3511,11 @@ def _refactor_engine_helper_2(
 
 
 # Utility functions for overlap filtering
+
+
+def _line_ranges_intersect(left: Tuple[int, int], right: Tuple[int, int]) -> bool:
+    """Whether two inclusive line ranges share at least one line."""
+    return left[0] <= right[1] and right[0] <= left[1]
 
 
 def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
