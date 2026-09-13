@@ -81,6 +81,8 @@ uv run --frozen python -m build
 
 Alternatively, create `.venv`, activate it, and install `pip install -e '.[dev]'`. `just check` checks formatting, lint, and typing; `just test` runs the tests. `just ci` runs both. These commands propagate failures. Activate the environment before installing/running pre-commit hooks so they use the same toolchain.
 
+`just ecosystem` runs the standing ecosystem check (`scripts/ecosystem_check.py`): it clones the public projects listed in `scripts/ecosystem/manifest.toml`, runs each project's own test suite, refactors a copy with the CLI defaults, runs the suite again, and reports `PASS`, `NO_CHANGE`, `BROKEN`, `CRASH`, `TIMEOUT`, `UNSUPPORTED`, or a documented `BROKEN_KNOWN` per project, with a Markdown and JSON report. It runs weekly and on demand in CI and is the evidence behind [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md).
+
 Behavioral tests compare sampled return values and types, exceptions, output, and argument mutations. Cross-file tests isolate imports for each execution. Empty selections, unsupported class construction, and cross-file returned closures do not count as success. Single-file callable comparison samples one returned-callable layer; deeper returned callables are not validated. These checks are regression evidence, not proof of equivalence for arbitrary programs.
 
 ## Documentation
@@ -89,6 +91,8 @@ Behavioral tests compare sampled return values and types, exceptions, output, an
 - [Security policy](SECURITY.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Known limitations](docs/KNOWN_LIMITATIONS.md)
+- [Production readiness and ecosystem evidence](docs/PRODUCTION_READINESS.md)
+- [Adversarial review](docs/ADVERSARIAL_REVIEW.md)
 - [Historical issues](KNOWN_ISSUES.md)
 
 Historical notes and example outputs document earlier versions and may describe behavior superseded by the current audit. The current CLI help and source define the available interface.

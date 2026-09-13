@@ -60,6 +60,7 @@ TRANSFORMED = {
     "r86_annotated_assignment_live",
     "r87_nested_function_in_method",
     "r88_elif_branch",
+    "r90_cluster_across_classes",
 }
 
 

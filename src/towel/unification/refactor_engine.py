@@ -2373,6 +2373,8 @@ class UnificationRefactorEngine:
 
         # Generate replacement calls
         replacements: List[Replacement] = []
+        # Method context of each clustered call site, by index in ``replacements``
+        cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]] = {}
 
         # Map block indices to their return variables, in one shared order
         return_vars_by_block = {
@@ -2505,6 +2507,10 @@ class UnificationRefactorEngine:
                 )
                 if fpath != pair.file_path:
                     continue
+                # Where the candidate sits decides, once the helper's home is
+                # known, whether it can share a method call (see below).
+                candidate_class = self._method_class(fn, clsX, analyzerX)
+                candidate_info = self._get_method_context(fn, candidate_class)
                 # Skip the original two functions
                 if fn.name in (pair.function1_name, pair.function2_name):
                     # Still scan, but avoid ranges we've already taken
@@ -2650,6 +2656,12 @@ class UnificationRefactorEngine:
                         # Skip this candidate replacement
                         continue
                     # Append replacement
+                    cluster_contexts[len(replacements)] = (
+                        candidate_class,
+                        candidate_info.kind,
+                        candidate_info.implicit_param,
+                        candidate_info.receiver_known,
+                    )
                     replacements.append(
                         Replacement(
                             line_range=cand_range,
@@ -2727,6 +2739,22 @@ class UnificationRefactorEngine:
                 canonical_file = class_plan.file_path
                 method_kind_metadata = class_plan.method_kind
                 method_param_name = class_plan.implicit_param
+
+        if insert_into_class is not None and cluster_contexts:
+            # The helper is a method called through the receiver. A clustered
+            # block in another class, in a module-level function, or in a
+            # function merely nested in a method has no such receiver, so it
+            # keeps its code (pyflakes: sibling TestCase classes).
+            expected = (method_info1.kind, method_info1.implicit_param, method_info1.receiver_known)
+            replacements = [
+                replacement
+                for index, replacement in enumerate(replacements)
+                if index not in cluster_contexts
+                or (
+                    cluster_contexts[index][0] in {pair.class1_name, pair.class2_name}
+                    and cluster_contexts[index][1:] == expected
+                )
+            ]
 
         # SAFETY: Avoid refactoring across closures with nonlocal variables for now.
         # If the containing functions (func1/func2) declare any nonlocal variables, skip this proposal
