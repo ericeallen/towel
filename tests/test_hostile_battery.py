@@ -52,6 +52,10 @@ TRANSFORMED = {
     "r63_except_var_used_in_handler",
     "r74_starred_vs_plain",
     "r80_inlined_leading_thunk",
+    "r81_conditionally_bound_free_variable",
+    "r82_local_classes_same_name",
+    "r83_tab_indented_class",
+    "r84_warn_stacklevel",
 }
 
 

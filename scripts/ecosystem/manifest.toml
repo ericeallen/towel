@@ -1,0 +1,287 @@
+# Ecosystem check manifest. Each project is cloned at `rev`, its suite run
+# once as a baseline, refactored in a copy with the CLI defaults, and its
+# suite run again. A project qualifies only when the two runs are identical.
+#
+# Fields: name, url, rev (commit or branch), package (path refactored, relative
+# to the project root), pythonpath (for the test run), deps (test-only
+# requirements installed into a private environment), test (command run from
+# the project root; {python} is the environment interpreter), prepare
+# (optional shell command run once after cloning).
+
+[[project]]
+name = "tabulate"
+url = "https://github.com/astanin/python-tabulate.git"
+rev = "HEAD"
+package = "tabulate"
+
+[[project]]
+name = "toolz"
+url = "https://github.com/pytoolz/toolz.git"
+rev = "HEAD"
+package = "toolz"
+
+[[project]]
+name = "boltons"
+url = "https://github.com/mahmoud/boltons.git"
+rev = "HEAD"
+package = "boltons"
+
+[[project]]
+name = "pyparsing"
+url = "https://github.com/pyparsing/pyparsing.git"
+rev = "HEAD"
+package = "pyparsing"
+deps = ["railroad-diagrams", "jinja2"]
+
+[[project]]
+name = "markdown-it-py"
+url = "https://github.com/executablebooks/markdown-it-py.git"
+rev = "HEAD"
+package = "markdown_it"
+deps = ["pytest-regressions", "mdurl", "linkify-it-py", "psutil", "pytest-benchmark"]
+
+[[project]]
+name = "more-itertools"
+url = "https://github.com/more-itertools/more-itertools.git"
+rev = "HEAD"
+package = "more_itertools"
+test = ["{python}", "-m", "unittest"]
+
+[[project]]
+name = "humanize"
+url = "https://github.com/python-humanize/humanize.git"
+rev = "HEAD"
+package = "src/humanize"
+pythonpath = "src"
+deps = ["freezegun", "pytest-benchmark"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--benchmark-disable"]
+install = true
+
+[[project]]
+name = "attrs"
+url = "https://github.com/python-attrs/attrs.git"
+rev = "HEAD"
+package = "src/attr"
+pythonpath = "src"
+deps = ["hypothesis", "pytest-xdist"]
+
+[[project]]
+name = "jinja2"
+url = "https://github.com/pallets/jinja.git"
+rev = "HEAD"
+package = "src/jinja2"
+pythonpath = "src"
+deps = ["markupsafe", "trio"]
+
+[[project]]
+name = "click"
+url = "https://github.com/pallets/click.git"
+rev = "HEAD"
+package = "src/click"
+pythonpath = "src"
+install = true
+
+[[project]]
+name = "marshmallow"
+url = "https://github.com/marshmallow-code/marshmallow.git"
+rev = "HEAD"
+package = "src/marshmallow"
+pythonpath = "src"
+deps = ["pytz", "simplejson"]
+
+[[project]]
+name = "sqlparse"
+url = "https://github.com/andialbrecht/sqlparse.git"
+rev = "HEAD"
+package = "sqlparse"
+
+[[project]]
+name = "tomli"
+url = "https://github.com/hukkin/tomli.git"
+rev = "HEAD"
+package = "src/tomli"
+pythonpath = "src"
+
+[[project]]
+name = "packaging"
+url = "https://github.com/pypa/packaging.git"
+rev = "HEAD"
+package = "src/packaging"
+pythonpath = "src"
+deps = ["pretend", "hypothesis"]
+
+[[project]]
+name = "pluggy"
+url = "https://github.com/pytest-dev/pluggy.git"
+rev = "HEAD"
+package = "src/pluggy"
+pythonpath = "src"
+expect_broken = "frame-relative: _verify_all_args_are_provided warns with stacklevel through the extracted helper"
+
+[[project]]
+name = "cachetools"
+url = "https://github.com/tkem/cachetools.git"
+rev = "HEAD"
+package = "src/cachetools"
+pythonpath = "src"
+
+[[project]]
+name = "sortedcontainers"
+url = "https://github.com/grantjenks/python-sortedcontainers.git"
+rev = "HEAD"
+package = "src/sortedcontainers"
+pythonpath = "src"
+
+[[project]]
+name = "bidict"
+url = "https://github.com/jab/bidict.git"
+rev = "HEAD"
+package = "bidict"
+deps = ["hypothesis", "pytest-xdist"]
+
+[[project]]
+name = "pyflakes"
+url = "https://github.com/PyCQA/pyflakes.git"
+rev = "HEAD"
+package = "pyflakes"
+
+[[project]]
+name = "pycodestyle"
+url = "https://github.com/PyCQA/pycodestyle.git"
+rev = "HEAD"
+package = "pycodestyle.py"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "testsuite"]
+
+[[project]]
+name = "pathspec"
+url = "https://github.com/cpburnz/python-pathspec.git"
+rev = "HEAD"
+package = "pathspec"
+
+[[project]]
+name = "wcwidth"
+url = "https://github.com/jquast/wcwidth.git"
+rev = "HEAD"
+package = "wcwidth"
+deps = ["pytest-cov"]
+
+[[project]]
+name = "idna"
+url = "https://github.com/kjd/idna.git"
+rev = "HEAD"
+package = "idna"
+deps = ["hypothesis"]
+
+[[project]]
+name = "funcy"
+url = "https://github.com/Suor/funcy.git"
+rev = "HEAD"
+package = "funcy"
+deps = ["whatever"]
+
+[[project]]
+name = "glom"
+url = "https://github.com/mahmoud/glom.git"
+rev = "HEAD"
+package = "glom"
+deps = ["attrs", "face", "boltons", "pyyaml"]
+
+[[project]]
+name = "natsort"
+url = "https://github.com/SethMMorton/natsort.git"
+rev = "HEAD"
+package = "natsort"
+deps = ["hypothesis", "pytest-mock"]
+
+[[project]]
+name = "tenacity"
+url = "https://github.com/jd/tenacity.git"
+rev = "HEAD"
+package = "tenacity"
+deps = ["typeguard", "tornado"]
+
+[[project]]
+name = "python-slugify"
+url = "https://github.com/un33k/python-slugify.git"
+rev = "HEAD"
+package = "slugify"
+deps = ["text-unidecode"]
+
+[[project]]
+name = "colorama"
+url = "https://github.com/tartley/colorama.git"
+rev = "HEAD"
+package = "colorama"
+
+[[project]]
+name = "itsdangerous"
+url = "https://github.com/pallets/itsdangerous.git"
+rev = "HEAD"
+package = "src/itsdangerous"
+pythonpath = "src"
+deps = ["freezegun"]
+
+[[project]]
+name = "pygments"
+url = "https://github.com/pygments/pygments.git"
+rev = "HEAD"
+package = "pygments"
+deps = ["wcag-contrast-ratio"]
+
+[[project]]
+name = "voluptuous"
+url = "https://github.com/alecthomas/voluptuous.git"
+rev = "HEAD"
+package = "voluptuous"
+
+[[project]]
+name = "tomlkit"
+url = "https://github.com/python-poetry/tomlkit.git"
+rev = "HEAD"
+package = "tomlkit"
+deps = ["pyyaml"]
+
+[[project]]
+name = "platformdirs"
+url = "https://github.com/tox-dev/platformdirs.git"
+rev = "HEAD"
+package = "src/platformdirs"
+pythonpath = "src"
+deps = ["appdirs", "pytest-mock"]
+
+[[project]]
+name = "filelock"
+url = "https://github.com/tox-dev/filelock.git"
+rev = "HEAD"
+package = "src/filelock"
+pythonpath = "src"
+deps = ["pytest-timeout", "pytest-mock", "virtualenv"]
+
+[[project]]
+name = "python-dateutil"
+url = "https://github.com/dateutil/dateutil.git"
+rev = "HEAD"
+package = "src/dateutil"
+pythonpath = "src"
+deps = ["freezegun", "hypothesis", "six"]
+
+[[project]]
+name = "decorator"
+url = "https://github.com/micheles/decorator.git"
+rev = "HEAD"
+package = "src/decorator.py"
+pythonpath = "src"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "src/tests"]
+
+[[project]]
+name = "schema"
+url = "https://github.com/keleshev/schema.git"
+rev = "HEAD"
+package = "schema"
+
+[[project]]
+name = "wrapt"
+url = "https://github.com/GrahamDumpleton/wrapt.git"
+rev = "HEAD"
+package = "src/wrapt"
+pythonpath = "src"

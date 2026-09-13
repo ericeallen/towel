@@ -255,17 +255,33 @@ class ClassLocator(ast.NodeVisitor):
         self.source = source
         self.target_name = target_name
         self.result: Optional[Tuple[int, str]] = None
+        self.matches = 0
+        self._depth = 0
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-        if node.name == self.target_name and hasattr(node, "end_lineno"):
-            indent = _compute_indent(self.source, node.lineno)
-            end_lineno = getattr(node, "end_lineno", None)
-            if isinstance(end_lineno, int):
-                insert_line = end_lineno - 1
+        if node.name == self.target_name:
+            self.matches += 1
+            # Only a unique module-level class is an unambiguous target. A
+            # class nested in a function is a fresh object per call, and two
+            # classes sharing a name cannot be told apart by name.
+            if self._depth == 0 and self.matches == 1 and node.body:
+                indent = _compute_indent(self.source, node.body[0].lineno)
+                self.result = ((node.end_lineno or node.lineno) - 1, indent)
             else:
-                insert_line = node.lineno
-            self.result = (insert_line, indent)
+                self.result = None
+        self._depth += 1
         self.generic_visit(node)
+        self._depth -= 1
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+        self._depth += 1
+        self.generic_visit(node)
+        self._depth -= 1
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
+        self._depth += 1
+        self.generic_visit(node)
+        self._depth -= 1
 
 
 class FuncLocator(ast.NodeVisitor):

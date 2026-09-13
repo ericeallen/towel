@@ -37,10 +37,11 @@ from typing import Any, List, Tuple, Dict, Set, Optional, FrozenSet, Literal, Un
 from weakref import WeakKeyDictionary
 from pathlib import Path
 from .scope_analyzer import ScopeAnalyzer, Scope
-from .unifier import Unifier
+from .unifier import Unifier, Substitution
 from .extractor import HygienicExtractor, is_value_producing, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .thunk_inlining import inline_leading_thunks
+from .definite_assignment import definitely_bound_before, locally_bound_names
 from .exceptions import RefactoringError
 from .orphan_detector import has_orphaned_variables
 from .assignment_analyzer import (
@@ -985,6 +986,14 @@ class UnificationRefactorEngine:
         # vs instance).
         if not (method_info1.receiver_known and method_info2.receiver_known):
             return None
+        if pair.class1_name is not None and not _unique_module_level_class(
+            class_infos, pair.file_path, pair.class1_name
+        ):
+            return None
+        if pair.class2_name is not None and not _unique_module_level_class(
+            class_infos, pair.file_path2 or pair.file_path, pair.class2_name
+        ):
+            return None
         k1, k2 = method_info1.kind, method_info2.kind
         inferred_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
         if k1 is None and k2 is None:
@@ -1023,7 +1032,9 @@ class UnificationRefactorEngine:
             (file2, pair.class2_name),
             class_infos,
         )
-        if ancestor is None:
+        if ancestor is None or not _unique_module_level_class(
+            class_infos, ancestor.file_path, ancestor.name
+        ):
             return None
 
         implicit_param = method_info1.implicit_param or method_info2.implicit_param
@@ -2186,6 +2197,13 @@ class UnificationRefactorEngine:
             free_vars -= problematic
 
         defer_impure_parameters(substitution, pair.block1_nodes)
+        if func1 is not None and func2 is not None:
+            free_vars = _thunk_uncertain_free_variables(
+                substitution,
+                free_vars,
+                ((func1, pair.block1_nodes), (func2, pair.block2_nodes)),
+                hygienic_renames,
+            )
 
         # Extract function
         try:
@@ -2933,17 +2951,16 @@ class UnificationRefactorEngine:
                         "".join(lines), proposal.insert_into_class
                     )
                     if insert_info is None:
-                        insert_line = self._find_insert_position(lines)
-                        lines[insert_line:insert_line] = method_lines + ["\n", "\n"]
+                        raise RefactoringError(
+                            f"Class {proposal.insert_into_class} is not a unique module-level "
+                            f"class in {file_path}; cannot insert a method"
+                        )
                     else:
-                        insert_line_zero_based, indent = insert_info
-                        method_indent = indent + "    "
-                        indented_method: List[str] = []
-                        for line in method_lines:
-                            if line.strip():
-                                indented_method.append(method_indent + line)
-                            else:
-                                indented_method.append(line)
+                        insert_line_zero_based, method_indent = insert_info
+                        indented_method: List[str] = [
+                            _reindent(line, method_indent) if line.strip() else line
+                            for line in method_lines
+                        ]
                         insert_at = insert_line_zero_based + 1
                         method_prefix: List[str] = []
                         if insert_at > 0 and lines[insert_at - 1].strip():
@@ -3606,6 +3623,84 @@ def _align_return_variables(
     if not set(template_names) <= bound_first or not set(block_names) <= bound_second:
         return None
     return template_names, block_names
+
+
+def _thunk_uncertain_free_variables(
+    substitution: Substitution,
+    free_variables: Set[str],
+    blocks: Sequence[Tuple[FunctionNode, List[ast.AST]]],
+    renames: Sequence[Dict[str, str]],
+) -> Set[str]:
+    """Pass free variables that may be unbound at the call as thunks.
+
+    A free variable read only on some path inside the block, and bound
+    before the block only on some path, must be read where the block read
+    it. The thunk keeps that timing; the eager argument would raise
+    ``UnboundLocalError`` at the call.
+    """
+    template_renames = renames[0] if renames else {}
+    canonical_to_block = [
+        {
+            canonical: name
+            for name, canonical in (renames[index] if index < len(renames) else {}).items()
+        }
+        for index in range(len(blocks))
+    ]
+
+    def spelling(index: int, template_name: str) -> str:
+        canonical = template_renames.get(template_name, template_name)
+        return canonical_to_block[index].get(canonical, canonical)
+
+    remaining = set(free_variables)
+    for name in sorted(free_variables):
+        certain = True
+        for index, (function, block) in enumerate(blocks):
+            spelled = spelling(index, name)
+            if spelled not in locally_bound_names(function):
+                continue  # resolves lexically outside the function; not path-dependent
+            if spelled not in definitely_bound_before(function, cast(ast.stmt, block[0])):
+                certain = False
+                break
+        if certain:
+            continue
+        parameter = _fresh_parameter_name(substitution, blocks)
+        for index in range(len(blocks)):
+            substitution.add_mapping(
+                index, ast.Name(id=spelling(index, name), ctx=ast.Load()), parameter
+            )
+        substitution.function_params[parameter] = []
+        remaining.discard(name)
+    return remaining
+
+
+def _fresh_parameter_name(
+    substitution: Substitution, blocks: Sequence[Tuple[FunctionNode, List[ast.AST]]]
+) -> str:
+    taken = set(substitution.param_expressions) | {
+        node.id
+        for _, block in blocks
+        for statement in block
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Name)
+    }
+    index = 0
+    while f"__param_{index}" in taken:
+        index += 1
+    return f"__param_{index}"
+
+
+def _unique_module_level_class(class_infos: Sequence[ClassInfo], file_path: str, name: str) -> bool:
+    """Whether ``name`` names exactly one class in ``file_path`` and it is module-level."""
+    matches = [info for info in class_infos if info.file_path == file_path and info.name == name]
+    return len(matches) == 1 and matches[0].qualname == name
+
+
+def _reindent(line: str, prefix: str) -> str:
+    """Prefix an ``ast.unparse`` line, converting its 4-space levels to the file's unit."""
+    stripped = line.lstrip(" ")
+    levels = (len(line) - len(stripped)) // 4
+    unit = "\t" if "\t" in prefix else "    "
+    return prefix + unit * levels + stripped
 
 
 def _line_ranges_intersect(left: Tuple[int, int], right: Tuple[int, int]) -> bool:

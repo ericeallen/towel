@@ -11,7 +11,7 @@ import sys
 import argparse
 from importlib.metadata import version
 from pathlib import Path
-from typing import List, Tuple, Optional, Mapping
+from typing import Dict, List, Tuple, Optional, Mapping, cast
 from towel.changes import apply_changes, recover
 
 
@@ -241,6 +241,14 @@ Examples:
         help="List all extracted helper functions found",
     )
 
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "With --list, print a JSON inventory of every helper: scope, parameters with "
+            "their evaluation kind, source, call sites, and the mapping keys that rename them"
+        ),
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -509,6 +517,11 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
         return
 
     # List mode
+    if args.list and args.json:
+        import json
+
+        print(json.dumps(helper_inventory(target, helpers), indent=2))
+        return
     if args.list:
         print(f"\nFound {len(helpers)} extracted helper function(s):\n")
         for file_path, func_name, lineno, source_preview in helpers:
@@ -577,6 +590,138 @@ def _find_extracted_helpers(
                     helpers.append((py_file, node.name, node.lineno, preview))
 
     return sorted(helpers, key=lambda x: (str(x[0]), x[2]))
+
+
+def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) -> Dict[str, object]:
+    """Describe every generated helper for a naming assistant.
+
+    Each entry gives the helper's scope, source, parameters with their
+    evaluation kind (``thunk`` parameters are called as ``name()`` inside the
+    helper, ``lifted`` ones are called with block variables, ``receiver`` is
+    the bound instance or class), every call site with the argument
+    expression bound to each parameter, and the exact mapping keys that
+    rename the helper or one of its parameters.
+    """
+    import ast
+
+    wanted = {name for _, name, _, _ in helpers}
+    modules: Dict[Path, Tuple[str, ast.Module]] = {}
+    for path in sorted(target.rglob("*.py")):
+        if path.is_symlink():
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+            modules[path] = (source, ast.parse(source))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+    calls: Dict[str, List[Dict[str, object]]] = {name: [] for name in wanted}
+    for path, (source, tree) in modules.items():
+        statements = {
+            child: statement
+            for statement in ast.walk(tree)
+            if isinstance(statement, ast.stmt)
+            for child in ast.walk(statement)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            name = (
+                function.id
+                if isinstance(function, ast.Name)
+                else (function.attr if isinstance(function, ast.Attribute) else None)
+            )
+            if name not in wanted:
+                continue
+            statement = statements.get(node, node)
+            calls[name].append(
+                {
+                    "file": str(path.relative_to(target)),
+                    "line": node.lineno,
+                    "bound": isinstance(function, ast.Attribute),
+                    "statement": ast.get_source_segment(source, statement) or "",
+                    "arguments": [ast.get_source_segment(source, arg) or "" for arg in node.args],
+                }
+            )
+    entries: List[Dict[str, object]] = []
+    for path, name, lineno, _ in helpers:
+        source, tree = modules[path]
+        parents = {
+            child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef) or node.name != name or node.lineno != lineno:
+                continue
+            enclosing = parents.get(node)
+            if isinstance(enclosing, ast.ClassDef):
+                scope = f"class:{enclosing.name}"
+            elif isinstance(enclosing, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope = f"function:{enclosing.name}"
+            else:
+                scope = "module"
+            decorators = {
+                (d.id if isinstance(d, ast.Name) else getattr(d, "attr", ""))
+                for d in node.decorator_list
+            }
+            names = [arg.arg for arg in (*node.args.posonlyargs, *node.args.args)]
+            kinds: Dict[str, str] = {}
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+                    if child.func.id in names:
+                        kinds[child.func.id] = "thunk" if not child.args else "lifted"
+            has_receiver = scope.startswith("class:") and "staticmethod" not in decorators
+            relative = str(path.relative_to(target))
+            parameters = []
+            for index, parameter in enumerate(names):
+                if index == 0 and has_receiver:
+                    kind = "receiver"
+                else:
+                    kind = kinds.get(parameter, "value")
+                bindings = []
+                for call in calls[name]:
+                    arguments = cast(List[str], call["arguments"])
+                    offset = index - (1 if has_receiver and call["bound"] else 0)
+                    if 0 <= offset < len(arguments):
+                        expression = str(arguments[offset])
+                        if kind == "thunk" and expression.startswith("lambda:"):
+                            expression = expression[len("lambda:") :].strip()
+                        bindings.append(
+                            {"file": call["file"], "line": call["line"], "expression": expression}
+                        )
+                parameters.append(
+                    {
+                        "name": parameter,
+                        "kind": kind,
+                        "rename_key": f"{relative}:{name}.{parameter}",
+                        "bindings": bindings,
+                    }
+                )
+            entries.append(
+                {
+                    "file": relative,
+                    "line": lineno,
+                    "name": name,
+                    "scope": scope,
+                    "rename_key": f"{relative}:{name}" if scope == "module" else name,
+                    "renameable": scope == "module"
+                    or (scope.startswith("class:") and not name.startswith("__")),
+                    "parameters": parameters,
+                    "source": ast.get_source_segment(source, node) or "",
+                    "calls": calls[name],
+                }
+            )
+    return {
+        "target": str(target),
+        "mapping_format": {
+            "helper": '"path.py:helper" or "helper" -> new function name',
+            "parameter": '"path.py:helper.parameter" or "helper.parameter" -> new parameter name',
+            "notes": (
+                "Thunk parameters are called inside the helper, so name them for the value they yield "
+                "(the helper reads name()). Keys are applied as one batch; any invalid entry aborts all."
+            ),
+        },
+        "helpers": entries,
+    }
 
 
 def _apply_rename_file(

@@ -151,7 +151,29 @@ def requires_original_frame(nodes: Iterable[ast.AST]) -> bool:
                     return True
                 if node.func.id in {"vars", "super"} and not node.args and not node.keywords:
                     return True
+            if isinstance(node, ast.Call) and _is_frame_relative_call(node):
+                return True
     return False
+
+
+_FRAME_RELATIVE_CALLEES = frozenset(
+    {"_getframe", "currentframe", "stack", "getouterframes", "extract_stack", "print_stack"}
+)
+
+
+def _is_frame_relative_call(call: ast.Call) -> bool:
+    """Calls whose result depends on how many frames sit above them.
+
+    ``warnings.warn(..., stacklevel=n)`` attributes the warning to the n-th
+    caller; a helper adds one frame. Frame and stack inspection is likewise
+    relative to the current frame. Only direct, recognizably named calls are
+    detected; a callee that inspects frames internally is not.
+    """
+    callee = call.func
+    name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+    if name == "warn" and any(keyword.arg == "stacklevel" for keyword in call.keywords):
+        return True
+    return name in _FRAME_RELATIVE_CALLEES
 
 
 def has_external_loop_control(nodes: Iterable[ast.AST]) -> bool:

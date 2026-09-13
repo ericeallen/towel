@@ -149,16 +149,16 @@ def test_unresolved_module_consumers_are_rejected(tmp_path, consumer, message):
 
 
 @pytest.mark.parametrize(
-    "source",
+    "source, message",
     [
-        "class C:\n    " + HELPER.replace("\n", "\n    "),
-        "def outer():\n    " + HELPER.replace("\n", "\n    "),
+        ("class C:\n    " + HELPER.replace("\n", "\n    "), "mangling"),
+        ("def outer():\n    " + HELPER.replace("\n", "\n    "), "Nested helper"),
     ],
 )
-def test_nested_and_class_helpers_fail_visibly(tmp_path, source):
+def test_nested_and_private_class_helpers_fail_visibly(tmp_path, source, message):
     path = tmp_path / "main.py"
     path.write_text(source)
-    with pytest.raises(ValueError, match="Nested/class"):
+    with pytest.raises(ValueError, match=message):
         _rename_function_in_directory(tmp_path, "__extracted_func_0", "answer", False)
     assert path.read_text() == source
 
