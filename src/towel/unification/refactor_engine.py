@@ -214,6 +214,29 @@ def _process_pair_in_worker(
     return pair_index, proposal
 
 
+def _copy_substitution(substitution: Substitution) -> Substitution:
+    """A substitution whose containers are the caller's own; AST nodes stay shared."""
+    return Substitution(
+        mappings=dict(substitution.mappings),
+        param_expressions={
+            name: list(expressions) for name, expressions in substitution.param_expressions.items()
+        },
+        function_params={
+            name: list(params) for name, params in substitution.function_params.items()
+        },
+        hygienic_renames=(
+            [dict(mapping) for mapping in substitution.hygienic_renames]
+            if substitution.hygienic_renames is not None
+            else None
+        ),
+        params_used_as_callee=set(substitution.params_used_as_callee),
+        inlined_parameters=set(substitution.inlined_parameters),
+        promoted_literal_args={
+            name: dict(by_block) for name, by_block in substitution.promoted_literal_args.items()
+        },
+    )
+
+
 class UnificationRefactorEngine:
     """
     Main engine for unification-based refactoring.
@@ -261,6 +284,14 @@ class UnificationRefactorEngine:
         # Block guards are pure in (guard, function, block); a block takes part
         # in every pair it forms, so its verdicts are computed once.
         self._block_guard_cache: Dict[Tuple[Any, ...], bool] = {}
+        # Unification is a function of the two blocks' nodes. The clustering
+        # pass unifies one template against the same candidates for every pair
+        # that shares it, so results are memoized per (block, block) within an
+        # analysis; callers mutate substitutions, so a hit returns a copy.
+        self._unify_cache: Dict[
+            Tuple[Tuple[ast.AST, ...], Tuple[ast.AST, ...]],
+            Optional[Tuple[Substitution, List[Dict[str, str]]]],
+        ] = {}
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
         # Every file of the current analysis: helper names must be unique
@@ -372,6 +403,32 @@ class UnificationRefactorEngine:
 
         return sorted(python_files)
 
+    def _unify_memoized(
+        self, blocks: List[List[ast.AST]], hygienic_renames: List[Dict[str, str]]
+    ) -> Optional[Substitution]:
+        """Unify two blocks, reusing the result for a pair already unified."""
+        if len(blocks) != 2:
+            return self.unifier.unify_blocks(blocks, hygienic_renames)
+        key = (tuple(blocks[0]), tuple(blocks[1]))
+        if key in self._unify_cache:
+            cached = self._unify_cache[key]
+            if cached is None:
+                return None
+            substitution, renames = cached
+            for target, source in zip(hygienic_renames, renames):
+                target.clear()
+                target.update(source)
+            return _copy_substitution(substitution)
+        substitution_result = self.unifier.unify_blocks(blocks, hygienic_renames)
+        if substitution_result is None:
+            self._unify_cache[key] = None
+            return None
+        self._unify_cache[key] = (
+            _copy_substitution(substitution_result),
+            [dict(mapping) for mapping in hygienic_renames],
+        )
+        return substitution_result
+
     def _block_rejected(
         self,
         guard: Callable[..., bool],
@@ -415,6 +472,8 @@ class UnificationRefactorEngine:
         invalidate_paths: If provided, forces reparse/reanalysis of these paths even if cached.
         """
         self._signed_block_cache.clear()
+        self._block_guard_cache.clear()
+        self._unify_cache.clear()
         self._analysis_paths = tuple(file_paths)
         try:
             return run_pipeline(
@@ -427,6 +486,8 @@ class UnificationRefactorEngine:
             )
         finally:
             self._signed_block_cache.clear()
+        self._block_guard_cache.clear()
+        self._unify_cache.clear()
 
     def _signed_blocks(
         self, function: FunctionNode
@@ -2025,7 +2086,7 @@ class UnificationRefactorEngine:
         if os.getenv("DEBUG_VALIDATION"):
             print("  Attempting unification...")
 
-        substitution = self.unifier.unify_blocks(blocks, hygienic_renames)
+        substitution = self._unify_memoized(blocks, hygienic_renames)
 
         if not substitution:
             if os.getenv("DEBUG_VALIDATION"):
@@ -2561,9 +2622,7 @@ class UnificationRefactorEngine:
                         continue
                     # Try to unify template block with candidate
                     cluster_renames: List[Dict[str, str]] = [{}, {}]
-                    subst2 = self.unifier.unify_blocks(
-                        [pair.block1_nodes, cand_nodes], cluster_renames
-                    )
+                    subst2 = self._unify_memoized([pair.block1_nodes, cand_nodes], cluster_renames)
                     if not subst2:
                         continue
                     defer_impure_parameters(subst2, pair.block1_nodes)
