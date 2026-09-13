@@ -29,7 +29,13 @@ rejects, and what remains outside its model. Read it together with
 - **Frame and control flow.** Blocks containing `yield`, `await`, `async`
   loops or context managers, `locals()`, `globals()`, `vars()`, `eval`,
   `exec`, zero-argument `super()`, `break`/`continue` targeting an outer loop,
-  or comprehension assignment expressions are rejected.
+  comprehension assignment expressions, `warnings.warn(..., stacklevel=)`,
+  or direct frame or stack inspection are rejected.
+- **Unbound locals.** A free variable that is a local of the containing
+  function, bound before the block only on some path, is passed as a thunk
+  so it is read where the block read it. Definite assignment is computed
+  conservatively: loops, `contextlib.suppress`, and non-exhaustive `match`
+  statements never bind definitely.
 - **Rendering.** Every generated file compiles, and every generated call binds
   to the generated helper's signature after method conversion.
 
@@ -45,9 +51,10 @@ frames, names, or source.
   relies on `stacklevel` to attribute a warning to a specific caller will see
   the helper instead. Only direct calls to the frame-sensitive builtins listed
   above are rejected; aliased or indirect inspection is not detected.
-- **Unbound-local timing.** A local that may be unbound is read at the call
-  site when passed eagerly, so an `UnboundLocalError` can move from inside a
-  branch that would not have executed to the call itself.
+- **Frame-relative callees.** A called function that itself uses
+  `warnings.warn(stacklevel=...)` or inspects the stack sees one more frame.
+  Only direct calls in the block are detected; pluggy's argument validation
+  is the documented example in the ecosystem check.
 - **Reflection and dynamic rebinding.** Code that rebinds module globals or
   closure cells through `globals()[...]`, `setattr(module, ...)`, `exec`, or
   from another thread between two reads inside a block is outside the model.
@@ -66,6 +73,14 @@ frames, names, or source.
   a batch is not atomic across files. Application requires exclusive write
   access; a concurrent editor writing in the check/replace interval is not
   prevented. Interrupted batches leave a recovery journal.
+
+## Method insertion
+
+A helper becomes a method only when both blocks belong to one unique
+module-level class, or to classes with a unique module-level common
+ancestor, and every decorator on the source methods is known to preserve
+the receiver. Local classes, duplicated class names, and unknown decorators
+get a module-level helper that takes the receiver explicitly.
 
 ## Conservative rejections
 

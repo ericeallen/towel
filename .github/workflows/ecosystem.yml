@@ -1,0 +1,29 @@
+name: Ecosystem
+
+# Runs public projects' own test suites before and after Towel refactors them.
+# Manual and weekly, because it clones and tests dozens of repositories.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  ecosystem:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen python scripts/ecosystem_check.py --work "$RUNNER_TEMP/ecosystem" --workers 2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ecosystem-report
+          path: ${{ runner.temp }}/ecosystem/report

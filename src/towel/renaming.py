@@ -8,6 +8,7 @@ lookup and escaping module objects are rejected where visible in that tree.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 import io
 import keyword
@@ -409,6 +410,7 @@ def plan_renames(
             if key in selected and selected[key] != new:
                 raise ValueError(f"Conflicting renames for {module.path}:{old}")
             selected[key] = new
+    _extend_to_generated_importers(modules, selected)
     method_renames = _validate_method_renames(modules, method_specifications)
     if not selected and not method_renames and not parameter_specifications:
         return ChangePlan(()), 0
@@ -461,6 +463,53 @@ def _identifiers_in(node: ast.AST) -> set[str]:
         elif isinstance(child, ast.MatchMapping) and child.rest:
             names.add(child.rest)
     return names
+
+
+def _import_origin(module: _Module, node: ast.ImportFrom) -> str:
+    """Absolute module name an ``ImportFrom`` refers to."""
+    package = module.name if module.path.name == "__init__.py" else module.name.rpartition(".")[0]
+    if node.level:
+        parts = package.split(".") if package else []
+        if node.level > len(parts):
+            raise ValueError(f"Unresolved relative import in {module.path}")
+        return ".".join(
+            parts[: len(parts) - node.level + 1] + ([node.module] if node.module else [])
+        )
+    return node.module or ""
+
+
+def _extend_to_generated_importers(
+    modules: Sequence[_Module], selected: dict[tuple[str, str], str]
+) -> None:
+    """Rename generated bindings that unaliased imports create in other modules.
+
+    ``from pkg.a import __extracted_func_0`` binds a generated name in the
+    importer; that binding was produced with the helper and should follow its
+    rename, including through further re-exports. User aliases keep their
+    own names. The closure runs to a fixed point over the module graph.
+    """
+    changed = True
+    while changed:
+        changed = False
+        for module in modules:
+            for node in ast.walk(module.tree):
+                if (
+                    not isinstance(node, ast.ImportFrom)
+                    or module.scopes.nodes[node] is not module.scopes.root
+                ):
+                    continue
+                origin = _import_origin(module, node)
+                for alias in node.names:
+                    new = selected.get((origin, alias.name))
+                    if new is None or alias.asname is not None:
+                        continue
+                    if not _GENERATED_HELPER.fullmatch(alias.name):
+                        continue
+                    key = (module.name, alias.name)
+                    if key in selected:
+                        continue
+                    selected[key] = new
+                    changed = True
 
 
 def _validate_method_renames(
@@ -581,6 +630,9 @@ def _plan_parameter_renames(
     return found
 
 
+_GENERATED_HELPER = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
+
+
 def _plan_module(
     module: _Module, selected: dict[tuple[str, str], str], modules: dict[str, _Module]
 ) -> _Edits:
@@ -640,14 +692,27 @@ def _plan_module(
             raise ValueError(f"Star import prevents safe helper rename: {module.path}")
         for alias in node.names:
             local = alias.asname or alias.name
-            if scope is scopes.root and local in local_renames:
+            if (
+                scope is scopes.root
+                and local in local_renames
+                and selected.get((origin, alias.name)) != local_renames[local]
+            ):
                 raise ValueError(
                     f"Imported binding redefines selected helper: {module.path}:{local}"
                 )
             renamed = selected.get((origin, alias.name))
             if renamed is not None:
-                # Preserve an importing module's own binding and re-export API.
-                edits.node(alias, f"{renamed} as {local}")
+                if selected.get((module.name, local)) == renamed and alias.asname is None:
+                    # A generated binding selected by the closure: rename the
+                    # import and, through local_renames, every reference here.
+                    if renamed in module.scopes.root.bindings:
+                        raise ValueError(
+                            f"Rename would collide with existing identifier {renamed} in {module.path}"
+                        )
+                    edits.node(alias, renamed)
+                else:
+                    # Preserve an importing module's own binding and re-export API.
+                    edits.node(alias, f"{renamed} as {local}")
             imported_module = f"{origin}.{alias.name}" if origin else alias.name
             if imported_module in modules:
                 record_import(scope, local, imported_module)

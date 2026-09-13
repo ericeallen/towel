@@ -52,11 +52,17 @@ Dynamic imports, reflection, arbitrary callbacks, runtime rebinding, metaclasses
 
 ## Helper names
 
+Generated names are deliberately meaningless: `__extracted_func_3`, `__param_0`. Naming them is a separate step designed to be driven by a coding assistant.
+
 ```bash
-towel rename-helpers path/to/cleaned --dry-run
+towel rename-helpers path/to/cleaned --list --json > helpers.json
+towel rename-helpers path/to/cleaned --rename-file renames.json --dry-run
+towel rename-helpers path/to/cleaned --rename-file renames.json
 ```
 
-The command prints a prompt for manual use with an assistant; it does not call an LLM service. JSON mappings can be applied with `--rename-file`. Renaming replaces identifier tokens, preserving comments and strings, and rejects keywords and collisions within a changed file. It is not a complete symbol-resolution engine: review mappings across scopes and modules, especially file-qualified selections and reflective string references.
+The JSON inventory lists every helper with its scope, source, call sites, and parameters. Each parameter carries its evaluation kind (`value`, `thunk`, `lifted`, `receiver`) and the argument expressions bound to it at every call site, which is what a good name is derived from. Each entry also carries the exact mapping keys: `"path.py:helper"` renames a module-level helper together with its importers, `"helper"` renames a unique class-level helper together with every attribute reference, and `"path.py:helper.__param_0"` renames a parameter within the helper's scope. A mapping is applied as one batch; a collision, a mangled name, or a dynamic reference aborts the whole batch with the reason.
+
+The shared `towel-rename` skill (in the agent-skills repository) walks an assistant through extract, review, name, and re-test. The interactive prompt mode remains available and does not call any LLM service.
 
 ## Development and verification
 

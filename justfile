@@ -115,6 +115,10 @@ test-smoke:
 test-regression:
     source .venv/bin/activate && python -m unittest tests.test_regression -v
 
+# Run public projects' own suites before and after refactoring (clones ~40 repos)
+ecosystem *ARGS:
+    .venv/bin/python scripts/ecosystem_check.py --work /tmp/towel-ecosystem --workers 4 {{ARGS}}
+
 # DANGER: Regenerate regression test baseline (OVERWRITES EXPECTED OUTPUT!)
 regenerate-baseline:
     #!/usr/bin/env bash

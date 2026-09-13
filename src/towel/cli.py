@@ -246,7 +246,9 @@ Examples:
         action="store_true",
         help=(
             "With --list, print a JSON inventory of every helper: scope, parameters with "
-            "their evaluation kind, source, call sites, and the mapping keys that rename them"
+            "their evaluation kind, source, call sites, and the mapping keys that rename them. "
+            "With --rename-file, print a JSON result; a rejected mapping exits with status 2 "
+            "and the reason"
         ),
     )
     parser.add_argument(
@@ -512,7 +514,9 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
     # Find all extracted helper functions
     helpers = _find_extracted_helpers(target, args.files, args.functions)
 
-    if not helpers:
+    if not helpers and not args.rename_file:
+        # A mapping may still rename parameters of helpers renamed earlier;
+        # the planner validates every key against the current source.
         print(f"No extracted helper functions found in {target}")
         return
 
@@ -539,7 +543,7 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
 
     # Apply renamings from file
     if args.rename_file:
-        _apply_rename_file(target, helpers, args.rename_file, args.dry_run)
+        _apply_rename_file(target, helpers, args.rename_file, args.dry_run, args.json)
         return
 
     # Interactive LLM mode
@@ -729,8 +733,14 @@ def _apply_rename_file(
     helpers: List[Tuple[Path, str, int, str]],
     rename_file: Path,
     dry_run: bool,
+    as_json: bool = False,
 ) -> None:
-    """Apply renamings from a JSON file."""
+    """Apply renamings from a JSON file, reporting a structured result when asked.
+
+    A planning failure is a normal outcome for an assistant choosing names:
+    it exits with status 2 and states the reason, so the caller can pick
+    another name and retry. Nothing is written unless every entry is valid.
+    """
     import json
 
     # Load rename mappings
@@ -745,11 +755,32 @@ def _apply_rename_file(
         print("Error: Rename file must contain a JSON object (dict)")
         sys.exit(1)
 
-    total_changes = _apply_rename_mappings(target, renames, dry_run)
+    try:
+        total_changes = _apply_rename_mappings(target, renames, dry_run, quiet=as_json)
+    except ValueError as error:
+        if as_json:
+            print(json.dumps({"applied": False, "dry_run": dry_run, "error": str(error)}))
+        else:
+            print(f"Error: {error}")
+        sys.exit(2)
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "applied": not dry_run,
+                    "dry_run": dry_run,
+                    "changes": total_changes,
+                    "renames": {str(key): value for key, value in renames.items()},
+                }
+            )
+        )
+        return
     print(f"\n{'[DRY RUN] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
 
 
-def _apply_rename_mappings(target: Path, renames: Mapping[str, object], dry_run: bool) -> int:
+def _apply_rename_mappings(
+    target: Path, renames: Mapping[str, object], dry_run: bool, quiet: bool = False
+) -> int:
     """Validate every mapping and stage the entire rename batch before any write."""
     specifications: List[Tuple[str, str, Optional[Path]]] = []
     for spec, new_name in renames.items():
@@ -766,8 +797,9 @@ def _apply_rename_mappings(target: Path, renames: Mapping[str, object], dry_run:
                 )
         specifications.append((name, new_name, file_filter))
     count = _rename_batch(target, specifications, dry_run)
-    for spec, new_name in renames.items():
-        print(f"  {spec} -> {new_name}")
+    if not quiet:
+        for spec, new_name in renames.items():
+            print(f"  {spec} -> {new_name}")
     return count
 
 

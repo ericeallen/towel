@@ -90,9 +90,13 @@ def test_file_qualified_imports_aliases_relative_imports_and_reexports(tmp_path)
     expected = execute(main)
     _apply_rename_mappings(tmp_path, {"pkg/a.py:__extracted_func_0": "answer"}, False)
     assert execute(main) == expected
-    assert "from .a import answer as __extracted_func_0" in (package / "b.py").read_text()
+    # A generated, unaliased binding follows the rename through every re-export;
+    # a user alias keeps its own name.
+    assert "from .a import answer\n" in (package / "b.py").read_text()
     assert "from .a import answer as bound" in (package / "b.py").read_text()
-    assert "pkg.a.answer()" in main.read_text()
+    assert "return answer(), bound(), module.answer()" in (package / "b.py").read_text()
+    assert "from pkg.b import check, answer" in main.read_text()
+    assert "pkg.a.answer()" in main.read_text() and "__extracted_func_0" not in main.read_text()
 
 
 def test_explicit_global_binding_is_renamed(tmp_path):
