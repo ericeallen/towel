@@ -43,6 +43,14 @@ TRANSFORMED = {
     "r39_cluster_alpha",
     "r40_class_hierarchy",
     "r44_cluster_nested_overlap",
+    "r45_async_no_await",
+    "r46_nonlocal_counter",
+    "r47_lru_cache_method",
+    "r54_with_binding_used_after",
+    "r55_chained_assign",
+    "r60_local_import",
+    "r63_except_var_used_in_handler",
+    "r74_starred_vs_plain",
 }
 
 

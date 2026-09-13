@@ -1853,7 +1853,10 @@ class Unifier:
         if any(isinstance(expr, ast.stmt) for expr in exprs):
             return False
 
-            # Check if we've already parameterized these exact expressions
+        # Slices and starred items are syntax fragments of their container, not
+        # values: ``seq[start:stop]`` versus ``seq[i]`` cannot share a parameter.
+        if any(isinstance(expr, (ast.Slice, ast.Starred)) for expr in exprs):
+            return False
 
         # Check if all expressions are already mapped to the same parameter
         existing_params = [

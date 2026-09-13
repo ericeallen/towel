@@ -11,6 +11,7 @@ from towel.unification.semantic_safety import (
     defer_impure_parameters,
     has_impure_eager_parameters,
     is_eagerly_evaluable,
+    moves_scope_declaration,
     nested_scopes_cross_block_boundary,
     unbinds_external_name,
 )
@@ -138,3 +139,26 @@ def test_callee_parameters_are_forwarded_not_thunked() -> None:
 def test_undeferred_impure_argument_is_detected() -> None:
     substitution, _ = _substitution("a.b", "c.d")
     assert has_impure_eager_parameters(substitution)
+
+
+class TestMovesScopeDeclaration:
+    def test_declaration_used_after_block_is_rejected(self) -> None:
+        function = _function(
+            "def f(items):\n    global counter\n    for i in items:\n        counter += i\n"
+            "    counter += 1\n    return counter\n"
+        )
+        assert moves_scope_declaration(function, _slice(function, 0, 2))
+
+    def test_declaration_fully_inside_block_is_allowed(self) -> None:
+        function = _function(
+            "def f(items):\n    global counter\n    for i in items:\n        counter += i\n"
+            "    return len(items)\n"
+        )
+        assert not moves_scope_declaration(function, _slice(function, 0, 2))
+
+    def test_nested_function_declaration_moves_with_it(self) -> None:
+        function = _function(
+            "def f(items):\n    count = 0\n    def inc():\n        nonlocal count\n"
+            "        count += 1\n    for i in items:\n        inc()\n    return count\n"
+        )
+        assert not moves_scope_declaration(function, _slice(function, 1, 3))

@@ -440,3 +440,43 @@ def defer_impure_parameters(
             continue
         if any(not is_eagerly_evaluable(expression) for _, expression in expressions):
             substitution.function_params[name] = []
+
+
+def moves_scope_declaration(
+    function: Union[ast.FunctionDef, ast.AsyncFunctionDef], nodes: Iterable[ast.AST]
+) -> bool:
+    """Whether the block carries a ``global``/``nonlocal`` declaration the caller still needs.
+
+    A declaration inside the block moves into the helper with it. Any remaining
+    use of that name in the caller then silently becomes a local access. Only
+    declarations at the block's own scope count; a nested function's own
+    declarations move with that function.
+    """
+    block = tuple(nodes)
+    extracted = {child for statement in block for child in ast.walk(statement)}
+    declared: Set[str] = set()
+    for statement in block:
+        for node in _walk_own_scope(statement):
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                declared.update(node.names)
+    if not declared:
+        return False
+    for node in ast.walk(function):
+        if node in extracted or node is function:
+            continue
+        if isinstance(node, ast.Name) and node.id in declared:
+            return True
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and declared & set(node.names):
+            return True
+    return False
+
+
+def _walk_own_scope(node: ast.AST) -> Iterable[ast.AST]:
+    """Yield nodes of ``node`` without entering nested function or class scopes."""
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        yield current
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(current))

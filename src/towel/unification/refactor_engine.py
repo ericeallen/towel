@@ -59,6 +59,7 @@ from .semantic_safety import (
     nested_scopes_cross_block_boundary,
     has_impure_eager_parameters,
     defer_impure_parameters,
+    moves_scope_declaration,
 )
 from .block_signature import BlockSignature, extract_block_signature, quick_filter
 from .models import (
@@ -1738,6 +1739,12 @@ class UnificationRefactorEngine:
             self._debug_reject("closure_crosses_block_boundary", pair)
             return None
 
+        if (func1 is not None and moves_scope_declaration(func1, pair.block1_nodes)) or (
+            func2 is not None and moves_scope_declaration(func2, pair.block2_nodes)
+        ):
+            self._debug_reject("moves_scope_declaration", pair)
+            return None
+
         # (Removed specialized full-body extraction fast-path; reverting to generic pairing logic.)
 
         # DEBUG logging
@@ -2385,6 +2392,8 @@ class UnificationRefactorEngine:
                     if snapshots_rebound_external_names(analyzerX, fn, cand_nodes):
                         continue
                     if nested_scopes_cross_block_boundary(fn, cand_nodes):
+                        continue
+                    if moves_scope_declaration(fn, cand_nodes):
                         continue
                     # Minimum size gate
                     start_line, end_line = cand_range
