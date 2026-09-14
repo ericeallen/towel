@@ -25,6 +25,7 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 CASES = Path(__file__).parent / "hostile_cases"
 
 TRANSFORMED = {
+    "r101_same_named_method_forces_module_helper",
     "h04_closure_freevar",
     "h05_cond_return_plus_retvar",
     "h13_dunder_file",

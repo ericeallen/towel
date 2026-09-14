@@ -3168,7 +3168,21 @@ class UnificationRefactorEngine:
             # name but are not in the same function scope. Name-equality caused incorrectly
             # inserting helpers inside one sibling method.
             if dce_insert_func:
-                insert_into_function = dce_insert_func
+                # The helper is placed textually by function name (FuncLocator),
+                # so the name must identify one function in the file. When two
+                # classes have a same-named method (tornado: several
+                # ``get_handlers``), the deepest common enclosing function is a
+                # real, unique node, but the name alone would resolve to the
+                # wrong one and the call sites would not see the helper. Every
+                # free variable is already a parameter, so a module-level helper
+                # is equally correct; fall back to it when the name is ambiguous.
+                same_name_functions = {
+                    id(function)
+                    for path, function, _, _, _, _, *_ in all_functions
+                    if path == canonical_file and function.name == dce_insert_func
+                }
+                if len(same_name_functions) == 1:
+                    insert_into_function = dce_insert_func
 
         class_plan: Optional[ClassInsertionPlan] = None
         if insert_into_function is None:
