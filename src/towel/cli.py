@@ -340,7 +340,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         parameterize_constants=True,
         prefer_absolute_imports=args.prefer_absolute_imports,
         pep420_namespace_packages=args.pep420,
-        excluded_directories=tuple(args.exclude),
+        excluded_directories=tuple(getattr(args, "exclude", None) or ()),
     )
 
     # Use fixed-point iteration
