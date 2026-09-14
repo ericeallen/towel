@@ -90,7 +90,7 @@ def test_specific_named_mapping_takes_precedence_over_default_root(tmp_path):
     assert ProjectLayout.discover(module).module_name_for(module) == "actual_name.tools"
 
 
-@pytest.mark.parametrize("backend", ["poetry.core.masonry.api", "custom.backend"])
+@pytest.mark.parametrize("backend", ["pdm.backend", "custom.backend"])
 def test_unknown_backend_rejects_even_incidental_setuptools_configuration(tmp_path, backend):
     (tmp_path / "pyproject.toml").write_text(
         f'[build-system]\nbuild-backend="{backend}"\n'
@@ -202,3 +202,83 @@ def test_hatch_sources_that_cannot_name_roots_fail_explicitly(tmp_path, options)
     module = package(tmp_path, "src/black")
     with pytest.raises(ValueError, match="Hatch"):
         ProjectLayout.discover(module)
+
+
+def poetry(root: Path, options: str = "", name: str = "my-project") -> None:
+    (root / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="poetry.core.masonry.api"\n'
+        f'[tool.poetry]\nname="{name}"\nversion="0.0.0"\n{options}'
+    )
+
+
+def test_poetry_default_package_beside_pyproject(tmp_path: Path) -> None:
+    poetry(tmp_path)
+    module = package(tmp_path, "my_project")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [tmp_path.resolve()]
+    assert layout.module_name_for(module) == "my_project.tools"
+
+
+def test_poetry_default_package_under_src(tmp_path: Path) -> None:
+    poetry(tmp_path)
+    module = package(tmp_path, "src/my_project")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [(tmp_path / "src").resolve()]
+    assert layout.module_name_for(module) == "my_project.tools"
+
+
+def test_poetry_pep621_name_is_accepted(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="poetry.core.masonry.api"\n'
+        '[project]\nname="Mixed-Case"\nversion="0.0.0"\n'
+    )
+    module = package(tmp_path, "mixed_case")
+    assert ProjectLayout.discover(module).module_name_for(module) == "mixed_case.tools"
+
+
+def test_poetry_packages_from_directory_is_the_import_root(tmp_path: Path) -> None:
+    poetry(tmp_path, 'packages=[{include="core", from="lib"}]\n')
+    module = package(tmp_path, "lib/core")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [(tmp_path / "lib").resolve()]
+    assert layout.module_name_for(module) == "core.tools"
+
+
+def test_poetry_nested_from_directory_wins_over_the_project_root(tmp_path: Path) -> None:
+    poetry(tmp_path, 'packages=[{include="extra"}, {include="core", from="lib"}]\n')
+    module = package(tmp_path, "lib/core")
+    extra = package(tmp_path, "extra")
+    layout = ProjectLayout.discover(module)
+    assert set(layout.source_roots) == {tmp_path.resolve(), (tmp_path / "lib").resolve()}
+    assert layout.module_name_for(module) == "core.tools"
+    assert layout.module_name_for(extra) == "extra.tools"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        'packages=[{include="core", to="renamed"}]\n',
+        'packages=[{include="core/*"}]\n',
+        'packages=[{include="missing"}]\n',
+        'packages=[{include="../core"}]\n',
+        "packages=[]\n",
+    ],
+)
+def test_poetry_layouts_that_cannot_name_roots_fail_explicitly(tmp_path: Path, options) -> None:
+    poetry(tmp_path, options)
+    module = package(tmp_path, "core")
+    with pytest.raises(ValueError, match="Poetry"):
+        ProjectLayout.discover(module)
+
+
+def test_poetry_missing_default_package_is_rejected(tmp_path: Path) -> None:
+    poetry(tmp_path, name="ghost")
+    module = package(tmp_path, "other")
+    with pytest.raises(ValueError, match="Poetry package was not found"):
+        ProjectLayout.discover(module)
+
+
+def test_poetry_ignores_setuptools_configuration(tmp_path: Path) -> None:
+    poetry(tmp_path, '[tool.setuptools]\npackage-dir={""="incorrect"}\n')
+    module = package(tmp_path, "my_project")
+    assert ProjectLayout.discover(module).source_roots == [tmp_path.resolve()]

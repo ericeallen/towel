@@ -200,6 +200,58 @@ def _flit_source_roots(project_root: Path, data: Dict[str, Any]) -> List[Path]:
     raise ValueError("Flit module was not found beside pyproject.toml or under src")
 
 
+def _poetry_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Path]:
+    """Locate the packages poetry-core builds, from ``[tool.poetry].packages`` or by name.
+
+    Each ``packages`` entry names a package to ``include`` relative to an
+    optional ``from`` directory, and that directory is the import root
+    (``from`` is stripped from the installed path). Entries with ``to``
+    rewrite the installed path and glob patterns select unknown files, so
+    both are refused. Without ``packages`` poetry-core looks for a module or
+    package named after the project, beside ``pyproject.toml`` and then under
+    ``src``.
+    """
+    tool = data.get("tool", {})
+    poetry = tool.get("poetry", {}) if isinstance(tool, dict) else {}
+    if not isinstance(poetry, dict):
+        raise ValueError("Invalid Poetry configuration")
+    packages = poetry.get("packages")
+    if packages is not None:
+        if not isinstance(packages, list) or not packages:
+            raise ValueError("Poetry packages must be a nonempty list; cannot infer safe imports")
+        roots: List[Path] = []
+        for entry in packages:
+            if not isinstance(entry, dict) or "to" in entry:
+                raise ValueError("Unsupported Poetry package entry; cannot infer safe imports")
+            include = entry.get("include")
+            origin = entry.get("from", "")
+            if not isinstance(include, str) or not isinstance(origin, str):
+                raise ValueError("Unsupported Poetry package entry; cannot infer safe imports")
+            if any(char in include + origin for char in "*?[]"):
+                raise ValueError("Unsupported Poetry package pattern; cannot infer safe imports")
+            root = (project_root / origin).resolve()
+            included = (root / include).resolve()
+            if not root.is_relative_to(project_root) or not included.is_relative_to(root):
+                raise ValueError("Poetry package must lie within the project")
+            if not (included.is_dir() or included.suffix == ".py" and included.is_file()):
+                raise ValueError(f"Poetry package {include!r} was not found")
+            if root not in roots:
+                roots.append(root)
+        return roots
+    name = poetry.get("name")
+    if not isinstance(name, str):
+        project = data.get("project", {})
+        name = project.get("name") if isinstance(project, dict) else None
+    if not isinstance(name, str) or not name:
+        raise ValueError("Poetry project name is required to infer safe imports")
+    normalized = re.sub(r"[-.]+", "_", name)
+    for root in (project_root, project_root / "src"):
+        for candidate in (normalized, normalized.lower()):
+            if (root / candidate / "__init__.py").is_file() or (root / f"{candidate}.py").is_file():
+                return [root.resolve()]
+    raise ValueError("Poetry package was not found beside pyproject.toml or under src")
+
+
 @dataclass
 class ProjectLayout:
     """Represents the directory structure and import configuration of a Python project.
@@ -239,6 +291,7 @@ class ProjectLayout:
             "setuptools.build_meta:__legacy__",
             "hatchling.build",
             "flit_core.buildapi",
+            "poetry.core.masonry.api",
         ):
             raise ValueError(f"Unsupported build backend {backend!r}; cannot infer safe imports")
 
@@ -253,7 +306,11 @@ class ProjectLayout:
         tool = data.get("tool", {})
         setuptools = tool.get("setuptools", {}) if isinstance(tool, dict) else {}
         mapping = setuptools.get("package-dir", {}) if isinstance(setuptools, dict) else {}
-        if backend not in ("hatchling.build", "flit_core.buildapi") and isinstance(mapping, dict):
+        if backend not in (
+            "hatchling.build",
+            "flit_core.buildapi",
+            "poetry.core.masonry.api",
+        ) and isinstance(mapping, dict):
             for prefix, rel in mapping.items():
                 if not isinstance(prefix, str) or not isinstance(rel, str):
                     continue
@@ -264,6 +321,8 @@ class ProjectLayout:
                         package_prefixes[root] = prefix
         if not source_roots and backend == "flit_core.buildapi":
             source_roots = _flit_source_roots(project_root, data)
+        if not source_roots and backend == "poetry.core.masonry.api":
+            source_roots = _poetry_source_roots(project_root, data)
         if not source_roots:
             source_roots = _hatch_source_roots(project_root, data)
 
@@ -348,7 +407,11 @@ class ProjectLayout:
             if parts and parts[-1] == "__init__":
                 parts.pop()
             return ".".join([prefix, *parts])
-        for src_root in self.source_roots:
+        # The most specific root wins: a project may list a nested source
+        # directory beside the project root (poetry ``from``, setuptools
+        # ``package-dir``), and the file's module name is relative to the
+        # innermost root that contains it.
+        for src_root in sorted(self.source_roots, key=lambda root: len(root.parts), reverse=True):
             try:
                 rel = file_path.relative_to(src_root)
                 if rel.suffix != ".py":
