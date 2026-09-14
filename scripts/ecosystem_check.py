@@ -50,6 +50,7 @@ class Project:
     install: bool = False
     expect_broken: str = ""
     known_failures: Tuple[str, ...] = ()
+    timeout: Optional[int] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -89,6 +90,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             install=bool(entry.get("install", False)),
             expect_broken=entry.get("expect_broken", ""),
             known_failures=tuple(entry.get("known_failures", [])),
+            timeout=entry.get("timeout"),
         )
         if not only or project.name in only:
             projects.append(project)
@@ -210,6 +212,9 @@ def changed(ready: Path, package: str) -> Tuple[int, str]:
 
 
 def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -> Result:
+    # A project may carry its own per-phase budget when it is far larger
+    # than the rest of the corpus (networkx: 198k lines with its tests).
+    timeout = project.timeout or timeout
     logs = work / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     source = work / project.name

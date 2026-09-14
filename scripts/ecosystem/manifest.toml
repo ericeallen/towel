@@ -9,7 +9,8 @@
 # (optional shell command run once after cloning), expect_broken (why the
 # suite is expected to differ after transformation) with known_failures (test
 # id substrings; the verdict is BROKEN_KNOWN only when every new failure
-# matches one, otherwise BROKEN).
+# matches one, otherwise BROKEN), timeout (seconds per phase for this project,
+# overriding --timeout).
 
 [[project]]
 name = "tabulate"
@@ -423,6 +424,7 @@ rev = "HEAD"
 package = "networkx"
 deps = ["numpy", "scipy", "pandas", "matplotlib"]
 install = true
+timeout = 7200
 
 [[project]]
 name = "pytest"

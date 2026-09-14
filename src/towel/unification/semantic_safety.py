@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Set, Union
+from typing import TYPE_CHECKING, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union
 
 from .binding_detector import BindingDetector
 from .project_layout import ProjectLayout
@@ -220,6 +220,74 @@ def has_external_loop_control(nodes: Iterable[ast.AST]) -> bool:
     return visitor.external
 
 
+# Static import edges of a module, keyed by its path, modification time and
+# size, and the source roots used to resolve them. A cross-file pair asks
+# this question for every accepted candidate, and without the cache each
+# question re-read and re-parsed every reachable module of the project
+# (Sphinx: 243 modules per pair).
+_IMPORT_EDGES: Dict[Tuple[Path, int, int, FrozenSet[Path]], Optional[FrozenSet[Path]]] = {}
+_SOURCE_ROOTS: Dict[Path, Tuple[Path, ...]] = {}
+_MODULE_FILES: Dict[Tuple[Path, Tuple[str, ...]], FrozenSet[Path]] = {}
+
+
+def _module_files(base: Path, components: Iterable[str]) -> FrozenSet[Path]:
+    key = (base, tuple(components))
+    cached = _MODULE_FILES.get(key)
+    if cached is not None:
+        return cached
+    result: Set[Path] = set()
+    cursor = base
+    for component in key[1]:
+        cursor = cursor / component
+        initializer = cursor / "__init__.py"
+        if initializer.is_file():
+            result.add(initializer.resolve())
+    module = cursor.with_suffix(".py")
+    if module.is_file():
+        result.add(module.resolve())
+    frozen = frozenset(result)
+    _MODULE_FILES[key] = frozen
+    return frozen
+
+
+def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[Path]]:
+    """Local modules ``current`` imports, or None when its imports cannot be inspected."""
+    try:
+        stat = current.stat()
+    except OSError:
+        return None
+    key = (current, stat.st_mtime_ns, stat.st_size, roots)
+    if key in _IMPORT_EDGES:
+        return _IMPORT_EDGES[key]
+    try:
+        tree = ast.parse(current.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, SyntaxError):
+        _IMPORT_EDGES[key] = None
+        return None
+    dependencies: Set[Path] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                for root in roots:
+                    dependencies.update(_module_files(root, alias.name.split(".")))
+        elif isinstance(node, ast.ImportFrom):
+            bases: FrozenSet[Path] = roots
+            if node.level:
+                base = current.parent
+                for _ in range(node.level - 1):
+                    base = base.parent
+                bases = frozenset({base})
+            components = node.module.split(".") if node.module else []
+            for base in bases:
+                dependencies.update(_module_files(base, components))
+                for alias in node.names:
+                    if alias.name != "*":
+                        dependencies.update(_module_files(base, [*components, alias.name]))
+    frozen = frozenset(dependencies)
+    _IMPORT_EDGES[key] = frozen
+    return frozen
+
+
 def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) -> bool:
     """Check whether adding imports of the helper closes a local import cycle.
 
@@ -232,20 +300,11 @@ def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) 
     if not targets:
         return False
     common_root = Path(os.path.commonpath([str(path.parent) for path in targets | {canonical}]))
-    roots = set(ProjectLayout.discover(canonical).source_roots) | {common_root}
-
-    def module_files(base: Path, components: Iterable[str]) -> Set[Path]:
-        result: Set[Path] = set()
-        cursor = base
-        for component in components:
-            cursor = cursor / component
-            initializer = cursor / "__init__.py"
-            if initializer.is_file():
-                result.add(initializer.resolve())
-        module = cursor.with_suffix(".py")
-        if module.is_file():
-            result.add(module.resolve())
-        return result
+    source_roots = _SOURCE_ROOTS.get(canonical)
+    if source_roots is None:
+        source_roots = tuple(ProjectLayout.discover(canonical).source_roots)
+        _SOURCE_ROOTS[canonical] = source_roots
+    roots = frozenset(source_roots) | {common_root}
 
     pending = [canonical]
     visited: Set[Path] = set()
@@ -256,30 +315,10 @@ def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) 
         if current in visited:
             continue
         visited.add(current)
-        try:
-            tree = ast.parse(current.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, SyntaxError):
+        dependencies = _import_edges(current, roots)
+        if dependencies is None:
             # If an import cannot be inspected, do not claim that it is safe.
             return True
-        dependencies: Set[Path] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    for root in roots:
-                        dependencies.update(module_files(root, alias.name.split(".")))
-            elif isinstance(node, ast.ImportFrom):
-                bases = roots
-                if node.level:
-                    base = current.parent
-                    for _ in range(node.level - 1):
-                        base = base.parent
-                    bases = {base}
-                components = node.module.split(".") if node.module else []
-                for base in bases:
-                    dependencies.update(module_files(base, components))
-                    for alias in node.names:
-                        if alias.name != "*":
-                            dependencies.update(module_files(base, [*components, alias.name]))
         pending.extend(dependencies - visited)
     return False
 
