@@ -115,7 +115,7 @@ Set `DEBUG_PROPOSAL_REJECTIONS=1` to print the reason for each rejected pair.
 
 ## Performance
 
-Analysis is quadratic in candidate blocks per file. Four measures keep it
+Analysis is quadratic in candidate blocks per file. Five measures keep it
 tractable, all exact: they change no proposal.
 
 - Blocks that can never be accepted are not enumerated: one that returns on
@@ -127,6 +127,10 @@ tractable, all exact: they change no proposal.
   positions and rehydrated onto the matching blocks.
 - The clustering pass memoizes its per-candidate pipeline on the template,
   the candidate, and the pair's helper.
+- The import-cycle check parses each module once per analysis and caches
+  its import edges by path, modification time, and size; it used to
+  re-parse every reachable module for every cross-file pair, which on a
+  243-module project cost about a second per pair.
 - A large cold analysis forks workers after parsing; they inherit the ASTs
   and caches copy-on-write and return only accepted proposals. Forking is
   decided by a timed serial probe, never by pair count alone, because a

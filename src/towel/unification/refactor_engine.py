@@ -31,6 +31,8 @@ import os
 import re
 from collections import deque
 import multiprocessing
+import sys
+import resource
 import time
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
@@ -207,7 +209,13 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, Refactoring
         raise RuntimeError("Worker has no pairs to evaluate")
     start, end = bounds
     accepted: List[Tuple[int, RefactoringProposal]] = []
+    parent = os.getppid()
     for index in range(start, end):
+        # A worker whose parent has died is reparented; it must not keep
+        # working and growing its caches (fourteen such orphans from a killed
+        # run once filled a 128 GB machine's swap).
+        if os.getppid() != parent:
+            os._exit(1)
         proposal = _worker_engine._try_refactor_pair_multi_file(
             _worker_pairs[index], _worker_functions, _worker_class_infos
         )
@@ -786,6 +794,12 @@ class UnificationRefactorEngine:
     PARALLEL_PROBE_PAIRS = 400
     PARALLEL_MIN_PROJECTED_SECONDS = 12.0
 
+    #: Forked workers may keep at most this share of physical memory between
+    #: them, estimated from this process's resident size: refcount updates
+    #: copy the pages a worker touches, so a large analysis graph costs about
+    #: one process size per worker.
+    PARALLEL_MEMORY_SHARE = 0.35
+
     def _parallel_workers(self) -> int:
         """Worker processes to use, or 1 when pair evaluation must stay serial."""
         override = os.environ.get("TOWEL_WORKERS")
@@ -796,7 +810,22 @@ class UnificationRefactorEngine:
                 return 1
         if "fork" not in multiprocessing.get_all_start_methods():
             return 1
-        return max(1, os.cpu_count() or 1)
+        workers = max(1, os.cpu_count() or 1)
+        return max(1, min(workers, self._workers_that_fit_in_memory()))
+
+    @staticmethod
+    def _workers_that_fit_in_memory() -> int:
+        """How many copies of this process's resident set fit in the allowed memory share."""
+        try:
+            physical = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+            resident = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            if sys.platform != "darwin":
+                resident *= 1024  # Linux reports kilobytes
+        except (ValueError, OSError, AttributeError):
+            return os.cpu_count() or 1
+        if resident <= 0:
+            return os.cpu_count() or 1
+        return int(physical * UnificationRefactorEngine.PARALLEL_MEMORY_SHARE // resident)
 
     def _should_use_parallel(self, pair_count: int) -> bool:
         """Whether pair evaluation should fork workers.
