@@ -88,6 +88,7 @@ from .assignment_analyzer import (
 )
 from .project_layout import ProjectLayout
 from .semantic_safety import (
+    imported_definition_sites,
     nested_bindings_escape,
     uses_class_private_names,
     snapshots_rebound_external_names,
@@ -1316,28 +1317,32 @@ class UnificationRefactorEngine:
         class_infos: List[ClassInfo],
         base_name: str,
         *,
-        prefer_file: Optional[str] = None,
+        referencing_file: str,
     ) -> Optional[ClassInfo]:
-        """Resolve a base-class reference to known class metadata when possible."""
+        """Resolve a base-class reference as the referencing module would.
 
-        # Exact qualname match first (covers nested classes written as Outer.Inner)
-        qual_matches = [info for info in class_infos if info.qualname == base_name]
-        if prefer_file is not None:
-            for info in qual_matches:
-                if info.file_path == prefer_file:
-                    return info
-        if qual_matches:
-            return qual_matches[0]
-
-        simple_name = base_name.split(".")[-1]
-        simple_matches = [info for info in class_infos if info.name == simple_name]
-        if prefer_file is not None:
-            for info in simple_matches:
-                if info.file_path == prefer_file:
-                    return info
-        if len(simple_matches) == 1:
-            return simple_matches[0]
-        return None
+        A base written as ``Outer.Inner`` is the class of that qualname in
+        the same module; otherwise the name must be bound by one of the
+        module's own imports, and the class is looked up in the module that
+        import denotes. A project may define several classes with one name
+        (oauthlib has a ``BaseEndpoint`` per protocol), so a name is never
+        matched across the project, and a reference that resolves to no
+        single class contributes no ancestor.
+        """
+        local = [
+            info
+            for info in class_infos
+            if info.file_path == referencing_file and info.qualname == base_name
+        ]
+        if local:
+            return local[0] if len(local) == 1 else None
+        sites = imported_definition_sites(referencing_file, base_name)
+        if not sites:
+            return None
+        matches = [
+            info for info in class_infos if (Path(info.file_path).resolve(), info.qualname) in sites
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def _collect_class_ancestors(
         self, class_info: ClassInfo, class_infos: List[ClassInfo]
@@ -1352,7 +1357,7 @@ class UnificationRefactorEngine:
             current, depth = queue.popleft()
             for base_name in current.bases:
                 base_info = self._find_class_info_for_base(
-                    class_infos, base_name, prefer_file=current.file_path
+                    class_infos, base_name, referencing_file=current.file_path
                 )
                 if base_info is None:
                     continue

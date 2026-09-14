@@ -80,7 +80,10 @@ frames, names, or source.
 
 A helper becomes a method only when both blocks belong to functions defined
 directly in one unique module-level class, or in classes with a unique
-module-level common ancestor, every decorator on the source methods is known
+module-level common ancestor (a base name resolves through the referencing
+module's own unconditional imports, never by name across the project, so a
+base bound by a conditional or star import contributes no ancestor), every
+decorator on the source methods is known
 to preserve the receiver, and the methods have a first parameter named
 `self` (or the method is a `classmethod`). Local classes, duplicated class names, unknown
 decorators, functions nested inside methods, and class-body functions with
@@ -112,9 +115,10 @@ uncertainty. Common reasons a real duplicate is not extracted:
   would have to be rendered inside the preceding branch's `else`; the
   `elif`'s own body and further branches remain candidates. This gives up a
   valid extraction when the preceding branch always exits (tabulate).
-- Project layouts other than setuptools, Hatch, and Flit conventions are
-  refused for directory mode because import roots cannot be inferred safely;
-  the ecosystem check reports these as `UNSUPPORTED` (tomlkit, Poetry).
+- Project layouts other than setuptools, Hatch, Flit, and Poetry conventions
+  are refused for directory mode because import roots cannot be inferred
+  safely; the ecosystem check reports these as `UNSUPPORTED`. Poetry
+  ``packages`` entries with ``to`` or glob patterns are refused likewise.
 
 Set `DEBUG_PROPOSAL_REJECTIONS=1` to print the reason for each rejected pair.
 

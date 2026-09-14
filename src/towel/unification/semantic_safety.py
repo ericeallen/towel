@@ -288,6 +288,127 @@ def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[P
     return frozen
 
 
+_IMPORT_BINDINGS: Dict[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = {}
+
+
+def _module_level_import_bindings(current: Path) -> Optional[Dict[str, Tuple[str, ...]]]:
+    """Names bound by unconditional module-level imports of ``current``.
+
+    Each name maps to the dotted path it denotes, with relative modules
+    written as ``.``-prefixed paths (``from .base import X`` binds ``X`` to
+    ``.base.X``). Imports inside ``try``, ``if``, or functions are left out,
+    so a name they bind resolves to nothing rather than to a guess. None
+    when the module cannot be parsed.
+    """
+    try:
+        stat = current.stat()
+    except OSError:
+        return None
+    key = (current, stat.st_mtime_ns, stat.st_size)
+    if key in _IMPORT_BINDINGS:
+        return _IMPORT_BINDINGS[key]
+    try:
+        tree = ast.parse(current.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, SyntaxError):
+        _IMPORT_BINDINGS[key] = None
+        return None
+    bindings: Dict[str, Tuple[str, ...]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = tuple(alias.name.split("."))
+                if alias.asname is not None:
+                    bindings[alias.asname] = parts
+                else:
+                    # ``import a.b.c`` binds ``a``; the full path stays
+                    # reachable as ``a.b.c`` and is matched by prefix.
+                    bindings.setdefault(parts[0], parts[:1])
+                    bindings[alias.name] = parts
+        elif isinstance(node, ast.ImportFrom):
+            prefix: Tuple[str, ...] = ("." * node.level,) if node.level else ()
+            module = tuple(node.module.split(".")) if node.module else ()
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                bindings[alias.asname or alias.name] = (*prefix, *module, alias.name)
+    _IMPORT_BINDINGS[key] = bindings
+    return bindings
+
+
+def _module_definition_file(base: Path, parts: Tuple[str, ...]) -> Optional[Path]:
+    """The file whose top level is the module ``parts`` under ``base``, if it exists."""
+    cursor = base.joinpath(*parts) if parts else base
+    initializer = cursor / "__init__.py"
+    if initializer.is_file():
+        return initializer.resolve()
+    module = cursor.with_suffix(".py")
+    if parts and module.is_file():
+        return module.resolve()
+    return None
+
+
+def _dotted_path_files(current: Path, roots: Iterable[Path], parts: Tuple[str, ...]) -> Set[Path]:
+    """Files defining the module at ``parts``; a leading dotted part marks a relative path."""
+    if parts and set(parts[0]) == {"."}:
+        base = current.parent
+        for _ in range(len(parts[0]) - 1):
+            base = base.parent
+        bases: Iterable[Path] = (base,)
+        parts = parts[1:]
+    else:
+        bases = roots
+    files = (_module_definition_file(base, parts) for base in bases)
+    return {file for file in files if file is not None}
+
+
+def imported_definition_sites(
+    current_file: str, dotted_name: str
+) -> Optional[FrozenSet[Tuple[Path, str]]]:
+    """Where a name used in ``current_file`` may be defined, as (file, qualname) pairs.
+
+    ``dotted_name`` is written as it appears in the module (``Base``,
+    ``mod.Base``, ``pkg.mod.Outer.Inner``). Its longest dotted prefix bound
+    by a module-level import names the module; the remainder is the
+    qualified name inside it. Because ``from m import x`` may denote a
+    submodule or an attribute, each split of the path into module and
+    qualname whose module file exists is a candidate. None when the name
+    is not bound by an unconditional module-level import, the module cannot
+    be parsed, or the project layout gives no import roots.
+    """
+    current = Path(current_file).resolve()
+    bindings = _module_level_import_bindings(current)
+    if bindings is None:
+        return None
+    parts = dotted_name.split(".")
+    bound: Optional[Tuple[Tuple[str, ...], Tuple[str, ...]]] = None
+    for length in range(len(parts), 0, -1):
+        target = bindings.get(".".join(parts[:length]))
+        if target is not None:
+            bound = (target, tuple(parts[length:]))
+            break
+    if bound is None:
+        return None
+    target, remainder = bound
+    roots = _SOURCE_ROOTS.get(current)
+    if roots is None:
+        try:
+            roots = tuple(ProjectLayout.discover(current).source_roots)
+        except ValueError:
+            return None
+        _SOURCE_ROOTS[current] = roots
+    full = (*target, *remainder)
+    sites: Set[Tuple[Path, str]] = set()
+    # ``target`` may end in an attribute rather than a module, so every
+    # split at or after the bound module's own length is tried.
+    for split in range(max(1, len(target) - 1), len(full)):
+        module, qualname = full[:split], full[split:]
+        if not qualname:
+            continue
+        for file in _dotted_path_files(current, roots, module):
+            sites.add((file, ".".join(qualname)))
+    return frozenset(sites)
+
+
 def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) -> bool:
     """Check whether adding imports of the helper closes a local import cycle.
 
