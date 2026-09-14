@@ -67,6 +67,7 @@ TRANSFORMED = {
     "r97_helper_in_function_with_outside_site",
     "r57_star_unpack",
     "r98_same_named_methods_nested_helpers",
+    "r99_partial_return_branches",
 }
 
 

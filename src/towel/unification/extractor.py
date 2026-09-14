@@ -26,6 +26,7 @@ import ast
 import copy
 from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
 from .unifier import Substitution
+from .definite_assignment import definitely_bound_after
 
 if TYPE_CHECKING:
     from .scope_analyzer import Scope
@@ -835,48 +836,27 @@ def is_value_producing(block: List[ast.stmt]) -> bool:
 
 
 def has_complete_return_coverage(block: List[ast.stmt]) -> bool:
-    """
-    Check if a value-producing block has complete return coverage.
+    """Whether a value-producing block returns on every path.
 
-    This ensures that if a block contains conditional returns (like an IF
-    with a return in the if-branch), it also has a return for the else case.
-
-    Returns True if:
-    - The last statement is a return, OR
-    - The last statement is an IF/While/For with returns in ALL branches
-
-    Args:
-        block: List of AST statements
-
-    Returns:
-        True if the block has complete return coverage
+    Two conditions, both required. The shape the extractor renders: the last
+    statement is a return, or an if/else whose branches both return. And the
+    exact property: no path through the block falls through, decided by the
+    definite-assignment analysis. The shape alone accepted networkx's
+    ``if test == 'graph': if a != b: return False / elif ...: return False``
+    followed by more checks, because each branch merely *contains* a return;
+    called as ``return helper(...)``, the caller then returned None on the
+    paths where neither branch returned.
     """
     if not block:
         return False
-
     last_stmt = block[-1]
-
-    # If the last statement is a return, we have complete coverage
     if isinstance(last_stmt, ast.Return):
-        return True
-
-    # If the last statement is an IF
-    if isinstance(last_stmt, ast.If):
-        # Check if both branches have returns
-        if_has_return = contains_return(last_stmt.body)
-
-        # Check else branch
-        if last_stmt.orelse:
-            else_has_return = contains_return(last_stmt.orelse)
-            # Complete coverage if both branches return
-            return if_has_return and else_has_return
-        else:
-            # No else branch - incomplete coverage unless there's a return after
-            return False
-
-    # For other control structures (while, for, etc), incomplete coverage
-    # unless there's a return after them
-    return False
+        shaped = True
+    elif isinstance(last_stmt, ast.If) and last_stmt.orelse:
+        shaped = contains_return(last_stmt.body) and contains_return(last_stmt.orelse)
+    else:
+        shaped = False
+    return shaped and definitely_bound_after(block) is None
 
 
 def get_enclosing_names(scope_tree: "Scope", current_scope: "Scope") -> Set[str]:
