@@ -64,3 +64,22 @@ def test_alpha_normalization_keeps_imported_names_but_renames_as_targets() -> No
     assert _normalized("from m import v as x\nprint(x)\n") == _normalized(
         "from m import v as y\nprint(y)\n"
     )
+
+
+def test_annotations_in_function_bodies_are_inert() -> None:
+    from towel.unification.scope_analyzer import ScopeAnalyzer
+
+    source = "def f(items):\n    total: Money = 0\n    items[0]: Count = 1\n    return total\n"
+    tree = ast.parse(source)
+    analyzer = ScopeAnalyzer()
+    analyzer.analyze(tree)
+    function = tree.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert "Money" not in analyzer.get_free_variables(function.body[:2])
+    assert "Count" not in analyzer.get_free_variables(function.body[:2])
+    first = ast.parse("total: Money = 0").body[0]
+    second = ast.parse("total: Cents = 0").body[0]
+    substitution = Unifier().unify_blocks([[first], [second]], [{}, {}])
+    assert substitution is not None
+    assert substitution.param_expressions == {}
+    assert _normalized("x: A = 1\nprint(x)\n") == _normalized("x: B = 1\nprint(x)\n")

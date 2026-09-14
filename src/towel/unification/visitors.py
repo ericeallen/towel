@@ -180,6 +180,12 @@ class NameCollector(ast.NodeVisitor):
     def visit_Name(self, n: ast.Name) -> None:  # noqa: N802
         _record_load_name_and_visit(n, self.used, self)
 
+    def visit_AnnAssign(self, n: ast.AnnAssign) -> None:  # noqa: N802
+        # An annotation inside a function body is never evaluated.
+        if n.value is not None:
+            self.visit(n.value)
+        self.visit(n.target)
+
     def visit_FunctionDef(self, n: ast.FunctionDef) -> None:  # noqa: N802
         return None
 

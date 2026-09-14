@@ -63,6 +63,7 @@ TRANSFORMED = {
     "r90_cluster_across_classes",
     "r91_class_body_helper",
     "r92_parameterless_class_body_helper",
+    "r95_type_checking_annotation",
 }
 
 

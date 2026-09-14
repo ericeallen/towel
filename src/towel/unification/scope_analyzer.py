@@ -534,6 +534,14 @@ class ScopeAnalyzer(ast.NodeVisitor):
                 for target in node.targets:
                     self.visit(target)  # Then visit LHS targets
 
+            def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+                # Inside a function body no annotation is evaluated, whatever
+                # the target, so names that appear only in one are not free
+                # variables (astroid: a class imported under TYPE_CHECKING).
+                if node.value is not None:
+                    self.visit(node.value)
+                self.visit(node.target)
+
             def visit_AugAssign(self, node: ast.AugAssign) -> None:
                 # CRITICAL: Augmented assignments (x += 1) READ the variable
                 # They don't DEFINE it, so target should be in uses, NOT bindings

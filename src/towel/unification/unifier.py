@@ -910,6 +910,14 @@ class Unifier:
                 cast(List[ast.GeneratorExp], nodes), subst, cast(List[int], list(block_indices))
             )
 
+        # Annotated assignments: inside a function body the annotation is
+        # never evaluated, so it is neither compared nor parameterized; the
+        # helper keeps the template's spelling.
+        if isinstance(first_node, ast.AnnAssign):
+            return self._unify_ann_assign(
+                cast(List[ast.AnnAssign], nodes), subst, cast(List[int], list(block_indices))
+            )
+
         # Special handling for with-statements: optional_vars are bindings
         if isinstance(first_node, ast.With):
             return self._unify_with(
@@ -1218,6 +1226,23 @@ class Unifier:
             return True
         finally:
             self.alpha_renamings = saved_alpha
+
+    def _unify_ann_assign(
+        self, nodes: List[ast.AnnAssign], subst: Substitution, block_indices: List[int]
+    ) -> bool:
+        """Unify annotated assignments by target and value, ignoring the annotation."""
+        if not all(isinstance(node, ast.AnnAssign) for node in nodes):
+            return False
+        if len({node.simple for node in nodes}) != 1:
+            return False
+        values = [node.value for node in nodes]
+        if any(value is None for value in values):
+            return all(value is None for value in values) and self._unify_nodes(
+                [node.target for node in nodes], subst, block_indices
+            )
+        return self._unify_nodes(
+            cast(List[ast.AST], values), subst, block_indices
+        ) and self._unify_nodes([node.target for node in nodes], subst, block_indices)
 
     def _unify_single_comprehension(
         self, comps: List[ast.comprehension], subst: Substitution, block_indices: List[int]

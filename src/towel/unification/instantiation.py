@@ -84,6 +84,11 @@ def _alpha_normalize(module: ast.Module) -> ast.Module:
     the block never binds are left alone, so a helper binder that captures a
     block's free name still compares unequal.
     """
+    # Annotations inside a function body are never evaluated; the helper
+    # keeps the template's, so they take no part in the comparison.
+    for node in ast.walk(module):
+        if isinstance(node, ast.AnnAssign):
+            node.annotation = ast.Name(id="__annotation__", ctx=ast.Load())
     bound = bound_names(module.body) - _fixed_import_names(module.body)
     order: Dict[str, str] = {}
     for node in ast.walk(module):
