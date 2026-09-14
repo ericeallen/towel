@@ -97,6 +97,13 @@ Examples:
         action="store_true",
         help="Run without interactive confirmation (skip prompt)",
     )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="DIRECTORY",
+        help="Directory name to leave out of directory mode (repeatable), e.g. tests",
+    )
 
     pref_group = parser.add_mutually_exclusive_group()
     pref_group.add_argument(
@@ -333,6 +340,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         parameterize_constants=True,
         prefer_absolute_imports=args.prefer_absolute_imports,
         pep420_namespace_packages=args.pep420,
+        excluded_directories=tuple(args.exclude),
     )
 
     # Use fixed-point iteration

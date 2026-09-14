@@ -272,6 +272,7 @@ class UnificationRefactorEngine:
         prefer_absolute_imports: Optional[bool] = None,
         pep420_namespace_packages: Optional[bool] = None,
         promote_equal_hof_literals: bool = False,
+        excluded_directories: Sequence[str] = (),
     ):
         """
         Initialize the refactoring engine.
@@ -284,6 +285,10 @@ class UnificationRefactorEngine:
         self.analysis_session = AnalysisSession()
         self.max_parameters = max_parameters
         self.min_lines = min_lines
+        # Directory names left out of directory mode, such as ``tests`` when a
+        # package carries its test suite inside itself (networkx: 77k of its
+        # 198k lines).
+        self.excluded_directories = tuple(excluded_directories)
         self.parameterize_constants = parameterize_constants
         self.unifier = Unifier(
             max_parameters=max_parameters,
@@ -425,8 +430,10 @@ class UnificationRefactorEngine:
             for py_file in directory_path.rglob("*.py"):
                 # Skip common directories to ignore
                 if any(
-                    part.startswith(".") or part in ["__pycache__", "venv", "env", "node_modules"]
-                    for part in py_file.relative_to(directory_path).parts
+                    part.startswith(".")
+                    or part in ["__pycache__", "venv", "env", "node_modules"]
+                    or part in self.excluded_directories
+                    for part in py_file.relative_to(directory_path).parts[:-1]
                 ):
                     continue
                 if py_file.is_file() and not py_file.is_symlink():

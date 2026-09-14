@@ -51,6 +51,7 @@ class Project:
     expect_broken: str = ""
     known_failures: Tuple[str, ...] = ()
     timeout: Optional[int] = None
+    exclude: Tuple[str, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -91,6 +92,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             expect_broken=entry.get("expect_broken", ""),
             known_failures=tuple(entry.get("known_failures", [])),
             timeout=entry.get("timeout"),
+            exclude=tuple(entry.get("exclude", [])),
         )
         if not only or project.name in only:
             projects.append(project)
@@ -257,6 +259,7 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
             "--non-interactive",
             "--progress",
             "none",
+            *(argument for name in project.exclude for argument in ("--exclude", name)),
         ],
         ready,
         towel_env,

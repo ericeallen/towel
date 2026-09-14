@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import pathlib
 
 from towel.unification.assignment_analyzer import (
     _collect_block_binding_stats,
@@ -83,3 +84,19 @@ def test_annotations_in_function_bodies_are_inert() -> None:
     assert substitution is not None
     assert substitution.param_expressions == {}
     assert _normalized("x: A = 1\nprint(x)\n") == _normalized("x: B = 1\nprint(x)\n")
+
+
+def test_directory_mode_can_leave_named_directories_out(tmp_path) -> None:
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "a.py").write_text("x = 1\n")
+    (tmp_path / "pkg" / "tests").mkdir()
+    (tmp_path / "pkg" / "tests" / "test_a.py").write_text("y = 2\n")
+    (tmp_path / "pkg" / "tests.py").write_text("z = 3\n")
+    found = UnificationRefactorEngine(excluded_directories=("tests",))._find_python_files(
+        str(tmp_path / "pkg")
+    )
+    names = sorted(pathlib.Path(path).relative_to(tmp_path / "pkg").as_posix() for path in found)
+    # The directory is skipped; a module that merely shares the name is kept.
+    assert names == ["a.py", "tests.py"]

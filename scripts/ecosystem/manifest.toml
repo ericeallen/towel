@@ -10,7 +10,8 @@
 # suite is expected to differ after transformation) with known_failures (test
 # id substrings; the verdict is BROKEN_KNOWN only when every new failure
 # matches one, otherwise BROKEN), timeout (seconds per phase for this project,
-# overriding --timeout).
+# overriding --timeout), exclude (directory names left out of the refactor,
+# passed to `towel dry --exclude`).
 
 [[project]]
 name = "tabulate"
@@ -425,6 +426,7 @@ package = "networkx"
 deps = ["numpy", "scipy", "pandas", "matplotlib"]
 install = true
 timeout = 7200
+exclude = ["tests"]
 
 [[project]]
 name = "pytest"
@@ -443,6 +445,7 @@ rev = "HEAD"
 package = "sphinx"
 deps = ["pytest-xdist", "defusedxml", "typing_extensions", "cython", "setuptools"]
 install = true
+timeout = 3600
 
 [[project]]
 name = "black"
