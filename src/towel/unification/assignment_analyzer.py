@@ -335,16 +335,11 @@ def _collect_bindings_and_reassignments(
 
     class BindingCollector(ast.NodeVisitor):
         def visit_Assign(self, node: ast.Assign) -> None:
-            is_reassignment = reassignments.get(id(node), False)
-
+            # A tuple or list target binds every name inside it (astroid:
+            # ``frame, stmts = self.lookup(name)`` read after the block).
+            destination = reassigned_vars if reassignments.get(id(node), False) else bound_vars
             for target in node.targets:
-                if isinstance(target, ast.Name):
-                    var_name = target.id
-                    if is_reassignment:
-                        reassigned_vars.add(var_name)
-                    else:
-                        bound_vars.add(var_name)
-
+                destination.update(_stored_names(target))
             self.generic_visit(node)
 
         def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
@@ -401,11 +396,10 @@ def _collect_bindings_and_reassignments(
             self.generic_visit(node)
 
         def visit_With(self, node: ast.With) -> None:
-            # With statement 'as' clauses create bindings
+            # With statement 'as' clauses create bindings, including unpacked ones
             for item in node.items:
                 if item.optional_vars:
-                    if isinstance(item.optional_vars, ast.Name):
-                        bound_vars.add(item.optional_vars.id)
+                    bound_vars.update(_stored_names(item.optional_vars))
             self.generic_visit(node)
 
         def visit_Match(self, node: ast.Match) -> None:
@@ -424,6 +418,15 @@ def _collect_bindings_and_reassignments(
 
     collector = BindingCollector()
     collector.visit(node)
+
+
+def _stored_names(target: ast.AST) -> Set[str]:
+    """Names an assignment target binds: a name, or every name inside a tuple, list or star."""
+    return {
+        node.id
+        for node in ast.walk(target)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
 
 
 def _collect_block_binding_stats(

@@ -64,6 +64,8 @@ TRANSFORMED = {
     "r91_class_body_helper",
     "r92_parameterless_class_body_helper",
     "r95_type_checking_annotation",
+    "r97_helper_in_function_with_outside_site",
+    "r57_star_unpack",
 }
 
 

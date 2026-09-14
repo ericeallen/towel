@@ -2905,6 +2905,13 @@ class UnificationRefactorEngine:
                 )
                 if fpath != pair.file_path:
                     continue
+                # A helper inserted into the pair's deepest common enclosing
+                # function is visible only there and in its nested functions;
+                # a block elsewhere in the file cannot call it (prompt_toolkit).
+                if dce_insert_func and not (
+                    fn.name == dce_insert_func or dce_insert_func in (_ancX or [])
+                ):
+                    continue
                 # Where the candidate sits decides, once the helper's home is
                 # known, whether it can share a method call (see below).
                 candidate_class = self._method_class(fn, clsX, analyzerX)

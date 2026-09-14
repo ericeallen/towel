@@ -115,17 +115,38 @@ Set `DEBUG_PROPOSAL_REJECTIONS=1` to print the reason for each rejected pair.
 
 ## Performance
 
-Analysis is quadratic in candidate blocks per file. Measured with the CLI
-defaults on September 13, 2026 (macOS, Python 3.13): a single 5,000-line
-module reaches a fixed point in about 23 seconds; a 4,000-line package with
-its tests applied 18 extractions in about 6 minutes; an 18,000-line package
-completes in about 2.5 minutes. The worst case is a module of many small,
-similar functions: pyflakes' 2,167-line `test_other.py` forms 444,250
-candidate pairs. One analysis pass over it took more than nine minutes
-before the safety guards, unification, and per-block binding analyses were
-memoized per (function, block) within an analysis, and about one minute
-after; unification had been repeated for 98 percent of its calls because
-the clustering pass unifies one template against the same candidates for
-every pair that shares it. Progress is reported per phase. There is no time
-budget; interrupt with Ctrl-C, which leaves files unchanged. The ecosystem
-check applies a 30-minute limit per phase and reports `TIMEOUT`.
+Analysis is quadratic in candidate blocks per file. Four measures keep it
+tractable, all exact: they change no proposal.
+
+- Blocks that can never be accepted are not enumerated: one that returns on
+  some path but not every path, or a lone expression statement. On pyflakes'
+  2,167-line `test_other.py` that removes 32,857 of 44,826 rejected pairs.
+- Every analysis result is cached by the block's structure, not by node
+  identity, so a fixed-point iteration that re-parses a file still reuses
+  results for the blocks it did not touch. Unification results are stored as
+  positions and rehydrated onto the matching blocks.
+- The clustering pass memoizes its per-candidate pipeline on the template,
+  the candidate, and the pair's helper.
+- A large cold analysis forks workers after parsing; they inherit the ASTs
+  and caches copy-on-write and return only accepted proposals. Forking is
+  decided by a timed serial probe, never by pair count alone, because a
+  pool per fixed-point iteration costs more than small iterations save.
+  `TOWEL_WORKERS=1` disables it; any other value caps the worker count.
+
+Measured with the CLI defaults on September 13, 2026 (macOS, Python 3.13,
+single core unless stated), before and after this pass, with identical
+output in every case:
+
+| Target | Before | After, one core | After, forking |
+|---|---|---|---|
+| pyflakes `test_other.py`, one analysis | more than 540 s, capped | 30.6 s | 7.4 s |
+| boltons, fixed point | 32 s | 17 s | 15 s |
+| pygments, fixed point | 170 s | 107 s | 60 s |
+| pyflakes, fixed point | 300 s | 224 s | 54 s |
+
+The remaining cost is the pairwise evaluation of structurally distinct
+candidates, which no cache can share; large test modules with hundreds of
+similar methods remain the worst case. Progress is reported per phase.
+There is no time budget; interrupt with Ctrl-C, which leaves files
+unchanged. The ecosystem check applies a 30-minute limit per phase and
+reports `TIMEOUT`.
