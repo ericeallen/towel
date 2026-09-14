@@ -487,3 +487,82 @@ rev = "HEAD"
 package = "django/forms"
 deps = ["asgiref", "sqlparse", "tzdata", "Pillow", "PyYAML", "jinja2", "tblib"]
 test = ["{python}", "tests/runtests.py", "--parallel", "1", "forms_tests"]
+
+[[project]]
+name = "rich"
+url = "https://github.com/Textualize/rich.git"
+rev = "HEAD"
+package = "rich"
+deps = ["pygments", "markdown-it-py", "attrs"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+expect_broken = "frame-relative: test_traceback.py::test_handler asserts a rendered traceback whose frames and widths the helper changes"
+known_failures = ["tests/test_traceback.py::test_handler"]
+
+[[project]]
+name = "typer"
+url = "https://github.com/fastapi/typer.git"
+rev = "HEAD"
+package = "typer"
+deps = ["shellingham", "rich", "annotated-doc", "pytest-xdist"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "structlog"
+url = "https://github.com/hynek/structlog.git"
+rev = "HEAD"
+package = "src/structlog"
+pythonpath = "src"
+deps = ["pytest-asyncio", "simplejson", "time-machine", "typing-extensions"]
+
+[[project]]
+name = "cattrs"
+url = "https://github.com/python-attrs/cattrs.git"
+rev = "HEAD"
+package = "src/cattrs"
+pythonpath = "src"
+deps = ["attrs", "typing-extensions", "hypothesis", "pytest-benchmark", "immutables", "ujson", "orjson", "msgpack", "pyyaml", "tomlkit", "cbor2", "msgspec", "pymongo"]
+
+[[project]]
+name = "isort"
+url = "https://github.com/PyCQA/isort.git"
+rev = "HEAD"
+package = "isort"
+deps = ["colorama", "hypothesis", "hypothesmith", "mypy-extensions", "black"]
+install = true
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/unit"]
+
+[[project]]
+name = "pyjwt"
+url = "https://github.com/jpadilla/pyjwt.git"
+rev = "HEAD"
+package = "jwt"
+deps = ["cryptography"]
+
+[[project]]
+name = "xmltodict"
+url = "https://github.com/martinblech/xmltodict.git"
+rev = "HEAD"
+package = "xmltodict.py"
+
+[[project]]
+name = "arrow"
+url = "https://github.com/arrow-py/arrow.git"
+rev = "HEAD"
+package = "arrow"
+deps = ["python-dateutil", "tzdata", "dateparser", "pytest-mock", "pytz", "simplejson", "pytest-cov"]
+# tox.ini adds coverage options with a 99% floor; the floor is not a test result.
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
+
+[[project]]
+name = "six"
+url = "https://github.com/benjaminp/six.git"
+rev = "HEAD"
+package = "six.py"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test_six.py"]
+
+[[project]]
+name = "tornado"
+url = "https://github.com/tornadoweb/tornado.git"
+rev = "HEAD"
+package = "tornado"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tornado/test"]
