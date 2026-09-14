@@ -216,6 +216,15 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, Refactoring
     return accepted
 
 
+def _encloses(outer: FunctionNode, inner: FunctionNode) -> bool:
+    """Whether ``inner`` is ``outer`` or lies within its source span."""
+    if outer is inner:
+        return True
+    outer_end = outer.end_lineno or outer.lineno
+    inner_end = inner.end_lineno or inner.lineno
+    return outer.lineno <= inner.lineno and inner_end <= outer_end and outer is not inner
+
+
 def _copy_substitution(substitution: Substitution) -> Substitution:
     """A substitution whose containers are the caller's own; AST nodes stay shared."""
     return Substitution(
@@ -1782,6 +1791,23 @@ class UnificationRefactorEngine:
 
         return params
 
+    @staticmethod
+    def _enclosing_function_named(
+        name: str,
+        file_path: str,
+        all_functions: Sequence[Tuple[Any, ...]],
+        inner: Sequence[FunctionNode],
+    ) -> Optional[FunctionNode]:
+        """The one function called ``name`` in ``file_path`` enclosing every ``inner`` function."""
+        matches = [
+            entry[1]
+            for entry in all_functions
+            if entry[0] == file_path
+            and entry[1].name == name
+            and all(_encloses(entry[1], function) for function in inner)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
     def _deepest_common_ancestry(
         self, anc1: Optional[List[str]], anc2: Optional[List[str]]
     ) -> Optional[str]:
@@ -2144,15 +2170,21 @@ class UnificationRefactorEngine:
                 _enclosing_func,
                 _ancestry,
             ) = entry
-            if func1 is None and file_path == pair.file_path and func.name == pair.function1_name:
+            same1 = (
+                func is pair.function1_node
+                if pair.function1_node is not None
+                else func.name == pair.function1_name
+            )
+            if func1 is None and file_path == pair.file_path and same1:
                 func1 = func
                 scope_analyzer1 = analyzer
                 root_scope1 = root_scope_entry
-            if (
-                func2 is None
-                and file_path == (pair.file_path2 or pair.file_path)
-                and func.name == pair.function2_name
-            ):
+            same2 = (
+                func is pair.function2_node
+                if pair.function2_node is not None
+                else func.name == pair.function2_name
+            )
+            if func2 is None and file_path == (pair.file_path2 or pair.file_path) and same2:
                 func2 = func
                 scope_analyzer2 = analyzer
                 root_scope2 = root_scope_entry
@@ -2445,11 +2477,22 @@ class UnificationRefactorEngine:
 
         # Pre-compute the deepest common enclosing function (for same-file cases)
         dce_insert_func: Optional[str] = None
+        dce_node: Optional[FunctionNode] = None
         same_file_ctx = pair.file_path2 is not None and pair.file_path2 == pair.file_path
         if same_file_ctx:
             dce_insert_func = self._deepest_common_ancestry(
                 pair.function1_ancestry, pair.function2_ancestry
             )
+            # Ancestry is a list of names, and methods of different classes
+            # share names (prompt_toolkit: two ``_all_children``). The helper
+            # may go into a function only when exactly one function of that
+            # name encloses both blocks' functions.
+            if dce_insert_func and func1 is not None and func2 is not None:
+                dce_node = self._enclosing_function_named(
+                    dce_insert_func, pair.file_path, all_functions, (func1, func2)
+                )
+                if dce_node is None:
+                    dce_insert_func = None
 
         # Get enclosing names to avoid shadowing (module-level by default)
         enclosing_names = set(root_scope.bindings.keys()) if root_scope else set()
@@ -2908,9 +2951,7 @@ class UnificationRefactorEngine:
                 # A helper inserted into the pair's deepest common enclosing
                 # function is visible only there and in its nested functions;
                 # a block elsewhere in the file cannot call it (prompt_toolkit).
-                if dce_insert_func and not (
-                    fn.name == dce_insert_func or dce_insert_func in (_ancX or [])
-                ):
+                if dce_node is not None and not _encloses(dce_node, fn):
                     continue
                 # Where the candidate sits decides, once the helper's home is
                 # known, whether it can share a method call (see below).
@@ -3061,12 +3102,8 @@ class UnificationRefactorEngine:
             # simple name equality as methods across different classes may share the same
             # name but are not in the same function scope. Name-equality caused incorrectly
             # inserting helpers inside one sibling method.
-            if pair.function1_ancestry is not None and pair.function2_ancestry is not None:
-                dce = self._deepest_common_ancestry(
-                    pair.function1_ancestry, pair.function2_ancestry
-                )
-                if dce:
-                    insert_into_function = dce
+            if dce_insert_func:
+                insert_into_function = dce_insert_func
 
         class_plan: Optional[ClassInsertionPlan] = None
         if insert_into_function is None:

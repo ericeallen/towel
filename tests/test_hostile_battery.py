@@ -66,6 +66,7 @@ TRANSFORMED = {
     "r95_type_checking_annotation",
     "r97_helper_in_function_with_outside_site",
     "r57_star_unpack",
+    "r98_same_named_methods_nested_helpers",
 }
 
 
