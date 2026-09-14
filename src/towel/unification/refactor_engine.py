@@ -31,6 +31,7 @@ import os
 import re
 from collections import deque
 import multiprocessing
+import time
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
@@ -765,11 +766,14 @@ class UnificationRefactorEngine:
             progress=progress,
         )
 
-    #: Cold pairs below this count finish faster serially than forking a pool
-    #: costs: a fixed-point iteration re-analyzes only the files it changed, and
-    #: those localized analyses are small, so only the first, full analysis of
-    #: a large file or project forks.
+    #: Fewer cold pairs than this never fork; above it, a serial prefix is
+    #: timed and the rest forks only when the projected serial time exceeds
+    #: PARALLEL_MIN_PROJECTED_SECONDS. Pair counts alone misjudge cost: pygments'
+    #: lexer modules form tens of thousands of cheap pairs per iteration, and
+    #: forking a pool for each iteration made the run three times slower.
     PARALLEL_PAIR_THRESHOLD = 20000
+    PARALLEL_PROBE_PAIRS = 400
+    PARALLEL_MIN_PROJECTED_SECONDS = 12.0
 
     def _parallel_workers(self) -> int:
         """Worker processes to use, or 1 when pair evaluation must stay serial."""
@@ -1487,12 +1491,33 @@ class UnificationRefactorEngine:
             for index, pair in enumerate(block_pairs)
             if (self._sid(pair.block1_nodes), self._sid(pair.block2_nodes)) not in self._unify_cache
         ]
-        warm = [index for index in range(len(block_pairs)) if index not in set(cold)]
+        cold_set = set(cold)
+        warm = [index for index in range(len(block_pairs)) if index not in cold_set]
         workers = min(self._parallel_workers(), max(1, len(cold) // 64))
         if workers <= 1 or len(cold) < self.PARALLEL_PAIR_THRESHOLD:
             return self._evaluate_pairs_serial(
                 block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
             )
+        # Probe: evaluate a prefix of the cold pairs here and project the rest.
+        results: Dict[int, RefactoringProposal] = {}
+        probe = cold[: self.PARALLEL_PROBE_PAIRS]
+        started = time.monotonic()
+        for index in probe:
+            probed = self._try_refactor_pair_multi_file(
+                block_pairs[index], all_functions, class_infos
+            )
+            if probed is not None:
+                results[index] = probed
+        per_pair = (time.monotonic() - started) / max(1, len(probe))
+        cold = cold[len(probe) :]
+        if per_pair * len(cold) < self.PARALLEL_MIN_PROJECTED_SECONDS:
+            for index in cold + warm:
+                serial_proposal = self._try_refactor_pair_multi_file(
+                    block_pairs[index], all_functions, class_infos
+                )
+                if serial_proposal is not None:
+                    results[index] = serial_proposal
+            return [results[index] for index in sorted(results)]
         chunk_count = workers * 4
         chunk_size = max(1, -(-len(cold) // chunk_count))
         chunks = [
@@ -1500,9 +1525,8 @@ class UnificationRefactorEngine:
             for offset in range(0, len(cold), chunk_size)
         ]
         # Chunks are index ranges over ``block_pairs``; cold indices are
-        # increasing, so a range may include warm pairs, which the worker then
-        # also evaluates from its inherited cache. That keeps chunks contiguous.
-        results: Dict[int, RefactoringProposal] = {}
+        # increasing, so a range may include warm or probed pairs, which the
+        # worker then also evaluates cheaply. That keeps chunks contiguous.
         _worker_engine, _worker_functions, _worker_class_infos, _worker_pairs = (
             self,
             all_functions,
@@ -1529,7 +1553,7 @@ class UnificationRefactorEngine:
             _worker_engine = _worker_functions = _worker_class_infos = _worker_pairs = None
         # Warm pairs outside every chunk are evaluated here, from this process's caches.
         for index in warm:
-            if index in covered:
+            if index in covered or index in results:
                 continue
             warm_proposal = self._try_refactor_pair_multi_file(
                 block_pairs[index], all_functions, class_infos
