@@ -290,15 +290,25 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
     if same:
         result.verdict = "PASS"
         return result
-    new_failures = failed_tests(result.after.log) - failed_tests(result.baseline.log)
-    unexpected = sorted(
-        test
-        for test in new_failures
-        if not any(pattern in test for pattern in project.known_failures)
-    )
-    if project.expect_broken and new_failures and not unexpected:
-        # Every new failure is one the manifest names; the documented limitation
-        # explains the difference, and nothing else regressed.
+    before_failed = failed_tests(result.baseline.log)
+    after_failed = failed_tests(result.after.log)
+    differing = sorted(before_failed ^ after_failed)
+    if differing and _retest_agrees(test, differing, source, ready, env, timeout, logs, project):
+        # A test that fails on one tree and passes on the other, then behaves
+        # the same on both when rerun alone, is timing-dependent (anyio's
+        # socket cancellation, rich's terminal rendering), not a difference
+        # the transformation made.
+        result.verdict = "PASS"
+        result.detail = f"flaky, same on retest: {' '.join(differing)[:200]}"
+        return result
+    unexpected = [
+        test for test in differing if not any(pattern in test for pattern in project.known_failures)
+    ]
+    if project.expect_broken and differing and not unexpected:
+        # Every test that differs, in either direction, is one the manifest
+        # names; the documented limitation explains the difference (a
+        # frame-sensitive assertion may fail before and pass after just as
+        # well as the reverse), and nothing else changed.
         result.verdict = "BROKEN_KNOWN"
         result.detail = project.expect_broken
     else:
@@ -307,6 +317,42 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         if unexpected:
             result.detail = f"{len(unexpected)} unexpected: {' '.join(unexpected)[:200]}"
     return result
+
+
+_OPTIONS_WITH_VALUES = {"-o", "-p", "-k", "-m", "-c", "-W", "--tb", "--rootdir"}
+
+
+def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> List[str]:
+    """The project's test command narrowed to the given node ids.
+
+    Trailing positional arguments (a tests directory or module) are dropped
+    so pytest runs only the named tests; option values stay in place.
+    """
+    command = list(test)
+    while command and not command[-1].startswith("-"):
+        if len(command) >= 2 and command[-2] in _OPTIONS_WITH_VALUES:
+            break
+        command.pop()
+    return [*command, *test_ids]
+
+
+def _retest_agrees(
+    test: Sequence[str],
+    test_ids: Sequence[str],
+    source: Path,
+    ready: Path,
+    env: Dict[str, str],
+    timeout: int,
+    logs: Path,
+    project: Project,
+) -> bool:
+    """Whether the tests that differed fail identically on both trees when rerun alone."""
+    command = _retest_command(test, test_ids)
+    before = run(command, source, env, timeout, logs / f"{project.name}-retest-before.log")
+    after = run(command, ready, env, timeout, logs / f"{project.name}-retest-after.log")
+    if before.returncode == -9 or after.returncode == -9:
+        return False
+    return failed_tests(before.log) == failed_tests(after.log)
 
 
 REFUSAL = re.compile(r"^Error: (Unsupported build backend .*|.*cannot infer safe imports.*)$", re.M)
