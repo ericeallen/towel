@@ -1854,6 +1854,12 @@ class Unifier:
         # Only expressions (Name, Constant, Call, etc.) can be parameterized
         if any(isinstance(expr, ast.stmt) for expr in exprs):
             return False
+        # Only an expression can be replaced by a parameter. An import alias,
+        # an argument, a keyword or a with-item that differs is a different
+        # binding or a different signature, not a value (jsonschema: two
+        # ``from jsonschema import X`` with different X).
+        if any(not isinstance(expr, ast.expr) for expr in exprs):
+            return False
 
         # Slices and starred items are syntax fragments of their container, not
         # values: ``seq[start:stop]`` versus ``seq[i]`` cannot share a parameter.

@@ -137,6 +137,20 @@ class AssignmentAnalyzer(ast.NodeVisitor):
             self.reassignments[id(node)] = node.target.id in self.bound_vars
             self.bound_vars.add(node.target.id)
 
+    def visit_Import(self, node: ast.Import) -> None:
+        """An import binds each alias, or the first component of a dotted name."""
+        self._bind_import_aliases(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self._bind_import_aliases(node)
+
+    def _bind_import_aliases(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
+        names = [
+            alias.asname or alias.name.split(".")[0] for alias in node.names if alias.name != "*"
+        ]
+        self.reassignments[id(node)] = any(name in self.bound_vars for name in names)
+        self.bound_vars.update(names)
+
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
         """An assignment expression binds its target in the enclosing function."""
         self.visit(node.value)
@@ -349,6 +363,21 @@ def _collect_bindings_and_reassignments(
             else:
                 bound_vars.add(node.target.id)
             self.generic_visit(node)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            self._bind_import_aliases(node)
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            self._bind_import_aliases(node)
+
+        def _bind_import_aliases(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
+            names = [
+                alias.asname or alias.name.split(".")[0]
+                for alias in node.names
+                if alias.name != "*"
+            ]
+            target = reassigned_vars if reassignments.get(id(node), False) else bound_vars
+            target.update(names)
 
         def visit_AugAssign(self, node: ast.AugAssign) -> None:
             # Augmented assignments are always reassignments

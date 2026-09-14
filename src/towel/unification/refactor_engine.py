@@ -55,7 +55,12 @@ from weakref import WeakKeyDictionary
 from pathlib import Path
 from .scope_analyzer import ScopeAnalyzer, Scope
 from .unifier import Unifier, Substitution
-from .extractor import HygienicExtractor, is_value_producing, UnsupportedExtraction
+from .extractor import (
+    HygienicExtractor,
+    UnsupportedExtraction,
+    has_complete_return_coverage,
+    is_value_producing,
+)
 from .instantiation import instantiation_mismatch
 from .thunk_inlining import inline_leading_thunks
 from .structural_memo import (
@@ -1618,6 +1623,17 @@ class UnificationRefactorEngine:
                         continue
                     start_line, end_line = span
                     line_count = end_line - start_line + 1
+
+                    # A block that returns on some path but not on every path
+                    # (a conditional return, or a lone expression statement,
+                    # which counts as value-producing) is never accepted: a
+                    # value-producing helper needs complete return coverage,
+                    # and one that also binds live variables is rejected as
+                    # mixed. Leaving such blocks out spares every pair they
+                    # would have formed; on pyflakes' test_other.py that is
+                    # 32,857 of 44,826 rejected pairs.
+                    if is_value_producing(block) and not has_complete_return_coverage(block):
+                        continue
 
                     if line_count >= self.min_lines:
                         results.append(((start_line, end_line), cast(List[ast.AST], block)))

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import ast
 import copy
-from typing import Dict, List, Mapping, Optional, Sequence, cast
+from typing import Dict, List, Mapping, Optional, Sequence, Set, cast
 
 from .semantic_safety import bound_names
 
@@ -84,13 +84,25 @@ def _alpha_normalize(module: ast.Module) -> ast.Module:
     the block never binds are left alone, so a helper binder that captures a
     block's free name still compares unequal.
     """
-    bound = bound_names(module.body)
+    bound = bound_names(module.body) - _fixed_import_names(module.body)
     order: Dict[str, str] = {}
     for node in ast.walk(module):
         for name in _identifiers(node):
             if name in bound and name not in order:
                 order[name] = f"__alpha_{len(order)}"
     return cast(ast.Module, _IdentifierRenamer(order).visit(module))
+
+
+def _fixed_import_names(statements: Sequence[ast.stmt]) -> Set[str]:
+    """Names an import binds without ``as``: they name what is imported and cannot be renamed."""
+    names: Set[str] = set()
+    for statement in statements:
+        for node in ast.walk(statement):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    if alias.asname is None and alias.name != "*":
+                        names.add(alias.name.split(".")[0])
+    return names
 
 
 def _identifiers(node: ast.AST) -> List[str]:
@@ -107,7 +119,7 @@ def _identifiers(node: ast.AST) -> List[str]:
     if isinstance(node, (ast.Global, ast.Nonlocal)):
         return list(node.names)
     if isinstance(node, ast.alias):
-        return [node.asname or node.name.split(".")[0]]
+        return [node.asname] if node.asname is not None else []
     return []
 
 
@@ -313,8 +325,8 @@ class _IdentifierRenamer(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_alias(self, node: ast.alias) -> ast.AST:
+        # ``import a as b`` binds a free name b; ``from m import x`` binds the
+        # name of what it imports, which no renaming may touch.
         if node.asname is not None:
             node.asname = self._mapping.get(node.asname, node.asname)
-        elif "." not in node.name:
-            node.name = self._mapping.get(node.name, node.name)
         return node
