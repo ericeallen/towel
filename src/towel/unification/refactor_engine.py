@@ -31,6 +31,7 @@ import os
 import re
 from collections import deque
 import multiprocessing
+from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
@@ -57,6 +58,12 @@ from .unifier import Unifier, Substitution
 from .extractor import HygienicExtractor, is_value_producing, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .thunk_inlining import inline_leading_thunks
+from .structural_memo import (
+    StoredSubstitution,
+    load_substitution,
+    store_substitution,
+    structural_id,
+)
 from .definite_assignment import (
     definitely_bound_after,
     definitely_bound_before,
@@ -272,19 +279,26 @@ class UnificationRefactorEngine:
         self._used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
         # Block guards are pure in (guard, function, block); a block takes part
         # in every pair it forms, so its verdicts are computed once.
-        self._block_guard_cache: Dict[Tuple[Any, ...], bool] = {}
+        self._block_guard_cache: "OrderedDict[Tuple[Any, ...], bool]" = OrderedDict()
         # Unification is a function of the two blocks' nodes. The clustering
         # pass unifies one template against the same candidates for every pair
         # that shares it, so results are memoized per (block, block) within an
         # analysis; callers mutate substitutions, so a hit returns a copy.
-        self._unify_cache: Dict[
-            Tuple[Tuple[ast.AST, ...], Tuple[ast.AST, ...]],
-            Optional[Tuple[Substitution, List[Dict[str, str]]]],
-        ] = {}
+        # Keyed by the two blocks' structure, valued by positions: a hit
+        # serves any later block with the same structure, including the same
+        # code after a re-parse. Bounded and self-validating, so never evicted
+        # by path.
+        self._unify_cache: "OrderedDict[Tuple[str, str], Optional[StoredSubstitution]]" = (
+            OrderedDict()
+        )
+        self._cluster_cache: "OrderedDict[Tuple[Any, ...], Optional[ast.AST]]" = OrderedDict()
+        self._structural_ids: Dict[Tuple[ast.AST, ...], str] = {}
+        self._function_sources: Dict[FunctionNode, str] = {}
+        self._source_digests: Dict[str, str] = {}
         # Per-block analyses (binding snapshot, reassignment and unbinding
         # checks) depend only on the function and the block; a block takes
         # part in every pair it forms, so each is computed once per analysis.
-        self._per_block_cache: Dict[Tuple[str, FunctionNode, Tuple[ast.AST, ...]], Any] = {}
+        self._per_block_cache: "OrderedDict[Tuple[str, str, str], Any]" = OrderedDict()
         # Every cache entry is registered under the absolute path(s) of the
         # file(s) it describes, so a file that changes between fixed-point
         # iterations evicts exactly its own entries and unchanged files keep
@@ -408,30 +422,155 @@ class UnificationRefactorEngine:
         hygienic_renames: List[Dict[str, str]],
         paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
-        """Unify two blocks, reusing the result for a pair already unified."""
+        """Unify two blocks, reusing the result for any pair with the same structure."""
         if len(blocks) != 2:
             return self.unifier.unify_blocks(blocks, hygienic_renames)
-        key = (tuple(blocks[0]), tuple(blocks[1]))
-        if key not in self._unify_cache:
-            self._remember(paths, self._unify_cache, key)
+        key = (self._sid(blocks[0]), self._sid(blocks[1]))
         if key in self._unify_cache:
-            cached = self._unify_cache[key]
-            if cached is None:
+            stored = self._unify_cache[key]
+            self._unify_cache.move_to_end(key)
+            if stored is None:
                 return None
-            substitution, renames = cached
+            substitution, renames = load_substitution(stored, blocks)
             for target, source in zip(hygienic_renames, renames):
                 target.clear()
                 target.update(source)
-            return _copy_substitution(substitution)
-        substitution_result = self.unifier.unify_blocks(blocks, hygienic_renames)
-        if substitution_result is None:
-            self._unify_cache[key] = None
-            return None
-        self._unify_cache[key] = (
-            _copy_substitution(substitution_result),
-            [dict(mapping) for mapping in hygienic_renames],
+            return substitution
+        result = self.unifier.unify_blocks(blocks, hygienic_renames)
+        self._bounded_put(
+            self._unify_cache,
+            key,
+            None if result is None else store_substitution(result, blocks, hygienic_renames),
         )
-        return substitution_result
+        return result
+
+    def _cluster_candidate_call(
+        self,
+        pair: CodeBlockPair,
+        fpath: str,
+        fn: FunctionNode,
+        analyzerX: Optional[ScopeAnalyzer],
+        cand_nodes: List[ast.AST],
+        candidate_snapshot: BlockBindingSnapshot,
+        free_vars: Set[str],
+        enclosing_names: Set[str],
+        value_prod1: bool,
+        globals_to_declare_in_extracted: Set[str],
+        nonlocals_to_declare_in_extracted: Set[str],
+        func_def: ast.FunctionDef,
+        func_def_dump: str,
+        param_order: Dict[str, int],
+        helper_preamble_length: int,
+    ) -> Optional[ast.AST]:
+        """The call replacing a clustered occurrence, or None when it cannot share the helper.
+
+        Everything here is a function of the template and candidate blocks'
+        structure, the candidate's function and module, and the pair's helper,
+        so the caller memoizes it on exactly those.
+        """
+        cluster_renames: List[Dict[str, str]] = [{}, {}]
+        subst2 = self._unify_memoized(
+            [pair.block1_nodes, cand_nodes], cluster_renames, (pair.file_path, fpath)
+        )
+        if not subst2:
+            return None
+        defer_impure_parameters(subst2, pair.block1_nodes)
+        # Unifying another occurrence may require a different,
+        # more general helper. Its parameter numbers alone do
+        # not identify the meanings of the existing helper's
+        # arguments. Only reuse the helper when extraction from
+        # this substitution produces the same body/signature.
+        candidate_helper, candidate_order = HygienicExtractor().extract_function(
+            template_block=pair.block1_nodes,
+            substitution=subst2,
+            free_variables=free_vars,
+            enclosing_names=enclosing_names,
+            is_value_producing=value_prod1,
+            global_decls=globals_to_declare_in_extracted or None,
+            nonlocal_decls=nonlocals_to_declare_in_extracted or None,
+            function_name=func_def.name,
+        )
+        inline_leading_thunks(candidate_helper, subst2, candidate_order)
+        if candidate_order != param_order or ast.dump(candidate_helper) != func_def_dump:
+            return None
+        if has_impure_eager_parameters(subst2):
+            return None
+        # Orphan check for candidate within its function body
+        indices = self._get_block_indices(fn, cand_nodes)
+        if indices is None:
+            return None
+        # Skip docstring in body
+        body = self._body_without_docstring(fn.body)
+        has_orph, _orph = has_orphaned_variables(cast(List[ast.AST], body), indices)
+        if has_orph:
+            return None
+        # Generate a call node for the candidate
+        try:
+            call_node2 = self.extractor.generate_call(
+                function_name=func_def.name,
+                block_idx=1,
+                substitution=subst2,
+                param_order=param_order,
+                free_variables=free_vars,
+                is_value_producing=value_prod1,
+                return_variables=[],
+                hygienic_renames=cluster_renames,
+            )
+        except UnsupportedExtraction:
+            return None
+        # Validate candidate call-site does not reference undefined names
+        used2 = self._get_used_names(call_node2)
+        if any(n.startswith("__param_") for n in used2):
+            # Skip brittle candidate that leaked placeholders
+            return None
+        if (
+            instantiation_mismatch(
+                func_def,
+                call_node2,
+                cand_nodes,
+                cluster_renames[0],
+                cluster_renames[1],
+                preamble_length=helper_preamble_length,
+                returns_variables=False,
+            )
+            is not None
+        ):
+            return None
+        bound_before_cand: Set[str] = set(candidate_snapshot.bound_before_block)
+        free_vars_cand: Set[str] = set()
+        if analyzerX is not None:
+            free_vars_cand = set(analyzerX.get_free_variables(cand_nodes))
+        allowed_cand = bound_before_cand | free_vars_cand
+        builtin_whitelist = {
+            "len",
+            "sum",
+            "min",
+            "max",
+            "any",
+            "all",
+            "map",
+            "filter",
+            "sorted",
+            "list",
+            "dict",
+            "set",
+            "range",
+            "int",
+            "float",
+            "str",
+            "bool",
+            "enumerate",
+            "zip",
+        }
+        invalid2 = {
+            name
+            for name in used2
+            if name != func_def.name and name not in allowed_cand and name not in builtin_whitelist
+        }
+        if invalid2:
+            return None
+        # Append replacement
+        return call_node2
 
     def _block_rejected(
         self,
@@ -442,22 +581,23 @@ class UnificationRefactorEngine:
         path: Optional[str] = None,
     ) -> bool:
         """Evaluate a pure block guard once per (guard, function, block)."""
-        key = (guard, func, analyzer, tuple(nodes))
+        key = (
+            guard,
+            self._sid([func]) if func is not None else None,
+            self._sid(nodes),
+            self._module_digest(func) if analyzer is not None else None,
+        )
         cached = self._block_guard_cache.get(key)
         if cached is not None:
+            self._block_guard_cache.move_to_end(key)
             return cached
-        self._remember(
-            (self._function_paths.get(func) if func is not None else path,),
-            self._block_guard_cache,
-            key,
-        )
         if analyzer is not None:
             verdict = bool(guard(analyzer, func, list(nodes)))
         elif func is not None:
             verdict = bool(guard(func, list(nodes)))
         else:
             verdict = bool(guard(list(nodes)))
-        self._block_guard_cache[key] = verdict
+        self._bounded_put(self._block_guard_cache, key, verdict)
         return verdict
 
     def _get_assignment_reuse(self, func: FunctionNode) -> Dict[int, bool]:
@@ -497,6 +637,30 @@ class UnificationRefactorEngine:
             session=self.analysis_session,
         )
 
+    #: Entries kept per structural cache; oldest are dropped beyond this.
+    STRUCTURAL_CACHE_LIMIT = 250_000
+
+    @staticmethod
+    def _bounded_put(cache: "OrderedDict[Any, Any]", key: Any, value: Any) -> None:
+        cache[key] = value
+        while len(cache) > UnificationRefactorEngine.STRUCTURAL_CACHE_LIMIT:
+            cache.popitem(last=False)
+
+    def _sid(self, nodes: Sequence[ast.AST]) -> str:
+        """The structural id of a block or function, computed once per node tuple."""
+        key = tuple(nodes)
+        cached = self._structural_ids.get(key)
+        if cached is None:
+            cached = structural_id(key)
+            self._structural_ids[key] = cached
+            owner = self._function_paths.get(cast(FunctionNode, key[0])) if key else None
+            self._remember((owner,), self._structural_ids, key)
+        return cached
+
+    def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
+        """A digest of the module source a function came from, for module-wide analyses."""
+        return self._function_sources.get(func) if func is not None else None
+
     def _remember(
         self, paths: Iterable[Optional[str]], cache: MutableMapping[Any, Any], key: Any
     ) -> None:
@@ -515,10 +679,17 @@ class UnificationRefactorEngine:
         for function, function_path in tuple(self._function_paths.items()):
             if os.path.abspath(function_path) == absolute:
                 del self._function_paths[function]
+                self._function_sources.pop(function, None)
 
     def _record_function_paths(self, all_functions: Sequence[Tuple[Any, ...]]) -> None:
         for entry in all_functions:
             self._function_paths[entry[1]] = entry[0]
+            source = entry[2]
+            digest = self._source_digests.get(source)
+            if digest is None:
+                digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+                self._source_digests[source] = digest
+            self._function_sources[entry[1]] = digest
 
     def _signed_blocks(
         self, function: FunctionNode
@@ -1309,7 +1480,7 @@ class UnificationRefactorEngine:
         cold = [
             index
             for index, pair in enumerate(block_pairs)
-            if (tuple(pair.block1_nodes), tuple(pair.block2_nodes)) not in self._unify_cache
+            if (self._sid(pair.block1_nodes), self._sid(pair.block2_nodes)) not in self._unify_cache
         ]
         warm = [index for index in range(len(block_pairs)) if index not in set(cold)]
         workers = min(self._parallel_workers(), max(1, len(cold) // 64))
@@ -1590,10 +1761,11 @@ class UnificationRefactorEngine:
         compute: Callable[[], Any],
     ) -> Any:
         """Compute an immutable per-(function, block) result once per analysis."""
-        key = (name, func, tuple(block_nodes))
+        key = (name, self._sid([func]), self._sid(block_nodes))
         if key not in self._per_block_cache:
-            self._per_block_cache[key] = compute()
-            self._remember((self._function_paths.get(func),), self._per_block_cache, key)
+            self._bounded_put(self._per_block_cache, key, compute())
+        else:
+            self._per_block_cache.move_to_end(key)
         return self._per_block_cache[key]
 
     def _build_block_binding_snapshot(
@@ -2679,6 +2851,7 @@ class UnificationRefactorEngine:
             }
             # Template signature from block1
             tmpl_sig = extract_block_signature(pair.block1_nodes)
+            func_def_dump = ast.dump(func_def)
 
             # Gather candidates from same file functions
             for entry in all_functions:
@@ -2741,113 +2914,53 @@ class UnificationRefactorEngine:
                     ):
                         continue
                     # Try to unify template block with candidate
-                    cluster_renames: List[Dict[str, str]] = [{}, {}]
-                    subst2 = self._unify_memoized(
-                        [pair.block1_nodes, cand_nodes], cluster_renames, (pair.file_path, fpath)
+                    memo_key = (
+                        self._sid(pair.block1_nodes),
+                        self._sid(cand_nodes),
+                        self._sid([fn]),
+                        self._module_digest(fn),
+                        frozenset(free_vars),
+                        frozenset(enclosing_names),
+                        value_prod1,
+                        tuple(sorted(globals_to_declare_in_extracted)),
+                        tuple(sorted(nonlocals_to_declare_in_extracted)),
+                        func_def.name,
+                        func_def_dump,
+                        tuple(sorted(param_order.items())),
+                        helper_preamble_length,
                     )
-                    if not subst2:
-                        continue
-                    defer_impure_parameters(subst2, pair.block1_nodes)
-                    # Unifying another occurrence may require a different,
-                    # more general helper. Its parameter numbers alone do
-                    # not identify the meanings of the existing helper's
-                    # arguments. Only reuse the helper when extraction from
-                    # this substitution produces the same body/signature.
-                    candidate_helper, candidate_order = HygienicExtractor().extract_function(
-                        template_block=pair.block1_nodes,
-                        substitution=subst2,
-                        free_variables=free_vars,
-                        enclosing_names=enclosing_names,
-                        is_value_producing=value_prod1,
-                        global_decls=globals_to_declare_in_extracted or None,
-                        nonlocal_decls=nonlocals_to_declare_in_extracted or None,
-                        function_name=func_def.name,
-                    )
-                    inline_leading_thunks(candidate_helper, subst2, candidate_order)
-                    if candidate_order != param_order or ast.dump(candidate_helper) != ast.dump(
-                        func_def
-                    ):
-                        continue
-                    if has_impure_eager_parameters(subst2):
-                        continue
-                    # Orphan check for candidate within its function body
-                    indices = self._get_block_indices(fn, cand_nodes)
-                    if indices is None:
-                        continue
-                    # Skip docstring in body
-                    body = self._body_without_docstring(fn.body)
-                    has_orph, _orph = has_orphaned_variables(cast(List[ast.AST], body), indices)
-                    if has_orph:
-                        continue
-                    # Generate a call node for the candidate
-                    try:
-                        call_node2 = self.extractor.generate_call(
-                            function_name=func_def.name,
-                            block_idx=1,
-                            substitution=subst2,
-                            param_order=param_order,
-                            free_variables=free_vars,
-                            is_value_producing=value_prod1,
-                            return_variables=[],
-                            hygienic_renames=cluster_renames,
-                        )
-                    except UnsupportedExtraction:
-                        continue
-                    # Validate candidate call-site does not reference undefined names
-                    used2 = self._get_used_names(call_node2)
-                    if any(n.startswith("__param_") for n in used2):
-                        # Skip brittle candidate that leaked placeholders
-                        continue
-                    if (
-                        instantiation_mismatch(
-                            func_def,
-                            call_node2,
+                    if memo_key in self._cluster_cache:
+                        cached_call = self._cluster_cache[memo_key]
+                        self._cluster_cache.move_to_end(memo_key)
+                        if cached_call is None:
+                            continue
+                        call_node2 = copy.deepcopy(cached_call)
+                    else:
+                        computed = self._cluster_candidate_call(
+                            pair,
+                            fpath,
+                            fn,
+                            analyzerX,
                             cand_nodes,
-                            cluster_renames[0],
-                            cluster_renames[1],
-                            preamble_length=helper_preamble_length,
-                            returns_variables=False,
+                            candidate_snapshot,
+                            free_vars,
+                            enclosing_names,
+                            value_prod1,
+                            globals_to_declare_in_extracted,
+                            nonlocals_to_declare_in_extracted,
+                            func_def,
+                            func_def_dump,
+                            param_order,
+                            helper_preamble_length,
                         )
-                        is not None
-                    ):
-                        continue
-                    bound_before_cand: Set[str] = set(candidate_snapshot.bound_before_block)
-                    free_vars_cand: Set[str] = set()
-                    if analyzerX is not None:
-                        free_vars_cand = set(analyzerX.get_free_variables(cand_nodes))
-                    allowed_cand = bound_before_cand | free_vars_cand
-                    builtin_whitelist = {
-                        "len",
-                        "sum",
-                        "min",
-                        "max",
-                        "any",
-                        "all",
-                        "map",
-                        "filter",
-                        "sorted",
-                        "list",
-                        "dict",
-                        "set",
-                        "range",
-                        "int",
-                        "float",
-                        "str",
-                        "bool",
-                        "enumerate",
-                        "zip",
-                    }
-                    invalid2 = set()
-                    for name in used2:
-                        if name == func_def.name:
+                        self._bounded_put(
+                            self._cluster_cache,
+                            memo_key,
+                            None if computed is None else copy.deepcopy(computed),
+                        )
+                        if computed is None:
                             continue
-                        if name in allowed_cand or name in builtin_whitelist:
-                            continue
-                        invalid2.add(name)
-                    if invalid2:
-                        # Skip this candidate replacement
-                        continue
-                    # Append replacement
+                        call_node2 = computed
                     cluster_contexts[len(replacements)] = (
                         candidate_class,
                         candidate_info.kind,
