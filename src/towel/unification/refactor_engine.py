@@ -770,8 +770,10 @@ class UnificationRefactorEngine:
     #: timed and the rest forks only when the projected serial time exceeds
     #: PARALLEL_MIN_PROJECTED_SECONDS. Pair counts alone misjudge cost: pygments'
     #: lexer modules form tens of thousands of cheap pairs per iteration, and
-    #: forking a pool for each iteration made the run three times slower.
-    PARALLEL_PAIR_THRESHOLD = 20000
+    #: forking a pool for each iteration made the run three times slower,
+    #: while pyflakes' test modules form a few thousand expensive pairs that
+    #: a pool halves. The probe, not the count, tells the two apart.
+    PARALLEL_PAIR_THRESHOLD = 2000
     PARALLEL_PROBE_PAIRS = 400
     PARALLEL_MIN_PROJECTED_SECONDS = 12.0
 
@@ -1479,28 +1481,30 @@ class UnificationRefactorEngine:
     ) -> List[RefactoringProposal]:
         """Evaluate pairs in forked workers; results are ordered as the serial path orders them.
 
-        Pairs whose unification is already memoized are evaluated in this
-        process, where the cache lives; the rest are split into contiguous
-        chunks so pairs sharing a template block land in one worker and hit
-        that worker's own caches.
+        A serial probe over the first pairs measures the real per-pair cost;
+        the rest is split into contiguous chunks so pairs sharing a template
+        block land in one worker and hit that worker's own caches.
         """
         global _worker_engine, _worker_functions, _worker_class_infos, _worker_pairs
 
-        cold = [
-            index
-            for index, pair in enumerate(block_pairs)
-            if (self._sid(pair.block1_nodes), self._sid(pair.block2_nodes)) not in self._unify_cache
-        ]
-        cold_set = set(cold)
-        warm = [index for index in range(len(block_pairs)) if index not in cold_set]
+        # Every pair costs something even when its analyses are cached, and
+        # most pairs are rejected before unification, so the probe samples the
+        # whole list rather than the pairs the unification cache has not seen.
+        cold = list(range(len(block_pairs)))
+        warm: List[int] = []
         workers = min(self._parallel_workers(), max(1, len(cold) // 64))
         if workers <= 1 or len(cold) < self.PARALLEL_PAIR_THRESHOLD:
             return self._evaluate_pairs_serial(
                 block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
             )
-        # Probe: evaluate a prefix of the cold pairs here and project the rest.
+        # Probe: evaluate a strided sample of the pairs here and project the
+        # rest. Pairs are ordered by function, and in a fixed-point iteration
+        # the early functions are the untouched ones whose analyses are
+        # cached, so a prefix would understate the cost; a stride samples
+        # cached and cold regions alike.
         results: Dict[int, RefactoringProposal] = {}
-        probe = cold[: self.PARALLEL_PROBE_PAIRS]
+        stride = max(1, len(cold) // self.PARALLEL_PROBE_PAIRS)
+        probe = cold[::stride][: self.PARALLEL_PROBE_PAIRS]
         started = time.monotonic()
         for index in probe:
             probed = self._try_refactor_pair_multi_file(
@@ -1509,7 +1513,8 @@ class UnificationRefactorEngine:
             if probed is not None:
                 results[index] = probed
         per_pair = (time.monotonic() - started) / max(1, len(probe))
-        cold = cold[len(probe) :]
+        probed_indices = set(probe)
+        cold = [index for index in cold if index not in probed_indices]
         if per_pair * len(cold) < self.PARALLEL_MIN_PROJECTED_SECONDS:
             for index in cold + warm:
                 serial_proposal = self._try_refactor_pair_multi_file(
