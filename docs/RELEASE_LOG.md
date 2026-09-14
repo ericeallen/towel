@@ -5,7 +5,7 @@
 - Summary:
   - Soundness: every accepted proposal is verified by instantiating the helper with each call's arguments and comparing with the replaced block up to renamed binders; arguments that are not names, literals, or containers of those are passed as thunks evaluated at the original position.
   - Guards: closure/cell sharing across the block boundary, deletion and `except ... as` of pre-bound names, moved `global`/`nonlocal` declarations, slice and starred parameters, and opaque method decorators are rejected or handled explicitly; match captures bind in scope analysis; generated parameter names avoid block identifiers; clustered replacements may not overlap.
-  - Layouts: Flit and Poetry projects are supported in directory mode.
+  - Layouts: Flit, Poetry, and pdm projects are supported in directory mode.
   - Evidence: a standing 59-project ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`, weekly CI) passes 48 projects' full suites identically before and after transformation, with 7 producing no proposal, 3 documented frame-sensitive or source-observing cases, and 1 unsupported layout; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
   - Renaming: `towel rename-helpers --list --json` emits an inventory for LLM-driven naming and `--rename-file` applies a batch with scope and importer checks, reporting JSON.
   - Performance: safety guards, unification, and per-block analyses are memoized per analysis; pyflakes' 2,167-line test module analyzes in about a minute instead of exceeding nine.

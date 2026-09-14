@@ -90,7 +90,7 @@ def test_specific_named_mapping_takes_precedence_over_default_root(tmp_path):
     assert ProjectLayout.discover(module).module_name_for(module) == "actual_name.tools"
 
 
-@pytest.mark.parametrize("backend", ["pdm.backend", "custom.backend"])
+@pytest.mark.parametrize("backend", ["scikit_build_core.build", "custom.backend"])
 def test_unknown_backend_rejects_even_incidental_setuptools_configuration(tmp_path, backend):
     (tmp_path / "pyproject.toml").write_text(
         f'[build-system]\nbuild-backend="{backend}"\n'
@@ -282,3 +282,40 @@ def test_poetry_ignores_setuptools_configuration(tmp_path: Path) -> None:
     poetry(tmp_path, '[tool.setuptools]\npackage-dir={""="incorrect"}\n')
     module = package(tmp_path, "my_project")
     assert ProjectLayout.discover(module).source_roots == [tmp_path.resolve()]
+
+
+def pdm(root: Path, options: str = "") -> None:
+    (root / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="pdm.backend"\n'
+        f'[project]\nname="my-project"\nversion="0.0.0"\n{options}'
+    )
+
+
+def test_pdm_uses_src_when_present(tmp_path: Path) -> None:
+    pdm(tmp_path, '[tool.pdm.build]\nincludes=["src/my_project"]\n')
+    module = package(tmp_path, "src/my_project")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [(tmp_path / "src").resolve()]
+    assert layout.module_name_for(module) == "my_project.tools"
+
+
+def test_pdm_flat_layout_without_src(tmp_path: Path) -> None:
+    pdm(tmp_path)
+    module = package(tmp_path, "my_project")
+    assert ProjectLayout.discover(module).source_roots == [tmp_path.resolve()]
+
+
+def test_pdm_explicit_package_dir(tmp_path: Path) -> None:
+    pdm(tmp_path, '[tool.pdm.build]\npackage-dir="lib"\n')
+    module = package(tmp_path, "lib/my_project")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [(tmp_path / "lib").resolve()]
+    assert layout.module_name_for(module) == "my_project.tools"
+
+
+@pytest.mark.parametrize("options", ['package-dir="lib/*"\n', 'package-dir="missing"\n'])
+def test_pdm_package_dir_that_cannot_name_a_root_fails_explicitly(tmp_path: Path, options) -> None:
+    pdm(tmp_path, f"[tool.pdm.build]\n{options}")
+    module = package(tmp_path, "lib/my_project")
+    with pytest.raises(ValueError, match="pdm"):
+        ProjectLayout.discover(module)

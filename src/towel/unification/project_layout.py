@@ -252,6 +252,31 @@ def _poetry_source_roots(project_root: Path, data: Mapping[str, object]) -> List
     raise ValueError("Poetry package was not found beside pyproject.toml or under src")
 
 
+def _pdm_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Path]:
+    """Locate the directory pdm-backend collects packages from.
+
+    pdm-backend imports every package under ``[tool.pdm.build].package-dir``;
+    when that is unset it uses ``src`` if the directory exists and the
+    project root otherwise. ``includes`` and ``source-includes`` select
+    files without moving them, so they leave the import root alone.
+    """
+    tool = data.get("tool", {})
+    pdm = tool.get("pdm", {}) if isinstance(tool, dict) else {}
+    build = pdm.get("build", {}) if isinstance(pdm, dict) else {}
+    if not isinstance(build, dict):
+        raise ValueError("Invalid pdm build configuration")
+    package_dir = build.get("package-dir")
+    if package_dir is None:
+        source = project_root / "src"
+        return [source.resolve() if source.is_dir() else project_root.resolve()]
+    if not isinstance(package_dir, str) or any(char in package_dir for char in "*?[]"):
+        raise ValueError("Unsupported pdm package-dir; cannot infer safe imports")
+    root = (project_root / package_dir).resolve()
+    if not root.is_relative_to(project_root) or not root.is_dir():
+        raise ValueError("pdm package-dir must be a directory within the project")
+    return [root]
+
+
 @dataclass
 class ProjectLayout:
     """Represents the directory structure and import configuration of a Python project.
@@ -292,6 +317,7 @@ class ProjectLayout:
             "hatchling.build",
             "flit_core.buildapi",
             "poetry.core.masonry.api",
+            "pdm.backend",
         ):
             raise ValueError(f"Unsupported build backend {backend!r}; cannot infer safe imports")
 
@@ -310,6 +336,7 @@ class ProjectLayout:
             "hatchling.build",
             "flit_core.buildapi",
             "poetry.core.masonry.api",
+            "pdm.backend",
         ) and isinstance(mapping, dict):
             for prefix, rel in mapping.items():
                 if not isinstance(prefix, str) or not isinstance(rel, str):
@@ -323,6 +350,8 @@ class ProjectLayout:
             source_roots = _flit_source_roots(project_root, data)
         if not source_roots and backend == "poetry.core.masonry.api":
             source_roots = _poetry_source_roots(project_root, data)
+        if not source_roots and backend == "pdm.backend":
+            source_roots = _pdm_source_roots(project_root, data)
         if not source_roots:
             source_roots = _hatch_source_roots(project_root, data)
 
