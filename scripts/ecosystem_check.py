@@ -237,6 +237,10 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         shutil.rmtree(ready)
     shutil.copytree(source, ready, symlinks=True)
     towel_env = dict(env, PYTHONPATH=str(towel_src))
+    # Each refactor may fork workers for a large analysis; with several
+    # projects in flight the caller caps that through TOWEL_WORKERS.
+    if "TOWEL_WORKERS" in os.environ:
+        towel_env["TOWEL_WORKERS"] = os.environ["TOWEL_WORKERS"]
     result.refactor = run(
         [
             sys.executable,

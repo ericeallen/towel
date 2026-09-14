@@ -179,3 +179,26 @@ def test_flit_missing_module_is_rejected(tmp_path: Path) -> None:
     (tmp_path / "other.py").write_text("")
     with pytest.raises(ValueError, match="Flit module was not found"):
         ProjectLayout.discover(tmp_path / "other.py")
+
+
+def test_hatch_sources_directories_are_import_roots(tmp_path):
+    hatch(tmp_path, '[tool.hatch.build.targets.wheel]\nsources=["src"]\nonly-include=["src"]\n')
+    module = package(tmp_path, "src/black")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [(tmp_path / "src").resolve()]
+    assert layout.module_name_for(module) == "black.tools"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        'sources=["src"]\nonly-include=["other"]\n',
+        'sources=["src/*"]\n',
+        'sources=["missing"]\n',
+    ],
+)
+def test_hatch_sources_that_cannot_name_roots_fail_explicitly(tmp_path, options):
+    hatch(tmp_path, f"[tool.hatch.build.targets.wheel]\n{options}")
+    module = package(tmp_path, "src/black")
+    with pytest.raises(ValueError, match="Hatch"):
+        ProjectLayout.discover(module)

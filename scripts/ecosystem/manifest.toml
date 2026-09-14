@@ -294,3 +294,175 @@ url = "https://github.com/GrahamDumpleton/wrapt.git"
 rev = "HEAD"
 package = "src/wrapt"
 pythonpath = "src"
+
+# --- Second batch (September 13, 2026): larger and application-shaped projects ---
+
+[[project]]
+name = "flask"
+url = "https://github.com/pallets/flask.git"
+rev = "HEAD"
+package = "src/flask"
+pythonpath = "src"
+deps = ["asgiref", "python-dotenv"]
+install = true
+
+[[project]]
+name = "werkzeug"
+url = "https://github.com/pallets/werkzeug.git"
+rev = "HEAD"
+package = "src/werkzeug"
+pythonpath = "src"
+deps = ["cryptography", "ephemeral-port-reserve", "pytest-timeout", "watchdog"]
+install = true
+
+[[project]]
+name = "httpx"
+url = "https://github.com/encode/httpx.git"
+rev = "HEAD"
+package = "httpx"
+deps = ["chardet", "trio", "trustme", "uvicorn", "cryptography", "h2", "socksio", "zstandard", "brotli", "click", "pygments", "rich"]
+install = true
+
+[[project]]
+name = "starlette"
+url = "https://github.com/encode/starlette.git"
+rev = "HEAD"
+package = "starlette"
+deps = ["httpx", "httpx2[zstd]", "trio", "blockbuster", "itsdangerous", "jinja2", "python-multipart", "pyyaml", "opentelemetry-api", "opentelemetry-sdk", "importlib-metadata"]
+install = true
+
+[[project]]
+name = "anyio"
+url = "https://github.com/agronholm/anyio.git"
+rev = "HEAD"
+package = "src/anyio"
+pythonpath = "src"
+deps = ["blockbuster", "hypothesis", "psutil", "pytest-mock", "pytest-timeout", "trustme", "truststore", "uvloop", "trio", "coverage"]
+install = true
+
+[[project]]
+name = "jsonschema"
+url = "https://github.com/python-jsonschema/jsonschema.git"
+rev = "HEAD"
+package = "jsonschema"
+deps = ["virtue", "jsonpath-ng"]
+install = true
+
+[[project]]
+name = "virtualenv"
+url = "https://github.com/pypa/virtualenv.git"
+rev = "HEAD"
+package = "src/virtualenv"
+pythonpath = "src"
+deps = ["covdefaults", "coverage", "coverage-enable-subprocess", "flaky", "packaging", "pytest-env", "pytest-mock", "pytest-timeout", "pytest-xdist", "setuptools", "time-machine"]
+install = true
+
+[[project]]
+name = "nox"
+url = "https://github.com/wntrblm/nox.git"
+rev = "HEAD"
+package = "nox"
+deps = ["pytest-xdist", "coverage"]
+install = true
+
+[[project]]
+name = "markdown"
+url = "https://github.com/Python-Markdown/markdown.git"
+rev = "HEAD"
+package = "markdown"
+deps = ["pyyaml"]
+test = ["{python}", "-m", "unittest", "discover", "tests"]
+
+[[project]]
+name = "tqdm"
+url = "https://github.com/tqdm/tqdm.git"
+rev = "HEAD"
+package = "tqdm"
+deps = ["pytest-timeout", "pytest-asyncio", "nbval", "ipywidgets"]
+install = true
+
+[[project]]
+name = "lark"
+url = "https://github.com/lark-parser/lark.git"
+rev = "HEAD"
+package = "lark"
+deps = ["regex", "interegular", "atomicwrites"]
+install = true
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+expect_broken = "source-observing: lark.tools.standalone copies marked regions of named source files into one artifact, so a helper moved to another file is absent from it"
+known_failures = ["tests/__main__.py::TestStandalone::"]
+
+[[project]]
+name = "peewee"
+url = "https://github.com/coleifer/peewee.git"
+rev = "HEAD"
+package = "peewee.py"
+test = ["{python}", "runtests.py"]
+
+[[project]]
+name = "python-prompt-toolkit"
+url = "https://github.com/prompt-toolkit/python-prompt-toolkit.git"
+rev = "HEAD"
+package = "src/prompt_toolkit"
+pythonpath = "src"
+deps = ["pytest-mock", "asyncssh"]
+install = true
+
+[[project]]
+name = "astroid"
+url = "https://github.com/pylint-dev/astroid.git"
+rev = "HEAD"
+package = "astroid"
+deps = ["typing-extensions"]
+install = true
+
+[[project]]
+name = "networkx"
+url = "https://github.com/networkx/networkx.git"
+rev = "HEAD"
+package = "networkx"
+deps = ["numpy", "scipy", "pandas", "matplotlib"]
+install = true
+
+[[project]]
+name = "pytest"
+url = "https://github.com/pytest-dev/pytest.git"
+rev = "HEAD"
+package = "src/_pytest"
+pythonpath = "src"
+deps = ["attrs", "hypothesis", "mock", "pygments", "requests", "setuptools", "xmlschema", "argcomplete"]
+install = true
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "testing"]
+
+[[project]]
+name = "sphinx"
+url = "https://github.com/sphinx-doc/sphinx.git"
+rev = "HEAD"
+package = "sphinx"
+deps = ["pytest-xdist", "defusedxml", "typing_extensions", "cython", "setuptools"]
+install = true
+
+[[project]]
+name = "black"
+url = "https://github.com/psf/black.git"
+rev = "HEAD"
+package = "src/black"
+pythonpath = "src"
+deps = ["pytest-xdist", "aiohttp", "tokenize-rt"]
+install = true
+
+[[project]]
+name = "django-utils"
+url = "https://github.com/django/django.git"
+rev = "HEAD"
+package = "django/utils"
+deps = ["asgiref", "sqlparse", "tzdata", "Pillow", "PyYAML", "jinja2", "tblib"]
+test = ["{python}", "tests/runtests.py", "--parallel", "1", "utils_tests"]
+
+[[project]]
+name = "django-forms"
+url = "https://github.com/django/django.git"
+rev = "HEAD"
+package = "django/forms"
+deps = ["asgiref", "sqlparse", "tzdata", "Pillow", "PyYAML", "jinja2", "tblib"]
+test = ["{python}", "tests/runtests.py", "--parallel", "1", "forms_tests"]

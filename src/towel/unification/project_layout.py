@@ -117,9 +117,40 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
     wheel = targets.get("wheel", {}) if isinstance(targets, dict) else {}
     if not isinstance(build, dict) or not isinstance(wheel, dict):
         raise ValueError("Invalid Hatch wheel configuration")
-    for key in ("sources", "only-include", "include", "force-include"):
+    for key in ("include", "force-include"):
         if key in wheel or key in build:
             raise ValueError(f"Unsupported Hatch {key} layout; cannot infer safe imports")
+    sources = wheel.get("sources", build.get("sources"))
+    if sources is not None:
+        # ``sources = ["src"]`` strips the prefix from every file under it, so
+        # each listed directory is an import root. The rewrite-map form and
+        # glob patterns are refused; ``only-include`` must stay within the
+        # listed sources for the roots to be complete.
+        if not isinstance(sources, list) or not sources:
+            raise ValueError("Unsupported Hatch sources layout; cannot infer safe imports")
+        roots = []
+        for value in sources:
+            if not isinstance(value, str) or any(char in value for char in "*?[]"):
+                raise ValueError("Unsupported Hatch sources layout; cannot infer safe imports")
+            root = (project_root / value).resolve()
+            if not root.is_relative_to(project_root) or not root.is_dir():
+                raise ValueError("Hatch source must be a directory within the project")
+            roots.append(root)
+        only_include = wheel.get("only-include", build.get("only-include"))
+        if only_include is not None:
+            if not isinstance(only_include, list):
+                raise ValueError("Unsupported Hatch only-include layout; cannot infer safe imports")
+            for value in only_include:
+                if not isinstance(value, str) or any(char in value for char in "*?[]"):
+                    raise ValueError("Unsupported Hatch only-include layout")
+                included = (project_root / value).resolve()
+                if not any(included == root or included.is_relative_to(root) for root in roots):
+                    raise ValueError(
+                        "Hatch only-include outside sources; cannot infer safe imports"
+                    )
+        return roots
+    if "only-include" in wheel or "only-include" in build:
+        raise ValueError("Unsupported Hatch only-include layout; cannot infer safe imports")
     packages = wheel.get("packages", build.get("packages"))
     if packages is not None:
         if not isinstance(packages, list) or not packages:
