@@ -445,7 +445,7 @@ rev = "HEAD"
 package = "sphinx"
 deps = ["pytest-xdist", "defusedxml", "typing_extensions", "cython", "setuptools"]
 install = true
-timeout = 3600
+timeout = 5400
 
 [[project]]
 name = "black"
