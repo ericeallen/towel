@@ -251,6 +251,22 @@ deps = ["pyyaml"]
 prepare = "git submodule update --init --quiet"
 
 [[project]]
+name = "oauthlib"
+url = "https://github.com/oauthlib/oauthlib.git"
+rev = "HEAD"
+package = "oauthlib"
+deps = ["pytest-cov", "pytest-subtests", "pyjwt", "cryptography", "blinker"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "parso"
+url = "https://github.com/davidhalter/parso.git"
+rev = "HEAD"
+package = "parso"
+deps = ["docopt"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
+
+[[project]]
 name = "platformdirs"
 url = "https://github.com/tox-dev/platformdirs.git"
 rev = "HEAD"

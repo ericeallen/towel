@@ -16,8 +16,11 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import dataclasses
+import fcntl
 import json
 import os
+import signal
+import threading
 import re
 import shutil
 import subprocess
@@ -331,6 +334,36 @@ def failed_tests(log_path: str) -> Set[str]:
     return set(FAILED_LINE.findall(text))
 
 
+def _isolate_worker() -> None:
+    """Run in each pool worker: own process group, ended with the harness.
+
+    A worker forked by the pool outlives a killed harness and keeps cloning,
+    testing and refactoring in the shared work directory, where a second
+    harness then races it (one such race produced a false BROKEN verdict).
+    The worker leads its own process group so that, when the harness dies,
+    a watchdog thread can end the worker and every subprocess it started.
+    """
+    os.setsid()
+    parent = os.getppid()
+
+    def watch() -> None:
+        while os.getppid() == parent:
+            time.sleep(1)
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+
+    threading.Thread(target=watch, name="harness-parent-watchdog", daemon=True).start()
+
+
+def _lock_work_directory(work: Path) -> int:
+    """Hold an exclusive lock for the run; two harnesses must never share a work directory."""
+    handle = os.open(work / ".harness.lock", os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit(f"another ecosystem check is using {work}; choose a different --work")
+    return handle
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -344,6 +377,7 @@ def main() -> int:
     args = parser.parse_args()
     projects = load_manifest(args.manifest, args.only)
     args.work.mkdir(parents=True, exist_ok=True)
+    _lock_work_directory(args.work)
     report_dir = args.work / "report"
     report_dir.mkdir(exist_ok=True)
     towel_commit = subprocess.run(
@@ -351,7 +385,9 @@ def main() -> int:
     ).stdout.strip()
     print(f"ecosystem check: {len(projects)} projects, towel {towel_commit[:12]}", flush=True)
     results: List[Result] = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=args.workers) as pool:
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=args.workers, initializer=_isolate_worker
+    ) as pool:
         futures = {
             pool.submit(check_project, project, args.work, args.towel_src, args.timeout): project
             for project in projects
