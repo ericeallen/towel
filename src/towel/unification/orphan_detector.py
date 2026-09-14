@@ -20,7 +20,9 @@ but referenced in code that remains after the extraction point.
 """
 
 import ast
-from typing import List, Set, Tuple
+from typing import List, Set, Tuple, cast
+
+from .definite_assignment import definitely_bound_after
 
 
 def _apply_visitor_to_nodes(
@@ -172,16 +174,15 @@ def has_orphaned_variables(
     # Get variables bound in the extracted block
     bound_in_extracted = get_bound_variables(extracted_block)
 
-    # Get variables used in the remaining code
-    used_in_remaining = get_used_variables(remaining_code)
-
-    # Get variables bound in the remaining code
-    bound_in_remaining = get_bound_variables(remaining_code)
-
-    # Orphaned variables are those that are:
-    # 1. Bound in the extracted block
-    # 2. Used in the remaining code
-    # 3. NOT bound in the remaining code (before use)
-    orphaned = bound_in_extracted & used_in_remaining - bound_in_remaining
-
+    # A later read is safe only when every path from the block's end to that
+    # read rebinds the name first. Subtracting every name rebound anywhere
+    # afterwards let networkx's ``if multigraph_key is not None: edge_id =
+    # multigraph_key`` hide the read of ``edge_id`` that follows it.
+    orphaned: Set[str] = set()
+    for index, statement in enumerate(remaining_code):
+        definite = definitely_bound_after(cast(List[ast.stmt], remaining_code[:index]))
+        if definite is None:
+            break  # no path reaches this statement
+        used = get_used_variables([statement])
+        orphaned |= (bound_in_extracted & used) - definite
     return len(orphaned) > 0, orphaned

@@ -57,7 +57,6 @@ TRANSFORMED = {
     "r83_tab_indented_class",
     "r84_warn_stacklevel",
     "r85_conditionally_bound_parameter",
-    "r86_annotated_assignment_live",
     "r87_nested_function_in_method",
     "r88_elif_branch",
     "r90_cluster_across_classes",
@@ -68,6 +67,7 @@ TRANSFORMED = {
     "r57_star_unpack",
     "r98_same_named_methods_nested_helpers",
     "r99_partial_return_branches",
+    "r100_clustered_site_with_live_binding",
 }
 
 

@@ -103,6 +103,11 @@ uncertainty. Common reasons a real duplicate is not extracted:
   block boundary in a way the return analysis does not represent.
 - Lambda expressions with positional-only, keyword-only, or variadic
   parameters are not unified.
+- A name the block binds that later code reads after only a *conditional*
+  rebinding is treated as orphaned and the block is rejected, even where the
+  helper would return it (the annotated-assignment fixture r86 is now
+  rejected for this reason). Returning such names was found unsafe in three
+  fixtures; a path-aware return analysis would recover the case.
 - A block that begins at an `elif` is never extracted, because its call
   would have to be rendered inside the preceding branch's `else`; the
   `elif`'s own body and further branches remain candidates. This gives up a
