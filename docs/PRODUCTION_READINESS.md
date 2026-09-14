@@ -202,7 +202,7 @@ suite covered the transformed lines.
 
 ## Verification gates on the final tree
 
-- Python 3.11, 3.12, and 3.13: 1,227 tests passed on each, plus 34 subtests.
+- Python 3.11, 3.12, and 3.13: 1,228 tests passed on each, plus 34 subtests.
   Coverage is 89% against the unconditional 85% gate.
 - Black, Flake8, strict mypy, Bandit, and all pre-commit hooks pass. Hostile
   fixtures are excluded from formatting because their layout is what they

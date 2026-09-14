@@ -9,8 +9,9 @@
   - Evidence: a standing 59-project ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`, weekly CI) passes 48 projects' full suites identically before and after transformation, with 7 producing no proposal, 3 documented frame-sensitive or source-observing cases, and 1 unsupported layout; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
   - Renaming: `towel rename-helpers --list --json` emits an inventory for LLM-driven naming and `--rename-file` applies a batch with scope and importer checks, reporting JSON.
   - Performance: safety guards, unification, and per-block analyses are memoized per analysis; pyflakes' 2,167-line test module analyzes in about a minute instead of exceeding nine.
+  - Robustness: forked workers end within a second of their parent's death (a watchdog thread per worker; a killed run once left fourteen workers that filled the machine's swap), and the worker count is capped by resident size against physical memory.
 - Status: All tests green
-  - Unit/integration tests: 1,227 passed on Python 3.11, 3.12, and 3.13
+  - Unit/integration tests: 1,228 passed on Python 3.11, 3.12, and 3.13 (the watchdog test needs a fork start method)
   - Ecosystem check: 48 PASS, 7 NO_CHANGE, 3 BROKEN_KNOWN, 1 UNSUPPORTED of 59 (see docs/PRODUCTION_READINESS.md)
 
 ---

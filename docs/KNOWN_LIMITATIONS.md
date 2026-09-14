@@ -141,6 +141,14 @@ tractable, all exact: they change no proposal.
   decided by a timed serial probe, never by pair count alone, because a
   pool per fixed-point iteration costs more than small iterations save.
   `TOWEL_WORKERS=1` disables it; any other value caps the worker count.
+  Each worker runs a watchdog thread that ends the worker within a second
+  of its parent's death, wherever the worker is (mid-pair or waiting on
+  the pool's queue, where a plain pool worker would wait forever because
+  its siblings hold the queue open); killing a run leaves no workers
+  behind, verified by `tests/test_parent_watchdog.py`. The worker count is
+  also capped by the parent's resident size against physical memory at
+  fork time, an estimate rather than a guarantee: several simultaneous
+  large runs on one machine should still set `TOWEL_WORKERS` low.
 
 Measured with the CLI defaults on September 13, 2026 (macOS, Python 3.13,
 single core unless stated), before and after this pass, with identical

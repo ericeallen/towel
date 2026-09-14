@@ -33,6 +33,7 @@ from collections import deque
 import multiprocessing
 import sys
 import resource
+import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
@@ -195,6 +196,33 @@ def _preserves_receiver(decorator: ast.expr) -> bool:
 
 _worker_pairs: Optional[List[CodeBlockPair]] = None
 
+PARENT_WATCH_INTERVAL_SECONDS = 1.0
+
+
+def _exit_when_parent_dies(parent: int, interval: float) -> None:
+    """Poll the parent pid and end this worker as soon as it is reparented."""
+    while os.getppid() == parent:
+        time.sleep(interval)
+    os._exit(1)
+
+
+def _start_parent_watchdog() -> None:
+    """Run in each forked worker: a killed parent must not leave workers behind.
+
+    A worker checks nothing itself: between chunks it blocks on the pool's
+    call queue, whose write end every sibling inherited, so it would wait
+    there forever once the parent is gone (fourteen such orphans from a
+    killed run once filled a 128 GB machine's swap). A daemon thread that
+    polls the parent pid ends the worker within one interval wherever the
+    main thread happens to be, mid-pair or idle.
+    """
+    threading.Thread(
+        target=_exit_when_parent_dies,
+        args=(os.getppid(), PARENT_WATCH_INTERVAL_SECONDS),
+        name="towel-parent-watchdog",
+        daemon=True,
+    ).start()
+
 
 def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, RefactoringProposal]]:
     """Evaluate ``_worker_pairs[start:end]`` in a forked worker.
@@ -209,13 +237,7 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, Refactoring
         raise RuntimeError("Worker has no pairs to evaluate")
     start, end = bounds
     accepted: List[Tuple[int, RefactoringProposal]] = []
-    parent = os.getppid()
     for index in range(start, end):
-        # A worker whose parent has died is reparented; it must not keep
-        # working and growing its caches (fourteen such orphans from a killed
-        # run once filled a 128 GB machine's swap).
-        if os.getppid() != parent:
-            os._exit(1)
         proposal = _worker_engine._try_refactor_pair_multi_file(
             _worker_pairs[index], _worker_functions, _worker_class_infos
         )
@@ -1586,7 +1608,9 @@ class UnificationRefactorEngine:
         covered: Set[int] = set()
         try:
             context = multiprocessing.get_context("fork")
-            with ProcessPoolExecutor(max_workers=workers, mp_context=context) as executor:
+            with ProcessPoolExecutor(
+                max_workers=workers, mp_context=context, initializer=_start_parent_watchdog
+            ) as executor:
                 for (start, end), accepted in zip(
                     chunks, executor.map(_evaluate_pair_chunk, chunks)
                 ):
