@@ -3,15 +3,16 @@
 **Disposition: ready for production use as a reviewed refactoring tool.**
 Every accepted proposal is checked by a syntactic instantiation invariant,
 arguments with possible effects are evaluated inside the helper at their
-original position, and a standing 81-project ecosystem check passes every
+original position, and a standing 91-project ecosystem check passes every
 project's own test suite before and after transformation, apart from three
 documented frame-sensitive or source-observing cases. This supersedes
 the alpha disposition in [OPEN_SOURCE_AUDIT.md](OPEN_SOURCE_AUDIT.md).
 Publication remains a separate maintainer decision; see
 [RELEASING.md](RELEASING.md). Unattended use is not claimed: the first three
-batches of new projects each found new defect classes (see below), and only
-the fourth passed clean, so the failure rate on an unfamiliar project is
-low but not zero.
+batches of new projects each found new defect classes (see below), but the
+fourth and fifth batches of ten previously unseen projects each passed clean,
+meeting the stopping rule of two consecutive defect-free batches. The failure
+rate on an unfamiliar project is low but not zero.
 
 Work was done on `audit/open-source-2026-09-12` in the audit checkout on
 September 12–14, 2026, starting from `97fe0a2` (the 1.1.0a1 candidate). The
@@ -112,67 +113,77 @@ JSON, and all logs are archived with the release evidence.
 |---|---|---|---|---|
 | anyio `f695900` | PASS | 12 | 34 | identical: 8 failed, 3926 passed, 337 skipped, 5 xfailed |
 | arrow `2224255` | PASS | 2 | 2 | identical: 1902 passed |
-| astroid `5d1a0a2` | PASS | 13 | 66 | identical: 3 failed, 2135 passed, 90 skipped, 15 xfailed, 35 subtests passed |
+| astroid `5d1a0a2` | PASS | 13 | 67 | identical: 3 failed, 2135 passed, 90 skipped, 15 xfailed, 35 subtests passed |
 | attrs `8f76777` | PASS | 4 | 5 | identical: 4 failed, 1400 passed, 7 skipped, 1 xfailed |
 | bidict `61e9827` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
-| black `20622e1` | PASS | 2 | 15 | identical: 2 failed, 479 passed, 3 skipped, 8 subtests passed |
+| black `20622e1` | PASS | 2 | 14 | identical: 2 failed, 479 passed, 3 skipped, 8 subtests passed |
+| bleach `f0355a7` | PASS | 10 | 197 | identical: 436 passed, 1 skipped, 3 xfailed |
 | boltons `961dcff` | PASS | 13 | 18 | identical: 519 passed |
-| cachetools `4500e3d` | PASS | 3 | 1 | identical: 333 passed |
+| cachetools `4500e3d` | PASS | 3 | 2 | identical: 333 passed |
 | cattrs `5bf7c97` | PASS | 17 | 9 | identical: 2 failed, 1042 passed, 15 xfailed |
+| cerberus `65e977d` | PASS | 8 | 36 | identical: 248 passed, 1 skipped |
 | click `6aabf09` | PASS | 5 | 16 | identical: 2058 passed, 25 skipped, 31000 deselected, 1 xfailed |
 | colorama `841634e` | PASS | 5 | 7 | identical: 38 passed, 14 skipped |
+| croniter `3dd4d14` | PASS | 5 | 1101 | identical: 248 passed, 92 subtests passed |
 | decorator `2322c7b` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
 | deepdiff `79e4379` | PASS | 5 | 12 | identical: 7 failed, 1256 passed, 44 skipped, 1 error |
 | django-forms `850e026` | PASS | 4 | 5 | identical: OK (skipped=2) |
 | django-utils `850e026` | PASS | 6 | 5 | identical: OK (skipped=21) |
 | dpath `26b7732` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
-| filelock `4efd93e` | PASS | 2 | 2 | identical: 1456 passed, 54 skipped |
+| feedparser `a22c552` | PASS | 9 | 4 | identical: 4297 passed, 8 skipped |
+| filelock `4efd93e` | PASS | 2 | 3 | identical: 1456 passed, 54 skipped |
 | flask `d73fa1c` | PASS | 3 | 2 | identical: 494 passed |
 | funcy `5419a8f` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
 | glom `fd70d30` | BROKEN_KNOWN | 5 | 7 | frame-relative: test_error.py asserts literal traceback frames, and the helper adds one |
 | h11 `62c5068` | PASS | 6 | 26 | identical: 78 passed |
+| html5lib `fd4f032` | PASS | 19 | 205 | identical: 972 passed, 28 skipped |
 | httpx `b5addb6` | PASS | 12 | 8 | identical: 10 failed, 1407 passed, 1 skipped |
 | humanize `3201e70` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
 | idna `cd17392` | PASS | 1 | 1 | identical: 6445 passed, 1 skipped, 56 subtests passed |
+| inflection `88eefaa` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
 | isort `131f4ad` | PASS | 5 | 12 | identical: 2 failed, 623 passed, 1 skipped |
 | itsdangerous `672971d` | PASS | 3 | 0 | identical: 297 passed |
 | jinja2 `5ef7011` | PASS | 6 | 43 | identical: 911 passed |
 | jmespath `2812594` | PASS | 5 | 1 | identical: 998 passed, 1 skipped |
-| jsonschema `865c27f` | PASS | 8 | 191 | identical: 7826 passed, 703 skipped |
+| jsonpatch `d8e1a6e` | PASS | 1 | 1 | identical: 110 passed |
+| jsonschema `865c27f` | PASS | 8 | 190 | identical: 7826 passed, 703 skipped |
 | lark `9a4fb9c` | BROKEN_KNOWN | 8 | 20 | source-observing: lark.tools.standalone copies marked regions of named source files into one artifact, so a helper moved to another file is absent from it |
 | loguru `48acf77` | PASS | 3 | 2 | identical: 1615 passed, 53 skipped |
 | mako `411b4ac` | PASS | 10 | 21 | identical: 517 passed, 53 skipped |
 | markdown `0d6afd1` | PASS | 10 | 9 | identical: FAILED (errors=364, skipped=110) |
-| markdown-it-py `a5950ca` | PASS | 2 | 6 | identical: 1000 passed, 1 skipped |
+| markdown-it-py `a5950ca` | PASS | 2 | 7 | identical: 1000 passed, 1 skipped |
 | markupsafe `b2e4d9c` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
 | marshmallow `c54aa72` | PASS | 2 | 1 | identical: 1190 passed |
 | more-itertools `b2f3aff` | PASS | 1 | 4 | identical: OK (skipped=5) |
 | natsort `e2328c2` | PASS | 1 | 0 | identical: 355 passed |
-| networkx `4e74880` | PASS | 67 | 350 | identical: 9282 passed, 58 skipped, 741 xfailed |
+| networkx `4e74880` | PASS | 67 | 352 | identical: 9282 passed, 58 skipped, 741 xfailed |
 | nox `fe27974` | PASS | 3 | 3 | identical: 906 passed, 47 skipped, 1 xpassed |
 | oauthlib `40b0ab5` | PASS | 22 | 22 | identical: 703 passed, 2 skipped, 21 subtests passed |
 | outcome `03ed621` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
 | packaging `10590c1` | PASS | 10 | 14 | identical: 62434 passed, 1 skipped, 427 deselected |
+| parsimonious `eb79639` | PASS | 3 | 3 | identical: 84 passed, 2 skipped |
 | parso `7f5b142` | PASS | 3 | 5 | identical: 1985 passed |
 | pathspec `f0fb3f4` | PASS | 6 | 2 | identical: 215 passed, 372 skipped, 280 subtests passed |
-| peewee `2866df2` | PASS | 1 | 99 | identical: OK (skipped=176) |
+| peewee `2866df2` | PASS | 1 | 107 | identical: OK (skipped=176) |
 | platformdirs `5921065` | PASS | 2 | 1 | identical: 1229 passed, 106 skipped |
 | pluggy `0a49741` | BROKEN_KNOWN | 3 | 0 | frame-relative: _verify_all_args_are_provided warns with stacklevel through the extracted helper |
+| prettytable `2a6cd4f` | PASS | 1 | 25 | identical: 338 passed |
 | pycodestyle `d6c3854` | NO_CHANGE | 0 | 1 | no proposal at the default minimum |
-| pyflakes `52cb729` | PASS | 10 | 110 | identical: 748 passed, 25 skipped |
+| pyflakes `52cb729` | PASS | 10 | 111 | identical: 748 passed, 25 skipped |
 | pygments `38f426a` | PASS | 45 | 89 | identical: 5330 passed, 16 skipped |
 | pyjwt `b9f6a9d` | PASS | 2 | 3 | identical: 456 passed, 4 skipped |
 | pyparsing `efd56db` | PASS | 5 | 12 | identical: 2140 passed, 27 skipped, 2041 subtests passed |
+| pyrsistent `0c0b7ae` | PASS | 4 | 1 | identical: 536 passed, 102 skipped |
 | pytest `53bc06b` | PASS | 16 | 32 | identical: 1 failed, 4515 passed, 126 skipped, 12 xfailed, 1 xpassed, 1 error |
 | python-dateutil `48bd1af` | PASS | 6 | 12 | identical: 41 failed, 1991 passed, 47 skipped, 17 xfailed |
-| python-prompt-toolkit `583b341` | PASS | 27 | 298 | identical: 156 passed |
+| python-prompt-toolkit `583b341` | PASS | 27 | 297 | identical: 156 passed |
 | python-slugify `fee5aa3` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
-| rich `9d8f9a3` | PASS | 15 | 61 | identical: 8 failed, 948 passed, 25 skipped |
+| rich `9d8f9a3` | PASS | 15 | 62 | identical: 8 failed, 948 passed, 25 skipped |
 | schema `310a123` | PASS | 1 | 1 | identical: 124 passed |
 | six `c8e3940` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
 | sniffio `6996e05` | PASS | 1 | 0 | identical: 3 passed, 1 skipped |
 | sortedcontainers `3ac3586` | PASS | 2 | 21 | identical: 366 passed |
-| sphinx `e44a40e` | PASS | 96 | 2444 | identical: 7 failed, 2383 passed, 35 skipped |
+| sphinx `e44a40e` | PASS | 96 | 2513 | identical: 7 failed, 2383 passed, 35 skipped |
 | sqlparse `60cdc64` | PASS | 2 | 2 | identical: 506 passed, 2 xfailed, 1 xpassed |
 | starlette `03f12b7` | PASS | 5 | 5 | identical: 1249 passed, 2 xfailed |
 | structlog `73393f3` | PASS | 6 | 3 | identical: 4 failed, 880 passed, 37 skipped |
@@ -180,8 +191,8 @@ JSON, and all logs are archived with the release evidence.
 | tenacity `3e58094` | PASS | 2 | 1 | identical: 183 passed, 1 skipped, 15 subtests passed |
 | tomli `5a77b12` | PASS | 1 | 1 | identical: 17 passed, 1 skipped, 744 subtests passed |
 | tomlkit `4b38bec` | PASS | 6 | 19 | identical: 1058 passed |
-| toolz `568c2b8` | PASS | 5 | 39 | identical: 1 failed, 185 passed |
-| tornado `7ed8156` | PASS | 40 | 379 | identical: 1173 passed, 157 skipped, 86 subtests passed |
+| toolz `568c2b8` | PASS | 5 | 40 | identical: 1 failed, 185 passed |
+| tornado `7ed8156` | PASS | 40 | 380 | identical: 1173 passed, 157 skipped, 86 subtests passed |
 | tqdm `9cf5a12` | PASS | 8 | 5 | identical: 168 passed, 11 skipped |
 | trio `59d94d7` | PASS | 37 | 158 | identical: 9 failed, 536 passed, 62 skipped, 1 xfailed |
 | typer `a80f6e5` | PASS | 5 | 27 | identical: 409 failed, 956 passed, 35 skipped, 2 xfailed |
@@ -191,7 +202,7 @@ JSON, and all logs are archived with the release evidence.
 | werkzeug `6a604e0` | PASS | 15 | 15 | identical: 1024 passed |
 | wrapt `f1586a5` | PASS | 5 | 4 | identical: 1 failed, 1222 passed, 8 skipped |
 | xmltodict `6e29fba` | NO_CHANGE | 0 | 0 | no proposal at the default minimum |
-Totals: PASS 66, NO_CHANGE 12, BROKEN_KNOWN 3, and no project unsupported,
+Totals: PASS 75, NO_CHANGE 13, BROKEN_KNOWN 3, and no project unsupported,
 broken, crashed, or timed out. A `BROKEN_KNOWN` verdict requires
 every newly failing test to match a failure the manifest names, so a
 documented limitation cannot hide an unrelated regression; the three are
@@ -201,12 +212,13 @@ named source files). Suites that already failed before transformation
 (attrs, python-dateutil, toolz, wcwidth, wrapt) fail identically after it;
 those failures are missing package metadata or environment-specific.
 
-The corpus is 81 projects: 39 libraries from the first batch, 20 larger
-or application-shaped projects added on September 13, 2026, and 22 more on
-September 14 (oauthlib, parso, rich, typer, structlog, cattrs, isort, PyJWT,
-xmltodict, arrow, six, tornado, trio, h11, jmespath, dpath, loguru,
-DeepDiff, MarkupSafe, sniffio, outcome, Mako). The September 13 batch was:
-Flask,
+The corpus is 91 projects: 39 libraries from the first batch, 20 larger
+or application-shaped projects added on September 13, 2026, and 32 more on
+September 14 in three batches (oauthlib, parso, rich, typer, structlog,
+cattrs, isort, PyJWT, xmltodict, arrow, six, tornado, trio, h11, jmespath,
+dpath, loguru, DeepDiff, MarkupSafe, sniffio, outcome, Mako, html5lib,
+bleach, feedparser, Cerberus, croniter, PrettyTable, parsimonious,
+inflection, pyrsistent, jsonpatch). The September 13 batch was: Flask,
 Werkzeug, httpx, Starlette, anyio, jsonschema, virtualenv, nox, Markdown,
 tqdm, lark, peewee, prompt_toolkit, astroid, networkx (refactored without
 its 77,000 lines of tests, `exclude = ["tests"]`), pytest, Sphinx, Black,
@@ -237,7 +249,10 @@ batch of ten (trio through Mako) found no engine defect, the first clean
 batch; the harness also gained a rerun of any test whose result differs
 between the two trees, which reclassifies a flaky difference as a pass, and it
 now ignores the pytest warning tally, which shifts with line numbers rather
-than test outcomes.
+than test outcomes. A third batch of ten (html5lib, bleach, feedparser,
+Cerberus, croniter, PrettyTable, parsimonious, inflection, pyrsistent,
+jsonpatch) was also clean, so two consecutive batches of previously unseen
+projects found no defect and the stopping rule is met.
 
 ## Verification gates on the final tree
 
@@ -267,7 +282,7 @@ than test outcomes.
   eagerly when the helper evaluates it first, once, and unconditionally,
   which covers the common `x = E` opening; thunks used repeatedly or after
   an effect stay deferred. The `rename-helpers` workflow can name the rest.
-- The ecosystem corpus is 81 projects; the largest, networkx and Sphinx,
+- The ecosystem corpus is 91 projects; the largest, networkx and Sphinx,
   are refactored within hours-long budgets. No measurement yet says how
   much of each transformed block its suite exercises. A stopping rule for
   claiming unattended use would be a fixed run of new projects with no new
