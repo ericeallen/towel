@@ -94,7 +94,12 @@ def test_global_and_local_with_same_spelling_are_not_conflated(tmp_path: Path) -
     path = tmp_path / "example.py"
     body = "    x = value + 1\n    y = x * 2\n    z = y + 3\n    return z\n"
     path.write_text("value = 10\ndef first():\n" + body + "def second(value):\n" + body)
-    assert UnificationRefactorEngine().analyze_file(str(path)) == []
+    # min_lines=4 makes the whole four-line block the only candidate; that block
+    # reads ``value``, which is a module global in ``first`` and a parameter in
+    # ``second``, so it must not be extracted. (At the default three-line minimum
+    # the engine instead extracts the trailing ``y = x * 2; z = y + 3; return z``,
+    # which never reads ``value`` and is safe -- a different, valid proposal.)
+    assert UnificationRefactorEngine(min_lines=4).analyze_file(str(path)) == []
 
 
 def test_cross_file_global_declarations_are_not_relocated(tmp_path: Path) -> None:

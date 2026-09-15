@@ -123,7 +123,7 @@ from .visitors import (
 
 # Configuration defaults
 DEFAULT_MAX_PARAMETERS = 5
-DEFAULT_MIN_LINES = 4
+DEFAULT_MIN_LINES = 3
 DEFAULT_SIMILARITY_THRESHOLD = 0.6
 DEFAULT_MAX_ITERATIONS = 0  # Unlimited
 
@@ -303,7 +303,7 @@ class UnificationRefactorEngine:
 
         Args:
             max_parameters: Maximum parameters for extracted functions (default: 5)
-            min_lines: Minimum lines for a code block (default: 4)
+            min_lines: Minimum lines for a code block (default: 3)
             parameterize_constants: Whether to parameterize differing constants
         """
         self.analysis_session = AnalysisSession()
