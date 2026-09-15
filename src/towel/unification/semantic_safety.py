@@ -132,6 +132,76 @@ def has_comprehension_assignment(nodes: Iterable[ast.AST]) -> bool:
     )
 
 
+# Attributes and callees whose behavior depends on the call stack, the active
+# traceback, or a module's own source text. Moving code into a helper adds a
+# frame and shifts line numbers, so a program that reads any of these can
+# observe the refactoring even when its result is unchanged. These power the
+# pre-run warning; they are names to look for, not a guarantee of breakage.
+_FRAME_SENSITIVE_ATTRS = frozenset(
+    {
+        "f_back",
+        "f_locals",
+        "f_globals",
+        "f_lineno",
+        "f_code",
+        "tb_frame",
+        "tb_next",
+        "tb_lineno",
+        "__traceback__",
+    }
+)
+_FRAME_SENSITIVE_CALLEES = frozenset(
+    {
+        "_getframe",
+        "currentframe",
+        "stack",
+        "getouterframes",
+        "getframeinfo",
+        "extract_stack",
+        "print_stack",
+        "extract_tb",
+        "walk_tb",
+        "walk_stack",
+        "format_exc",
+        "format_stack",
+        "print_exc",
+    }
+)
+_SOURCE_OBSERVING_CALLEES = frozenset(
+    {"getsource", "getsourcelines", "getsourcefile", "findsource", "getframeinfo"}
+)
+
+
+def frame_sensitivity_markers(source: str) -> FrozenSet[str]:
+    """Frame-, traceback-, and source-observing constructs a module contains.
+
+    A module in the returned-empty case is not proof of safety; a callee that
+    inspects frames internally is invisible here. This exists to warn a person
+    which files to review, not to decide any single extraction.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return frozenset()
+    markers: Set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if node.attr in _FRAME_SENSITIVE_ATTRS:
+                markers.add("frame")
+            if node.attr == "__traceback__":
+                markers.add("traceback")
+        elif isinstance(node, ast.Call):
+            callee = node.func
+            name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+            if name == "warn" and any(kw.arg == "stacklevel" for kw in node.keywords):
+                markers.add("stacklevel-warning")
+            if name in _FRAME_SENSITIVE_CALLEES:
+                markers.add("frame")
+            if name in _SOURCE_OBSERVING_CALLEES:
+                markers.add("source")
+    return frozenset(markers)
+
+
 def requires_original_frame(nodes: Iterable[ast.AST]) -> bool:
     """Reject suspension and operations that inspect the original call frame.
 

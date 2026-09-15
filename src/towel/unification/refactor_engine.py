@@ -88,6 +88,7 @@ from .assignment_analyzer import (
 )
 from .project_layout import ProjectLayout
 from .semantic_safety import (
+    frame_sensitivity_markers,
     imported_definition_sites,
     nested_bindings_escape,
     uses_class_private_names,
@@ -3884,6 +3885,51 @@ class UnificationRefactorEngine:
 
         return current_code, num_applied, descriptions
 
+    _FRAME_SENSITIVE_DESCRIPTION = {
+        "frame": "inspect call frames",
+        "traceback": "read exception tracebacks",
+        "stacklevel-warning": "attribute warnings to a caller's frame",
+        "source": "read Python source text",
+    }
+
+    def _warn_about_frame_sensitive_files(self, directory: str) -> None:
+        """Warn that some modules observe frames, tracebacks, or their own source.
+
+        Extraction adds a helper frame and shifts line numbers, so a program
+        that reads any of these can observe the change even when the result it
+        computes is unchanged (pluggy attributes a warning through the new
+        frame, lark's standalone tool copies marked source regions, glom and
+        rich assert on rendered tracebacks). The scan names files to review;
+        it is not a proof of breakage, and a callee that inspects frames
+        internally is invisible to it. Emitted on stderr like any diagnostic.
+        """
+        flagged: List[Tuple[str, FrozenSet[str]]] = []
+        for path in self._find_python_files(directory):
+            try:
+                markers = frame_sensitivity_markers(Path(path).read_text(encoding="utf-8"))
+            except OSError:
+                continue
+            if markers:
+                flagged.append((path, markers))
+        if not flagged:
+            return
+        kinds = sorted({m for _path, markers in flagged for m in markers})
+        described = ", ".join(self._FRAME_SENSITIVE_DESCRIPTION.get(k, k) for k in kinds)
+        directory_root = Path(directory)
+        print(
+            f"warning: {len(flagged)} module(s) in this project {described}; a "
+            "transformation that adds a helper frame or shifts line numbers may "
+            "change their observable behavior even when it preserves the "
+            "program's result. Review these files' diffs or pass --exclude:",
+            file=sys.stderr,
+        )
+        for path, markers in sorted(flagged):
+            try:
+                shown = str(Path(path).relative_to(directory_root))
+            except ValueError:
+                shown = path
+            print(f"    {shown} ({', '.join(sorted(markers))})", file=sys.stderr)
+
     def refactor_directory_to_fixed_point(
         self,
         input_dir: str,
@@ -3934,6 +3980,8 @@ class UnificationRefactorEngine:
             copy_project(input_path, output_path, allow_empty=True)
         elif not output_path.is_dir():
             raise ValueError("Input directory does not exist")
+
+        self._warn_about_frame_sensitive_files(output_dir)
 
         # Aggregate results per file
         results: Dict[str, Tuple[int, List[str]]] = {}

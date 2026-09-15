@@ -57,6 +57,15 @@ frames, names, or source.
   `warnings.warn(stacklevel=...)` or inspects the stack sees one more frame.
   Only direct calls in the block are detected; pluggy's argument validation
   is the documented example in the ecosystem check.
+- **Pre-run warning for frame- and source-observing modules.** Because a
+  callee's frame use is invisible to the per-block guard, directory mode scans
+  every module first and prints a stderr warning naming the files that inspect
+  call frames or tracebacks, attribute warnings by `stacklevel`, or read Python
+  source (`inspect.getsource`). The warning says to review those diffs or
+  `--exclude` them; it names files to check, not a proof of breakage, and does
+  not catch a module that reads a sibling's source through a plain `open` of a
+  `__file__`-relative path (lark's standalone generator), which stays a
+  documented `BROKEN_KNOWN` case.
 - **Reflection and dynamic rebinding.** Code that rebinds module globals or
   closure cells through `globals()[...]`, `setattr(module, ...)`, `exec`, or
   from another thread between two reads inside a block is outside the model.
