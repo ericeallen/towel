@@ -48,24 +48,43 @@ frames, names, or source.
 
 ## Observable differences that remain
 
-- **Tracebacks, `warnings.warn(stacklevel=...)`, and frame inspection.** A
-  helper adds a frame. Code that inspects `sys._getframe`, walks tracebacks, or
-  relies on `stacklevel` to attribute a warning to a specific caller will see
-  the helper instead. Only direct calls to the frame-sensitive builtins listed
-  above are rejected; aliased or indirect inspection is not detected.
-- **Frame-relative callees.** A called function that itself uses
-  `warnings.warn(stacklevel=...)` or inspects the stack sees one more frame.
-  Only direct calls in the block are detected; pluggy's argument validation
-  is the documented example in the ecosystem check.
-- **Pre-run warning for frame- and source-observing modules.** Because a
-  callee's frame use is invisible to the per-block guard, directory mode scans
-  every module first and prints a stderr warning naming the files that inspect
-  call frames or tracebacks, attribute warnings by `stacklevel`, or read Python
-  source (`inspect.getsource`). The warning says to review those diffs or
-  `--exclude` them; it names files to check, not a proof of breakage, and does
-  not catch a module that reads a sibling's source through a plain `open` of a
-  `__file__`-relative path (lark's standalone generator), which stays a
-  documented `BROKEN_KNOWN` case.
+Some behavior is outside any static model: a program that reads its own call
+stack, the active traceback, or its own source can observe that a helper adds
+a frame or shifts line numbers, even though the value the program computes is
+unchanged. Towel handles this in three layers, and it is worth being explicit
+about where each one stops.
+
+- **Rejected outright.** A block that *itself* contains generator or async
+  suspension, `locals()`/`globals()`/`vars()`/`super()` with no arguments,
+  `eval`/`exec`, direct frame or stack inspection (`sys._getframe`,
+  `inspect.stack`, and the like), or `warnings.warn(..., stacklevel=...)` is
+  never extracted. This is exact for constructs written directly in the block.
+- **Warned before the run.** Directory mode scans every module first and prints
+  a stderr warning naming the files that inspect frames or tracebacks,
+  attribute warnings by `stacklevel`, or read source through
+  `inspect.getsource`. This catches frame sensitivity that a call chain hides
+  from the block-level guard, such as pluggy's argument validation, where the
+  extracted block calls a function that warns with `stacklevel`. The warning
+  tells you which diffs to review or `--exclude`; it is a pointer, not a proof
+  of breakage.
+- **Not detected, and therefore silent.** Three kinds of frame or source
+  sensitivity are outside both the guard and the warning, and are documented
+  `BROKEN_KNOWN` cases in the ecosystem check rather than things Towel can flag:
+  a module that reads a *sibling's* source as text through a plain `open` of a
+  `__file__`-relative path and copies regions of it (lark's standalone parser
+  generator); a *caller or test* that asserts on the exact frames or text of a
+  traceback the refactored code raises normally (glom and rich assert on
+  rendered tracebacks); and a plain `warnings.warn` with no `stacklevel`, whose
+  once-per-location deduplication is keyed on the line number, so moving code
+  can change how many warnings a run reports without changing any test result.
+  None of these can be distinguished statically from safe code that does the
+  same thing (a linter also opens `.py` files; every library raises
+  exceptions), so Towel does not warn on them to avoid a flood of false
+  positives. Review the diff and run the tests, as with any refactoring.
+
+The remaining entries are other kinds of dynamic behavior that no scan
+addresses:
+
 - **Reflection and dynamic rebinding.** Code that rebinds module globals or
   closure cells through `globals()[...]`, `setattr(module, ...)`, `exec`, or
   from another thread between two reads inside a block is outside the model.
@@ -164,9 +183,8 @@ tractable, all exact: they change no proposal.
   fork time, an estimate rather than a guarantee: several simultaneous
   large runs on one machine should still set `TOWEL_WORKERS` low.
 
-Measured with the CLI defaults on September 13, 2026 (macOS, Python 3.13,
-single core unless stated), before and after this pass, with identical
-output in every case:
+Measured with the CLI defaults (macOS, Python 3.13, single core unless
+stated), before and after this pass, with identical output in every case:
 
 | Target | Before | After, one core | After, forking |
 |---|---|---|---|
@@ -181,3 +199,26 @@ similar methods remain the worst case. Progress is reported per phase.
 There is no time budget; interrupt with Ctrl-C, which leaves files
 unchanged. The ecosystem check applies a 30-minute limit per phase and
 reports `TIMEOUT`.
+
+## Resources and platform
+
+Towel runs on Python 3.11 to 3.13 on a POSIX system. Applying changes needs
+POSIX filesystem semantics. Parallel analysis uses the `fork` start method, so
+where `fork` is unavailable (Windows, or a non-`fork` start method) the tool
+runs correctly on a single core and produces the same output.
+
+One core suffices; more cores shorten a large analysis. Memory is the binding
+constraint on the largest projects. A single analysis process holds the parsed
+modules and its bounded caches: about 36 MB for one small module, 85 MB for
+boltons (24,000 lines), 103 MB for Click (29,000 lines), and 247 MB for
+pygments (137,000 lines), measured as peak resident size with
+`TOWEL_WORKERS=1`. Forking multiplies that: each worker is a copy-on-write fork
+whose caches then diverge, so peak memory scales with the worker count.
+networkx (200,000 lines, tests excluded) peaked at about 1 GB in one process
+with `TOWEL_WORKERS=1`, and near 7.4 GB across twenty processes when forking
+on an 18-core machine. The engine estimates the parent's resident
+size against physical memory at fork time and caps the workers at about a third
+of RAM, but that is an estimate, not a guarantee; on a memory-constrained
+machine, or when running several large refactorings at once, set
+`TOWEL_WORKERS` low. At `TOWEL_WORKERS=1` the footprint stays at the
+single-process figure above.

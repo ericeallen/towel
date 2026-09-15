@@ -2,11 +2,11 @@
 
 Towel finds repeated Python code using unification and proposes helper-function extractions.
 
-**Release status: 1.1.0.** Every accepted proposal is verified by instantiating the helper with each call's arguments and comparing the result with the block it replaces; arguments that could have observable effects or fresh identity are evaluated inside the helper at their original position. Seven public projects pass their full test suites before and after transformation under the defaults. Refactoring is still a change to your code: preview first, review the diff, and run your tests. [Known limitations](docs/KNOWN_LIMITATIONS.md) lists what is verified, what is rejected, and what remains outside the model; [the readiness report](docs/PRODUCTION_READINESS.md) records the evidence.
+**Release status: 1.1.0.** Every accepted proposal is verified by instantiating the helper with each call's arguments and comparing the result with the block it replaces; arguments that could have observable effects or fresh identity are evaluated inside the helper at their original position. A standing ecosystem check refactors 91 public projects and runs each one's own test suite before and after: 75 pass identically, 13 produce no proposal, and 3 differ only in documented frame-sensitive ways (see below). Refactoring is still a change to your code: preview first, review the diff, and run your tests. [Known limitations](docs/KNOWN_LIMITATIONS.md) lists what is verified, what is rejected, and what remains outside the model; [the readiness report](docs/PRODUCTION_READINESS.md) records the evidence.
 
 ## Install
 
-Python 3.11 is the minimum. The test matrix covers Python 3.11–3.13. Local verification runs on macOS; CI is configured for Linux. Filesystem application requires POSIX semantics. The runtime uses the standard library. Optional `tqdm` provides progress bars.
+The runtime uses only the standard library; optional `tqdm` provides progress bars. Platform, CPU, memory, and disk requirements are in [Requirements](#requirements) below.
 
 ```bash
 python -m pip install .
@@ -15,6 +15,32 @@ towel --help
 ```
 
 The commands below describe this checkout; previously published distributions may differ.
+
+## Requirements
+
+**Platform.** Python 3.11 to 3.13 on a POSIX system (macOS or Linux). Applying changes needs POSIX filesystem semantics. Parallel analysis uses the `fork` start method, so on Windows, or under any start method that is not `fork`, the tool runs on a single core; everything else works.
+
+**CPU.** One core is enough. The tool parallelizes a large analysis by forking one worker per core, which speeds up big projects but changes nothing about the result; `TOWEL_WORKERS=1` keeps it on one core and `TOWEL_WORKERS=N` caps the workers.
+
+**Memory.** A single analysis process holds the parsed modules and its caches: tens of megabytes for one file, about 250 MB for a 140,000-line project. Forking multiplies that by the worker count, because each worker starts as a copy-on-write fork whose caches then diverge; a 200,000-line project on an 18-core machine peaked near 7.4 GB across 20 processes. The tool estimates the parent's size against physical memory at fork time and caps the workers at roughly a third of RAM, but the estimate is not a guarantee. On a memory-constrained machine, or when running several large refactorings at once, set `TOWEL_WORKERS` low; at `TOWEL_WORKERS=1` the footprint stays at the single-process figure.
+
+**Disk.** In-place refactoring needs no extra space. Out-of-place refactoring first copies the whole project to the output directory. Recovery journals under `.towel-transaction-active` hold the original source bytes of a batch until you resolve it.
+
+## How long it takes
+
+There is no time budget; progress is reported per phase and Ctrl-C leaves the files unchanged. Cost is roughly quadratic in the number of similar candidate blocks per file, so a few large modules with many near-identical methods are the worst case, not total line count.
+
+Rough expectations with the defaults:
+
+| Scale | Example | Time |
+|---|---|---|
+| One module | a 2,000-line file | seconds |
+| Small package | boltons, 24,000 lines | about 5 s |
+| Medium package | Click, 29,000 lines | about 12 s |
+| Large package | pygments, 137,000 lines | tens of seconds |
+| Largest in the corpus | networkx and Sphinx, 150,000 to 200,000 lines | several minutes to tens of minutes |
+
+The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-analyzes the whole project after each applied change; the ecosystem check gives them extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine.
 
 ## Use
 
@@ -50,19 +76,30 @@ The refactoring pipeline preserves the original Python operators. The legacy `as
 
 Dynamic imports, reflection, arbitrary callbacks, runtime rebinding, metaclasses, and external side effects limit what can be established statically. Each engine owns a bounded analysis session with content checks and isolated AST snapshots. The test import-isolation harness and an individual engine instance require sequential use. Candidates involving detected namespace rebinding, frame inspection, or comprehension assignment expressions are rejected; opaque external reflection and rebinding remain outside the supported model.
 
-## Helper names
+## Naming the helpers with an LLM
 
-Generated names are deliberately meaningless: `__extracted_func_3`, `__param_0`. Naming them is a separate step designed to be driven by a coding assistant.
+Towel deliberately generates meaningless names, `__extracted_func_3` and `__param_0`, and leaves the naming to a separate, review-first step. Extraction is a verified mechanical transformation; choosing a good name is a judgment call, so the two are kept apart. The intended workflow hands the naming to a coding assistant, because the assistant reads far better names out of the call sites than any heuristic, and you review its choices before they touch the code.
+
+The round trip is: extract, export an inventory, let the LLM propose names, apply them as one checked batch, and re-run your tests.
 
 ```bash
+# 1. Extract with placeholder names, then export the inventory the LLM reads.
+towel dry path/to/project path/to/cleaned --non-interactive
 towel rename-helpers path/to/cleaned --list --json > helpers.json
+
+# 2. Have the assistant read helpers.json and write renames.json:
+#    a mapping from each inventory key to the name it chose.
+
+# 3. Preview the batch, then apply it, then re-run your tests.
 towel rename-helpers path/to/cleaned --rename-file renames.json --dry-run
 towel rename-helpers path/to/cleaned --rename-file renames.json
 ```
 
-The JSON inventory lists every helper with its scope, source, call sites, and parameters. Each parameter carries its evaluation kind (`value`, `thunk`, `lifted`, `receiver`) and the argument expressions bound to it at every call site, which is what a good name is derived from. Each entry also carries the exact mapping keys: `"path.py:helper"` renames a module-level helper together with its importers, `"helper"` renames a unique class-level helper together with every attribute reference, and `"path.py:helper.__param_0"` renames a parameter within the helper's scope. A mapping is applied as one batch; a collision, a mangled name, or a dynamic reference aborts the whole batch with the reason.
+The JSON inventory gives the assistant what it needs to name well: every helper with its scope, source, and call sites, and for each parameter its evaluation kind (`value`, `thunk`, `lifted`, `receiver`) and the actual argument expressions passed at every call site. A parameter that always receives `user.email` and `account.email` should become `email`, and the argument expressions are how the assistant sees that.
 
-The shared `towel-rename` skill (in the agent-skills repository) walks an assistant through extract, review, name, and re-test. The interactive prompt mode remains available and does not call any LLM service.
+Each inventory entry carries the exact mapping key to use as a rename target: `"path.py:helper"` renames a module-level helper together with its importers, `"helper"` renames a unique class-level helper together with every attribute reference, and `"path.py:helper.__param_0"` renames a parameter within the helper's scope. The rename is applied as one atomic batch with scope and importer checks; a name collision, a mangled name, or a dynamic reference aborts the whole batch and reports the reason, so a bad suggestion changes nothing. `--dry-run` reports the same JSON without writing.
+
+The shared `towel-rename` skill (in the agent-skills repository) walks an assistant through the whole loop: extract, review the diff, name, apply, and re-test. An interactive prompt mode is also available for naming by hand, and it calls no LLM service.
 
 ## Development and verification
 

@@ -104,10 +104,13 @@ Flit projects were refused. Those are the consumer-found defects above.
 `scripts/ecosystem_check.py` (run as `just ecosystem`, and weekly in CI)
 clones each project in `scripts/ecosystem/manifest.toml`, runs its suite,
 refactors a copy with the CLI defaults, runs the suite again, and compares
-exit status and the normalized summary line. The table is the final run on
-commit `539669cb3f88`, macOS, Python 3.13, September 14, 2026, three
-projects at a time with two forked workers each; the report, per-project
-JSON, and all logs are archived with the release evidence.
+exit status and the normalized test outcomes, ignoring the warning tally,
+and reruns any test whose result differs to tell a flaky difference from a
+regression. The table is the final run on commit `a00511e0e0e0`, macOS,
+Python 3.13, September 15, 2026, three projects at a time with two forked
+workers each; the report, per-project JSON, and all logs are archived with
+the release evidence. Platform and resource requirements are in
+[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#resources-and-platform).
 
 | Project (revision) | Verdict | Files changed | Refactor s | Suite |
 |---|---|---|---|---|
