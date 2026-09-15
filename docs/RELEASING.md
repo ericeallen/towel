@@ -1,6 +1,6 @@
 # Preparing a release
 
-The proposed next release is `1.1.0`, the first release after the production-readiness pass recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). Preparing artifacts does not authorize uploading them, changing repository visibility, creating remote tags, or contacting users. Publication is a separate maintainer decision.
+The proposed next release is `1.414`, the first release after the production-readiness pass recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). Preparing artifacts does not authorize uploading them, changing repository visibility, creating remote tags, or contacting users. Publication is a separate maintainer decision.
 
 ## Recorded release history
 

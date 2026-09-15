@@ -1,6 +1,7 @@
 ## 2026-09-15
 
-- Version: 1.1.0
+- Version: 1.414
+- Development status: Beta (PyPI classifier `4 - Beta`)
 - Commit: (this branch, `audit/open-source-2026-09-12`)
 - Summary:
   - Soundness: every accepted proposal is verified by instantiating the helper with each call's arguments and comparing with the replaced block up to renamed binders; arguments that are not names, literals, or containers of those are passed as thunks evaluated at the original position.

@@ -1,4 +1,4 @@
-# Production readiness — 1.1.0
+# Production readiness — 1.414
 
 **Disposition: ready for production use as a reviewed refactoring tool.**
 Every accepted proposal is checked by a syntactic instantiation invariant,
@@ -277,7 +277,7 @@ projects found no defect and the stopping rule is met.
 
 - Hosted Linux CI has not run; the workflow is unchanged and local runs are
   macOS. Run it against the published commit before citing it.
-- No wheel or source distribution was rebuilt for 1.1.0; `just release 1.1.0`
+- No wheel or source distribution was rebuilt for 1.414; `just release 1.414`
   prepares them and the maintainer approves hashes.
 - Security support policy, confidential reporting channel, and repository
   visibility remain maintainer decisions recorded in RELEASING.md.
@@ -287,7 +287,9 @@ projects found no defect and the stopping rule is met.
   an effect stay deferred. The `rename-helpers` workflow can name the rest.
 - The ecosystem corpus is 91 projects; the largest, networkx and Sphinx,
   are refactored within hours-long budgets. No measurement yet says how
-  much of each transformed block its suite exercises. A stopping rule for
-  claiming unattended use would be a fixed run of new projects with no new
-  defect class; the second batch of 20 found eleven, so that count restarts
-  at zero with the next additions.
+  much of each transformed block its suite exercises. The stopping rule for
+  calling the pass rate stable was two consecutive batches of ten previously
+  unseen projects with no new engine defect; the fourth and fifth batches
+  (September 14–15) each met it, after the first three batches found defects.
+  That is stability on the sampled corpus, not a guarantee for an arbitrary
+  project, which is why unattended use is still not claimed.
