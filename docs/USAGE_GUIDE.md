@@ -1,5 +1,7 @@
 # Towel - Usage Guide
 
+> **Supplementary API guide.** A how-to for the `UnificationRefactorEngine` API. The maintained overview and CLI workflow are in the [README](../README.md); current limitations are in [docs/KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
 ## Quick Start
 
 There are three ways to use Towel, the unification-based code refactoring tool:

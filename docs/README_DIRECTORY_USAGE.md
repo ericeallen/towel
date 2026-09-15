@@ -1,5 +1,7 @@
 # How to Analyze a Whole Directory
 
+> **Supplementary API guide.** A how-to for the `UnificationRefactorEngine` API. The maintained overview and CLI workflow are in the [README](../README.md); current limitations are in [docs/KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
 ## TL;DR
 
 ```python

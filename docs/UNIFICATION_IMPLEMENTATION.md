@@ -1,5 +1,7 @@
 # Towel - Unification-Based Implementation
 
+> **Historical development note.** Written during development (2024–2025) and kept for provenance. It may describe superseded behavior, and its counts and status are from the period. The maintained references are [docs/ARCHITECTURE.md](ARCHITECTURE.md), [docs/KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), and the [README](../README.md).
+
 ## Overview
 
 Towel implements a unification-based approach to detect and refactor duplicate code in Python. This uses a principled method based on unification algorithms from automated theorem proving. The tool performs hygienic code generation and preserves referential transparency. All 175 refactoring proposals pass observational equivalence testing across comprehensive test cases.

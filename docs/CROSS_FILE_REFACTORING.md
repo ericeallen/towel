@@ -1,5 +1,7 @@
 # Cross-File Refactoring - Implementation Complete
 
+> **Historical development note.** Written during development (2024–2025) and kept for provenance. It may describe superseded behavior, and its counts and status are from the period. The maintained references are [docs/ARCHITECTURE.md](ARCHITECTURE.md), [docs/KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), and the [README](../README.md).
+
 ## Problem Statement
 
 When analyzing `example3_file1.py` and `example3_file2.py` separately, the tool would extract the same duplicate function in BOTH files, creating duplicate extracted functions. This is not what we want - the extracted function should be defined in only one place and imported by the other file.

@@ -1,5 +1,7 @@
 # Bug Handoff - Cross-File Import Path Generation Issue
 
+> **Resolved and superseded.** This December 2025 handoff describes a cross-file import-path bug that has since been fixed and is covered by the cross-file hostile battery and [docs/ADVERSARIAL_REVIEW.md](ADVERSARIAL_REVIEW.md). Kept for provenance; it is not an open issue.
+
 **Date**: December 3, 2025
 **Status**: CRITICAL - All PyPI versions yanked
 **Affected Versions**: 1.0.3, 1.0.4 (and potentially earlier)

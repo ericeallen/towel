@@ -1,6 +1,19 @@
 # Known Issues
 
-This document tracks **critical bugs** discovered through observational equivalence testing.
+> **Historical.** This file is the early (2024–2025) bug log from the tool's
+> observational-equivalence testing. **Every issue listed here is resolved.**
+> It is kept for provenance. The variable-capture and related name-safety
+> defects are fixed: every accepted proposal is now verified by instantiating
+> the helper with each call site's arguments and comparing against the block it
+> replaces (see [docs/ADVERSARIAL_REVIEW.md](docs/ADVERSARIAL_REVIEW.md)). For
+> the current, maintained list of what the tool verifies, rejects, and leaves
+> outside its model, see [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md),
+> and for the current disposition see
+> [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). The test and
+> project counts below are from the period and do not reflect the current
+> suite (1,257 tests) or corpus (91 projects).
+
+This document tracks **critical bugs** discovered through observational equivalence testing. All of them have since been fixed; see the banner above.
 
 ## Fixed Issues
 
@@ -156,11 +169,11 @@ All 125 tests continue to pass after this fix.
 
 ---
 
-## Outstanding Bugs
+## Formerly Outstanding Bugs (all since fixed)
 
 ### 3. Variable Capture Bug
 
-**Status**: 🔴 CRITICAL - Wrong variables used (UNFIXED)
+**Status**: ✅ FIXED - lifted parameters keep each call site's own names, and the instantiation check would reject any proposal that did not
 
 **Discovery**: Found via `test_example1_simple_observational_equivalence`
 
@@ -223,15 +236,15 @@ def process_admin_data(admin_id):
 
 1. ✅ **Sequential corruption bug**: FIXED - Now uses fixed-point iteration
 2. ✅ **Variable shadowing bug**: FIXED - Binding occurrences now preserved
-3. 🔴 **Variable capture bug**: Makes refactored code incorrect but at least fails quickly (UNFIXED)
+3. ✅ **Variable capture bug**: FIXED - each call site passes its own names; the per-proposal instantiation check gates against any capture
 
-The tool is **significantly safer** than before, but still cannot be used in production until the variable capture bug is fixed.
+All three bugs listed here are fixed. The current disposition is in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md): usable as a reviewed refactoring tool, not for unattended use.
 
 ## Recommendations
 
 ### Immediate
 
-1. **Do not use for production code** until the variable capture bug is fixed
+1. Historical note: at the time, production use was advised against until the variable capture bug was fixed; it has since been fixed and verified
 2. **Always run observational equivalence tests** on output
 3. **Review generated function calls** for incorrect variable names
 

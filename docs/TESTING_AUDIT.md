@@ -1,5 +1,7 @@
 # Comprehensive Testing Audit
 
+> **Historical development note.** Written during development (2024–2025) and kept for provenance. It may describe superseded behavior, and its counts and status are from the period. The maintained references are [docs/ARCHITECTURE.md](ARCHITECTURE.md), [docs/KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), and the [README](../README.md).
+
 ## 1. Builtin Identifiers Coverage
 
 ### Currently Covered (57 items)

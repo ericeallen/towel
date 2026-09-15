@@ -1,4 +1,6 @@
-# Adversarial review — alpha release candidate
+# Adversarial review
+
+A cumulative log of adversarial counterexamples and their repairs, across the September 2026 audit rounds. Each row is now covered by a fixture and, where noted, by the ecosystem check.
 
 The review used executable counterexamples, independent agents, fault injection, consumer projects' own tests, and repeated transformations. Passing evidence establishes the tested cases, not universal equivalence of arbitrary Python programs.
 
@@ -42,13 +44,13 @@ Candidate blocks/signatures are computed once per function and shared by pairing
 
 Profiling the new rebinding guard exposed repeated module scans consuming 94.3% of one fixture analysis. A frozen analyzer-owned hazard summary reduced that same profiled analysis from 97.446 seconds to 6.153 seconds, preserving all 30 proposals and all 446 checked block decisions. The semantic battery also passes after this optimization.
 
-Every engine owns a bounded analysis session. Cached module/scope/function graphs are private; returned graphs are isolated copies. Content checks defeat same-size/same-mtime edits. Tests cover cache capacity, source-byte budget, working-directory changes, independent engines, invalidation, and mutation poisoning. Each engine and the import-testing harness require sequential use.
+Every engine owns a bounded analysis session. Cached module/scope/function graphs are shared by reference and treated as read-only; `TOWEL_CHECK_AST_IMMUTABLE=1` verifies on every reuse that analysis left the AST unchanged. Content checks defeat same-size/same-mtime edits. Tests cover cache capacity, source-byte budget, working-directory changes, independent engines, invalidation, and mutation poisoning. Each engine and the import-testing harness require sequential use.
 
 Before the rebinding-summary optimization, a large More-itertools module produced thousands of expensive unification candidates and an estimated analysis time above twenty minutes. That exploratory analysis was stopped before writing. The qualifying consumer run refactored a smaller module and ran the consumer's full test suite. Large-project scalability remains a limitation, even with faster candidate generation.
 
 ## Final verification
 
-Final interpreter, consumer, artifact, and scan results are recorded in [the readiness report](OPEN_SOURCE_AUDIT.md). Evidence files preserve the commands, counts, source manifests, and original counterexample paths. No claim of production stability or universal preservation is made.
+Final interpreter, consumer, artifact, and scan results for that round are recorded in the [historical alpha audit](OPEN_SOURCE_AUDIT.md); the current disposition and evidence are in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). Evidence files preserve the commands, counts, source manifests, and original counterexample paths. No claim of production stability or universal preservation is made.
 
 The final concurrent interpreter matrix exposed a test isolation defect: regression copies shared the system temporary parent and therefore its transaction lock. Each stability run now uses a private temporary directory; the runtime correctly rejected the conflicting writer.
 

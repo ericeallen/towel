@@ -1,5 +1,7 @@
 # Troubleshooting Guide
 
+> **Supplementary API guide.** A how-to for the `UnificationRefactorEngine` API. The maintained overview and CLI workflow are in the [README](../README.md); current limitations are in [docs/KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
 ## Common Issues and Solutions
 
 ### IndexError: list index out of range
