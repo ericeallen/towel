@@ -103,3 +103,8 @@ docs/docs_local/
 # Temporary debug files
 *.txt
 !requirements.txt
+
+# Local task/scratch state (not part of the project)
+.todo/
+.todo_list
+mytmp
