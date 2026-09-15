@@ -566,3 +566,78 @@ url = "https://github.com/tornadoweb/tornado.git"
 rev = "HEAD"
 package = "tornado"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tornado/test"]
+
+[[project]]
+name = "trio"
+url = "https://github.com/python-trio/trio.git"
+rev = "HEAD"
+package = "src/trio"
+pythonpath = "src"
+deps = ["attrs", "sortedcontainers", "idna", "outcome", "sniffio", "trustme", "pytest-trio", "exceptiongroup", "astor", "pyopenssl", "pyyaml", "jedi", "isort"]
+install = true
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "src/trio/_tests"]
+
+[[project]]
+name = "h11"
+url = "https://github.com/python-hyper/h11.git"
+rev = "HEAD"
+package = "h11"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "h11/tests"]
+
+[[project]]
+name = "jmespath"
+url = "https://github.com/jmespath/jmespath.py.git"
+rev = "HEAD"
+package = "jmespath"
+deps = ["hypothesis"]
+
+[[project]]
+name = "dpath"
+url = "https://github.com/dpath-maintainers/dpath-python.git"
+rev = "HEAD"
+package = "dpath"
+deps = ["hypothesis", "nose2"]
+
+[[project]]
+name = "loguru"
+url = "https://github.com/Delgan/loguru.git"
+rev = "HEAD"
+package = "loguru"
+deps = ["freezegun", "pytest-mock", "colorama"]
+
+[[project]]
+name = "deepdiff"
+url = "https://github.com/seperman/deepdiff.git"
+rev = "HEAD"
+package = "deepdiff"
+deps = ["cachebox", "orderly-set", "numpy", "python-dateutil", "pyyaml", "tomli-w", "click", "pydantic", "pytz", "orjson", "uuid6"]
+
+[[project]]
+name = "markupsafe"
+url = "https://github.com/pallets/markupsafe.git"
+rev = "HEAD"
+package = "src/markupsafe"
+pythonpath = "src"
+
+[[project]]
+name = "sniffio"
+url = "https://github.com/python-trio/sniffio.git"
+rev = "HEAD"
+package = "sniffio"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "sniffio/_tests"]
+
+[[project]]
+name = "outcome"
+url = "https://github.com/python-trio/outcome.git"
+rev = "HEAD"
+package = "src/outcome"
+pythonpath = "src"
+deps = ["attrs"]
+
+[[project]]
+name = "mako"
+url = "https://github.com/sqlalchemy/mako.git"
+rev = "HEAD"
+package = "mako"
+deps = ["markupsafe"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
