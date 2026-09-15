@@ -641,3 +641,80 @@ rev = "HEAD"
 package = "mako"
 deps = ["markupsafe"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
+
+[[project]]
+name = "html5lib"
+url = "https://github.com/html5lib/html5lib-python.git"
+rev = "HEAD"
+package = "html5lib"
+deps = ["six", "webencodings", "mock", "setuptools<81", "pytest-expect", "pytest<8"]
+
+[[project]]
+name = "bleach"
+url = "https://github.com/mozilla/bleach.git"
+rev = "HEAD"
+package = "bleach"
+deps = ["six", "webencodings", "html5lib"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "feedparser"
+url = "https://github.com/kurtmckee/feedparser.git"
+rev = "HEAD"
+package = "feedparser"
+deps = ["feedparser-sgmllib", "responses"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "cerberus"
+url = "https://github.com/pyeve/cerberus.git"
+rev = "HEAD"
+package = "cerberus"
+deps = ["pytest-benchmark"]
+
+[[project]]
+name = "croniter"
+url = "https://github.com/kiorky/croniter.git"
+rev = "HEAD"
+package = "src/croniter"
+pythonpath = "src"
+deps = ["python-dateutil", "pytz", "natsort", "tzlocal"]
+
+[[project]]
+name = "prettytable"
+url = "https://github.com/prettytable/prettytable.git"
+rev = "HEAD"
+package = "src/prettytable"
+install = true
+pythonpath = "src"
+deps = ["wcwidth", "pytest-lazy-fixtures"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "parsimonious"
+url = "https://github.com/erikrose/parsimonious.git"
+rev = "HEAD"
+package = "parsimonious"
+deps = ["regex"]
+
+[[project]]
+name = "inflection"
+url = "https://github.com/jpvanhal/inflection.git"
+rev = "HEAD"
+package = "inflection"
+
+[[project]]
+name = "pyrsistent"
+url = "https://github.com/tobgu/pyrsistent.git"
+rev = "HEAD"
+package = "pyrsistent"
+deps = ["hypothesis", "typing-extensions"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "jsonpatch"
+url = "https://github.com/stefankoegl/python-json-patch.git"
+rev = "HEAD"
+package = "jsonpatch.py"
+deps = ["jsonpointer"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
