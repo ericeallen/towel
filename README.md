@@ -4,6 +4,8 @@ Towel finds repeated Python code using unification and proposes helper-function 
 
 **Release status: 1.414 (beta).** Every accepted proposal is verified by instantiating the helper with each call's arguments and comparing the result with the block it replaces; arguments that could have observable effects or fresh identity are evaluated inside the helper at their original position. A standing ecosystem check refactors 91 public projects and runs each one's own test suite before and after: 75 pass identically, 13 produce no proposal, and 3 differ only in documented frame-sensitive or source-observing ways (see below). Refactoring is still a change to your code: preview first, review the diff, and run your tests. [Known limitations](docs/KNOWN_LIMITATIONS.md) lists what is verified, what is rejected, and what remains outside the model; [the readiness report](docs/PRODUCTION_READINESS.md) records the evidence.
 
+**New here?** The [Quick start](docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
+
 ## Install
 
 The runtime uses only the standard library; optional `tqdm` provides progress bars. Platform, CPU, memory, and disk requirements are in [Requirements](#requirements) below.
@@ -126,15 +128,21 @@ Behavioral tests compare sampled return values and types, exceptions, output, an
 
 ## Documentation
 
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Known limitations](docs/KNOWN_LIMITATIONS.md)
-- [Production readiness and ecosystem evidence](docs/PRODUCTION_READINESS.md)
-- [Adversarial review](docs/ADVERSARIAL_REVIEW.md)
-- [Historical issues](KNOWN_ISSUES.md)
+Start here:
 
-Historical notes and example outputs document earlier versions and may describe behavior superseded by the current audit. The current CLI help and source define the available interface.
+- [Quick start](docs/QUICKSTART.md) — install and refactor in four steps
+- [Known limitations](docs/KNOWN_LIMITATIONS.md) — what is verified, what is rejected, and what is outside the model
+- [Python API guide](docs/USAGE_GUIDE.md) — using `UnificationRefactorEngine` directly
+
+How it works and why to trust it:
+
+- [Architecture](docs/ARCHITECTURE.md) — the pipeline, the algorithms, and their references
+- [Production readiness](docs/PRODUCTION_READINESS.md) — the ecosystem evidence behind the claims
+- [Adversarial review](docs/ADVERSARIAL_REVIEW.md) — defects found and repaired
+
+Project:
+
+- [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Releasing](docs/RELEASING.md)
 
 ## License
 

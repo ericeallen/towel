@@ -2,7 +2,7 @@
 
 > **Supplementary API guide.** A how-to for the `UnificationRefactorEngine` API. The maintained overview and CLI workflow are in the [README](../README.md); current limitations are in [docs/KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 
-## Quick Start
+## Getting started with the API
 
 There are three ways to use Towel, the unification-based code refactoring tool:
 
@@ -11,7 +11,7 @@ There are three ways to use Towel, the unification-based code refactoring tool:
 ```python
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
 # Analyze one file
 proposals = engine.analyze_file("myfile.py")
@@ -28,7 +28,7 @@ if proposals:
 ```python
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
 # Analyze multiple files together
 files = ["file1.py", "file2.py", "file3.py"]
@@ -49,7 +49,7 @@ if proposals:
 ```python
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
 # Analyze all Python files in a directory (recursive)
 proposals = engine.analyze_directory("src/", recursive=True)
@@ -119,7 +119,7 @@ engine = UnificationRefactorEngine(
     max_parameters=5,  # Maximum parameters for extracted functions
                        # (prevents over-parameterization)
 
-    min_lines=4        # Minimum lines for a code block
+    min_lines=3        # Minimum lines for a code block
                        # (smaller blocks are ignored)
 )
 ```
