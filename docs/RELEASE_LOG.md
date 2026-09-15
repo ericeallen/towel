@@ -6,14 +6,14 @@
   - Soundness: every accepted proposal is verified by instantiating the helper with each call's arguments and comparing with the replaced block up to renamed binders; arguments that are not names, literals, or containers of those are passed as thunks evaluated at the original position.
   - Guards: closure/cell sharing across the block boundary, deletion and `except ... as` of pre-bound names, moved `global`/`nonlocal` declarations, slice and starred parameters, and opaque method decorators are rejected or handled explicitly; match captures bind in scope analysis; generated parameter names avoid block identifiers; clustered replacements may not overlap.
   - Layouts: Flit, Poetry, and pdm projects are supported in directory mode.
-  - Evidence: a standing 71-project ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`, weekly CI) passes 59 projects' full suites identically before and after transformation, with 9 producing no proposal and 3 documented frame-sensitive or source-observing cases; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
+  - Evidence: a standing 81-project ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`, weekly CI) passes 66 projects' full suites identically before and after transformation, with 12 producing no proposal and 3 documented frame-sensitive or source-observing cases; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
   - Renaming: `towel rename-helpers --list --json` emits an inventory for LLM-driven naming and `--rename-file` applies a batch with scope and importer checks, reporting JSON.
   - Performance: safety guards, unification, and per-block analyses are memoized per analysis; pyflakes' 2,167-line test module analyzes in about a minute instead of exceeding nine.
   - Corpus: the ecosystem check reruns any test whose result differs between the two trees, alone, on both trees, and calls the difference flaky rather than a regression when they then agree; a killed run leaves no workers behind and holds an exclusive lock on its work directory.
   - Robustness: forked workers end within a second of their parent's death (a watchdog thread per worker; a killed run once left fourteen workers that filled the machine's swap), and the worker count is capped by resident size against physical memory.
 - Status: All tests green
-  - Unit/integration tests: 1,252 passed on Python 3.11, 3.12, and 3.13 (the watchdog test needs a fork start method)
-  - Ecosystem check: 59 PASS, 9 NO_CHANGE, 3 BROKEN_KNOWN of 71 (see docs/PRODUCTION_READINESS.md)
+  - Unit/integration tests: 1,257 passed on Python 3.11, 3.12, and 3.13 (the watchdog test needs a fork start method)
+  - Ecosystem check: 66 PASS, 12 NO_CHANGE, 3 BROKEN_KNOWN of 81 (see docs/PRODUCTION_READINESS.md)
 
 ---
 
