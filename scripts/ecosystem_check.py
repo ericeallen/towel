@@ -129,7 +129,13 @@ def summarize(output: str) -> str:
     lines = [line.strip() for line in plain.splitlines() if line.strip()]
     for line in reversed(lines):
         if any(pattern.match(line) for pattern in SUMMARY_PATTERNS):
-            return re.sub(r" in [\d.]+s(?: \(\d+:\d+:\d+\))?", "", line).strip("= ")
+            without_time = re.sub(r" in [\d.]+s(?: \(\d+:\d+:\d+\))?", "", line).strip("= ")
+            # The warning tally is not a test outcome, and pytest groups
+            # warnings by the source line that raised them, so moving code
+            # changes the count even when every test's result is unchanged
+            # (jmespath's deprecation warning). Drop it from the comparison.
+            without_warnings = re.sub(r",? \d+ warnings?\b", "", without_time).strip(", ")
+            return without_warnings
     return lines[-1] if lines else ""
 
 
