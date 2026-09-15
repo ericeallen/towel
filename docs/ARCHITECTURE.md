@@ -53,7 +53,9 @@ and proposals.
 ## The core algorithm: anti-unification into a helper
 
 Two blocks unify when they have the same statement shape and differ only in
-sub-expressions that can be abstracted into parameters. The unifier walks both
+sub-expressions that can be abstracted into parameters. This is *anti-unification*,
+also called least general generalization [Plotkin 1970; Reynolds 1970]:
+the template is the most specific pattern both blocks instantiate. The unifier walks both
 ASTs in lockstep. Where the trees agree it keeps the structure; where they
 differ it introduces a parameter, provided the differing nodes are expressions
 that can be abstracted safely. Binder names (loop variables, comprehension
@@ -65,15 +67,16 @@ Each parameter is passed in the way that preserves the original evaluation:
 - **Value.** A name, literal, or tuple of those is passed eagerly. It has no
   observable effect and no fresh identity, so evaluating it at the call site is
   indistinguishable from evaluating it in place.
-- **Thunk.** Any other expression is passed as a zero-argument lambda and
-  called inside the helper exactly where the original expression stood. This
+- **Thunk.** Any other expression is passed as a zero-argument lambda (a *thunk*
+  [Ingerman 1961]) and called inside the helper exactly where the original
+  expression stood. This
   preserves evaluation order, count, and conditionality: an expression the
   original evaluated twice, or not at all on some path, is evaluated the same
   number of times under the same conditions. As an optimization, a thunk the
   helper would evaluate first, once, and unconditionally is passed eagerly
   instead, because nothing can observe the difference.
 - **Lifted.** An expression that reads a name bound *inside* the block is
-  lambda-lifted: the lambda takes those names as arguments so it still refers
+  lambda-lifted [Johnsson 1985]: the lambda takes those names as arguments so it still refers
   to the block-local values, not to whatever the helper's scope binds.
 - **Receiver.** When the helper becomes a method, the instance or class is
   passed as the receiver (see *Helper placement*).
@@ -89,7 +92,8 @@ container syntax, not values.
 Acceptance never trusts the algorithm; it checks the result.
 `instantiation.py` takes the generated helper, substitutes each call site's
 actual arguments back into the helper body, alpha-normalizes both it and the
-original block (binders renamed to positional placeholders, annotations
+original block (binders renamed to positional placeholders, i.e. compared up to
+alpha-equivalence [Church 1936; Barendregt 1984], annotations
 replaced by a placeholder because they are inert at runtime), and requires the
 two to be structurally identical. A proposal is offered only if this holds for
 **every** call site. This is the property that makes the transformation safe to
@@ -99,7 +103,10 @@ the proposal rather than emitting it.
 
 ## Scope, binding, and liveness
 
-Extraction must not orphan a name. `definite_assignment.py` provides
+Extraction must not orphan a name. A forward dataflow *definite-assignment*
+analysis [Gosling et al., Java Language Specification ch. 16; cf. Nielson,
+Nielson & Hankin 1999] answers which names are guaranteed bound at a point.
+`definite_assignment.py` provides
 `definitely_bound_after(statements)`: the set of names guaranteed bound after a
 run of statements, or `None` if control cannot fall through (every path
 returns, raises, breaks, or continues). `orphan_detector.py` uses it
@@ -297,6 +304,29 @@ unsupported callable shapes are reported as unverified. CI enforces an 85%
 coverage floor across Python 3.11–3.13. Coverage measures executed code, not
 correctness. See [CONTRIBUTING.md](../CONTRIBUTING.md) and
 [RELEASING.md](RELEASING.md).
+
+## References
+
+The engine composes several standard results; the implementations are original,
+but the ideas and their names are from the literature.
+
+- **Anti-unification / least general generalization.** Plotkin, G. D. (1970).
+  "A Note on Inductive Generalization." *Machine Intelligence* 5, 153–163.
+  Reynolds, J. C. (1970). "Transformational Systems and the Algebraic Structure
+  of Atomic Formulas." *Machine Intelligence* 5, 135–151.
+- **Lambda lifting.** Johnsson, T. (1985). "Lambda Lifting: Transforming
+  Programs to Recursive Equations." *Functional Programming Languages and
+  Computer Architecture*, Springer LNCS 201, 190–203.
+- **Thunks (delayed evaluation).** Ingerman, P. Z. (1961). "Thunks: A Way of
+  Compiling Procedure Statements with Some Comments on Procedure Declarations."
+  *Communications of the ACM* 4(1), 55–58.
+- **Alpha-equivalence.** Church, A. (1936). "An Unsolvable Problem of Elementary
+  Number Theory." *American Journal of Mathematics* 58(2), 345–363. Barendregt,
+  H. P. (1984). *The Lambda Calculus: Its Syntax and Semantics.* North-Holland.
+- **Definite-assignment / dataflow analysis.** Gosling, J., Joy, B., Steele, G.,
+  Bracha, G., Buckley, A. *The Java Language Specification*, ch. 16 "Definite
+  Assignment." Nielson, F., Nielson, H. R., Hankin, C. (1999). *Principles of
+  Program Analysis.* Springer.
 
 ## Module map
 
