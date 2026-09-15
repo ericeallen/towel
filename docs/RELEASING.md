@@ -7,7 +7,7 @@ The proposed next release is `1.414`, the first release after the production-rea
 Checked on September 12, 2026:
 
 - [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files.
-- The GitHub repository is private. Authenticated inspection found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. These are observations, not guarantees about future settings.
+- The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
 - The public PyPI description still represents the earlier release. A new distribution must carry the current status documentation, known limitations, and Python requirement.
 
 Recheck live version availability immediately before publishing. The proposed version number is not reserved.
@@ -29,8 +29,8 @@ For the exact candidate commit:
 ## Maintainer decisions before publication
 
 - Choose the exact unused version and approve the reviewed artifact hashes.
-- Decide whether and when to make the repository public. Configure CI as a required check before relying on branch protection; verify the actual remote settings.
-- Establish which releases will receive security fixes and a working confidential reporting channel. [GitHub private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository) is available for public repositories. Verify its report button after enabling it, or explicitly document another approved private channel. Do not invent a contact address or response-time commitment.
+- The repository is public (done September 15, 2026). Configure CI as a required check before relying on branch protection; verify the actual remote settings.
+- GitHub private vulnerability reporting is enabled (done September 15, 2026), and [SECURITY.md](../SECURITY.md) documents it as the reporting channel and names the supported version (the latest release). Confirm the "Report a vulnerability" button appears on the Security tab, and revisit the support policy as the project's release cadence settles.
 - Approve the publication destination and release notes. Preserve the historical yanks unless a separate reviewed decision changes their status.
 
 No security support window or response-time promise is established by this document. Update [SECURITY.md](../SECURITY.md) when those decisions are made.

@@ -1,10 +1,16 @@
 # Security policy
 
-Towel rewrites source code. Review generated code and run the affected project's own tests before adopting it; see docs/KNOWN_LIMITATIONS.md for what is verified and what is not. No supported-release matrix or response-time commitment has been established for the next public release. The historical PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling; they are not a recommended installation target.
+Towel rewrites source code. Review the generated diff and run the affected project's own tests before adopting it; see [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for what is verified and what is not.
 
-## Reporting
+## Supported versions
 
-A confidential reporting channel has not yet been verified. Do not put credentials or confidential source code in public issues. Before publication, the maintainer must establish a private channel and specify which releases receive security fixes. GitHub private vulnerability reporting requires a public repository; the repository was private when checked on September 12, 2026. Enabling and testing that channel is a publication prerequisite if it is selected. See [release preparation](docs/RELEASING.md) for the remaining maintainer decisions.
+Security fixes are provided for the latest released version, currently **1.414**. Earlier versions are not supported; the PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and are not a recommended installation target. Upgrade to the latest release rather than relying on a fix to an older one.
+
+## Reporting a vulnerability
+
+Report suspected vulnerabilities privately through GitHub's **"Report a vulnerability"** button on this repository's **Security** tab (Security → Advisories → Report a vulnerability). That opens a private security advisory visible only to the maintainer. Please do not open a public issue for a security report, and do not include credentials or confidential source code in a report.
+
+This is a solo-maintained project with no formal response-time commitment. Reports are handled on a best-effort basis; you will receive an acknowledgment when a report is triaged. If a report leads to a fix, it ships in a new release, and the affected versions are noted in the advisory and the [changelog](CHANGELOG.md).
 
 ## Execution and source safety
 
