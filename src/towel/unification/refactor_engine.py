@@ -303,29 +303,6 @@ def _encloses(outer: FunctionNode, inner: FunctionNode) -> bool:
     return outer.lineno <= inner.lineno and inner_end <= outer_end and outer is not inner
 
 
-def _copy_substitution(substitution: Substitution) -> Substitution:
-    """A substitution whose containers are the caller's own; AST nodes stay shared."""
-    return Substitution(
-        mappings=dict(substitution.mappings),
-        param_expressions={
-            name: list(expressions) for name, expressions in substitution.param_expressions.items()
-        },
-        function_params={
-            name: list(params) for name, params in substitution.function_params.items()
-        },
-        hygienic_renames=(
-            [dict(mapping) for mapping in substitution.hygienic_renames]
-            if substitution.hygienic_renames is not None
-            else None
-        ),
-        params_used_as_callee=set(substitution.params_used_as_callee),
-        inlined_parameters=set(substitution.inlined_parameters),
-        promoted_literal_args={
-            name: dict(by_block) for name, by_block in substitution.promoted_literal_args.items()
-        },
-    )
-
-
 class UnificationRefactorEngine:
     """
     Main engine for unification-based refactoring.
@@ -1630,7 +1607,6 @@ class UnificationRefactorEngine:
         # most pairs are rejected before unification, so the probe samples the
         # whole list rather than the pairs the unification cache has not seen.
         cold = list(range(len(block_pairs)))
-        warm: List[int] = []
         workers = min(self._parallel_workers(), max(1, len(cold) // 64))
         if workers <= 1 or len(cold) < self.PARALLEL_PAIR_THRESHOLD:
             return self._evaluate_pairs_serial(
@@ -1655,7 +1631,7 @@ class UnificationRefactorEngine:
         probed_indices = set(probe)
         cold = [index for index in cold if index not in probed_indices]
         if per_pair * len(cold) < self.PARALLEL_MIN_PROJECTED_SECONDS:
-            for index in cold + warm:
+            for index in cold:
                 serial_proposal = self._try_refactor_pair_multi_file(
                     block_pairs[index], all_functions, class_infos
                 )
@@ -1677,16 +1653,12 @@ class UnificationRefactorEngine:
             class_infos,
             block_pairs,
         )
-        covered: Set[int] = set()
         try:
             context = multiprocessing.get_context("fork")
             with ProcessPoolExecutor(
                 max_workers=workers, mp_context=context, initializer=_start_parent_watchdog
             ) as executor:
-                for (start, end), accepted in zip(
-                    chunks, executor.map(_evaluate_pair_chunk, chunks)
-                ):
-                    covered.update(range(start, end))
+                for _bounds, accepted in zip(chunks, executor.map(_evaluate_pair_chunk, chunks)):
                     for index, proposal in accepted:
                         results[index] = proposal
         except (BrokenProcessPool, OSError, RuntimeError) as error:
@@ -1697,15 +1669,6 @@ class UnificationRefactorEngine:
             )
         finally:
             _worker_engine = _worker_functions = _worker_class_infos = _worker_pairs = None
-        # Warm pairs outside every chunk are evaluated here, from this process's caches.
-        for index in warm:
-            if index in covered or index in results:
-                continue
-            warm_proposal = self._try_refactor_pair_multi_file(
-                block_pairs[index], all_functions, class_infos
-            )
-            if warm_proposal is not None:
-                results[index] = warm_proposal
         return [results[index] for index in sorted(results)]
 
     @staticmethod
