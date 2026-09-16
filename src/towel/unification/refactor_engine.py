@@ -401,9 +401,7 @@ class UnificationRefactorEngine:
         Includes function names and basic block ranges to help triage pruning gates.
         """
         try:
-            import os as _os
-
-            if not _os.getenv("DEBUG_PROPOSAL_REJECTIONS"):
+            if not os.getenv("DEBUG_PROPOSAL_REJECTIONS"):
                 return
             msg = (
                 f"REJECT[{reason}]: {pair.function1_name}{'@'+str(pair.block1_range) if pair.block1_range else ''} "
@@ -2541,10 +2539,9 @@ class UnificationRefactorEngine:
             self._debug_reject("frame_sensitive_block", pair)
             return None
 
-        # DEBUG logging
-        import os
+        debug_enabled = bool(os.getenv("DEBUG_VALIDATION"))
 
-        if os.getenv("DEBUG_VALIDATION"):
+        if debug_enabled:
             print("\n=== _try_refactor_pair_multi_file called ===")
             print(f"Functions: {pair.function1_name} and {pair.function2_name}")
             print(f"Block1 range: {pair.block1_range}")
@@ -2597,10 +2594,7 @@ class UnificationRefactorEngine:
 
         # (Removed specialized full-body extraction fast-path; reverting to generic pairing logic.)
 
-        # DEBUG logging
-        import os
-
-        if os.getenv("DEBUG_VALIDATION"):
+        if debug_enabled:
             print("\n=== Finding Functions ===")
             print(f"Looking for: {pair.function1_name} and {pair.function2_name}")
             print(f"Found func1: {func1 is not None}")
@@ -2687,7 +2681,6 @@ class UnificationRefactorEngine:
                 self._debug_reject("unbinds_external_name", pair)
                 return None
 
-            debug_enabled = bool(os.getenv("DEBUG_VALIDATION"))
             if debug_enabled:
                 print("\n=== Block1 Validation Debug ===")
                 print(f"Function: {pair.function1_name}")
@@ -2728,7 +2721,7 @@ class UnificationRefactorEngine:
             return_variables_block2
         )
 
-        if os.getenv("DEBUG_VALIDATION"):
+        if debug_enabled:
             print(f"  Value-producing check: block1={value_prod1}, block2={value_prod2}")
             if return_variables_block1:
                 print(f"  Block1 has return_variables: {return_variables_block1}")
@@ -2736,7 +2729,7 @@ class UnificationRefactorEngine:
                 print(f"  Block2 has return_variables: {return_variables_block2}")
 
         if value_prod1 != value_prod2:
-            if os.getenv("DEBUG_VALIDATION"):
+            if debug_enabled:
                 print("  REJECTED: Value-producing mismatch")
             self._debug_reject("value_producing_mismatch", pair)
             return None
@@ -2748,12 +2741,12 @@ class UnificationRefactorEngine:
             from .extractor import has_complete_return_coverage
 
             if not has_complete_return_coverage(cast(List[ast.stmt], pair.block1_nodes)):
-                if os.getenv("DEBUG_VALIDATION"):
+                if debug_enabled:
                     print("  REJECTED: Block1 missing complete return coverage")
                 self._debug_reject("incomplete_return_coverage_block1", pair)
                 return None
             if not has_complete_return_coverage(cast(List[ast.stmt], pair.block2_nodes)):
-                if os.getenv("DEBUG_VALIDATION"):
+                if debug_enabled:
                     print("  REJECTED: Block2 missing complete return coverage")
                 self._debug_reject("incomplete_return_coverage_block2", pair)
                 return None
@@ -2779,7 +2772,7 @@ class UnificationRefactorEngine:
         ) and _is_trivial_return_of_bound_name(
             pair.block2_nodes, bound_before_block2, bound_in_block2
         ):
-            if os.getenv("DEBUG_VALIDATION"):
+            if debug_enabled:
                 print(
                     "  REJECTED: Trivial single-line return blocks (prefer extracting computation)"
                 )
@@ -2788,7 +2781,7 @@ class UnificationRefactorEngine:
 
         # Check structural similarity
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
-            if os.getenv("DEBUG_VALIDATION"):
+            if debug_enabled:
                 print("  REJECTED: Not structurally similar")
             self._debug_reject("not_structurally_similar", pair)
             return None
@@ -2797,7 +2790,7 @@ class UnificationRefactorEngine:
         blocks = [pair.block1_nodes, pair.block2_nodes]
         hygienic_renames: List[Dict[str, str]] = [{}, {}]
 
-        if os.getenv("DEBUG_VALIDATION"):
+        if debug_enabled:
             print("  Attempting unification...")
 
         substitution = self._unify_memoized(
@@ -2805,12 +2798,12 @@ class UnificationRefactorEngine:
         )
 
         if not substitution:
-            if os.getenv("DEBUG_VALIDATION"):
+            if debug_enabled:
                 print("  REJECTED: Unification failed (no substitution)")
             self._debug_reject("unification_failed", pair)
             return None
 
-        if os.getenv("DEBUG_VALIDATION"):
+        if debug_enabled:
             print("  ✓ Unification successful")
             print(f"  Substitution: {substitution}")
 
@@ -2920,7 +2913,7 @@ class UnificationRefactorEngine:
                 return None
         if free_vars1 & bound_after_block1:
             incomplete_vars = free_vars1 & bound_after_block1
-            if os.getenv("DEBUG_VALIDATION"):
+            if debug_enabled:
                 print(
                     f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}"
                 )
@@ -2930,7 +2923,7 @@ class UnificationRefactorEngine:
 
         if free_vars2 & bound_after_block2:
             incomplete_vars = free_vars2 & bound_after_block2
-            if os.getenv("DEBUG_VALIDATION"):
+            if debug_enabled:
                 print(
                     f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}"
                 )
@@ -4124,8 +4117,6 @@ class UnificationRefactorEngine:
         termination_reason = "fixed_point"
 
         # Timing / ETA state (for heuristic ETA when total unknown)
-        import time as _time
-
         per_proposal_durations: List[float] = []
 
         # Progress helpers -------------------------------------------------
@@ -4283,7 +4274,7 @@ class UnificationRefactorEngine:
             proposal = self._pop_next_proposal(proposal_queue)
             if proposal is None:
                 break
-            iter_start = _time.time()
+            iter_start = time.time()
             last_desc = proposal.description
             # Suppress separate applying log line when tqdm active to avoid duplicate lines
             if not (use_tqdm and progress_bar is not None):
@@ -4318,7 +4309,7 @@ class UnificationRefactorEngine:
                 continue
 
             # Record duration for this iteration (include localized follow-up analysis time)
-            per_proposal_durations.append(_time.time() - iter_start)
+            per_proposal_durations.append(time.time() - iter_start)
             iterations += 1
             total_applied += 1
             if use_tqdm and progress_bar is not None:
@@ -4553,9 +4544,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
         return total_lines
 
     # Optional debug diagnostics: env flag
-    import os as _os
-
-    _debug_overlap = bool(_os.getenv("DEBUG_OVERLAP_FILTER"))
+    _debug_overlap = bool(os.getenv("DEBUG_OVERLAP_FILTER"))
 
     # Helpers for deterministic ordering and interval extraction
     def first_span(p: RefactoringProposal) -> Tuple[str, int]:
