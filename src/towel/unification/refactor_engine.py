@@ -996,6 +996,23 @@ class UnificationRefactorEngine:
                     return True
         return False
 
+    def _declares_nonlocal(
+        self, func: Optional[FunctionNode], scope_analyzer: Optional[ScopeAnalyzer]
+    ) -> bool:
+        """Return True if ``func`` declares any nonlocal variables of its own.
+
+        Prefers the scope analyzer's precomputed nonlocal set for the function's
+        scope; falls back to a direct body scan when no analyzer is available.
+        """
+        if func is None:
+            return False
+        if scope_analyzer:
+            scope_id = scope_analyzer.node_scopes.get(func)
+            if scope_id:
+                return bool(scope_analyzer.nonlocal_vars.get(scope_id.scope_id, set()))
+            return False
+        return self._function_contains_nonlocal(func)
+
     @staticmethod
     def _decorator_name(decorator: ast.expr) -> Optional[str]:
         """Return the simple name for a decorator expression if it can be resolved."""
@@ -3366,27 +3383,11 @@ class UnificationRefactorEngine:
             ]
 
         # SAFETY: Avoid refactoring across closures with nonlocal variables for now.
-        # If the containing functions (func1/func2) declare any nonlocal variables, skip this proposal
+        # If either containing function declares nonlocal variables, skip this proposal
         # to preserve known semantics and baseline expectations (e.g., closure_adversarial.py).
-        nonlocal_in_func1 = False
-        nonlocal_in_func2 = False
-        if scope_analyzer1 and func1 is not None:
-            scope_id1 = scope_analyzer1.node_scopes.get(func1)
-            if scope_id1:
-                nlv1 = scope_analyzer1.nonlocal_vars.get(scope_id1.scope_id, set())
-                nonlocal_in_func1 = bool(nlv1)
-        elif func1 is not None:
-            nonlocal_in_func1 = self._function_contains_nonlocal(func1)
-
-        if scope_analyzer2 and func2 is not None:
-            scope_id2 = scope_analyzer2.node_scopes.get(func2)
-            if scope_id2:
-                nlv2 = scope_analyzer2.nonlocal_vars.get(scope_id2.scope_id, set())
-                nonlocal_in_func2 = bool(nlv2)
-        elif func2 is not None:
-            nonlocal_in_func2 = self._function_contains_nonlocal(func2)
-
-        if nonlocal_in_func1 or nonlocal_in_func2:
+        if self._declares_nonlocal(func1, scope_analyzer1) or self._declares_nonlocal(
+            func2, scope_analyzer2
+        ):
             self._debug_reject("nonlocal_safety_skip", pair)
             return None
 
