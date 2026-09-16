@@ -11,6 +11,7 @@ import ast
 import tempfile
 import os
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.models import FunctionArtifact
 
 
 class TestBlockExtraction(unittest.TestCase):
@@ -299,8 +300,8 @@ def func2():
 
         func1, func2 = tree.body[0], tree.body[1]
         all_functions = [
-            ("test.py", func1, code, analyzer, scope),
-            ("test.py", func2, code, analyzer, scope),
+            FunctionArtifact("test.py", func1, code, analyzer, scope, None, None, []),
+            FunctionArtifact("test.py", func2, code, analyzer, scope, None, None, []),
         ]
 
         pairs = self.engine._find_block_pairs_multi_file(all_functions)
@@ -340,8 +341,8 @@ def func2():
 
         func1, func2 = tree.body[0], tree.body[1]
         all_functions = [
-            ("test.py", func1, code, analyzer, scope),
-            ("test.py", func2, code, analyzer, scope),
+            FunctionArtifact("test.py", func1, code, analyzer, scope, None, None, []),
+            FunctionArtifact("test.py", func2, code, analyzer, scope, None, None, []),
         ]
 
         pairs = self.engine._find_block_pairs_multi_file(all_functions)

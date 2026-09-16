@@ -749,13 +749,13 @@ class UnificationRefactorEngine:
 
     def _record_function_paths(self, all_functions: Sequence[FunctionArtifact]) -> None:
         for entry in all_functions:
-            self._function_paths[entry[1]] = entry[0]
-            source = entry[2]
+            self._function_paths[entry.node] = entry.file_path
+            source = entry.source
             digest = self._source_digests.get(source)
             if digest is None:
                 digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
                 self._source_digests[source] = digest
-            self._function_sources[entry[1]] = digest
+            self._function_sources[entry.node] = digest
 
     def _signed_blocks(
         self, function: FunctionNode
@@ -1848,11 +1848,11 @@ class UnificationRefactorEngine:
     ) -> Optional[FunctionNode]:
         """The one function called ``name`` in ``file_path`` enclosing every ``inner`` function."""
         matches = [
-            entry[1]
+            entry.node
             for entry in all_functions
-            if entry[0] == file_path
-            and entry[1].name == name
-            and all(_encloses(entry[1], function) for function in inner)
+            if entry.file_path == file_path
+            and entry.node.name == name
+            and all(_encloses(entry.node, function) for function in inner)
         ]
         return matches[0] if len(matches) == 1 else None
 
@@ -2022,7 +2022,7 @@ class UnificationRefactorEngine:
         # order, so traversing i, j, block1, matching block2 preserves proposal
         # priority as well as the exact set of candidates.
         for entry in all_functions:
-            blocks = self._signed_blocks(entry[1])
+            blocks = self._signed_blocks(entry.node)
             signed_blocks.append(blocks)
             buckets: Dict[
                 BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]
@@ -2162,16 +2162,10 @@ class UnificationRefactorEngine:
         root_scope2: Optional[Scope] = None
 
         for entry in all_functions:
-            (
-                file_path,
-                func,
-                _source,
-                analyzer,
-                root_scope_entry,
-                _class_name,
-                _enclosing_func,
-                _ancestry,
-            ) = entry
+            file_path = entry.file_path
+            func = entry.node
+            analyzer = entry.scope_analyzer
+            root_scope_entry = entry.root_scope
             same1 = (
                 func is pair.function1_node
                 if pair.function1_node is not None
@@ -2248,9 +2242,10 @@ class UnificationRefactorEngine:
 
         # Gather candidates from same file functions
         for entry in all_functions:
-            fpath, fn, _src, analyzerX, _rscopeX, clsX, _enclX, _ancX = (
-                entry if len(entry) >= 8 else (*entry, None, None, None)
-            )
+            fpath = entry.file_path
+            fn = entry.node
+            analyzerX = entry.scope_analyzer
+            clsX = entry.class_name
             if fpath != pair.file_path:
                 continue
             # A helper inserted into the pair's deepest common enclosing
@@ -2762,7 +2757,8 @@ class UnificationRefactorEngine:
         # If we plan to insert into a specific function scope (DCE), enrich hygiene set with that
         # function's local bindings to avoid name collisions
         if dce_insert_func:
-            for fpath, fn, _src, analyzer, rscope, _cls, _encl, _anc in all_functions:
+            for artifact in all_functions:
+                fpath, fn, analyzer = artifact.file_path, artifact.node, artifact.scope_analyzer
                 if fpath == (pair.file_path2 or pair.file_path) and fn.name == dce_insert_func:
                     func_scope = analyzer.node_scopes.get(fn)
                     if func_scope is not None:
@@ -2781,7 +2777,8 @@ class UnificationRefactorEngine:
             # Locate the target function node and its scope analyzer for this file
             target_func_node = None
             target_analyzer: Optional[ScopeAnalyzer] = None
-            for fpath, fn, _src, analyzer, _rscope, _cls, _encl, _anc in all_functions:
+            for artifact in all_functions:
+                fpath, fn, analyzer = artifact.file_path, artifact.node, artifact.scope_analyzer
                 if fpath == pair.file_path and fn.name == target_insert_fn:
                     target_func_node = fn
                     target_analyzer = analyzer
@@ -2982,7 +2979,7 @@ class UnificationRefactorEngine:
         func1_for_orphans: Optional[FunctionNode] = None
         func2_for_orphans: Optional[FunctionNode] = None
         for entry in all_functions:
-            file_path, func = entry[0], entry[1]
+            file_path, func = entry.file_path, entry.node
             if file_path == pair.file_path and func.name == pair.function1_name:
                 func1_for_orphans = func
             if (
@@ -3211,9 +3208,9 @@ class UnificationRefactorEngine:
                 # free variable is already a parameter, so a module-level helper
                 # is equally correct; fall back to it when the name is ambiguous.
                 same_name_functions = {
-                    id(function)
-                    for path, function, _, _, _, _, *_ in all_functions
-                    if path == canonical_file and function.name == dce_insert_func
+                    id(a.node)
+                    for a in all_functions
+                    if a.file_path == canonical_file and a.node.name == dce_insert_func
                 }
                 if len(same_name_functions) == 1:
                     insert_into_function = dce_insert_func
@@ -3277,9 +3274,9 @@ class UnificationRefactorEngine:
         }
         if len(participating_paths) > 1 and any(
             isinstance(node, ast.Global)
-            for path, function, *_ in all_functions
-            if path in participating_paths
-            for node in ast.walk(function)
+            for a in all_functions
+            if a.file_path in participating_paths
+            for node in ast.walk(a.node)
         ):
             self._debug_reject("cross_module_global_declaration", pair)
             return None
@@ -3294,21 +3291,21 @@ class UnificationRefactorEngine:
         destination_class = insert_into_class
         if insert_into_function:
             destinations = {
-                class_name
-                for path, function, _, _, _, class_name, *_ in all_functions
-                if path == canonical_file and function.name == insert_into_function
+                a.class_name
+                for a in all_functions
+                if a.file_path == canonical_file and a.node.name == insert_into_function
             }
             destination_class = next(iter(destinations)) if len(destinations) == 1 else None
         for replacement in replacements:
             if replacement.class_name and replacement.class_name != destination_class:
                 source_path = replacement.file_path or canonical_file
-                for path, function, _, _, _, class_name, *_ in all_functions:
+                for a in all_functions:
                     if (
-                        path == source_path
-                        and class_name == replacement.class_name
-                        and function.lineno <= replacement.line_range[0]
-                        and (function.end_lineno or function.lineno) >= replacement.line_range[1]
-                        and uses_class_private_names([function])
+                        a.file_path == source_path
+                        and a.class_name == replacement.class_name
+                        and a.node.lineno <= replacement.line_range[0]
+                        and (a.node.end_lineno or a.node.lineno) >= replacement.line_range[1]
+                        and uses_class_private_names([a.node])
                     ):
                         self._debug_reject("private_name_lexical_class", pair)
                         return None
@@ -3327,9 +3324,9 @@ class UnificationRefactorEngine:
             source_digests=tuple(
                 sorted(
                     {
-                        (path, hashlib.sha256(source.encode("utf-8")).hexdigest())
-                        for path, _, source, *_ in all_functions
-                        if path in participating_paths
+                        (a.file_path, hashlib.sha256(a.source.encode("utf-8")).hexdigest())
+                        for a in all_functions
+                        if a.file_path in participating_paths
                     }
                 )
             ),

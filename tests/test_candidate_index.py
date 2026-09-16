@@ -21,19 +21,7 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 def analyzed_functions(paths):
     modules = parse_modules(paths)
     analyze_scopes(modules)
-    return [
-        (
-            function.file_path,
-            function.node,
-            function.source,
-            function.scope_analyzer,
-            function.root_scope,
-            function.class_name,
-            function.enclosing_function,
-            function.ancestry,
-        )
-        for function in collect_functions(modules)
-    ]
+    return collect_functions(modules)
 
 
 def exhaustive_pairs(engine, functions):
