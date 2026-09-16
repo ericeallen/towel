@@ -3709,11 +3709,16 @@ class UnificationRefactorEngine:
 
                     if abs_mod and layout.prefer_absolute_imports:
                         module_name = abs_mod
+                    elif from_path.parent == to_path.parent:
+                        # A same-directory helper is always reachable via a
+                        # relative import. Prefer that whenever no importable
+                        # absolute name exists (e.g. a project root whose
+                        # directory name is not a valid identifier), so the
+                        # generated import stays valid instead of emitting an
+                        # illegal dotted name.
+                        module_name = from_path.stem if abs_mod else "." + from_path.stem
                     else:
-                        if from_path.parent == to_path.parent:
-                            module_name = from_path.stem
-                        else:
-                            module_name = abs_mod or from_path.stem
+                        module_name = abs_mod or "." + from_path.stem
 
                     func_name = proposal.extracted_function.name
                     import_line = f"from {module_name} import {func_name}\n"

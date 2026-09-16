@@ -21,6 +21,7 @@ Python 3.10 uses the TOML backport; newer versions use the standard library.
 
 from __future__ import annotations
 
+from keyword import iskeyword
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -325,6 +326,21 @@ def _conventional_source_roots(project_root: Path, data: Mapping[str, object]) -
     return []
 
 
+def _valid_module_path(name: Optional[str]) -> Optional[str]:
+    """Return ``name`` only if every dotted component is a valid Python identifier.
+
+    A path component such as a project directory named ``my-project`` is not a
+    legal module name; emitting ``from my-project.pkg import x`` produces invalid
+    syntax. Callers treat ``None`` as "no importable absolute name exists".
+    """
+    if not name:
+        return None
+    parts = name.split(".")
+    if all(part.isidentifier() and not iskeyword(part) for part in parts):
+        return name
+    return None
+
+
 @dataclass
 class ProjectLayout:
     """Represents the directory structure and import configuration of a Python project.
@@ -498,7 +514,7 @@ class ProjectLayout:
             parts = list(relative.with_suffix("").parts)
             if parts and parts[-1] == "__init__":
                 parts.pop()
-            return ".".join([prefix, *parts])
+            return _valid_module_path(".".join([prefix, *parts]))
         # The most specific root wins: a project may list a nested source
         # directory beside the project root (poetry ``from``, setuptools
         # ``package-dir``), and the file's module name is relative to the
@@ -522,7 +538,7 @@ class ProjectLayout:
                         if not _is_package_dir(cursor, pep420=False):
                             # Not a classic package path; fall back to absolute-from-project
                             break
-                return ".".join(parts)
+                return _valid_module_path(".".join(parts))
             except ValueError:
                 continue
 
@@ -531,7 +547,7 @@ class ProjectLayout:
             rel = file_path.relative_to(self.project_root)
             if rel.suffix != ".py":
                 return None
-            return ".".join(rel.with_suffix("").parts)
+            return _valid_module_path(".".join(rel.with_suffix("").parts))
         except Exception:
             return None
 
