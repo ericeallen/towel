@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 from .parameters import parameter_names
+from .scope_analyzer import pattern_capture_names
 from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Union
 
 Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
@@ -81,7 +82,7 @@ def locally_bound_names(function: Function) -> Set[str]:
         elif isinstance(node, ast.ExceptHandler) and node.name:
             names.add(node.name)
         elif isinstance(node, ast.match_case):
-            names.update(_pattern_names(node.pattern))
+            names.update(pattern_capture_names(node.pattern))
         pending.extend(ast.iter_child_nodes(node))
     return names
 
@@ -99,7 +100,7 @@ def _bindings_on_entry(container: ast.AST, field: str) -> Set[str]:
     if isinstance(container, ast.ExceptHandler) and field == "body" and container.name:
         return {container.name}
     if isinstance(container, ast.match_case) and field == "body":
-        return _pattern_names(container.pattern)
+        return pattern_capture_names(container.pattern)
     return set()
 
 
@@ -109,16 +110,6 @@ def _targets(target: ast.AST) -> Set[str]:
         for node in ast.walk(target)
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
-
-
-def _pattern_names(pattern: ast.AST) -> Set[str]:
-    names: Set[str] = set()
-    for node in ast.walk(pattern):
-        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            names.add(node.name)
-        elif isinstance(node, ast.MatchMapping) and node.rest:
-            names.add(node.rest)
-    return names
 
 
 def _meet(left: Definite, right: Definite) -> Definite:
@@ -201,7 +192,9 @@ def _definite_statement(statement: ast.stmt) -> Definite:
         result: Definite = None
         for case in statement.cases:
             body = _definite(case.body)
-            case_names = None if body is None else body | frozenset(_pattern_names(case.pattern))
+            case_names = (
+                None if body is None else body | frozenset(pattern_capture_names(case.pattern))
+            )
             result = _meet(result, case_names)
         return result if result is not None else frozenset()
     # Loops may run zero times; a while-else or for-else without break would
