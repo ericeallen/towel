@@ -2402,6 +2402,111 @@ class UnificationRefactorEngine:
 
         return globals_to_declare, nonlocals_to_declare, free_vars
 
+    @staticmethod
+    def _reserve_augassign_params(pair: CodeBlockPair, substitution: Substitution) -> Set[str]:
+        """Keep augmented-assignment targets free variables rather than parameters.
+
+        ``total += x`` reads ``total`` before writing it, so it must stay a
+        parameter even when unification matched it as a substitutable expression.
+        Removes those parameters from the substitution and records, per block, the
+        name each maps to (for call generation). Returns the target names.
+        """
+        aug_finder = AugAssignFinder()
+        for node in pair.block1_nodes:
+            aug_finder.visit(node)
+        aug_assign_vars = aug_finder.aug_assign_targets
+
+        aug_assign_param_mappings: Dict[str, Dict[int, str]] = {}
+        params_to_remove = []
+        for param_name, exprs in list(substitution.param_expressions.items()):
+            for block_idx, expr in exprs:
+                if block_idx == 0 and isinstance(expr, ast.Name) and expr.id in aug_assign_vars:
+                    if param_name not in aug_assign_param_mappings:
+                        aug_assign_param_mappings[param_name] = {}
+                    aug_assign_param_mappings[param_name][block_idx] = expr.id
+            if 0 in aug_assign_param_mappings.get(param_name, {}):
+                params_to_remove.append(param_name)
+
+        if not hasattr(substitution, "aug_assign_mappings"):
+            setattr(substitution, "aug_assign_mappings", {})
+        aug_mappings = cast(Dict[str, Dict[int, str]], getattr(substitution, "aug_assign_mappings"))
+        for param_name, block_mappings in aug_assign_param_mappings.items():
+            if 0 in block_mappings:
+                aug_mappings[block_mappings[0]] = block_mappings
+
+        for param_name in params_to_remove:
+            del substitution.param_expressions[param_name]
+        return aug_assign_vars
+
+    @staticmethod
+    def _strip_fstring_params(substitution: Substitution) -> None:
+        """Drop parameters that map to a whole f-string in the template block.
+
+        Parameterizing an entire ``JoinedStr`` would replace the f-string with a
+        single argument and lose its structure, so those parameters are removed.
+        """
+        fstring_params = []
+        for param_name, exprs in substitution.param_expressions.items():
+            for block_idx, expr in exprs:
+                if block_idx == 0 and isinstance(expr, ast.JoinedStr):
+                    fstring_params.append(param_name)
+                    break
+        for param_name in fstring_params:
+            del substitution.param_expressions[param_name]
+
+    @staticmethod
+    def _working_free_vars(
+        substitution: Substitution, aug_assign_vars: Set[str], free_vars1: Set[str]
+    ) -> Set[str]:
+        """Block1's free variables minus the ones now carried as parameters.
+
+        A variable that became a parameter is no longer free, except an
+        augmented-assignment target, which stays free so it is passed in and out.
+        """
+        parameterized_vars = set()
+        for param_name, exprs in substitution.param_expressions.items():
+            for block_idx, expr in exprs:
+                if block_idx == 0 and isinstance(expr, ast.Name) and expr.id not in aug_assign_vars:
+                    parameterized_vars.add(expr.id)
+        return set(free_vars1) - parameterized_vars
+
+    def _rejects_module_data_lookup(
+        self,
+        pair: CodeBlockPair,
+        analyzer1: Optional[ScopeAnalyzer],
+        analyzer2: Optional[ScopeAnalyzer],
+    ) -> bool:
+        """True when a block reads a module-level name that a callback could rebind.
+
+        Module data can be rebound between two reads; passing it as a helper
+        argument snapshots the value, but retaining the global name could capture
+        a different caller's local. Reject until extraction can represent
+        deferred, scope-correct lookups.
+        """
+        for block, block_analyzer in (
+            (pair.block1_nodes, analyzer1),
+            (pair.block2_nodes, analyzer2),
+        ):
+            if block_analyzer is None or block_analyzer.root_scope is None:
+                continue
+            for statement in block:
+                for node in ast.walk(statement):
+                    if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                        continue
+                    binding = block_analyzer.identifier_bindings.get(
+                        node
+                    ) or block_analyzer.root_scope.bindings.get(node.id)
+                    if (
+                        binding is not None
+                        and binding.scope_id == block_analyzer.root_scope.scope_id
+                        and isinstance(
+                            binding.node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Name)
+                        )
+                    ):
+                        self._debug_reject("module_data_lookup", pair)
+                        return True
+        return False
+
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
@@ -2819,94 +2924,18 @@ class UnificationRefactorEngine:
             self._debug_reject("incomplete_lifetime_block2", pair, str(incomplete_vars))
             return None
 
-        # Find all variables used in augmented assignments in block1
-        # These variables MUST be passed as parameters even if they appear in substitution
-        # because augmented assignments (total += x) READ the variable before writing it
-        aug_finder = AugAssignFinder()
-        for node in pair.block1_nodes:
-            aug_finder.visit(node)
-        aug_assign_vars = aug_finder.aug_assign_targets
+        aug_assign_vars = self._reserve_augassign_params(pair, substitution)
 
-        # Handle augmented assignment variables specially
-        # 1) Remove them from substitution so they remain as free variables/parameters
-        # 2) Record the name mapping per block for call generation later
-        aug_assign_param_mappings: Dict[str, Dict[int, str]] = {}
-        params_to_remove = []
-        for param_name, exprs in list(substitution.param_expressions.items()):
-            for block_idx, expr in exprs:
-                if block_idx == 0 and isinstance(expr, ast.Name) and expr.id in aug_assign_vars:
-                    if param_name not in aug_assign_param_mappings:
-                        aug_assign_param_mappings[param_name] = {}
-                    aug_assign_param_mappings[param_name][block_idx] = expr.id
-            if 0 in aug_assign_param_mappings.get(param_name, {}):
-                params_to_remove.append(param_name)
+        self._strip_fstring_params(substitution)
 
-        # Store the mappings in the substitution object for later use (dynamic attribute)
-        if not hasattr(substitution, "aug_assign_mappings"):
-            setattr(substitution, "aug_assign_mappings", {})
-        aug_mappings = cast(Dict[str, Dict[int, str]], getattr(substitution, "aug_assign_mappings"))
-        for param_name, block_mappings in aug_assign_param_mappings.items():
-            if 0 in block_mappings:
-                block1_var_name = block_mappings[0]
-                aug_mappings[block1_var_name] = block_mappings
+        free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1)
 
-        # Remove the augmented assignment parameters from substitution
-        for param_name in params_to_remove:
-            del substitution.param_expressions[param_name]
-
-        # Never parameterize entire f-strings: if any parameter maps to a JoinedStr in
-        # the template block (block 0), remove it so the f-string structure is preserved
-        fstring_params = []
-        for param_name, exprs in substitution.param_expressions.items():
-            for block_idx, expr in exprs:
-                if block_idx == 0 and isinstance(expr, ast.JoinedStr):
-                    fstring_params.append(param_name)
-                    break
-        for param_name in fstring_params:
-            del substitution.param_expressions[param_name]
-
-        # Remove variables that have been parameterized from free_vars
-        # If a variable was parameterized (e.g., 'user' -> '__param_5'),
-        # it's no longer free - it's been replaced by a parameter
-        # EXCEPT: variables in augmented assignments MUST remain free variables
-        parameterized_vars = set()
-        for param_name, exprs in substitution.param_expressions.items():
-            for block_idx, expr in exprs:
-                # Only check the first block (template block)
-                if block_idx == 0 and isinstance(expr, ast.Name):
-                    # Don't add to parameterized_vars if it's an augmented assignment target
-                    if expr.id not in aug_assign_vars:
-                        parameterized_vars.add(expr.id)
-
-        # Initialize working free_vars from block1's perspective (template block)
-        free_vars = set(free_vars1) - parameterized_vars
-
-        # Module data can be rebound by callbacks between two reads. Passing
-        # it as a helper argument snapshots the value; retaining a global name
-        # can instead capture a local in another caller. Reject this case until
-        # extraction can represent deferred, scope-correct lookups.
-        for block, block_analyzer in (
-            (pair.block1_nodes, scope_analyzer1 or pair.scope_analyzer1),
-            (pair.block2_nodes, scope_analyzer2 or pair.scope_analyzer2),
+        if self._rejects_module_data_lookup(
+            pair,
+            scope_analyzer1 or pair.scope_analyzer1,
+            scope_analyzer2 or pair.scope_analyzer2,
         ):
-            if block_analyzer is None or block_analyzer.root_scope is None:
-                continue
-            for statement in block:
-                for node in ast.walk(statement):
-                    if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
-                        continue
-                    binding = block_analyzer.identifier_bindings.get(
-                        node
-                    ) or block_analyzer.root_scope.bindings.get(node.id)
-                    if (
-                        binding is not None
-                        and binding.scope_id == block_analyzer.root_scope.scope_id
-                        and isinstance(
-                            binding.node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Name)
-                        )
-                    ):
-                        self._debug_reject("module_data_lookup", pair)
-                        return None
+            return None
 
         # CRITICAL: Check if any free variables are declared global or nonlocal
         # If a free variable is global/nonlocal, we cannot parameterize it
