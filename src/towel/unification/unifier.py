@@ -522,11 +522,7 @@ class Unifier:
 
         # Also attach hygienic_renames to the substitution for downstream consumers
         # so they don't need to thread the mapping through every call.
-        try:
-            subst.hygienic_renames = hygienic_renames
-        except Exception:
-            # Best-effort; continue even if attribute assignment is blocked
-            pass
+        subst.hygienic_renames = hygienic_renames
 
         # After successful unification, optionally promote literal arguments in
         # higher-order factory calls (Option B policy): even if literals are

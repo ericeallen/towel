@@ -326,8 +326,9 @@ class HygienicExtractor:
                         promoted = substitution.promoted_literal_args.get(param_name, {})
                         if block_idx in promoted:
                             args_list[param_idx] = cast(ast.expr, promoted[block_idx])
-                except Exception:
-                    # Best-effort; fall back to name reference on any issue
+                except (AttributeError, KeyError, TypeError, IndexError):
+                    # Malformed promotion map: fall back to the free-variable
+                    # name reference rather than masking an unrelated error.
                     pass
 
         # Create function call
