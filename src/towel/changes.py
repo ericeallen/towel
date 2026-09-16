@@ -77,8 +77,8 @@ def _sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _write_new(path: Path, content: bytes, mode: int = 0o600) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+def _write_and_sync(descriptor: int, content: bytes, mode: int) -> None:
+    """Write ``content`` to an open descriptor and flush it durably to disk."""
     with os.fdopen(descriptor, "wb") as stream:
         stream.write(content)
         stream.flush()
@@ -86,15 +86,16 @@ def _write_new(path: Path, content: bytes, mode: int = 0o600) -> None:
         os.fsync(stream.fileno())
 
 
+def _write_new(path: Path, content: bytes, mode: int = 0o600) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    _write_and_sync(descriptor, content, mode)
+
+
 def _replace(path: Path, content: bytes, mode: int) -> None:
     descriptor, name = tempfile.mkstemp(prefix=".towel-stage-", dir=path.parent)
     temporary = Path(name)
     try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fchmod(stream.fileno(), mode)
-            os.fsync(stream.fileno())
+        _write_and_sync(descriptor, content, mode)
         os.replace(temporary, path)
         _sync_directory(path.parent)
     finally:

@@ -74,6 +74,43 @@ For more help on a specific command:
             parser.exit(1, f"Error: {error}\n")
 
 
+def _add_import_layout_flags(parser: argparse.ArgumentParser) -> None:
+    """Add the shared import-layout flags (--prefer-absolute-imports, --pep420).
+
+    The dry and preview subcommands both infer cross-file import paths, so they
+    expose the same two mutually-exclusive toggles.
+    """
+    pref_group = parser.add_mutually_exclusive_group()
+    pref_group.add_argument(
+        "--prefer-absolute-imports",
+        dest="prefer_absolute_imports",
+        action="store_true",
+        help="Prefer absolute imports for cross-file extractions when possible",
+    )
+    pref_group.add_argument(
+        "--no-prefer-absolute-imports",
+        dest="prefer_absolute_imports",
+        action="store_false",
+        help="Prefer local/same-dir imports when possible",
+    )
+    parser.set_defaults(prefer_absolute_imports=None)
+
+    pep_group = parser.add_mutually_exclusive_group()
+    pep_group.add_argument(
+        "--pep420",
+        dest="pep420",
+        action="store_true",
+        help="Treat directories as namespace packages (PEP 420) when deriving module paths",
+    )
+    pep_group.add_argument(
+        "--no-pep420",
+        dest="pep420",
+        action="store_false",
+        help="Require __init__.py for packages when deriving module paths",
+    )
+    parser.set_defaults(pep420=None)
+
+
 def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add 'dry' subcommand parser."""
     parser = subparsers.add_parser(
@@ -105,35 +142,7 @@ Examples:
         help="Directory name to leave out of directory mode (repeatable), e.g. tests",
     )
 
-    pref_group = parser.add_mutually_exclusive_group()
-    pref_group.add_argument(
-        "--prefer-absolute-imports",
-        dest="prefer_absolute_imports",
-        action="store_true",
-        help="Prefer absolute imports for cross-file extractions when possible",
-    )
-    pref_group.add_argument(
-        "--no-prefer-absolute-imports",
-        dest="prefer_absolute_imports",
-        action="store_false",
-        help="Prefer local/same-dir imports when possible",
-    )
-    parser.set_defaults(prefer_absolute_imports=None)
-
-    pep_group = parser.add_mutually_exclusive_group()
-    pep_group.add_argument(
-        "--pep420",
-        dest="pep420",
-        action="store_true",
-        help="Treat directories as namespace packages (PEP 420) when deriving module paths",
-    )
-    pep_group.add_argument(
-        "--no-pep420",
-        dest="pep420",
-        action="store_false",
-        help="Require __init__.py for packages when deriving module paths",
-    )
-    parser.set_defaults(pep420=None)
+    _add_import_layout_flags(parser)
 
     parser.add_argument(
         "--max-iterations",
@@ -161,35 +170,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
 
     parser.add_argument("target", help="File or directory to analyze")
 
-    pref_group = parser.add_mutually_exclusive_group()
-    pref_group.add_argument(
-        "--prefer-absolute-imports",
-        dest="prefer_absolute_imports",
-        action="store_true",
-        help="Prefer absolute imports for cross-file extractions when possible",
-    )
-    pref_group.add_argument(
-        "--no-prefer-absolute-imports",
-        dest="prefer_absolute_imports",
-        action="store_false",
-        help="Prefer local/same-dir imports when possible",
-    )
-    parser.set_defaults(prefer_absolute_imports=None)
-
-    pep_group = parser.add_mutually_exclusive_group()
-    pep_group.add_argument(
-        "--pep420",
-        dest="pep420",
-        action="store_true",
-        help="Treat directories as namespace packages (PEP 420) when deriving module paths",
-    )
-    pep_group.add_argument(
-        "--no-pep420",
-        dest="pep420",
-        action="store_false",
-        help="Require __init__.py for packages when deriving module paths",
-    )
-    parser.set_defaults(pep420=None)
+    _add_import_layout_flags(parser)
 
 
 def _add_rename_helpers_parser(
