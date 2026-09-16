@@ -218,3 +218,46 @@ def test_same_dir_helper_uses_relative_import_under_non_identifier_root():
         assert "from .alpha import __extracted_func" in importer or (
             "from .beta import __extracted_func" in importer
         ), importer
+
+
+def test_out_of_place_package_import_is_relative_not_output_dir_name():
+    """Refactoring a package out-of-place must not bake the output dir into imports.
+
+    Regression: with prefer_absolute_imports defaulting on, a same-directory
+    cross-file helper used to be imported as `from <output_dir>.sub.mod import ...`,
+    which breaks once the cleaned copy is adopted into its real location. With no
+    packaging metadata to anchor an absolute name, the import must be relative.
+    """
+    import ast
+
+    with tempfile.TemporaryDirectory() as td:
+        # A classic package whose directory name is a valid identifier but is NOT
+        # the real installed package name — e.g. a temp output directory.
+        pkg = Path(td) / "cleaned_output"
+        _write(pkg / "__init__.py", "")
+        _write(
+            pkg / "alpha.py",
+            "def f1(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
+            "        return -x\n    return x\n",
+        )
+        _write(
+            pkg / "beta.py",
+            "def f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
+            "        return -x\n    return x\n",
+        )
+
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=3, prefer_absolute_imports=True
+        )
+        proposals = engine.analyze_directory(str(pkg), recursive=True)
+        assert proposals, "Expected a cross-file proposal between alpha.py and beta.py"
+        modified = engine.apply_refactoring_multi_file(proposals[0])
+
+        for content in modified.values():
+            ast.parse(content)
+        importer = next(c for c in modified.values() if "import __extracted_func" in c)
+        # Relative import, and the output dir name never appears.
+        assert "cleaned_output" not in importer, importer
+        assert "from .alpha import __extracted_func" in importer or (
+            "from .beta import __extracted_func" in importer
+        ), importer

@@ -87,7 +87,7 @@ from .assignment_analyzer import (
     _collect_block_binding_stats,
     _collect_bindings_and_reassignments,
 )
-from .project_layout import ProjectLayout
+from .project_layout import ProjectLayout, _is_package_dir
 from .semantic_safety import (
     frame_sensitivity_markers,
     imported_definition_sites,
@@ -3601,11 +3601,7 @@ class UnificationRefactorEngine:
                 if not proposal.insert_into_class:
                     from_path = Path(proposal.file_path)
                     to_path = Path(file_path)
-                    from pathlib import Path as _P
-
-                    common_dir = _P(
-                        __import__("os").path.commonpath([str(from_path), str(to_path)])
-                    )
+                    common_dir = Path(os.path.commonpath([str(from_path), str(to_path)]))
 
                     layout = ProjectLayout.discover(
                         common_dir,
@@ -3614,19 +3610,22 @@ class UnificationRefactorEngine:
                     )
 
                     abs_mod = layout.module_name_for(from_path)
-
-                    if abs_mod and layout.prefer_absolute_imports:
+                    relative = _relative_import_module(from_path, to_path)
+                    # A relative import only resolves inside a classic package; flat
+                    # modules on sys.path (no __init__.py) must use an absolute name.
+                    importer_in_package = _is_package_dir(to_path.parent, pep420=False)
+                    # Prefer an absolute import only when the layout is anchored by
+                    # real packaging metadata, so the name stays valid after an
+                    # out-of-place output is adopted into its real location. Otherwise
+                    # use a relative import when the file is in a package: it encodes
+                    # only the intrinsic same-package relationship, is valid wherever
+                    # the code lands, and matches the surrounding intra-package style.
+                    if abs_mod and layout.prefer_absolute_imports and layout.metadata_root:
                         module_name = abs_mod
-                    elif from_path.parent == to_path.parent:
-                        # A same-directory helper is always reachable via a
-                        # relative import. Prefer that whenever no importable
-                        # absolute name exists (e.g. a project root whose
-                        # directory name is not a valid identifier), so the
-                        # generated import stays valid instead of emitting an
-                        # illegal dotted name.
-                        module_name = from_path.stem if abs_mod else "." + from_path.stem
+                    elif relative is not None and importer_in_package:
+                        module_name = relative
                     else:
-                        module_name = abs_mod or "." + from_path.stem
+                        module_name = abs_mod or from_path.stem
 
                     func_name = proposal.extracted_function.name
                     import_line = f"from {module_name} import {func_name}\n"
@@ -4396,6 +4395,34 @@ def _reindent(line: str, prefix: str) -> str:
 def _line_ranges_intersect(left: Tuple[int, int], right: Tuple[int, int]) -> bool:
     """Whether two inclusive line ranges share at least one line."""
     return left[0] <= right[1] and right[0] <= left[1]
+
+
+def _relative_import_module(from_path: Path, to_path: Path) -> Optional[str]:
+    """The relative-import module for reaching ``from_path`` from ``to_path``.
+
+    Ascends from the importing file's own directory until it contains the helper
+    file, using one leading dot for that package plus one more per level climbed:
+    ``.helpers`` for a sibling module, ``.sub.helpers`` for one in a subpackage,
+    ``..helpers`` for one a level up. Returns ``None`` when the two files share no
+    directory tree, so a relative import cannot reach across.
+    """
+    helper = from_path.resolve()
+    package_dir = to_path.resolve().parent
+    dots = 1
+    while True:
+        try:
+            relative = helper.relative_to(package_dir)
+            break
+        except ValueError:
+            parent = package_dir.parent
+            if parent == package_dir:
+                return None
+            package_dir = parent
+            dots += 1
+    parts = list(relative.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return "." * dots + ".".join(parts)
 
 
 def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:

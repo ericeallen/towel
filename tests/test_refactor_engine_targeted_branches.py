@@ -284,14 +284,10 @@ def consumer(data):
 
             self.assertIn("def helper(value):", updated_a)
             self.assertIn("return helper(value)", updated_a)
-            import_line_present = any(
-                candidate in updated_b
-                for candidate in [
-                    "from pkg.source_a import helper",
-                    "from source_a import helper",
-                ]
-            )
-            self.assertTrue(import_line_present)
+            # No packaging metadata anchors an absolute name here, and both files
+            # sit in a classic package, so the helper is imported relatively — the
+            # location-independent form that survives adopting an out-of-place copy.
+            self.assertIn("from .source_a import helper", updated_b)
             self.assertIn("return helper(data)", updated_b)
 
     def test_refactor_directory_to_fixed_point_uses_stubbed_results(self):

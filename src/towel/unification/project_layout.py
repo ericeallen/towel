@@ -354,6 +354,10 @@ class ProjectLayout:
     prefer_absolute_imports: bool = True
     pep420_namespace_packages: bool = True
     package_prefixes: Dict[Path, str] = field(default_factory=dict)
+    # True when discovery found a real packaging marker (pyproject/setup.*) at the
+    # project root, so an absolute module name is anchored and survives adoption.
+    # False for a bare directory, where only relative imports are trustworthy.
+    metadata_root: bool = False
 
     @classmethod
     def discover(
@@ -486,12 +490,17 @@ class ProjectLayout:
                 project_root = start_dir
                 source_roots = [start_dir]
 
+        metadata_root = any(
+            (project_root / marker).exists()
+            for marker in ("pyproject.toml", "setup.cfg", "setup.py")
+        )
         return cls(
             project_root=project_root,
             source_roots=source_roots,
             prefer_absolute_imports=prefer_abs,
             pep420_namespace_packages=pep420,
             package_prefixes=package_prefixes,
+            metadata_root=metadata_root,
         )
 
     def module_name_for(self, file_path: Path) -> Optional[str]:

@@ -3,10 +3,12 @@
 
 For every project in the manifest: clone at the pinned revision, install its
 test dependencies into a private environment, run its suite as a baseline,
-copy it, refactor the package in the copy with the CLI defaults, run the suite
-again, and compare. A project qualifies when both runs are identical in exit
-status and summary line. Progress is printed as each phase completes; the
-exit status is nonzero when any project breaks or the refactoring crashes.
+copy it, refactor the package out of place with the CLI defaults, adopt the
+cleaned copy back over the package (the documented workflow, which exercises
+import paths that survive relocation), run the suite again, and compare. A
+project qualifies when both runs are identical in exit status and summary line.
+Progress is printed as each phase completes; the exit status is nonzero when
+any project breaks or the refactoring crashes.
 
     python scripts/ecosystem_check.py --work /tmp/towel-ecosystem --workers 4
 """
@@ -257,6 +259,13 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
     # projects in flight the caller caps that through TOWEL_WORKERS.
     if "TOWEL_WORKERS" in os.environ:
         towel_env["TOWEL_WORKERS"] = os.environ["TOWEL_WORKERS"]
+    # Refactor OUT OF PLACE to a differently named directory, then adopt the
+    # cleaned copy back over the package. This mirrors the documented workflow
+    # ("write to a new directory, diff, then adopt") and exercises import paths
+    # that survive relocation, which an in-place refactor cannot check.
+    cleaned = work / f"{project.name}-cleaned"
+    if cleaned.exists():
+        shutil.rmtree(cleaned)
     result.refactor = run(
         [
             sys.executable,
@@ -264,7 +273,7 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
             "towel.cli",
             "dry",
             project.package,
-            project.package,
+            str(cleaned),
             "--non-interactive",
             "--progress",
             "none",
@@ -284,6 +293,16 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         result.verdict = "UNSUPPORTED" if refused else "CRASH"
         result.detail = refused or result.refactor.summary
         return result
+    # Adopt: replace the package with the cleaned copy in place. A package
+    # directory is swapped wholesale (dropping the non-source helper sidecar the
+    # CLI writes for naming); a single-file module is copied over directly.
+    package_path = ready / project.package
+    if cleaned.is_dir():
+        (cleaned / ".towel-helpers.json").unlink(missing_ok=True)
+        shutil.rmtree(package_path)
+        shutil.copytree(cleaned, package_path, symlinks=True)
+    else:
+        shutil.copyfile(cleaned, package_path)
     result.changed_files, result.diff_stat = changed(ready, project.package)
     if result.changed_files == 0:
         result.verdict = "NO_CHANGE"
