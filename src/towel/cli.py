@@ -292,6 +292,57 @@ Examples:
     )
 
 
+CHANGE_SIDECAR_NAME = ".towel-helpers.json"
+
+
+def _change_sidecar_path(target: "Path") -> "Path":
+    """Where the before/after record lives for a dry output target (file or dir)."""
+    from pathlib import Path
+
+    target = Path(target)
+    if target.is_dir():
+        return target / CHANGE_SIDECAR_NAME
+    return target.with_name(target.name + CHANGE_SIDECAR_NAME)
+
+
+def _write_change_sidecar(engine: object, output: str) -> None:
+    """Persist each applied extraction's original block and generated call.
+
+    Grouped by helper name so the rename-helpers inventory can show a
+    before/after per call site, which helps a naming assistant finish names,
+    docstrings, and types. Written next to the refactored output; delete it
+    once naming is done.
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    records = list(getattr(engine, "_change_log", []) or [])
+    if not records:
+        return
+    out = Path(output)
+    base = out if out.is_dir() else out.parent
+    helpers: Dict[str, List[Dict[str, object]]] = {}
+    for record in records:
+        try:
+            rel = os.path.relpath(str(record["path"]), str(base))
+        except ValueError:
+            rel = str(record["path"])
+        helpers.setdefault(str(record["helper"]), []).append(
+            {
+                "file": rel,
+                "line": record["line"],
+                "before": record["before"],
+                "after": record["after"],
+            }
+        )
+    sidecar = _change_sidecar_path(out)
+    sidecar.write_text(
+        json.dumps({"version": 1, "helpers": helpers}, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"\nWrote call-site before/after to {sidecar} (for naming; safe to delete).")
+
+
 def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     # Import here to avoid loading heavy modules if not needed
@@ -398,6 +449,8 @@ def _run_dry(args: argparse.Namespace) -> None:
                     print(f"    ... and {len(descriptions) - 3} more")
         else:
             print("\nNo refactorings found! Termination: fixed_point")
+
+    _write_change_sidecar(engine, output_path)
 
 
 def _run_preview(args: argparse.Namespace) -> None:
@@ -615,6 +668,17 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
     rename the helper or one of its parameters.
     """
     import ast
+    import json
+
+    changes_by_helper: Dict[str, object] = {}
+    sidecar = _change_sidecar_path(target)
+    if sidecar.is_file():
+        try:
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("helpers"), dict):
+                changes_by_helper = data["helpers"]
+        except (OSError, ValueError):
+            changes_by_helper = {}
 
     wanted = {name for _, name, _, _ in helpers}
     modules: Dict[Path, Tuple[str, ast.Module]] = {}
@@ -720,6 +784,7 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                     "parameters": parameters,
                     "source": ast.get_source_segment(source, node) or "",
                     "calls": calls[name],
+                    "changes": changes_by_helper.get(name, []),
                 }
             )
     return {

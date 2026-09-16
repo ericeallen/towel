@@ -115,3 +115,47 @@ def test_cli_rename_file_reports_structured_result_and_rejection(tmp_path: Path)
     assert rejected.returncode == 2
     payload = json.loads(rejected.stdout)
     assert payload["applied"] is False and "collide" in payload["error"]
+
+
+def test_inventory_includes_before_after_from_the_dry_sidecar(tmp_path: Path) -> None:
+    import contextlib
+    import io
+
+    from towel.cli import _change_sidecar_path, _write_change_sidecar
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "__init__.py").write_text("")
+    (src / "m.py").write_text(
+        "def f(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n"
+        "def g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n"
+        "def compute(v):\n    return v\n"
+    )
+    out = tmp_path / "cleaned"
+    engine = UnificationRefactorEngine(min_lines=3)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        engine.refactor_directory_to_fixed_point(str(src), str(out), progress="none")
+        # The engine recorded the true original block and generated call per site.
+        assert engine._change_log, "a refactoring should have been applied and logged"
+        _write_change_sidecar(engine, str(out))
+
+    assert _change_sidecar_path(out).is_file()
+
+    inventory = helper_inventory(out, _find_extracted_helpers(out, None, None))
+    entries = inventory["helpers"]
+    assert entries, "the cleaned tree should contain at least one helper"
+    changed = [e for e in entries if e["changes"]]
+    assert changed, "at least one helper carries before/after changes from the sidecar"
+    for change in changed[0]["changes"]:
+        assert change["before"] and change["after"]
+        # 'before' is the original block; 'after' is the generated call.
+        assert "compute(" in change["before"]
+        assert change["after"].startswith("return ") and "(" in change["after"]
+
+
+def test_inventory_has_empty_changes_without_a_sidecar(tmp_path: Path) -> None:
+    target = _project(tmp_path)
+    inventory = helper_inventory(target, _find_extracted_helpers(target, None, None))
+    for entry in inventory["helpers"]:
+        assert entry["changes"] == []

@@ -33,6 +33,7 @@ from collections import deque
 import multiprocessing
 import sys
 import resource
+import textwrap
 import threading
 import time
 from collections import OrderedDict
@@ -359,6 +360,9 @@ class UnificationRefactorEngine:
         self._function_paths: Dict[FunctionNode, str] = {}
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
+        # Per-run record of what each applied extraction replaced: the original
+        # block and the generated call, for the naming step's before/after view.
+        self._change_log: List[Dict[str, object]] = []
         # Every file of the current analysis: helper names must be unique
         # across all of them, because any module may import from any other.
         self._analysis_paths: Tuple[str, ...] = ()
@@ -3487,6 +3491,18 @@ class UnificationRefactorEngine:
                     else:
                         replacement_lines.append("\n")
 
+                # Record the true before/after for this call site before splicing.
+                self._change_log.append(
+                    {
+                        "helper": final_func_name,
+                        "path": file_path,
+                        "line": start_line,
+                        "before": textwrap.dedent("".join(lines[start_line - 1 : end_line])).rstrip(
+                            "\n"
+                        ),
+                        "after": replacement_code,
+                    }
+                )
                 # Splice into source
                 lines[start_line - 1 : end_line] = replacement_lines
 
@@ -3849,6 +3865,7 @@ class UnificationRefactorEngine:
             Returns:
                 Tuple of (final_code, num_refactorings_applied, descriptions)
         """
+        self._change_log = []
         current_bytes = Path(file_path).read_bytes()
         current_code = current_bytes.decode("utf-8")
         num_applied = 0
@@ -3956,6 +3973,7 @@ class UnificationRefactorEngine:
             (results_dict, termination_reason)
             termination_reason ∈ {"fixed_point", "iteration_cap"}
         """
+        self._change_log = []
         from pathlib import Path
         import textwrap
 

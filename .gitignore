@@ -108,3 +108,7 @@ docs/docs_local/
 .todo/
 .todo_list
 mytmp
+
+# Naming sidecar written by `towel dry`
+.towel-helpers.json
+*.towel-helpers.json
