@@ -236,3 +236,30 @@ def test_invalid_rename_file_has_failure_status(tmp_path: Path, contents: str) -
     assert result.status == 1
     assert "Error" in result.stdout
     assert source.read_text() == HELPER
+
+
+def test_import_layout_flags_shared_by_dry_and_preview() -> None:
+    """Both subcommands expose the shared --prefer-absolute-imports / --pep420 toggles.
+
+    Guards the _add_import_layout_flags extraction: a regression in the shared
+    helper (or a missing call) would drop the flags from one subcommand.
+    """
+    import argparse
+
+    from towel.cli import _add_import_layout_flags
+
+    parser = argparse.ArgumentParser()
+    _add_import_layout_flags(parser)
+    assert parser.parse_args([]).prefer_absolute_imports is None
+    assert parser.parse_args([]).pep420 is None
+    assert parser.parse_args(["--prefer-absolute-imports"]).prefer_absolute_imports is True
+    assert parser.parse_args(["--no-prefer-absolute-imports"]).prefer_absolute_imports is False
+    assert parser.parse_args(["--pep420"]).pep420 is True
+    assert parser.parse_args(["--no-pep420"]).pep420 is False
+
+    # And both real subcommands accept them (they call the shared helper).
+    for command in ("dry", "preview"):
+        args = [command, "src"] + (["out"] if command == "dry" else [])
+        result = invoke(args + ["--pep420", "--no-prefer-absolute-imports", "--help"])
+        assert "--prefer-absolute-imports" in result.stdout
+        assert "--pep420" in result.stdout
