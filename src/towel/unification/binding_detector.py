@@ -32,6 +32,8 @@ role (both are bound variables with identical usage patterns).
 from __future__ import annotations
 
 import ast
+
+from .parameters import parameter_nodes
 from typing import List, Optional, Set, Union
 from dataclasses import dataclass
 from enum import Enum
@@ -314,13 +316,7 @@ class BindingDetector(ast.NodeVisitor):
         self.scope_stack.pop()
 
     def _bind_function_parameters(self, args: ast.arguments) -> None:
-        for arg in (*args.posonlyargs, *args.args):
-            self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
-        if args.vararg:
-            self._add_binding(args.vararg.arg, BindingKind.FUNCTION_PARAM, args.vararg)
-        if args.kwarg:
-            self._add_binding(args.kwarg.arg, BindingKind.FUNCTION_PARAM, args.kwarg)
-        for arg in args.kwonlyargs:
+        for arg in parameter_nodes(args):
             self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
 
     def _add_optional_binding(self, name: Optional[str], kind: BindingKind, node: ast.AST) -> None:

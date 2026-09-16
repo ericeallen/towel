@@ -89,6 +89,7 @@ from .assignment_analyzer import (
 )
 from .project_layout import ProjectLayout, _is_package_dir
 from .progress import load_tqdm, render_inline_bar
+from .parameters import parameter_names
 from .semantic_safety import (
     frame_sensitivity_markers,
     imported_definition_sites,
@@ -1804,20 +1805,7 @@ class UnificationRefactorEngine:
 
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return set()
-
-        params: Set[str] = set()
-        args = func.args
-
-        for arg in getattr(args, "posonlyargs", []) or []:
-            params.add(arg.arg)
-        for arg in args.args:
-            params.add(arg.arg)
-        for arg in args.kwonlyargs:
-            params.add(arg.arg)
-        if args.vararg:
-            params.add(args.vararg.arg)
-        if args.kwarg:
-            params.add(args.kwarg.arg)
+        params = set(parameter_names(func.args))
 
         return params
 
