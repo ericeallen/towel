@@ -8,7 +8,7 @@ correct behavior of assignment classification and reassignment detection.
 
 import unittest
 import ast
-from src.towel.unification.assignment_analyzer import (
+from towel.unification.assignment_analyzer import (
     analyze_assignments,
     AssignmentAnalyzer,
     has_reassignments_without_bindings,

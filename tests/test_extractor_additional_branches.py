@@ -10,8 +10,8 @@ Focus on:
 import unittest
 import ast
 
-from src.towel.unification.extractor import HygienicExtractor
-from src.towel.unification.unifier import Substitution
+from towel.unification.extractor import HygienicExtractor
+from towel.unification.unifier import Substitution
 
 
 class TestExtractorInjectedPreamble(unittest.TestCase):

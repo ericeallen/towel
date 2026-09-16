@@ -5,7 +5,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from src.towel.unification.refactor_engine import (
+from towel.unification.refactor_engine import (
     RefactoringProposal,
     UnificationRefactorEngine,
     filter_overlapping_proposals,

@@ -6,7 +6,7 @@ These tests verify that builtin tracking works correctly.
 """
 
 import unittest
-from src.towel.unification.builtins import PYTHON_BUILTINS, is_builtin, filter_builtins
+from towel.unification.builtins import PYTHON_BUILTINS, is_builtin, filter_builtins
 
 
 class TestPythonBuiltinsConstant(unittest.TestCase):

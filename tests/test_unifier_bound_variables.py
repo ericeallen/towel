@@ -18,7 +18,7 @@ Example:
 
 import unittest
 import ast
-from src.towel.unification.unifier import Unifier
+from towel.unification.unifier import Unifier
 
 
 class TestUnifierBoundVariables(unittest.TestCase):

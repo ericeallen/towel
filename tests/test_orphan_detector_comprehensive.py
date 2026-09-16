@@ -8,7 +8,7 @@ for various code extraction scenarios.
 
 import unittest
 import ast
-from src.towel.unification.orphan_detector import (
+from towel.unification.orphan_detector import (
     _apply_visitor_to_nodes,
     get_bound_variables,
     get_used_variables,

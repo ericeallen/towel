@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 
 from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 class TestAdversarialBreakers(unittest.TestCase):

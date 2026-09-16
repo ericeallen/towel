@@ -8,7 +8,7 @@ Block 0 unification fails for higher_order_function_c/d.
 
 import unittest
 import ast
-from src.towel.unification.unifier import Unifier, Substitution
+from towel.unification.unifier import Unifier, Substitution
 
 
 class TestUnifierBasics(unittest.TestCase):

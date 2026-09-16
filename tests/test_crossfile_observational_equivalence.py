@@ -11,7 +11,7 @@ class TestCrossfileObservationalEquivalence(unittest.TestCase):
     def test_crossfile_projects(self) -> None:
         # Import lazily to avoid import-time overhead if the test is filtered
         from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
-        from src.towel.unification.refactor_engine import UnificationRefactorEngine
+        from towel.unification.refactor_engine import UnificationRefactorEngine
 
         engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
         tester = CrossFileEquivalenceTester(engine)

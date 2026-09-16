@@ -22,7 +22,7 @@ from typing import Dict
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
 

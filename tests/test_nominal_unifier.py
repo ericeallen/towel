@@ -1,7 +1,7 @@
 import ast
 import unittest
 
-from src.towel.unification.nominal_unifier import (
+from towel.unification.nominal_unifier import (
     NominalUnificationContext,
     NominalVariableMatcher,
     analyze_nominal_patterns,

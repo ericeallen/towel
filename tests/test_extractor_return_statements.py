@@ -23,8 +23,8 @@ Example:
 
 import unittest
 import ast
-from src.towel.unification.unifier import Unifier, Substitution
-from src.towel.unification.extractor import HygienicExtractor
+from towel.unification.unifier import Unifier, Substitution
+from towel.unification.extractor import HygienicExtractor
 
 
 class TestExtractorReturnStatements(unittest.TestCase):

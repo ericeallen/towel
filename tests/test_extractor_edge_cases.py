@@ -1,9 +1,9 @@
 import ast
 from typing import Set, Dict
 
-from src.towel.unification.extractor import HygienicExtractor
-from src.towel.unification.scope_analyzer import ScopeAnalyzer
-from src.towel.unification.unifier import Substitution, Unifier
+from towel.unification.extractor import HygienicExtractor
+from towel.unification.scope_analyzer import ScopeAnalyzer
+from towel.unification.unifier import Substitution, Unifier
 
 
 def make_substitution(param_map):

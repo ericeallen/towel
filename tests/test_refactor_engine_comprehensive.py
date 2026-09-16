@@ -10,7 +10,7 @@ import unittest
 import ast
 import tempfile
 import os
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 class TestBlockExtraction(unittest.TestCase):
@@ -292,7 +292,7 @@ def func2():
     return x + y + z + w
 """
         tree = ast.parse(code)
-        from src.towel.unification.scope_analyzer import ScopeAnalyzer
+        from towel.unification.scope_analyzer import ScopeAnalyzer
 
         analyzer = ScopeAnalyzer()
         scope = analyzer.analyze(tree)
@@ -333,7 +333,7 @@ def func2():
     return x + y + z + w
 """
         tree = ast.parse(code)
-        from src.towel.unification.scope_analyzer import ScopeAnalyzer
+        from towel.unification.scope_analyzer import ScopeAnalyzer
 
         analyzer = ScopeAnalyzer()
         scope = analyzer.analyze(tree)

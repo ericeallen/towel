@@ -6,7 +6,7 @@ Targeted tests to exercise less-traveled Unifier branches (with/namedexpr/lambda
 import unittest
 import ast
 
-from src.towel.unification.unifier import Unifier
+from towel.unification.unifier import Unifier
 
 
 def _parse_block(src: str):

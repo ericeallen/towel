@@ -6,9 +6,9 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
-from src.towel.unification.unifier import Unifier
-from src.towel.unification.extractor import HygienicExtractor
+from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.unifier import Unifier
+from towel.unification.extractor import HygienicExtractor
 
 
 class TempModule:

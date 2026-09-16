@@ -11,7 +11,7 @@ from pathlib import Path
 import textwrap
 import ast
 
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import assert_file_not_modified
 
 

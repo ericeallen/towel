@@ -19,8 +19,8 @@ Example:
 
 import unittest
 import ast
-from src.towel.unification.unifier import Unifier
-from src.towel.unification.extractor import HygienicExtractor
+from towel.unification.unifier import Unifier
+from towel.unification.extractor import HygienicExtractor
 
 
 class TestVariableCaptureBug(unittest.TestCase):

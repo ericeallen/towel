@@ -3,7 +3,7 @@ import sys
 import textwrap
 import unittest
 
-from src.towel.unification.binding_detector import (
+from towel.unification.binding_detector import (
     BindingDetector,
     BindingKind,
     detect_bindings,

@@ -8,7 +8,7 @@ of scope analysis, binding tracking, and free variable detection.
 
 import unittest
 import ast
-from src.towel.unification.scope_analyzer import ScopeAnalyzer, Scope, Binding
+from towel.unification.scope_analyzer import ScopeAnalyzer, Scope, Binding
 
 
 class TestScopeBasics(unittest.TestCase):

@@ -9,15 +9,15 @@ correct behavior of code extraction, hygiene checking, and helper functions.
 import unittest
 import ast
 from typing import cast
-from src.towel.unification.extractor import (
+from towel.unification.extractor import (
     contains_return,
     is_value_producing,
     has_complete_return_coverage,
     get_enclosing_names,
     HygienicExtractor,
 )
-from src.towel.unification.scope_analyzer import Scope, ScopeAnalyzer
-from src.towel.unification.unifier import Substitution
+from towel.unification.scope_analyzer import Scope, ScopeAnalyzer
+from towel.unification.unifier import Substitution
 
 
 class TestContainsReturn(unittest.TestCase):

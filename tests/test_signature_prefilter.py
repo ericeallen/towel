@@ -1,5 +1,5 @@
 import ast
-from src.towel.unification.block_signature import (
+from towel.unification.block_signature import (
     extract_block_signature,
     quick_filter,
     evaluate_signature,

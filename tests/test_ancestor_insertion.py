@@ -5,7 +5,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 class TestAncestorInsertion(unittest.TestCase):

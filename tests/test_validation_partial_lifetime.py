@@ -11,7 +11,7 @@ extracted block.
 import unittest
 import os
 import ast
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 class TestPartialLifetimeValidation(unittest.TestCase):
@@ -103,7 +103,7 @@ def test_func(x):
         block_stmts = func.body[0:3]  # First 3 statements
 
         # Check if any initially bound variables are used after
-        from src.towel.unification.assignment_analyzer import _collect_bindings_and_reassignments
+        from towel.unification.assignment_analyzer import _collect_bindings_and_reassignments
 
         bound_in_block = set()
         reassigned_in_block = set()
