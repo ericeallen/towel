@@ -105,6 +105,7 @@ from .semantic_safety import (
 from .block_signature import BlockSignature, extract_block_signature, quick_filter
 from .models import (
     CodeBlockPair,
+    FunctionArtifact,
     MethodInfo,
     ClassInfo,
     ClassInsertionPlan,
@@ -188,20 +189,7 @@ class _ClusterCandidate:
 
 
 _worker_engine: Optional["UnificationRefactorEngine"] = None
-_worker_functions: Optional[
-    List[
-        Tuple[
-            str,
-            FunctionNode,
-            str,
-            "ScopeAnalyzer",
-            "Scope",
-            Optional[str],
-            Optional[str],
-            List[str],
-        ]
-    ]
-] = None
+_worker_functions: Optional[Sequence[FunctionArtifact]] = None
 _worker_class_infos: Optional[List[ClassInfo]] = None
 
 
@@ -759,7 +747,7 @@ class UnificationRefactorEngine:
                 del self._function_paths[function]
                 self._function_sources.pop(function, None)
 
-    def _record_function_paths(self, all_functions: Sequence[Tuple[Any, ...]]) -> None:
+    def _record_function_paths(self, all_functions: Sequence[FunctionArtifact]) -> None:
         for entry in all_functions:
             self._function_paths[entry[1]] = entry[0]
             source = entry[2]
@@ -789,18 +777,7 @@ class UnificationRefactorEngine:
     def _process_block_pairs(
         self,
         block_pairs: List[CodeBlockPair],
-        all_functions: List[
-            Tuple[
-                str,
-                FunctionNode,
-                str,
-                ScopeAnalyzer,
-                Scope,
-                Optional[str],
-                Optional[str],
-                List[str],
-            ]
-        ],
+        all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
         *,
         verbose: bool,
@@ -1517,18 +1494,7 @@ class UnificationRefactorEngine:
     def _evaluate_pairs_serial(
         self,
         block_pairs: List[CodeBlockPair],
-        all_functions: List[
-            Tuple[
-                str,
-                FunctionNode,
-                str,
-                ScopeAnalyzer,
-                Scope,
-                Optional[str],
-                Optional[str],
-                List[str],
-            ]
-        ],
+        all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
         *,
         verbose: bool,
@@ -1576,18 +1542,7 @@ class UnificationRefactorEngine:
     def _evaluate_pairs_parallel(
         self,
         block_pairs: List[CodeBlockPair],
-        all_functions: List[
-            Tuple[
-                str,
-                FunctionNode,
-                str,
-                ScopeAnalyzer,
-                Scope,
-                Optional[str],
-                Optional[str],
-                List[str],
-            ]
-        ],
+        all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
         *,
         verbose: bool,
@@ -1888,7 +1843,7 @@ class UnificationRefactorEngine:
     def _enclosing_function_named(
         name: str,
         file_path: str,
-        all_functions: Sequence[Tuple[Any, ...]],
+        all_functions: Sequence[FunctionArtifact],
         inner: Sequence[FunctionNode],
     ) -> Optional[FunctionNode]:
         """The one function called ``name`` in ``file_path`` enclosing every ``inner`` function."""
@@ -2041,18 +1996,7 @@ class UnificationRefactorEngine:
 
     def _find_block_pairs_multi_file(
         self,
-        all_functions: List[
-            Tuple[
-                str,
-                FunctionNode,
-                str,
-                ScopeAnalyzer,
-                Scope,
-                Optional[str],
-                Optional[str],
-                List[str],
-            ]
-        ],
+        all_functions: Sequence[FunctionArtifact],
         *,
         progress: str = "none",
     ) -> List[CodeBlockPair]:
@@ -2202,18 +2146,7 @@ class UnificationRefactorEngine:
     def _resolve_pair_context(
         self,
         pair: CodeBlockPair,
-        all_functions: List[
-            Tuple[
-                str,
-                FunctionNode,
-                str,
-                ScopeAnalyzer,
-                Scope,
-                Optional[str],
-                Optional[str],
-                List[str],
-            ]
-        ],
+        all_functions: Sequence[FunctionArtifact],
     ) -> "_PairContext":
         """Resolve each block's function, scope analyzer, and root scope.
 
@@ -2280,18 +2213,7 @@ class UnificationRefactorEngine:
         self,
         template: "_HelperTemplate",
         dce_node: Optional[FunctionNode],
-        all_functions: List[
-            Tuple[
-                str,
-                FunctionNode,
-                str,
-                ScopeAnalyzer,
-                Scope,
-                Optional[str],
-                Optional[str],
-                List[str],
-            ]
-        ],
+        all_functions: Sequence[FunctionArtifact],
         replacements: List[Replacement],
         cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]],
     ) -> None:
@@ -2506,18 +2428,7 @@ class UnificationRefactorEngine:
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
-        all_functions: List[
-            Tuple[
-                str,
-                FunctionNode,
-                str,
-                ScopeAnalyzer,
-                Scope,
-                Optional[str],
-                Optional[str],
-                List[str],
-            ]
-        ],
+        all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
     ) -> Optional[RefactoringProposal]:
         """
@@ -4348,9 +4259,7 @@ class UnificationRefactorEngine:
 
 def _refactor_engine_helper_2(
     self: UnificationRefactorEngine,
-    all_functions: List[
-        Tuple[str, FunctionNode, str, ScopeAnalyzer, Scope, Optional[str], Optional[str], List[str]]
-    ],
+    all_functions: Sequence[FunctionArtifact],
     block_pairs: List[CodeBlockPair],
     class_infos: List[ClassInfo],
     progress: str,

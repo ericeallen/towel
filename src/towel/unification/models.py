@@ -24,7 +24,7 @@ This module defines the core data structures used throughout the refactoring eng
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Literal, NamedTuple, Optional, Tuple, Union
 import ast
 
 
@@ -177,9 +177,13 @@ class ParsedModule:
     class_infos: List[ClassInfo] = field(default_factory=list)
 
 
-@dataclass
-class FunctionArtifact:
-    """Represents a function (sync or async) discovered during analysis with context."""
+class FunctionArtifact(NamedTuple):
+    """A function (sync or async) discovered during analysis, with its context.
+
+    A NamedTuple so it can be passed straight into the engine's positional
+    consumers while still offering named-field access; field order is the
+    contract those consumers unpack.
+    """
 
     file_path: str
     node: Union[ast.FunctionDef, ast.AsyncFunctionDef]

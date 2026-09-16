@@ -175,21 +175,7 @@ def pair_blocks(
     The engine owns candidate generation and its progress reporting; this adapter
     only packs the analyzed function context.
     """
-    packed = [
-        (
-            f.file_path,
-            f.node,
-            f.source,
-            f.scope_analyzer,
-            f.root_scope,
-            f.class_name,
-            f.enclosing_function,
-            f.ancestry,
-        )
-        for f in funcs
-    ]
-
-    return engine._find_block_pairs_multi_file(packed, progress=progress)
+    return engine._find_block_pairs_multi_file(list(funcs), progress=progress)
 
 
 def unify_blocks(
@@ -201,21 +187,8 @@ def unify_blocks(
     verbose: bool = False,
     progress: str = "auto",
 ) -> List[RefactoringProposal]:
-    packed = [
-        (
-            f.file_path,
-            f.node,
-            f.source,
-            f.scope_analyzer,
-            f.root_scope,
-            f.class_name,
-            f.enclosing_function,
-            f.ancestry,
-        )
-        for f in funcs
-    ]
     return engine._process_block_pairs(
-        list(pairs), packed, list(classes), verbose=verbose, progress=progress
+        list(pairs), list(funcs), list(classes), verbose=verbose, progress=progress
     )
 
 
