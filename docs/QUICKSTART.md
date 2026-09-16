@@ -23,6 +23,8 @@ Linux, no runtime dependencies.
 towel preview path/to/project
 ```
 
+For each opportunity, `preview` prints the extracted helper and, per call site, the original block (`-`) next to the generated call (`+`), so you can see exactly what would change before applying anything.
+
 ## 2. Refactor into a fresh copy
 
 Never refactor in place on your first run — write to a new directory and diff it.

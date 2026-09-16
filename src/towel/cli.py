@@ -457,6 +457,7 @@ def _run_preview(args: argparse.Namespace) -> None:
     """Run the preview command."""
     import os
     import ast
+    import textwrap
     from towel.unification.refactor_engine import (
         UnificationRefactorEngine,
         filter_overlapping_proposals,
@@ -516,6 +517,7 @@ def _run_preview(args: argparse.Namespace) -> None:
     print("REFACTORING OPPORTUNITIES")
     print("=" * 70)
 
+    source_cache: Dict[str, List[str]] = {}
     for i, prop in enumerate(proposals[:10], 1):
         print(f"\n{i}. {prop.description}")
         print(f"   Parameters: {prop.parameters_count}")
@@ -547,6 +549,40 @@ def _run_preview(args: argparse.Namespace) -> None:
         except ValueError as e:
             print(f"      (Preview unavailable: {e})")
             print(f"      Function name: {prop.extracted_function.name}")
+
+        # Show each call site's original block (before) and the generated call
+        # (after), so a reader sees exactly what would change.
+        print("\n   Call sites (- before / + after):")
+        shown = 0
+        for repl in sorted(
+            prop.replacements,
+            key=lambda r: ((r.file_path or prop.file_path), r.line_range[0]),
+        ):
+            if shown >= 3:
+                print(f"      ... ({len(prop.replacements) - shown} more call site(s))")
+                break
+            fpath = repl.file_path or prop.file_path
+            start, end = repl.line_range
+            if fpath not in source_cache:
+                try:
+                    source_cache[fpath] = open(fpath, encoding="utf-8").readlines()
+                except OSError:
+                    source_cache[fpath] = []
+            file_lines = source_cache[fpath]
+            if not (1 <= start <= end <= len(file_lines)):
+                continue
+            before = textwrap.dedent("".join(file_lines[start - 1 : end])).rstrip("\n")
+            try:
+                after = ast.unparse(repl.node)
+            except ValueError:
+                continue
+            location = os.path.relpath(fpath, target) if is_dir else os.path.basename(fpath)
+            print(f"      {location}:{start}")
+            for line in before.split("\n"):
+                print(f"        - {line}")
+            for line in after.split("\n"):
+                print(f"        + {line}")
+            shown += 1
 
     if len(proposals) > 10:
         print(f"\n... and {len(proposals) - 10} more proposals")

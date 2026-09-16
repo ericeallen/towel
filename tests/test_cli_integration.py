@@ -86,6 +86,9 @@ def test_preview_finds_duplicates_without_changing_files(tmp_path: Path, directo
     assert "REFACTORING OPPORTUNITIES" in result.stdout
     assert "first" in result.stdout and "second" in result.stdout
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+    # The human preview shows each call site's original block and generated call.
+    assert "Call sites (- before / + after):" in result.stdout
+    assert "        - " in result.stdout and "        + " in result.stdout
 
 
 def test_preview_no_duplicates_is_a_successful_read_only_result(tmp_path: Path) -> None:

@@ -57,7 +57,8 @@ The two largest projects in the ecosystem check, networkx and Sphinx, are the sl
 ## Use
 
 ```bash
-# Read-only analysis
+# Read-only analysis: lists each opportunity with the extracted helper and,
+# per call site, the original block (-) next to the generated call (+)
 towel preview path/to/project
 
 # Write to a new output directory
