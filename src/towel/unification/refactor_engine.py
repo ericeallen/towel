@@ -163,6 +163,20 @@ class _HelperTemplate:
 
 
 @dataclass(frozen=True)
+class _PairContext:
+    """Each block's resolved function, scope analyzer, and root scope."""
+
+    func1: Optional[FunctionNode]
+    func2: Optional[FunctionNode]
+    scope_analyzer: Optional[ScopeAnalyzer]
+    scope_analyzer2: Optional[ScopeAnalyzer]
+    root_scope: Optional[Scope]
+    # The analyzer discovered for block1's own function, before falling back to
+    # the pair-provided analyzer; some downstream checks need the raw value.
+    scope_analyzer1: Optional[ScopeAnalyzer]
+
+
+@dataclass(frozen=True)
 class _ClusterCandidate:
     """A candidate occurrence tested for whether it can share a helper."""
 
@@ -2207,7 +2221,7 @@ class UnificationRefactorEngine:
 
         return pairs
 
-    def _try_refactor_pair_multi_file(
+    def _resolve_pair_context(
         self,
         pair: CodeBlockPair,
         all_functions: List[
@@ -2222,36 +2236,12 @@ class UnificationRefactorEngine:
                 List[str],
             ]
         ],
-        class_infos: List[ClassInfo],
-    ) -> Optional[RefactoringProposal]:
+    ) -> "_PairContext":
+        """Resolve each block's function, scope analyzer, and root scope.
+
+        Prefers the analyzer/scope discovered for the block's own function in the
+        aggregated function list, falling back to the values carried on the pair.
         """
-        Try to refactor a pair of code blocks using unification (cross-file support).
-
-        Args:
-            pair: Code block pair (may be cross-file)
-            all_functions: All functions being analyzed
-            class_infos: Metadata about classes discovered in analyzed files
-
-        Returns:
-            Refactoring proposal or None
-        """
-        if self._block_rejected(
-            requires_original_frame, pair.block1_nodes, path=pair.file_path
-        ) or self._block_rejected(
-            requires_original_frame, pair.block2_nodes, path=pair.file_path2 or pair.file_path
-        ):
-            self._debug_reject("frame_sensitive_block", pair)
-            return None
-
-        # DEBUG logging
-        import os
-
-        if os.getenv("DEBUG_VALIDATION"):
-            print("\n=== _try_refactor_pair_multi_file called ===")
-            print(f"Functions: {pair.function1_name} and {pair.function2_name}")
-            print(f"Block1 range: {pair.block1_range}")
-            print(f"Block2 range: {pair.block2_range}")
-
         # Resolve contextual analyzers and scopes from the aggregated function list
         func1: Optional[FunctionNode] = pair.function1_node
         func2: Optional[FunctionNode] = pair.function2_node
@@ -2299,6 +2289,67 @@ class UnificationRefactorEngine:
             scope_analyzer2 = pair.scope_analyzer2
         if root_scope2 is None and pair.root_scope2 is not None:
             root_scope2 = pair.root_scope2
+        return _PairContext(
+            func1=func1,
+            func2=func2,
+            scope_analyzer=scope_analyzer,
+            scope_analyzer2=scope_analyzer2,
+            root_scope=root_scope,
+            scope_analyzer1=scope_analyzer1,
+        )
+
+    def _try_refactor_pair_multi_file(
+        self,
+        pair: CodeBlockPair,
+        all_functions: List[
+            Tuple[
+                str,
+                FunctionNode,
+                str,
+                ScopeAnalyzer,
+                Scope,
+                Optional[str],
+                Optional[str],
+                List[str],
+            ]
+        ],
+        class_infos: List[ClassInfo],
+    ) -> Optional[RefactoringProposal]:
+        """
+        Try to refactor a pair of code blocks using unification (cross-file support).
+
+        Args:
+            pair: Code block pair (may be cross-file)
+            all_functions: All functions being analyzed
+            class_infos: Metadata about classes discovered in analyzed files
+
+        Returns:
+            Refactoring proposal or None
+        """
+        if self._block_rejected(
+            requires_original_frame, pair.block1_nodes, path=pair.file_path
+        ) or self._block_rejected(
+            requires_original_frame, pair.block2_nodes, path=pair.file_path2 or pair.file_path
+        ):
+            self._debug_reject("frame_sensitive_block", pair)
+            return None
+
+        # DEBUG logging
+        import os
+
+        if os.getenv("DEBUG_VALIDATION"):
+            print("\n=== _try_refactor_pair_multi_file called ===")
+            print(f"Functions: {pair.function1_name} and {pair.function2_name}")
+            print(f"Block1 range: {pair.block1_range}")
+            print(f"Block2 range: {pair.block2_range}")
+
+        ctx = self._resolve_pair_context(pair, all_functions)
+        func1 = ctx.func1
+        func2 = ctx.func2
+        scope_analyzer = ctx.scope_analyzer
+        scope_analyzer2 = ctx.scope_analyzer2
+        root_scope = ctx.root_scope
+        scope_analyzer1 = ctx.scope_analyzer1
 
         if (
             func1 is not None
