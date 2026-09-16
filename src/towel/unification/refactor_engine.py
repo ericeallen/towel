@@ -2298,6 +2298,178 @@ class UnificationRefactorEngine:
             scope_analyzer1=scope_analyzer1,
         )
 
+    def _add_clustered_replacements(
+        self,
+        template: "_HelperTemplate",
+        dce_node: Optional[FunctionNode],
+        all_functions: List[
+            Tuple[
+                str,
+                FunctionNode,
+                str,
+                ScopeAnalyzer,
+                Scope,
+                Optional[str],
+                Optional[str],
+                List[str],
+            ]
+        ],
+        replacements: List[Replacement],
+        cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]],
+    ) -> None:
+        """Append same-file occurrences that can share the extracted helper.
+
+        Scans every function in the pair's file for additional blocks that unify
+        with the template and reproduce its helper, appending a call for each and
+        recording the method context needed to decide, later, whether that call
+        can dispatch through a receiver. Mutates ``replacements`` and
+        ``cluster_contexts`` in place.
+        """
+        pair = template.pair
+        func_def = template.func_def
+        func_def_dump = template.func_def_dump
+        param_order = template.param_order
+        helper_preamble_length = template.preamble_length
+        free_vars = template.free_vars
+        enclosing_names = template.enclosing_names
+        value_prod1 = template.is_value_producing
+        globals_to_declare_in_extracted = template.globals_to_declare
+        nonlocals_to_declare_in_extracted = template.nonlocals_to_declare
+        from .block_signature import extract_block_signature, quick_filter as _qf
+
+        # Build a set of already covered ranges to avoid duplicates
+        covered = {
+            (pair.file_path, pair.block1_range),
+            (pair.file_path2 or pair.file_path, pair.block2_range),
+        }
+        # Template signature from block1
+        tmpl_sig = extract_block_signature(pair.block1_nodes)
+        func_def_dump = ast.dump(func_def)
+
+        # Gather candidates from same file functions
+        for entry in all_functions:
+            fpath, fn, _src, analyzerX, _rscopeX, clsX, _enclX, _ancX = (
+                entry if len(entry) >= 8 else (*entry, None, None, None)
+            )
+            if fpath != pair.file_path:
+                continue
+            # A helper inserted into the pair's deepest common enclosing
+            # function is visible only there and in its nested functions;
+            # a block elsewhere in the file cannot call it (prompt_toolkit).
+            if dce_node is not None and not _encloses(dce_node, fn):
+                continue
+            # Where the candidate sits decides, once the helper's home is
+            # known, whether it can share a method call (see below).
+            candidate_class = self._method_class(fn, clsX, analyzerX)
+            candidate_info = self._get_method_context(fn, candidate_class)
+            # Skip the original two functions
+            if fn.name in (pair.function1_name, pair.function2_name):
+                # Still scan, but avoid ranges we've already taken
+                pass
+            # Extract blocks and test quick filter against template
+            for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
+                if any(
+                    path == fpath and _line_ranges_intersect(cand_range, taken)
+                    for path, taken in covered
+                ):
+                    continue
+                if self._block_rejected(requires_original_frame, cand_nodes, path=fpath):
+                    continue
+                if self._block_rejected(nested_bindings_escape, cand_nodes, fn):
+                    continue
+                if self._block_rejected(
+                    snapshots_rebound_external_names, cand_nodes, fn, analyzerX
+                ):
+                    continue
+                if self._block_rejected(nested_scopes_cross_block_boundary, cand_nodes, fn):
+                    continue
+                if self._block_rejected(moves_scope_declaration, cand_nodes, fn):
+                    continue
+                # Minimum size gate
+                start_line, end_line = cand_range
+                if (end_line - start_line + 1) < self.min_lines:
+                    continue
+                if not _qf(tmpl_sig, cand_sig):
+                    continue
+                reassignX = self._get_assignment_reuse(fn)
+                if self._per_block(
+                    "reassignments",
+                    fn,
+                    cand_nodes,
+                    lambda: has_reassignments_without_bindings(fn, cand_nodes, reassignX),
+                )[0]:
+                    continue
+                candidate_snapshot = self._build_block_binding_snapshot(
+                    fn, cand_nodes, cand_range, reassignX
+                )
+                if self._per_block(
+                    "unbinds",
+                    fn,
+                    cand_nodes,
+                    lambda: unbinds_external_name(
+                        fn, cand_nodes, candidate_snapshot.bound_before_block
+                    ),
+                ):
+                    continue
+                # Try to unify template block with candidate
+                memo_key = (
+                    self._sid(pair.block1_nodes),
+                    self._sid(cand_nodes),
+                    self._sid([fn]),
+                    self._module_digest(fn),
+                    frozenset(free_vars),
+                    frozenset(enclosing_names),
+                    value_prod1,
+                    tuple(sorted(globals_to_declare_in_extracted)),
+                    tuple(sorted(nonlocals_to_declare_in_extracted)),
+                    func_def.name,
+                    func_def_dump,
+                    tuple(sorted(param_order.items())),
+                    helper_preamble_length,
+                )
+                if memo_key in self._cluster_cache:
+                    cached_call = self._cluster_cache[memo_key]
+                    self._cluster_cache.move_to_end(memo_key)
+                    if cached_call is None:
+                        continue
+                    call_node2 = copy.deepcopy(cached_call)
+                else:
+                    computed = self._cluster_candidate_call(
+                        template,
+                        _ClusterCandidate(
+                            file_path=fpath,
+                            function=fn,
+                            analyzer=analyzerX,
+                            nodes=cand_nodes,
+                            snapshot=candidate_snapshot,
+                        ),
+                    )
+                    self._bounded_put(
+                        self._cluster_cache,
+                        memo_key,
+                        None if computed is None else copy.deepcopy(computed),
+                    )
+                    if computed is None:
+                        continue
+                    call_node2 = computed
+                cluster_contexts[len(replacements)] = (
+                    candidate_class,
+                    candidate_info.kind,
+                    candidate_info.implicit_param,
+                    candidate_info.receiver_known,
+                )
+                replacements.append(
+                    Replacement(
+                        line_range=cand_range,
+                        node=call_node2,
+                        file_path=fpath,
+                        class_name=clsX,
+                        method_kind=None,
+                        implicit_param=None,
+                    )
+                )
+                covered.add((fpath, cand_range))
+
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
@@ -3079,154 +3251,27 @@ class UnificationRefactorEngine:
         # beyond the initial pair and include them in this proposal as extra replacements.
         # This helps cases like example1_simple where three functions share the same
         # validator block; by default pairwise selection would only cover two.
-        from .block_signature import extract_block_signature, quick_filter as _qf
-
         # Only attempt simple clustering for module-level, non-returning validators
         same_file_ctx = (pair.file_path2 is None) or (pair.file_path2 == pair.file_path)
         if same_file_ctx and not return_variables_block1 and not return_variables_block2:
-            # Build a set of already covered ranges to avoid duplicates
-            covered = {
-                (pair.file_path, pair.block1_range),
-                (pair.file_path2 or pair.file_path, pair.block2_range),
-            }
-            # Template signature from block1
-            tmpl_sig = extract_block_signature(pair.block1_nodes)
-            func_def_dump = ast.dump(func_def)
-
-            # Gather candidates from same file functions
-            for entry in all_functions:
-                fpath, fn, _src, analyzerX, _rscopeX, clsX, _enclX, _ancX = (
-                    entry if len(entry) >= 8 else (*entry, None, None, None)
-                )
-                if fpath != pair.file_path:
-                    continue
-                # A helper inserted into the pair's deepest common enclosing
-                # function is visible only there and in its nested functions;
-                # a block elsewhere in the file cannot call it (prompt_toolkit).
-                if dce_node is not None and not _encloses(dce_node, fn):
-                    continue
-                # Where the candidate sits decides, once the helper's home is
-                # known, whether it can share a method call (see below).
-                candidate_class = self._method_class(fn, clsX, analyzerX)
-                candidate_info = self._get_method_context(fn, candidate_class)
-                # Skip the original two functions
-                if fn.name in (pair.function1_name, pair.function2_name):
-                    # Still scan, but avoid ranges we've already taken
-                    pass
-                # Extract blocks and test quick filter against template
-                for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
-                    if any(
-                        path == fpath and _line_ranges_intersect(cand_range, taken)
-                        for path, taken in covered
-                    ):
-                        continue
-                    if self._block_rejected(requires_original_frame, cand_nodes, path=fpath):
-                        continue
-                    if self._block_rejected(nested_bindings_escape, cand_nodes, fn):
-                        continue
-                    if self._block_rejected(
-                        snapshots_rebound_external_names, cand_nodes, fn, analyzerX
-                    ):
-                        continue
-                    if self._block_rejected(nested_scopes_cross_block_boundary, cand_nodes, fn):
-                        continue
-                    if self._block_rejected(moves_scope_declaration, cand_nodes, fn):
-                        continue
-                    # Minimum size gate
-                    start_line, end_line = cand_range
-                    if (end_line - start_line + 1) < self.min_lines:
-                        continue
-                    if not _qf(tmpl_sig, cand_sig):
-                        continue
-                    reassignX = self._get_assignment_reuse(fn)
-                    if self._per_block(
-                        "reassignments",
-                        fn,
-                        cand_nodes,
-                        lambda: has_reassignments_without_bindings(fn, cand_nodes, reassignX),
-                    )[0]:
-                        continue
-                    candidate_snapshot = self._build_block_binding_snapshot(
-                        fn, cand_nodes, cand_range, reassignX
-                    )
-                    if self._per_block(
-                        "unbinds",
-                        fn,
-                        cand_nodes,
-                        lambda: unbinds_external_name(
-                            fn, cand_nodes, candidate_snapshot.bound_before_block
-                        ),
-                    ):
-                        continue
-                    # Try to unify template block with candidate
-                    memo_key = (
-                        self._sid(pair.block1_nodes),
-                        self._sid(cand_nodes),
-                        self._sid([fn]),
-                        self._module_digest(fn),
-                        frozenset(free_vars),
-                        frozenset(enclosing_names),
-                        value_prod1,
-                        tuple(sorted(globals_to_declare_in_extracted)),
-                        tuple(sorted(nonlocals_to_declare_in_extracted)),
-                        func_def.name,
-                        func_def_dump,
-                        tuple(sorted(param_order.items())),
-                        helper_preamble_length,
-                    )
-                    if memo_key in self._cluster_cache:
-                        cached_call = self._cluster_cache[memo_key]
-                        self._cluster_cache.move_to_end(memo_key)
-                        if cached_call is None:
-                            continue
-                        call_node2 = copy.deepcopy(cached_call)
-                    else:
-                        computed = self._cluster_candidate_call(
-                            _HelperTemplate(
-                                pair=pair,
-                                func_def=func_def,
-                                func_def_dump=func_def_dump,
-                                param_order=param_order,
-                                preamble_length=helper_preamble_length,
-                                free_vars=free_vars,
-                                enclosing_names=enclosing_names,
-                                is_value_producing=value_prod1,
-                                globals_to_declare=globals_to_declare_in_extracted,
-                                nonlocals_to_declare=nonlocals_to_declare_in_extracted,
-                            ),
-                            _ClusterCandidate(
-                                file_path=fpath,
-                                function=fn,
-                                analyzer=analyzerX,
-                                nodes=cand_nodes,
-                                snapshot=candidate_snapshot,
-                            ),
-                        )
-                        self._bounded_put(
-                            self._cluster_cache,
-                            memo_key,
-                            None if computed is None else copy.deepcopy(computed),
-                        )
-                        if computed is None:
-                            continue
-                        call_node2 = computed
-                    cluster_contexts[len(replacements)] = (
-                        candidate_class,
-                        candidate_info.kind,
-                        candidate_info.implicit_param,
-                        candidate_info.receiver_known,
-                    )
-                    replacements.append(
-                        Replacement(
-                            line_range=cand_range,
-                            node=call_node2,
-                            file_path=fpath,
-                            class_name=clsX,
-                            method_kind=None,
-                            implicit_param=None,
-                        )
-                    )
-                    covered.add((fpath, cand_range))
+            self._add_clustered_replacements(
+                _HelperTemplate(
+                    pair=pair,
+                    func_def=func_def,
+                    func_def_dump=ast.dump(func_def),
+                    param_order=param_order,
+                    preamble_length=helper_preamble_length,
+                    free_vars=free_vars,
+                    enclosing_names=enclosing_names,
+                    is_value_producing=value_prod1,
+                    globals_to_declare=globals_to_declare_in_extracted,
+                    nonlocals_to_declare=nonlocals_to_declare_in_extracted,
+                ),
+                dce_node,
+                all_functions,
+                replacements,
+                cluster_contexts,
+            )
         # Determine canonical file for extracted function
         # Default to the first file, but this may change if we insert into an ancestor class
         canonical_file = pair.file_path
