@@ -345,7 +345,11 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         enclosing_names = set()
 
         func_def, param_order = self.extractor.extract_function(
-            tree.body, substitution, free_variables, enclosing_names, is_value_producing=True
+            template_block=tree.body,
+            substitution=substitution,
+            free_variables=free_variables,
+            enclosing_names=enclosing_names,
+            is_value_producing=True,
         )
 
         self.assertIsInstance(func_def, ast.FunctionDef, "Should return FunctionDef")
@@ -361,10 +365,10 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         enclosing_names = set()
 
         func_def, param_order = self.extractor.extract_function(
-            tree.body,
-            substitution,
-            free_variables,
-            enclosing_names,
+            template_block=tree.body,
+            substitution=substitution,
+            free_variables=free_variables,
+            enclosing_names=enclosing_names,
             is_value_producing=False,
             function_name="my_function",
         )
@@ -381,7 +385,11 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         enclosing_names = {"extracted_function"}
 
         func_def, param_order = self.extractor.extract_function(
-            tree.body, substitution, free_variables, enclosing_names, is_value_producing=False
+            template_block=tree.body,
+            substitution=substitution,
+            free_variables=free_variables,
+            enclosing_names=enclosing_names,
+            is_value_producing=False,
         )
 
         self.assertNotEqual(func_def.name, "extracted_function", "Should avoid name collision")
@@ -396,7 +404,11 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         enclosing_names = set()
 
         func_def, param_order = self.extractor.extract_function(
-            tree.body, substitution, free_variables, enclosing_names, is_value_producing=False
+            template_block=tree.body,
+            substitution=substitution,
+            free_variables=free_variables,
+            enclosing_names=enclosing_names,
+            is_value_producing=False,
         )
 
         # Check that 'x' is a parameter
@@ -410,10 +422,10 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         enclosing_names = set()
 
         func_def, param_order = self.extractor.extract_function(
-            [],  # Empty body
-            substitution,
-            free_variables,
-            enclosing_names,
+            template_block=[],  # Empty body
+            substitution=substitution,
+            free_variables=free_variables,
+            enclosing_names=enclosing_names,
             is_value_producing=False,
         )
 
@@ -436,7 +448,12 @@ class TestGenerateCall(unittest.TestCase):
         free_variables = set()
 
         result = self.extractor.generate_call(
-            "my_function", 0, substitution, param_order, free_variables, is_value_producing=False
+            function_name="my_function",
+            block_idx=0,
+            substitution=substitution,
+            param_order=param_order,
+            free_variables=free_variables,
+            is_value_producing=False,
         )
 
         # Should be Expr wrapping a Call
@@ -451,7 +468,12 @@ class TestGenerateCall(unittest.TestCase):
         free_variables = set()
 
         result = self.extractor.generate_call(
-            "my_function", 0, substitution, param_order, free_variables, is_value_producing=True
+            function_name="my_function",
+            block_idx=0,
+            substitution=substitution,
+            param_order=param_order,
+            free_variables=free_variables,
+            is_value_producing=True,
         )
 
         # Should be Return wrapping a Call
@@ -465,7 +487,12 @@ class TestGenerateCall(unittest.TestCase):
         free_variables = {"x", "y"}
 
         result = self.extractor.generate_call(
-            "my_function", 0, substitution, param_order, free_variables, is_value_producing=False
+            function_name="my_function",
+            block_idx=0,
+            substitution=substitution,
+            param_order=param_order,
+            free_variables=free_variables,
+            is_value_producing=False,
         )
 
         call = result.value
@@ -488,7 +515,11 @@ class TestIntegration(unittest.TestCase):
 
         # Extract function
         func_def, param_order = extractor.extract_function(
-            tree.body, substitution, free_variables, enclosing_names, is_value_producing=True
+            template_block=tree.body,
+            substitution=substitution,
+            free_variables=free_variables,
+            enclosing_names=enclosing_names,
+            is_value_producing=True,
         )
 
         # Verify function has parameter
@@ -497,7 +528,12 @@ class TestIntegration(unittest.TestCase):
 
         # Generate call
         call = extractor.generate_call(
-            func_def.name, 0, substitution, param_order, free_variables, is_value_producing=True
+            function_name=func_def.name,
+            block_idx=0,
+            substitution=substitution,
+            param_order=param_order,
+            free_variables=free_variables,
+            is_value_producing=True,
         )
 
         # Verify call structure

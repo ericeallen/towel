@@ -122,7 +122,12 @@ def test_generated_calls_do_not_mutate_or_alias_substitution_expressions(callee:
         substitution.params_used_as_callee.add("__param_0")
     before = ast.dump(expression, include_attributes=True)
     call = HygienicExtractor().generate_call(
-        "helper", 0, substitution, {"__param_0": 0}, set(), False
+        function_name="helper",
+        block_idx=0,
+        substitution=substitution,
+        param_order={"__param_0": 0},
+        free_variables=set(),
+        is_value_producing=False,
     )
     assert ast.dump(expression, include_attributes=True) == before
     assert all(node is not expression for node in ast.walk(call))

@@ -147,18 +147,18 @@ def test_generate_call_function_param_lambda_lift():
     extractor = HygienicExtractor()
     block = ast.parse("result = i + 1").body
     func_def, param_order = extractor.extract_function(
-        block,
-        subst,
+        template_block=block,
+        substitution=subst,
         free_variables={"i"},
         enclosing_names=set(),
         is_value_producing=True,
         return_variables=["result"],
     )
     call_stmt = extractor.generate_call(
-        func_def.name,
-        0,
-        subst,
-        param_order,
+        function_name=func_def.name,
+        block_idx=0,
+        substitution=subst,
+        param_order=param_order,
         free_variables={"i"},
         is_value_producing=True,
         return_variables=["result"],
@@ -184,18 +184,18 @@ def test_generate_call_aug_assign_mapping():
     extractor = HygienicExtractor()
     block = ast.parse("total = a + b\nresult = total * 2").body
     func_def, param_order = extractor.extract_function(
-        block,
-        subst,
+        template_block=block,
+        substitution=subst,
         free_variables={"__param_2"},  # treat as free variable name
         enclosing_names=set(),
         is_value_producing=True,
         return_variables=["result"],
     )
     call_stmt = extractor.generate_call(
-        func_def.name,
-        1,  # second block index uses mapping to 'output'
-        subst,
-        param_order,
+        function_name=func_def.name,
+        block_idx=1,  # second block index uses mapping to 'output'
+        substitution=subst,
+        param_order=param_order,
         free_variables={"__param_2"},
         is_value_producing=True,
         return_variables=["result"],

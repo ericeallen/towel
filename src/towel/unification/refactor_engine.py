@@ -142,6 +142,37 @@ class BlockBindingSnapshot:
     initially_bound: Set[str]
 
 
+@dataclass(frozen=True)
+class _HelperTemplate:
+    """The template helper a clustered occurrence must reproduce to reuse it.
+
+    These values are fixed for a given (pair, extracted helper) and are shared
+    across every candidate occurrence tested against that helper.
+    """
+
+    pair: CodeBlockPair
+    func_def: ast.FunctionDef
+    func_def_dump: str
+    param_order: Dict[str, int]
+    preamble_length: int
+    free_vars: Set[str]
+    enclosing_names: Set[str]
+    is_value_producing: bool
+    globals_to_declare: Set[str]
+    nonlocals_to_declare: Set[str]
+
+
+@dataclass(frozen=True)
+class _ClusterCandidate:
+    """A candidate occurrence tested for whether it can share a helper."""
+
+    file_path: str
+    function: FunctionNode
+    analyzer: Optional[ScopeAnalyzer]
+    nodes: List[ast.AST]
+    snapshot: BlockBindingSnapshot
+
+
 _worker_engine: Optional["UnificationRefactorEngine"] = None
 _worker_functions: Optional[
     List[
@@ -503,22 +534,7 @@ class UnificationRefactorEngine:
         return result
 
     def _cluster_candidate_call(
-        self,
-        pair: CodeBlockPair,
-        fpath: str,
-        fn: FunctionNode,
-        analyzerX: Optional[ScopeAnalyzer],
-        cand_nodes: List[ast.AST],
-        candidate_snapshot: BlockBindingSnapshot,
-        free_vars: Set[str],
-        enclosing_names: Set[str],
-        value_prod1: bool,
-        globals_to_declare_in_extracted: Set[str],
-        nonlocals_to_declare_in_extracted: Set[str],
-        func_def: ast.FunctionDef,
-        func_def_dump: str,
-        param_order: Dict[str, int],
-        helper_preamble_length: int,
+        self, template: "_HelperTemplate", candidate: "_ClusterCandidate"
     ) -> Optional[ast.AST]:
         """The call replacing a clustered occurrence, or None when it cannot share the helper.
 
@@ -526,6 +542,21 @@ class UnificationRefactorEngine:
         structure, the candidate's function and module, and the pair's helper,
         so the caller memoizes it on exactly those.
         """
+        pair = template.pair
+        fpath = candidate.file_path
+        fn = candidate.function
+        analyzerX = candidate.analyzer
+        cand_nodes = candidate.nodes
+        candidate_snapshot = candidate.snapshot
+        free_vars = template.free_vars
+        enclosing_names = template.enclosing_names
+        value_prod1 = template.is_value_producing
+        globals_to_declare_in_extracted = template.globals_to_declare
+        nonlocals_to_declare_in_extracted = template.nonlocals_to_declare
+        func_def = template.func_def
+        func_def_dump = template.func_def_dump
+        param_order = template.param_order
+        helper_preamble_length = template.preamble_length
         cluster_renames: List[Dict[str, str]] = [{}, {}]
         subst2 = self._unify_memoized(
             [pair.block1_nodes, cand_nodes], cluster_renames, (pair.file_path, fpath)
@@ -3100,21 +3131,25 @@ class UnificationRefactorEngine:
                         call_node2 = copy.deepcopy(cached_call)
                     else:
                         computed = self._cluster_candidate_call(
-                            pair,
-                            fpath,
-                            fn,
-                            analyzerX,
-                            cand_nodes,
-                            candidate_snapshot,
-                            free_vars,
-                            enclosing_names,
-                            value_prod1,
-                            globals_to_declare_in_extracted,
-                            nonlocals_to_declare_in_extracted,
-                            func_def,
-                            func_def_dump,
-                            param_order,
-                            helper_preamble_length,
+                            _HelperTemplate(
+                                pair=pair,
+                                func_def=func_def,
+                                func_def_dump=func_def_dump,
+                                param_order=param_order,
+                                preamble_length=helper_preamble_length,
+                                free_vars=free_vars,
+                                enclosing_names=enclosing_names,
+                                is_value_producing=value_prod1,
+                                globals_to_declare=globals_to_declare_in_extracted,
+                                nonlocals_to_declare=nonlocals_to_declare_in_extracted,
+                            ),
+                            _ClusterCandidate(
+                                file_path=fpath,
+                                function=fn,
+                                analyzer=analyzerX,
+                                nodes=cand_nodes,
+                                snapshot=candidate_snapshot,
+                            ),
                         )
                         self._bounded_put(
                             self._cluster_cache,

@@ -47,13 +47,13 @@ class HygienicExtractor:
 
     def extract_function(
         self,
+        *,
         template_block: List[ast.AST],
         substitution: Substitution,
         free_variables: Set[str],
         enclosing_names: Set[str],
         is_value_producing: bool,
         return_variables: Optional[List[str]] = None,
-        *,
         global_decls: Optional[Set[str]] = None,
         nonlocal_decls: Optional[Set[str]] = None,
         function_name: str = "extracted_function",
@@ -193,6 +193,7 @@ class HygienicExtractor:
 
     def generate_call(
         self,
+        *,
         function_name: str,
         block_idx: int,
         substitution: Substitution,
