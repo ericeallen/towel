@@ -2487,6 +2487,61 @@ class UnificationRefactorEngine:
                 )
                 covered.add((fpath, cand_range))
 
+    def _global_nonlocal_declarations(
+        self,
+        pair: CodeBlockPair,
+        scope_analyzer: ScopeAnalyzer,
+        free_vars: Set[str],
+    ) -> Tuple[Set[str], Set[str], Set[str]]:
+        """Names the helper must declare global/nonlocal, and free_vars pruned of them.
+
+        A free variable declared global or nonlocal in the enclosing function
+        cannot also be a parameter (``SyntaxError: name 'x' is parameter and
+        global``), so it is dropped from free_vars and left as a free reference.
+        A name assigned inside the block that is global/nonlocal but not declared
+        there must be re-declared in the helper to preserve assignment semantics.
+        Returns (globals_to_declare, nonlocals_to_declare, pruned_free_vars).
+        """
+        func1_scope_id = None
+        for node, scope in scope_analyzer.node_scopes.items():
+            if isinstance(node, ast.FunctionDef) and node.name == pair.function1_name:
+                func1_scope_id = scope.scope_id
+                break
+
+        globals_to_declare: Set[str] = set()
+        nonlocals_to_declare: Set[str] = set()
+
+        if func1_scope_id is not None:
+            global_vars = scope_analyzer.global_vars.get(func1_scope_id, set())
+            nonlocal_vars = scope_analyzer.nonlocal_vars.get(func1_scope_id, set())
+
+            # A free variable that is global/nonlocal here cannot be parameterized.
+            problematic = free_vars & (global_vars | nonlocal_vars)
+
+            # Assignment targets and explicit declarations inside the template blocks.
+            v = AssignTargetVisitor()
+            for n in pair.block1_nodes:
+                v.visit(n)
+            for n in pair.block2_nodes:
+                v.visit(n)
+            assigned_names = v.assigned_names
+            declared_global_in_block = v.declared_global_in_block
+            declared_nonlocal_in_block = v.declared_nonlocal_in_block
+
+            # Names assigned in the block that are global/nonlocal in the enclosing
+            # function must be declared in the helper to preserve assignment semantics.
+            assigned_problematic_any = assigned_names & (global_vars | nonlocal_vars)
+            globals_to_declare = (assigned_problematic_any & global_vars) - declared_global_in_block
+            nonlocals_to_declare = (
+                assigned_problematic_any & nonlocal_vars
+            ) - declared_nonlocal_in_block
+
+            # Leave problematic free variables free so the helper references the
+            # outer binding rather than shadowing it with a parameter.
+            free_vars = free_vars - problematic
+
+        return globals_to_declare, nonlocals_to_declare, free_vars
+
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
@@ -3013,50 +3068,9 @@ class UnificationRefactorEngine:
         # because you cannot have a parameter that is also declared global/nonlocal
         # This would create: SyntaxError: name 'x' is parameter and global
         assert scope_analyzer is not None
-        func1_scope_id = None
-        for node, scope in scope_analyzer.node_scopes.items():
-            if isinstance(node, ast.FunctionDef) and node.name == pair.function1_name:
-                func1_scope_id = scope.scope_id
-                break
-
-        globals_to_declare_in_extracted: Set[str] = set()
-        nonlocals_to_declare_in_extracted: Set[str] = set()
-
-        if func1_scope_id is not None:
-            # Check if any variables relevant to this block are global or nonlocal in this scope
-            global_vars = scope_analyzer.global_vars.get(func1_scope_id, set())
-            nonlocal_vars = scope_analyzer.nonlocal_vars.get(func1_scope_id, set())
-
-            # For parameterization safety: if a free variable is declared global/nonlocal, do not parameterize it
-            problematic = free_vars & (global_vars | nonlocal_vars)
-
-            # Collect assignment targets and explicit decls inside the template blocks
-            v = AssignTargetVisitor()
-            for n in pair.block1_nodes:
-                v.visit(n)
-            for n in pair.block2_nodes:
-                v.visit(n)
-            assigned_names = v.assigned_names
-            declared_global_in_block = v.declared_global_in_block
-            declared_nonlocal_in_block = v.declared_nonlocal_in_block
-
-            # Names that are assigned within the block and are global/nonlocal in the enclosing function
-            # MUST be declared in the extracted helper to preserve assignment semantics,
-            # even if they are not free variables of the original block.
-            assigned_problematic_any = assigned_names & (global_vars | nonlocal_vars)
-
-            # For assigned globals/nonlocals that weren't explicitly declared within the block,
-            # promote the declaration into the extracted function body.
-            globals_to_declare_in_extracted = (
-                assigned_problematic_any & global_vars
-            ) - declared_global_in_block
-            nonlocals_to_declare_in_extracted = (
-                assigned_problematic_any & nonlocal_vars
-            ) - declared_nonlocal_in_block
-
-            # Do not parameterize free variables that are global/nonlocal; let them remain free
-            # so the extracted function references the outer binding.
-            free_vars -= problematic
+        globals_to_declare_in_extracted, nonlocals_to_declare_in_extracted, free_vars = (
+            self._global_nonlocal_declarations(pair, scope_analyzer, free_vars)
+        )
 
         defer_impure_parameters(substitution, pair.block1_nodes)
         if func1 is not None and func2 is not None:
