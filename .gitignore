@@ -84,7 +84,6 @@ my_test/
 my_test_out/
 my_test2/
 my_test2_out/
-monte_chess/
 
 # Backup files
 *.bak
