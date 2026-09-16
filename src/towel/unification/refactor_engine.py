@@ -2555,7 +2555,6 @@ class UnificationRefactorEngine:
                 self._debug_reject("unsafe_reassignment_block2", pair, str(problematic_vars2))
                 return None
 
-            # Consolidated helper mirrors DRY's _refactor_engine_helper_2 (docs/DRY_RUN_2025-11-28.md)
             block1_snapshot = self._build_block_binding_snapshot(
                 func1, pair.block1_nodes, pair.block1_range, reassignments1
             )
@@ -4083,7 +4082,7 @@ class UnificationRefactorEngine:
             for fpath in modified_files:
                 _bump_result(fpath, proposal.description)
 
-            if hasattr(self, "invalidate_paths") and changed_paths:
+            if changed_paths:
                 self.invalidate_paths(changed_paths)
 
             if changed_paths:
@@ -4131,7 +4130,9 @@ class UnificationRefactorEngine:
                     try:
                         file_count = sum(1 for _ in output_path.rglob("*.py"))
                         _detail(f"Analyzing {file_count} file(s)...")
-                    except Exception:
+                    except OSError:
+                        # Only the directory walk for a progress message; a real
+                        # I/O problem will resurface in the analysis that follows.
                         pass
                 # Show pairing progress during global analysis if user requested progress bars.
                 analysis_progress_flag = (
@@ -4251,19 +4252,6 @@ class UnificationRefactorEngine:
     # Optional analysis cache invalidation hook used by directory fixed-point runner
     def invalidate_paths(self, paths: List[str]) -> None:  # pragma: no cover - simple cache hook
         self.analysis_session.invalidate(paths)
-
-
-def _refactor_engine_helper_2(
-    self: UnificationRefactorEngine,
-    all_functions: Sequence[FunctionArtifact],
-    block_pairs: List[CodeBlockPair],
-    class_infos: List[ClassInfo],
-    progress: str,
-    verbose: bool,
-) -> List[RefactoringProposal]:
-    return self._evaluate_pairs_serial(
-        block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
-    )
 
 
 # Utility functions for overlap filtering
