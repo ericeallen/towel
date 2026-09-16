@@ -1,5 +1,4 @@
 import ast
-from typing import Set, Dict
 
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.scope_analyzer import ScopeAnalyzer

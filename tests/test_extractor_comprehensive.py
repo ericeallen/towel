@@ -16,7 +16,7 @@ from towel.unification.extractor import (
     get_enclosing_names,
     HygienicExtractor,
 )
-from towel.unification.scope_analyzer import Scope, ScopeAnalyzer
+from towel.unification.scope_analyzer import Scope
 from towel.unification.unifier import Substitution
 
 

@@ -10,17 +10,14 @@ files behave identically to their original versions by:
 """
 
 import ast
-import inspect
 import re
 import tempfile
 import os
-from typing import List, Tuple, Dict, Any, Optional, Set
+from typing import List, Tuple, Dict, Any, Optional
 from pathlib import Path
 
 from tests.test_observational_equivalence import (
-    execute_function,
     compare_function_behavior,
-    FunctionExecutionResult,
 )
 from tests.edge_case_values import EdgeCaseValues
 from tests.equivalence_targets import affected_functions, invocation_definitions

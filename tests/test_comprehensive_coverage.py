@@ -198,7 +198,7 @@ def bar():
         foo_func = tree.body[1]
         bar_func = tree.body[2]
 
-        from towel.unification.unifier import Unifier, Substitution
+        from towel.unification.unifier import Unifier
 
         unifier = Unifier(max_parameters=5)
 

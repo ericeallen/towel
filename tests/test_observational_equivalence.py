@@ -8,8 +8,6 @@ Tests that refactored code behaves identically to original code by:
 """
 
 import unittest
-import ast
-import sys
 import io
 import copy
 import re

@@ -23,7 +23,7 @@ Example:
 
 import unittest
 import ast
-from towel.unification.unifier import Unifier, Substitution
+from towel.unification.unifier import Substitution
 from towel.unification.extractor import HygienicExtractor
 
 

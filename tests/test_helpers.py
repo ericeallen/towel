@@ -7,7 +7,6 @@ or the working directory.
 
 import tempfile
 import shutil
-import os
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator

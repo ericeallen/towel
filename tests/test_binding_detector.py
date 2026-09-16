@@ -8,7 +8,6 @@ Verifies that all Python variable binding constructs are correctly identified.
 import unittest
 import ast
 from towel.unification.binding_detector import (
-    BindingDetector,
     BindingKind,
     detect_bindings,
     get_bound_variables,

@@ -11,7 +11,6 @@ import os
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
 from towel.unification.extractor import HygienicExtractor
-from towel.unification.scope_analyzer import ScopeAnalyzer
 
 
 class TestExtractorErrorPaths(unittest.TestCase):

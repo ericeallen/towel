@@ -10,7 +10,6 @@ import unittest
 import ast
 from towel.unification.assignment_analyzer import (
     analyze_assignments,
-    AssignmentAnalyzer,
     has_reassignments_without_bindings,
     _collect_bindings_and_reassignments,
 )

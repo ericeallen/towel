@@ -13,7 +13,6 @@ import sys
 import ast
 import unittest
 import tempfile
-import shutil
 import re
 from pathlib import Path
 from typing import Dict
