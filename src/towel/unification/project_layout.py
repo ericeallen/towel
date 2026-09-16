@@ -277,6 +277,54 @@ def _pdm_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Pa
     return [root]
 
 
+def _project_names(data: Mapping[str, object]) -> List[str]:
+    """Candidate distribution names from PEP 621 or a build tool's own table."""
+    names: List[str] = []
+    project = data.get("project")
+    if isinstance(project, dict) and isinstance(project.get("name"), str):
+        names.append(project["name"])
+    tool = data.get("tool", {})
+    if isinstance(tool, dict):
+        flit = tool.get("flit", {})
+        module = flit.get("module", {}) if isinstance(flit, dict) else {}
+        if isinstance(module, dict) and isinstance(module.get("name"), str):
+            names.append(module["name"])
+        poetry = tool.get("poetry", {})
+        if isinstance(poetry, dict) and isinstance(poetry.get("name"), str):
+            names.append(poetry["name"])
+    return names
+
+
+def _conventional_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Path]:
+    """Infer a conventional layout by distribution name, for any build backend.
+
+    Nearly every backend that is not doing something unusual installs a single
+    package or module named after the distribution, in the project root or under
+    ``src``. This finds that package or module by name without trusting the
+    backend, so a conventional project built by an unrecognized backend (for
+    example ``flit_scm``) resolves the same way its Flit/Hatch/Poetry cousins
+    do. It returns nothing when no name-based package or module exists at a
+    conventional location, so a genuinely non-standard layout is still refused
+    rather than guessed.
+    """
+    for name in _project_names(data):
+        variants = {
+            name,
+            name.replace("-", "_"),
+            re.sub(r"[-_.]+", "_", name),
+            re.sub(r"[-_.]+", "_", name).lower(),
+        }
+        for candidate in variants:
+            if not candidate or any(ch in candidate for ch in "*?[]/\\"):
+                continue
+            for root in (project_root, project_root / "src"):
+                if (root / candidate / "__init__.py").is_file() or (
+                    root / f"{candidate}.py"
+                ).is_file():
+                    return [root.resolve()]
+    return []
+
+
 @dataclass
 class ProjectLayout:
     """Represents the directory structure and import configuration of a Python project.
@@ -310,7 +358,7 @@ class ProjectLayout:
         data = _load_pyproject(project_root)
         build = data.get("build-system", {})
         backend = build.get("build-backend") if isinstance(build, dict) else None
-        if backend not in (
+        recognized_backend = backend in (
             None,
             "setuptools.build_meta",
             "setuptools.build_meta:__legacy__",
@@ -318,8 +366,7 @@ class ProjectLayout:
             "flit_core.buildapi",
             "poetry.core.masonry.api",
             "pdm.backend",
-        ):
-            raise ValueError(f"Unsupported build backend {backend!r}; cannot infer safe imports")
+        )
 
         # Default settings
         prefer_abs = True if prefer_absolute_imports is None else prefer_absolute_imports
@@ -332,11 +379,13 @@ class ProjectLayout:
         tool = data.get("tool", {})
         setuptools = tool.get("setuptools", {}) if isinstance(tool, dict) else {}
         mapping = setuptools.get("package-dir", {}) if isinstance(setuptools, dict) else {}
-        if backend not in (
-            "hatchling.build",
-            "flit_core.buildapi",
-            "poetry.core.masonry.api",
-            "pdm.backend",
+        # ``[tool.setuptools]`` is meaningful only under setuptools (or an
+        # undeclared backend, which defaults to setuptools); a foreign backend's
+        # incidental setuptools table is not trusted.
+        if backend in (
+            None,
+            "setuptools.build_meta",
+            "setuptools.build_meta:__legacy__",
         ) and isinstance(mapping, dict):
             for prefix, rel in mapping.items():
                 if not isinstance(prefix, str) or not isinstance(rel, str):
@@ -357,6 +406,20 @@ class ProjectLayout:
 
         start_resolved = start_path.resolve()
         start_dir = start_resolved.parent if start_resolved.is_file() else start_resolved
+
+        # An unrecognized backend gets conventional, name-based inference rather
+        # than an outright rejection: a package or module named after the
+        # distribution, in the project root or under ``src``. Only a layout that
+        # cannot be inferred that way is refused.
+        if not source_roots and not recognized_backend:
+            conventional = _conventional_source_roots(project_root, data)
+            if conventional:
+                source_roots = conventional
+            else:
+                raise ValueError(
+                    f"Unsupported build backend {backend!r}; no conventional "
+                    "name-based package or src layout to infer safe imports from"
+                )
 
         # Setuptools discovers classic packages under src when project metadata
         # leaves package discovery implicit. Unconfigured trees and other build

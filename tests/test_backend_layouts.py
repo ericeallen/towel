@@ -91,14 +91,33 @@ def test_specific_named_mapping_takes_precedence_over_default_root(tmp_path):
 
 
 @pytest.mark.parametrize("backend", ["scikit_build_core.build", "custom.backend"])
-def test_unknown_backend_rejects_even_incidental_setuptools_configuration(tmp_path, backend):
+def test_foreign_backend_ignores_setuptools_config_but_infers_conventional_layout(
+    tmp_path, backend
+):
+    # A foreign backend's incidental [tool.setuptools] table is not trusted, but
+    # a conventional src/<name> package is still inferred by name.
     (tmp_path / "pyproject.toml").write_text(
         f'[build-system]\nbuild-backend="{backend}"\n'
         '[project]\nname="my-project"\nversion="0.0.0"\n'
         '[tool.setuptools]\npackage-dir={""="src"}\n'
     )
+    module = package(tmp_path, "src/my_project")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [(tmp_path / "src").resolve()]
+    assert layout.module_name_for(module) == "my_project.tools"
+
+
+@pytest.mark.parametrize("backend", ["scikit_build_core.build", "custom.backend"])
+def test_foreign_backend_with_nonconventional_layout_is_refused(tmp_path, backend):
+    # The only package sits at a non-conventional location named by setuptools
+    # config the foreign backend does not license us to trust, so it is refused.
+    (tmp_path / "pyproject.toml").write_text(
+        f'[build-system]\nbuild-backend="{backend}"\n'
+        '[project]\nname="my-project"\nversion="0.0.0"\n'
+        '[tool.setuptools]\npackage-dir={""="weird"}\n'
+    )
     with pytest.raises(ValueError, match="Unsupported build backend"):
-        ProjectLayout.discover(package(tmp_path, "src/my_project"))
+        ProjectLayout.discover(package(tmp_path, "weird/my_project"))
 
 
 def test_hatch_unmatched_name_does_not_guess_src_as_package(tmp_path):
@@ -318,4 +337,43 @@ def test_pdm_package_dir_that_cannot_name_a_root_fails_explicitly(tmp_path: Path
     pdm(tmp_path, f"[tool.pdm.build]\n{options}")
     module = package(tmp_path, "lib/my_project")
     with pytest.raises(ValueError, match="pdm"):
+        ProjectLayout.discover(module)
+
+
+def _generic_backend(root: Path, backend: str, name: str = "my-project", extra: str = "") -> None:
+    (root / "pyproject.toml").write_text(
+        f'[build-system]\nbuild-backend="{backend}"\n'
+        f'[project]\nname="{name}"\nversion="0.0.0"\n{extra}'
+    )
+
+
+def test_unrecognized_backend_infers_conventional_flat_package(tmp_path: Path) -> None:
+    # flit_scm is Flit's layout under a different backend string.
+    _generic_backend(tmp_path, "flit_scm:buildapi", name="my-project")
+    module = package(tmp_path, "my_project")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [tmp_path.resolve()]
+    assert layout.module_name_for(module) == "my_project.tools"
+
+
+def test_unrecognized_backend_infers_conventional_src_package(tmp_path: Path) -> None:
+    _generic_backend(tmp_path, "some.exotic.backend", name="Mixed-Case")
+    module = package(tmp_path, "src/mixed_case")
+    layout = ProjectLayout.discover(module)
+    assert layout.source_roots == [(tmp_path / "src").resolve()]
+    assert layout.module_name_for(module) == "mixed_case.tools"
+
+
+def test_unrecognized_backend_infers_single_module(tmp_path: Path) -> None:
+    _generic_backend(tmp_path, "flit_scm:buildapi", name="solo")
+    (tmp_path / "solo.py").write_text("VALUE = 1\n")
+    layout = ProjectLayout.discover(tmp_path / "solo.py")
+    assert layout.source_roots == [tmp_path.resolve()]
+    assert layout.module_name_for(tmp_path / "solo.py") == "solo"
+
+
+def test_unrecognized_backend_without_conventional_layout_is_refused(tmp_path: Path) -> None:
+    _generic_backend(tmp_path, "weird.backend", name="my-project")
+    module = package(tmp_path, "somewhere_else")
+    with pytest.raises(ValueError, match="Unsupported build backend"):
         ProjectLayout.discover(module)

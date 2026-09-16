@@ -172,8 +172,10 @@ helper can be imported correctly. It reads the build backend from
 `pyproject.toml` and derives import roots for setuptools (including
 `package-dir` mappings and the classic `src` layout), Hatch (wheel
 `packages`/`sources`), Flit, Poetry (`packages` with `from`), and pdm
-(`package-dir`). A layout it cannot resolve safely raises rather than guessing;
-the ecosystem check reports those as `UNSUPPORTED`. `semantic_safety.py`'s
+(`package-dir`). An unrecognized backend falls back to conventional inference:
+a package or module named after the distribution, in the project root or under
+`src`. Only a layout that cannot be resolved either way raises rather than
+guessing; the ecosystem check reports those as `UNSUPPORTED`. `semantic_safety.py`'s
 `would_create_import_cycle` follows static imports through local modules,
 caching each module's import edges by path, mtime, and size, and rejects a
 helper placement that would close a cycle.
