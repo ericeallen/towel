@@ -384,8 +384,8 @@ def compare_executions(
     return not differences, differences
 
 
-class TestAutomaticObservationalEquivalence(unittest.TestCase):
-    """Automatically test observational equivalence for ALL example files."""
+class TestAutomaticObservationalEquivalenceWithConstants(unittest.TestCase):
+    """Observational equivalence across all example files, with constant parameterization."""
 
     def setUp(self):
         from towel.unification.refactor_engine import UnificationRefactorEngine
