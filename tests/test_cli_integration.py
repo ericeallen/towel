@@ -236,25 +236,3 @@ def test_invalid_rename_file_has_failure_status(tmp_path: Path, contents: str) -
     assert result.status == 1
     assert "Error" in result.stdout
     assert source.read_text() == HELPER
-
-
-def test_legacy_entry_points_execute_preview_and_dry(tmp_path: Path) -> None:
-    source, destination = tmp_path / "source.py", tmp_path / "changed.py"
-    source.write_text(DUPLICATES)
-    preview = invoke([str(source)], entry=cli.preview_main)
-    assert preview.status == 0 and "REFACTORING OPPORTUNITIES" in preview.stdout
-    dry = invoke(
-        [
-            str(source),
-            str(destination),
-            "--non-interactive",
-            "--max-iterations",
-            "1",
-            "--progress",
-            "none",
-        ],
-        entry=cli.dry_main,
-    )
-    assert dry.status == 0
-    assert destination.read_text() != DUPLICATES
-    assert evaluate_functions(destination.read_text()) == evaluate_functions(DUPLICATES)

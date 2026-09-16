@@ -275,16 +275,6 @@ mapping as one atomic batch with scope and importer checks; a collision, a
 mangled name, or a dynamic reference aborts the whole batch and reports why, so
 a bad suggestion changes nothing. See the README for the end-to-end workflow.
 
-## Legacy normalization utilities
-
-[`ast_normalizer.py`](../src/towel/unification/ast_normalizer.py) is an
-importable compatibility module that emits `DeprecationWarning` when its
-transformers are constructed. Its assignment-to-augmented-assignment and
-arithmetic rewrites are **not used by the production pipeline** and are unsafe
-for arbitrary Python (`x = x + y` and `x += y` differ in aliasing and operator
-dispatch; reordering changes evaluation order and overloaded behavior). Do not
-reintroduce them into analysis or use them as an equivalence oracle.
-
 ## Verification and evidence
 
 The transformation's safety rests on the per-proposal instantiation invariant.

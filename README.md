@@ -77,7 +77,7 @@ To roll back an interrupted batch, use `towel recover /path/to/.towel-transactio
 
 For detailed conservative rejection reasons, set `DEBUG_PROPOSAL_REJECTIONS=1` when running preview.
 
-`towel-dry` and `towel-preview` are compatibility entry points. `python scripts/dry` delegates to the same installed CLI. Run `towel dry --help` for import-layout, iteration, and progress options.
+Run `towel dry --help` for import-layout, iteration, and progress options.
 
 ## What is analyzed
 
@@ -85,7 +85,7 @@ The pipeline parses modules, analyzes scopes, collects functions and classes, co
 
 Differing sub-expressions become helper parameters. Names, literals, and tuples of those are passed eagerly; any other expression is passed as a zero-argument thunk and evaluated inside the helper where the original expression stood, so evaluation order, count, and conditionality are preserved. Expressions that read names bound inside the block are lambda-lifted with those names as arguments. A thunk the helper would evaluate first, once, and unconditionally is passed eagerly instead, since nothing can observe the difference. Before a proposal is offered, the helper is instantiated with each call's arguments and must reproduce the original block up to renamed binders.
 
-The refactoring pipeline preserves the original Python operators. The legacy `ast_normalizer` utilities remain available with deprecation warnings for compatibility, but can change Python behavior and are not used by this pipeline. Generator/suspension operations and frame-sensitive calls such as `locals()` are conservatively rejected. Nested blocks that bind names used outside the block are rejected until full control-flow liveness is supported. Static local import cycles and cross-module global declarations are rejected. This reduces the number of proposals rather than claiming an unsupported transformation is safe.
+The refactoring pipeline preserves the original Python operators. Generator/suspension operations and frame-sensitive calls such as `locals()` are conservatively rejected. Nested blocks that bind names used outside the block are rejected until full control-flow liveness is supported. Static local import cycles and cross-module global declarations are rejected. This reduces the number of proposals rather than claiming an unsupported transformation is safe.
 
 Dynamic imports, reflection, arbitrary callbacks, runtime rebinding, metaclasses, and external side effects limit what can be established statically. Each engine owns a bounded analysis session with content checks and isolated AST snapshots. The test import-isolation harness and an individual engine instance require sequential use. Candidates involving detected namespace rebinding, frame inspection, or comprehension assignment expressions are rejected; opaque external reflection and rebinding remain outside the supported model.
 

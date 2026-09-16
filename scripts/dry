@@ -1,7 +1,0 @@
-#!/usr/bin/env python3
-"""Compatibility entry point using the installed, shared CLI implementation."""
-
-from towel.cli import dry_main
-
-if __name__ == "__main__":
-    dry_main()

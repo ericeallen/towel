@@ -1069,20 +1069,5 @@ Only include the JSON object in your response.
     return intro + functions_section + output_format
 
 
-# Legacy entry points for backwards compatibility
-def dry_main() -> None:
-    """Direct entry point for 'towel-dry' command (legacy)."""
-    # Emulate 'towel dry' by injecting 'dry' as first argument
-    sys.argv.insert(1, "dry")
-    main()
-
-
-def preview_main() -> None:
-    """Direct entry point for 'towel-preview' command (legacy)."""
-    # Emulate 'towel preview' by injecting 'preview' as first argument
-    sys.argv.insert(1, "preview")
-    main()
-
-
 if __name__ == "__main__":
     main()

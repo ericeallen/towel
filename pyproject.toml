@@ -48,9 +48,6 @@ Issues = "https://github.com/ericeallen/towel/issues"
 
 [project.scripts]
 towel = "towel.cli:main"
-# Legacy entry points for backwards compatibility with existing workflows
-towel-dry = "towel.cli:dry_main"
-towel-preview = "towel.cli:preview_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
