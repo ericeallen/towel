@@ -88,6 +88,47 @@ The refactoring pipeline preserves the original Python operators. The legacy `as
 
 Dynamic imports, reflection, arbitrary callbacks, runtime rebinding, metaclasses, and external side effects limit what can be established statically. Each engine owns a bounded analysis session with content checks and isolated AST snapshots. The test import-isolation harness and an individual engine instance require sequential use. Candidates involving detected namespace rebinding, frame inspection, or comprehension assignment expressions are rejected; opaque external reflection and rebinding remain outside the supported model.
 
+## Why some arguments are wrapped in `lambda`
+
+When the differing sub-expression between two duplicates is more than a plain value, Towel passes it as a zero-argument lambda (a *thunk*) and calls it inside the helper at the exact place the original expression stood. In the output that looks like this:
+
+```python
+notify(lambda: welcome_email(user))
+```
+
+To a casual reader the lambda looks redundant. It is not. Passing the expression directly would evaluate it once, unconditionally, at the call site, and that changes behavior whenever the original evaluated it conditionally, more than once, or not at all. Consider two blocks that differ only in one call (illustrative):
+
+```python
+# before
+if user.active:
+    send(welcome_email(user))
+```
+
+Pass that call eagerly and it runs for every user, active or not:
+
+```python
+# WRONG: welcome_email(user) runs unconditionally, with its side effects, and
+# can raise, even when user.active is False
+def notify(message, user):
+    if user.active:
+        send(message)
+
+notify(welcome_email(user), user)
+```
+
+The thunk defers it to the spot the original code ran it, preserving the condition:
+
+```python
+# correct
+def notify(build_message, user):
+    if user.active:
+        send(build_message())
+
+notify(lambda: welcome_email(user), user)
+```
+
+The same reasoning covers an expression inside a loop (the thunk runs once per iteration, as the original did) or one that might raise. Towel keeps the wrapper only where it can matter: an expression the helper would evaluate first, once, and unconditionally is passed directly, because then nothing can observe the difference. So a `lambda:` in the output is a deliberate marker that Towel is preserving that argument's timing, count, or conditionality; its absence means eager evaluation was proven equivalent.
+
 ## Naming the helpers with an LLM
 
 Towel deliberately generates meaningless names, `__extracted_func_3` and `__param_0`, and leaves the naming to a separate, review-first step. Extraction is a verified mechanical transformation; choosing a good name is a judgment call, so the two are kept apart. The intended workflow hands the naming to a coding assistant, because the assistant reads far better names out of the call sites than any heuristic, and you review its choices before they touch the code.
