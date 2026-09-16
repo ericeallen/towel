@@ -2,21 +2,31 @@
 
 Towel finds repeated Python code using unification and proposes helper-function extractions.
 
+> **Install from PyPI as [`code-towel`](https://pypi.org/project/code-towel/)** (the command is `towel`):
+> `pip install code-towel`
+> Do **not** install `towel`: `pip install towel` and `uvx towel` fetch a different, unrelated project.
+
 **Release status: 1.414 (beta).** Every accepted proposal is verified by instantiating the helper with each call's arguments and comparing the result with the block it replaces; arguments that could have observable effects or fresh identity are evaluated inside the helper at their original position. A standing ecosystem check refactors 91 public projects and runs each one's own test suite before and after: 75 pass identically, 13 produce no proposal, and 3 differ only in documented frame-sensitive or source-observing ways (see below). Refactoring is still a change to your code: preview first, review the diff, and run your tests. [Known limitations](docs/KNOWN_LIMITATIONS.md) lists what is verified, what is rejected, and what remains outside the model; [the readiness report](docs/PRODUCTION_READINESS.md) records the evidence.
 
 **New here?** The [Quick start](docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
 
 ## Install
 
-The runtime uses only the standard library; optional `tqdm` provides progress bars. Platform, CPU, memory, and disk requirements are in [Requirements](#requirements) below.
+The PyPI package is **`code-towel`**; installing it gives you the **`towel`** command.
 
 ```bash
-python -m pip install .
+pip install code-towel
 towel --version
 towel --help
 ```
 
-The commands below describe this checkout; previously published distributions may differ.
+Install `code-towel`, not `towel`: the name `towel` on PyPI is a different, unrelated project, so `pip install towel` and `uvx towel` will not install this tool. To run it with `uvx` without installing, name the package explicitly:
+
+```bash
+uvx --from code-towel towel --help
+```
+
+The runtime uses only the standard library; optional `tqdm` provides progress bars. Platform, CPU, memory, and disk requirements are in [Requirements](#requirements) below.
 
 ## Requirements
 

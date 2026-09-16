@@ -8,11 +8,14 @@ preview, apply to a copy, review the diff, and run your tests.
 ## Install
 
 ```bash
-python -m pip install code-towel
+pip install code-towel
 towel --version
 ```
 
-Python 3.11–3.13 on macOS or Linux. No runtime dependencies.
+The PyPI package is `code-towel` and the command is `towel`. Do not install
+`towel`: that name belongs to a different, unrelated project, so `pip install
+towel` and `uvx towel` will not get this tool. Python 3.11–3.13 on macOS or
+Linux, no runtime dependencies.
 
 ## 1. See what it would change (read-only)
 
