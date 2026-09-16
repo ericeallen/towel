@@ -213,6 +213,34 @@ def test_implicit_name_lookup_boundaries_fail_visibly(tmp_path, suffix):
     assert path.read_text() == original
 
 
+def test_local_named_like_namespace_builtin_does_not_block_rename(tmp_path):
+    """A local that merely shadows vars/globals/... is not dynamic namespace access.
+
+    Regression: the guard rejected any file containing a bare name spelled like a
+    namespace builtin, so a local ``vars = set()`` (as in Towel's own
+    _get_binding_vars) wrongly blocked renaming extracted helpers.
+    """
+    path = tmp_path / "main.py"
+    original = (
+        HELPER
+        + "def collect(items):\n"
+        + "    vars = set()\n"
+        + "    for item in items:\n"
+        + "        vars.add(item)\n"
+        + "    return sorted(vars)\n"
+        + "print(__extracted_func_0(), collect([2, 1]))\n"
+    )
+    path.write_text(original)
+    execute(path)
+    # Must NOT raise: the shadowing local does no dynamic namespace access.
+    _rename_function_in_directory(tmp_path, "__extracted_func_0", "answer", False)
+    updated = path.read_text()
+    assert "def answer():" in updated
+    assert "__extracted_func_0" not in updated
+    assert "vars = set()" in updated  # the shadowing local is left untouched
+    execute(path)  # renamed program still runs
+
+
 @pytest.mark.parametrize("configuration", ["ambient_git", "setuptools_src", "package_target"])
 def test_import_identity_uses_python_layout_not_ancestor_git(tmp_path, configuration):
     # A Git marker above the explicit source target is unrelated to sys.path.

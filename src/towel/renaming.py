@@ -19,6 +19,7 @@ from typing import Iterable, Sequence
 
 from .changes import ChangePlan
 from .unification.project_layout import ProjectLayout
+from .unification.semantic_safety import is_namespace_access_call
 
 Function = ast.FunctionDef | ast.AsyncFunctionDef
 
@@ -818,18 +819,26 @@ def _plan_module(
                 raise ValueError(
                     f"Module object escapes static rename analysis: {module.path}:{expression_origin}"
                 )
+        if (
+            isinstance(node, ast.Name)
+            and local_renames
+            and node.id in {"globals", "locals", "vars", "eval", "exec"}
+        ):
+            # A bare reference to one of these names can alias the builtin
+            # (``lookup = globals``) and later read the module namespace by
+            # string, which a rename would silently break. Only flag it when the
+            # name actually resolves to the builtin: a local variable or
+            # parameter that merely shadows the spelling (``vars = set()``) does
+            # no dynamic namespace access.
+            resolved = _resolve(scopes.nodes[node], node.id)
+            if resolved is scopes.root and node.id not in resolved.bindings:
+                raise ValueError(f"Dynamic namespace access prevents safe rename: {module.path}")
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             imported = imports.get((_resolve(scopes.nodes[node], node.id), node.id))
             if imported is not None and has_renamed_members(imported):
                 raise ValueError(
                     f"Rebound module alias prevents safe rename: {module.path}:{node.id}"
                 )
-        if (
-            isinstance(node, ast.Name)
-            and local_renames
-            and node.id in {"globals", "locals", "vars", "eval", "exec"}
-        ):
-            raise ValueError(f"Dynamic namespace access prevents safe rename: {module.path}")
         annotations: list[ast.AST] = []
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             annotations.extend(
@@ -855,7 +864,7 @@ def _plan_module(
         ):
             raise ValueError(f"String annotation requires manual rename: {module.path}")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if local_renames and node.func.id in {"globals", "locals", "vars", "eval", "exec"}:
+            if local_renames and is_namespace_access_call(node):
                 raise ValueError(f"Dynamic namespace access prevents safe rename: {module.path}")
             if node.func.id in {"getattr", "setattr", "hasattr", "delattr"} and any(
                 isinstance(argument, ast.Constant) and argument.value in local_renames

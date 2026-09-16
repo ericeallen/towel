@@ -202,6 +202,22 @@ def frame_sensitivity_markers(source: str) -> FrozenSet[str]:
     return frozenset(markers)
 
 
+def is_namespace_access_call(node: ast.AST) -> bool:
+    """Whether ``node`` is a call that reads or writes the caller's namespace.
+
+    That is ``locals()``, ``globals()``, ``eval()``, ``exec()``, or the
+    no-argument ``vars()`` (which returns ``locals()``). A local variable,
+    parameter, or attribute that merely shares one of these names is not such a
+    call, so callers can rely on this to avoid false positives on shadowing.
+    """
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+        return False
+    name = node.func.id
+    if name in {"locals", "globals", "eval", "exec"}:
+        return True
+    return name == "vars" and not node.args and not node.keywords
+
+
 def requires_original_frame(nodes: Iterable[ast.AST]) -> bool:
     """Reject suspension and operations that inspect the original call frame.
 
@@ -216,13 +232,18 @@ def requires_original_frame(nodes: Iterable[ast.AST]) -> bool:
         for node in ast.walk(statement):
             if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.AsyncFor, ast.AsyncWith)):
                 return True
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in {"locals", "globals", "eval", "exec"}:
+            if isinstance(node, ast.Call):
+                if is_namespace_access_call(node):
                     return True
-                if node.func.id in {"vars", "super"} and not node.args and not node.keywords:
+                if (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id == "super"
+                    and not node.args
+                    and not node.keywords
+                ):
                     return True
-            if isinstance(node, ast.Call) and _is_frame_relative_call(node):
-                return True
+                if _is_frame_relative_call(node):
+                    return True
     return False
 
 
