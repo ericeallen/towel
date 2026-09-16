@@ -159,3 +159,39 @@ def test_option_b_disabled_keeps_equal_literals_inline(tmp_path):
 
     # Helper should not introduce extra parameters beyond the data argument
     assert all(arg.arg != "__param_0" for arg in helper.args.args)
+
+
+def test_promotion_failure_rolls_back_substitution():
+    """A mid-promotion error must not leak a partially mutated Substitution.
+
+    _promote_hof_literals mutates the substitution incrementally, so if it fails
+    partway the caller must restore the pre-promotion state rather than return a
+    half-applied result into code generation.
+    """
+    import ast
+    from unittest.mock import patch
+
+    from towel.unification.unifier import Unifier
+
+    src = "a = helper(1)\nb = a + 1\n"
+    blocks = [ast.parse(src).body, ast.parse(src).body]
+
+    called = {"n": 0}
+
+    def boom(self, _blocks, subst):  # patched as a method: takes self
+        called["n"] += 1
+        # Mutate exactly the containers real promotion touches, then fail.
+        subst.add_mapping(0, ast.Constant(value=99), "__param_boom")
+        subst.promoted_literal_args["__param_boom"] = {0: ast.Constant(value=99)}
+        raise TypeError("promotion blew up")
+
+    unifier = Unifier(max_parameters=5, promote_equal_hof_literals=True)
+    with patch.object(Unifier, "_promote_hof_literals", boom):
+        subst = unifier.unify_blocks([b[:] for b in blocks], [{}, {}])
+
+    assert subst is not None, "identical blocks should still unify"
+    assert called["n"] == 1, "promotion must actually run for this to test rollback"
+    # Every trace of the failed promotion must be rolled back.
+    assert "__param_boom" not in subst.promoted_literal_args
+    assert "__param_boom" not in subst.param_expressions
+    assert "__param_boom" not in subst.mappings.values()
