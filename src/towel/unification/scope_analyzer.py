@@ -17,9 +17,10 @@ Analyze identifier bindings and scopes in Python code.
 """
 
 import ast
-from typing import Callable, Dict, Set, List, Optional, Tuple, Iterable, Union, FrozenSet
+from typing import Callable, Dict, Set, List, Optional, Tuple, Union, FrozenSet
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
+from .parameters import parameter_names, parameter_nodes
 
 
 @dataclass(frozen=True)
@@ -60,25 +61,6 @@ class Scope:
     def add_binding(self, name: str, node: ast.AST) -> None:
         """Add a binding to this scope."""
         self.bindings[name] = Binding(name, self.scope_id, node)
-
-
-def _iter_argument_nodes(args: ast.arguments) -> Iterable[ast.arg]:
-    """Yield every ast.arg (positional, keyword, var/kw) from an arguments block."""
-    for arg in args.posonlyargs:
-        yield arg
-    for arg in args.args:
-        yield arg
-    for arg in args.kwonlyargs:
-        yield arg
-    if args.vararg:
-        yield args.vararg
-    if args.kwarg:
-        yield args.kwarg
-
-
-def _iter_argument_names(args: ast.arguments) -> Iterable[str]:
-    for arg in _iter_argument_nodes(args):
-        yield arg.arg
 
 
 def pattern_capture_names(pattern: ast.AST) -> Set[str]:
@@ -223,7 +205,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
 
     def _bind_function_parameters(self, args: ast.arguments) -> None:
         assert self.current_scope is not None
-        for arg in _iter_argument_nodes(args):
+        for arg in parameter_nodes(args):
             self.current_scope.add_binding(arg.arg, arg)
 
     def _visit_loop(self, node: Union[ast.For, ast.AsyncFor]) -> None:
@@ -478,7 +460,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
 
             def _bind_callable_parameters(self, args: ast.arguments) -> None:
                 """Reused parameter binding logic from the DRY run (docs/DRY_RUN_2025-11-28.md)."""
-                for name in _iter_argument_names(args):
+                for name in parameter_names(args):
                     self._add_current_scope_bindings({name})
 
             def _visit_loop_with_bindings(self, node: Union[ast.For, ast.AsyncFor]) -> None:

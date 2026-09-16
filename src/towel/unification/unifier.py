@@ -23,6 +23,8 @@ import ast
 from typing import Callable, Dict, Optional, List, Tuple, Set, Any, cast, Sequence, Union, Iterator
 from dataclasses import dataclass, field
 
+from .parameters import parameter_names
+
 
 @dataclass
 class Substitution:
@@ -358,20 +360,6 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
                 for _ in node.generators:
                     self.binding_stack.pop()
 
-        def _collect_param_names(self, args: ast.arguments) -> Set[str]:
-            names: Set[str] = set()
-            for arg in args.args:
-                names.add(arg.arg)
-            for arg in args.posonlyargs:
-                names.add(arg.arg)
-            for arg in args.kwonlyargs:
-                names.add(arg.arg)
-            if args.vararg:
-                names.add(args.vararg.arg)
-            if args.kwarg:
-                names.add(args.kwarg.arg)
-            return names
-
         def _visit_function_like(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
             if not self._contains_target(node):
                 self.assignments.add(node.name)
@@ -381,7 +369,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
             self.assignments.add(node.name)
             self.binding_stack.append({node.name})
             try:
-                param_names = self._collect_param_names(node.args)
+                param_names = set(parameter_names(node.args))
                 if param_names:
                     self._with_binding(
                         param_names,

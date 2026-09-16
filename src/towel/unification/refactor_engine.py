@@ -88,6 +88,7 @@ from .assignment_analyzer import (
     _collect_bindings_and_reassignments,
 )
 from .project_layout import ProjectLayout, _is_package_dir
+from .progress import load_tqdm, render_inline_bar
 from .semantic_safety import (
     frame_sensitivity_markers,
     imported_definition_sites,
@@ -871,30 +872,11 @@ class UnificationRefactorEngine:
         return pair_count >= self.PARALLEL_PAIR_THRESHOLD and self._parallel_workers() > 1
 
     @staticmethod
-    def _load_tqdm_wrapper() -> Optional[Any]:
-        """Best-effort tqdm importer (mirrors DRY run helper, see docs/DRY_RUN_2025-11-28.md)."""
-
-        try:
-            import importlib
-
-            module = importlib.import_module("tqdm.auto")
-            return getattr(module, "tqdm")
-        except Exception:
-            return None
-
-    @staticmethod
     def _start_inline_status(label: str, enabled: bool) -> None:
         """Emit the leading inline progress label when requested (DRY helper)."""
 
         if enabled:
             print(label, end=" ", flush=True)
-
-    @staticmethod
-    def _render_inline_bar(pct: int, bar_len: int = 24) -> str:
-        """Render a textual progress bar reused across inline progress sites."""
-
-        filled = (pct * bar_len) // 100
-        return "#" * filled + "-" * (bar_len - filled)
 
     @classmethod
     def _update_inline_status(
@@ -902,7 +884,7 @@ class UnificationRefactorEngine:
     ) -> None:
         """Print an inline progress update with consistent formatting."""
 
-        bar = cls._render_inline_bar(pct, bar_len=bar_len)
+        bar = render_inline_bar(pct, bar_len=bar_len)
         suffix_text = f" {suffix}" if suffix else ""
         print(f"\r{label} [{bar}] {pct:3d}%{suffix_text}", end="", flush=True)
 
@@ -929,7 +911,7 @@ class UnificationRefactorEngine:
         use_tqdm = normalized in {"auto", "tqdm"}
         tqdm_cls: Optional[Any] = None
         if use_tqdm:
-            tqdm_cls = self._load_tqdm_wrapper()
+            tqdm_cls = load_tqdm()
             use_tqdm = tqdm_cls is not None
         return normalized, tqdm_cls, use_tqdm
 
@@ -2037,7 +2019,7 @@ class UnificationRefactorEngine:
         total_funcs = len(all_functions)
         total_func_pairs = (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
         if use_tqdm and total_func_pairs > 0:
-            tqdm_cls = self._load_tqdm_wrapper()
+            tqdm_cls = load_tqdm()
             if tqdm_cls is not None:
                 tqdm_bar = tqdm_cls(
                     total=total_func_pairs,
@@ -4041,7 +4023,7 @@ class UnificationRefactorEngine:
             try:
                 denom = max(applied + queued, 1)
                 pct = int((applied / denom) * 100)
-                bar = self._render_inline_bar(pct, bar_len=32)
+                bar = render_inline_bar(pct, bar_len=32)
                 short = desc if len(desc) <= 48 else desc[:45] + "..."
                 print(
                     f"\r[towel] {phase:<10} [{bar}] {pct:3d}% | applied={applied} queued={queued} | {short}",

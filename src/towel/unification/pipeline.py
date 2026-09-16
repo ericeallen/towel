@@ -59,6 +59,7 @@ from .models import (
     RefactoringProposal,
 )
 from .scope_analyzer import ScopeAnalyzer
+from .progress import load_tqdm, render_inline_bar
 from .visitors import FunctionCollector
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -337,44 +338,20 @@ class ProgressBar(Protocol):
         ...
 
 
-class ProgressFactory(Protocol):
-    def __call__(
-        self, *, total: int, desc: str, unit: str, dynamic_ncols: bool, leave: bool
-    ) -> ProgressBar:
-        """Construct a progress display without requiring tqdm at runtime."""
-        ...
-
-
-def _get_tqdm_class() -> Optional[ProgressFactory]:
-    """Dynamically import tqdm.auto.tqdm if available."""
-    try:
-        import importlib
-
-        tqdm_mod = importlib.import_module("tqdm.auto")
-        return cast(ProgressFactory, getattr(tqdm_mod, "tqdm"))
-    except Exception:
-        return None
-
-
 def _create_progress_bar(
     use_progress: bool, total: int, desc: str, unit: str
 ) -> Optional[ProgressBar]:
     """Return a tqdm-style bar if available (see docs/DRY_RUN_2025-11-28.md)."""
     if not use_progress or total <= 0:
         return None
-    tqdm_cls = _get_tqdm_class()
+    tqdm_cls = load_tqdm()
     if tqdm_cls is None:
         return None
     try:
-        return tqdm_cls(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=False)
+        bar = tqdm_cls(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=False)
+        return cast(ProgressBar, bar)
     except Exception:
         return None
-
-
-def _render_inline_bar(pct: int, bar_len: int = 24) -> str:
-    pct = max(0, min(100, pct))
-    filled = (pct * bar_len) // 100
-    return "#" * filled + "-" * (bar_len - filled)
 
 
 def _close_progress_bar(bar: Optional[ProgressBar]) -> None:
@@ -430,7 +407,7 @@ def run_pipeline(
             elif inline_progress:
                 percent = int(100 * index / len(paths))
                 print(
-                    f"\rAnalyzing files: [{_render_inline_bar(percent)}] {percent:3d}%",
+                    f"\rAnalyzing files: [{render_inline_bar(percent)}] {percent:3d}%",
                     end="",
                     flush=True,
                 )

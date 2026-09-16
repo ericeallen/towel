@@ -10,7 +10,8 @@ as definitely bound only when every path reaching the statement binds it.
 from __future__ import annotations
 
 import ast
-from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Union
+from .parameters import parameter_names
+from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Union
 
 Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
@@ -24,7 +25,7 @@ def definitely_bound_before(function: Function, statement: ast.stmt) -> Set[str]
     parents: Dict[ast.AST, ast.AST] = {
         child: parent for parent in ast.walk(function) for child in ast.iter_child_nodes(parent)
     }
-    bound: Set[str] = set(_parameters(function))
+    bound: Set[str] = set(parameter_names(function.args))
     path: List[ast.AST] = []
     node: ast.AST = statement
     while node is not function:
@@ -60,7 +61,7 @@ def locally_bound_names(function: Function) -> Set[str]:
     Any other name resolves lexically to an enclosing scope, a global, or a
     builtin, and reading it early cannot change which binding it sees.
     """
-    names: Set[str] = set(_parameters(function))
+    names: Set[str] = set(parameter_names(function.args))
     pending: List[ast.AST] = list(function.body)
     while pending:
         node = pending.pop()
@@ -83,15 +84,6 @@ def locally_bound_names(function: Function) -> Set[str]:
             names.update(_pattern_names(node.pattern))
         pending.extend(ast.iter_child_nodes(node))
     return names
-
-
-def _parameters(function: Function) -> Iterable[str]:
-    args = function.args
-    for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
-        yield arg.arg
-    for variadic in (args.vararg, args.kwarg):
-        if variadic is not None:
-            yield variadic.arg
 
 
 def _bindings_on_entry(container: ast.AST, field: str) -> Set[str]:

@@ -28,6 +28,7 @@ import ast
 from typing import Dict, List, Set, Tuple, Union
 
 from .scope_analyzer import pattern_capture_names
+from .parameters import parameter_names
 
 
 def analyze_assignments(func: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> Dict[int, bool]:
@@ -78,8 +79,7 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         """
         # If this is the first function we're visiting, analyze it
         if not self.bound_vars:
-            _record_function_parameters(node.args, self.bound_vars)
-            _record_kwonly_parameters(node.args, self.bound_vars)
+            self.bound_vars.update(parameter_names(node.args))
 
             # Visit function body
             for stmt in node.body:
@@ -440,24 +440,6 @@ def _collect_block_binding_stats(
             node, reassignments, bound_in_block, reassigned_in_block
         )
     return bound_in_block, reassigned_in_block
-
-
-def _record_function_parameters(args: ast.arguments, target: Set[str]) -> None:
-    """Add positional, vararg, and kwarg parameters to ``target``."""
-    for arg in args.args:
-        target.add(arg.arg)
-    if args.vararg:
-        target.add(args.vararg.arg)
-    if args.kwarg:
-        target.add(args.kwarg.arg)
-
-
-def _record_kwonly_parameters(args: ast.arguments, target: Set[str]) -> None:
-    """Add positional-only and keyword-only parameters to ``target``."""
-    for arg in args.posonlyargs:
-        target.add(arg.arg)
-    for arg in args.kwonlyargs:
-        target.add(arg.arg)
 
 
 def _add_augassign_target(target: ast.AST, reassigned_vars: Set[str]) -> None:
