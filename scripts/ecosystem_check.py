@@ -29,6 +29,7 @@ import subprocess
 import sys
 import time
 import tomllib
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -264,8 +265,14 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
     # ("write to a new directory, diff, then adopt") and exercises import paths
     # that survive relocation, which an in-place refactor cannot check.
     cleaned = work / f"{project.name}-cleaned"
-    if cleaned.exists():
+    # ``cleaned`` is a directory for a package but a single file for a
+    # one-module project (six, xmltodict, pycodestyle, ...). A leftover from a
+    # previous run in a reused work directory may therefore be either, and
+    # ``rmtree`` raises NotADirectoryError on a file, so remove it by kind.
+    if cleaned.is_dir():
         shutil.rmtree(cleaned)
+    elif cleaned.exists():
+        cleaned.unlink()
     result.refactor = run(
         [
             sys.executable,
@@ -468,12 +475,20 @@ def main() -> int:
             try:
                 result = future.result()
             except Exception as error:  # noqa: BLE001 - report and continue
-                result = Result(project.name, "HARNESS_ERROR", detail=repr(error))
+                # Keep the traceback: a bare ``repr`` of, say, a
+                # NotADirectoryError names neither the path nor the call site,
+                # which is what made this class of harness bug hard to diagnose.
+                result = Result(
+                    project.name,
+                    "HARNESS_ERROR",
+                    detail=f"{error!r}\n{traceback.format_exc()}",
+                )
             results.append(result)
             seconds = result.refactor.seconds if result.refactor else 0.0
+            detail_line = result.detail.splitlines()[0] if result.detail else ""
             print(
                 f"{result.verdict:15} {result.name:18} files={result.changed_files:<3} "
-                f"refactor={seconds:6.1f}s {result.detail[:80]}",
+                f"refactor={seconds:6.1f}s {detail_line[:80]}",
                 flush=True,
             )
             (report_dir / f"{result.name}.json").write_text(
