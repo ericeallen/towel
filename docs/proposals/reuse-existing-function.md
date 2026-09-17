@@ -39,12 +39,17 @@ expressions such as ``n - 1``. The same check as above, run on the enclosing
 function itself, would find a block inside ``f`` that unifies with the whole
 body of ``f`` under a substitution of ``f``'s parameters, and replace the block
 with ``f(<substituted arguments>)``; mutual recursion is the same check
-against the other function's body. Only a *syntactic* instance qualifies.
-``factorial`` written as ``if n == 0: 1 / elif n - 1 == 0: 1 / else n *
-factorial(n - 1)`` is not one: the ``elif`` branch equals ``n * factorial(n -
-1)`` only because ``1 * 1 == 1``, an arithmetic fact the unifier cannot see.
-The pair search never generates such a pair today because the whole body
-contains the fragment, so this needs a dedicated per-function pass.
+against the other function's body. Only a *syntactic* instance qualifies,
+and branch-guided unfolding counts as syntactic. In ``factorial`` written as
+``if n == 0: 1 / elif n - 1 == 0: 1 / else n * factorial(n - 1)``, the
+``elif`` test is the body's own test instantiated at the recursive argument
+``n - 1``, which unification recognizes. Unfolding ``factorial(n - 1)`` one
+step under that test gives ``n * 1`` for the ``else`` branch, still syntactic;
+comparing it with the ``elif`` branch's ``1`` then needs ``n == 1`` from the
+test, an arithmetic fact. Had the branch been written ``return n * 1`` the
+whole reduction would be syntactic. The pair search never generates such a
+pair today because the whole body contains the fragment, so this needs a
+dedicated per-function pass.
 
 ## Original proposal
 
