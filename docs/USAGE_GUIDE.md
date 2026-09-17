@@ -331,9 +331,17 @@ simple_proposals = [p for p in proposals if p.parameters_count <= 2]
 
 ### Import errors after refactoring
 
-- Make sure you're using `analyze_files()` or `analyze_directory()`
-- Check that module names are correct (based on file names)
-- Consider using relative imports for packages
+Towel writes a relative import for a cross-file helper inside a package
+(`from .module import helper`), so the result imports correctly whether you
+refactor in place or adopt an out-of-place copy into its real location. If you
+still hit an import error:
+
+- Refactor through `analyze_files()`/`analyze_directory()` or the `towel dry`
+  command, which run the full pipeline including import-path inference; a
+  hand-built `RefactoringProposal` skips it.
+- For an unusual layout, declare the build backend and source roots in
+  `pyproject.toml` so the module names resolve; an unresolvable layout is
+  reported rather than guessed.
 
 ## Fast local testing
 
