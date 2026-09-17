@@ -73,9 +73,14 @@ class TestComprehensionBindings(unittest.TestCase):
     """Test comprehension variable binding."""
 
     def setUp(self):
-        # Use min_lines=1 for comprehensions since they're typically short
+        # Use min_lines=1 for comprehensions since they're typically short, and
+        # keep trivial single-expression helpers so the binding probes below see
+        # the small extractions they exercise.
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            max_parameters=5,
+            min_lines=1,
+            parameterize_constants=True,
+            skip_trivial_helpers=False,
         )
         # Capture original content to verify it's never modified
         self.example_path = get_test_example_path("bindings_comprehensions.py")

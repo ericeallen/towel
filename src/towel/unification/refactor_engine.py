@@ -310,6 +310,7 @@ class UnificationRefactorEngine:
         pep420_namespace_packages: Optional[bool] = None,
         promote_equal_hof_literals: bool = False,
         excluded_directories: Sequence[str] = (),
+        skip_trivial_helpers: bool = True,
     ):
         """
         Initialize the refactoring engine.
@@ -322,6 +323,7 @@ class UnificationRefactorEngine:
         self.analysis_session = AnalysisSession()
         self.max_parameters = max_parameters
         self.min_lines = min_lines
+        self.skip_trivial_helpers = skip_trivial_helpers
         # Directory names left out of directory mode, such as ``tests`` when a
         # package carries its test suite inside itself (networkx: 77k of its
         # 198k lines).
@@ -2495,6 +2497,28 @@ class UnificationRefactorEngine:
                         return True
         return False
 
+    @staticmethod
+    def _helper_is_trivial_forwarding(func: ast.FunctionDef) -> bool:
+        """Whether the helper body is a single forwarding statement with no logic.
+
+        A lone ``raise``, a ``return`` of a single call, or a bare call expression
+        just forwards to something else, so extracting it trades a readable inline
+        statement for an indirection. Size is not the signal -- a passthrough that
+        forwards many arguments is verbose yet worthless -- so this matches on
+        structure. Anything with real computation or more than one statement is
+        left for the ordinary gates.
+        """
+        if len(func.body) != 1:
+            return False
+        statement = func.body[0]
+        if isinstance(statement, ast.Raise):
+            return True
+        if isinstance(statement, ast.Return) and isinstance(statement.value, ast.Call):
+            return True
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+            return True
+        return False
+
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
@@ -3330,6 +3354,11 @@ class UnificationRefactorEngine:
             ),
         )
 
+        if self.skip_trivial_helpers and self._helper_is_trivial_forwarding(
+            proposal.extracted_function
+        ):
+            self._debug_reject("trivial_forwarding_helper", pair)
+            return None
         return proposal
 
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
