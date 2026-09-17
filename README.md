@@ -38,7 +38,8 @@ Towel proposes the shared block as a helper (emitted with a placeholder name you
 rename afterward) and rewrites both functions to call it. The inserted code is
 formatted with Black when it is installed (`pip install "code-towel[format]"`),
 following the project's own `[tool.black]` settings; `--no-format` turns that
-off:
+off. In annotated code the helper also carries the parameter and return
+annotations its call sites declare, copied rather than inferred:
 
 ```python
 def __extracted_func_0(record):

@@ -116,6 +116,7 @@ from .models import (
     RefactoringProposal,
     ReusedFunction,
 )
+from .annotations import CallSite, annotate_helper, call_in_statement
 from .pipeline import run_pipeline, AnalysisSession
 from .visitors import (
     MethodCallRewriter,
@@ -328,6 +329,7 @@ class UnificationRefactorEngine:
         excluded_directories: Sequence[str] = (),
         skip_trivial_helpers: bool = True,
         reuse_existing_functions: bool = True,
+        annotate_helpers: bool = True,
         snippet_formatter: Optional[Callable[[str], str]] = None,
     ):
         """
@@ -360,6 +362,11 @@ class UnificationRefactorEngine:
                 plain module-level function, leave that function as it is and
                 have the other sites call it instead of extracting a helper that
                 would only restate it (default: True).
+            annotate_helpers: Give a helper the parameter and return annotations
+                its call sites agree on -- an annotated, never-rebound parameter
+                of the enclosing function, a literal's builtin type, the sites'
+                declared return type -- in code that already uses annotations
+                (default: True). Nothing is inferred.
             snippet_formatter: Renders each generated helper definition and
                 call statement from ``ast.unparse`` output to the text that is
                 inserted, for example Black (see ``towel.formatting``). None
@@ -370,6 +377,7 @@ class UnificationRefactorEngine:
         self.min_lines = min_lines
         self.skip_trivial_helpers = skip_trivial_helpers
         self.reuse_existing_functions = reuse_existing_functions
+        self.annotate_helpers = annotate_helpers
         self.snippet_formatter = snippet_formatter
         # Directory names left out of directory mode, such as ``tests`` when a
         # package carries its test suite inside itself (networkx: 77k of its
@@ -3771,7 +3779,40 @@ class UnificationRefactorEngine:
             redirected = self._redirect_to_existing_function(proposal, all_functions)
             if redirected is not None:
                 return redirected
+        if self.annotate_helpers:
+            proposal = self._with_helper_annotations(proposal, all_functions)
         return proposal
+
+    def _with_helper_annotations(
+        self, proposal: RefactoringProposal, all_functions: Sequence[FunctionArtifact]
+    ) -> RefactoringProposal:
+        """The proposal with its helper annotated from what the call sites declare.
+
+        Runs after every verification, since annotations play no part in the
+        instantiation check, and after clustering, which compares helper
+        bodies structurally.
+        """
+        sites: List[CallSite] = []
+        for replacement in proposal.replacements:
+            file_path = replacement.file_path or proposal.file_path
+            call = call_in_statement(replacement.node, proposal.extracted_function.name)
+            function = self._innermost_function_at(file_path, replacement.line_range, all_functions)
+            module = function.scope_analyzer.analyzed_tree if function is not None else None
+            if call is None or function is None or not isinstance(module, ast.Module):
+                return proposal
+            sites.append(
+                CallSite(
+                    statement=cast(ast.stmt, replacement.node),
+                    call=call,
+                    function=function.node,
+                    module=module,
+                    file_path=file_path,
+                )
+            )
+        annotated = annotate_helper(
+            proposal.extracted_function, sites, proposal.file_path, proposal.return_variables
+        )
+        return dataclasses.replace(proposal, extracted_function=annotated)
 
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
         """

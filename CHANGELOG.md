@@ -28,6 +28,16 @@ ecosystem evidence behind each claim. The format follows
   is checked to have the same syntax tree before and after. Pass `--no-format`
   to insert the unformatted rendering; without Black a note says so. Library
   callers pass any `snippet_formatter` callable to the engine.
+- Extracted helpers carry the type annotations their call sites declare. A
+  parameter is annotated when every site passes an annotated, never-rebound
+  parameter of its enclosing function, or a literal of one builtin type, and
+  the sites agree; the return is annotated from the sites' declared return
+  type, from annotated locals the helper returns, or as `None` for a helper
+  that returns nothing. Nothing is inferred. Annotations are copied unquoted
+  only where they cannot fail to resolve (builtins, deferred annotations, or
+  names bound by a module-level import) and as strings otherwise; across
+  modules only builtin names are used. Code without annotations stays that
+  way. Construct the engine with `annotate_helpers=False` to disable it.
 
 ## [1.618] — 2026-09-17
 
