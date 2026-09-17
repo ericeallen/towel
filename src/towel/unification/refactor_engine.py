@@ -2295,6 +2295,15 @@ class UnificationRefactorEngine:
                     for path, taken in covered
                 ):
                     continue
+                # The size gate and signature filter are constant-time and
+                # reject most blocks; the semantic guards below each walk the
+                # candidate's function, so they run only on survivors. Every
+                # check is independent, so the order changes cost, not outcome.
+                start_line, end_line = cand_range
+                if (end_line - start_line + 1) < self.min_lines:
+                    continue
+                if not _qf(tmpl_sig, cand_sig):
+                    continue
                 if self._block_rejected(requires_original_frame, cand_nodes, path=fpath):
                     continue
                 if self._block_rejected(nested_bindings_escape, cand_nodes, fn):
@@ -2306,12 +2315,6 @@ class UnificationRefactorEngine:
                 if self._block_rejected(nested_scopes_cross_block_boundary, cand_nodes, fn):
                     continue
                 if self._block_rejected(moves_scope_declaration, cand_nodes, fn):
-                    continue
-                # Minimum size gate
-                start_line, end_line = cand_range
-                if (end_line - start_line + 1) < self.min_lines:
-                    continue
-                if not _qf(tmpl_sig, cand_sig):
                     continue
                 reassignX = self._get_assignment_reuse(fn)
                 if self._per_block(
