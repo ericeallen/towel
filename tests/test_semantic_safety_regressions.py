@@ -335,7 +335,11 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
                     )
                 )
 
-    def test_direct_cross_file_import_cycle_is_rejected(self) -> None:
+    def test_cross_file_helper_placed_in_the_module_that_avoids_a_cycle(self) -> None:
+        # ``a`` imports ``b``, so hosting the shared helper in ``a`` and importing
+        # it from ``b`` would close a cycle. There is no pre-existing a<->b cycle,
+        # so the helper can live safely in ``b`` (which ``a`` already imports).
+        # The engine must pick that safe home rather than decline the extraction.
         body = "    y = x + 1\n    z = y * 2\n    q = z + 3\n    return q\n"
         a = self.root / "a.py"
         b = self.root / "b.py"
@@ -343,7 +347,8 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         b.write_text("def second(x):\n" + body, encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
             proposals = UnificationRefactorEngine().analyze_files([str(a), str(b)], progress="none")
-        self.assertEqual(proposals, [])
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(Path(proposals[0].file_path).name, "b.py")
 
     def test_transitive_cycle_through_module_without_functions(self) -> None:
         a = self.root / "a.py"

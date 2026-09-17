@@ -3322,12 +3322,30 @@ class UnificationRefactorEngine:
             self._debug_reject("cross_module_global_declaration", pair)
             return None
 
-        if would_create_import_cycle(
-            canonical_file,
-            {replacement.file_path or canonical_file for replacement in replacements},
-        ):
-            self._debug_reject("import_cycle", pair)
-            return None
+        # The helper lives in ``canonical_file`` and every other participating
+        # module imports it. Placing it in a module the others already depend on
+        # closes an import cycle. When the blocks span modules with no
+        # pre-existing cycle among them, at least one module can host the helper
+        # without adding a back-edge (the one the others already import), so try
+        # each participating module and keep the first safe home rather than
+        # relying on the default choice never cycling. Only a plain module-level
+        # helper can move; class- or function-scoped insertion is pinned to a
+        # location. Decline only when no home is safe (a genuine cycle).
+        replacement_files = {
+            replacement.file_path or canonical_file for replacement in replacements
+        }
+        participating = {canonical_file} | replacement_files
+        if would_create_import_cycle(canonical_file, participating):
+            safe_home = None
+            if insert_into_class is None and insert_into_function is None:
+                for candidate in sorted(participating - {canonical_file}):
+                    if not would_create_import_cycle(candidate, participating):
+                        safe_home = candidate
+                        break
+            if safe_home is None:
+                self._debug_reject("import_cycle", pair)
+                return None
+            canonical_file = safe_home
 
         destination_class = insert_into_class
         if insert_into_function:
