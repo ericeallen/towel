@@ -31,6 +31,21 @@ function *the pair never touches* in the same iteration; the fixed-point loop
 reaches it on a later iteration when that function's whole body pairs with
 the new helper.
 
+## Follow-up idea: re-rolling an unrolled recursion (not implemented)
+
+A function may contain a fragment that is an instance of its own body: the
+recursive step written out once more, with the parameters replaced by
+expressions such as ``n - 1``. The same check as above, run on the enclosing
+function itself, would find a block inside ``f`` that unifies with the whole
+body of ``f`` under a substitution of ``f``'s parameters, and replace the block
+with ``f(<substituted arguments>)``; mutual recursion is the same check
+against the other function's body. Only a *syntactic* instance qualifies.
+``factorial`` written as ``if n == 0: 1 / elif n - 1 == 0: 1 / else n *
+factorial(n - 1)`` is not one: the ``elif`` branch equals ``n * factorial(n -
+1)`` only because ``1 * 1 == 1``, an arithmetic fact the unifier cannot see.
+The pair search never generates such a pair today because the whole body
+contains the fragment, so this needs a dedicated per-function pass.
+
 ## Original proposal
 
 ## Problem

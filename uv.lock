@@ -173,11 +173,15 @@ dev = [
     { name = "tomli" },
     { name = "tqdm" },
 ]
+format = [
+    { name = "black" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.6" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.3.1" },
+    { name = "black", marker = "extra == 'format'", specifier = ">=24.1.0" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0.0" },
@@ -188,7 +192,7 @@ requires-dist = [
     { name = "tomli", marker = "extra == 'dev'", specifier = ">=2.0.1" },
     { name = "tqdm", marker = "extra == 'dev'", specifier = ">=4.66.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["format", "dev"]
 
 [[package]]
 name = "colorama"

@@ -11,7 +11,7 @@ import sys
 import argparse
 from importlib.metadata import version
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Mapping, cast
+from typing import Callable, Dict, List, Tuple, Optional, Mapping, cast
 from towel.changes import apply_changes, recover
 
 
@@ -149,6 +149,14 @@ Examples:
         type=int,
         default=0,
         help="Maximum refactorings to apply (0 = unlimited until fixed point, default: 0)",
+    )
+
+    parser.add_argument(
+        "--no-format",
+        action="store_true",
+        help="Insert generated helpers and calls as rendered, without formatting them with "
+        "Black. By default they are formatted when Black is installed (the 'format' extra), "
+        "using the project's [tool.black] line length and string quoting.",
     )
 
     parser.add_argument(
@@ -324,6 +332,20 @@ def _write_change_sidecar(engine: object, output: str) -> None:
     print(f"\nWrote call-site before/after to {sidecar} (for naming; safe to delete).")
 
 
+def _generated_code_formatter(project_path: "Path") -> Optional[Callable[[str], str]]:
+    """Black configured from the project's own settings, or None with a note when absent."""
+    from towel.formatting import BlackSettings, black_formatter
+
+    try:
+        return black_formatter(BlackSettings.for_project(project_path))
+    except ImportError:
+        print(
+            "Note: Black is not installed, so generated code is inserted unformatted. "
+            'Install the format extra (pip install "code-towel[format]") to format it.'
+        )
+        return None
+
+
 def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     # Import here to avoid loading heavy modules if not needed
@@ -373,6 +395,11 @@ def _run_dry(args: argparse.Namespace) -> None:
         prefer_absolute_imports=args.prefer_absolute_imports,
         pep420_namespace_packages=args.pep420,
         excluded_directories=tuple(getattr(args, "exclude", None) or ()),
+        snippet_formatter=(
+            None
+            if getattr(args, "no_format", False)
+            else _generated_code_formatter(Path(input_path))
+        ),
     )
 
     # Use fixed-point iteration

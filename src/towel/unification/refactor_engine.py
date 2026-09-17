@@ -328,6 +328,7 @@ class UnificationRefactorEngine:
         excluded_directories: Sequence[str] = (),
         skip_trivial_helpers: bool = True,
         reuse_existing_functions: bool = True,
+        snippet_formatter: Optional[Callable[[str], str]] = None,
     ):
         """
         Initialize the refactoring engine.
@@ -359,12 +360,17 @@ class UnificationRefactorEngine:
                 plain module-level function, leave that function as it is and
                 have the other sites call it instead of extracting a helper that
                 would only restate it (default: True).
+            snippet_formatter: Renders each generated helper definition and
+                call statement from ``ast.unparse`` output to the text that is
+                inserted, for example Black (see ``towel.formatting``). None
+                (default) inserts the ``ast.unparse`` text as is.
         """
         self.analysis_session = AnalysisSession()
         self.max_parameters = max_parameters
         self.min_lines = min_lines
         self.skip_trivial_helpers = skip_trivial_helpers
         self.reuse_existing_functions = reuse_existing_functions
+        self.snippet_formatter = snippet_formatter
         # Directory names left out of directory mode, such as ``tests`` when a
         # package carries its test suite inside itself (networkx: 77k of its
         # 198k lines).
@@ -3813,6 +3819,13 @@ class UnificationRefactorEngine:
         finally:
             self._helper_name_counters = counters
 
+    def _render(self, node: ast.AST) -> str:
+        """The source text inserted for a generated node, formatted when a formatter is set."""
+        source = ast.unparse(node)
+        if self.snippet_formatter is None:
+            return source
+        return self.snippet_formatter(source)
+
     def _materialize_refactoring(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """
         Apply a cross-file refactoring proposal.
@@ -3924,7 +3937,7 @@ class UnificationRefactorEngine:
                             final_func_name,
                         )
 
-                replacement_code = ast.unparse(replacement_node)
+                replacement_code = self._render(replacement_node)
                 code_lines = replacement_code.split("\n")
                 indent = self._get_indent(lines[start_line - 1])
 
@@ -3961,7 +3974,7 @@ class UnificationRefactorEngine:
                     fn_insert_info = self._find_function_insert_position_before_body_statements(
                         "".join(lines), proposal.insert_into_function
                     )
-                    fn_code = ast.unparse(proposal.extracted_function)
+                    fn_code = self._render(proposal.extracted_function)
                     fn_lines = [l + "\n" for l in fn_code.split("\n")]
                     if fn_insert_info is None:
                         insert_line = self._find_insert_position(lines)
@@ -3995,7 +4008,7 @@ class UnificationRefactorEngine:
                         method_kind,
                         proposal.method_param_name,
                     )
-                    func_code = ast.unparse(proposal.extracted_function)
+                    func_code = self._render(proposal.extracted_function)
                     method_lines = [line + "\n" for line in func_code.split("\n")]
                     insert_info = self._find_class_insert_position(
                         "".join(lines), proposal.insert_into_class
@@ -4020,7 +4033,7 @@ class UnificationRefactorEngine:
                             method_suffix.append("\n")
                         lines[insert_at:insert_at] = method_prefix + indented_method + method_suffix
                 else:
-                    func_code = ast.unparse(proposal.extracted_function)
+                    func_code = self._render(proposal.extracted_function)
                     func_lines = [line + "\n" for line in func_code.split("\n")]
                     insert_line = self._find_insert_position(lines)
                     lines_to_insert: List[str] = []

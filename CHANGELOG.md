@@ -21,6 +21,13 @@ ecosystem evidence behind each claim. The format follows
   variadic, shadowed, or rebound function falls back to ordinary extraction.
   Construct the engine with `reuse_existing_functions=False` to restore the
   old behavior.
+- `towel dry` formats the code it inserts with Black when Black is installed
+  (`pip install "code-towel[format]"`), using the project's own `[tool.black]`
+  line length and string quoting. Only the generated helper and the rewritten
+  call statements are formatted, never the surrounding file, and each snippet
+  is checked to have the same syntax tree before and after. Pass `--no-format`
+  to insert the unformatted rendering; without Black a note says so. Library
+  callers pass any `snippet_formatter` callable to the engine.
 
 ## [1.618] — 2026-09-17
 
