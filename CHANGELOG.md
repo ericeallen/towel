@@ -9,6 +9,8 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+## [1.618] — 2026-09-16
+
 ### Changed
 - Cross-file helpers are imported relatively by default (`from .module import
   helper`), which stays valid when an out-of-place output is adopted into its
@@ -19,6 +21,12 @@ ecosystem evidence behind each claim. The format follows
   would be a single `raise`, a `return` of one call, or a bare call adds
   indirection without sharing logic. Construct the engine with
   `skip_trivial_helpers=False` to restore the old behavior.
+- A cross-file helper is placed in a module that does not close an import cycle.
+  When the shared block spans modules, the helper is hosted in one the others
+  already import rather than adding a back-edge; the extraction is declined only
+  when no placement is safe (a genuine pre-existing cycle). This replaces the
+  earlier behavior of hosting the helper in the first module and declining
+  whenever that would cycle.
 
 ### Fixed
 - The rename tool no longer refuses a module merely because it contains a local

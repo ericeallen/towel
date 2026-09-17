@@ -1,12 +1,12 @@
 # Preparing a release
 
-The proposed next release is `1.414`, the first release after the production-readiness pass recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). Preparing artifacts does not authorize uploading them, changing repository visibility, creating remote tags, or contacting users. Publication is a separate maintainer decision.
+The proposed next release is `1.618`. `1.414` was published to PyPI on September 15, 2026 (the first release after the production-readiness pass recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)); `1.618` is the follow-up carrying relative-by-default cross-file imports, the trivial-helper filter, cycle-avoiding cross-file helper placement, and the rename-guard fix. Preparing artifacts does not authorize uploading them, changing repository visibility, creating remote tags, or contacting users. Publication is a separate maintainer decision.
 
 ## Recorded release history
 
 Checked on September 12, 2026:
 
-- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files.
+- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` was subsequently published on September 15, 2026 and is not yanked; it, too, must not be rebuilt or replaced. Publish `1.618` as a new version.
 - The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
 - The public PyPI description still represents the earlier release. A new distribution must carry the current status documentation, known limitations, and Python requirement.
 
