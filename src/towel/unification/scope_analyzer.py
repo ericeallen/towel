@@ -459,12 +459,12 @@ class ScopeAnalyzer(ast.NodeVisitor):
                 self.assigned_so_far.update(new_bindings)
 
             def _bind_callable_parameters(self, args: ast.arguments) -> None:
-                """Reused parameter binding logic from the DRY run (docs/DRY_RUN_2025-11-28.md)."""
+                """Bind a callable's parameters as locals of the current scope."""
                 for name in parameter_names(args):
                     self._add_current_scope_bindings({name})
 
             def _visit_loop_with_bindings(self, node: Union[ast.For, ast.AsyncFor]) -> None:
-                """Shared traversal for sync/async loops (see docs/DRY_RUN_2025-11-28.md)."""
+                """Visit a for/async-for loop, binding its target in the current scope."""
                 self.visit(node.iter)
                 loop_vars = self._extract_binding_names(node.target)
                 self._add_current_scope_bindings(loop_vars)

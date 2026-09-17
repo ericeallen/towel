@@ -10,6 +10,60 @@ Towel finds repeated Python code using unification and proposes helper-function 
 
 **New here?** The [Quick start](docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
 
+## What it does
+
+Towel finds code that is repeated across your functions and pulls each group of
+duplicates into one shared helper, rewriting the copies as calls to it. It works
+by *anti-unification*: it computes the least-general generalization of the
+matching blocks, so the parts that are the same become the helper's body and the
+parts that differ become its parameters.
+
+Given two functions that share a block:
+
+```python
+def order_summary(order):
+    items = [i for i in order.items if i.in_stock]
+    subtotal = sum(i.price for i in items)
+    total = round(subtotal * 1.08, 2)
+    return f"Order {order.id}: ${total}"
+
+def quote_summary(quote):
+    items = [i for i in quote.items if i.in_stock]
+    subtotal = sum(i.price for i in items)
+    total = round(subtotal * 1.08, 2)
+    return f"Quote {quote.id}: ${total}"
+```
+
+Towel proposes the shared block as a helper (emitted with a placeholder name you
+rename afterward) and rewrites both functions to call it:
+
+```python
+def __extracted_func_0(record):
+    items = [i for i in record.items if i.in_stock]
+    subtotal = sum(i.price for i in items)
+    total = round(subtotal * 1.08, 2)
+    return total
+
+def order_summary(order):
+    total = __extracted_func_0(order)
+    return f"Order {order.id}: ${total}"
+
+def quote_summary(quote):
+    total = __extracted_func_0(quote)
+    return f"Quote {quote.id}: ${total}"
+```
+
+What makes Towel different from a search-and-replace is that it is conservative
+and verified. It proposes an extraction only when it can prove the result runs
+the same as the original — instantiating the helper with each call's arguments
+and comparing against the block it replaced — and it refuses cases it cannot
+establish rather than guess. It skips trivial extractions that would add
+indirection without sharing real logic, wraps arguments that must not be
+evaluated eagerly in zero-argument `lambda`s (see
+[below](#why-some-arguments-are-wrapped-in-lambda)), and leaves naming to you.
+Nothing is written without your say-so: the workflow is preview, refactor into a
+copy, review the diff, and run your tests.
+
 ## Install
 
 The PyPI package is **`code-towel`**; installing it gives you the **`towel`** command.

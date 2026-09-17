@@ -316,9 +316,28 @@ class UnificationRefactorEngine:
         Initialize the refactoring engine.
 
         Args:
-            max_parameters: Maximum parameters for extracted functions (default: 5)
-            min_lines: Minimum lines for a code block (default: 3)
-            parameterize_constants: Whether to parameterize differing constants
+            max_parameters: Maximum parameters an extracted helper may take; a
+                candidate needing more is rejected (default: 5).
+            min_lines: Minimum number of source lines a duplicated block must span
+                to be considered (default: 3).
+            parameterize_constants: Whether differing constants across the matched
+                blocks become helper parameters (default: True).
+            prefer_absolute_imports: For a cross-file helper, prefer an absolute
+                import over a relative one -- honored only when packaging metadata
+                anchors the module name. None (default) lets the discovered layout
+                decide.
+            pep420_namespace_packages: Treat directories without ``__init__.py`` as
+                namespace packages when deriving module paths. None (default)
+                infers it from the project.
+            promote_equal_hof_literals: Expose literal arguments of higher-order
+                factory calls as parameters even when they are equal across blocks
+                (Option B policy); default False.
+            excluded_directories: Directory names to skip in directory mode, such
+                as a package that carries its own test suite.
+            skip_trivial_helpers: Skip proposing a helper whose body is a single
+                forwarding statement -- a lone ``raise``, a ``return`` of one
+                call, or a bare call -- which adds indirection without sharing any
+                logic (default: True).
         """
         self.analysis_session = AnalysisSession()
         self.max_parameters = max_parameters
@@ -900,7 +919,7 @@ class UnificationRefactorEngine:
 
     @staticmethod
     def _pop_next_proposal(queue: List[RefactoringProposal]) -> Optional[RefactoringProposal]:
-        """Remove and return the oldest queued proposal (DRY helper; see docs/DRY_RUN_2025-11-28.md)."""
+        """Remove and return the oldest queued proposal."""
 
         if not queue:
             return None
@@ -1831,7 +1850,7 @@ class UnificationRefactorEngine:
     def _deepest_common_ancestry(
         self, anc1: Optional[List[str]], anc2: Optional[List[str]]
     ) -> Optional[str]:
-        """Return deepest shared symbol in two ancestry chains (DRY helper \u00a7ref docs/DRY_RUN_2025-11-28.md)."""
+        """Return deepest shared symbol in two ancestry chains."""
 
         if not anc1 or not anc2:
             return None
@@ -1884,7 +1903,7 @@ class UnificationRefactorEngine:
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
     ) -> BlockBindingSnapshot:
-        """Aggregate binding stats for a block (DRY helper import, see docs/DRY_RUN_2025-11-28.md)."""
+        """Aggregate binding stats for a block."""
 
         bound_in_block, reassigned_in_block = _collect_block_binding_stats(
             block_nodes, reassignments
@@ -4080,7 +4099,7 @@ class UnificationRefactorEngine:
                 pass
 
         def _update_progress_postfix(applied: int, queued: int) -> None:
-            """Keep tqdm postfix updates consistent (see docs/DRY_RUN_2025-11-28.md)."""
+            """Keep tqdm postfix updates consistent."""
             if not (use_tqdm and progress_bar is not None):
                 return
             try:

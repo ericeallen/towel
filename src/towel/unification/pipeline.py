@@ -341,7 +341,7 @@ class ProgressBar(Protocol):
 def _create_progress_bar(
     use_progress: bool, total: int, desc: str, unit: str
 ) -> Optional[ProgressBar]:
-    """Return a tqdm-style bar if available (see docs/DRY_RUN_2025-11-28.md)."""
+    """Return a tqdm-style progress bar if tqdm is available, else None."""
     if not use_progress or total <= 0:
         return None
     tqdm_cls = load_tqdm()
