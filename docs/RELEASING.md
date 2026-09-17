@@ -16,6 +16,8 @@ Recheck live version availability immediately before publishing. The proposed ve
 
 Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`. Run the commands documented in the README: formatting, lint, typing, Bandit, the full tests, the unconditional 85% coverage gate, and a wheel/source build. Repeat the full tests and coverage on every supported interpreter, currently Python 3.11–3.13.
 
+**Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` updates only `pyproject.toml`. After bumping, grep the tree for the outgoing version and update at least `README.md`'s `**Release status: X (beta).**` line and `SECURITY.md`'s "currently **X**" supported-version line, then rebuild so the corrected README is what gets embedded. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
+
 For the exact candidate commit:
 
 1. Record the commit, tool/interpreter versions, commands, exit statuses, and coverage results. Review every changed golden snapshot; regeneration is not validation.
