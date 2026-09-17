@@ -9,7 +9,7 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
-## [1.618] — 2026-09-16
+## [1.618] — 2026-09-17
 
 ### Changed
 - Cross-file helpers are imported relatively by default (`from .module import
