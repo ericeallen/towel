@@ -78,11 +78,11 @@ just test-crossfile
 
 ```bash
 cd /path/to/towel
-source venv/bin/activate
+source .venv/bin/activate
 
 python -c "
 from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 tester = CrossFileEquivalenceTester(engine)
@@ -98,7 +98,7 @@ print(f'\\nSuccess rate: {100 * results[\"total_passed\"] / results[\"total_prop
 ```bash
 python -c "
 from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
-from src.towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 tester = CrossFileEquivalenceTester(engine)
@@ -138,16 +138,9 @@ The cross-file testing framework is fully implemented and working, including:
 - Justfile integration
 - Support for nested directories at any depth
 
-**Test Results**: ⚠️ Revealing Issues
+**Test results**: cross-file refactoring is verified end to end.
 
-Current run shows 1/13 proposals passing (7.7% success rate), which indicates the testing infrastructure is successfully identifying issues with the cross-file refactoring engine:
-
-- ✅ Duplicates are being correctly identified across files and directories
-- ✅ Cross-file proposals are being generated
-- ⚠️ Some refactorings produce syntax errors (indentation, "return outside function")
-- ⚠️ Import generation may need refinement
-
-This is **expected behavior** for a test framework - it should identify bugs! The low success rate means the tests are doing their job.
+The cross-file observational-equivalence harness (`test_crossfile_observational_equivalence.py`, `just test-crossfile`) refactors these fixtures and confirms the programs behave identically before and after. Cross-file extraction also clears the standing 91-project ecosystem check (see [../docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md)): duplicates are identified across files and directories, a shared helper is placed in a reachable location, and each importing file receives a correct relative import.
 
 ---
 
@@ -222,6 +215,6 @@ This cross-file testing infrastructure provides:
 
 ✅ **Behavioral Verification**: Uses observational equivalence to ensure correctness
 
-✅ **Bug Detection**: Successfully identified multiple issues with the cross-file refactoring engine
+✅ **Behavior preservation**: confirms the refactored program runs identically to the original
 
-The framework is production-ready and will help ensure cross-file refactoring quality as the feature matures!
+The harness guards cross-file refactoring quality as part of the test suite.

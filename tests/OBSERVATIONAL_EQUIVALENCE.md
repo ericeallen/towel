@@ -38,7 +38,7 @@ The framework:
 
 ```bash
 # Run all observational equivalence tests
-just test-observational
+uv run --frozen pytest tests/test_observational_equivalence.py
 
 # Run observational tests as part of comprehensive suite
 just test
@@ -63,8 +63,8 @@ tester = AutomaticEquivalenceTester(engine)
 results = tester.test_all_examples('test_examples')
 
 # Results show:
-# - Total files tested: 18
-# - Total proposals tested: 64
+# - Total files tested (every .py under test_examples/)
+# - Total proposals tested
 # - Automatic test input generation based on function signatures
 # - Comprehensive observational equivalence testing
 ```
@@ -110,82 +110,39 @@ def test_my_refactoring(self):
         self.fail("\n".join(differences))
 ```
 
-## Test Results
+## Test results
 
-### Automatic Comprehensive Testing Results
+The observational-equivalence tests run as part of the suite
+(`test_observational_equivalence.py`) and pass. The automatic framework extracts
+every proposal Towel makes for the example files and checks, on generated inputs,
+that each refactored function returns the same value and raises the same
+exceptions as the original.
 
-The automatic testing framework tests **64 refactoring proposals across 18 example files**:
+### Passing manual tests
 
-**Summary:**
-- **Total files tested:** 18
-- **Total proposals tested:** 64
-- **Passed:** 29 proposals (45%)
-- **Failed:** 35 proposals (55%)
+Scenario tests that verify observational equivalence directly:
 
-**Files with all tests passing:**
-- `complex_expressions.py` - 5 proposals passed
-- `example4_complex.py` - 3 proposals passed
-- `bindings_comprehensions.py` - 0 proposals (no duplicates found)
+- **`test_bindings_for_loops_observational_equivalence`**: for-loop variable bindings.
+- **`test_return_values_observational_equivalence`**: early returns and return-value propagation.
+- **`test_execute_simple_function`**: the execution framework itself.
+- **`test_compare_identical_functions`**: the framework's comparison logic.
+- **`test_all_examples_automatically`**: the comprehensive automatic sweep.
+- **`test_automatic_single_file`**: single-file automatic testing.
 
-**Files with failures:**
-- `example1_simple.py` - 0 passed, 3 failed (variable capture bug)
-- `referential_transparency.py` - 0 passed, 5 failed (multiple bugs)
-- `functional_patterns.py` - 0 passed, 5 failed
-- `hygienic_naming.py` - 0 passed, 5 failed
-- `scoping_edge_cases.py` - 1 passed, 4 failed
-- And 7 more files with partial failures
+### Historical defects (now fixed)
 
-The failures document real bugs in the refactoring engine that are tracked in `KNOWN_ISSUES.md`.
+Observational-equivalence testing found two real bugs early in development, both
+since fixed and each now covered by a regression fixture (see
+[../docs/ADVERSARIAL_REVIEW.md](../docs/ADVERSARIAL_REVIEW.md)):
 
-### ✓ Passing Manual Tests
-
-Manual tests that verify observational equivalence for specific scenarios:
-
-- **`test_bindings_for_loops_observational_equivalence`**: For loop variable bindings
-- **`test_return_values_observational_equivalence`**: Early returns and return value propagation
-- **`test_execute_simple_function`**: Basic execution framework
-- **`test_compare_identical_functions`**: Framework comparison logic
-- **`test_all_examples_automatically`**: Comprehensive automatic testing (passes with documented failures)
-- **`test_automatic_single_file`**: Single file automatic testing
-
-### ⚠ Known Issues (Skipped Tests)
-
-Tests that document **critical bugs** found by observational equivalence testing:
-
-#### 1. Variable Capture Bug
-
-- **`test_example1_simple_observational_equivalence`**: Variable capture bug
-  - **Issue**: Refactored code uses wrong variable name (`user` instead of `admin`)
-  - **Example**: `extracted_func_2(admin, user)` → `NameError: name 'user' is not defined`
-  - **Impact**: Refactored code throws NameError at runtime
-
-- **`test_simple_arithmetic_observational_equivalence`**: Same variable capture issue
-  - **Issue**: Parameter names from first function leak into second function
-  - **Impact**: Identical to above
-
-#### 2. Sequential Refactoring Corruption Bug (CRITICAL)
-
-- **`test_referential_transparency_observational_equivalence`**: Sequential refactorings corrupt code
-  - **Issue**: Applying multiple refactorings sequentially causes line number misalignment
-  - **Example**: Function `update_mutable_state_v1` gets corrupted from:
-    ```python
-    def update_mutable_state_v1(items, counter):
-        counter = {"total": 0, "processed": 0}
-        for item in items:
-            counter["total"] += item
-            # ... correct code ...
-    ```
-    To:
-    ```python
-    def update_mutable_state_v1(items, counter):
-        counter = {"total": 0, "processed": 0}
-        return extracted_func_4(value.strip().upper, data, logger)
-        # References undefined: value, data, logger!
-    ```
-  - **Impact**: **CRITICAL** - Corrupts unrelated functions, making them completely broken
-  - **Root Cause**: When refactoring changes file length, line numbers in subsequent proposals become invalid
-  - **Warnings Seen**: `Warning: Invalid line range 185-194 for ... (file has 158 lines)`
-
+- **Variable capture** — a parameter name from one block leaked into another, so
+  the refactored call referenced an undefined name. The extractor now renames
+  binders hygienically, and the per-proposal instantiation check would reject any
+  recurrence before it is offered.
+- **Sequential corruption** — applying several proposals in a row misaligned line
+  ranges and rewrote unrelated code. Changes are now staged and applied
+  atomically per file, and the fixed-point loop re-derives ranges after each
+  application.
 ## Value Demonstrated
 
 The observational equivalence testing framework has already proven its value by:
@@ -281,7 +238,7 @@ The observational equivalence tests run as part of the standard test suite:
 just test
 
 # Or specifically
-just test-observational
+uv run --frozen pytest tests/test_observational_equivalence.py
 ```
 
 Tests are automatically discovered and run by the test runner. Skipped tests (known issues) don't fail the build but are reported for tracking.
@@ -320,7 +277,7 @@ stdout and stderr are captured using `io.StringIO` and `contextlib.redirect_stdo
 - **`tests/test_observational_equivalence.py`**: Main test file
 - **`tests/test_helpers.py`**: Shared test utilities
 - **`tests/run_tests.py`**: Comprehensive test runner
-- **`justfile`**: `test-observational` target
+- **`justfile`**: `test-smoke` includes the observational tests
 
 ## Contributing
 

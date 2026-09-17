@@ -61,6 +61,7 @@ for proposal in proposals:
     for file_path, content in modified_files.items():
         with open(file_path, 'w') as f:
             f.write(content)
+```
 
 ## Progress Modes & Termination Reason
 
@@ -93,22 +94,20 @@ print("Termination:", reason)
 ### Localized Follow-Ups
 
 After each applied proposal, the engine re-analyzes only the changed files to enqueue *localized* follow-up proposals immediately. This accelerates chained extractions without rescanning the entire project every iteration.
-```
 
 ## Command-Line Usage
 
-Use the provided script to analyze a directory:
+Preview opportunities read-only, then refactor into a fresh directory to diff
+and adopt:
 
 ```bash
-python3 analyze_directory.py test_examples
+towel preview src/
+towel dry src/ src_cleaned/ --non-interactive
 ```
 
-This will:
-1. Find all Python files in the directory
-2. Analyze them for duplicates (including cross-file)
-3. Show all refactoring opportunities
-4. Ask if you want to apply them
-5. Write the refactored code
+`preview` lists each opportunity with the extracted helper and, per call site,
+the original block next to the generated call; `dry` writes the refactored copy.
+See the [README](../README.md) and [Quick start](QUICKSTART.md) for the full CLI.
 
 ## Configuration
 
@@ -195,22 +194,22 @@ def process_admin_data(admin_id):
 
 **After:**
 ```python
-def extracted_func(param_9):
-    if not param_9.get('id'):
+def __extracted_func_0(__param_0):
+    if not __param_0.get('id'):
         raise ValueError('User ID is required')
-    if not param_9.get('name'):
+    if not __param_0.get('name'):
         raise ValueError('User name is required')
-    if len(param_9.get('name', '')) < 2:
+    if len(__param_0.get('name', '')) < 2:
         raise ValueError('User name too short')
 
 def process_user_data(user_id):
     user = {"id": user_id, "name": "John"}
-    extracted_func(user)
+    __extracted_func_0(user)
     return user
 
 def process_admin_data(admin_id):
     admin = {"id": admin_id, "name": "Jane", "role": "admin"}
-    extracted_func(admin)
+    __extracted_func_0(admin)
     return admin
 ```
 
@@ -244,7 +243,7 @@ def calculate_discount_for_premium_customer(price, customer):
 
 **After (file1.py):**
 ```python
-def extracted_func(customer, price):
+def __extracted_func_0(customer, price):
     base_discount = 0.1
     if customer.get('years_member', 0) > 5:
         base_discount += 0.05
@@ -255,15 +254,15 @@ def extracted_func(customer, price):
     return final_price
 
 def calculate_discount_for_regular_customer(price, customer):
-    return extracted_func(customer, price)
+    return __extracted_func_0(customer, price)
 ```
 
 **After (file2.py):**
 ```python
-from file1 import extracted_func
+from file1 import __extracted_func_0
 
 def calculate_discount_for_premium_customer(price, customer):
-    return extracted_func(customer, price)
+    return __extracted_func_0(customer, price)
 ```
 
 ## Tips

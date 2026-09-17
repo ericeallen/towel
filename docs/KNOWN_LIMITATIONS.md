@@ -127,6 +127,10 @@ uncertainty. Common reasons a real duplicate is not extracted:
 
 - A differing sub-expression is a slice, a starred item, or a whole f-string;
   these are container syntax rather than values.
+- The extracted helper body would be a single forwarding statement — a lone
+  `raise`, a `return` of one call, or a bare call. Such a helper shares no
+  logic, only a name, so it is skipped by default; construct the engine with
+  `skip_trivial_helpers=False` to keep it.
 - The block deletes, rebinds, or declares a name the caller keeps using.
 - A nested function or lambda shares a rebound name with the block.
 - The helper would need more than the configured maximum parameters.

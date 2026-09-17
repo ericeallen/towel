@@ -8,42 +8,44 @@ Comprehensive unit tests for Towel, the DRY (Don't Repeat Yourself) code refacto
 # Run all unit tests
 just test
 
-# Run specific test categories
-just test-bindings      # Test binding construct handling
-just test-returns       # Test return value propagation
-just test-fstrings      # Test f-string handling
-just test-engine        # Test refactoring engine end-to-end
+# Run the fast smoke subset (signature gate, unifier, extractor, regressions)
+just test-smoke
+
+# Run a single test file
+uv run --frozen pytest tests/test_bindings.py
 ```
 
 ## Test Structure
 
 ### Unit Tests (`tests/`)
 
-- **`test_bindings.py`** - Tests for binding construct handling
-  - For loop variables (alpha-renaming: `i` vs `j`)
-  - Comprehension variables (list, dict, set, generator)
-  - Tuple unpacking in loops
-  - Builtin functions not parameterized
+The suite is roughly 90 `test_*.py` files. Rather than list them all (they
+change often), here is how they group by concern, with a representative file
+for each:
 
-- **`test_return_values.py`** - Tests for return value propagation
-  - Early returns in if statements
-  - Nested returns
-  - Returns inside loops
-  - Multiple return paths
-  - Functions with no explicit return
-
-- **`test_fstrings.py`** - Tests for f-string and constant handling
-  - F-strings with identical/different literals
-  - F-string AST unparsing (no errors)
-  - Constant parameterization (numeric and string)
-  - Mixed f-strings and regular strings
-
-- **`test_refactoring_engine.py`** - End-to-end refactoring tests
-  - Single file refactoring
-  - Directory analysis
-  - Cross-file duplicate detection
-  - Parameter limits
-  - Min lines threshold
+- **Binding & scope** — `test_bindings.py`, `test_binding_detector.py`,
+  `test_definite_assignment.py`: alpha-renaming, comprehension and loop
+  variables, `global`/`nonlocal`, orphan detection, builtins left untouched.
+- **Return propagation** — `test_return_values.py`,
+  `test_extractor_return_statements.py`: early, nested, and multi-path returns
+  wired back into the replacement call.
+- **F-strings & constants** — `test_fstrings.py`,
+  `test_extractor_augassign_and_fstrings.py`: format-string handling and
+  constant parameterization without AST breakage.
+- **Extraction & rendering** — the many `test_extractor_*.py` files: helper and
+  call-site generation, hygienic naming, overlapping-replacement detection.
+- **Engine end-to-end** — `test_refactoring_engine.py`,
+  `test_engine_adversarial.py`: single-file, directory, and cross-file runs,
+  parameter and min-lines limits.
+- **Cross-file & layout** — `test_crossfile_integration.py`,
+  `test_backend_layouts.py`, `test_project_layout_and_imports.py`: import-path
+  inference across packaging backends and relative-vs-absolute import choice.
+- **Soundness batteries** — `test_adversarial_semantics.py`,
+  `test_adversarial_renaming.py`, `test_*_observational_equivalence.py`:
+  instantiation-based equivalence checks and the hostile fixtures behind them.
+- **Application & recovery** — `test_change_transactions.py`,
+  `test_copy_preservation.py`: atomic byte plans, rollback, and interruption
+  recovery.
 
 ### Test Examples (`test_examples/`)
 
@@ -78,10 +80,5 @@ The test suite covers:
 
 ## Current Status
 
-```
-Ran 30 tests in 0.307s
-
-OK
-```
-
-All tests passing! ✓
+The full suite passes; run `just coverage` to reproduce the enforced 85%
+coverage gate.

@@ -42,7 +42,10 @@ fixed-point loop (below).
    blocks that unify with the accepted template and can share the helper.
 9. **Materialize.** `extractor.py` renders the helper and the call sites,
    compiles the generated Python to confirm it parses, and detects overlapping
-   replacements.
+   replacements. A proposal whose rendered helper body is a single forwarding
+   statement — a lone `raise`, a `return` of one call, or a bare call — is
+   dropped here: it would only add indirection. Construct the engine with
+   `skip_trivial_helpers=False` to keep such helpers.
 10. **Apply.** `changes.py` turns accepted proposals into an immutable byte
     plan and applies it transactionally (see *Application and recovery*).
 
@@ -346,6 +349,8 @@ but the ideas and their names are from the literature.
 | Liveness and orphans | `definite_assignment.py`, `orphan_detector.py` |
 | Safety guards, import cycles, pre-scan | `semantic_safety.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
+| Parameter enumeration | `parameters.py` |
+| Progress reporting | `progress.py` |
 | Structural memoization | `structural_memo.py` |
 | Cross-file layout | `project_layout.py` |
 | Data model | `models.py` |

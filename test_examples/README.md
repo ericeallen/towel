@@ -4,11 +4,17 @@ This directory contains comprehensive test examples designed to stress test Towe
 
 ## Overview
 
-**Total Examples:** 18 Python files
-**Total Refactoring Opportunities Detected:** 259
-**Non-Overlapping Proposals:** 60
+**Total Examples:** 26 Python files
 
-These examples are intentionally designed to test edge cases, complex patterns, and challenging scenarios that might break naive duplicate detection systems.
+These examples are intentionally designed to test edge cases, complex patterns,
+and challenging scenarios that might break naive duplicate detection systems.
+
+> The per-file "Detected Opportunities" and the summary tallies below are
+> *illustrative*: they were recorded against an earlier engine configuration and
+> are not a benchmark. The exact proposal count for any fixture changes with the
+> engine version and with construction flags such as `skip_trivial_helpers`, so
+> treat these numbers as a rough sense of scale, not a contract. What each
+> fixture *stresses* is the durable part of this catalog.
 
 ## Test Categories
 
@@ -310,21 +316,47 @@ for outer in data:
 
 ---
 
+
+### 14. Adversarial & Comprehensive Fixtures
+
+These fixtures were added by the adversarial review batteries and the syntactic
+coverage sweep. They exist to break unsound extraction rather than to showcase
+clean opportunities, so many are expected to yield *few or no* proposals — a
+correct engine must decline the unsafe ones.
+
+- `binding_constructs_comprehensive.py` / `syntactic_coverage_comprehensive.py` —
+  exhaustive sweep of binding forms and surface syntax the extractor must handle.
+- `closure_adversarial.py` — closures whose captured names would change meaning if
+  hoisted into a helper.
+- `control_flow_adversarial.py` — `break`/`continue`/`return`/`else`-clause flow
+  that must not be silently relocated.
+- `exception_adversarial.py` — `try`/`except`/`finally` and exception-group shapes
+  where extraction could reorder handlers.
+- `global_nonlocal_examples.py` — `global`/`nonlocal` declarations whose scope must
+  survive extraction.
+- `side_effects_adversarial.py` — evaluation-order and identity-sensitive effects
+  that gate the value/thunk/lifted parameter choice.
+- `tricky_edge_cases_adversarial.py` — assorted soundness traps consolidated from
+  ecosystem findings.
+
+---
+
 ## Summary Statistics
 
-| Category | Files | Patterns | Proposals |
-|----------|-------|----------|-----------|
-| Basic Examples | 4 | 15+ | ~20 |
-| Binding/Scoping | 3 | 20+ | ~25 |
-| Complex Expressions | 1 | 8 | ~14 |
-| Hygienic Naming | 1 | 8 | ~12 |
-| Referential Transparency | 1 | 8 | ~16 |
-| Nested Structures | 1 | 10 | ~18 |
-| Method Chains | 1 | 8 | ~16 |
-| Functional Patterns | 1 | 9 | ~18 |
-| Real World | 1 | 7 | ~14 |
-| Edge Cases/Stress | 1 | 6 | ~12 |
-| **TOTAL** | **18** | **99+** | **~259** |
+| Category | Files |
+|----------|-------|
+| Basic Examples | 4 |
+| Binding/Scoping | 3 |
+| Complex Expressions | 1 |
+| Hygienic Naming | 1 |
+| Referential Transparency | 1 |
+| Nested Structures | 1 |
+| Method Chains | 1 |
+| Functional Patterns | 1 |
+| Real World | 1 |
+| Edge Cases/Stress | 1 |
+| Adversarial & Comprehensive | 7 |
+| **TOTAL** | **26** |
 
 ## What These Tests Validate
 
@@ -394,8 +426,6 @@ All example files have pristine templates in `.templates/` directory:
 
 When running `just preview test_examples/`:
 
-1. **Total Proposals:** ~259 refactoring opportunities detected
-2. **After Overlap Filtering:** ~60 non-overlapping proposals selected
 3. **Filtering Rate:** ~23% (removes ~199 overlapping proposals)
 
 This high number of overlapping proposals is expected because:

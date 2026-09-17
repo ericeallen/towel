@@ -42,7 +42,7 @@ What you expected Towel to produce:
 **Environment:**
  - OS: [e.g., macOS 13.0, Ubuntu 22.04, Windows 11]
  - Python Version: [e.g., 3.11.5]
- - Towel Version: [e.g., 0.6.10]
+ - Towel Version: [e.g., 1.414]
  - Installation Method: [e.g., pip, git clone]
 
 **Additional context**

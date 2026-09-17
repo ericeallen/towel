@@ -172,4 +172,4 @@ Thank you for contributing to Towel!
 
 For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md. CI runs the full tests and an unconditional 85% coverage gate for each supported Python version. `just release VERSION` prepares local distributions only; publication requires maintainer review of the current audit and policy decisions.
 
-Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md). Legacy AST normalization helpers are compatibility utilities, not safe preprocessing passes; do not use them to justify behavior-preservation claims.
+Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).
