@@ -26,25 +26,7 @@ def __extracted_func_5(auth, logger, request):
     return ({'status': 'success'}, 200)
 
 
-def __extracted_func_4(__param_0, __param_1, __param_2, error_handler, failed, items, metrics, processed, processor):
-    for i, item in enumerate(items):
-        try:
-            validated = processor.validate(item)
-            if not validated:
-                failed.append({'index': i, 'error': 'Validation failed', 'item': item})
-                metrics.increment(__param_0)
-                continue
-            result = processor.transform(item)
-            processor.enrich(result)
-            processed.append(result)
-            metrics.increment(__param_1)
-        except Exception as e:
-            error_handler.log(e, context={'index': i, 'item': item})
-            failed.append({'index': i, 'error': str(e), 'item': item})
-            metrics.increment(__param_2)
-
-
-def __extracted_func_3(__param_0, cache, database, key):
+def __extracted_func_4(__param_0, cache, database, key):
     cached = cache.get(key)
     if cached is not None:
         cache.increment_hits()
@@ -62,7 +44,7 @@ def __extracted_func_3(__param_0, cache, database, key):
     return None
 
 
-def __extracted_func_2(__param_0, config, logger, source):
+def __extracted_func_3(__param_0, config, logger, source):
     logger.info('Starting extract phase')
     max_retries = 3
     retry_count = 0
@@ -79,6 +61,27 @@ def __extracted_func_2(__param_0, config, logger, source):
                 logger.error('Extract phase failed')
                 raise
     return data
+
+
+def __extracted_func_2(__param_0, __param_1, __param_2, error_handler, items, metrics, processor):
+    processed = []
+    failed = []
+    for i, item in enumerate(items):
+        try:
+            validated = processor.validate(item)
+            if not validated:
+                failed.append({'index': i, 'error': 'Validation failed', 'item': item})
+                metrics.increment(__param_0)
+                continue
+            result = processor.transform(item)
+            processor.enrich(result)
+            processed.append(result)
+            metrics.increment(__param_1)
+        except Exception as e:
+            error_handler.log(e, context={'index': i, 'item': item})
+            failed.append({'index': i, 'error': str(e), 'item': item})
+            metrics.increment(__param_2)
+    return (failed, processed)
 
 
 def __extracted_func_1(__param_0, audit_log, data, rules_engine):
@@ -126,12 +129,12 @@ def handle_api_request_v2(request, auth, rate_limiter, logger):
 
 def etl_pipeline_extract_a(source, config, logger):
     """Version A: ETL extract phase."""
-    return __extracted_func_2(30, config, logger, source)
+    return __extracted_func_3(30, config, logger, source)
 
 
 def etl_pipeline_extract_b(source, config, logger):
     """Version B: Different timeout, same extraction pattern."""
-    return __extracted_func_2(60, config, logger, source)
+    return __extracted_func_3(60, config, logger, source)
 
 
 def validate_business_rules_v1(data, rules_engine, audit_log):
@@ -146,20 +149,14 @@ def validate_business_rules_v2(data, rules_engine, audit_log):
 
 def process_batch_with_errors_a(items, processor, error_handler, metrics):
     """Version A: Batch processing with error handling."""
-    processed = []
-    failed = []
-
-    __extracted_func_4('validation_failures', 'processed', 'processing_errors', error_handler, failed, items, metrics, processed, processor)
+    failed, processed = __extracted_func_2('validation_failures', 'processed', 'processing_errors', error_handler, items, metrics, processor)
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
 
 def process_batch_with_errors_b(items, processor, error_handler, metrics):
     """Version B: Different metric names, same pattern."""
-    processed = []
-    failed = []
-
-    __extracted_func_4('invalid_items', 'success_count', 'error_count', error_handler, failed, items, metrics, processed, processor)
+    failed, processed = __extracted_func_2('invalid_items', 'success_count', 'error_count', error_handler, items, metrics, processor)
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -167,13 +164,13 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
 def cache_with_fallback_v1(key, cache, database, ttl):
     """Version 1: Cache with database fallback."""
     # Try cache first
-    return __extracted_func_3(3600, cache, database, key)
+    return __extracted_func_4(3600, cache, database, key)
 
 
 def cache_with_fallback_v2(key, cache, database, ttl):
     """Version 2: Different TTL, same caching pattern."""
     # Same pattern, different TTL
-    return __extracted_func_3(7200, cache, database, key)
+    return __extracted_func_4(7200, cache, database, key)
 
 
 def aggregate_metrics_a(events, time_window, aggregator):

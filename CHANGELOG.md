@@ -39,6 +39,19 @@ ecosystem evidence behind each claim. The format follows
   modules only builtin names are used. Code without annotations stays that
   way. Construct the engine with `annotate_helpers=False` to disable it.
 
+### Fixed
+- A block that binds a variable read after it is extracted again, with the
+  helper returning the variable and the call rebinding it (`total =
+  helper(order)`), as the README has always shown. The orphan guard added for
+  networkx in 1.618 did not know the generated call rebinds a returned
+  variable, so it rejected every such block; only blocks that returned or
+  bound nothing live could be extracted.
+- Definite-assignment analysis now knows that `except E as name` deletes
+  `name` when the handler exits, and that a `del` nested in a branch unbinds
+  its target on that path. The returned-variable check relies on this; without
+  it a helper could return a handler's name and raise `UnboundLocalError`
+  where the original code did not.
+
 ## [1.618] — 2026-09-17
 
 ### Changed

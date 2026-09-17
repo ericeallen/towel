@@ -133,9 +133,9 @@ def _definite(statements: Sequence[ast.stmt]) -> Definite:
         result = _definite_statement(statement)
         if result is None:
             return None
-        bound = bound | result
-        if isinstance(statement, ast.Delete):
-            bound = bound - _targets_of_delete(statement)
+        # A name the statement may unbind on some path is no longer definite,
+        # unless the statement itself rebinds it on every path.
+        bound = (bound - _may_unbind(statement)) | result
     return bound
 
 
@@ -146,6 +146,33 @@ def _targets_of_delete(statement: ast.Delete) -> Set[str]:
         for node in ast.walk(target)
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Del)
     }
+
+
+def _may_unbind(statement: ast.stmt) -> FrozenSet[str]:
+    """Names some path through the statement leaves unbound: ``del`` targets and
+    ``except ... as name`` names, which Python deletes when the handler exits.
+    Nested definitions are other scopes and are not entered."""
+    if isinstance(statement, ast.Delete):
+        return frozenset(_targets_of_delete(statement))
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return frozenset()
+    names: Set[str] = set()
+    if isinstance(statement, ast.Try):
+        names.update(handler.name for handler in statement.handlers if handler.name)
+        for handler in statement.handlers:
+            for child in handler.body:
+                names |= _may_unbind(child)
+    if isinstance(statement, ast.Match):
+        for case in statement.cases:
+            for child in case.body:
+                names |= _may_unbind(child)
+    for field in ("body", "orelse", "finalbody"):
+        children = getattr(statement, field, None)
+        if isinstance(children, list):
+            for child in children:
+                if isinstance(child, ast.stmt):
+                    names |= _may_unbind(child)
+    return frozenset(names)
 
 
 def _definite_statement(statement: ast.stmt) -> Definite:
@@ -182,7 +209,9 @@ def _definite_statement(statement: ast.stmt) -> Definite:
         for handler in statement.handlers:
             handled = _definite(handler.body)
             if handled is not None and handler.name:
-                handled = handled | {handler.name}
+                # ``except E as e`` deletes ``e`` when the handler exits, so it
+                # is unbound on that path even if it was bound before the try.
+                handled = handled - {handler.name}
             normal = _meet(normal, handled)
         final = _definite(statement.finalbody)
         return _join(normal, final) if final is not None else None

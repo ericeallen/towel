@@ -3437,17 +3437,19 @@ class UnificationRefactorEngine:
                     start_idx2 = 1
                 body2 = body2[start_idx2:]
 
-                # Check for orphaned variables in both blocks
-                has_orphans1, orphans1 = has_orphaned_variables(
-                    cast(List[ast.AST], body1), indices1
-                )
-                has_orphans2, orphans2 = has_orphaned_variables(
-                    cast(List[ast.AST], body2), indices2
-                )
+                # Check for orphaned variables in both blocks. A name the helper
+                # returns is rebound by the generated call on every path out of
+                # the block, so a later read of it is not orphaned.
+                _, orphans1 = has_orphaned_variables(cast(List[ast.AST], body1), indices1)
+                _, orphans2 = has_orphaned_variables(cast(List[ast.AST], body2), indices2)
+                orphans1 -= set(ordered_return_variables[0])
+                orphans2 -= set(ordered_return_variables[1])
 
-                if has_orphans1 or has_orphans2:
+                if orphans1 or orphans2:
                     # Cannot extract - would create orphaned variable references
-                    self._debug_reject("orphaned_variables", pair)
+                    self._debug_reject(
+                        "orphaned_variables", pair, detail=str(sorted(orphans1 | orphans2))
+                    )
                     return None
 
         # Generate replacement calls

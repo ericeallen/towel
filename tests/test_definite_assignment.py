@@ -102,6 +102,46 @@ def test_definitely_bound(source: str, bound: set[str], unbound: set[str]) -> No
     assert not (unbound & result)
 
 
+@pytest.mark.parametrize(
+    "source, bound, unbound",
+    [
+        # ``except E as e`` deletes ``e`` on handler exit, even when it was
+        # bound before the try, so it is not definite after the statement.
+        (
+            "def f(v):\n    e = 'orig'\n    try:\n        r = 1 / v\n"
+            "    except ZeroDivisionError as e:\n        r = None\n    marker()\n",
+            {"r"},
+            {"e"},
+        ),
+        (
+            "def f(v):\n    try:\n        r = 1 / v\n"
+            "    except ZeroDivisionError as e:\n        r = None\n        marker()\n",
+            {"r", "e"},
+            set(),
+        ),
+        # A conditional ``del`` leaves the name unbound on one path.
+        (
+            "def f(c):\n    x = 1\n    y = 2\n    if c:\n        del x\n    marker()\n",
+            {"y"},
+            {"x"},
+        ),
+        # The handler's deletion is undone by a later rebinding.
+        (
+            "def f(v):\n    e = 'orig'\n    try:\n        r = 1 / v\n"
+            "    except ZeroDivisionError as e:\n        r = None\n    e = 'again'\n    marker()\n",
+            {"r", "e"},
+            set(),
+        ),
+    ],
+)
+def test_except_handler_name_is_unbound_after_the_handler(
+    source: str, bound: set[str], unbound: set[str]
+) -> None:
+    result = _bound_at_marker(source)
+    assert bound <= result
+    assert not (unbound & result)
+
+
 def test_locally_bound_names_excludes_nested_scopes_and_free_names() -> None:
     from towel.unification.definite_assignment import locally_bound_names
 

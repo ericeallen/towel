@@ -70,6 +70,16 @@ TRANSFORMED = {
     "r99_partial_return_branches",
     "r100_clustered_site_with_live_binding",
     "r102_whole_body_reuse",
+    # Blocks that bind a variable read afterwards, returned by the helper and
+    # rebound by the generated call.
+    "h01_side_effect_order",
+    "h61_str_method_param",
+    "r50_helper_name_collision",
+    "r69_annassign",
+    "r76_return_order",
+    "r86_annotated_assignment_live",
+    "r94_import_binds_live_name",
+    "r96_unpacked_targets_live",
 }
 
 
