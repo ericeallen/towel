@@ -156,7 +156,7 @@ wheels = [
 
 [[package]]
 name = "code-towel"
-version = "1.414"
+version = "1.618"
 source = { editable = "." }
 
 [package.optional-dependencies]
