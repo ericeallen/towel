@@ -474,7 +474,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                     self.visit(stmt)
 
             def _visit_with_like_block(self, node: Union[ast.With, ast.AsyncWith]) -> None:
-                """Centralizes binding + visitation for with/async-with blocks (DRY run helper)."""
+                """Visit a with/async-with block, binding each ``as`` target in the current scope."""
                 for item in node.items:
                     self.visit(item.context_expr)
                     if item.optional_vars:

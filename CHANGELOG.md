@@ -7,6 +7,24 @@ ecosystem evidence behind each claim. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Cross-file helpers are imported relatively by default (`from .module import
+  helper`), which stays valid when an out-of-place output is adopted into its
+  real location. An absolute import is used only when a packaging marker
+  (`pyproject.toml`/`setup.*`) anchors the module name, so the previous
+  behavior is preserved for in-place refactoring of a packaged project.
+- Trivial forwarding helpers are no longer proposed: a block whose helper body
+  would be a single `raise`, a `return` of one call, or a bare call adds
+  indirection without sharing logic. Construct the engine with
+  `skip_trivial_helpers=False` to restore the old behavior.
+
+### Fixed
+- The rename tool no longer refuses a module merely because it contains a local
+  variable or parameter named `vars`, `globals`, `locals`, `eval`, or `exec`;
+  it flags only a genuine reference to the builtin.
+
 ## [1.414] — 2026-09-15
 
 First release prepared under the open-source audit. Beta: the engineering and

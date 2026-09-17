@@ -175,7 +175,20 @@ helper can be imported correctly. It reads the build backend from
 (`package-dir`). An unrecognized backend falls back to conventional inference:
 a package or module named after the distribution, in the project root or under
 `src`. Only a layout that cannot be resolved either way raises rather than
-guessing; the ecosystem check reports those as `UNSUPPORTED`. `semantic_safety.py`'s
+guessing; the ecosystem check reports those as `UNSUPPORTED`.
+
+For a helper shared between two files in the same package, `refactor_engine.py`
+generates a relative import (`from .module import helper`, or a deeper
+`..sub.module`). A relative import encodes only the intrinsic same-package
+relationship, so it stays valid wherever the code lands — in particular when an
+out-of-place output is adopted into its real location, the documented workflow —
+and it matches the intra-package style the code already uses. An absolute import
+is used only when the discovered layout is anchored by a real packaging marker
+(`ProjectLayout.metadata_root`), so the absolute name survives relocation; a flat
+module with no package, where a relative import would not resolve, keeps a bare
+absolute name.
+
+`semantic_safety.py`'s
 `would_create_import_cycle` follows static imports through local modules,
 caching each module's import edges by path, mtime, and size, and rejects a
 helper placement that would close a cycle.

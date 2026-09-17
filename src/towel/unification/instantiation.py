@@ -235,6 +235,16 @@ class _Reducer(ast.NodeTransformer):
 def _beta_reduce(
     thunk: ast.Lambda, actual_args: List[ast.expr], actual_keywords: List[ast.keyword]
 ) -> ast.AST:
+    """Apply a thunk lambda to the call's arguments and return its reduced body.
+
+    A forwarding thunk -- ``lambda *a, **k: f(*a, **k)`` -- reduces to the wrapped
+    call ``f`` applied to the actual arguments; any other shape of forwarding
+    lambda is rejected (``forwarding thunk shape``) because it cannot be reduced
+    soundly. A plain thunk has its parameters bound to the actual arguments,
+    after an arity check, and the substituted body is returned. This is the
+    beta-reduction step that lets instantiation compare a helper call against the
+    original block up to the thunks the extractor introduced.
+    """
     signature = thunk.args
     forwarding = (
         signature.vararg is not None

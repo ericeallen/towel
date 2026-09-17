@@ -136,7 +136,7 @@ FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 @dataclass(frozen=True)
 class BlockBindingSnapshot:
-    """Summarized binding data for a block, mirroring DRY helper structure."""
+    """Summarized binding data for a block: what it binds, reassigns, and what is bound around it."""
 
     bound_in_block: Set[str]
     reassigned_in_block: Set[str]
@@ -895,7 +895,7 @@ class UnificationRefactorEngine:
 
     @staticmethod
     def _start_inline_status(label: str, enabled: bool) -> None:
-        """Emit the leading inline progress label when requested (DRY helper)."""
+        """Emit the leading inline progress label when progress is enabled."""
 
         if enabled:
             print(label, end=" ", flush=True)
@@ -926,7 +926,7 @@ class UnificationRefactorEngine:
         return queue.pop(0)
 
     def _resolve_progress_backend(self, progress: str) -> Tuple[str, Optional[Any], bool]:
-        """Normalize progress flag and load tqdm when available (mirrors DRY helper guidance)."""
+        """Resolve the progress mode and load tqdm if it is available."""
 
         allowed = {"auto", "tqdm", "none", "detail"}
         normalized = progress if progress in allowed else "tqdm"
@@ -1021,7 +1021,7 @@ class UnificationRefactorEngine:
 
     @staticmethod
     def _retarget_helper_calls(node: ast.AST, original_name: str, final_name: str) -> ast.AST:
-        """Rewrite helper call-sites when the extracted helper is renamed (DRY helper parity)."""
+        """Rewrite the helper call sites to match a renamed extracted helper."""
 
         if original_name == final_name:
             return node
@@ -1043,7 +1043,7 @@ class UnificationRefactorEngine:
 
     @staticmethod
     def _scan_module_docstring_and_imports(lines: List[str]) -> Tuple[int, int]:
-        """Return last import line and docstring boundary (DRY helper parity)."""
+        """Return the line after the last import and the module docstring boundary."""
 
         in_docstring = False
         docstring_char: Optional[str] = None
@@ -1952,7 +1952,7 @@ class UnificationRefactorEngine:
         debug_label: Optional[str] = None,
     ) -> Set[str]:
         """
-        Determine which newly-bound variables are read after the block (DRY helper parity).
+        Determine which newly-bound variables are read after the block.
         """
 
         if not initially_bound:
@@ -4110,7 +4110,7 @@ class UnificationRefactorEngine:
         def _apply_proposal_and_refresh_queue(
             proposal: RefactoringProposal, queue: List[RefactoringProposal]
         ) -> List[RefactoringProposal]:
-            """Apply proposal, update caches, and refresh queue (DRY helper)."""
+            """Apply a proposal, invalidate the affected caches, and refresh the queue."""
             before = {
                 path: Path(path).read_bytes()
                 for path in {

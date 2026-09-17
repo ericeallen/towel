@@ -62,16 +62,23 @@ class HygienicExtractor:
         Extract code into a function.
 
         Args:
-            template_block: The code block to extract (from one of the blocks)
-            substitution: Substitution mapping expressions to parameters
-            free_variables: Free variables in the block
-            enclosing_names: Names defined in enclosing scopes
-            is_value_producing: Whether the block produces a value
-            return_variables: Variables to return from the extracted function (for value-producing extraction)
-            function_name: Name for the extracted function
+            template_block: The code block to extract (from one of the blocks).
+            substitution: Substitution mapping expressions to parameters.
+            free_variables: Free variables in the block.
+            enclosing_names: Names defined in enclosing scopes, so the generated
+                helper name and parameters do not shadow them.
+            is_value_producing: Whether the block produces a value.
+            return_variables: Variables the helper must return (for a
+                value-producing extraction); empty for a statement block.
+            global_decls: Names to declare ``global`` in the helper body, so an
+                assignment to a module global keeps writing the global.
+            nonlocal_decls: Names to declare ``nonlocal`` in the helper body, for
+                the same reason across an enclosing function scope.
+            function_name: Requested name for the helper; made unique against
+                ``enclosing_names``.
 
         Returns:
-            Tuple of (function AST node, parameter order dict)
+            Tuple of (function AST node, parameter order dict).
         """
         # Reset name usage per extraction to keep function names stable across proposals
         # and avoid cross-proposal suffix inflation.
@@ -79,14 +86,9 @@ class HygienicExtractor:
 
         if return_variables is None:
             return_variables = []
-        # Ensure function name doesn't shadow
-        # Force double-underscore prefix for hygiene (avoid collisions with user code).
-        # If caller specified a different name explicitly, respect it; otherwise use the default.
-        if function_name == "__extracted_func":
-            function_name = self._ensure_unique_name(function_name, enclosing_names)
-        else:
-            # Still ensure uniqueness if a custom name was provided.
-            function_name = self._ensure_unique_name(function_name, enclosing_names)
+        # Make the helper name unique against the enclosing scope so it never
+        # shadows an existing binding.
+        function_name = self._ensure_unique_name(function_name, enclosing_names)
 
         # Determine parameters
         # 1. Parameters from unification (substituted expressions)
