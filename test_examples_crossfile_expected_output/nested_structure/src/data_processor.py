@@ -1,19 +1,13 @@
 """
 Data processing module.
 """
+from lib.report_generator import calculate_report_stats
 
 
 def calculate_statistics(values):
     """Calculate statistics for a list of values."""
     # Statistics calculation (DUPLICATE across subdirectories!)
-    if not values:
-        return {"count": 0, "sum": 0, "mean": 0}
-
-    total = sum(values)
-    count = len(values)
-    mean = total / count
-
-    return {"count": count, "sum": total, "mean": mean}
+    return calculate_report_stats(values)
 
 
 def process_data(data_list):

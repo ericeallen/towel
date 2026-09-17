@@ -518,18 +518,24 @@ def _run_preview(args: argparse.Namespace) -> None:
         else:
             print(f"   Type: Same file ({prop.file_path})")
 
-        # Show extracted function preview
-        print("\n   Extracted function preview:")
-        try:
-            func_code = ast.unparse(prop.extracted_function)
-            lines = func_code.split("\n")
-            for line in lines[:8]:
-                print(f"      {line}")
-            if len(lines) > 8:
-                print(f"      ... ({len(lines) - 8} more lines)")
-        except ValueError as e:
-            print(f"      (Preview unavailable: {e})")
-            print(f"      Function name: {prop.extracted_function.name}")
+        # Show extracted function preview, or the existing function the sites will call
+        if prop.reused_function is not None:
+            print(
+                f"\n   Calls existing function {prop.reused_function.name} "
+                f"({prop.reused_function.file_path}); no helper is added"
+            )
+        else:
+            print("\n   Extracted function preview:")
+            try:
+                func_code = ast.unparse(prop.extracted_function)
+                lines = func_code.split("\n")
+                for line in lines[:8]:
+                    print(f"      {line}")
+                if len(lines) > 8:
+                    print(f"      ... ({len(lines) - 8} more lines)")
+            except ValueError as e:
+                print(f"      (Preview unavailable: {e})")
+                print(f"      Function name: {prop.extracted_function.name}")
 
         # Show each call site's original block (before) and the generated call
         # (after), so a reader sees exactly what would change.

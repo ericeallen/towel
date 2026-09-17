@@ -105,12 +105,13 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
         self._refactor_and_adopt()
         a_source = (self.pkg / "a.py").read_text(encoding="utf-8")
         b_source = (self.pkg / "b.py").read_text(encoding="utf-8")
-        # The cross-file duplicate is still deduplicated (not declined)...
-        self.assertIn("__extracted_func", a_source)
-        # ...with the helper hosted in ``b`` and imported by ``a`` (which already
-        # imports ``b``), so no back-edge is introduced.
-        self.assertRegex(a_source, r"import __extracted_func")
-        self.assertNotRegex(b_source, r"from (?:app\.|\.)a import __extracted_func")
+        # The cross-file duplicate is still deduplicated (not declined): ``a1``
+        # is the whole body of ``b1``, so it calls ``b1``, imported from ``b``
+        # (which ``a`` already imports), and no back-edge is introduced.
+        self.assertRegex(a_source, r"from (?:app\.|\.)b import b1")
+        self.assertIn("return b1(seq, factor)", a_source)
+        self.assertNotIn("__extracted_func", b_source)
+        self.assertNotRegex(b_source, r"from (?:app\.|\.)a import")
 
 
 if __name__ == "__main__":

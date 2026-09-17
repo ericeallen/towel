@@ -5,15 +5,8 @@ Tests alpha-renaming: different loop variable names (i vs j) should unify.
 """
 
 
-def __extracted_func_2(pairs):
-    result = {}
-    for key, value in pairs:
-        if value is not None:
-            result[key] = value * 2
-    return result
-
-
-def __extracted_func_1(items):
+def process_list_a(items):
+    """Process list with loop variable 'i'."""
     result = []
     for i in range(len(items)):
         if items[i] > 0:
@@ -21,7 +14,13 @@ def __extracted_func_1(items):
     return result
 
 
-def __extracted_func_0(matrix):
+def process_list_b(items):
+    """Process list with loop variable 'j' (should unify with i)."""
+    return process_list_a(items)
+
+
+def nested_loops_a(matrix):
+    """Nested loops with i, j."""
     total = 0
     for i in range(len(matrix)):
         for j in range(len(matrix[i])):
@@ -30,31 +29,20 @@ def __extracted_func_0(matrix):
     return total
 
 
-def process_list_a(items):
-    """Process list with loop variable 'i'."""
-    return __extracted_func_1(items)
-
-
-def process_list_b(items):
-    """Process list with loop variable 'j' (should unify with i)."""
-    return __extracted_func_1(items)
-
-
-def nested_loops_a(matrix):
-    """Nested loops with i, j."""
-    return __extracted_func_0(matrix)
-
-
 def nested_loops_b(matrix):
     """Nested loops with x, y (should unify with i, j)."""
-    return __extracted_func_0(matrix)
+    return nested_loops_a(matrix)
 
 
 def tuple_unpacking_a(pairs):
     """For loop with tuple unpacking."""
-    return __extracted_func_2(pairs)
+    result = {}
+    for key, value in pairs:
+        if value is not None:
+            result[key] = value * 2
+    return result
 
 
 def tuple_unpacking_b(pairs):
     """For loop with tuple unpacking (different var names)."""
-    return __extracted_func_2(pairs)
+    return tuple_unpacking_a(pairs)

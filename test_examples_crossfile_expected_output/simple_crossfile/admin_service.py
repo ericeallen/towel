@@ -3,23 +3,19 @@ Admin service module.
 """
 
 
-def __extracted_func_0(email):
+def validate_admin_email(email):
+    """Validate admin email format."""
+    # Validation logic (DUPLICATE across files!)
     if not email:
         return False
-    if '@' not in email:
+    if "@" not in email:
         return False
-    parts = email.split('@')
+    parts = email.split("@")
     if len(parts) != 2:
         return False
     if not parts[0] or not parts[1]:
         return False
     return True
-
-
-def validate_admin_email(email):
-    """Validate admin email format."""
-    # Validation logic (DUPLICATE across files!)
-    return __extracted_func_0(email)
 
 
 def create_admin(name, email, permissions):

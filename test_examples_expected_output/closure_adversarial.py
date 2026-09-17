@@ -6,13 +6,6 @@ when variables are captured from enclosing scopes.
 """
 
 
-def __extracted_func_0(__param_0, __param_1):
-    result = 0
-    for i in range(__param_0):
-        result += __param_1
-    return result
-
-
 def make_adder_a(x):
     """Returns a closure that adds x."""
     total = 0
@@ -94,12 +87,15 @@ def accumulator_b(values):
 # These should NOT be extractable because they capture different variables
 def multiplier_a(x, factor):
     """Multiplier with captured factor."""
-    return __extracted_func_0(x, factor)
+    result = 0
+    for i in range(x):
+        result += factor
+    return result
 
 
 def multiplier_b(y, multiplier):
     """Similar pattern but captures different variable names."""
-    return __extracted_func_0(y, multiplier)
+    return multiplier_a(y, multiplier)
 
 
 # Variable shadowing edge case

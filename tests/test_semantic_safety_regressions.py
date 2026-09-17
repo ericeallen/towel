@@ -291,7 +291,9 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         ) + "".join(f"def membership_{suffix}(x, data):\n{membership}" for suffix in ("a", "b"))
         path = self.root / "clustering.py"
         path.write_text(source, encoding="utf-8")
-        engine = UnificationRefactorEngine(min_lines=3)
+        # Clustering onto a shared helper is under test; with reuse the
+        # attribute functions would simply call ``attributes_a``.
+        engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
         with contextlib.redirect_stdout(io.StringIO()):
             proposals = engine.analyze_files([str(path)], progress="none")
         proposal = next(

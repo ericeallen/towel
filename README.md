@@ -53,6 +53,11 @@ def quote_summary(quote):
     return f"Quote {quote.id}: ${total}"
 ```
 
+When a duplicate is the whole body of an existing function, Towel does not
+extract a helper that would only restate it: the function is kept and the other
+copies call it, so two identical functions become one function and one
+one-line forwarder.
+
 What makes Towel different from a search-and-replace is that it is conservative
 and verified. It proposes an extraction only when it can prove the result runs
 the same as the original — instantiating the helper with each call's arguments

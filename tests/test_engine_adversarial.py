@@ -98,7 +98,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         """
         m = TempModule(code)
         self.addCleanup(m.cleanup)
-        engine = self._engine(min_lines=2)
+        # The helper's parameters are under test; keep the extraction rather
+        # than having ``f2`` call ``f1``.
+        engine = self._engine(min_lines=2, reuse_existing_functions=False)
         props = engine.analyze_file(str(m.path))
         self.assertTrue(props, "Expected at least one proposal for augassign case")
         # Apply the first proposal and ensure the call does not parameterize the target as __param_*
@@ -1261,6 +1263,7 @@ class TestCrossFileImports(unittest.TestCase):
                 min_lines=2,
                 parameterize_constants=True,
                 prefer_absolute_imports=True,
+                reuse_existing_functions=False,  # the helper import is under test
             )
             props = engine.analyze_directory(str(pkg), recursive=False)
             self.assertTrue(props, "Expected a cross-file proposal between a.py and b.py")

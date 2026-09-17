@@ -98,11 +98,17 @@ class TestCrossFileAndValidation(unittest.TestCase):
             props = eng.analyze_files([str(file1), str(file2)])
             # Should include a proposal that mentions both fa and fb
             self.assertTrue(any("fa" in p.description and "fb" in p.description for p in props))
-            # And replacements should span both files
+            # And the proposal should span both files: ``fb`` is rewritten to
+            # call ``fa``, which stays in its own module.
             has_both_files = any(
-                len({(r.file_path or p.file_path) for r in p.replacements}) > 1 for p in props
+                len(
+                    {(r.file_path or p.file_path) for r in p.replacements}
+                    | ({p.reused_function.file_path} if p.reused_function else set())
+                )
+                > 1
+                for p in props
             )
-            self.assertTrue(has_both_files, "Expected replacements across both files")
+            self.assertTrue(has_both_files, "Expected the proposal to span both files")
 
     def test_trivial_single_line_return_rejected(self):
         # Two functions where only the single-line return matches; constants differ

@@ -22,6 +22,19 @@ PROJECT_ROOT = Path(__file__).parent.parent
 CROSSFILE_DIR = PROJECT_ROOT / "test_examples_crossfile"
 
 
+def _participating_files(proposal) -> set:
+    """Files a proposal touches, counting a reused definition's module.
+
+    When one duplicate is the whole body of an existing function, that
+    function is left in place and the other file calls it, so the proposal
+    spans both files even though only one receives an edit.
+    """
+    files = {r.file_path or proposal.file_path for r in proposal.replacements}
+    if proposal.reused_function is not None:
+        files.add(proposal.reused_function.file_path)
+    return files
+
+
 def get_crossfile_project_files(project_name: str) -> List[str]:
     """Get all Python files for a cross-file test project."""
     project_dir = CROSSFILE_DIR / project_name
@@ -53,9 +66,7 @@ class TestCrossFileProposalStructure:
         proposals = engine.analyze_files(files)
 
         # At least one proposal should span multiple files
-        cross_file_proposals = [
-            p for p in proposals if len(set(r.file_path for r in p.replacements)) > 1
-        ]
+        cross_file_proposals = [p for p in proposals if len(_participating_files(p)) > 1]
         assert len(cross_file_proposals) > 0, "Should have cross-file proposals"
 
     def test_crossfile_proposal_has_valid_file_paths(self):
@@ -350,5 +361,5 @@ class TestExampleThreeCrossFile:
         proposals = engine.analyze_files([file1, file2])
 
         # At least one proposal should touch both files
-        cross_file = [p for p in proposals if len(set(r.file_path for r in p.replacements)) == 2]
+        cross_file = [p for p in proposals if len(_participating_files(p)) == 2]
         assert len(cross_file) > 0, "Should have proposals spanning both files"

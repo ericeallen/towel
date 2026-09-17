@@ -69,6 +69,7 @@ TRANSFORMED = {
     "r98_same_named_methods_nested_helpers",
     "r99_partial_return_branches",
     "r100_clustered_site_with_live_binding",
+    "r102_whole_body_reuse",
 }
 
 

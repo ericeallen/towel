@@ -33,7 +33,9 @@ def test_clustered_third_occurrence_is_verified_despite_two_name_description(
 ) -> None:
     source = tmp_path / "cluster.py"
     source.write_text(THREE_FUNCTIONS)
-    proposal = UnificationRefactorEngine().analyze_file(str(source))[0]
+    # Keep the three-site helper: reusing ``first`` would leave two sites.
+    engine = UnificationRefactorEngine(reuse_existing_functions=False)
+    proposal = engine.analyze_file(str(source))[0]
     assert len(proposal.replacements) == 3
     assert "third" not in proposal.description
     assert affected_functions(proposal, {source: THREE_FUNCTIONS}) == {
@@ -44,11 +46,7 @@ def test_clustered_third_occurrence_is_verified_despite_two_name_description(
     )
     assert passed == 0 and failed == 1
     assert any("third:" in error and "incorrect" in error for error in errors)
-    assert AutomaticEquivalenceTester(UnificationRefactorEngine()).test_file(str(source)) == (
-        1,
-        0,
-        [],
-    )
+    assert AutomaticEquivalenceTester(engine).test_file(str(source)) == (1, 0, [])
 
 
 def proposal_for(source: Path, code: str, start: int, end: int) -> RefactoringProposal:

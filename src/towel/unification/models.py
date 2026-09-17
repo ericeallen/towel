@@ -99,6 +99,20 @@ class Replacement:
     implicit_param: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class ReusedFunction:
+    """An existing module-level function that one duplicate site is the whole body of.
+
+    The proposal leaves this function untouched and rewrites the other sites to
+    call it, so no helper is emitted. ``line_range`` spans the definition so
+    overlap filtering keeps competing proposals from editing it underneath.
+    """
+
+    name: str
+    file_path: str
+    line_range: Tuple[int, int]
+
+
 @dataclass
 class RefactoringProposal:
     """Proposed refactoring."""
@@ -114,6 +128,9 @@ class RefactoringProposal:
     method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
     method_param_name: Optional[str] = None
     source_digests: Tuple[Tuple[str, str], ...] = ()
+    # When set, ``extracted_function`` is that existing definition (for display)
+    # and every replacement already calls it by name; nothing is inserted.
+    reused_function: Optional[ReusedFunction] = None
 
     def __post_init__(self) -> None:
         """Coerce legacy tuple replacements into :class:`Replacement` instances."""

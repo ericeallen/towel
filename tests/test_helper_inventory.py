@@ -133,7 +133,8 @@ def test_inventory_includes_before_after_from_the_dry_sidecar(tmp_path: Path) ->
         "def compute(v):\n    return v\n"
     )
     out = tmp_path / "cleaned"
-    engine = UnificationRefactorEngine(min_lines=3)
+    # A generated helper is what the sidecar names; ``g`` reusing ``f`` logs nothing.
+    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(str(src), str(out), progress="none")
         # The engine recorded the true original block and generated call per site.

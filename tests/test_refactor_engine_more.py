@@ -44,7 +44,9 @@ def b(m, n):
 """.lstrip(),
             )
 
-            engine = UnificationRefactorEngine(min_lines=3)
+            # The helper's import is under test; keep the extraction rather
+            # than having ``b`` call ``a``.
+            engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
             proposals = engine.analyze_directory(td, recursive=False)
             self.assertTrue(proposals, "Expected at least one proposal")
 

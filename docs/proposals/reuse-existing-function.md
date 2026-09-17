@@ -1,7 +1,37 @@
 # Proposal: reuse an existing function instead of extracting a redundant helper
 
-Status: proposed (not implemented)
+Status: implemented for the whole-body case (2026-09-17); the general
+index-by-signature form below remains future work
 Author: design note from the 2026-09 audit sessions
+
+## What was implemented
+
+`UnificationRefactorEngine._redirect_to_existing_function` runs after a
+proposal is fully built and verified. When one replacement site is the entire
+body (after the docstring) of a plain module-level function, the generated
+call there passes each of that function's positional parameters exactly once,
+and every other argument is a name the function reads from its own module,
+the helper applied to any arguments is that function applied to them. The
+proposal is rewritten: the function is left as it is, the fresh helper is
+dropped, and every other site calls the function with its arguments in the
+function's parameter order. Ambient arguments are dropped only when the site
+binds the same name to the same module-level definition, or to an identical
+absolute import in another module. Candidates are tried in source order; one
+that a site cannot reach by name (shadowed, or mangled inside a class), or
+whose import would close a cycle, is skipped, and with no viable candidate the
+ordinary extraction stands. Decorated, async, variadic, conditionally defined,
+`global`-rebound, or module-`del`eted functions are never targets. Set
+`reuse_existing_functions=False` on the engine to disable it.
+
+This covers the motivating cases (two identical functions; a block that
+restates an existing function) without an index: the pair search already
+generates the whole-body block of every function, so the match surfaces as
+an ordinary pair. What it does not cover is a body that matches an existing
+function *the pair never touches* in the same iteration; the fixed-point loop
+reaches it on a later iteration when that function's whole body pairs with
+the new helper.
+
+## Original proposal
 
 ## Problem
 

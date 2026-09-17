@@ -47,7 +47,7 @@ def test_detail_progress_lists_proposals(tmp_path: Path) -> None:
         sys.stdout = old_stdout
     output = captured.getvalue()
     assert "Discovered" in output
-    assert "Extract common code" in output  # At least one proposal listed
+    assert "Reuse f1" in output or "Extract common code" in output  # a proposal listed
     # iteration_cap expected because we limited iterations to 1 with >1 proposals available
     assert termination == "iteration_cap"
     # We applied exactly one refactoring

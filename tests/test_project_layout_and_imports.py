@@ -116,6 +116,7 @@ def fb(x):
             parameterize_constants=True,
             prefer_absolute_imports=True,
             pep420_namespace_packages=True,
+            reuse_existing_functions=False,  # the helper import spelling is under test
         )
 
         proposals = engine.analyze_directory(str(root / "src"), recursive=True)
@@ -202,7 +203,10 @@ def test_same_dir_helper_uses_relative_import_under_non_identifier_root():
         )
 
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=3, prefer_absolute_imports=True
+            max_parameters=5,
+            min_lines=3,
+            prefer_absolute_imports=True,
+            reuse_existing_functions=False,  # the helper import spelling is under test
         )
         proposals = engine.analyze_directory(str(root), recursive=True)
         assert proposals, "Expected a cross-file proposal between alpha.py and beta.py"
@@ -247,7 +251,10 @@ def test_out_of_place_package_import_is_relative_not_output_dir_name():
         )
 
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=3, prefer_absolute_imports=True
+            max_parameters=5,
+            min_lines=3,
+            prefer_absolute_imports=True,
+            reuse_existing_functions=False,  # the helper import spelling is under test
         )
         proposals = engine.analyze_directory(str(pkg), recursive=True)
         assert proposals, "Expected a cross-file proposal between alpha.py and beta.py"

@@ -9,6 +9,19 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+### Added
+- A duplicate that is the whole body of a plain module-level function now
+  calls that function instead of extracting a helper. Two identical functions
+  no longer become a helper plus two forwarders: the first-defined one is kept
+  and the other calls it, and a matching block inside a larger function calls
+  the existing function directly. Arguments follow the function's parameter
+  order; names the body reads from its own module (functions, classes,
+  absolute imports) are not passed. Across files the call is imported like a
+  helper and refused when it would close an import cycle; a decorated, async,
+  variadic, shadowed, or rebound function falls back to ordinary extraction.
+  Construct the engine with `reuse_existing_functions=False` to restore the
+  old behavior.
+
 ## [1.618] — 2026-09-17
 
 ### Changed

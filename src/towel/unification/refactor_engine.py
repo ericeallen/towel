@@ -25,6 +25,7 @@ This orchestrates the entire refactoring process:
 
 import ast
 import copy
+import dataclasses
 import hashlib
 from towel.changes import ChangePlan, ChangeConflict, apply_changes
 import os
@@ -58,7 +59,7 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 from pathlib import Path
-from .scope_analyzer import ScopeAnalyzer, Scope
+from .scope_analyzer import Binding, ScopeAnalyzer, Scope
 from .unifier import Unifier, Substitution
 from .extractor import (
     HygienicExtractor,
@@ -113,6 +114,7 @@ from .models import (
     ClassInsertionPlan,
     Replacement,
     RefactoringProposal,
+    ReusedFunction,
 )
 from .pipeline import run_pipeline, AnalysisSession
 from .visitors import (
@@ -222,6 +224,20 @@ _IMPLICIT_RECEIVER_SPECIAL_METHODS = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class _ReusePlan:
+    """How a helper's arguments map onto an existing function it restates.
+
+    ``parameter_positions[j]`` is the helper argument index that supplies the
+    function's j-th positional parameter. ``ambient`` maps the remaining
+    argument indices to the module-level name (and its binding at the
+    function's own site) that the function reads for itself.
+    """
+
+    parameter_positions: List[int]
+    ambient: Dict[int, Tuple[str, Optional["Binding"]]]
+
+
 def _preserves_receiver(decorator: ast.expr) -> bool:
     """Whether a decorator is known to pass the receiver through unchanged."""
     target = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -311,6 +327,7 @@ class UnificationRefactorEngine:
         promote_equal_hof_literals: bool = False,
         excluded_directories: Sequence[str] = (),
         skip_trivial_helpers: bool = True,
+        reuse_existing_functions: bool = True,
     ):
         """
         Initialize the refactoring engine.
@@ -338,11 +355,16 @@ class UnificationRefactorEngine:
                 forwarding statement -- a lone ``raise``, a ``return`` of one
                 call, or a bare call -- which adds indirection without sharing any
                 logic (default: True).
+            reuse_existing_functions: When a duplicate site is the whole body of a
+                plain module-level function, leave that function as it is and
+                have the other sites call it instead of extracting a helper that
+                would only restate it (default: True).
         """
         self.analysis_session = AnalysisSession()
         self.max_parameters = max_parameters
         self.min_lines = min_lines
         self.skip_trivial_helpers = skip_trivial_helpers
+        self.reuse_existing_functions = reuse_existing_functions
         # Directory names left out of directory mode, such as ``tests`` when a
         # package carries its test suite inside itself (networkx: 77k of its
         # 198k lines).
@@ -2538,6 +2560,349 @@ class UnificationRefactorEngine:
             return True
         return False
 
+    # ------------------------------------------------------------------
+    # Reusing an existing function instead of extracting a redundant helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _positional_parameter_names(function: ast.FunctionDef) -> Optional[List[str]]:
+        """The parameters a positional call binds, in order; None when some cannot be."""
+        arguments = function.args
+        if arguments.vararg or arguments.kwarg or arguments.kwonlyargs:
+            return None
+        return [arg.arg for arg in arguments.posonlyargs + arguments.args]
+
+    @staticmethod
+    def _unwrap_helper_call(statement: ast.AST, helper_name: str) -> Optional[ast.Call]:
+        """The plain positional helper call inside a generated statement, if that is its shape."""
+        if not isinstance(statement, (ast.Return, ast.Expr)):
+            return None
+        call = statement.value
+        if (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == helper_name
+            and not call.keywords
+            and not any(isinstance(arg, ast.Starred) for arg in call.args)
+        ):
+            return call
+        return None
+
+    @staticmethod
+    def _same_absolute_import(left: ast.AST, right: ast.AST, name: str) -> bool:
+        """Whether two import statements bind ``name`` to the same absolute target.
+
+        ``import a.b`` in two modules binds the same module object; ``from a
+        import b`` (absolute) binds the same attribute. A relative import means
+        something different in each package, so it never counts.
+        """
+        if isinstance(left, ast.Import) and isinstance(right, ast.Import):
+            left_targets = {
+                alias.name
+                for alias in left.names
+                if (alias.asname or alias.name.split(".")[0]) == name
+            }
+            right_targets = {
+                alias.name
+                for alias in right.names
+                if (alias.asname or alias.name.split(".")[0]) == name
+            }
+            return bool(left_targets) and left_targets == right_targets
+        if isinstance(left, ast.ImportFrom) and isinstance(right, ast.ImportFrom):
+            if left.level or right.level or left.module != right.module:
+                return False
+            left_targets = {
+                alias.name for alias in left.names if (alias.asname or alias.name) == name
+            }
+            right_targets = {
+                alias.name for alias in right.names if (alias.asname or alias.name) == name
+            }
+            return bool(left_targets) and left_targets == right_targets
+        return False
+
+    def _reuse_plan(self, call: ast.Call, target: FunctionArtifact) -> Optional["_ReusePlan"]:
+        """How the helper's arguments map onto the target function, or None.
+
+        The call at the function's own site must pass each of its positional
+        parameters exactly once, by name. Any other argument must be a name
+        that resolves there to a module-level binding of the target's module
+        (a function, class, or import the body reads): the function reads it
+        itself, so a caller need not pass it. Then the helper applied to any
+        arguments is the function applied to the parameter arguments, provided
+        every other site supplies the same module-level objects.
+        """
+        if not isinstance(target.node, ast.FunctionDef):
+            return None
+        parameters = self._positional_parameter_names(target.node)
+        if parameters is None:
+            return None
+        names = [arg.id if isinstance(arg, ast.Name) else None for arg in call.args]
+        if None in names or len(set(names)) != len(names):
+            return None
+        if not set(parameters) <= set(names):
+            return None
+        scope = target.scope_analyzer.node_scopes.get(target.node)
+        if scope is None:
+            return None
+        ambient: Dict[int, Tuple[str, Optional[Binding]]] = {}
+        for index, name in enumerate(names):
+            if name in parameters:
+                continue
+            binding = scope.lookup(cast(str, name))
+            if binding is not None and binding.scope_id != target.root_scope.scope_id:
+                return None
+            ambient[index] = (cast(str, name), binding)
+        return _ReusePlan(
+            parameter_positions=[names.index(parameter) for parameter in parameters],
+            ambient=ambient,
+        )
+
+    @staticmethod
+    def _module_deletes_name(tree: ast.Module, name: str) -> bool:
+        """Whether a module-level statement (outside any definition) deletes ``name``."""
+        for statement in tree.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Delete) and any(
+                    isinstance(target, ast.Name) and target.id == name for target in node.targets
+                ):
+                    return True
+        return False
+
+    def _reusable_function_at(
+        self,
+        replacement: Replacement,
+        default_file: str,
+        all_functions: Sequence[FunctionArtifact],
+    ) -> Optional[FunctionArtifact]:
+        """The plain module-level function whose whole body ``replacement`` covers, if any.
+
+        Only a function that a call by name reproduces qualifies: defined once,
+        unconditionally, at module level, without decorators, not async (the
+        generated helper is synchronous), and never rebound or deleted through a
+        ``global`` declaration or a module-level ``del``.
+        """
+        file_path = replacement.file_path or default_file
+        for artifact in all_functions:
+            function = artifact.node
+            if (
+                artifact.file_path != file_path
+                or artifact.class_name is not None
+                or artifact.enclosing_function is not None
+                or not isinstance(function, ast.FunctionDef)
+                or function.decorator_list
+                or self._block_line_span(self._body_without_docstring(function.body))
+                != tuple(replacement.line_range)
+            ):
+                continue
+            tree = artifact.scope_analyzer.analyzed_tree
+            binding = artifact.root_scope.bindings.get(function.name)
+            if (
+                not isinstance(tree, ast.Module)
+                or not any(statement is function for statement in tree.body)
+                or binding is None
+                or binding.node is not function
+                or any(
+                    function.name in names for names in artifact.scope_analyzer.global_vars.values()
+                )
+                or self._module_deletes_name(tree, function.name)
+            ):
+                return None
+            return artifact
+        return None
+
+    @staticmethod
+    def _innermost_function_at(
+        file_path: str,
+        line_range: Tuple[int, int],
+        all_functions: Sequence[FunctionArtifact],
+    ) -> Optional[FunctionArtifact]:
+        """The most deeply nested analyzed function whose span contains ``line_range``."""
+        start, end = line_range
+        enclosing = [
+            artifact
+            for artifact in all_functions
+            if artifact.file_path == file_path
+            and artifact.node.lineno <= start
+            and end <= (artifact.node.end_lineno or artifact.node.lineno)
+        ]
+        if not enclosing:
+            return None
+        return max(enclosing, key=lambda artifact: artifact.node.lineno)
+
+    def _existing_function_reachable(
+        self,
+        target: FunctionArtifact,
+        replacement: Replacement,
+        default_file: str,
+        all_functions: Sequence[FunctionArtifact],
+    ) -> bool:
+        """Whether a call by name at the replacement site resolves to ``target``.
+
+        In the target's own module the name must resolve through the site's
+        enclosing scopes to that definition; in another module it must be free
+        there, so the import the materializer adds is what binds it. A
+        class-private spelling is mangled inside a class body either way.
+        """
+        file_path = replacement.file_path or default_file
+        name = target.node.name
+        if replacement.class_name is not None and name.startswith("__") and not name.endswith("__"):
+            return False
+        site = self._innermost_function_at(file_path, replacement.line_range, all_functions)
+        if site is None:
+            return False
+        scope = site.scope_analyzer.node_scopes.get(site.node)
+        if scope is None:
+            return False
+        binding = scope.lookup(name)
+        if file_path == target.file_path:
+            return binding is not None and binding.node is target.node
+        return binding is None
+
+    def _call_to_existing_function(
+        self,
+        replacement: Replacement,
+        helper_name: str,
+        target: FunctionArtifact,
+        plan: "_ReusePlan",
+        site: FunctionArtifact,
+    ) -> Optional[Replacement]:
+        """The replacement with its helper call retargeted at the existing function.
+
+        Parameter arguments are reordered into the function's order; when that
+        order differs from the helper's, only names and constants may move,
+        since evaluating other expressions in a new order could be observed.
+        An ambient argument is dropped, but only when it is the same name bound
+        to the same module-level object as at the function's own site: the same
+        definition in the same module, or an identical absolute import.
+        """
+        node = copy.deepcopy(replacement.node)
+        call = self._unwrap_helper_call(node, helper_name)
+        if call is None or len(call.args) != len(plan.parameter_positions) + len(plan.ambient):
+            return None
+        site_scope = site.scope_analyzer.node_scopes.get(site.node)
+        if site_scope is None:
+            return None
+        for index, (name, target_binding) in plan.ambient.items():
+            argument = call.args[index]
+            if not isinstance(argument, ast.Name) or argument.id != name:
+                return None
+            site_binding = site_scope.lookup(name)
+            if site.file_path == target.file_path:
+                same = (
+                    site_binding is target_binding
+                    if target_binding is None
+                    else site_binding is not None and site_binding.node is target_binding.node
+                )
+            else:
+                same = (
+                    site_binding is not None
+                    and target_binding is not None
+                    and site_binding.scope_id == site.root_scope.scope_id
+                    and self._same_absolute_import(site_binding.node, target_binding.node, name)
+                )
+            if not same:
+                return None
+        parameter_arguments = [call.args[index] for index in plan.parameter_positions]
+        identity = plan.parameter_positions == sorted(plan.parameter_positions)
+        if not identity and not all(
+            isinstance(arg, (ast.Name, ast.Constant)) for arg in parameter_arguments
+        ):
+            return None
+        call.args = parameter_arguments
+        call.func = ast.Name(id=target.node.name, ctx=ast.Load())
+        return dataclasses.replace(replacement, node=node)
+
+    def _redirect_to_existing_function(
+        self,
+        proposal: RefactoringProposal,
+        all_functions: Sequence[FunctionArtifact],
+    ) -> Optional[RefactoringProposal]:
+        """The proposal rewritten to call a function that one duplicate already is.
+
+        When a duplicate site is the whole body of a plain module-level function
+        and the generated call there passes exactly that function's parameters,
+        the helper applied to any arguments is that function applied to them.
+        The fresh helper would only restate the function, so it is dropped: the
+        function stays as it is and every other site calls it. Candidates are
+        tried in source order; one the other sites cannot reach by name, or
+        whose import would close a cycle, is skipped. None keeps the extraction.
+        """
+        if proposal.return_variables:
+            return None
+        helper_name = proposal.extracted_function.name
+        candidates: List[Tuple[int, FunctionArtifact]] = []
+        for index, replacement in enumerate(proposal.replacements):
+            target = self._reusable_function_at(replacement, proposal.file_path, all_functions)
+            if target is not None:
+                candidates.append((index, target))
+        candidates.sort(key=lambda item: (item[1].file_path, item[1].node.lineno))
+        for index, target in candidates:
+            call = self._unwrap_helper_call(proposal.replacements[index].node, helper_name)
+            if call is None:
+                continue
+            plan = self._reuse_plan(call, target)
+            if plan is None:
+                continue
+            others = [
+                replacement
+                for position, replacement in enumerate(proposal.replacements)
+                if position != index
+            ]
+            sites = [
+                self._innermost_function_at(
+                    replacement.file_path or proposal.file_path,
+                    replacement.line_range,
+                    all_functions,
+                )
+                for replacement in others
+            ]
+            if any(site is None for site in sites):
+                continue
+            rewritten = [
+                self._call_to_existing_function(
+                    replacement, helper_name, target, plan, cast(FunctionArtifact, site)
+                )
+                for replacement, site in zip(others, sites)
+            ]
+            if any(replacement is None for replacement in rewritten):
+                continue
+            if not all(
+                self._existing_function_reachable(
+                    target, replacement, proposal.file_path, all_functions
+                )
+                for replacement in others
+            ):
+                continue
+            participating = {target.file_path} | {
+                replacement.file_path or proposal.file_path for replacement in others
+            }
+            if would_create_import_cycle(target.file_path, participating):
+                continue
+            callers = sorted({cast(FunctionArtifact, site).node.name for site in sites})
+            location = Path(target.file_path).name
+            return dataclasses.replace(
+                proposal,
+                file_path=target.file_path,
+                extracted_function=cast(ast.FunctionDef, copy.deepcopy(target.node)),
+                replacements=cast(List[Replacement], rewritten),
+                description=(
+                    f"Reuse {target.node.name} ({location}) for duplicated code in "
+                    + ", ".join(callers)
+                ),
+                insert_into_class=None,
+                insert_into_function=None,
+                method_kind=None,
+                method_param_name=None,
+                reused_function=ReusedFunction(
+                    name=target.node.name,
+                    file_path=target.file_path,
+                    line_range=(target.node.lineno, target.node.end_lineno or target.node.lineno),
+                ),
+            )
+        return None
+
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
@@ -3396,6 +3761,10 @@ class UnificationRefactorEngine:
         ):
             self._debug_reject("trivial_forwarding_helper", pair)
             return None
+        if self.reuse_existing_functions:
+            redirected = self._redirect_to_existing_function(proposal, all_functions)
+            if redirected is not None:
+                return redirected
         return proposal
 
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
@@ -3471,7 +3840,9 @@ class UnificationRefactorEngine:
         class_context = bool(proposal.insert_into_class) or any(
             replacement.class_name is not None for replacement in proposal.replacements
         )
-        if original_helper_name == "__extracted_func" or (
+        if proposal.reused_function is not None:
+            pass  # the calls already name an existing function; it keeps its name
+        elif original_helper_name == "__extracted_func" or (
             class_context and re.fullmatch(r"__extracted_func(?:_\d+)?", original_helper_name)
         ):
             proposal.extracted_function.name = self._allocate_helper_name(
@@ -3566,22 +3937,26 @@ class UnificationRefactorEngine:
                         replacement_lines.append("\n")
 
                 # Record the true before/after for this call site before splicing.
-                self._change_log.append(
-                    {
-                        "helper": final_func_name,
-                        "path": file_path,
-                        "line": start_line,
-                        "before": textwrap.dedent("".join(lines[start_line - 1 : end_line])).rstrip(
-                            "\n"
-                        ),
-                        "after": replacement_code,
-                    }
-                )
+                # A call to an existing function needs no naming, so it is not logged.
+                if proposal.reused_function is None:
+                    self._change_log.append(
+                        {
+                            "helper": final_func_name,
+                            "path": file_path,
+                            "line": start_line,
+                            "before": textwrap.dedent(
+                                "".join(lines[start_line - 1 : end_line])
+                            ).rstrip("\n"),
+                            "after": replacement_code,
+                        }
+                    )
                 # Splice into source
                 lines[start_line - 1 : end_line] = replacement_lines
 
             # Insert helper into canonical file or import into others
-            if file_path == proposal.file_path:
+            if proposal.reused_function is not None and file_path == proposal.file_path:
+                pass  # the function the calls target is already defined here
+            elif file_path == proposal.file_path:
                 if proposal.insert_into_function:
                     fn_insert_info = self._find_function_insert_position_before_body_statements(
                         "".join(lines), proposal.insert_into_function
@@ -3701,8 +4076,45 @@ class UnificationRefactorEngine:
 
         for path, content in modified_files.items():
             compile(content, path, "exec")
-        self._verify_helper_call_arity(modified_files, final_func_name, proposal.method_kind)
+        if proposal.reused_function is not None:
+            self._verify_reused_function_calls(modified_files, proposal.reused_function, proposal)
+        else:
+            self._verify_helper_call_arity(modified_files, final_func_name, proposal.method_kind)
         return modified_files
+
+    def _verify_reused_function_calls(
+        self,
+        modified_files: Dict[str, str],
+        target: ReusedFunction,
+        proposal: RefactoringProposal,
+    ) -> None:
+        """Fail loudly if the reused function is gone or a generated call cannot bind to it.
+
+        Pre-existing calls are not checked: they may legitimately use keywords or
+        rely on defaults. Only the calls this proposal generates must pass
+        exactly the function's positional parameters.
+        """
+        source = modified_files.get(target.file_path)
+        if source is None:
+            source = Path(target.file_path).read_text(encoding="utf-8")
+        definitions = [
+            node
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == target.name
+        ]
+        if len(definitions) != 1:
+            raise RefactoringError(
+                f"Reused function {target.name} is not defined once at module level: "
+                f"{target.file_path}"
+            )
+        parameters = self._positional_parameter_names(definitions[0])
+        for replacement in proposal.replacements:
+            call = self._unwrap_helper_call(replacement.node, target.name)
+            if parameters is None or call is None or len(call.args) != len(parameters):
+                raise RefactoringError(
+                    f"Generated call to {target.name} does not bind its "
+                    f"{len(parameters or [])} parameters: {replacement.file_path}"
+                )
 
     @staticmethod
     def _verify_helper_call_arity(
@@ -4497,6 +4909,12 @@ def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
         start_line, end_line = repl.line_range
         for line_num in range(start_line, end_line + 1):
             affected.add((file_path, line_num))
+    # The reused definition is not edited, but every call now depends on it
+    # staying as it is, so a proposal that would rewrite it conflicts.
+    if proposal.reused_function is not None:
+        start_line, end_line = proposal.reused_function.line_range
+        for line_num in range(start_line, end_line + 1):
+            affected.add((proposal.reused_function.file_path, line_num))
 
     return affected
 
@@ -4527,12 +4945,8 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
         return []
 
     def proposal_size(p: RefactoringProposal) -> int:
-        """Calculate total lines affected by a proposal."""
-        total_lines = 0
-        for repl in p.replacements:
-            start_line, end_line = repl.line_range
-            total_lines += end_line - start_line + 1
-        return total_lines
+        """Total lines a proposal covers, counting a reused definition as covered."""
+        return len(get_affected_lines(p))
 
     # Optional debug diagnostics: env flag
     _debug_overlap = bool(os.getenv("DEBUG_OVERLAP_FILTER"))
