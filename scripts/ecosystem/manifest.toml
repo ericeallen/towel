@@ -718,3 +718,414 @@ rev = "HEAD"
 package = "jsonpatch.py"
 deps = ["jsonpointer"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
+
+# --- Added 2026-09-17: broader coverage -------------------------------------
+
+[[project]]
+name = "mistune"
+url = "https://github.com/lepture/mistune.git"
+rev = "HEAD"
+package = "src/mistune"
+pythonpath = "src"
+install = true
+
+[[project]]
+name = "blinker"
+url = "https://github.com/pallets-eco/blinker.git"
+rev = "HEAD"
+package = "src/blinker"
+pythonpath = "src"
+install = true
+
+[[project]]
+name = "pycparser"
+url = "https://github.com/eliben/pycparser.git"
+rev = "HEAD"
+package = "pycparser"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "invoke"
+url = "https://github.com/pyinvoke/invoke.git"
+rev = "HEAD"
+package = "invoke"
+deps = ["pytest-relaxed", "pytest-cov", "icecream", "lexicon", "fluidity"]
+
+[[project]]
+name = "python-fire"
+url = "https://github.com/google/python-fire.git"
+rev = "HEAD"
+package = "fire"
+deps = ["termcolor", "hypothesis", "mock", "levenshtein"]
+
+[[project]]
+name = "bottle"
+url = "https://github.com/bottlepy/bottle.git"
+rev = "HEAD"
+package = "bottle.py"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
+
+[[project]]
+name = "waitress"
+url = "https://github.com/Pylons/waitress.git"
+rev = "HEAD"
+package = "src/waitress"
+pythonpath = "src"
+install = true
+
+[[project]]
+name = "gunicorn"
+url = "https://github.com/benoitc/gunicorn.git"
+rev = "HEAD"
+package = "gunicorn"
+deps = ["packaging", "coverage"]
+install = true
+
+[[project]]
+name = "wsproto"
+url = "https://github.com/python-hyper/wsproto.git"
+rev = "HEAD"
+package = "src/wsproto"
+pythonpath = "src"
+deps = ["h11"]
+install = true
+
+[[project]]
+name = "hpack"
+url = "https://github.com/python-hyper/hpack.git"
+rev = "HEAD"
+package = "src/hpack"
+pythonpath = "src"
+deps = ["hypothesis"]
+install = true
+
+[[project]]
+name = "hyperframe"
+url = "https://github.com/python-hyper/hyperframe.git"
+rev = "HEAD"
+package = "src/hyperframe"
+pythonpath = "src"
+install = true
+
+[[project]]
+name = "h2"
+url = "https://github.com/python-hyper/h2.git"
+rev = "HEAD"
+package = "src/h2"
+pythonpath = "src"
+deps = ["hypothesis", "hpack", "hyperframe"]
+install = true
+
+[[project]]
+name = "pyupgrade"
+url = "https://github.com/asottile/pyupgrade.git"
+rev = "HEAD"
+package = "pyupgrade"
+deps = ["tokenize-rt"]
+install = true
+
+[[project]]
+name = "python-dotenv"
+url = "https://github.com/theskumar/python-dotenv.git"
+rev = "HEAD"
+package = "src/dotenv"
+pythonpath = "src"
+deps = ["click", "sh"]
+install = true
+
+[[project]]
+name = "backoff"
+url = "https://github.com/litl/backoff.git"
+rev = "HEAD"
+package = "backoff"
+deps = ["pytest-asyncio", "responses", "requests"]
+
+[[project]]
+name = "schedule"
+url = "https://github.com/dbader/schedule.git"
+rev = "HEAD"
+package = "schedule"
+
+[[project]]
+name = "traitlets"
+url = "https://github.com/ipython/traitlets.git"
+rev = "HEAD"
+package = "traitlets"
+deps = ["argcomplete", "pytest-mock", "mypy"]
+install = true
+
+[[project]]
+name = "soupsieve"
+url = "https://github.com/facelessuser/soupsieve.git"
+rev = "HEAD"
+package = "soupsieve"
+deps = ["beautifulsoup4", "lxml", "html5lib"]
+
+[[project]]
+name = "beautifulsoup4"
+url = "https://git.launchpad.net/beautifulsoup"
+rev = "HEAD"
+package = "bs4"
+deps = ["soupsieve", "lxml", "html5lib"]
+
+[[project]]
+name = "mkdocs"
+url = "https://github.com/mkdocs/mkdocs.git"
+rev = "HEAD"
+package = "mkdocs"
+deps = ["click", "jinja2", "markdown", "pyyaml", "watchdog", "ghp-import", "pyyaml-env-tag", "mergedeep", "pathspec", "packaging", "babel", "mkdocs-get-deps", "importlib-metadata"]
+install = true
+exclude = ["tests"]
+test = ["{python}", "-m", "unittest", "discover", "-q", "-p", "*tests.py", "mkdocs"]
+
+[[project]]
+name = "chardet"
+url = "https://github.com/chardet/chardet.git"
+rev = "HEAD"
+package = "chardet"
+deps = ["hypothesis"]
+install = true
+
+[[project]]
+name = "pyasn1"
+url = "https://github.com/pyasn1/pyasn1.git"
+rev = "HEAD"
+package = "pyasn1"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "ecdsa"
+url = "https://github.com/tlsfuzzer/python-ecdsa.git"
+rev = "HEAD"
+package = "src/ecdsa"
+pythonpath = "src"
+deps = ["hypothesis", "six"]
+install = true
+
+[[project]]
+name = "rsa"
+url = "https://github.com/sybrenstuvel/python-rsa.git"
+rev = "HEAD"
+package = "rsa"
+deps = ["pyasn1", "mypy"]
+
+[[project]]
+name = "ply"
+url = "https://github.com/dabeaz/ply.git"
+rev = "HEAD"
+package = "src/ply"
+pythonpath = "src"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+[[project]]
+name = "inflect"
+url = "https://github.com/jaraco/inflect.git"
+rev = "HEAD"
+package = "inflect"
+deps = ["typeguard", "more-itertools", "pytest-enabler"]
+install = true
+
+[[project]]
+name = "unidecode"
+url = "https://github.com/avian2/unidecode.git"
+rev = "HEAD"
+package = "unidecode"
+
+[[project]]
+name = "texttable"
+url = "https://github.com/foutaise/texttable.git"
+rev = "HEAD"
+package = "texttable.py"
+
+[[project]]
+name = "docopt-ng"
+url = "https://github.com/jazzband/docopt-ng.git"
+rev = "HEAD"
+package = "docopt"
+install = true
+
+[[project]]
+name = "yapf"
+url = "https://github.com/google/yapf.git"
+rev = "HEAD"
+package = "yapf"
+deps = ["platformdirs", "tomli"]
+install = true
+
+[[project]]
+name = "mccabe"
+url = "https://github.com/PyCQA/mccabe.git"
+rev = "HEAD"
+package = "mccabe.py"
+deps = ["hypothesis", "hypothesmith"]
+
+[[project]]
+name = "flake8"
+url = "https://github.com/PyCQA/flake8.git"
+rev = "HEAD"
+package = "src/flake8"
+pythonpath = "src"
+deps = ["mccabe", "pycodestyle", "pyflakes"]
+install = true
+
+[[project]]
+name = "jsonpointer"
+url = "https://github.com/stefankoegl/python-json-pointer.git"
+rev = "HEAD"
+package = "jsonpointer.py"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
+
+[[project]]
+name = "rfc3986"
+url = "https://github.com/python-hyper/rfc3986.git"
+rev = "HEAD"
+package = "src/rfc3986"
+pythonpath = "src"
+install = true
+
+[[project]]
+name = "uritemplate"
+url = "https://github.com/python-hyper/uritemplate.git"
+rev = "HEAD"
+package = "uritemplate"
+
+[[project]]
+name = "tomli-w"
+url = "https://github.com/hukkin/tomli-w.git"
+rev = "HEAD"
+package = "src/tomli_w"
+pythonpath = "src"
+deps = ["tomli"]
+install = true
+
+[[project]]
+name = "wheel"
+url = "https://github.com/pypa/wheel.git"
+rev = "HEAD"
+package = "src/wheel"
+pythonpath = "src"
+deps = ["setuptools", "pytest-timeout"]
+install = true
+
+[[project]]
+name = "installer"
+url = "https://github.com/pypa/installer.git"
+rev = "HEAD"
+package = "src/installer"
+pythonpath = "src"
+deps = ["pytest-mock"]
+install = true
+
+[[project]]
+name = "pyproject-hooks"
+url = "https://github.com/pypa/pyproject-hooks.git"
+rev = "HEAD"
+package = "src/pyproject_hooks"
+pythonpath = "src"
+deps = ["testpath", "setuptools"]
+install = true
+
+[[project]]
+name = "simpy"
+url = "https://gitlab.com/team-simpy/simpy.git"
+rev = "HEAD"
+package = "src/simpy"
+pythonpath = "src"
+install = true
+
+[[project]]
+name = "termcolor"
+url = "https://github.com/termcolor/termcolor.git"
+rev = "HEAD"
+package = "src/termcolor"
+pythonpath = "src"
+install = true
+
+[[project]]
+name = "typing_extensions"
+url = "https://github.com/python/typing_extensions.git"
+rev = "HEAD"
+package = "src/typing_extensions.py"
+pythonpath = "src"
+test = ["{python}", "-m", "unittest", "-q", "src/test_typing_extensions.py"]
+
+[[project]]
+name = "cheroot"
+url = "https://github.com/cherrypy/cheroot.git"
+rev = "HEAD"
+package = "cheroot"
+deps = ["jaraco.functools", "more-itertools", "jaraco.text", "jaraco.context", "pytest-mock", "requests", "requests-toolbelt", "requests-unixsocket", "portend", "pypytools", "jaraco.functools", "pyopenssl", "trustme"]
+exclude = ["test"]
+timeout = 3600
+
+[[project]]
+name = "sly"
+url = "https://github.com/dabeaz/sly.git"
+rev = "HEAD"
+package = "src/sly"
+pythonpath = "src"
+
+[[project]]
+name = "environs"
+url = "https://github.com/sloria/environs.git"
+rev = "HEAD"
+package = "src/environs"
+pythonpath = "src"
+deps = ["marshmallow", "python-dotenv", "dj-database-url", "dj-email-url", "django-cache-url"]
+install = true
+
+[[project]]
+name = "apispec"
+url = "https://github.com/marshmallow-code/apispec.git"
+rev = "HEAD"
+package = "src/apispec"
+pythonpath = "src"
+deps = ["marshmallow", "pyyaml", "packaging"]
+install = true
+
+[[project]]
+name = "webargs"
+url = "https://github.com/marshmallow-code/webargs.git"
+rev = "HEAD"
+package = "src/webargs"
+pythonpath = "src"
+deps = ["marshmallow", "packaging", "webtest", "webtest-aiohttp", "flask", "django", "bottle", "tornado", "pytest-aiohttp", "aiohttp", "falcon", "pyramid"]
+install = true
+timeout = 3600
+
+# --- Towel itself, at each released version --------------------------------
+# Towel refactoring its own engine, whose tests then verify the engine still
+# produces the recorded output on every example. `install` supplies the
+# distribution metadata the version test reads; the dev tools are needed
+# because the CLI formats with Black when it is present and the suite invokes
+# them in places.
+
+[[project]]
+name = "towel-v1.414"
+url = "https://github.com/ericeallen/towel.git"
+rev = "v1.414"
+package = "src/towel"
+pythonpath = "src"
+deps = ["tqdm", "black", "tomli", "hypothesis"]
+install = true
+timeout = 3600
+
+[[project]]
+name = "towel-v1.618"
+url = "https://github.com/ericeallen/towel.git"
+rev = "v1.618"
+package = "src/towel"
+pythonpath = "src"
+deps = ["tqdm", "black", "tomli", "hypothesis"]
+install = true
+timeout = 3600
+
+[[project]]
+name = "towel-main"
+url = "https://github.com/ericeallen/towel.git"
+rev = "HEAD"
+package = "src/towel"
+pythonpath = "src"
+deps = ["tqdm", "black", "tomli", "hypothesis"]
+install = true
+timeout = 3600
