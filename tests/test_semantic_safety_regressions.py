@@ -392,3 +392,23 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         )
         b.write_text("seed = 1\n", encoding="utf-8")
         self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}))
+
+    def test_relocated_self_package_import_cycles_through_package_init(self) -> None:
+        # tenacity regression: the flat output has a subpackage whose module
+        # reaches back into the package with an absolute self-import (``from
+        # tenacity import _utils``). Importing a name from the package runs its
+        # ``__init__``, so the edge to the root ``__init__.py`` must be seen;
+        # ``__init__`` importing the borrower then closes the cycle
+        # (sub.helper -> pkg/__init__ -> borrower). A single trailing-suffix
+        # match must therefore also add the relocated root's ``__init__.py``.
+        (self.root / "__init__.py").write_text("from .borrower import thing\n", encoding="utf-8")
+        (self.root / "borrower.py").write_text("thing = 1\n", encoding="utf-8")
+        (self.root / "leaf.py").write_text("leaf = 1\n", encoding="utf-8")
+        sub = self.root / "sub"
+        sub.mkdir()
+        (sub / "__init__.py").write_text("", encoding="utf-8")
+        helper_home = sub / "helper_home.py"
+        helper_home.write_text("from app import leaf\n", encoding="utf-8")
+        self.assertTrue(
+            would_create_import_cycle(str(helper_home), {str(self.root / "borrower.py")})
+        )

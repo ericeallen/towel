@@ -362,7 +362,18 @@ def _module_files_relocated(roots: FrozenSet[Path], components: Sequence[str]) -
         return files
     for start in range(1, len(parts)):
         for root in roots:
-            files |= set(_module_files(root, parts[start:]))
+            resolved = _module_files(root, parts[start:])
+            if resolved:
+                files |= set(resolved)
+                # The dropped leading components are the relocated package
+                # itself, whose ``__init__`` executes when the import runs, so
+                # importing ``pkg.sub`` from a relocated ``pkg`` also depends on
+                # the root ``__init__.py``. Missing this edge let the tenacity
+                # cycle (retry -> asyncio.retry -> tenacity/__init__ -> retry)
+                # slip through.
+                initializer = root / "__init__.py"
+                if initializer.is_file():
+                    files.add(initializer.resolve())
         if files:
             break
     return files
