@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, FrozenSet, Iterable, Optional, Sequence, Set, Tuple, Union
 
 from .binding_detector import BindingDetector
 from .project_layout import ProjectLayout
@@ -341,6 +341,33 @@ def _module_files(base: Path, components: Iterable[str]) -> FrozenSet[Path]:
     return frozen
 
 
+def _module_files_relocated(roots: FrozenSet[Path], components: Sequence[str]) -> Set[Path]:
+    """Files an absolute import resolves to across ``roots``, tolerating relocation.
+
+    Out-of-place refactoring writes a package's modules into a flat output
+    directory while they keep their original absolute imports, so the leading
+    package components (``starlette`` in ``starlette.websockets``) have no
+    directory to match and the full path resolves to nothing. Only then do we
+    retry against progressively shorter trailing suffixes, so
+    ``starlette.websockets`` still resolves to a relocated ``websockets.py`` and
+    the import-cycle guard sees the edge. The fallback can only *add* edges, so
+    at worst the guard grows more conservative; a normally laid-out project
+    resolves on the first attempt and never reaches it.
+    """
+    parts = list(components)
+    files: Set[Path] = set()
+    for root in roots:
+        files |= set(_module_files(root, parts))
+    if files or len(parts) <= 1:
+        return files
+    for start in range(1, len(parts)):
+        for root in roots:
+            files |= set(_module_files(root, parts[start:]))
+        if files:
+            break
+    return files
+
+
 def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[Path]]:
     """Local modules ``current`` imports, or None when its imports cannot be inspected."""
     try:
@@ -359,21 +386,26 @@ def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[P
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                for root in roots:
-                    dependencies.update(_module_files(root, alias.name.split(".")))
+                dependencies.update(_module_files_relocated(roots, alias.name.split(".")))
         elif isinstance(node, ast.ImportFrom):
-            bases: FrozenSet[Path] = roots
+            components = node.module.split(".") if node.module else []
             if node.level:
+                # A relative import resolves unambiguously against a computed
+                # base; relocation does not apply, so no suffix fallback.
                 base = current.parent
                 for _ in range(node.level - 1):
                     base = base.parent
-                bases = frozenset({base})
-            components = node.module.split(".") if node.module else []
-            for base in bases:
                 dependencies.update(_module_files(base, components))
                 for alias in node.names:
                     if alias.name != "*":
                         dependencies.update(_module_files(base, [*components, alias.name]))
+            else:
+                dependencies.update(_module_files_relocated(roots, components))
+                for alias in node.names:
+                    if alias.name != "*":
+                        dependencies.update(
+                            _module_files_relocated(roots, [*components, alias.name])
+                        )
     frozen = frozenset(dependencies)
     _IMPORT_EDGES[key] = frozen
     return frozen

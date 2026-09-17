@@ -368,3 +368,27 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         a.write_text("import math\n", encoding="utf-8")
         b.write_text("", encoding="utf-8")
         self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}))
+
+    def test_absolute_import_cycle_detected_in_relocated_flat_layout(self) -> None:
+        # Out-of-place refactoring writes a package's modules into a flat output
+        # directory, but the modules keep their original absolute imports
+        # (``from app.b import ...``). The localized follow-up pass then analyzes
+        # those relocated files, where no ``app/`` package directory exists. The
+        # cycle guard must still resolve ``app.b`` to ``b.py`` by its trailing
+        # component and detect the cycle; regression for the ecosystem breakage
+        # where starlette/pygments/parso/... gained circular imports because the
+        # guard silently returned False against the relocated layout.
+        a, b = self.root / "a.py", self.root / "b.py"
+        a.write_text("from app.b import seed\n\ndef first(x):\n    return x\n", encoding="utf-8")
+        b.write_text("seed = 1\n", encoding="utf-8")
+        self.assertTrue(would_create_import_cycle(str(a), {str(a), str(b)}))
+
+    def test_absolute_import_no_cycle_in_relocated_flat_layout(self) -> None:
+        # The mirror of the regression: when the relocated module imports an
+        # unrelated module, resolving trailing components must not invent a cycle.
+        a, b = self.root / "a.py", self.root / "b.py"
+        a.write_text(
+            "from app.other import seed\n\ndef first(x):\n    return x\n", encoding="utf-8"
+        )
+        b.write_text("seed = 1\n", encoding="utf-8")
+        self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}))
