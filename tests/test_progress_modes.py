@@ -150,4 +150,7 @@ def test_preview_honours_progress_none(tmp_path: Path, monkeypatch: pytest.Monke
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         main()
     assert "Analyzing directory" in out.getvalue()
-    assert err.getvalue() == ""
+    # No bar of either kind; the file count is an ordinary log line, not progress.
+    assert (
+        "it/s" not in err.getvalue() and "%|" not in err.getvalue() and "\r" not in err.getvalue()
+    )

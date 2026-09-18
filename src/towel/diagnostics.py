@@ -33,7 +33,7 @@ from dataclasses import dataclass
 import logging
 import os
 import sys
-from typing import Mapping, Optional
+from typing import Mapping, Optional, TextIO
 
 LOG = logging.getLogger("towel")
 """User-facing notes and warnings from the library."""
@@ -106,12 +106,32 @@ class Settings:
                 logger.setLevel(logging.DEBUG)
 
 
+class _CurrentStderrHandler(logging.StreamHandler[TextIO]):
+    """A stream handler that writes to whatever ``sys.stderr`` is when a record is emitted.
+
+    Binding the stream object once would send every later message to the
+    first stderr seen, which is wrong as soon as anything redirects it.
+    """
+
+    @property
+    def stream(self) -> TextIO:
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, value: object) -> None:
+        pass
+
+
 def configure_stderr_logging(level: int = logging.INFO) -> None:
-    """Send the ``towel`` loggers to stderr as bare messages; the command line calls this once."""
-    if any(isinstance(handler, logging.StreamHandler) for handler in LOG.handlers):
+    """Send the ``towel`` loggers to stderr as bare messages; the command line calls this once.
+
+    The logger keeps propagating: the root logger has no handlers on the
+    command line, so nothing prints twice, and a capturing handler on the
+    root still sees the records.
+    """
+    if any(isinstance(handler, _CurrentStderrHandler) for handler in LOG.handlers):
         return
-    handler = logging.StreamHandler(sys.stderr)
+    handler = _CurrentStderrHandler()
     handler.setFormatter(logging.Formatter("%(message)s"))
     LOG.addHandler(handler)
     LOG.setLevel(level)
-    LOG.propagate = False
