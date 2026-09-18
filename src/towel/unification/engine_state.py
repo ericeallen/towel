@@ -29,8 +29,17 @@ from __future__ import annotations
 import ast
 from typing import Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Set, Tuple
 
+from ..diagnostics import Settings
 from ..type_inference import TypeOracle
-from .models import AppliedChange, FunctionArtifact, RefactoringProposal, ReusedFunction
+from .models import (
+    AppliedChange,
+    ClassInfo,
+    CodeBlockPair,
+    FunctionArtifact,
+    RefactoringProposal,
+    ReusedFunction,
+)
+from .progress import ProgressBarFactory
 from .semantic_safety import ImportGraphCache
 
 
@@ -48,6 +57,9 @@ class EngineState:
 
     incremental_global_passes: bool
     """Whether later global passes re-pair only the files rewritten since the last one."""
+
+    _settings: Settings
+    """What Towel read from the environment at construction."""
 
     _change_log: List[AppliedChange]
     """Every call site rewritten so far in the current run."""
@@ -228,4 +240,36 @@ class EngineState:
 
     def invalidate_paths(self, paths: List[str]) -> None:
         """Provided by the engine."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _finish_inline_status(enabled: bool) -> None:
+        """Provided by FixedPointDrivers."""
+        raise NotImplementedError
+
+    def _resolve_progress_backend(
+        self, progress: str
+    ) -> Tuple[str, Optional[ProgressBarFactory], bool]:
+        """Provided by FixedPointDrivers."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _start_inline_status(label: str, enabled: bool) -> None:
+        """Provided by FixedPointDrivers."""
+        raise NotImplementedError
+
+    def _try_refactor_pair_multi_file(
+        self,
+        pair: CodeBlockPair,
+        all_functions: Sequence[FunctionArtifact],
+        class_infos: List[ClassInfo],
+    ) -> Optional[RefactoringProposal]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    @classmethod
+    def _update_inline_status(
+        cls, label: str, pct: int, *, bar_len: int = 24, suffix: str = ""
+    ) -> None:
+        """Provided by FixedPointDrivers."""
         raise NotImplementedError

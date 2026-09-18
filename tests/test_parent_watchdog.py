@@ -16,7 +16,7 @@ import pytest
 DRIVER = textwrap.dedent("""
     import multiprocessing, sys, time
     from concurrent.futures import ProcessPoolExecutor
-    from towel.unification.refactor_engine import _start_parent_watchdog
+    from towel.unification.parallel import _start_parent_watchdog
 
     def idle(seconds):
         time.sleep(seconds)
