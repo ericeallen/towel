@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 from .exceptions import RefactoringError
 from .models import FunctionArtifact, RefactoringProposal, Replacement, ReusedFunction
-from .pipeline import parse_cached
 from .scope_analyzer import ScopeBinding
 from .semantic_safety import would_create_import_cycle
 from .visitors import body_without_docstring
@@ -405,7 +404,7 @@ class ExistingFunctionReuse(EngineState):
             source = read_source(target.file_path)
         definitions = [
             node
-            for node in parse_cached(source).body
+            for node in self._parse_source(source).body
             if isinstance(node, ast.FunctionDef) and node.name == target.name
         ]
         if not definitions:

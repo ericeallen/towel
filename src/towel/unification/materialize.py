@@ -39,7 +39,6 @@ from typing import Dict, List, Literal, Optional
 from .exceptions import RefactoringError
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, RefactoringProposal, Replacement
-from .pipeline import parse_cached
 from ..project_layout import ProjectLayout, is_package_dir
 from towel.changes import ChangeConflict, ChangePlan
 from ..source_text import read_source
@@ -396,8 +395,8 @@ class Materialization(EngineState):
         if not any(import_line.strip() == ln.strip() for ln in lines):
             lines.insert(self._find_import_position(lines), import_line)
 
-    @staticmethod
     def _verify_helper_call_arity(
+        self,
         modified_files: Dict[str, str],
         helper_name: str,
         method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]],
@@ -410,7 +409,7 @@ class Materialization(EngineState):
         """
         parameters: Optional[int] = None
         for source in modified_files.values():
-            for node in ast.walk(parse_cached(source)):
+            for node in ast.walk(self._parse_source(source)):
                 if (
                     isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and node.name == helper_name
@@ -419,7 +418,7 @@ class Materialization(EngineState):
         if parameters is None:
             raise RefactoringError(f"Helper {helper_name} was not emitted")
         for path, source in modified_files.items():
-            for node in ast.walk(parse_cached(source)):
+            for node in ast.walk(self._parse_source(source)):
                 if not isinstance(node, ast.Call):
                     continue
                 function = node.func

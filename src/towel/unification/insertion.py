@@ -30,7 +30,6 @@ import ast
 
 from pathlib import Path
 from typing import List, Optional, Sequence, Set, Tuple, Union, cast
-from .pipeline import parse_cached
 from .visitors import ClassLocator, FuncLocator, body_without_docstring
 
 from .engine_state import EngineState
@@ -130,7 +129,7 @@ class InsertionPoints(EngineState):
         determined from the parsed module so that text inside comments or
         docstrings is never mistaken for an import.
         """
-        body = parse_cached("".join(lines)).body
+        body = self._parse_source("".join(lines)).body
         position = 0
         if (
             body
@@ -207,7 +206,7 @@ class InsertionPoints(EngineState):
         can be written bare; the caller guarantees through ``placeable_after``
         that nothing before that point runs code at import.
         """
-        tree = parse_cached("".join(lines))
+        tree = self._parse_source("".join(lines))
         after = 0
         after_names = after_names or set()
         for statement in tree.body:

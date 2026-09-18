@@ -27,7 +27,6 @@ included), and the pairing of blocks that share a signature bucket.
 import ast
 import os
 import re
-from collections import OrderedDict
 from typing import (
     Any,
     Callable,
@@ -60,6 +59,8 @@ from .parallel import ParallelEvaluation
 from .clustering import Clustering
 from .pair_evaluation import PairEvaluation
 from .block_analysis import BlockAnalysis
+from .bounded_cache import BoundedCache
+from .engine_state import ClusterKey, GuardKey
 from .defaults import DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from .insertion import InsertionPoints
@@ -223,7 +224,9 @@ class UnificationRefactorEngine(
         )
         # Block guards are pure in (guard, function, block); a block takes part
         # in every pair it forms, so its verdicts are computed once.
-        self._block_guard_cache: "OrderedDict[Tuple[Any, ...], bool]" = OrderedDict()
+        self._block_guard_cache: BoundedCache[GuardKey, bool] = BoundedCache(
+            self.STRUCTURAL_CACHE_LIMIT
+        )
         # Unification is a function of the two blocks' nodes. The clustering
         # pass unifies one template against the same candidates for every pair
         # that shares it, so results are memoized per (block, block) within an
@@ -232,10 +235,12 @@ class UnificationRefactorEngine(
         # serves any later block with the same structure, including the same
         # code after a re-parse. Bounded and self-validating, so never evicted
         # by path.
-        self._unify_cache: "OrderedDict[Tuple[str, str], Optional[StoredSubstitution]]" = (
-            OrderedDict()
+        self._unify_cache: BoundedCache[Tuple[str, str], Optional[StoredSubstitution]] = (
+            BoundedCache(self.STRUCTURAL_CACHE_LIMIT)
         )
-        self._cluster_cache: "OrderedDict[Tuple[Any, ...], Optional[ast.AST]]" = OrderedDict()
+        self._cluster_cache: BoundedCache[ClusterKey, Optional[ast.AST]] = BoundedCache(
+            self.STRUCTURAL_CACHE_LIMIT
+        )
         # Structural ids per block, keyed weakly by the block's first node and
         # then by its length, so an entry vanishes with its tree instead of
         # pinning it (block entries were never evicted before).
@@ -247,7 +252,10 @@ class UnificationRefactorEngine(
         # Per-block analyses (binding snapshot, reassignment and unbinding
         # checks) depend only on the function and the block; a block takes
         # part in every pair it forms, so each is computed once per analysis.
-        self._per_block_cache: "OrderedDict[Tuple[str, str, str], Any]" = OrderedDict()
+        self._per_block_cache: BoundedCache[Tuple[str, str, str], object] = BoundedCache(
+            self.STRUCTURAL_CACHE_LIMIT
+        )
+        self._parse_cache: BoundedCache[str, ast.Module] = BoundedCache(64)
         # Every cache entry is registered under the absolute path(s) of the
         # file(s) it describes, so a file that changes between fixed-point
         # iterations evicts exactly its own entries and unchanged files keep
@@ -407,11 +415,12 @@ class UnificationRefactorEngine(
     #: When a file's eviction-index list grows past this, drop entries the caches no longer hold.
     _EVICTION_INDEX_PRUNE_AT = 4096
 
-    @staticmethod
-    def _bounded_put(cache: "OrderedDict[Any, Any]", key: Any, value: Any) -> None:
-        cache[key] = value
-        while len(cache) > UnificationRefactorEngine.STRUCTURAL_CACHE_LIMIT:
-            cache.popitem(last=False)
+    def _parse_source(self, source: str) -> ast.Module:
+        """``ast.parse(source)``, remembered for the last few sources; callers never mutate the tree."""
+        tree = self._parse_cache.get(source)
+        if tree is None:
+            tree = self._parse_cache.put(source, ast.parse(source))
+        return tree
 
     def _sid(self, nodes: Sequence[ast.AST]) -> str:
         """The structural id of a contiguous block, or of a function, computed once.

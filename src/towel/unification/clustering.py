@@ -52,7 +52,7 @@ from .semantic_safety import (
 from .thunk_inlining import inline_leading_thunks
 from .visitors import body_without_docstring
 
-from .engine_state import EngineState
+from .engine_state import ClusterKey, EngineState
 from .function_index import FunctionIndex
 from .models import BlockBindingSnapshot, HelperTemplate, encloses
 
@@ -312,7 +312,7 @@ class Clustering(EngineState):
                 ):
                     continue
                 # Try to unify template block with candidate
-                memo_key = (
+                memo_key = ClusterKey(
                     template_id,
                     cand_id,
                     fn_id,
@@ -329,7 +329,6 @@ class Clustering(EngineState):
                 )
                 if memo_key in self._cluster_cache:
                     cached_call = self._cluster_cache[memo_key]
-                    self._cluster_cache.move_to_end(memo_key)
                     if cached_call is None:
                         continue
                     call_node2 = copy.deepcopy(cached_call)
@@ -344,10 +343,8 @@ class Clustering(EngineState):
                             snapshot=candidate_snapshot,
                         ),
                     )
-                    self._bounded_put(
-                        self._cluster_cache,
-                        memo_key,
-                        None if computed is None else copy.deepcopy(computed),
+                    self._cluster_cache[memo_key] = (
+                        None if computed is None else copy.deepcopy(computed)
                     )
                     if computed is None:
                         continue

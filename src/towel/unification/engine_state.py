@@ -28,8 +28,8 @@ implements it.
 from __future__ import annotations
 
 import ast
-from collections import OrderedDict
 from typing import (
+    NamedTuple,
     Any,
     Callable,
     Dict,
@@ -48,6 +48,7 @@ from weakref import WeakKeyDictionary
 from ..diagnostics import Settings
 from ..type_inference import TypeOracle
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, BlockSignature
+from .bounded_cache import BoundedCache
 from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
 from .models import (
@@ -71,6 +72,33 @@ from .structural_memo import StoredSubstitution
 from .unifier import Unifier
 from .progress import DEFAULT_PROGRESS, ProgressBarFactory, ProgressMode
 from .semantic_safety import ImportGraphCache
+
+
+class GuardKey(NamedTuple):
+    """What a block guard's verdict depends on."""
+
+    guard: Callable[..., bool]
+    function_id: Optional[str]
+    block_id: str
+    module_digest: Optional[str]
+
+
+class ClusterKey(NamedTuple):
+    """What a clustered call site depends on: the candidate, its module, and the helper template."""
+
+    template_id: str
+    candidate_id: str
+    function_id: str
+    module_digest: Optional[str]
+    free_vars: FrozenSet[str]
+    enclosing_names: FrozenSet[str]
+    is_value_producing: bool
+    globals_to_declare: Tuple[str, ...]
+    nonlocals_to_declare: Tuple[str, ...]
+    helper_name: str
+    helper_dump: str
+    param_order: Tuple[Tuple[str, int], ...]
+    preamble_length: int
 
 
 class EngineState:
@@ -97,7 +125,7 @@ class EngineState:
     extractor: HygienicExtractor
     """Renders helpers and call sites."""
 
-    _cluster_cache: "OrderedDict[Tuple[Any, ...], Optional[ast.AST]]"
+    _cluster_cache: BoundedCache["ClusterKey", Optional[ast.AST]]
     """Memo of the per-candidate clustering pipeline."""
 
     skip_trivial_helpers: bool
@@ -150,9 +178,13 @@ class EngineState:
     _function_index_cache: Optional[Tuple[Sequence[FunctionArtifact], FunctionIndex]]
     # Bounded, path-registered caches: guards per (guard, function, block),
     # unification results per block-structure pair, and the per-block analyses.
-    _block_guard_cache: "OrderedDict[Tuple[Any, ...], bool]"
-    _unify_cache: "OrderedDict[Tuple[str, str], Optional[StoredSubstitution]]"
-    _per_block_cache: "OrderedDict[Tuple[str, str, str], Any]"
+    _block_guard_cache: BoundedCache["GuardKey", bool]
+    _unify_cache: BoundedCache[Tuple[str, str], Optional[StoredSubstitution]]
+    # Per-block analyses of several result types; ``_per_block`` narrows each.
+    _per_block_cache: BoundedCache[Tuple[str, str, str], object]
+    # The last few parsed sources of the apply path, which parses each modified
+    # file several times per proposal.
+    _parse_cache: BoundedCache[str, ast.Module]
 
     def _get_indent(self, line: str) -> str:
         """The indentation of a line; provided by InsertionPoints."""
@@ -347,11 +379,6 @@ class EngineState:
         block_id: Optional[str] = None,
     ) -> bool:
         """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _bounded_put(cache: "OrderedDict[Any, Any]", key: Any, value: Any) -> None:
-        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def _build_block_binding_snapshot(
@@ -557,6 +584,10 @@ class EngineState:
         substitution: Substitution, aug_assign_vars: Set[str], free_vars1: Set[str]
     ) -> Set[str]:
         """Provided by BlockAnalysis."""
+        raise NotImplementedError
+
+    def _parse_source(self, source: str) -> ast.Module:
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def _remember(

@@ -357,28 +357,6 @@ class AnalysisSession:
         return analysis
 
 
-_PARSED: "OrderedDict[str, ast.Module]" = OrderedDict()
-_PARSED_LIMIT = 64
-
-
-def parse_cached(source: str) -> ast.Module:
-    """``ast.parse(source)``, remembered for the last few sources.
-
-    The apply path parses each modified file several times per proposal to
-    check arity and find insertion points; the parse is pure in ``source``,
-    so the tree is shared. Callers read it and never mutate it.
-    """
-    tree = _PARSED.get(source)
-    if tree is None:
-        tree = ast.parse(source)
-        _PARSED[source] = tree
-        while len(_PARSED) > _PARSED_LIMIT:
-            _PARSED.popitem(last=False)
-    else:
-        _PARSED.move_to_end(source)
-    return tree
-
-
 def _read_and_normalize_module(path: str) -> Tuple[str, ast.AST]:
     """Read a module without changing Python operator or mutation semantics."""
     src = read_source(path)

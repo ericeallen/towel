@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import ast
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, cast
 from .assignment_analyzer import (
     _collect_bindings_and_reassignments,
     _collect_block_binding_stats,
@@ -53,8 +53,10 @@ from .visitors import (
 )
 from ..diagnostics import VALIDATION, debugging
 
-from .engine_state import EngineState
+from .engine_state import EngineState, GuardKey
 from .function_index import FunctionIndex
+
+T = TypeVar("T")
 
 
 class BlockAnalysis(EngineState):
@@ -72,7 +74,6 @@ class BlockAnalysis(EngineState):
         key = (self._sid(blocks[0]), self._sid(blocks[1]))
         if key in self._unify_cache:
             stored = self._unify_cache[key]
-            self._unify_cache.move_to_end(key)
             if stored is None:
                 return None
             substitution, renames = load_substitution(stored, blocks)
@@ -81,10 +82,8 @@ class BlockAnalysis(EngineState):
                 target.update(source)
             return substitution
         result = self.unifier.unify_blocks(blocks, hygienic_renames)
-        self._bounded_put(
-            self._unify_cache,
-            key,
-            None if result is None else store_substitution(result, blocks, hygienic_renames),
+        self._unify_cache[key] = (
+            None if result is None else store_substitution(result, blocks, hygienic_renames)
         )
         return result
 
@@ -108,7 +107,7 @@ class BlockAnalysis(EngineState):
             function_id = self._sid([func])
         if block_id is None:
             block_id = self._sid(nodes)
-        key = (
+        key = GuardKey(
             guard,
             function_id,
             block_id,
@@ -116,7 +115,6 @@ class BlockAnalysis(EngineState):
         )
         cached = self._block_guard_cache.get(key)
         if cached is not None:
-            self._block_guard_cache.move_to_end(key)
             return cached
         if analyzer is not None:
             verdict = bool(guard(analyzer, func, list(nodes)))
@@ -124,7 +122,7 @@ class BlockAnalysis(EngineState):
             verdict = bool(guard(func, list(nodes)))
         else:
             verdict = bool(guard(list(nodes)))
-        self._bounded_put(self._block_guard_cache, key, verdict)
+        self._block_guard_cache[key] = verdict
         return verdict
 
     def _is_value_producing(self, block: Sequence[ast.stmt]) -> bool:
@@ -328,22 +326,24 @@ class BlockAnalysis(EngineState):
         name: str,
         func: FunctionNode,
         block_nodes: Sequence[ast.AST],
-        compute: Callable[[], Any],
+        compute: Callable[[], T],
         *,
         function_id: Optional[str] = None,
         block_id: Optional[str] = None,
-    ) -> Any:
-        """Compute an immutable per-(function, block) result once per analysis."""
+    ) -> T:
+        """Compute an immutable per-(function, block) result once per analysis.
+
+        The cache holds results of every analysis under one name each; the
+        result type follows the ``compute`` of the name asked for.
+        """
         if function_id is None:
             function_id = self._sid([func])
         if block_id is None:
             block_id = self._sid(block_nodes)
         key = (name, function_id, block_id)
         if key not in self._per_block_cache:
-            self._bounded_put(self._per_block_cache, key, compute())
-        else:
-            self._per_block_cache.move_to_end(key)
-        return self._per_block_cache[key]
+            self._per_block_cache[key] = compute()
+        return cast(T, self._per_block_cache[key])
 
     def _build_block_binding_snapshot(
         self,

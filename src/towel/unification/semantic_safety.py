@@ -5,24 +5,22 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
-from collections import OrderedDict
 from typing import (
     TYPE_CHECKING,
     Dict,
     FrozenSet,
-    Generic,
     Iterable,
     List,
     Optional,
     Sequence,
     Set,
     Tuple,
-    TypeVar,
     Union,
 )
 from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
+from .bounded_cache import BoundedCache
 from .exceptions import UnsupportedLayoutError
 from ..project_layout import ProjectLayout
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
@@ -336,37 +334,6 @@ def has_external_loop_control(nodes: Iterable[ast.AST]) -> bool:
     return visitor.external
 
 
-_K = TypeVar("_K")
-_V = TypeVar("_V")
-
-
-class _Bounded(Generic[_K, _V]):
-    """A small least-recently-used table; the newest entries survive."""
-
-    def __init__(self, limit: int) -> None:
-        self._limit = limit
-        self._table: "OrderedDict[_K, _V]" = OrderedDict()
-
-    def get(self, key: _K) -> Optional[_V]:
-        if key in self._table:
-            self._table.move_to_end(key)
-            return self._table[key]
-        return None
-
-    def __contains__(self, key: _K) -> bool:
-        return key in self._table
-
-    def put(self, key: _K, value: _V) -> _V:
-        self._table[key] = value
-        self._table.move_to_end(key)
-        while len(self._table) > self._limit:
-            self._table.popitem(last=False)
-        return value
-
-    def clear(self) -> None:
-        self._table.clear()
-
-
 class ImportGraphCache:
     """What one run has learned about the project's import graph.
 
@@ -380,17 +347,19 @@ class ImportGraphCache:
     """
 
     def __init__(self, limit: int = 8192) -> None:
-        self.edges: _Bounded[Tuple[Path, int, int, FrozenSet[Path]], Optional[FrozenSet[Path]]] = (
-            _Bounded(limit)
+        self.edges: BoundedCache[
+            Tuple[Path, int, int, FrozenSet[Path]], Optional[FrozenSet[Path]]
+        ] = BoundedCache(limit)
+        self.bindings: BoundedCache[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = (
+            BoundedCache(limit)
         )
-        self.bindings: _Bounded[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = (
-            _Bounded(limit)
+        self.module_files: BoundedCache[Tuple[Path, Tuple[str, ...]], FrozenSet[Path]] = (
+            BoundedCache(limit)
         )
-        self.module_files: _Bounded[Tuple[Path, Tuple[str, ...]], FrozenSet[Path]] = _Bounded(limit)
-        self.source_roots: _Bounded[Path, Tuple[Path, ...]] = _Bounded(limit)
+        self.source_roots: BoundedCache[Path, Tuple[Path, ...]] = BoundedCache(limit)
         # Resolving a path walks the filesystem; the class-hierarchy lookup
         # resolves every class's file per base-class reference.
-        self.resolved_paths: _Bounded[str, Path] = _Bounded(limit)
+        self.resolved_paths: BoundedCache[str, Path] = BoundedCache(limit)
 
     def resolve(self, path: str) -> Path:
         """``Path(path).resolve()``, once per spelling for the life of the cache."""
