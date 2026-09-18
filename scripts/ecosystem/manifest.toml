@@ -735,6 +735,7 @@ url = "https://github.com/pallets-eco/blinker.git"
 rev = "HEAD"
 package = "src/blinker"
 pythonpath = "src"
+deps = ["pytest-asyncio"]
 install = true
 
 [[project]]
@@ -749,7 +750,7 @@ name = "invoke"
 url = "https://github.com/pyinvoke/invoke.git"
 rev = "HEAD"
 package = "invoke"
-deps = ["pytest-relaxed", "pytest-cov", "icecream", "lexicon", "fluidity"]
+deps = ["pytest-relaxed", "pytest-cov", "icecream", "lexicon"]
 
 [[project]]
 name = "python-fire"
@@ -771,6 +772,7 @@ url = "https://github.com/Pylons/waitress.git"
 rev = "HEAD"
 package = "src/waitress"
 pythonpath = "src"
+deps = ["pytest-cov"]
 install = true
 
 [[project]]
@@ -778,7 +780,7 @@ name = "gunicorn"
 url = "https://github.com/benoitc/gunicorn.git"
 rev = "HEAD"
 package = "gunicorn"
-deps = ["packaging", "coverage"]
+deps = ["packaging", "coverage", "pytest-cov"]
 install = true
 
 [[project]]
@@ -851,7 +853,7 @@ name = "traitlets"
 url = "https://github.com/ipython/traitlets.git"
 rev = "HEAD"
 package = "traitlets"
-deps = ["argcomplete", "pytest-mock", "mypy"]
+deps = ["argcomplete", "pytest-mock", "mypy", "pytest-mypy-testing"]
 install = true
 
 [[project]]
@@ -866,7 +868,7 @@ name = "beautifulsoup4"
 url = "https://git.launchpad.net/beautifulsoup"
 rev = "HEAD"
 package = "bs4"
-deps = ["soupsieve", "lxml", "html5lib"]
+deps = ["soupsieve", "lxml", "html5lib", "typing_extensions"]
 
 [[project]]
 name = "mkdocs"
@@ -907,7 +909,7 @@ name = "rsa"
 url = "https://github.com/sybrenstuvel/python-rsa.git"
 rev = "HEAD"
 package = "rsa"
-deps = ["pyasn1", "mypy"]
+deps = ["pyasn1", "mypy", "pytest-cov"]
 
 [[project]]
 name = "ply"
@@ -915,7 +917,7 @@ url = "https://github.com/dabeaz/ply.git"
 rev = "HEAD"
 package = "src/ply"
 pythonpath = "src"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "python_files=*.py", "tests"]
 
 [[project]]
 name = "inflect"
@@ -936,6 +938,7 @@ name = "texttable"
 url = "https://github.com/foutaise/texttable.git"
 rev = "HEAD"
 package = "texttable.py"
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
 
 [[project]]
 name = "docopt-ng"
@@ -1032,6 +1035,7 @@ rev = "HEAD"
 package = "src/simpy"
 pythonpath = "src"
 install = true
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
 
 [[project]]
 name = "termcolor"
@@ -1080,7 +1084,7 @@ url = "https://github.com/marshmallow-code/apispec.git"
 rev = "HEAD"
 package = "src/apispec"
 pythonpath = "src"
-deps = ["marshmallow", "pyyaml", "packaging"]
+deps = ["marshmallow", "pyyaml", "packaging", "openapi-spec-validator"]
 install = true
 
 [[project]]
