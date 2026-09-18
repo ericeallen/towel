@@ -198,3 +198,58 @@ def test_mutating_returned_engine_proposal_does_not_change_reanalysis(tmp_path):
     repeated = engine.analyze_files([path], progress="none")
     assert [ast.dump(proposal.extracted_function) for proposal in repeated] == expected
     assert repeated[0].replacements
+
+
+DUPLICATED_PAIR = (
+    "def alpha(items):\n"
+    "    total = 0\n"
+    "    for item in items:\n"
+    "        total += item * 2\n"
+    "    return total\n"
+    "\n"
+    "\n"
+    "def beta(items):\n"
+    "    total = 0\n"
+    "    for item in items:\n"
+    "        total += item * 2\n"
+    "    return total\n"
+)
+
+
+def test_engine_invalidate_paths_drops_the_snapshot_and_reanalyzes_new_content(tmp_path):
+    """After ``invalidate_paths`` a rewritten file yields proposals for the new code only."""
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    path = write_module(tmp_path, source=DUPLICATED_PAIR)
+    engine = UnificationRefactorEngine(min_lines=3)
+
+    first = engine.analyze_files([path], progress="none")
+    assert [p.description for p in first] == ["Reuse alpha (module.py) for duplicated code in beta"]
+    assert engine.analysis_session.entry_count == 1
+    assert engine.analysis_session.reusable(path)
+
+    engine.invalidate_paths([path])
+    assert engine.analysis_session.entry_count == 0
+    assert not engine.analysis_session.reusable(path)
+
+    Path(path).write_text(DUPLICATED_PAIR.replace("alpha", "gamma").replace("beta", "delta"))
+    second = engine.analyze_files([path], progress="none")
+    assert [p.description for p in second] == [
+        "Reuse gamma (module.py) for duplicated code in delta"
+    ]
+    assert engine.analysis_session.reusable(path)
+
+
+def test_engine_invalidate_paths_leaves_other_files_cached(tmp_path):
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    kept = write_module(tmp_path, "kept.py", DUPLICATED_PAIR)
+    dropped = write_module(tmp_path, "dropped.py", DUPLICATED_PAIR)
+    engine = UnificationRefactorEngine(min_lines=3)
+    engine.analyze_files([kept, dropped], progress="none")
+    assert engine.analysis_session.entry_count == 2
+
+    engine.invalidate_paths([dropped])
+    assert engine.analysis_session.entry_count == 1
+    assert engine.analysis_session.reusable(kept)
+    assert not engine.analysis_session.reusable(dropped)
