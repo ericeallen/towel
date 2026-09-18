@@ -576,6 +576,8 @@ pythonpath = "src"
 deps = ["attrs", "sortedcontainers", "idna", "outcome", "sniffio", "trustme", "pytest-trio", "exceptiongroup", "astor", "pyopenssl", "pyyaml", "jedi", "isort"]
 install = true
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "src/trio/_tests"]
+expect_broken = "line-relative: test_deprecate.py asserts the exact line number a warning is issued from inside the test module, which a helper inserted above it shifts"
+known_failures = ["test_module_with_deprecations"]
 
 [[project]]
 name = "h11"
