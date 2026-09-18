@@ -17,6 +17,9 @@ import hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from weakref import WeakKeyDictionary
+
+from .statement_facts import memoized_per_node
 from .substitution import Substitution
 
 # A path names a node inside a block: the statement index, then (field, index)
@@ -25,12 +28,24 @@ Step = Tuple[str, int]
 Path = Tuple[int, Tuple[Step, ...]]
 
 
+def _node_digest(node: ast.AST) -> bytes:
+    return hashlib.sha256(ast.dump(node, include_attributes=False).encode("utf-8")).digest()
+
+
+_NODE_DIGESTS: "WeakKeyDictionary[ast.AST, bytes]" = WeakKeyDictionary()
+
+
 def structural_id(nodes: Sequence[ast.AST]) -> str:
-    """A digest of the nodes' structure: everything but positions."""
+    """A digest of the nodes' structure: everything but positions.
+
+    Each node's digest is memoized for its lifetime, since a statement is
+    part of every block that spans it and each block is identified many
+    times. The digests are of fixed width, so their concatenation names the
+    sequence unambiguously. The value is a per-run key, not a stable format.
+    """
     digest = hashlib.sha256()
     for node in nodes:
-        digest.update(ast.dump(node, include_attributes=False).encode("utf-8"))
-        digest.update(b"\n")
+        digest.update(memoized_per_node(_NODE_DIGESTS, node, _node_digest))
     return digest.hexdigest()
 
 

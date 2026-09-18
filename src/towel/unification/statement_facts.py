@@ -40,10 +40,14 @@ _RETURN_SKIPS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _T = TypeVar("_T")
 
 
-def _memoized(
+def memoized_per_node(
     memo: "WeakKeyDictionary[ast.AST, _T]", node: ast.AST, compute: Callable[[ast.AST], _T]
 ) -> _T:
-    """``compute(node)`` once per node, for as long as the node lives."""
+    """``compute(node)`` once per node, for as long as the node lives.
+
+    The memo is weak, so an entry vanishes with its node; the result must
+    depend on the node's structure alone, which analysis never mutates.
+    """
     cached = memo.get(node)
     if cached is None:
         cached = compute(node)
@@ -113,7 +117,7 @@ _FACTS: "WeakKeyDictionary[ast.AST, StatementFacts]" = WeakKeyDictionary()
 
 def statement_facts(statement: ast.AST) -> StatementFacts:
     """The facts of one statement, computed on first request."""
-    return _memoized(_FACTS, statement, _compute_facts)
+    return memoized_per_node(_FACTS, statement, _compute_facts)
 
 
 def block_contains_return(block: Sequence[ast.AST]) -> bool:
@@ -140,13 +144,14 @@ _SHAPES: "WeakKeyDictionary[ast.AST, StatementShape]" = WeakKeyDictionary()
 
 def statement_shape(statement: ast.AST) -> StatementShape:
     """The shape of one statement, computed on first request."""
-    return _memoized(_SHAPES, statement, _compute_shape)
+    return memoized_per_node(_SHAPES, statement, _compute_shape)
 
 
 __all__ = [
     "StatementFacts",
     "StatementShape",
     "block_contains_return",
+    "memoized_per_node",
     "statement_facts",
     "statement_shape",
 ]

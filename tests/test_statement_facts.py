@@ -156,3 +156,106 @@ def test_memoized_similarity_matches_the_per_call_walk() -> None:
             assert engine._are_structurally_similar(block1, block2) == expected
             verdicts[expected] += 1
     assert verdicts[True] and verdicts[False]
+
+
+def _reference_requires_original_frame(block: Sequence[ast.AST]) -> bool:
+    """The frame-sensitivity guard as one walk of the whole block computed it."""
+    from towel.unification.semantic_safety import (
+        _has_comprehension_assignment,
+        _is_frame_relative_call,
+        has_external_loop_control,
+        is_namespace_access_call,
+    )
+
+    if has_external_loop_control(block) or _has_comprehension_assignment(block):
+        return True
+    for statement in block:
+        for node in ast.walk(statement):
+            if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.AsyncFor, ast.AsyncWith)):
+                return True
+            if isinstance(node, ast.Call):
+                if is_namespace_access_call(node):
+                    return True
+                if (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id == "super"
+                    and not node.args
+                    and not node.keywords
+                ):
+                    return True
+                if _is_frame_relative_call(node):
+                    return True
+    return False
+
+
+def _reference_bound_names(block: Sequence[ast.AST]) -> set:
+    from towel.unification.scope_analyzer import pattern_capture_names
+
+    names: set = set()
+    for statement in block:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                names.add(node.id)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                names.add(node.name)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.match_case):
+                names.update(pattern_capture_names(node.pattern))
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    if alias.name != "*":
+                        names.add(alias.asname or alias.name.split(".")[0])
+    return names
+
+
+def _reference_deleted_names(block: Sequence[ast.AST]) -> set:
+    names: set = set()
+    for statement in block:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Delete):
+                for target in node.targets:
+                    names.update(
+                        child.id
+                        for child in ast.walk(target)
+                        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Del)
+                    )
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                names.add(node.name)
+    return names
+
+
+HOSTILE = Path(__file__).resolve().parent / "hostile_cases"
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(SOURCE_ROOT.rglob("*.py")) + sorted(HOSTILE.glob("*.py")),
+    ids=lambda p: p.name,
+)
+def test_memoized_guards_match_the_whole_block_walk(path: Path) -> None:
+    from towel.unification.semantic_safety import (
+        _deleted_names,
+        bound_names,
+        requires_original_frame,
+    )
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for statements in _statement_lists(tree):
+        for block in _contiguous_blocks(statements, longest=4):
+            assert requires_original_frame(block) == _reference_requires_original_frame(block)
+            assert bound_names(block) == _reference_bound_names(block)
+            assert _deleted_names(block) == _reference_deleted_names(block)
+
+
+def test_structural_id_stays_injective_on_structure() -> None:
+    from towel.unification.structural_memo import structural_id
+
+    by_id: dict = {}
+    for path in sorted(SOURCE_ROOT.rglob("*.py"))[:15]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for statements in _statement_lists(tree):
+            for block in _contiguous_blocks(statements, longest=3):
+                structure = tuple(ast.dump(s, include_attributes=False) for s in block)
+                assert by_id.setdefault(structural_id(block), structure) == structure
+    assert len(by_id) > 1000
