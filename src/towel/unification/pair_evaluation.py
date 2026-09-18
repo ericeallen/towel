@@ -51,7 +51,11 @@ from .semantic_safety import (
     defer_impure_parameters,
     has_impure_eager_parameters,
 )
-from .engine_state import EngineState
+from .clustering import Clustering
+from .reuse import ExistingFunctionReuse
+from .annotation_wiring import HelperAnnotationWiring
+from .placement import HelperPlacement
+from .block_analysis import BlockAnalysis
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
@@ -60,6 +64,7 @@ from .models import (
     span_contains,
     BlockBindingSnapshot,
     ClassInfo,
+    ClusterContext,
     CodeBlockPair,
     FunctionArtifact,
     FunctionNode,
@@ -153,7 +158,7 @@ class _CallSites:
     """Stage 9: the generated calls, and the method context of each clustered one."""
 
     replacements: List[Replacement]
-    cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]]
+    cluster_contexts: Dict[int, ClusterContext]
 
 
 @dataclass(frozen=True)
@@ -268,7 +273,9 @@ def _fresh_parameter_name(
     return name
 
 
-class PairEvaluation(EngineState):
+class PairEvaluation(
+    Clustering, HelperPlacement, BlockAnalysis, ExistingFunctionReuse, HelperAnnotationWiring
+):
     """From a candidate pair to a verified proposal; see the module docstring."""
 
     def _reject(
@@ -834,7 +841,7 @@ class PairEvaluation(EngineState):
                 return None
             replacements.append(replacement)
         # Same-file clustering: further identical blocks join this proposal.
-        cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]] = {}
+        cluster_contexts: Dict[int, ClusterContext] = {}
         if not pair.is_cross_file:
             self._add_clustered_replacements(
                 HelperTemplate(
@@ -959,15 +966,13 @@ class PairEvaluation(EngineState):
             # block in another class, in a module-level function, or in a
             # function merely nested in a method has no such receiver, so it
             # keeps its code (pyflakes: sibling TestCase classes).
-            info = setup.method_info1
-            expected = (info.kind, info.implicit_param, info.receiver_known)
             replacements = [
                 replacement
                 for index, replacement in enumerate(replacements)
                 if index not in sites.cluster_contexts
                 or (
-                    sites.cluster_contexts[index][0] in {pair.class1_name, pair.class2_name}
-                    and sites.cluster_contexts[index][1:] == expected
+                    sites.cluster_contexts[index].class_name in {pair.class1_name, pair.class2_name}
+                    and sites.cluster_contexts[index].method == setup.method_info1
                 )
             ]
         # Closures with nonlocal variables are left alone.

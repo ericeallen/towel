@@ -53,10 +53,10 @@ from ..diagnostics import LOG, REJECTIONS, debugging
 from ..filesystem import copy_project
 from ..source_text import decode_source, encode_like, read_source
 
-from .engine_state import EngineState
+from .materialize import Materialization
 
 
-class FixedPointDrivers(EngineState):
+class FixedPointDrivers(Materialization):
     """FixedPointDrivers methods of the engine; see the module docstring."""
 
     @staticmethod

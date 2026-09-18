@@ -40,7 +40,8 @@ from ..diagnostics import LOG
 from .progress import ProgressMode, wants_bar
 from concurrent.futures.process import BrokenProcessPool
 
-from .engine_state import EngineState
+from .fixed_point import FixedPointDrivers
+from .pair_evaluation import PairEvaluation
 
 _worker_engine: Optional["ParallelEvaluation"] = None
 
@@ -104,7 +105,7 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, Refactoring
     return accepted
 
 
-class ParallelEvaluation(EngineState):
+class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
     """ParallelEvaluation methods of the engine; see the module docstring."""
 
     #: Fewer cold pairs than this never fork; above it, a serial prefix is

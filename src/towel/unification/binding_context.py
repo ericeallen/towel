@@ -27,6 +27,7 @@ from weakref import WeakKeyDictionary
 from typing import Callable, Dict, FrozenSet, List, Sequence, Set, Tuple, Union
 
 from .parameters import parameter_names
+from .statement_facts import loaded_names
 from .models import FunctionNode
 from .visitors import visit_comprehension_generators
 
@@ -63,22 +64,7 @@ def get_free_variables(expr: ast.AST) -> Set[str]:
     Returns:
         Set of variable names referenced in the expression
     """
-
-    collector = _VarCollector()
-    collector.visit(expr)
-    return collector.vars
-
-
-class _VarCollector(ast.NodeVisitor):
-    """Names loaded anywhere in an expression."""
-
-    def __init__(self) -> None:
-        self.vars: Set[str] = set()
-
-    def visit_Name(self, node: ast.Name) -> None:
-        if isinstance(node.ctx, ast.Load):
-            self.vars.add(node.id)
-        self.generic_visit(node)
+    return loaded_names(expr)
 
 
 class _BindingContextFinder(ast.NodeVisitor):

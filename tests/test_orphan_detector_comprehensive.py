@@ -9,71 +9,10 @@ for various code extraction scenarios.
 import unittest
 import ast
 from towel.unification.orphan_detector import (
-    _apply_visitor_to_nodes,
     bound_names_in_block,
     get_used_variables,
     orphaned_variables,
 )
-
-
-class TestApplyVisitorToNodes(unittest.TestCase):
-    """Test _apply_visitor_to_nodes helper function."""
-
-    def test_applies_visitor_to_all_nodes(self):
-        """Test that visitor is applied to all nodes."""
-
-        class CountingVisitor(ast.NodeVisitor):
-            def __init__(self):
-                self.count = 0
-
-            def visit_Assign(self, node):
-                self.count += 1
-                self.generic_visit(node)
-
-        code = """
-x = 1
-y = 2
-z = 3
-"""
-        tree = ast.parse(code)
-        visitor = CountingVisitor()
-        result_set = set()
-
-        _apply_visitor_to_nodes(result_set, visitor, tree.body)
-
-        self.assertEqual(visitor.count, 3, "Should visit all 3 assignments")
-
-    def test_returns_result_set(self):
-        """Test that the result set is returned."""
-
-        class NameCollector(ast.NodeVisitor):
-            def __init__(self):
-                self.names = set()
-
-            def visit_Name(self, node):
-                self.names.add(node.id)
-
-        code = "x = y + z"
-        tree = ast.parse(code)
-        visitor = NameCollector()
-
-        result = _apply_visitor_to_nodes(visitor.names, visitor, tree.body)
-
-        self.assertIs(result, visitor.names, "Should return the result set")
-        self.assertGreater(len(result), 0, "Should have collected names")
-
-    def test_empty_node_list(self):
-        """Test with empty node list."""
-
-        class DummyVisitor(ast.NodeVisitor):
-            pass
-
-        visitor = DummyVisitor()
-        result_set = set()
-
-        result = _apply_visitor_to_nodes(result_set, visitor, [])
-
-        self.assertEqual(len(result), 0, "Should handle empty node list")
 
 
 class TestGetBoundVariablesBasic(unittest.TestCase):

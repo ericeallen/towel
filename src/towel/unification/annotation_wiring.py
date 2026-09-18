@@ -28,7 +28,7 @@ from collections import Counter
 import copy
 import dataclasses
 
-from typing import Dict, List, Optional, Set, cast
+from typing import Dict, List, Optional, Set
 from .annotations import (
     ApplySite,
     CallSite,
@@ -70,7 +70,7 @@ class HelperAnnotationWiring(EngineState):
                 return proposal
             sites.append(
                 CallSite(
-                    statement=cast(ast.stmt, replacement.node),
+                    statement=replacement.node,
                     call=call,
                     function=function.node,
                     module=module,
@@ -130,7 +130,7 @@ class HelperAnnotationWiring(EngineState):
                     start_line=start_line,
                     end_line=end_line,
                     indent=self._get_indent(lines[start_line - 1]),
-                    statement=cast(ast.stmt, replacement.node),
+                    statement=replacement.node,
                     call=call,
                     declared_return=self._declared_return_at(source, start_line),
                 )

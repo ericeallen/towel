@@ -59,20 +59,11 @@ from .progress import (
     wants_bar,
     render_inline_bar,
 )
-from .fixed_point import FixedPointDrivers
-from .materialize import Materialization
-from .annotation_wiring import HelperAnnotationWiring
-from .reuse import ExistingFunctionReuse
-from .placement import HelperPlacement
 from .parallel import ParallelEvaluation
-from .clustering import Clustering
-from .pair_evaluation import PairEvaluation
-from .block_analysis import BlockAnalysis
 from .bounded_cache import BoundedCache
 from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, GuardKey
 from .defaults import DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
-from .insertion import InsertionPoints
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
 from .semantic_safety import (
     ImportGraphCache,
@@ -174,18 +165,7 @@ class _PairingProgress:
             print()
 
 
-class UnificationRefactorEngine(
-    InsertionPoints,
-    HelperPlacement,
-    ExistingFunctionReuse,
-    HelperAnnotationWiring,
-    Materialization,
-    FixedPointDrivers,
-    ParallelEvaluation,
-    Clustering,
-    PairEvaluation,
-    BlockAnalysis,
-):
+class UnificationRefactorEngine(ParallelEvaluation):
     """The engine: find duplicated blocks, verify an extraction for each, apply to a fixed point.
 
     Assembled from the mixins above, one per responsibility, over an
@@ -325,7 +305,7 @@ class UnificationRefactorEngine(
         self._unify_cache: BoundedCache[Tuple[str, str], Optional[StoredSubstitution]] = (
             BoundedCache(self.STRUCTURAL_CACHE_LIMIT)
         )
-        self._cluster_cache: BoundedCache[ClusterKey, Optional[ast.AST]] = BoundedCache(
+        self._cluster_cache: BoundedCache[ClusterKey, Optional[ast.stmt]] = BoundedCache(
             self.STRUCTURAL_CACHE_LIMIT
         )
         # Every pair that yields one template scans the whole file for sites

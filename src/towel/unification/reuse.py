@@ -275,7 +275,7 @@ class ExistingFunctionReuse(EngineState):
         ``global`` declaration or a module-level ``del``.
         """
         file_path = replacement.file_path or default_file
-        for artifact in functions.in_file(file_path):
+        for artifact in functions.body_starting_at(file_path, replacement.line_range[0]):
             function = artifact.node
             if (
                 artifact.class_name is not None

@@ -111,6 +111,14 @@ class ClassInsertionPlan:
 
 
 @dataclass(frozen=True)
+class ClusterContext:
+    """Where a clustered call site sits: its class, and how its function binds a receiver."""
+
+    class_name: Optional[str]
+    method: MethodInfo
+
+
+@dataclass(frozen=True)
 class HelperHome:
     """Where a helper is placed: the file, and the class or function within it that hosts it.
 
@@ -131,7 +139,7 @@ class Replacement:
     """Represents a replacement call to the extracted function/method."""
 
     line_range: Tuple[int, int]
-    node: ast.AST
+    node: ast.stmt
     file_path: Optional[str] = None
     class_name: Optional[str] = None
     method_kind: Optional[MethodKind] = None

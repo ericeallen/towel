@@ -21,7 +21,7 @@ from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 from .models import FunctionNode
-from .statement_facts import import_binding_names
+from .statement_facts import import_binding_names, pattern_capture_names  # noqa: F401
 from .parameters import parameter_names, parameter_nodes
 from .visitors import ScopeVisitor
 
@@ -64,17 +64,6 @@ class Scope:
     def add_binding(self, name: str, node: ast.AST) -> None:
         """Add a binding to this scope."""
         self.bindings[name] = ScopeBinding(name, self.scope_id, node)
-
-
-def pattern_capture_names(pattern: ast.AST) -> Set[str]:
-    """Names bound by a match pattern, including nested captures."""
-    names: Set[str] = set()
-    for node in ast.walk(pattern):
-        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            names.add(node.name)
-        elif isinstance(node, ast.MatchMapping) and node.rest:
-            names.add(node.rest)
-    return names
 
 
 # Custom visitor that doesn't descend into nested functions

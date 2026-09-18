@@ -27,8 +27,7 @@ This is critical for safe code extraction:
 import ast
 from typing import Dict, Sequence, Set, Tuple, Union
 
-from .scope_analyzer import pattern_capture_names
-from .statement_facts import import_binding_names
+from .statement_facts import import_binding_names, pattern_capture_names
 from .models import FunctionNode
 from .parameters import parameter_names
 from .visitors import OwnScopeVisitor

@@ -17,6 +17,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Set, cast
 
 from .bounded_cache import BoundedCache
 from .semantic_safety import bound_names, walk_own_scope
+from .visitors import visit_as
 from .structural_memo import structural_id
 
 _EXPECTED_DUMPS: BoundedCache[str, str] = BoundedCache(16_384)
@@ -36,7 +37,7 @@ class InstantiationError(Exception):
 def instantiation_mismatch(
     helper: ast.FunctionDef,
     call_statement: ast.stmt,
-    block: Sequence[ast.AST],
+    block: Sequence[ast.stmt],
     template_renames: Mapping[str, str],
     block_renames: Mapping[str, str],
     *,
@@ -74,7 +75,7 @@ def instantiation_mismatch(
         return shape
     arguments = dict(zip(parameters, call.args))
     try:
-        reduced = [cast(ast.stmt, _Reducer(arguments).visit(statement)) for statement in body]
+        reduced = [visit_as(_Reducer(arguments), statement) for statement in body]
     except InstantiationError as error:
         return str(error)
     restored = [_IdentifierRenamer(inverse).visit(statement) for statement in reduced]
@@ -84,10 +85,10 @@ def instantiation_mismatch(
     return None
 
 
-def _expected_form(block: Sequence[ast.AST]) -> ast.Module:
+def _expected_form(block: Sequence[ast.stmt]) -> ast.Module:
     """The block as the reduced helper body must read, on a copy."""
     return _alpha_normalize(
-        ast.Module(body=[cast(ast.stmt, copy.deepcopy(node)) for node in block], type_ignores=[])
+        ast.Module(body=[copy.deepcopy(node) for node in block], type_ignores=[])
     )
 
 
@@ -95,7 +96,7 @@ def _normalized_dump(module: ast.Module) -> str:
     return ast.dump(module, include_attributes=False)
 
 
-def _expected_dump(block: Sequence[ast.AST]) -> str:
+def _expected_dump(block: Sequence[ast.stmt]) -> str:
     """``_normalized_dump(_expected_form(block))``, memoized on the block's structure."""
     key = structural_id(block)
     cached = _EXPECTED_DUMPS.get(key)

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 from .models import FunctionArtifact, span_contains
+from .visitors import body_without_docstring
 
 
 @dataclass(frozen=True)
@@ -45,19 +46,33 @@ class FunctionIndex:
     _by_name: Mapping[Tuple[str, str], Tuple[FunctionArtifact, ...]]
     _declares_global: Dict[str, bool] = field(default_factory=dict, compare=False)
     _source_digests: Dict[str, str] = field(default_factory=dict, compare=False)
+    # Functions by (file, line of the first non-docstring statement): a site can
+    # be the whole body only of a function whose body starts where the site does.
+    _by_body_start: Mapping[Tuple[str, int], Tuple[FunctionArtifact, ...]] = field(
+        default_factory=dict, compare=False
+    )
 
     @classmethod
     def build(cls, functions: Sequence[FunctionArtifact]) -> FunctionIndex:
         by_path: Dict[str, list[FunctionArtifact]] = {}
         by_name: Dict[Tuple[str, str], list[FunctionArtifact]] = {}
+        by_body_start: Dict[Tuple[str, int], list[FunctionArtifact]] = {}
         for artifact in functions:
             by_path.setdefault(artifact.file_path, []).append(artifact)
             by_name.setdefault((artifact.file_path, artifact.node.name), []).append(artifact)
+            body = body_without_docstring(artifact.node.body)
+            if body:
+                by_body_start.setdefault((artifact.file_path, body[0].lineno), []).append(artifact)
         return cls(
             tuple(functions),
             {path: tuple(entries) for path, entries in by_path.items()},
             {key: tuple(entries) for key, entries in by_name.items()},
+            _by_body_start={key: tuple(entries) for key, entries in by_body_start.items()},
         )
+
+    def body_starting_at(self, file_path: str, line: int) -> Tuple[FunctionArtifact, ...]:
+        """Every function of ``file_path`` whose first non-docstring statement starts at ``line``."""
+        return self._by_body_start.get((file_path, line), ())
 
     def in_file(self, file_path: str) -> Tuple[FunctionArtifact, ...]:
         """Every analyzed function of ``file_path``, in discovery order."""

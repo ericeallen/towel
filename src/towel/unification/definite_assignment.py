@@ -13,8 +13,7 @@ import ast
 from .assignment_analyzer import stored_names
 from .models import FunctionNode
 from .parameters import parameter_names
-from .scope_analyzer import pattern_capture_names
-from .statement_facts import import_binding_names
+from .statement_facts import import_binding_names, pattern_capture_names
 from functools import cached_property
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set
 from weakref import WeakKeyDictionary, ref

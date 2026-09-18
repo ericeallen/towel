@@ -61,9 +61,12 @@ from .thunk_inlining import inline_leading_thunks
 from .visitors import body_without_docstring
 
 from .builtins import CALL_ARGUMENT_BUILTINS
-from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, EngineState, TemplateKey
+from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, TemplateKey
+from .insertion import InsertionPoints
+from .placement import HelperPlacement
+from .block_analysis import BlockAnalysis
 from .function_index import FunctionIndex
-from .models import BlockBindingSnapshot, HelperTemplate, encloses
+from .models import BlockBindingSnapshot, ClusterContext, HelperTemplate, encloses
 
 
 @dataclass(frozen=True)
@@ -84,12 +87,12 @@ def _lines_of(line_range: Tuple[int, int]) -> range:
     return range(line_range[0], line_range[1] + 1)
 
 
-class Clustering(EngineState):
+class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
     """Clustering methods of the engine; see the module docstring."""
 
     def _cluster_candidate_call(
         self, template: "HelperTemplate", candidate: "_ClusterCandidate"
-    ) -> Optional[ast.AST]:
+    ) -> Optional[ast.stmt]:
         """The call replacing a clustered occurrence, or None when it cannot share the helper.
 
         Everything here is a function of the template and candidate blocks'
@@ -203,7 +206,7 @@ class Clustering(EngineState):
         dce_node: Optional[FunctionNode],
         functions: FunctionIndex,
         replacements: List[Replacement],
-        cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]],
+        cluster_contexts: Dict[int, ClusterContext],
     ) -> None:
         """Append same-file occurrences that can share the extracted helper.
 
@@ -286,12 +289,7 @@ class Clustering(EngineState):
             # known, whether it can share a method call.
             candidate_class = self._method_class(fn, entry.class_name, entry.scope_analyzer)
             candidate_info = self._get_method_context(fn, candidate_class)
-            context = (
-                candidate_class,
-                candidate_info.kind,
-                candidate_info.implicit_param,
-                candidate_info.receiver_known,
-            )
+            context = ClusterContext(candidate_class, candidate_info)
             fn_id = self._sid([fn])
             module_digest = self._module_digest(fn)
             for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
@@ -411,7 +409,7 @@ class Clustering(EngineState):
 
     def _clustered_call(
         self, key: ClusterKey, template: "HelperTemplate", candidate: "_ClusterCandidate"
-    ) -> Optional[ast.AST]:
+    ) -> Optional[ast.stmt]:
         """The candidate's call, memoized under ``key``; every hit is the same node, never mutated."""
         if key in self._cluster_cache:
             return self._cluster_cache[key]

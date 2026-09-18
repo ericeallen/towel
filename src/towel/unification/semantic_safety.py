@@ -27,8 +27,13 @@ from .models import FunctionNode
 from .bounded_cache import BoundedCache
 from .exceptions import UnsupportedLayoutError
 from ..project_layout import ProjectLayout, package_chain
-from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
-from .statement_facts import import_binding_names, imported_binding_name, memoized_per_node
+from .scope_analyzer import ScopeAnalyzer
+from .statement_facts import (
+    bindings_of,
+    imported_binding_name,
+    loaded_names,
+    memoized_per_node,
+)
 from .structural_memo import structural_id
 from .visitors import OwnScopeVisitor
 from ..source_text import read_source
@@ -762,7 +767,7 @@ def bound_names(nodes: Iterable[ast.AST]) -> Set[str]:
     """
     names: Set[str] = set()
     for statement in nodes:
-        bound: FrozenSet[str] = memoized_per_node(_BOUND_NAMES, statement, _statement_bound_names)
+        bound: FrozenSet[str] = memoized_per_node(_BOUND_NAMES, statement, _all_bindings_of)
         names.update(bound)
     return names
 
@@ -770,20 +775,8 @@ def bound_names(nodes: Iterable[ast.AST]) -> Set[str]:
 _BOUND_NAMES: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
 
 
-def _statement_bound_names(statement: ast.AST) -> FrozenSet[str]:
-    names: Set[str] = set()
-    for node in ast.walk(statement):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            names.add(node.id)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.match_case):
-            names.update(pattern_capture_names(node.pattern))
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update(import_binding_names(node))
-    return frozenset(names)
+def _all_bindings_of(statement: ast.AST) -> FrozenSet[str]:
+    return bindings_of(statement, into_nested_scopes=True)
 
 
 def _deleted_names(nodes: Iterable[ast.AST]) -> Set[str]:
@@ -840,14 +833,6 @@ def unbinds_external_name(
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.GeneratorExp)
 
 
-def _loaded_names(node: ast.AST) -> Set[str]:
-    return {
-        child.id
-        for child in ast.walk(node)
-        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
-    }
-
-
 class _ScopeFacts:
     """Nested scopes and top-level bindings of one function, computed once.
 
@@ -857,7 +842,7 @@ class _ScopeFacts:
 
     def __init__(self, function: FunctionNode) -> None:
         self.nested: Tuple[Tuple[ast.AST, FrozenSet[str]], ...] = tuple(
-            (node, frozenset(_loaded_names(node)))
+            (node, frozenset(loaded_names(node)))
             for node in ast.walk(function)
             if isinstance(node, _NESTED_SCOPE_TYPES) and node is not function
         )

@@ -43,7 +43,10 @@ from ..project_layout import ProjectLayout, is_package_dir
 from towel.changes import ChangeConflict, ChangePlan
 from ..source_text import read_source
 
-from .engine_state import EngineState
+from .reuse import ExistingFunctionReuse
+from .annotation_wiring import HelperAnnotationWiring
+from .insertion import InsertionPoints
+from .placement import HelperPlacement
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,9 @@ def _padded(lines: List[str], insert_at: int, block: List[str]) -> List[str]:
     return prefix + block + suffix
 
 
-class Materialization(EngineState):
+class Materialization(
+    InsertionPoints, HelperPlacement, ExistingFunctionReuse, HelperAnnotationWiring
+):
     """Materialization methods of the engine; see the module docstring."""
 
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:

@@ -47,31 +47,23 @@ from weakref import WeakKeyDictionary
 
 from ..diagnostics import Settings
 from ..type_inference import TypeOracle
-from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, BlockSignature
+from .block_signature import BlockSignature
 from .bounded_cache import BoundedCache
 from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
 from .models import (
-    MethodKind,
     AppliedChange,
-    BlockBindingSnapshot,
-    ClassInfo,
-    ClassInsertionPlan,
+    ClusterContext,
     CodeBlockPair,
     FunctionArtifact,
     FunctionNode,
-    HelperTemplate,
-    MethodInfo,
     RefactoringProposal,
     RejectReason,
     Replacement,
-    ReusedFunction,
 )
-from .scope_analyzer import ScopeAnalyzer
-from .substitution import Substitution
 from .structural_memo import StoredSubstitution
 from .unifier import Unifier
-from .progress import DEFAULT_PROGRESS, ProgressBarFactory, ProgressMode
+from .progress import DEFAULT_PROGRESS, ProgressMode
 from .semantic_safety import ImportGraphCache
 
 
@@ -135,7 +127,7 @@ class ClusteredSite:
     """
 
     replacement: Replacement
-    context: Tuple[Optional[str], Optional[str], Optional[str], bool]
+    context: ClusterContext
 
 
 class EngineState:
@@ -162,7 +154,7 @@ class EngineState:
     extractor: HygienicExtractor
     """Renders helpers and call sites."""
 
-    _cluster_cache: BoundedCache["ClusterKey", Optional[ast.AST]]
+    _cluster_cache: BoundedCache["ClusterKey", Optional[ast.stmt]]
     """Memo of the per-candidate clustering pipeline; a hit is the same node, never mutated."""
 
     _cluster_scan_cache: BoundedCache["ClusterScanKey", Tuple[ClusteredSite, ...]]
@@ -245,96 +237,6 @@ class EngineState:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
-    @staticmethod
-    def _annotation_names(helper: ast.FunctionDef) -> Set[str]:
-        """Provided by HelperAnnotationWiring."""
-        raise NotImplementedError
-
-    def _checks_generated_types(self, proposal: RefactoringProposal) -> bool:
-        """Provided by HelperAnnotationWiring."""
-        raise NotImplementedError
-
-    def _find_class_insert_position(
-        self, source: str, class_name: str
-    ) -> Optional[Tuple[int, str]]:
-        """Provided by InsertionPoints."""
-        raise NotImplementedError
-
-    def _find_function_insert_position_before_body_statements(
-        self, source: str, function_name: str
-    ) -> Optional[Tuple[int, str]]:
-        """Provided by InsertionPoints."""
-        raise NotImplementedError
-
-    def _find_import_position(self, lines: List[str]) -> int:
-        """Provided by InsertionPoints."""
-        raise NotImplementedError
-
-    def _find_insert_position(
-        self, lines: List[str], after_names: Optional[Set[str]] = None
-    ) -> int:
-        """Provided by InsertionPoints."""
-        raise NotImplementedError
-
-    def _infer_helper_annotations(self, proposal: RefactoringProposal) -> None:
-        """Provided by HelperAnnotationWiring."""
-        raise NotImplementedError
-
-    def _introduces_type_errors(self, modified_files: Dict[str, str]) -> bool:
-        """Provided by HelperAnnotationWiring."""
-        raise NotImplementedError
-
-    def _prepare_extracted_method_signature(
-        self,
-        fn: ast.FunctionDef,
-        method_kind: MethodKind,
-        implicit_param: Optional[str],
-    ) -> None:
-        """Provided by HelperPlacement."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _retarget_helper_calls(node: ast.AST, original_name: str, final_name: str) -> ast.AST:
-        """Provided by HelperPlacement."""
-        raise NotImplementedError
-
-    def _rewrite_call_for_method(
-        self,
-        node: ast.AST,
-        original_name: str,
-        new_name: str,
-        method_kind: Optional[MethodKind],
-        implicit_param: Optional[str],
-        class_name: Optional[str],
-        receiver_parameter_index: Optional[int] = None,
-        helper_parameter_count: Optional[int] = None,
-    ) -> ast.AST:
-        """Provided by HelperPlacement."""
-        raise NotImplementedError
-
-    def _source_lines(self, file_path: str) -> Sequence[str]:
-        """Provided by InsertionPoints."""
-        raise NotImplementedError
-
-    def _verify_reused_function_calls(
-        self,
-        modified_files: Dict[str, str],
-        target: ReusedFunction,
-        proposal: RefactoringProposal,
-    ) -> None:
-        """Provided by ExistingFunctionReuse."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _with_every_annotation_any(proposal: RefactoringProposal) -> RefactoringProposal:
-        """Provided by HelperAnnotationWiring."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _without_annotations(proposal: RefactoringProposal) -> RefactoringProposal:
-        """Provided by HelperAnnotationWiring."""
-        raise NotImplementedError
-
     def _find_python_files(self, directory: str, recursive: bool = True) -> List[str]:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
@@ -363,273 +265,22 @@ class EngineState:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
-    def apply_refactoring_multi_file(self, proposal: RefactoringProposal) -> Dict[str, str]:
-        """Provided by Materialization."""
-        raise NotImplementedError
-
-    def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
-        """Provided by Materialization."""
-        raise NotImplementedError
-
     def invalidate_paths(self, paths: List[str]) -> None:
         """Provided by UnificationRefactorEngine."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _finish_inline_status(enabled: bool) -> None:
-        """Provided by FixedPointDrivers."""
-        raise NotImplementedError
-
-    def _resolve_progress_backend(
-        self, progress: ProgressMode
-    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory]]:
-        """Provided by FixedPointDrivers."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _start_inline_status(label: str, enabled: bool) -> None:
-        """Provided by FixedPointDrivers."""
-        raise NotImplementedError
-
-    def _try_refactor_pair_multi_file(
-        self,
-        pair: CodeBlockPair,
-        all_functions: Sequence[FunctionArtifact],
-        class_infos: List[ClassInfo],
-    ) -> Optional[RefactoringProposal]:
-        """Provided by PairEvaluation."""
-        raise NotImplementedError
-
-    @classmethod
-    def _update_inline_status(
-        cls, label: str, pct: int, *, bar_len: int = 24, suffix: str = ""
-    ) -> None:
-        """Provided by FixedPointDrivers."""
-        raise NotImplementedError
-
-    def _block_rejected(
-        self,
-        guard: Callable[..., bool],
-        nodes: Sequence[ast.stmt],
-        func: Optional[FunctionNode] = None,
-        analyzer: Optional[ScopeAnalyzer] = None,
-        path: Optional[str] = None,
-        *,
-        function_id: Optional[str] = None,
-        block_id: Optional[str] = None,
-    ) -> bool:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _build_block_binding_snapshot(
-        self,
-        func: FunctionNode,
-        block_nodes: Sequence[ast.stmt],
-        block_range: Tuple[int, int],
-        reassignments: Dict[int, bool],
-        *,
-        function_id: Optional[str] = None,
-        block_id: Optional[str] = None,
-    ) -> BlockBindingSnapshot:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _get_assignment_reuse(self, func: FunctionNode) -> Dict[int, bool]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _get_block_indices(
-        self, function: FunctionNode, block_nodes: Sequence[ast.stmt]
-    ) -> Optional[Tuple[int, int]]:
-        """Provided by InsertionPoints."""
-        raise NotImplementedError
-
-    def _get_method_context(
-        self, func: Optional[FunctionNode], class_name: Optional[str]
-    ) -> MethodInfo:
-        """Provided by HelperPlacement."""
-        raise NotImplementedError
-
-    def _get_used_names(self, node: ast.AST) -> Set[str]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _method_class(
-        func: Optional[FunctionNode],
-        class_name: Optional[str],
-        analyzer: Optional[ScopeAnalyzer],
-    ) -> Optional[str]:
-        """Provided by HelperPlacement."""
         raise NotImplementedError
 
     def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
-    def _per_block(
-        self,
-        name: str,
-        func: FunctionNode,
-        block_nodes: Sequence[ast.stmt],
-        compute: Callable[[], Any],
-        *,
-        function_id: Optional[str] = None,
-        block_id: Optional[str] = None,
-    ) -> Any:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
     def _sid(self, nodes: Sequence[ast.AST]) -> str:
         """Provided by UnificationRefactorEngine."""
-        raise NotImplementedError
-
-    def _signed_blocks(
-        self, function: FunctionNode
-    ) -> List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _unify_memoized(
-        self,
-        blocks: Sequence[Sequence[ast.stmt]],
-        hygienic_renames: List[Dict[str, str]],
-        paths: Sequence[Optional[str]] = (),
-    ) -> Optional[Substitution]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _add_clustered_replacements(
-        self,
-        template: "HelperTemplate",
-        dce_node: Optional[FunctionNode],
-        functions: FunctionIndex,
-        replacements: List[Replacement],
-        cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]],
-    ) -> None:
-        """Provided by Clustering."""
-        raise NotImplementedError
-
-    def _are_structurally_similar(
-        self,
-        block1: Sequence[ast.stmt],
-        block2: Sequence[ast.stmt],
-        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
-    ) -> bool:
-        """Provided by Clustering."""
-        raise NotImplementedError
-
-    def _choose_class_insertion(
-        self,
-        pair: CodeBlockPair,
-        method_info1: MethodInfo,
-        method_info2: MethodInfo,
-        class_infos: List[ClassInfo],
-    ) -> Optional[ClassInsertionPlan]:
-        """Provided by HelperPlacement."""
         raise NotImplementedError
 
     def _debug_reject(
         self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
     ) -> None:
         """Provided by UnificationRefactorEngine."""
-        raise NotImplementedError
-
-    def _declares_nonlocal(
-        self, func: Optional[FunctionNode], scope_analyzer: Optional[ScopeAnalyzer]
-    ) -> bool:
-        """Provided by HelperPlacement."""
-        raise NotImplementedError
-
-    def _deepest_common_ancestry(
-        self, anc1: Optional[List[str]], anc2: Optional[List[str]]
-    ) -> Optional[str]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _enclosing_function_named(
-        name: str,
-        file_path: str,
-        functions: FunctionIndex,
-        inner: Sequence[FunctionNode],
-    ) -> Optional[FunctionNode]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _find_return_variables(
-        self,
-        func: FunctionNode,
-        block_range: Tuple[int, int],
-        initially_bound: Set[str],
-        *,
-        debug_label: Optional[str] = None,
-    ) -> Set[str]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _global_nonlocal_declarations(
-        self,
-        pair: CodeBlockPair,
-        scope_analyzer: ScopeAnalyzer,
-        free_vars: Set[str],
-    ) -> Tuple[Set[str], Set[str], Set[str]]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _helper_is_trivial_forwarding(func: ast.FunctionDef) -> bool:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _is_value_producing(self, block: Sequence[ast.stmt]) -> bool:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _redirect_to_existing_function(
-        self,
-        proposal: RefactoringProposal,
-        functions: FunctionIndex,
-    ) -> Optional[RefactoringProposal]:
-        """Provided by ExistingFunctionReuse."""
-        raise NotImplementedError
-
-    def _helper_reduced_to_forwarder(
-        self, proposal: RefactoringProposal, functions: FunctionIndex
-    ) -> Optional[str]:
-        """Provided by ExistingFunctionReuse."""
-        raise NotImplementedError
-
-    def _rejects_module_data_lookup(
-        self,
-        pair: CodeBlockPair,
-        analyzer1: Optional[ScopeAnalyzer],
-        analyzer2: Optional[ScopeAnalyzer],
-    ) -> bool:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _reserve_augassign_params(pair: CodeBlockPair, substitution: Substitution) -> Set[str]:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _strip_fstring_params(substitution: Substitution) -> None:
-        """Provided by BlockAnalysis."""
-        raise NotImplementedError
-
-    def _with_helper_annotations(
-        self, proposal: RefactoringProposal, functions: FunctionIndex
-    ) -> RefactoringProposal:
-        """Provided by HelperAnnotationWiring."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _working_free_vars(
-        substitution: Substitution, aug_assign_vars: Set[str], free_vars1: Set[str]
-    ) -> Set[str]:
-        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _parse_source(self, source: str) -> ast.Module:

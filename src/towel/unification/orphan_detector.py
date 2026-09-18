@@ -20,13 +20,12 @@ but referenced in code that remains after the extraction point.
 """
 
 import ast
-from typing import FrozenSet, List, Sequence, Set, Tuple, Union
+from typing import FrozenSet, Sequence, Set, Tuple
 
 from .bounded_cache import BoundedCache
 from .definite_assignment import definitely_bound_before_each
-from .models import FunctionNode
+from .statement_facts import bindings_of, loaded_names
 from .structural_memo import structural_id
-from .visitors import OwnScopeVisitor, visit_each
 
 _ORPHANS: BoundedCache[Tuple[str, int, int], FrozenSet[str]] = BoundedCache(65_536)
 """Orphaned names by (structural id of the body, block start, block end).
@@ -38,112 +37,20 @@ workers fork after parsing and each keeps its own copy.
 """
 
 
-def _apply_visitor_to_nodes(
-    result_set: Set[str], visitor: ast.NodeVisitor, nodes: Sequence[ast.AST]
-) -> Set[str]:
-    """
-    Apply an AST visitor to a sequence of nodes and return the collected results.
-
-    This helper function encapsulates the common pattern of visiting multiple AST nodes
-    with a NodeVisitor and collecting results in a set.
-
-    Args:
-        result_set: The set where the visitor collects its results
-        visitor: The NodeVisitor instance to apply to each node
-        nodes: The AST nodes to visit
-
-    Returns:
-        The result_set after all nodes have been visited
-
-    Note:
-        This function was identified as a refactoring opportunity by Towel itself
-        during dog-fooding testing (October 2025). The common visitor pattern in
-        bound_names_in_block() and get_used_variables() was successfully extracted,
-        validated with 100% test passage, and incorporated into the codebase.
-    """
-    visit_each(visitor, nodes)
-    return result_set
+def bound_names_in_block(nodes: Sequence[ast.stmt]) -> Set[str]:
+    """The names a block binds in its function's own scope (see ``bindings_of``)."""
+    names: Set[str] = set()
+    for node in nodes:
+        names |= bindings_of(node, into_nested_scopes=False)
+    return names
 
 
-class _BindingCollector(OwnScopeVisitor):
-    def __init__(self) -> None:
-        self.bindings: Set[str] = set()
-        self.in_comprehension: bool = False
-
-    def visit_Assign(self, node: ast.Assign) -> None:
-        for target in node.targets:
-            self._collect_names(target)
-        self.generic_visit(node)
-
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        if node.target:
-            self._collect_names(node.target)
-        self.generic_visit(node)
-
-    def visit_AugAssign(self, node: ast.AugAssign) -> None:
-        self._collect_names(node.target)
-        self.generic_visit(node)
-
-    def visit_For(self, node: ast.For) -> None:
-        self._collect_names(node.target)
-        self.generic_visit(node)
-
-    def _nested_function(self, node: FunctionNode) -> None:
-        self.bindings.add(node.name)
-
-    def _nested_class(self, node: ast.ClassDef) -> None:
-        """A class binds its name here; what its body binds is the class's."""
-        self.bindings.add(node.name)
-
-    def _comprehension(
-        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
-    ) -> None:
-        """Comprehension variables are local to it and are not bindings of this scope."""
-
-    def _collect_names(self, node: ast.AST) -> None:
-        """Collect all name nodes from a target."""
-        if isinstance(node, ast.Name):
-            self.bindings.add(node.id)
-        elif isinstance(node, (ast.Tuple, ast.List)):
-            for elt in node.elts:
-                self._collect_names(elt)
-        elif isinstance(node, ast.Starred):
-            self._collect_names(node.value)
-        # Ignore subscripts and attributes (they don't create bindings)
-
-
-def bound_names_in_block(nodes: Sequence[ast.AST]) -> Set[str]:
-    """
-    Get all variables bound (assigned) in a block of code.
-
-    This includes:
-    - Assignment targets (x = ...)
-    - For loop targets (for x in ...)
-    - Function/class definitions
-    - But NOT comprehension variables (they're local to the comprehension)
-    """
-
-    collector = _BindingCollector()
-    return _apply_visitor_to_nodes(collector.bindings, collector, nodes)
-
-
-class _UsageCollector(ast.NodeVisitor):
-    def __init__(self) -> None:
-        self.uses: Set[str] = set()
-
-    def visit_Name(self, node: ast.Name) -> None:
-        if isinstance(node.ctx, ast.Load):
-            self.uses.add(node.id)
-        self.generic_visit(node)
-
-
-def get_used_variables(nodes: List[ast.AST]) -> Set[str]:
-    """
-    Get all variables used (referenced) in a block of code.
-    """
-
-    collector = _UsageCollector()
-    return _apply_visitor_to_nodes(collector.uses, collector, nodes)
+def get_used_variables(nodes: Sequence[ast.AST]) -> Set[str]:
+    """Every name a block reads, nested scopes included."""
+    names: Set[str] = set()
+    for node in nodes:
+        names |= loaded_names(node)
+    return names
 
 
 def orphaned_variables(

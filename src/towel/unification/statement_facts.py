@@ -28,7 +28,7 @@ from __future__ import annotations
 import ast
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable, FrozenSet, List, Optional, Sequence, TypeVar, Union
+from typing import Callable, FrozenSet, List, Optional, Sequence, Set, TypeVar, Union
 from weakref import WeakKeyDictionary
 
 _SIGNATURE_SKIPS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -134,6 +134,70 @@ def imported_binding_name(alias: ast.alias) -> Optional[str]:
 def import_binding_names(node: Union[ast.Import, ast.ImportFrom]) -> List[str]:
     """The local names an import statement binds, in order, star imports aside."""
     return [name for alias in node.names if (name := imported_binding_name(alias)) is not None]
+
+
+def pattern_capture_names(pattern: ast.AST) -> Set[str]:
+    """Names bound by a match pattern, including nested captures."""
+    names: Set[str] = set()
+    for node in ast.walk(pattern):
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
+    return names
+
+
+_NESTED_DEFINITIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def bindings_of(statement: ast.AST, *, into_nested_scopes: bool) -> FrozenSet[str]:
+    """The names ``statement`` binds or unbinds: assignment, loop, ``with`` and walrus
+    targets, ``del`` targets, ``except ... as`` and match-capture names, imports, and the
+    names of definitions.
+
+    With ``into_nested_scopes`` every binding at any depth counts, comprehension
+    targets and the locals of nested functions included: an over-approximation
+    for guards that only reject. Without it, only the statement's own scope
+    counts: a nested definition contributes its name and nothing inside it, a
+    lambda nothing, and a comprehension only what an assignment expression in
+    it binds, since its targets are its own.
+    """
+    names: Set[str] = set()
+    pending: List[ast.AST] = [statement]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Name):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                names.add(node.id)
+            continue
+        if isinstance(node, _NESTED_DEFINITIONS):
+            names.add(node.name)
+            if not into_nested_scopes:
+                continue
+        elif isinstance(node, ast.Lambda) and not into_nested_scopes:
+            continue
+        elif isinstance(node, ast.comprehension) and not into_nested_scopes:
+            pending.append(node.iter)
+            pending.extend(node.ifs)
+            continue
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.match_case):
+            names.update(pattern_capture_names(node.pattern))
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(import_binding_names(node))
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+    return frozenset(names)
+
+
+def loaded_names(node: ast.AST) -> Set[str]:
+    """Every name read (Load context) anywhere under ``node``, nested scopes included."""
+    return {
+        child.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+    }
 
 
 def block_contains_return(block: Sequence[ast.stmt]) -> bool:

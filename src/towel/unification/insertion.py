@@ -29,7 +29,7 @@ from __future__ import annotations
 import ast
 
 from pathlib import Path
-from typing import List, Optional, Sequence, Set, Tuple, Union, cast
+from typing import List, Optional, Sequence, Set, Tuple
 from .visitors import ClassLocator, FuncLocator, body_without_docstring
 
 from .engine_state import EngineState
@@ -255,7 +255,7 @@ class InsertionPoints(EngineState):
         Returns (insert_line_index, function_indent_str) or None if function not found.
         """
         try:
-            tree = ast.parse(source)
+            tree = self._parse_source(source)
         except SyntaxError:
             return None
 
@@ -264,7 +264,7 @@ class InsertionPoints(EngineState):
         return locator.result
 
     def _get_block_indices(
-        self, function: FunctionNode, block_nodes: Sequence[ast.AST]
+        self, function: FunctionNode, block_nodes: Sequence[ast.stmt]
     ) -> Optional[Tuple[int, int]]:
         """
         Find the indices of a block within a function body.
@@ -283,8 +283,8 @@ class InsertionPoints(EngineState):
         body = body_without_docstring(function.body)
 
         # Match by line numbers
-        first_node = cast(Union[ast.stmt, ast.expr], block_nodes[0])
-        last_node = cast(Union[ast.stmt, ast.expr], block_nodes[-1])
+        first_node = block_nodes[0]
+        last_node = block_nodes[-1]
         block_start_line = first_node.lineno
         block_end_line = (
             last_node.end_lineno
