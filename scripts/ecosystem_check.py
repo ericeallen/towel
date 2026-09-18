@@ -513,7 +513,13 @@ def main() -> int:
     parser.add_argument(
         "--manifest", type=Path, default=REPO / "scripts" / "ecosystem" / "manifest.toml"
     )
-    parser.add_argument("--work", type=Path, default=Path("/tmp/towel-ecosystem"))
+    parser.add_argument(
+        "--work",
+        type=Path,
+        default=None,
+        help="directory to clone and test in (default: a fresh private temporary directory; "
+        "pass one to reuse clones or to read a previous run's report)",
+    )
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--only", nargs="*", default=[])
     parser.add_argument("--timeout", type=int, default=1800, help="seconds per phase")
@@ -532,11 +538,18 @@ def main() -> int:
     )
     args = parser.parse_args()
     if args.print_pins:
+        if args.work is None:
+            parser.error("--print-pins needs --work, the directory of the run to read")
         return print_pins(args.work / "report")
     if not untrusted_code_allowed(args.run_untrusted_code, dict(os.environ)):
         print(REFUSAL_MESSAGE, file=sys.stderr, end="")
         return 2
     projects = load_manifest(args.manifest, args.only)
+    if args.work is None:
+        # A shared /tmp path could be pre-created by another local user, who
+        # would then own the tree this run clones into and executes from.
+        args.work = Path(tempfile.mkdtemp(prefix="towel-ecosystem-"))
+        print(f"work directory: {args.work}", flush=True)
     args.work.mkdir(parents=True, exist_ok=True)
     _lock_work_directory(args.work)
     report_dir = args.work / "report"
