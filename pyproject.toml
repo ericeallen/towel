@@ -91,6 +91,15 @@ files = ["src/towel", "tests/test_helpers.py", "tests/edge_case_values.py"]
 [tool.coverage.run]
 source = ["src/towel"]
 omit = ["*/tests/*", "*/__pycache__/*"]
+# Pair evaluation forks worker processes (src/towel/unification/parallel.py);
+# without multiprocessing tracing their bodies count as uncovered. Listing
+# "thread" as well keeps the threading hook, which coverage drops when the
+# list names only multiprocessing, so each worker's watchdog thread is traced
+# too. Each process writes its own data file, so `coverage combine` must
+# precede the report (see the justfile and .github/workflows/ci.yml).
+concurrency = ["thread", "multiprocessing"]
+parallel = true
+sigterm = true
 
 [tool.coverage.report]
 exclude_lines = [

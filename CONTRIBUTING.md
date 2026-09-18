@@ -145,8 +145,10 @@ pytest
 # Run specific test file
 pytest tests/test_file.py
 
-# Run with coverage
+# Run with coverage (pair evaluation forks workers, so each process writes
+# its own data file and `combine` must precede the report)
 coverage run -m pytest
+coverage combine
 coverage report --fail-under=85
 ```
 
