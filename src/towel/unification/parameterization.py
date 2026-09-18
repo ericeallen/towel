@@ -25,13 +25,13 @@ from __future__ import annotations
 
 import ast
 
-from typing import Dict, List, Sequence, Set, Tuple, cast
+from typing import Dict, List, Sequence, Set, Tuple
 from .parameters import fresh_parameter_name
 from .scope_analyzer import ScopeAnalyzer
 from ..diagnostics import UNIFIER
 
 from .substitution import Substitution
-from .binding_context import get_bound_variables_in_context, get_free_variables
+from .binding_context import bound_variables_in_block, get_free_variables
 from .unifier_state import UnifierState
 
 
@@ -123,14 +123,8 @@ class Parameterization(UnifierState):
         bound_vars_per_expr = []
         for idx, expr in zip(block_indices, exprs):
             if self.current_blocks and idx < len(self.current_blocks):
-                # Get the full block as context
-                block = self.current_blocks[idx]
                 # Find which variables in the expression are bound in the block context
-                # mypy: ast.Module expects list[ast.stmt]
-                typed_block = cast(List[ast.stmt], block)
-                bound_in_context = get_bound_variables_in_context(
-                    ast.Module(body=typed_block, type_ignores=[]), expr
-                )
+                bound_in_context = bound_variables_in_block(self.current_blocks[idx], expr)
                 # Get variables referenced in the expression
                 vars_in_expr = get_free_variables(expr)
                 # Intersection: bound variables that are actually used in expression
