@@ -95,12 +95,23 @@ class BlockAnalysis(EngineState):
         func: Optional[FunctionNode] = None,
         analyzer: Optional[ScopeAnalyzer] = None,
         path: Optional[str] = None,
+        *,
+        function_id: Optional[str] = None,
+        block_id: Optional[str] = None,
     ) -> bool:
-        """Evaluate a pure block guard once per (guard, function, block)."""
+        """Evaluate a pure block guard once per (guard, function, block).
+
+        A caller that evaluates several guards of one pair passes the
+        structural ids it computed once; otherwise they are computed here.
+        """
+        if function_id is None and func is not None:
+            function_id = self._sid([func])
+        if block_id is None:
+            block_id = self._sid(nodes)
         key = (
             guard,
-            self._sid([func]) if func is not None else None,
-            self._sid(nodes),
+            function_id,
+            block_id,
             self._module_digest(func) if analyzer is not None else None,
         )
         cached = self._block_guard_cache.get(key)
@@ -318,9 +329,16 @@ class BlockAnalysis(EngineState):
         func: FunctionNode,
         block_nodes: Sequence[ast.AST],
         compute: Callable[[], Any],
+        *,
+        function_id: Optional[str] = None,
+        block_id: Optional[str] = None,
     ) -> Any:
         """Compute an immutable per-(function, block) result once per analysis."""
-        key = (name, self._sid([func]), self._sid(block_nodes))
+        if function_id is None:
+            function_id = self._sid([func])
+        if block_id is None:
+            block_id = self._sid(block_nodes)
+        key = (name, function_id, block_id)
         if key not in self._per_block_cache:
             self._bounded_put(self._per_block_cache, key, compute())
         else:
@@ -333,6 +351,9 @@ class BlockAnalysis(EngineState):
         block_nodes: Sequence[ast.AST],
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
+        *,
+        function_id: Optional[str] = None,
+        block_id: Optional[str] = None,
     ) -> BlockBindingSnapshot:
         """Binding statistics for a block, computed once per (function, block)."""
         snapshot: BlockBindingSnapshot = self._per_block(
@@ -342,6 +363,8 @@ class BlockAnalysis(EngineState):
             lambda: self._compute_block_binding_snapshot(
                 func, block_nodes, block_range, reassignments
             ),
+            function_id=function_id,
+            block_id=block_id,
         )
         return snapshot
 

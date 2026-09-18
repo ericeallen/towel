@@ -216,6 +216,7 @@ class Clustering(EngineState):
         }
         # Template signature from block1
         tmpl_sig = extract_block_signature(pair.block1_nodes)
+        template_id = self._sid(pair.block1_nodes)
         func_def_dump = ast.dump(template.func_def)
 
         # Gather candidates from same file functions
@@ -233,6 +234,7 @@ class Clustering(EngineState):
             # known, whether it can share a method call (see below).
             candidate_class = self._method_class(fn, clsX, analyzerX)
             candidate_info = self._get_method_context(fn, candidate_class)
+            fn_id = self._sid([fn])
             # Skip the original two functions
             if fn.name in (pair.function1_name, pair.function2_name):
                 # Still scan, but avoid ranges we've already taken
@@ -253,17 +255,37 @@ class Clustering(EngineState):
                     continue
                 if not quick_filter(tmpl_sig, cand_sig):
                     continue
-                if self._block_rejected(requires_original_frame, cand_nodes, path=fpath):
-                    continue
-                if self._block_rejected(nested_bindings_escape, cand_nodes, fn):
-                    continue
+                # The candidate's structural ids, computed once for every
+                # guard and analysis below.
+                cand_id = self._sid(cand_nodes)
                 if self._block_rejected(
-                    snapshots_rebound_external_names, cand_nodes, fn, analyzerX
+                    requires_original_frame, cand_nodes, path=fpath, block_id=cand_id
                 ):
                     continue
-                if self._block_rejected(nested_scopes_cross_block_boundary, cand_nodes, fn):
+                if self._block_rejected(
+                    nested_bindings_escape, cand_nodes, fn, function_id=fn_id, block_id=cand_id
+                ):
                     continue
-                if self._block_rejected(moves_scope_declaration, cand_nodes, fn):
+                if self._block_rejected(
+                    snapshots_rebound_external_names,
+                    cand_nodes,
+                    fn,
+                    analyzerX,
+                    function_id=fn_id,
+                    block_id=cand_id,
+                ):
+                    continue
+                if self._block_rejected(
+                    nested_scopes_cross_block_boundary,
+                    cand_nodes,
+                    fn,
+                    function_id=fn_id,
+                    block_id=cand_id,
+                ):
+                    continue
+                if self._block_rejected(
+                    moves_scope_declaration, cand_nodes, fn, function_id=fn_id, block_id=cand_id
+                ):
                     continue
                 reassignX = self._get_assignment_reuse(fn)
                 if self._per_block(
@@ -271,10 +293,12 @@ class Clustering(EngineState):
                     fn,
                     cand_nodes,
                     lambda: has_reassignments_without_bindings(fn, cand_nodes, reassignX),
+                    function_id=fn_id,
+                    block_id=cand_id,
                 )[0]:
                     continue
                 candidate_snapshot = self._build_block_binding_snapshot(
-                    fn, cand_nodes, cand_range, reassignX
+                    fn, cand_nodes, cand_range, reassignX, function_id=fn_id, block_id=cand_id
                 )
                 if self._per_block(
                     "unbinds",
@@ -283,13 +307,15 @@ class Clustering(EngineState):
                     lambda: unbinds_external_name(
                         fn, cand_nodes, candidate_snapshot.bound_before_block
                     ),
+                    function_id=fn_id,
+                    block_id=cand_id,
                 ):
                     continue
                 # Try to unify template block with candidate
                 memo_key = (
-                    self._sid(pair.block1_nodes),
-                    self._sid(cand_nodes),
-                    self._sid([fn]),
+                    template_id,
+                    cand_id,
+                    fn_id,
                     self._module_digest(fn),
                     frozenset(template.free_vars),
                     frozenset(template.enclosing_names),

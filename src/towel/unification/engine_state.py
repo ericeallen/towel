@@ -342,6 +342,9 @@ class EngineState:
         func: Optional[FunctionNode] = None,
         analyzer: Optional[ScopeAnalyzer] = None,
         path: Optional[str] = None,
+        *,
+        function_id: Optional[str] = None,
+        block_id: Optional[str] = None,
     ) -> bool:
         """Provided by BlockAnalysis."""
         raise NotImplementedError
@@ -357,6 +360,9 @@ class EngineState:
         block_nodes: Sequence[ast.AST],
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
+        *,
+        function_id: Optional[str] = None,
+        block_id: Optional[str] = None,
     ) -> BlockBindingSnapshot:
         """Provided by BlockAnalysis."""
         raise NotImplementedError
@@ -400,6 +406,9 @@ class EngineState:
         func: FunctionNode,
         block_nodes: Sequence[ast.AST],
         compute: Callable[[], Any],
+        *,
+        function_id: Optional[str] = None,
+        block_id: Optional[str] = None,
     ) -> Any:
         """Provided by BlockAnalysis."""
         raise NotImplementedError

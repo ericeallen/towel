@@ -219,6 +219,12 @@ class _PairContext:
     # The analyzer discovered for block1's own function, before falling back to
     # the pair-provided analyzer; some downstream checks need the raw value.
     scope_analyzer1: Optional[ScopeAnalyzer]
+    # Structural ids of the functions and blocks, computed once: every guard
+    # and per-block analysis of the pair is memoized under them.
+    function1_id: Optional[str]
+    function2_id: Optional[str]
+    block1_id: str
+    block2_id: str
 
 
 def _align_return_variables(
@@ -363,7 +369,7 @@ class PairEvaluation(EngineState):
             VALIDATION.debug(f"Found func1: {ctx.func1 is not None}")
             VALIDATION.debug(f"Found func2: {ctx.func2 is not None}")
 
-        analysis = self._analyze_bindings(pair, ctx.func1, ctx.func2)
+        analysis = self._analyze_bindings(pair, ctx)
         if analysis is None:
             return None
         value_producing = self._check_shape(pair, analysis)
@@ -395,10 +401,14 @@ class PairEvaluation(EngineState):
 
     def _guard_pair(self, pair: CodeBlockPair, functions: FunctionIndex) -> Optional[_PairSetup]:
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
+        ctx = self._resolve_pair_context(pair, functions)
         if self._block_rejected(
-            requires_original_frame, pair.block1_nodes, path=pair.file_path
+            requires_original_frame, pair.block1_nodes, path=pair.file_path, block_id=ctx.block1_id
         ) or self._block_rejected(
-            requires_original_frame, pair.block2_nodes, path=pair.file_path2 or pair.file_path
+            requires_original_frame,
+            pair.block2_nodes,
+            path=pair.file_path2 or pair.file_path,
+            block_id=ctx.block2_id,
         ):
             self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
             return None
@@ -409,7 +419,6 @@ class PairEvaluation(EngineState):
             VALIDATION.debug(f"Block1 range: {pair.block1_range}")
             VALIDATION.debug(f"Block2 range: {pair.block2_range}")
 
-        ctx = self._resolve_pair_context(pair, functions)
         func1, func2 = ctx.func1, ctx.func2
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
 
@@ -417,13 +426,23 @@ class PairEvaluation(EngineState):
             func1 is not None
             and scope_analyzer is not None
             and self._block_rejected(
-                snapshots_rebound_external_names, pair.block1_nodes, func1, scope_analyzer
+                snapshots_rebound_external_names,
+                pair.block1_nodes,
+                func1,
+                scope_analyzer,
+                function_id=ctx.function1_id,
+                block_id=ctx.block1_id,
             )
         ) or (
             func2 is not None
             and scope_analyzer2 is not None
             and self._block_rejected(
-                snapshots_rebound_external_names, pair.block2_nodes, func2, scope_analyzer2
+                snapshots_rebound_external_names,
+                pair.block2_nodes,
+                func2,
+                scope_analyzer2,
+                function_id=ctx.function2_id,
+                block_id=ctx.block2_id,
             )
         ):
             self._debug_reject(RejectReason.REBOUND_EXTERNAL_BINDING, pair)
@@ -444,8 +463,24 @@ class PairEvaluation(EngineState):
             (nested_scopes_cross_block_boundary, RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY),
             (moves_scope_declaration, RejectReason.MOVES_SCOPE_DECLARATION),
         ):
-            if (func1 is not None and self._block_rejected(guard, pair.block1_nodes, func1)) or (
-                func2 is not None and self._block_rejected(guard, pair.block2_nodes, func2)
+            if (
+                func1 is not None
+                and self._block_rejected(
+                    guard,
+                    pair.block1_nodes,
+                    func1,
+                    function_id=ctx.function1_id,
+                    block_id=ctx.block1_id,
+                )
+            ) or (
+                func2 is not None
+                and self._block_rejected(
+                    guard,
+                    pair.block2_nodes,
+                    func2,
+                    function_id=ctx.function2_id,
+                    block_id=ctx.block2_id,
+                )
             ):
                 self._debug_reject(reason, pair)
                 return None
@@ -454,7 +489,7 @@ class PairEvaluation(EngineState):
     # -- 2 ---------------------------------------------------------------------
 
     def _analyze_bindings(
-        self, pair: CodeBlockPair, func1: Optional[FunctionNode], func2: Optional[FunctionNode]
+        self, pair: CodeBlockPair, ctx: "_PairContext"
     ) -> Optional[_BindingAnalysis]:
         """Each block's bindings within its function, and the variables it must return.
 
@@ -463,6 +498,7 @@ class PairEvaluation(EngineState):
         name bound before it. Without both functions there is nothing to
         analyze and the snapshots stay empty.
         """
+        func1, func2 = ctx.func1, ctx.func2
         if not (func1 and func2):
             return _BindingAnalysis(_EMPTY_SNAPSHOT, _EMPTY_SNAPSHOT, set(), set())
         debug_enabled = debugging(VALIDATION)
@@ -474,6 +510,8 @@ class PairEvaluation(EngineState):
             func1,
             pair.block1_nodes,
             lambda: has_reassignments_without_bindings(func1, pair.block1_nodes, reassignments1),
+            function_id=ctx.function1_id,
+            block_id=ctx.block1_id,
         )
         if has_unsafe1:
             self._debug_reject(
@@ -485,6 +523,8 @@ class PairEvaluation(EngineState):
             func2,
             pair.block2_nodes,
             lambda: has_reassignments_without_bindings(func2, pair.block2_nodes, reassignments2),
+            function_id=ctx.function2_id,
+            block_id=ctx.block2_id,
         )
         if has_unsafe2:
             self._debug_reject(
@@ -493,21 +533,35 @@ class PairEvaluation(EngineState):
             return None
 
         snapshot1 = self._build_block_binding_snapshot(
-            func1, pair.block1_nodes, pair.block1_range, reassignments1
+            func1,
+            pair.block1_nodes,
+            pair.block1_range,
+            reassignments1,
+            function_id=ctx.function1_id,
+            block_id=ctx.block1_id,
         )
         snapshot2 = self._build_block_binding_snapshot(
-            func2, pair.block2_nodes, pair.block2_range, reassignments2
+            func2,
+            pair.block2_nodes,
+            pair.block2_range,
+            reassignments2,
+            function_id=ctx.function2_id,
+            block_id=ctx.block2_id,
         )
         if self._per_block(
             "unbinds",
             func1,
             pair.block1_nodes,
             lambda: unbinds_external_name(func1, pair.block1_nodes, snapshot1.bound_before_block),
+            function_id=ctx.function1_id,
+            block_id=ctx.block1_id,
         ) or self._per_block(
             "unbinds",
             func2,
             pair.block2_nodes,
             lambda: unbinds_external_name(func2, pair.block2_nodes, snapshot2.bound_before_block),
+            function_id=ctx.function2_id,
+            block_id=ctx.block2_id,
         ):
             self._debug_reject(RejectReason.UNBINDS_EXTERNAL_NAME, pair)
             return None
@@ -1200,4 +1254,8 @@ class PairEvaluation(EngineState):
             scope_analyzer2=scope_analyzer2,
             root_scope=root_scope,
             scope_analyzer1=scope_analyzer1,
+            function1_id=self._sid([func1]) if func1 is not None else None,
+            function2_id=self._sid([func2]) if func2 is not None else None,
+            block1_id=self._sid(pair.block1_nodes),
+            block2_id=self._sid(pair.block2_nodes),
         )
