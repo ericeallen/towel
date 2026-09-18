@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import pathlib
 
+from tests.test_helpers import function_def
 from towel.unification.assignment_analyzer import (
     _collect_block_binding_stats,
     analyze_assignments,
@@ -14,14 +15,8 @@ from towel.unification.unifier import Unifier
 from towel.unification.substitution import Substitution
 
 
-def _function(source: str) -> ast.FunctionDef:
-    node = ast.parse(source).body[0]
-    assert isinstance(node, ast.FunctionDef)
-    return node
-
-
 def test_imports_inside_a_block_are_bindings() -> None:
-    function = _function(
+    function = function_def(
         "def f():\n"
         "    import json\n"
         "    import os.path\n"
@@ -35,7 +30,7 @@ def test_imports_inside_a_block_are_bindings() -> None:
 
 
 def test_an_import_after_an_assignment_is_a_reassignment() -> None:
-    function = _function("def f():\n    json = None\n    import json\n    return json\n")
+    function = function_def("def f():\n    json = None\n    import json\n    return json\n")
     reassignments = analyze_assignments(function)
     bound, reassigned = _collect_block_binding_stats(function.body[1:2], reassignments)
     assert bound == set()

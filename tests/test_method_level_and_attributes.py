@@ -1,12 +1,8 @@
 import tempfile
 from pathlib import Path
 
+from tests.test_helpers import write_file
 from towel.unification.refactor_engine import UnificationRefactorEngine
-
-
-def _write(p: Path, content: str):
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
 
 
 def test_method_level_analysis_includes_class_methods_and_param_on_attribute():
@@ -33,7 +29,7 @@ class User:
 
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / "user.py"
-        _write(src, code)
+        write_file(src, code)
 
         engine = UnificationRefactorEngine(min_lines=3)
         proposals = engine.analyze_file(str(src))
@@ -66,7 +62,7 @@ def b(xs):
 
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / "comp.py"
-        _write(src, code)
+        write_file(src, code)
 
         engine = UnificationRefactorEngine(min_lines=2)
         proposals = engine.analyze_file(str(src))

@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import ast
-from typing import cast
 
 import pytest
 
+from tests.test_helpers import function_def
 from towel.unification.thunk_inlining import inline_leading_thunks
 from towel.unification.substitution import Substitution
-
-
-def _helper(source: str) -> ast.FunctionDef:
-    return cast(ast.FunctionDef, ast.parse(source).body[0])
 
 
 def _substitution(*names: str) -> tuple[Substitution, dict[str, int]]:
@@ -24,7 +20,7 @@ def _substitution(*names: str) -> tuple[Substitution, dict[str, int]]:
 
 
 def _inline(source: str, *names: str) -> tuple[set[str], str]:
-    helper = _helper(source)
+    helper = function_def(source)
     substitution, order = _substitution(*names)
     inlined = inline_leading_thunks(helper, substitution, order)
     assert inlined == substitution.inlined_parameters

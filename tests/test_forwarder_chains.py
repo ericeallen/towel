@@ -13,35 +13,16 @@ helper would keep only the new call, one more layer with no logic of its own.
 
 from __future__ import annotations
 
-import ast
-import contextlib
-import io
 from pathlib import Path
 import textwrap
 from types import SimpleNamespace
 
-from towel.unification.refactor_engine import UnificationRefactorEngine
-
-
-def _write(tmp_path: Path, code: str) -> str:
-    path = tmp_path / "m.py"
-    path.write_text(textwrap.dedent(code))
-    return str(path)
-
-
-def _fixed_point(path: str, min_lines: int = 1, **engine_options: object) -> tuple[str, int]:
-    engine = UnificationRefactorEngine(min_lines=min_lines, **engine_options)  # type: ignore[arg-type]
-    with contextlib.redirect_stdout(io.StringIO()):
-        final, applied, _descriptions = engine.refactor_to_fixed_point(path, max_iterations=0)
-    return final, applied
-
-
-def _functions(source: str) -> dict[str, ast.FunctionDef]:
-    return {node.name: node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)}
-
-
-def _body(function: ast.FunctionDef) -> str:
-    return "\n".join(ast.unparse(statement) for statement in function.body)
+from tests.test_helpers import (
+    module_functions,
+    refactor_to_fixed_point_silently,
+    unparsed_body,
+    write_module,
+)
 
 
 def _summaries(source: str, names: list[str]) -> list[object]:
@@ -69,20 +50,20 @@ def _chain(count: int) -> str:
 
 def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) -> None:
     source = textwrap.dedent(_chain(12))
-    final, applied = _fixed_point(_write(tmp_path, source))
-    functions = _functions(final)
+    final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source))
+    functions = module_functions(final)
     helpers = [name for name in functions if name.startswith("__extracted_func")]
     assert helpers == ["__extracted_func_0"], "one helper serves every site"
     assert applied == 1
     for index in range(12):
-        assert _body(functions[f"f{index}"]).startswith("total = __extracted_func_0(order)")
+        assert unparsed_body(functions[f"f{index}"]).startswith("total = __extracted_func_0(order)")
     names = [f"f{index}" for index in range(12)]
     assert _summaries(final, names) == _summaries(source, names)
 
 
 def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: Path) -> None:
-    final, _applied = _fixed_point(
-        _write(
+    final, _applied = refactor_to_fixed_point_silently(
+        write_module(
             tmp_path,
             """
             def a(v):
@@ -106,19 +87,19 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
         ),
         3,
     )
-    functions = _functions(final)
+    functions = module_functions(final)
     assert [name for name in functions if name.startswith("__extracted_func")] == [
         "__extracted_func_0"
     ]
-    assert _body(functions["c"]) == "amount = __extracted_func_0(v)\nreturn f'c {amount}'"
+    assert unparsed_body(functions["c"]) == "amount = __extracted_func_0(v)\nreturn f'c {amount}'"
 
 
 def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> None:
     # The proposal built from the pair whose union of live names covers the
     # third site wins; a candidate reading a name its helper does not return
     # is declined for that helper (see ``align_return_variables``).
-    final, _applied = _fixed_point(
-        _write(
+    final, _applied = refactor_to_fixed_point_silently(
+        write_module(
             tmp_path,
             """
             def a(v):
@@ -142,17 +123,17 @@ def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> N
         ),
         3,
     )
-    functions = _functions(final)
+    functions = module_functions(final)
     assert [name for name in functions if name.startswith("__extracted_func")] == [
         "__extracted_func_0"
     ]
     for name in ("a", "b", "c"):
-        assert _body(functions[name]).startswith("tmp, total = __extracted_func_0(v)")
+        assert unparsed_body(functions[name]).startswith("tmp, total = __extracted_func_0(v)")
 
 
 def test_a_function_that_is_the_block_plus_its_return_is_reused(tmp_path: Path) -> None:
-    final, _applied = _fixed_point(
-        _write(
+    final, _applied = refactor_to_fixed_point_silently(
+        write_module(
             tmp_path,
             """
             def compute(v):
@@ -176,20 +157,21 @@ def test_a_function_that_is_the_block_plus_its_return_is_reused(tmp_path: Path) 
         ),
         3,
     )
-    functions = _functions(final)
+    functions = module_functions(final)
     assert set(functions) == {"compute", "show", "label"}, "no helper is emitted"
     assert (
-        _body(functions["compute"]) == "tmp = v + 1\nbase = tmp - 3\ntotal = base * 2\nreturn total"
+        unparsed_body(functions["compute"])
+        == "tmp = v + 1\nbase = tmp - 3\ntotal = base * 2\nreturn total"
     )
-    assert _body(functions["show"]) == "total = compute(v)\nreturn f'show {total}'"
-    assert _body(functions["label"]) == "amount = compute(w)\nreturn f'label {amount}'"
+    assert unparsed_body(functions["show"]) == "total = compute(v)\nreturn f'show {total}'"
+    assert unparsed_body(functions["label"]) == "amount = compute(w)\nreturn f'label {amount}'"
 
 
 def test_a_function_returning_the_names_in_another_order_is_reused_in_its_order(
     tmp_path: Path,
 ) -> None:
-    final, _applied = _fixed_point(
-        _write(
+    final, _applied = refactor_to_fixed_point_silently(
+        write_module(
             tmp_path,
             """
             def compute(v):
@@ -213,14 +195,14 @@ def test_a_function_returning_the_names_in_another_order_is_reused_in_its_order(
         ),
         3,
     )
-    functions = _functions(final)
+    functions = module_functions(final)
     assert set(functions) == {"compute", "show", "label"}, "no helper is emitted"
     assert (
-        _body(functions["compute"])
+        unparsed_body(functions["compute"])
         == "lo = v - 1\nhi = v + 1\nmid = (lo + hi) / 2\nreturn (lo, hi)"
     )
-    assert _body(functions["show"]) == "lo, hi = compute(v)\nreturn f'show {lo} {hi}'"
-    assert _body(functions["label"]) == "lo, hi = compute(v)\nreturn f'label {lo} {hi}'"
+    assert unparsed_body(functions["show"]) == "lo, hi = compute(v)\nreturn f'show {lo} {hi}'"
+    assert unparsed_body(functions["label"]) == "lo, hi = compute(v)\nreturn f'label {lo} {hi}'"
 
 
 GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT = """
@@ -240,26 +222,34 @@ def collect(items, offset):
 
 
 def test_a_generated_helper_is_not_reduced_to_a_forwarder(tmp_path: Path) -> None:
-    final, applied = _fixed_point(_write(tmp_path, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT), 3)
+    final, applied = refactor_to_fixed_point_silently(
+        write_module(tmp_path, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT), min_lines=3
+    )
     assert applied == 0
     assert (
-        _body(_functions(final)["__extracted_func_0"]) == "y = x + 10\nz = y ** 2\nresult.append(z)"
+        unparsed_body(module_functions(final)["__extracted_func_0"])
+        == "y = x + 10\nz = y ** 2\nresult.append(z)"
     )
 
 
 def test_the_forwarder_check_is_part_of_skipping_trivial_helpers(tmp_path: Path) -> None:
-    final, applied = _fixed_point(
-        _write(tmp_path, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT), 3, skip_trivial_helpers=False
+    final, applied = refactor_to_fixed_point_silently(
+        write_module(tmp_path, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT),
+        min_lines=3,
+        skip_trivial_helpers=False,
     )
     assert applied == 1
-    assert _body(_functions(final)["__extracted_func_0"]) == "__extracted_func_1(x, 10, result)"
+    assert (
+        unparsed_body(module_functions(final)["__extracted_func_0"])
+        == "__extracted_func_1(x, 10, result)"
+    )
 
 
 def test_a_user_named_function_may_specialize_the_new_helper(tmp_path: Path) -> None:
     # Only helpers this tool inserted are protected; a named function that
     # becomes a one-line specialization of the helper is a legitimate result.
-    final, applied = _fixed_point(
-        _write(
+    final, applied = refactor_to_fixed_point_silently(
+        write_module(
             tmp_path,
             GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.replace(
                 "__extracted_func_0", "square_shifted"
@@ -268,4 +258,7 @@ def test_a_user_named_function_may_specialize_the_new_helper(tmp_path: Path) -> 
         3,
     )
     assert applied == 1
-    assert _body(_functions(final)["square_shifted"]) == "__extracted_func_0(x, 10, result)"
+    assert (
+        unparsed_body(module_functions(final)["square_shifted"])
+        == "__extracted_func_0(x, 10, result)"
+    )

@@ -1,14 +1,9 @@
 import ast
 import unittest
 
+from tests.test_helpers import fix_locations
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution
-
-
-def _fix(nodes):
-    m = ast.Module(body=nodes, type_ignores=[])
-    ast.fix_missing_locations(m)
-    return m.body
 
 
 class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
@@ -22,7 +17,7 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
             ),
             ast.Return(value=ast.Name(id="res", ctx=ast.Load())),
         ]
-        block = _fix(block)
+        block = fix_locations(block)
 
         subst = Substitution()
         subst.param_expressions["__param_0"] = [
@@ -82,7 +77,7 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
                 )
             ),
         ]
-        block = _fix(block)
+        block = fix_locations(block)
         subst = Substitution()
         subst.param_expressions["__param_0"] = [
             (0, ast.Name(id="x", ctx=ast.Load())),

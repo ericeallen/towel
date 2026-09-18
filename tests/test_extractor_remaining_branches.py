@@ -1,6 +1,7 @@
 import ast
 import unittest
 
+from tests.test_helpers import fix_locations
 from towel.unification.extractor import (
     HygienicExtractor,
     contains_return,
@@ -10,12 +11,6 @@ from towel.unification.extractor import (
 from towel.unification.substitution import Substitution
 
 
-def _fix(block):
-    m = ast.Module(body=block, type_ignores=[])
-    ast.fix_missing_locations(m)
-    return m.body
-
-
 class TestExtractorRemainingBranches(unittest.TestCase):
     def test_single_return_variable_branch(self):
         # Block returns a single variable -> exercise single-return path (line ~199)
@@ -23,7 +18,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             ast.Assign(targets=[ast.Name("x", ast.Store())], value=ast.Constant(1)),
             ast.Return(value=ast.Name("x", ast.Load())),
         ]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         extractor = HygienicExtractor()
         func_def, order = extractor.extract_function(
@@ -55,7 +50,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 ],
             )
         ]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         subst.add_mapping(0, ast.Name("items", ast.Load()), "__param_0")
         subst.add_mapping(0, ast.Name("use", ast.Load()), "__param_1")
@@ -89,7 +84,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 ],
             ),
         )
-        block = _fix([comp])
+        block = fix_locations([comp])
         subst = Substitution()
         # Parameterize seq and conditions
         subst.add_mapping(0, ast.Name("seq", ast.Load()), "__param_0")
@@ -124,7 +119,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 targets=[ast.Name("final", ast.Store())], value=ast.Name("result", ast.Load())
             ),
         ]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         subst.add_mapping(0, ast.Name("x", ast.Load()), "__param_0")
         extractor = HygienicExtractor()
@@ -161,7 +156,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 value=ast.Name("val", ast.Load()),
             )
         ]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         subst.add_mapping(0, ast.Name("val", ast.Load()), "__param_0")
         extractor = HygienicExtractor()
@@ -183,7 +178,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             left=ast.Name("x", ast.Load()), op=ast.Add(), right=ast.Name("y", ast.Load())
         )
         block_raw = [ast.Assign(targets=[ast.Name("res", ast.Store())], value=expr)]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         subst.add_mapping(0, expr, "__param_0", bound_vars=["x", "y"])
         extractor = HygienicExtractor()
@@ -214,7 +209,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 ),
             ]
         )
-        block = _fix([ast.Assign(targets=[ast.Name("s", ast.Store())], value=fstr)])
+        block = fix_locations([ast.Assign(targets=[ast.Name("s", ast.Store())], value=fstr)])
         subst = Substitution()
         subst.add_mapping(0, ast.Name("x", ast.Load()), "__param_0")
         extractor = HygienicExtractor()
@@ -242,7 +237,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             body=[ast.Return(value=ast.Constant(1))],
             orelse=[],
         )
-        block = _fix([if_node])
+        block = fix_locations([if_node])
         self.assertTrue(contains_return(block))
         self.assertTrue(is_value_producing(block))
         self.assertFalse(has_complete_return_coverage(block))

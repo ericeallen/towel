@@ -1,12 +1,7 @@
-import ast
-import textwrap
 import unittest
 
+from tests.test_helpers import parse_block
 from towel.unification.unifier import Unifier
-
-
-def parse_block(src: str):
-    return ast.parse(textwrap.dedent(src)).body
 
 
 class TestUnifierBatch2(unittest.TestCase):

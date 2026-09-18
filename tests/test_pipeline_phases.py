@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 from typing import List
 
 import pytest
 
+from tests.test_helpers import PROJECT_ROOT, example_paths
 from towel.unification.pipeline import (
     parse_modules,
     analyze_scopes,
@@ -20,13 +20,6 @@ from towel.unification.pipeline import (
 )
 from towel.unification.models import ParsedModule
 from towel.unification.refactor_engine import UnificationRefactorEngine
-
-PROJECT_ROOT = Path(__file__).parent.parent
-EXAMPLES_DIR = PROJECT_ROOT / "test_examples"
-
-
-def example_paths(names: List[str]) -> List[str]:
-    return [str(EXAMPLES_DIR / n) for n in names]
 
 
 class TestParseModules:

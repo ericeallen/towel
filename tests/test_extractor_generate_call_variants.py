@@ -5,12 +5,6 @@ from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution
 
 
-def _fix(block):
-    m = ast.Module(body=block, type_ignores=[])
-    ast.fix_missing_locations(m)
-    return m.body
-
-
 class TestExtractorGenerateCallVariants(unittest.TestCase):
     def test_return_stmt_value_producing_without_return_vars(self):
         # Build a simple substitution/param_order and request a value-producing call
