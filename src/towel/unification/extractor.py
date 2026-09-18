@@ -24,7 +24,7 @@ Generates extracted functions while ensuring:
 
 import ast
 import copy
-from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
+from typing import List, Dict, Sequence, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
 from .substitution import Substitution
 from .definite_assignment import definitely_bound_after
 from .visitors import OwnScopeVisitor
@@ -779,7 +779,7 @@ class _ReturnFinder(OwnScopeVisitor):
         self.found_return = True
 
 
-def contains_return(block: List[ast.stmt]) -> bool:
+def contains_return(block: Sequence[ast.stmt]) -> bool:
     """
     Check if a block contains any return statements (including nested ones).
     """
@@ -792,7 +792,7 @@ def contains_return(block: List[ast.stmt]) -> bool:
     return False
 
 
-def is_value_producing(block: List[ast.stmt]) -> bool:
+def is_value_producing(block: Sequence[ast.stmt]) -> bool:
     """
     Check if a block of code produces a value.
 
@@ -815,7 +815,7 @@ def is_value_producing(block: List[ast.stmt]) -> bool:
     return False
 
 
-def has_complete_return_coverage(block: List[ast.stmt]) -> bool:
+def has_complete_return_coverage(block: Sequence[ast.stmt]) -> bool:
     """Whether a value-producing block returns on every path.
 
     Two conditions, both required. The shape the extractor renders: the last

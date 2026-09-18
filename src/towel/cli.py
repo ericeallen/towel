@@ -14,13 +14,13 @@ import os
 import sys
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, TypedDict, cast
+from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, TypedDict
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from towel.type_inference import TypeOracle
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, recover
-from towel.diagnostics import Settings, configure_stderr_logging
+from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.unification.models import ParameterKind
 from towel.unification.progress import DEFAULT_PROGRESS, normalize_progress
 
@@ -817,6 +817,49 @@ def _find_extracted_helpers(
     return sorted(helpers, key=lambda x: (str(x[0]), x[2]))
 
 
+def _change_record(value: object) -> Optional[ChangeRecord]:
+    """``value`` as a change record when it has exactly the sidecar's shape."""
+    if not isinstance(value, dict):
+        return None
+    file, line, before, after = (value.get(key) for key in ("file", "line", "before", "after"))
+    if (
+        isinstance(file, str)
+        and isinstance(line, int)
+        and isinstance(before, str)
+        and isinstance(after, str)
+    ):
+        return ChangeRecord(file=file, line=line, before=before, after=after)
+    return None
+
+
+def _read_change_sidecar(sidecar: Path) -> Dict[str, List[ChangeRecord]]:
+    """The call-site changes a ``dry`` run recorded, by helper; empty when absent or malformed.
+
+    The sidecar is Towel's own output, so a record of the wrong shape means
+    the file was edited or written by another version; it is reported and
+    the inventory proceeds without change records.
+    """
+    if not sidecar.is_file():
+        return {}
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    helpers = data.get("helpers") if isinstance(data, dict) else None
+    if not isinstance(helpers, dict):
+        return {}
+    changes: Dict[str, List[ChangeRecord]] = {}
+    for helper, records in helpers.items():
+        parsed = [
+            _change_record(record) for record in (records if isinstance(records, list) else [])
+        ]
+        if not isinstance(helper, str) or any(record is None for record in parsed):
+            LOG.warning("Ignoring malformed change records in %s", sidecar)
+            return {}
+        changes[helper] = [record for record in parsed if record is not None]
+    return changes
+
+
 def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) -> HelperInventory:
     """Describe every generated helper for a naming assistant.
 
@@ -828,15 +871,7 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
     rename the helper or one of its parameters.
     """
 
-    changes_by_helper: Dict[str, List[ChangeRecord]] = {}
-    sidecar = _change_sidecar_path(target)
-    if sidecar.is_file():
-        try:
-            data = json.loads(sidecar.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("helpers"), dict):
-                changes_by_helper = cast(Dict[str, List[ChangeRecord]], data["helpers"])
-        except (OSError, ValueError):
-            changes_by_helper = {}
+    changes_by_helper = _read_change_sidecar(_change_sidecar_path(target))
 
     wanted = {name for _, name, _, _ in helpers}
     modules: Dict[Path, Tuple[str, ast.Module]] = {}

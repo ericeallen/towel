@@ -132,8 +132,10 @@ class ExistingFunctionReuse(EngineState):
         parameters = self._positional_parameter_names(target.node)
         if parameters is None:
             return None
-        names = [arg.id if isinstance(arg, ast.Name) else None for arg in call.args]
-        if None in names or len(set(names)) != len(names):
+        if not all(isinstance(arg, ast.Name) for arg in call.args):
+            return None
+        names = [arg.id for arg in call.args if isinstance(arg, ast.Name)]
+        if len(set(names)) != len(names):
             return None
         if not set(parameters) <= set(names):
             return None
@@ -144,10 +146,10 @@ class ExistingFunctionReuse(EngineState):
         for index, name in enumerate(names):
             if name in parameters:
                 continue
-            binding = scope.lookup(cast(str, name))
+            binding = scope.lookup(name)
             if binding is not None and binding.scope_id != target.root_scope.scope_id:
                 return None
-            ambient[index] = (cast(str, name), binding)
+            ambient[index] = (name, binding)
         return _ReusePlan(
             parameter_positions=[names.index(parameter) for parameter in parameters],
             ambient=ambient,
@@ -327,20 +329,28 @@ class ExistingFunctionReuse(EngineState):
                 if position != index
             ]
             sites = [
-                functions.innermost_at(
-                    replacement.file_path or proposal.file_path, replacement.line_range
-                )
+                site
                 for replacement in others
+                if (
+                    site := functions.innermost_at(
+                        replacement.file_path or proposal.file_path, replacement.line_range
+                    )
+                )
+                is not None
             ]
-            if any(site is None for site in sites):
+            if len(sites) != len(others):
                 continue
             rewritten = [
-                self._call_to_existing_function(
-                    replacement, helper_name, target, plan, cast(FunctionArtifact, site)
-                )
+                rewritten_site
                 for replacement, site in zip(others, sites)
+                if (
+                    rewritten_site := self._call_to_existing_function(
+                        replacement, helper_name, target, plan, site
+                    )
+                )
+                is not None
             ]
-            if any(replacement is None for replacement in rewritten):
+            if len(rewritten) != len(others):
                 continue
             if not all(
                 self._existing_function_reachable(
@@ -354,13 +364,13 @@ class ExistingFunctionReuse(EngineState):
             }
             if would_create_import_cycle(target.file_path, participating, self.import_graph):
                 continue
-            callers = sorted({cast(FunctionArtifact, site).node.name for site in sites})
+            callers = sorted({site.node.name for site in sites})
             location = Path(target.file_path).name
             return dataclasses.replace(
                 proposal,
                 file_path=target.file_path,
                 extracted_function=cast(ast.FunctionDef, copy.deepcopy(target.node)),
-                replacements=cast(List[Replacement], rewritten),
+                replacements=rewritten,
                 description=(
                     f"Reuse {target.node.name} ({location}) for duplicated code in "
                     + ", ".join(callers)

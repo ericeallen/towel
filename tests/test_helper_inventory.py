@@ -160,3 +160,27 @@ def test_inventory_has_empty_changes_without_a_sidecar(tmp_path: Path) -> None:
     inventory = helper_inventory(target, _find_extracted_helpers(target, None, None))
     for entry in inventory["helpers"]:
         assert entry["changes"] == []
+
+
+def test_read_change_sidecar_accepts_only_its_own_shape(tmp_path: Path, caplog) -> None:
+    import json
+    import logging
+
+    from towel.cli import _read_change_sidecar
+
+    sidecar = tmp_path / "sidecar.json"
+    record = {"file": "m.py", "line": 3, "before": "x = 1", "after": "x = h()"}
+
+    sidecar.write_text(json.dumps({"helpers": {"h": [record]}}))
+    assert _read_change_sidecar(sidecar) == {"h": [record]}
+
+    assert _read_change_sidecar(tmp_path / "missing.json") == {}
+    sidecar.write_text("{not json")
+    assert _read_change_sidecar(sidecar) == {}
+    sidecar.write_text(json.dumps({"helpers": [record]}))
+    assert _read_change_sidecar(sidecar) == {}
+
+    with caplog.at_level(logging.WARNING, logger="towel"):
+        sidecar.write_text(json.dumps({"helpers": {"h": [{**record, "line": "3"}]}}))
+        assert _read_change_sidecar(sidecar) == {}
+    assert "malformed change records" in caplog.text

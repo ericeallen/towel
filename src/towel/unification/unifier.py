@@ -264,43 +264,39 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             # For loops: the target variable is bound
             # It can differ between blocks (like 'i' vs 'j') and that's OK
             # We just need to unify the structure, not the variable name
-            return self._unify_for_loop(
-                cast(List[ast.For], nodes), subst, cast(List[int], list(block_indices))
-            )
+            return self._unify_for_loop(cast(List[ast.For], nodes), subst, list(block_indices))
 
         # Special handling for Lambda: parameters are bindings (alpha-renaming)
         # lambda x: x * 2 and lambda y: y * 2 are equivalent (alpha-equivalent)
         # The parameter names should NOT be parameterized
         if isinstance(first_node, ast.Lambda):
-            return self._unify_lambda(
-                cast(List[ast.Lambda], nodes), subst, cast(List[int], list(block_indices))
-            )
+            return self._unify_lambda(cast(List[ast.Lambda], nodes), subst, list(block_indices))
 
         # Special handling for f-strings (JoinedStr)
         # F-string literal parts (Constant nodes) must NEVER be parameterized
         # Only the expressions inside FormattedValue can be parameterized
         if isinstance(first_node, ast.JoinedStr):
             return self._unify_joined_str(
-                cast(List[ast.JoinedStr], nodes), subst, cast(List[int], list(block_indices))
+                cast(List[ast.JoinedStr], nodes), subst, list(block_indices)
             )
 
         # Special handling for comprehensions: targets are bindings and may differ
         # Treat generator targets as alpha-equivalent like for-loop variables
         if isinstance(first_node, ast.ListComp):
             return self._unify_elt_comprehension(
-                cast(List[ast.ListComp], nodes), subst, cast(List[int], list(block_indices))
+                cast(List[ast.ListComp], nodes), subst, list(block_indices)
             )
         if isinstance(first_node, ast.SetComp):
             return self._unify_elt_comprehension(
-                cast(List[ast.SetComp], nodes), subst, cast(List[int], list(block_indices))
+                cast(List[ast.SetComp], nodes), subst, list(block_indices)
             )
         if isinstance(first_node, ast.DictComp):
             return self._unify_dict_comp(
-                cast(List[ast.DictComp], nodes), subst, cast(List[int], list(block_indices))
+                cast(List[ast.DictComp], nodes), subst, list(block_indices)
             )
         if isinstance(first_node, ast.GeneratorExp):
             return self._unify_elt_comprehension(
-                cast(List[ast.GeneratorExp], nodes), subst, cast(List[int], list(block_indices))
+                cast(List[ast.GeneratorExp], nodes), subst, list(block_indices)
             )
 
         # Annotated assignments: inside a function body the annotation is
@@ -308,25 +304,23 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # helper keeps the template's spelling.
         if isinstance(first_node, ast.AnnAssign):
             return self._unify_ann_assign(
-                cast(List[ast.AnnAssign], nodes), subst, cast(List[int], list(block_indices))
+                cast(List[ast.AnnAssign], nodes), subst, list(block_indices)
             )
 
         # Special handling for with-statements: optional_vars are bindings
         if isinstance(first_node, ast.With):
-            return self._unify_with(
-                cast(List[ast.With], nodes), subst, cast(List[int], list(block_indices))
-            )
+            return self._unify_with(cast(List[ast.With], nodes), subst, list(block_indices))
 
         # Special handling for except handlers: name is a binding identifier
         if isinstance(first_node, ast.ExceptHandler):
             return self._unify_except_handler(
-                cast(List[ast.ExceptHandler], nodes), subst, cast(List[int], list(block_indices))
+                cast(List[ast.ExceptHandler], nodes), subst, list(block_indices)
             )
 
         # Special handling for walrus operator: target is a binding (alpha-equivalent)
         if isinstance(first_node, ast.NamedExpr):
             return self._unify_named_expr(
-                cast(List[ast.NamedExpr], nodes), subst, cast(List[int], list(block_indices))
+                cast(List[ast.NamedExpr], nodes), subst, list(block_indices)
             )
 
         # For each field in the node
