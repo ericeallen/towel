@@ -113,3 +113,46 @@ def test_signature_leaves_nested_scopes_out_but_counts_around_them() -> None:
     assert signature.has_with and not signature.has_try
     assert signature.call_count == 2
     assert signature.name_store_count == 3
+
+
+def _reference_similarity(
+    block1: Sequence[ast.AST], block2: Sequence[ast.AST], threshold: float = 0.6
+) -> bool:
+    """The structural-similarity check as it walked both blocks per call."""
+    from collections import Counter
+
+    if len(block1) != len(block2):
+        return False
+    total_nodes = 0
+    matching_nodes = 0
+    for stmt1, stmt2 in zip(block1, block2):
+        nodes1 = list(ast.walk(stmt1))
+        nodes2 = list(ast.walk(stmt2))
+        if abs(len(nodes1) - len(nodes2)) / max(len(nodes1), len(nodes2)) > 0.3:
+            return False
+        counter1 = Counter(type(n).__name__ for n in nodes1)
+        counter2 = Counter(type(n).__name__ for n in nodes2)
+        total_nodes += max(len(nodes1), len(nodes2))
+        matching_nodes += sum((counter1 & counter2).values())
+    if total_nodes == 0:
+        return False
+    return matching_nodes / total_nodes >= threshold
+
+
+def test_memoized_similarity_matches_the_per_call_walk() -> None:
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    engine = UnificationRefactorEngine()
+    blocks: List[List[ast.stmt]] = []
+    for path in sorted(SOURCE_ROOT.rglob("*.py"))[:12]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for statements in _statement_lists(tree):
+            blocks.extend(_contiguous_blocks(statements, longest=3))
+    assert len(blocks) > 100
+    verdicts = {True: 0, False: 0}
+    for index, block1 in enumerate(blocks[:400]):
+        for block2 in blocks[index + 1 : index + 40]:
+            expected = _reference_similarity(block1, block2)
+            assert engine._are_structurally_similar(block1, block2) == expected
+            verdicts[expected] += 1
+    assert verdicts[True] and verdicts[False]

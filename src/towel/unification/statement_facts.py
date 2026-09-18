@@ -26,6 +26,7 @@ engine's other node-identity caches too.
 from __future__ import annotations
 
 import ast
+from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Sequence, TypeVar
 from weakref import WeakKeyDictionary
@@ -120,4 +121,32 @@ def block_contains_return(block: Sequence[ast.AST]) -> bool:
     return any(statement_facts(statement).contains_return for statement in block)
 
 
-__all__ = ["StatementFacts", "block_contains_return", "statement_facts"]
+@dataclass(frozen=True)
+class StatementShape:
+    """How many nodes of each type one statement holds, nested scopes included."""
+
+    node_count: int
+    type_counts: "Counter[str]"
+    """Shared between callers; never mutated."""
+
+
+def _compute_shape(statement: ast.AST) -> StatementShape:
+    type_counts = Counter(type(node).__name__ for node in ast.walk(statement))
+    return StatementShape(node_count=sum(type_counts.values()), type_counts=type_counts)
+
+
+_SHAPES: "WeakKeyDictionary[ast.AST, StatementShape]" = WeakKeyDictionary()
+
+
+def statement_shape(statement: ast.AST) -> StatementShape:
+    """The shape of one statement, computed on first request."""
+    return _memoized(_SHAPES, statement, _compute_shape)
+
+
+__all__ = [
+    "StatementFacts",
+    "StatementShape",
+    "block_contains_return",
+    "statement_facts",
+    "statement_shape",
+]

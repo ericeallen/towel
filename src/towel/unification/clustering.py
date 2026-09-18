@@ -38,6 +38,7 @@ from .models import FunctionNode, Replacement
 from .orphan_detector import orphaned_variables
 from .overlap import line_ranges_intersect
 from .scope_analyzer import ScopeAnalyzer
+from .statement_facts import statement_shape
 from .semantic_safety import (
     defer_impure_parameters,
     has_impure_eager_parameters,
@@ -368,27 +369,19 @@ class Clustering(EngineState):
         total_nodes = 0
         matching_nodes = 0
 
+        # Each statement's node count and type histogram are memoized per
+        # statement: a block is compared against every candidate it pairs with.
         for stmt1, stmt2 in zip(block1, block2):
-            # Compare AST structure
-            nodes1 = list(ast.walk(stmt1))
-            nodes2 = list(ast.walk(stmt2))
+            shape1 = statement_shape(stmt1)
+            shape2 = statement_shape(stmt2)
 
             # Must have similar number of nodes
-            if abs(len(nodes1) - len(nodes2)) / max(len(nodes1), len(nodes2)) > 0.3:
+            total = max(shape1.node_count, shape2.node_count)
+            if abs(shape1.node_count - shape2.node_count) / total > 0.3:
                 return False
 
-            # Count matching node types
-            types1 = [type(n).__name__ for n in nodes1]
-            types2 = [type(n).__name__ for n in nodes2]
-
             # Count common types
-            from collections import Counter
-
-            counter1 = Counter(types1)
-            counter2 = Counter(types2)
-
-            common = sum((counter1 & counter2).values())
-            total = max(len(types1), len(types2))
+            common = sum((shape1.type_counts & shape2.type_counts).values())
 
             total_nodes += total
             matching_nodes += common
