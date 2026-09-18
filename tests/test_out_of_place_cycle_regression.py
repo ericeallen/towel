@@ -116,3 +116,51 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSiblingOriginalRegression(unittest.TestCase):
+    """The out-of-place output sits *beside* the original clone, as the ecosystem
+    harness lays it out (``sphinx`` next to ``sphinx-cleaned``).
+
+    A submodule's absolute import of its own package (``from sphinx.transforms
+    import SphinxTransform``) then resolved against the original, where the
+    helper import that closes the cycle did not yet exist, so the guard let
+    ``transforms/__init__`` import a submodule that imports the package back.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="towel-sibling-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.pkg = self.tmp / "sphinx"
+        transforms = self.pkg / "transforms"
+        transforms.mkdir(parents=True)
+        (self.pkg / "__init__.py").write_text("", encoding="utf-8")
+        (transforms / "__init__.py").write_text(
+            "class SphinxTransform:\n    pass\n\n"
+            "def t1(seq, factor):\n" + _SHARED + "\ndef t2(seq, factor):\n" + _SHARED,
+            encoding="utf-8",
+        )
+        (transforms / "compact.py").write_text(
+            "from sphinx.transforms import SphinxTransform\n\n"
+            "def c1(seq, factor):\n" + _SHARED + "\ndef c2(seq, factor):\n" + _SHARED,
+            encoding="utf-8",
+        )
+
+    def test_adopted_package_imports_without_cycle(self) -> None:
+        cleaned = self.tmp / "sphinx-cleaned"  # the harness's sibling layout
+        UnificationRefactorEngine().refactor_directory_to_fixed_point(
+            str(self.pkg), str(cleaned), max_iterations=0, progress="none"
+        )
+        shutil.rmtree(self.pkg)
+        shutil.copytree(cleaned, self.pkg)
+        init_source = (self.pkg / "transforms" / "__init__.py").read_text(encoding="utf-8")
+        self.assertNotRegex(init_source, r"from \.compact import")
+        result = subprocess.run(
+            [sys.executable, "-c", "import sphinx.transforms.compact"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            env={"PYTHONDONTWRITEBYTECODE": "1", "PATH": ""},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertNotIn("circular import", result.stderr)
