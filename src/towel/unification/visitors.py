@@ -22,7 +22,7 @@ readability and enable a clearer compiler-like pipeline structure.
 from __future__ import annotations
 
 import ast
-from typing import Callable, List, Optional, Set, Tuple, Union, Literal, Sequence, TypeVar
+from typing import Callable, Iterable, List, Optional, Set, Tuple, Union, Literal, Sequence, TypeVar
 
 MethodKind = Literal["instance", "classmethod", "staticmethod"]
 T = TypeVar("T")
@@ -369,3 +369,21 @@ def _compute_indent(source: str, lineno: int) -> str:
     index = max(0, min(len(lines) - 1, lineno - 1))
     line = lines[index] if lines else ""
     return line[: len(line) - len(line.lstrip())]
+
+
+def visit_each(visitor: ast.NodeVisitor, nodes: Iterable[ast.AST]) -> None:
+    """Visit every node in turn; the visitor accumulates whatever it collects."""
+    for node in nodes:
+        visitor.visit(node)
+
+
+def visit_comprehension_result(
+    visitor: ast.NodeVisitor,
+    node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp],
+) -> None:
+    """Visit what a comprehension produces: the key and value of a dict, else the element."""
+    if isinstance(node, ast.DictComp):
+        visitor.visit(node.key)
+        visitor.visit(node.value)
+    else:
+        visitor.visit(node.elt)

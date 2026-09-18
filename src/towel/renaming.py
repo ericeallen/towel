@@ -20,6 +20,7 @@ from typing import Iterable, Sequence
 from .changes import ChangePlan
 from .unification.project_layout import ProjectLayout
 from .unification.semantic_safety import is_namespace_access_call
+from .unification.visitors import visit_comprehension_result
 
 Function = ast.FunctionDef | ast.AsyncFunctionDef
 
@@ -107,11 +108,7 @@ class _Bindings(ast.NodeVisitor):
             self.visit(generator.iter)
             for condition in generator.ifs:
                 self.visit(condition)
-        if isinstance(node, ast.DictComp):
-            self.visit(node.key)
-            self.visit(node.value)
-        else:
-            self.visit(node.elt)
+        visit_comprehension_result(self, node)
 
     visit_SetComp = visit_ListComp
     visit_DictComp = visit_ListComp
@@ -205,11 +202,7 @@ class _Scopes(ast.NodeVisitor):
                 self.visit(generator.iter)
             for condition in generator.ifs:
                 self.visit(condition)
-        if isinstance(node, ast.DictComp):
-            self.visit(node.key)
-            self.visit(node.value)
-        else:
-            self.visit(node.elt)
+        visit_comprehension_result(self, node)
         self.current = previous
 
     visit_SetComp = visit_ListComp

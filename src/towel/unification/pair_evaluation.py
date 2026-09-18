@@ -330,6 +330,19 @@ def _fresh_parameter_name(
 class PairEvaluation(EngineState):
     """From a candidate pair to a verified proposal; see the module docstring."""
 
+    def _reject(
+        self,
+        pair: CodeBlockPair,
+        reason: RejectReason,
+        detail: Optional[str] = None,
+        trace: Optional[str] = None,
+    ) -> None:
+        """Decline ``pair``: note ``trace`` in the validation log and ``reason`` in the rejection log."""
+        if trace is not None and debugging(VALIDATION):
+            VALIDATION.debug(trace)
+        self._debug_reject(reason, pair, detail)
+        return None
+
     def _try_refactor_pair_multi_file(
         self,
         pair: CodeBlockPair,
@@ -550,20 +563,26 @@ class PairEvaluation(EngineState):
             if analysis.return_variables2:
                 VALIDATION.debug(f"  Block2 has return_variables: {analysis.return_variables2}")
         if value_prod1 != value_prod2:
-            if debug_enabled:
-                VALIDATION.debug("  REJECTED: Value-producing mismatch")
-            self._debug_reject(RejectReason.VALUE_PRODUCING_MISMATCH, pair)
+            self._reject(
+                pair,
+                RejectReason.VALUE_PRODUCING_MISMATCH,
+                trace="  REJECTED: Value-producing mismatch",
+            )
             return None
         if value_prod1 and not analysis.return_variables1:
             if not has_complete_return_coverage(cast(List[ast.stmt], pair.block1_nodes)):
-                if debug_enabled:
-                    VALIDATION.debug("  REJECTED: Block1 missing complete return coverage")
-                self._debug_reject(RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK1, pair)
+                self._reject(
+                    pair,
+                    RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK1,
+                    trace="  REJECTED: Block1 missing complete return coverage",
+                )
                 return None
             if not has_complete_return_coverage(cast(List[ast.stmt], pair.block2_nodes)):
-                if debug_enabled:
-                    VALIDATION.debug("  REJECTED: Block2 missing complete return coverage")
-                self._debug_reject(RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2, pair)
+                self._reject(
+                    pair,
+                    RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2,
+                    trace="  REJECTED: Block2 missing complete return coverage",
+                )
                 return None
         if _is_trivial_return_of_bound_name(
             pair.block1_nodes,
@@ -574,16 +593,18 @@ class PairEvaluation(EngineState):
             analysis.snapshot2.bound_before_block,
             analysis.snapshot2.bound_in_block,
         ):
-            if debug_enabled:
-                VALIDATION.debug(
-                    "  REJECTED: Trivial single-line return blocks (prefer extracting computation)"
-                )
-            self._debug_reject(RejectReason.TRIVIAL_RETURN_BLOCKS, pair)
+            self._reject(
+                pair,
+                RejectReason.TRIVIAL_RETURN_BLOCKS,
+                trace="  REJECTED: Trivial single-line return blocks (prefer extracting computation)",
+            )
             return None
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
-            if debug_enabled:
-                VALIDATION.debug("  REJECTED: Not structurally similar")
-            self._debug_reject(RejectReason.NOT_STRUCTURALLY_SIMILAR, pair)
+            self._reject(
+                pair,
+                RejectReason.NOT_STRUCTURALLY_SIMILAR,
+                trace="  REJECTED: Not structurally similar",
+            )
             return None
         return value_prod1
 
@@ -600,9 +621,11 @@ class PairEvaluation(EngineState):
             blocks, hygienic_renames, (pair.file_path, pair.file_path2 or pair.file_path)
         )
         if not substitution:
-            if debug_enabled:
-                VALIDATION.debug("  REJECTED: Unification failed (no substitution)")
-            self._debug_reject(RejectReason.UNIFICATION_FAILED, pair)
+            self._reject(
+                pair,
+                RejectReason.UNIFICATION_FAILED,
+                trace="  REJECTED: Unification failed (no substitution)",
+            )
             return None
         if debug_enabled:
             VALIDATION.debug("  ✓ Unification successful")

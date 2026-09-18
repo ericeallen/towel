@@ -210,20 +210,16 @@ class BindingContextFinder(ast.NodeVisitor):
         else:
             self.generic_visit(node)
 
-    def visit_ListComp(self, node: ast.ListComp) -> None:
-        # CRITICAL: Comprehension variables must be bound when visiting elt
-        # [r.get_value() for r in results] - 'r' must be bound before visiting r.get_value()
+    def visit_ListComp(self, node: Union[ast.ListComp, ast.SetComp, ast.GeneratorExp]) -> None:
+        # Comprehension variables must be bound when visiting the element:
+        # in [r.get_value() for r in results], 'r' is bound before r.get_value().
         if self._contains_target(node):
             self._visit_comprehension_node(node, lambda: self.visit(node.elt))
         else:
             self.generic_visit(node)
 
-    def visit_SetComp(self, node: ast.SetComp) -> None:
-        # CRITICAL: Comprehension variables must be bound when visiting elt
-        if self._contains_target(node):
-            self._visit_comprehension_node(node, lambda: self.visit(node.elt))
-        else:
-            self.generic_visit(node)
+    visit_SetComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
 
     def visit_DictComp(self, node: ast.DictComp) -> None:
         # CRITICAL: Comprehension variables must be bound when visiting key and value
@@ -234,13 +230,6 @@ class BindingContextFinder(ast.NodeVisitor):
                 self.visit(node.value)
 
             self._visit_comprehension_node(node, visit_entries)
-        else:
-            self.generic_visit(node)
-
-    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
-        # CRITICAL: Comprehension variables must be bound when visiting elt
-        if self._contains_target(node):
-            self._visit_comprehension_node(node, lambda: self.visit(node.elt))
         else:
             self.generic_visit(node)
 
@@ -924,11 +913,11 @@ class Unifier:
         # Special handling for comprehensions: targets are bindings and may differ
         # Treat generator targets as alpha-equivalent like for-loop variables
         if isinstance(first_node, ast.ListComp):
-            return self._unify_list_comp(
+            return self._unify_elt_comprehension(
                 cast(List[ast.ListComp], nodes), subst, cast(List[int], list(block_indices))
             )
         if isinstance(first_node, ast.SetComp):
-            return self._unify_set_comp(
+            return self._unify_elt_comprehension(
                 cast(List[ast.SetComp], nodes), subst, cast(List[int], list(block_indices))
             )
         if isinstance(first_node, ast.DictComp):
@@ -936,7 +925,7 @@ class Unifier:
                 cast(List[ast.DictComp], nodes), subst, cast(List[int], list(block_indices))
             )
         if isinstance(first_node, ast.GeneratorExp):
-            return self._unify_generator_exp(
+            return self._unify_elt_comprehension(
                 cast(List[ast.GeneratorExp], nodes), subst, cast(List[int], list(block_indices))
             )
 
@@ -1034,33 +1023,21 @@ class Unifier:
 
         return True
 
-    def _unify_list_comp(
-        self, nodes: List[ast.ListComp], subst: Substitution, block_indices: List[int]
+    def _unify_elt_comprehension(
+        self,
+        nodes: Sequence[Union[ast.ListComp, ast.SetComp, ast.GeneratorExp]],
+        subst: Substitution,
+        block_indices: List[int],
     ) -> bool:
-        """
-        Unify ListComp nodes with alpha-renaming of generator targets.
+        """Unify comprehensions that produce one element, with alpha-renamed generator targets.
 
-        For a list comprehension, variables bound in each generator's target are
-        bindings (like for-loop variables) and can differ across blocks. We
-        establish temporary alpha-renamings using the first block as canonical,
-        unify all generators under those mappings, then unify the element.
+        Variables bound in each generator's target are bindings (like loop
+        variables) and may differ across blocks: temporary alpha-renamings use
+        the first block as canonical, every generator unifies under them, and
+        then the element does.
         """
         if not nodes:
             return False
-
-        return self._unify_comprehension_core(
-            nodes,
-            subst,
-            block_indices,
-            lambda: self._unify_nodes([n.elt for n in nodes], subst, block_indices),
-        )
-
-    def _unify_set_comp(
-        self, nodes: List[ast.SetComp], subst: Substitution, block_indices: List[int]
-    ) -> bool:
-        if not nodes:
-            return False
-
         return self._unify_comprehension_core(
             nodes,
             subst,
@@ -1102,19 +1079,6 @@ class Unifier:
             block_indices,
             lambda: self._unify_nodes([n.key for n in nodes], subst, block_indices)
             and self._unify_nodes([n.value for n in nodes], subst, block_indices),
-        )
-
-    def _unify_generator_exp(
-        self, nodes: List[ast.GeneratorExp], subst: Substitution, block_indices: List[int]
-    ) -> bool:
-        if not nodes:
-            return False
-
-        return self._unify_comprehension_core(
-            nodes,
-            subst,
-            block_indices,
-            lambda: self._unify_nodes([n.elt for n in nodes], subst, block_indices),
         )
 
     def _unify_with(

@@ -21,6 +21,7 @@ from typing import Callable, Dict, Set, List, Optional, Tuple, Union, FrozenSet
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 from .parameters import parameter_names, parameter_nodes
+from .visitors import visit_comprehension_result
 
 
 @dataclass(frozen=True)
@@ -321,11 +322,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                 self.visit(generator.iter)
             for condition in generator.ifs:
                 self.visit(condition)
-        if isinstance(node, ast.DictComp):
-            self.visit(node.key)
-            self.visit(node.value)
-        else:
-            self.visit(node.elt)
+        visit_comprehension_result(self, node)
         self._exit_scope()
 
     visit_ListComp = _visit_comprehension_scope
@@ -625,11 +622,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
                         )
                         for condition in generator.ifs:
                             self.visit(condition)
-                    if isinstance(node, ast.DictComp):
-                        self.visit(node.key)
-                        self.visit(node.value)
-                    else:
-                        self.visit(node.elt)
+                    visit_comprehension_result(self, node)
 
                 self._with_new_scope(set(), visit_body)
 

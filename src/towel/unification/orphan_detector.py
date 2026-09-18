@@ -23,6 +23,7 @@ import ast
 from typing import List, Set, Tuple, cast
 
 from .definite_assignment import definitely_bound_before_each
+from .visitors import visit_each
 
 
 def _apply_visitor_to_nodes(
@@ -48,8 +49,7 @@ def _apply_visitor_to_nodes(
         get_bound_variables() and get_used_variables() was successfully extracted,
         validated with 100% test passage, and incorporated into the codebase.
     """
-    for node in nodes:
-        visitor.visit(node)
+    visit_each(visitor, nodes)
     return result_set
 
 

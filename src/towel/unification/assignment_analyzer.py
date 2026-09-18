@@ -339,7 +339,7 @@ def _collect_bindings_and_reassignments(
             # ``frame, stmts = self.lookup(name)`` read after the block).
             destination = reassigned_vars if reassignments.get(id(node), False) else bound_vars
             for target in node.targets:
-                destination.update(_stored_names(target))
+                destination.update(stored_names(target))
             self.generic_visit(node)
 
         def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
@@ -399,7 +399,7 @@ def _collect_bindings_and_reassignments(
             # With statement 'as' clauses create bindings, including unpacked ones
             for item in node.items:
                 if item.optional_vars:
-                    bound_vars.update(_stored_names(item.optional_vars))
+                    bound_vars.update(stored_names(item.optional_vars))
             self.generic_visit(node)
 
         def visit_Match(self, node: ast.Match) -> None:
@@ -420,7 +420,7 @@ def _collect_bindings_and_reassignments(
     collector.visit(node)
 
 
-def _stored_names(target: ast.AST) -> Set[str]:
+def stored_names(target: ast.AST) -> Set[str]:
     """Names an assignment target binds: a name, or every name inside a tuple, list or star."""
     return {
         node.id

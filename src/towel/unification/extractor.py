@@ -515,30 +515,25 @@ class HygienicExtractor:
                 In 'for target in iter: body', the 'target' is a BINDING occurrence
                 and should NOT be replaced with a parameter.
                 """
-                # Transform the iterator (can contain parameterized expressions)
-                new_iter = cast(ast.expr, self.visit(node.iter))
-
-                # Don't transform the target (loop variable) - it's a binding
-                new_target = node.target
-                for var_name in self._variables_from_target(node.target):
-                    self._mark_shadowed(var_name)
-
-                # Transform the body
-                new_body = self._visit_branch_statements(node.body)
-                new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
-
-                return ast.For(target=new_target, iter=new_iter, body=new_body, orelse=new_orelse)
+                new_iter, new_body, new_orelse = self._loop_parts(node)
+                return ast.For(target=node.target, iter=new_iter, body=new_body, orelse=new_orelse)
 
             def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
+                new_iter, new_body, new_orelse = self._loop_parts(node)
+                return ast.AsyncFor(
+                    target=node.target, iter=new_iter, body=new_body, orelse=new_orelse
+                )
+
+            def _loop_parts(
+                self, node: Union[ast.For, ast.AsyncFor]
+            ) -> Tuple[ast.expr, List[ast.stmt], List[ast.stmt]]:
+                """The transformed iterator, body, and else of a loop; its target is a binding and stays."""
                 new_iter = cast(ast.expr, self.visit(node.iter))
-                new_target = node.target
                 for var_name in self._variables_from_target(node.target):
                     self._mark_shadowed(var_name)
                 new_body = self._visit_branch_statements(node.body)
                 new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
-                return ast.AsyncFor(
-                    target=new_target, iter=new_iter, body=new_body, orelse=new_orelse
-                )
+                return new_iter, new_body, new_orelse
 
             def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
                 """

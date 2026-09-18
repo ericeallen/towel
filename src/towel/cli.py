@@ -465,28 +465,30 @@ def _import_sorter(project_path: "Path") -> Optional[Callable[[str, str], str]]:
     return choice.tool
 
 
+def _existing_target(path: str) -> Tuple[bool, bool]:
+    """``(is_file, is_dir)`` for a path the command may work on; exits with a message otherwise."""
+    import os
+
+    if not os.path.exists(path):
+        print(f"Error: '{path}' does not exist")
+        sys.exit(1)
+    is_file, is_dir = os.path.isfile(path), os.path.isdir(path)
+    if not is_file and not is_dir:
+        print(f"Error: '{path}' is neither a file nor a directory")
+        sys.exit(1)
+    return is_file, is_dir
+
+
 def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     # Import here to avoid loading heavy modules if not needed
-    import os
     from towel.filesystem import copy_project
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
     input_path = args.input
     output_path = args.output
 
-    # Check if input exists
-    if not os.path.exists(input_path):
-        print(f"Error: '{input_path}' does not exist")
-        sys.exit(1)
-
-    # Determine if it's a file or directory
-    is_file = os.path.isfile(input_path)
-    is_dir = os.path.isdir(input_path)
-
-    if not is_file and not is_dir:
-        print(f"Error: '{input_path}' is neither a file nor a directory")
-        sys.exit(1)
+    is_file, is_dir = _existing_target(input_path)
 
     # Check input file extension for single files
     if is_file and not input_path.endswith(".py"):
@@ -591,17 +593,7 @@ def _run_preview(args: argparse.Namespace) -> None:
 
     target = args.target
 
-    # Check if target exists
-    if not os.path.exists(target):
-        print(f"Error: '{target}' does not exist")
-        sys.exit(1)
-
-    is_file = os.path.isfile(target)
-    is_dir = os.path.isdir(target)
-
-    if not is_file and not is_dir:
-        print(f"Error: '{target}' is neither a file nor a directory")
-        sys.exit(1)
+    is_file, is_dir = _existing_target(target)
 
     # Create engine
     engine = UnificationRefactorEngine(

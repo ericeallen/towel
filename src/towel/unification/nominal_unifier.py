@@ -44,6 +44,7 @@ from typing import Dict, List, Set, Optional, Tuple, cast
 from dataclasses import dataclass, field
 
 from .binding_detector import Binding, detect_bindings
+from .visitors import visit_each
 
 
 @dataclass
@@ -370,6 +371,5 @@ def _record_binding_sites(
 def _gather_variables_in_order(
     block: List[ast.AST], collector: ast.NodeVisitor, ordered: List[str]
 ) -> List[str]:
-    for stmt in block:
-        collector.visit(stmt)
+    visit_each(collector, block)
     return ordered

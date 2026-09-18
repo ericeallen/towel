@@ -79,23 +79,11 @@ class Clustering(EngineState):
         so the caller memoizes it on exactly those.
         """
         pair = template.pair
-        fpath = candidate.file_path
-        fn = candidate.function
-        analyzerX = candidate.analyzer
-        cand_nodes = candidate.nodes
-        candidate_snapshot = candidate.snapshot
-        free_vars = template.free_vars
-        enclosing_names = template.enclosing_names
-        value_prod1 = template.is_value_producing
-        globals_to_declare_in_extracted = template.globals_to_declare
-        nonlocals_to_declare_in_extracted = template.nonlocals_to_declare
-        func_def = template.func_def
-        func_def_dump = template.func_def_dump
-        param_order = template.param_order
-        helper_preamble_length = template.preamble_length
         cluster_renames: List[Dict[str, str]] = [{}, {}]
         subst2 = self._unify_memoized(
-            [pair.block1_nodes, cand_nodes], cluster_renames, (pair.file_path, fpath)
+            [pair.block1_nodes, candidate.nodes],
+            cluster_renames,
+            (pair.file_path, candidate.file_path),
         )
         if not subst2:
             return None
@@ -108,36 +96,39 @@ class Clustering(EngineState):
         candidate_helper, candidate_order = HygienicExtractor().extract_function(
             template_block=pair.block1_nodes,
             substitution=subst2,
-            free_variables=free_vars,
-            enclosing_names=enclosing_names,
-            is_value_producing=value_prod1,
-            global_decls=globals_to_declare_in_extracted or None,
-            nonlocal_decls=nonlocals_to_declare_in_extracted or None,
-            function_name=func_def.name,
+            free_variables=template.free_vars,
+            enclosing_names=template.enclosing_names,
+            is_value_producing=template.is_value_producing,
+            global_decls=template.globals_to_declare or None,
+            nonlocal_decls=template.nonlocals_to_declare or None,
+            function_name=template.func_def.name,
         )
         inline_leading_thunks(candidate_helper, subst2, candidate_order)
-        if candidate_order != param_order or ast.dump(candidate_helper) != func_def_dump:
+        if (
+            candidate_order != template.param_order
+            or ast.dump(candidate_helper) != template.func_def_dump
+        ):
             return None
         if has_impure_eager_parameters(subst2):
             return None
         # Orphan check for candidate within its function body
-        indices = self._get_block_indices(fn, cand_nodes)
+        indices = self._get_block_indices(candidate.function, candidate.nodes)
         if indices is None:
             return None
         # Skip docstring in body
-        body = body_without_docstring(fn.body)
+        body = body_without_docstring(candidate.function.body)
         has_orph, _orph = has_orphaned_variables(cast(List[ast.AST], body), indices)
         if has_orph:
             return None
         # Generate a call node for the candidate
         try:
             call_node2 = self.extractor.generate_call(
-                function_name=func_def.name,
+                function_name=template.func_def.name,
                 block_idx=1,
                 substitution=subst2,
-                param_order=param_order,
-                free_variables=free_vars,
-                is_value_producing=value_prod1,
+                param_order=template.param_order,
+                free_variables=template.free_vars,
+                is_value_producing=template.is_value_producing,
                 return_variables=[],
                 hygienic_renames=cluster_renames,
             )
@@ -150,21 +141,21 @@ class Clustering(EngineState):
             return None
         if (
             instantiation_mismatch(
-                func_def,
+                template.func_def,
                 call_node2,
-                cand_nodes,
+                candidate.nodes,
                 cluster_renames[0],
                 cluster_renames[1],
-                preamble_length=helper_preamble_length,
+                preamble_length=template.preamble_length,
                 returns_variables=False,
             )
             is not None
         ):
             return None
-        bound_before_cand: Set[str] = set(candidate_snapshot.bound_before_block)
+        bound_before_cand: Set[str] = set(candidate.snapshot.bound_before_block)
         free_vars_cand: Set[str] = set()
-        if analyzerX is not None:
-            free_vars_cand = set(analyzerX.get_free_variables(cand_nodes))
+        if candidate.analyzer is not None:
+            free_vars_cand = set(candidate.analyzer.get_free_variables(candidate.nodes))
         allowed_cand = bound_before_cand | free_vars_cand
         builtin_whitelist = {
             "len",
@@ -190,7 +181,9 @@ class Clustering(EngineState):
         invalid2 = {
             name
             for name in used2
-            if name != func_def.name and name not in allowed_cand and name not in builtin_whitelist
+            if name != template.func_def.name
+            and name not in allowed_cand
+            and name not in builtin_whitelist
         }
         if invalid2:
             return None
@@ -214,15 +207,6 @@ class Clustering(EngineState):
         ``cluster_contexts`` in place.
         """
         pair = template.pair
-        func_def = template.func_def
-        func_def_dump = template.func_def_dump
-        param_order = template.param_order
-        helper_preamble_length = template.preamble_length
-        free_vars = template.free_vars
-        enclosing_names = template.enclosing_names
-        value_prod1 = template.is_value_producing
-        globals_to_declare_in_extracted = template.globals_to_declare
-        nonlocals_to_declare_in_extracted = template.nonlocals_to_declare
 
         # Build a set of already covered ranges to avoid duplicates
         covered = {
@@ -231,7 +215,7 @@ class Clustering(EngineState):
         }
         # Template signature from block1
         tmpl_sig = extract_block_signature(pair.block1_nodes)
-        func_def_dump = ast.dump(func_def)
+        func_def_dump = ast.dump(template.func_def)
 
         # Gather candidates from same file functions
         for entry in all_functions:
@@ -308,15 +292,15 @@ class Clustering(EngineState):
                     self._sid(cand_nodes),
                     self._sid([fn]),
                     self._module_digest(fn),
-                    frozenset(free_vars),
-                    frozenset(enclosing_names),
-                    value_prod1,
-                    tuple(sorted(globals_to_declare_in_extracted)),
-                    tuple(sorted(nonlocals_to_declare_in_extracted)),
-                    func_def.name,
+                    frozenset(template.free_vars),
+                    frozenset(template.enclosing_names),
+                    template.is_value_producing,
+                    tuple(sorted(template.globals_to_declare)),
+                    tuple(sorted(template.nonlocals_to_declare)),
+                    template.func_def.name,
                     func_def_dump,
-                    tuple(sorted(param_order.items())),
-                    helper_preamble_length,
+                    tuple(sorted(template.param_order.items())),
+                    template.preamble_length,
                 )
                 if memo_key in self._cluster_cache:
                     cached_call = self._cluster_cache[memo_key]

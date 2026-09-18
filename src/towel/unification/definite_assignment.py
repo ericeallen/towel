@@ -10,6 +10,7 @@ as definitely bound only when every path reaching the statement binds it.
 from __future__ import annotations
 
 import ast
+from .assignment_analyzer import stored_names
 from .parameters import parameter_names
 from .scope_analyzer import pattern_capture_names
 from functools import cached_property
@@ -204,11 +205,7 @@ def _bindings_on_entry(container: ast.AST, field: str) -> Set[str]:
 
 
 def _targets(target: ast.AST) -> Set[str]:
-    return {
-        node.id
-        for node in ast.walk(target)
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
-    }
+    return stored_names(target)
 
 
 def _meet(left: Definite, right: Definite) -> Definite:
