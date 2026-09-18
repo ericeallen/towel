@@ -7,6 +7,9 @@ Tests that refactored code behaves identically to original code by:
 3. Ensuring refactoring preserves semantics
 """
 
+import asyncio
+import inspect
+import itertools
 import unittest
 import io
 import copy
@@ -147,6 +150,15 @@ def compare_callable_returns(
     return True
 
 
+def same_named_classes(first: type, second: type) -> bool:
+    """Whether two class objects are definitions of the same class statement."""
+    return (
+        first.__module__ == second.__module__
+        and first.__qualname__ == second.__qualname__
+        and first.__dict__.keys() == second.__dict__.keys()
+    )
+
+
 class FunctionExecutionResult:
     """Captures the result of executing a function."""
 
@@ -210,7 +222,15 @@ class FunctionExecutionResult:
         import math
 
         if type(val1) is not type(val2):
-            return False
+            # The original and the refactored module each execute their own
+            # class statements, so an instance of a class either defines is
+            # never of the other's type. Two definitions of one class are
+            # compared by the state their instances carry.
+            if not same_named_classes(type(val1), type(val2)):
+                return False
+            if not (hasattr(val1, "__dict__") and hasattr(val2, "__dict__")):
+                return False
+            return self._values_equal(vars(val1), vars(val2))
 
         # Check if both are floats and both are NaN
         if isinstance(val1, float) and isinstance(val2, float):
@@ -313,21 +333,47 @@ def execute_function(
     return result
 
 
+MATERIALIZED_ITEMS = 10_000
+"""How much of a returned generator is consumed and compared."""
+
+
+def materialize(value: object) -> object:
+    """Run a returned coroutine to completion, or consume a returned generator.
+
+    A generator or coroutine object is never equal to another, so comparing
+    the objects a generator function or coroutine function returns would
+    report every such function as changed. What they compute is what is
+    compared: the items the generator yields (bounded, so an endless one
+    still terminates) or the value the coroutine settles on. An exception
+    raised while consuming or awaiting propagates like one raised by the
+    call, since the caller would observe it the same way.
+    """
+    if inspect.iscoroutine(value):
+        return asyncio.run(value)
+    if inspect.isgenerator(value):
+        return list(itertools.islice(value, MATERIALIZED_ITEMS))
+    return value
+
+
 def execute_callable(
     function: Callable[..., object],
     args: Tuple[object, ...],
     kwargs: Dict[str, object],
     capture_output: bool = True,
 ) -> FunctionExecutionResult:
-    """Invoke a callable and observe output even when it raises."""
+    """Invoke a callable and observe output even when it raises.
+
+    A generator or coroutine the call returns is materialized (see
+    ``materialize``) inside the same output capture.
+    """
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     try:
         if capture_output:
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                result = function(*args, **kwargs)
+                result = materialize(function(*args, **kwargs))
         else:
-            result = function(*args, **kwargs)
+            result = materialize(function(*args, **kwargs))
         return FunctionExecutionResult(
             return_value=result, stdout=stdout_capture.getvalue(), stderr=stderr_capture.getvalue()
         )

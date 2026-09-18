@@ -31,15 +31,15 @@ def affected_functions(
         if len(owners) != 1:
             raise ValueError(f"{path}:{start}-{end}: no unique callable owner")
         owner = owners[0]
-        if isinstance(owner, ast.FunctionDef):
+        if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # A coroutine function is run to completion by the harness.
             name = owner.name
-        elif isinstance(owner, ast.ClassDef):
+        else:
+            assert isinstance(owner, ast.ClassDef)
             methods = [node for node in owner.body if contains(node)]
             if len(methods) != 1 or not isinstance(methods[0], ast.FunctionDef):
                 raise ValueError(f"{path}:{start}-{end}: unsupported class/async replacement")
             name = f"{owner.name}.{methods[0].name}"
-        else:
-            raise ValueError(f"{path}:{start}-{end}: async execution is unsupported")
         names = selected.setdefault(path, [])
         if name not in names:
             names.append(name)
@@ -48,14 +48,20 @@ def affected_functions(
     return {path: tuple(names) for path, names in selected.items()}
 
 
+Callable = ast.FunctionDef | ast.AsyncFunctionDef
+"""A definition the harness can invoke: a coroutine function is awaited to completion."""
+
+
 def invocation_definitions(
     source: str, target: str
-) -> tuple[str, str, ast.FunctionDef, ast.FunctionDef | None]:
+) -> tuple[str, str, Callable, ast.FunctionDef | None]:
     """Return adapter source, callable name, method signature and optional constructor."""
     tree = ast.parse(source)
     if "." not in target:
         matches = [
-            node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == target
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == target
         ]
         if len(matches) != 1:
             raise ValueError(f"No unique top-level function {target}")
@@ -68,16 +74,20 @@ def invocation_definitions(
     if len(classes) != 1:
         raise ValueError(f"No unique top-level class {class_name}")
     cls = classes[0]
-    if cls.bases or cls.keywords or cls.decorator_list:
-        raise ValueError(
-            f"{target}: inherited, decorated, or metaclass construction is unsupported"
-        )
+    if cls.keywords or cls.decorator_list:
+        raise ValueError(f"{target}: decorated or metaclass construction is unsupported")
     methods = [
         node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name
     ]
     if len(methods) != 1:
         raise ValueError(f"No unique method {target}")
     method = methods[0]
+    # A subclass is constructed like any class as long as this module declares
+    # its constructor; an inherited one would have an unknown signature.
+    if cls.bases and not any(
+        isinstance(node, ast.FunctionDef) and node.name == "__init__" for node in cls.body
+    ):
+        raise ValueError(f"{target}: a subclass with an inherited constructor is unsupported")
     decorators = [
         node.id if isinstance(node, ast.Name) else "unsupported" for node in method.decorator_list
     ]

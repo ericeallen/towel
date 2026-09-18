@@ -130,7 +130,7 @@ def test_crossfile_qualified_method_adapter_uses_imported_class(tmp_path: Path) 
         (
             "class Base: pass\nclass C(Base):\n    def f(self): return 1\n",
             "C.f",
-            "C.f: inherited, decorated, or metaclass construction is unsupported",
+            "C.f: a subclass with an inherited constructor is unsupported",
         ),
         (
             "class C:\n    def __init__(self, *, x): pass\n    def f(self): return 1\n",

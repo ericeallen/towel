@@ -19,7 +19,7 @@ from tests.test_observational_equivalence import (
     compare_function_behavior,
 )
 from tests.edge_case_values import EdgeCaseValues
-from tests.equivalence_targets import affected_functions, invocation_definitions
+from tests.equivalence_targets import Callable, affected_functions, invocation_definitions
 
 # The directory of text fixtures for filename parameters, created once and
 # reused; it lives under a directory of its own, never at the temp root.
@@ -110,7 +110,7 @@ def get_function_signature(code: str, function_name: str) -> Optional[ast.Functi
     return None
 
 
-def analyze_parameter_usage(func_def: ast.FunctionDef, param_name: str) -> Optional[str]:
+def analyze_parameter_usage(func_def: Callable, param_name: str) -> Optional[str]:
     """
     Analyze how a parameter is used in the function body to infer its type.
 
@@ -242,15 +242,9 @@ def generate_test_values_for_type(
 
             # Use comprehensive edge case values for better coverage
             # Note: Keep collections small to avoid performance issues, but full numeric coverage
-            if "int" in type_name:
-                # Full integer edge cases - large ints don't cause issues unless used in range()
-                edge_ints = EdgeCaseValues.integers()
-                return edge_ints  # All int edge cases including sys.maxsize, 10**100
-            elif "str" in type_name:
-                edge_strs = EdgeCaseValues.strings()
-                # Exclude only the very long string (last one: 'a' * 1000)
-                return edge_strs[:-1]  # All except last
-            elif "list" in type_name:
+            # The containers are matched first: ``list[int]`` is a list, and
+            # its item type must not make it an int.
+            if "list" in type_name:
                 edge_lists = EdgeCaseValues.lists()
                 # Exclude very large lists (last few with 100+ elements)
                 return edge_lists[:10]  # Up to 10 elements max
@@ -258,6 +252,14 @@ def generate_test_values_for_type(
                 edge_dicts = EdgeCaseValues.dicts()
                 # Exclude very large dicts (last one with 100 keys)
                 return edge_dicts[:-1]  # All except last
+            elif "int" in type_name:
+                # Full integer edge cases - large ints don't cause issues unless used in range()
+                edge_ints = EdgeCaseValues.integers()
+                return edge_ints  # All int edge cases including sys.maxsize, 10**100
+            elif "str" in type_name:
+                edge_strs = EdgeCaseValues.strings()
+                # Exclude only the very long string (last one: 'a' * 1000)
+                return edge_strs[:-1]  # All except last
             elif "bool" in type_name:
                 return EdgeCaseValues.booleans()
             elif "float" in type_name:
@@ -335,7 +337,7 @@ def generate_test_values_for_type(
 TestCase = Tuple[Tuple[object, ...], Dict[str, object]]
 
 
-def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[TestCase]:
+def generate_test_cases_for_function(func_def: Callable) -> List[TestCase]:
     """
     Generate test cases (args, kwargs) for a function based on its signature.
 
