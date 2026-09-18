@@ -407,7 +407,7 @@ class HygienicExtractor:
     def extract_function(
         self,
         *,
-        template_block: List[ast.AST],
+        template_block: Sequence[ast.AST],
         substitution: Substitution,
         free_variables: Set[str],
         enclosing_names: Set[str],
@@ -474,7 +474,7 @@ class HygienicExtractor:
 
         # Create function body by substituting unified parameters
         body_nodes = self._substitute_parameters(
-            copy.deepcopy(template_block), substitution, param_names_unified, rename_mapping
+            copy.deepcopy(list(template_block)), substitution, param_names_unified, rename_mapping
         )
         # Substitute parameters returns generic AST nodes; for function body we expect statements
         body: List[ast.stmt] = [cast(ast.stmt, n) for n in body_nodes]

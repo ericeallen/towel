@@ -29,7 +29,7 @@ import ast
 import copy
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
@@ -63,7 +63,7 @@ class _ClusterCandidate:
     file_path: str
     function: FunctionNode
     analyzer: Optional[ScopeAnalyzer]
-    nodes: List[ast.AST]
+    nodes: List[ast.stmt]
     snapshot: BlockBindingSnapshot
 
 
@@ -345,8 +345,8 @@ class Clustering(EngineState):
 
     def _are_structurally_similar(
         self,
-        block1: List[ast.AST],
-        block2: List[ast.AST],
+        block1: Sequence[ast.AST],
+        block2: Sequence[ast.AST],
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     ) -> bool:
         """

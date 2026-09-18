@@ -192,7 +192,7 @@ class _Placement:
 
 
 def _is_trivial_return_of_bound_name(
-    block_nodes: List[ast.AST], bound_before_block: Set[str], bound_in_block: Set[str]
+    block_nodes: Sequence[ast.AST], bound_before_block: Set[str], bound_in_block: Set[str]
 ) -> bool:
     """A one-statement block that only returns a name bound before it."""
     if len(block_nodes) != 1:
@@ -258,7 +258,7 @@ def _align_return_variables(
 def _thunk_uncertain_free_variables(
     substitution: Substitution,
     free_variables: Set[str],
-    blocks: Sequence[Tuple[FunctionNode, List[ast.AST]]],
+    blocks: Sequence[Tuple[FunctionNode, Sequence[ast.AST]]],
     renames: Sequence[Dict[str, str]],
 ) -> Set[str]:
     """Pass free variables that may be unbound at the call as thunks.
@@ -314,7 +314,7 @@ def _thunk_uncertain_free_variables(
 
 
 def _fresh_parameter_name(
-    substitution: Substitution, blocks: Sequence[Tuple[FunctionNode, List[ast.AST]]]
+    substitution: Substitution, blocks: Sequence[Tuple[FunctionNode, Sequence[ast.AST]]]
 ) -> str:
     taken = set(substitution.param_expressions) | {
         node.id
@@ -569,14 +569,14 @@ class PairEvaluation(EngineState):
             )
             return None
         if value_prod1 and not analysis.return_variables1:
-            if not has_complete_return_coverage(cast(List[ast.stmt], pair.block1_nodes)):
+            if not has_complete_return_coverage(pair.block1_nodes):
                 self._reject(
                     pair,
                     RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK1,
                     trace="  REJECTED: Block1 missing complete return coverage",
                 )
                 return None
-            if not has_complete_return_coverage(cast(List[ast.stmt], pair.block2_nodes)):
+            if not has_complete_return_coverage(pair.block2_nodes):
                 self._reject(
                     pair,
                     RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2,
@@ -718,7 +718,7 @@ class PairEvaluation(EngineState):
         for index, (nodes, entering) in enumerate(
             ((pair.block1_nodes, free_vars1), (pair.block2_nodes, free_vars2))
         ):
-            bound_at_exit = definitely_bound_after(cast(List[ast.stmt], nodes))
+            bound_at_exit = definitely_bound_after(nodes)
             if bound_at_exit is None:
                 continue
             not_definite = [

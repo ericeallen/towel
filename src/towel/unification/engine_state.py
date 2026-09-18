@@ -142,7 +142,7 @@ class EngineState:
     _used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]]
     _value_producing_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]]
     _signed_block_cache: WeakKeyDictionary[
-        FunctionNode, List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]
+        FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
     ]
     # The index of the current analysis's functions, keyed by the list it
     # was built from; see ``_function_index``.
@@ -354,7 +354,7 @@ class EngineState:
     def _build_block_binding_snapshot(
         self,
         func: FunctionNode,
-        block_nodes: List[ast.AST],
+        block_nodes: Sequence[ast.AST],
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
     ) -> BlockBindingSnapshot:
@@ -366,7 +366,7 @@ class EngineState:
         raise NotImplementedError
 
     def _get_block_indices(
-        self, function: FunctionNode, block_nodes: List[ast.AST]
+        self, function: FunctionNode, block_nodes: Sequence[ast.AST]
     ) -> Optional[Tuple[int, int]]:
         """Provided by InsertionPoints."""
         raise NotImplementedError
@@ -410,13 +410,13 @@ class EngineState:
 
     def _signed_blocks(
         self, function: FunctionNode
-    ) -> List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]:
+    ) -> List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]:
         """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _unify_memoized(
         self,
-        blocks: List[List[ast.AST]],
+        blocks: Sequence[Sequence[ast.AST]],
         hygienic_renames: List[Dict[str, str]],
         paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
@@ -436,8 +436,8 @@ class EngineState:
 
     def _are_structurally_similar(
         self,
-        block1: List[ast.AST],
-        block2: List[ast.AST],
+        block1: Sequence[ast.AST],
+        block2: Sequence[ast.AST],
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     ) -> bool:
         """Provided by Clustering."""
@@ -506,7 +506,7 @@ class EngineState:
         """Provided by BlockAnalysis."""
         raise NotImplementedError
 
-    def _is_value_producing(self, block: Sequence[ast.AST]) -> bool:
+    def _is_value_producing(self, block: Sequence[ast.stmt]) -> bool:
         """Provided by BlockAnalysis."""
         raise NotImplementedError
 

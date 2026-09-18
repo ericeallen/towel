@@ -118,7 +118,7 @@ class ConstantConsistency(UnifierState):
         # Positions align - can parameterize consistently
         return True
 
-    def _collect_constant_positions(self, blocks: List[List[ast.AST]]) -> None:
+    def _collect_constant_positions(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         """
         Collect all constant occurrences and their structural positions.
 
@@ -164,7 +164,7 @@ class ConstantConsistency(UnifierState):
                 child_path = path + (field_name,)
                 self._record_constants_in_tree(field_value, child_path, block_idx)
 
-    def _find_all_occurrences(self, value: Any, block: List[ast.AST]) -> List[ast.AST]:
+    def _find_all_occurrences(self, value: Any, block: Sequence[ast.AST]) -> List[ast.AST]:
         """
         Find all AST nodes in a block that are constants with the given value.
 

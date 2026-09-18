@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Sequence, Tuple
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.6
 """Structural similarity a clustered occurrence must reach to join a helper."""
@@ -49,7 +49,7 @@ class BlockSignature:
     call_count: int
 
 
-def extract_block_signature(block: List[ast.AST]) -> BlockSignature:
+def extract_block_signature(block: Sequence[ast.AST]) -> BlockSignature:
     """The structural summary two blocks must share before unification is attempted.
 
     Nested definitions and lambdas are not looked into: their bodies are

@@ -17,7 +17,7 @@ Analyze identifier bindings and scopes in Python code.
 """
 
 import ast
-from typing import Dict, Set, List, Optional, Tuple, Union, FrozenSet
+from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 from .parameters import parameter_names, parameter_nodes
@@ -588,7 +588,7 @@ class ScopeAnalyzer(ScopeVisitor):
                 self._add_assignment_bindings(elt)
         # Other cases (subscript, attribute) don't create bindings
 
-    def get_free_variables(self, nodes: List[ast.AST]) -> Set[str]:
+    def get_free_variables(self, nodes: Sequence[ast.AST]) -> Set[str]:
         """
         Get free variables in a block of code.
 

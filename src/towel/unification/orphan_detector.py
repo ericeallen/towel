@@ -20,7 +20,7 @@ but referenced in code that remains after the extraction point.
 """
 
 import ast
-from typing import List, Sequence, Set, Tuple, Union, cast
+from typing import List, Sequence, Set, Tuple, Union
 
 from .definite_assignment import definitely_bound_before_each
 from .visitors import OwnScopeVisitor, visit_each
@@ -135,7 +135,7 @@ def get_used_variables(nodes: List[ast.AST]) -> Set[str]:
 
 
 def orphaned_variables(
-    function_body: Sequence[ast.AST], extracted_block_range: Tuple[int, int]
+    function_body: Sequence[ast.stmt], extracted_block_range: Tuple[int, int]
 ) -> Set[str]:
     """The names later code would read that extracting the block leaves unbound.
 
@@ -165,9 +165,7 @@ def orphaned_variables(
     # afterwards let networkx's ``if multigraph_key is not None: edge_id =
     # multigraph_key`` hide the read of ``edge_id`` that follows it.
     orphaned: Set[str] = set()
-    for statement, definite in zip(
-        remaining_code, definitely_bound_before_each(cast(List[ast.stmt], remaining_code))
-    ):
+    for statement, definite in zip(remaining_code, definitely_bound_before_each(remaining_code)):
         if definite is None:
             break  # no path reaches this statement
         used = get_used_variables([statement])

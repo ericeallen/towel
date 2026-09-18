@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import ast
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from .assignment_analyzer import (
     _collect_bindings_and_reassignments,
     _collect_block_binding_stats,
@@ -63,7 +63,7 @@ class BlockAnalysis(EngineState):
 
     def _unify_memoized(
         self,
-        blocks: List[List[ast.AST]],
+        blocks: Sequence[Sequence[ast.AST]],
         hygienic_renames: List[Dict[str, str]],
         paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
@@ -117,7 +117,7 @@ class BlockAnalysis(EngineState):
         self._bounded_put(self._block_guard_cache, key, verdict)
         return verdict
 
-    def _is_value_producing(self, block: Sequence[ast.AST]) -> bool:
+    def _is_value_producing(self, block: Sequence[ast.stmt]) -> bool:
         """``is_value_producing`` memoized per block: a block is paired many times."""
         if not block:
             return False
@@ -128,7 +128,7 @@ class BlockAnalysis(EngineState):
             self._value_producing_cache[first] = by_length
         result = by_length.get(len(block))
         if result is None:
-            result = is_value_producing(cast(List[ast.stmt], list(block)))
+            result = is_value_producing(block)
             by_length[len(block)] = result
         return result
 
@@ -143,7 +143,7 @@ class BlockAnalysis(EngineState):
 
     def _signed_blocks(
         self, function: FunctionNode
-    ) -> List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]:
+    ) -> List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]:
         """Share one block/signature enumeration across pairing and clustering."""
         cached = self._signed_block_cache.get(function)
         if cached is None:
@@ -160,7 +160,7 @@ class BlockAnalysis(EngineState):
 
     def _extract_code_blocks(
         self, function: FunctionNode
-    ) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
+    ) -> List[Tuple[Tuple[int, int], List[ast.stmt]]]:
         """
         Extract all contiguous code blocks from a function body, including nested bodies.
 
@@ -173,9 +173,9 @@ class BlockAnalysis(EngineState):
 
         def extract_from_body(
             body: List[ast.stmt], parent: Optional[ast.stmt] = None
-        ) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
+        ) -> List[Tuple[Tuple[int, int], List[ast.stmt]]]:
             # Extract all contiguous subsequences of minimum length from a given body
-            results: List[Tuple[Tuple[int, int], List[ast.AST]]] = []
+            results: List[Tuple[Tuple[int, int], List[ast.stmt]]] = []
 
             # An ``elif`` is the sole statement of its parent's ``orelse`` and
             # shares the parent's column. It has no position of its own in the
@@ -221,7 +221,7 @@ class BlockAnalysis(EngineState):
                         continue
 
                     if line_count >= self.min_lines:
-                        results.append(((start_line, end_line), cast(List[ast.AST], block)))
+                        results.append(((start_line, end_line), block))
 
             # Recurse into nested bodies for control-flow/container statements
             for stmt in body:
@@ -374,7 +374,7 @@ class BlockAnalysis(EngineState):
     def _build_block_binding_snapshot(
         self,
         func: FunctionNode,
-        block_nodes: List[ast.AST],
+        block_nodes: Sequence[ast.AST],
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
     ) -> BlockBindingSnapshot:
@@ -392,7 +392,7 @@ class BlockAnalysis(EngineState):
     def _compute_block_binding_snapshot(
         self,
         func: FunctionNode,
-        block_nodes: List[ast.AST],
+        block_nodes: Sequence[ast.AST],
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
     ) -> BlockBindingSnapshot:

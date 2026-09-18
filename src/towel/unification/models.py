@@ -38,8 +38,8 @@ class CodeBlockPair:
     function2_name: str
     block1_range: Tuple[int, int]
     block2_range: Tuple[int, int]
-    block1_nodes: List[ast.AST]
-    block2_nodes: List[ast.AST]
+    block1_nodes: List[ast.stmt]
+    block2_nodes: List[ast.stmt]
     file_path2: Optional[str] = None
     class1_name: Optional[str] = None
     class2_name: Optional[str] = None

@@ -25,7 +25,7 @@ another mixin implements each stub.
 from __future__ import annotations
 
 import ast
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Sequence
 
 
 class UnifierState:
@@ -40,7 +40,7 @@ class UnifierState:
     alpha_renamings: Dict[Tuple[int, str], str]
     """Per block, the canonical spelling of each alpha-renamed binder."""
 
-    current_blocks: Optional[List[List[ast.AST]]]
+    current_blocks: Optional[Sequence[Sequence[ast.AST]]]
     """The blocks being unified, for checks that need the whole block."""
 
     parameterize_constants: bool

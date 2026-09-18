@@ -313,7 +313,7 @@ class InsertionPoints(EngineState):
         return locator.result
 
     def _get_block_indices(
-        self, function: FunctionNode, block_nodes: List[ast.AST]
+        self, function: FunctionNode, block_nodes: Sequence[ast.AST]
     ) -> Optional[Tuple[int, int]]:
         """
         Find the indices of a block within a function body.

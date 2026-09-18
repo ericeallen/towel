@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import ast
 
-from typing import Any, List, Optional, Tuple, cast
+from typing import Any, List, Optional, Tuple, cast, Sequence
 from .visitors import OwnScopeVisitor
 
 from .substitution import Substitution
@@ -63,7 +63,9 @@ class _CallContextFinder(OwnScopeVisitor):
 class LiteralPromotion(UnifierState):
     """See the module docstring."""
 
-    def _promote_hof_literals(self, blocks: List[List[ast.AST]], subst: Substitution) -> None:
+    def _promote_hof_literals(
+        self, blocks: Sequence[Sequence[ast.AST]], subst: Substitution
+    ) -> None:
         """
         Promote literal arguments in higher-order factory calls into parameters,
         even when equal across blocks (Option B).
@@ -90,7 +92,7 @@ class LiteralPromotion(UnifierState):
 
         # Utility: collect whether a variable is used later in a Call context (as a callee or as an argument)
         def is_used_as_callable_or_value_later(
-            block: List[ast.AST], start_stmt_idx: int, var_name: str
+            block: Sequence[ast.AST], start_stmt_idx: int, var_name: str
         ) -> bool:
 
             finder = _CallContextFinder(var_name)

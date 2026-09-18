@@ -270,7 +270,7 @@ class UnificationRefactorEngine(
         # across all of them, because any module may import from any other.
         self._analysis_paths: Tuple[str, ...] = ()
         self._signed_block_cache: WeakKeyDictionary[
-            FunctionNode, List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]
+            FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
         ] = WeakKeyDictionary()
 
     # --- Debug helpers ---
@@ -578,9 +578,9 @@ class UnificationRefactorEngine(
         self._record_function_paths(all_functions)
 
         pairs: List[CodeBlockPair] = []
-        signed_blocks: List[List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]] = []
+        signed_blocks: List[List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]] = []
         block_buckets: List[
-            Dict[BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]]
+            Dict[BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]]
         ] = []
         # Precompute once per function. Each bucket retains the original block
         # order, so traversing i, j, block1, matching block2 preserves proposal
@@ -589,7 +589,7 @@ class UnificationRefactorEngine(
             blocks = self._signed_blocks(entry.node)
             signed_blocks.append(blocks)
             buckets: Dict[
-                BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]
+                BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
             ] = {}
             for block in blocks:
                 buckets.setdefault(signature_bucket_key(block[2]), []).append(block)

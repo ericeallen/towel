@@ -25,7 +25,7 @@ This is critical for safe code extraction:
 """
 
 import ast
-from typing import Dict, List, Set, Tuple, Union
+from typing import Dict, Sequence, Set, Tuple, Union
 
 from .scope_analyzer import pattern_capture_names
 from .parameters import parameter_names
@@ -233,7 +233,7 @@ class _AssignmentAnalyzer(OwnScopeVisitor):
 
 def has_reassignments_without_bindings(
     func: Union[ast.FunctionDef, ast.AsyncFunctionDef],
-    block_nodes: List[ast.AST],
+    block_nodes: Sequence[ast.AST],
     reassignments: Dict[int, bool],
 ) -> Tuple[bool, Set[str]]:
     """
@@ -377,7 +377,7 @@ def stored_names(target: ast.AST) -> Set[str]:
 
 
 def _collect_block_binding_stats(
-    block_nodes: List[ast.AST], reassignments: Dict[int, bool]
+    block_nodes: Sequence[ast.AST], reassignments: Dict[int, bool]
 ) -> Tuple[Set[str], Set[str]]:
     """Return (bound_in_block, reassigned_in_block) for the given nodes."""
     bound_in_block: Set[str] = set()
