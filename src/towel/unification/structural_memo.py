@@ -17,7 +17,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from .unifier import Substitution
+from .substitution import Substitution
 
 # A path names a node inside a block: the statement index, then (field, index)
 # steps; ``index`` is -1 for a single-valued field.

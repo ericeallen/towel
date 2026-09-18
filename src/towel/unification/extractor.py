@@ -25,7 +25,7 @@ Generates extracted functions while ensuring:
 import ast
 import copy
 from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
-from .unifier import Substitution
+from .substitution import Substitution
 from .definite_assignment import definitely_bound_after
 from .visitors import OwnScopeVisitor
 

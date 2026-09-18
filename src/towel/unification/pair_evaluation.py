@@ -75,7 +75,7 @@ from .semantic_safety import (
     would_create_import_cycle,
 )
 from .thunk_inlining import inline_leading_thunks
-from .unifier import Substitution
+from .substitution import Substitution
 from .visitors import body_without_docstring
 
 _CALL_ARGUMENT_BUILTINS = frozenset(

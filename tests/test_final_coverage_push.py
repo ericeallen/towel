@@ -28,7 +28,7 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        from towel.unification.unifier import Substitution
+        from towel.unification.substitution import Substitution
 
         subst = Substitution()
 

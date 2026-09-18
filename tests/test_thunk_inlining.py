@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 
 from towel.unification.thunk_inlining import inline_leading_thunks
-from towel.unification.unifier import Substitution
+from towel.unification.substitution import Substitution
 
 
 def _helper(source: str) -> ast.FunctionDef:

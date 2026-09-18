@@ -12,7 +12,7 @@ from towel.unification.extractor import HygienicExtractor
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.semantic_safety import has_external_loop_control, uses_class_private_names
-from towel.unification.unifier import Substitution
+from towel.unification.substitution import Substitution
 
 
 def _rewrites(tmp_path: Path, source: str) -> list[str]:

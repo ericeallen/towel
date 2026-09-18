@@ -8,7 +8,7 @@ from towel.unification.extractor import (
     is_value_producing,
     has_complete_return_coverage,
 )
-from towel.unification.unifier import Substitution
+from towel.unification.substitution import Substitution
 
 
 def _fix(block):

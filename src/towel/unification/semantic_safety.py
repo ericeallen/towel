@@ -28,7 +28,7 @@ from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
 from .visitors import OwnScopeVisitor
 
 if TYPE_CHECKING:
-    from .unifier import Substitution
+    from .substitution import Substitution
 
 
 def uses_class_private_names(nodes: Iterable[ast.AST]) -> bool:

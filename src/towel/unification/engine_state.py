@@ -50,7 +50,7 @@ from .models import (
     ReusedFunction,
 )
 from .scope_analyzer import ScopeAnalyzer
-from .unifier import Substitution
+from .substitution import Substitution
 from .progress import DEFAULT_PROGRESS, ProgressBarFactory, ProgressMode
 from .semantic_safety import ImportGraphCache
 

@@ -10,7 +10,8 @@ from towel.unification.assignment_analyzer import (
     analyze_assignments,
 )
 from towel.unification.instantiation import _alpha_normalize
-from towel.unification.unifier import Substitution, Unifier
+from towel.unification.unifier import Unifier
+from towel.unification.substitution import Substitution
 
 
 def _function(source: str) -> ast.FunctionDef:

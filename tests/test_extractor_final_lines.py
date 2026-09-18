@@ -6,7 +6,7 @@ from towel.unification.extractor import (
     HygienicExtractor,
     contains_return,
 )
-from towel.unification.unifier import Substitution
+from towel.unification.substitution import Substitution
 
 
 class TestExtractorFinalLines(unittest.TestCase):

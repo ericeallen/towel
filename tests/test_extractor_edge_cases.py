@@ -2,7 +2,8 @@ import ast
 
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.scope_analyzer import ScopeAnalyzer
-from towel.unification.unifier import Substitution, Unifier
+from towel.unification.unifier import Unifier
+from towel.unification.substitution import Substitution
 
 
 def make_substitution(param_map):

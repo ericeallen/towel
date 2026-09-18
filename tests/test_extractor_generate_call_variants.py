@@ -3,7 +3,7 @@ import unittest
 import towel.unification.extractor  # ensure module import for coverage
 
 from towel.unification.extractor import HygienicExtractor
-from towel.unification.unifier import Substitution
+from towel.unification.substitution import Substitution
 
 
 def _fix(block):

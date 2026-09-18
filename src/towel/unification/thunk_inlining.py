@@ -15,7 +15,7 @@ from __future__ import annotations
 import ast
 from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
-from .unifier import Substitution
+from .substitution import Substitution
 
 
 def inline_leading_thunks(

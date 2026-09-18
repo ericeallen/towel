@@ -46,7 +46,8 @@ from typing import (
 from weakref import WeakKeyDictionary
 from pathlib import Path
 from .scope_analyzer import ScopeAnalyzer
-from .unifier import Unifier, Substitution
+from .unifier import Unifier
+from .substitution import Substitution
 from .extractor import (
     HygienicExtractor,
     has_complete_return_coverage,

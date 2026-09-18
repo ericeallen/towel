@@ -1,7 +1,8 @@
 import ast
 from typing import List, cast
 
-from towel.unification.unifier import Substitution, Unifier
+from towel.unification.unifier import Unifier
+from towel.unification.substitution import Substitution
 
 
 def _parse_stmt_list(code: str):

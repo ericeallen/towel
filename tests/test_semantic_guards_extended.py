@@ -15,7 +15,7 @@ from towel.unification.semantic_safety import (
     nested_scopes_cross_block_boundary,
     unbinds_external_name,
 )
-from towel.unification.unifier import Substitution
+from towel.unification.substitution import Substitution
 
 
 def _function(source: str) -> ast.FunctionDef:
