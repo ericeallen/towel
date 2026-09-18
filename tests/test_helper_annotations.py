@@ -61,10 +61,11 @@ def test_parameters_and_none_return_come_from_agreeing_sites(tmp_path: Path) -> 
     exec(compile(result, "<annotated>", "exec"), {})
 
 
-def test_disagreeing_sites_join_into_a_normalized_union(tmp_path: Path) -> None:
+def test_disagreeing_sites_join_into_a_union(tmp_path: Path) -> None:
     # The parameter must accept every site's argument, so its annotation is
-    # the least upper bound the sites spell: their union, normalized by the
-    # subtype relation (``int`` is under ``float`` in the numeric tower).
+    # the least upper bound the sites spell: their union. Without a type
+    # checker nothing is known about subtyping, so the union is not reduced
+    # (with mypy, ``int | float`` becomes ``float``: see test_type_inference).
     result = _refactor(
         tmp_path,
         f"""
@@ -72,7 +73,7 @@ def test_disagreeing_sites_join_into_a_normalized_union(tmp_path: Path) -> None:
         def second(value: float, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: float) -> None:"
+    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int | float) -> None:"
 
 
 def test_unrelated_sites_join_into_a_union(tmp_path: Path) -> None:
@@ -102,9 +103,10 @@ def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
     assert _signature(result) == "def __extracted_func_0(items: list, limit: int | None) -> None:"
 
 
-def test_declared_return_types_take_the_narrower_one(tmp_path: Path) -> None:
+def test_declared_return_types_need_a_checker_to_meet(tmp_path: Path) -> None:
     # The sites' declared return types bound the helper's value from above;
-    # when one is a subtype of the other it is the greatest lower bound.
+    # only a type checker can tell that ``int`` is under ``int | None``, so
+    # without one the return is Any (with mypy: see test_type_inference).
     result = _refactor(
         tmp_path,
         """
@@ -119,7 +121,7 @@ def test_declared_return_types_take_the_narrower_one(tmp_path: Path) -> None:
             return len(text.strip())
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(value: int) -> int:"
+    assert _signature(result) == "def __extracted_func_0(value: int) -> Any:"
 
 
 def test_unrelated_declared_return_types_leave_the_return_to_any(tmp_path: Path) -> None:
@@ -240,7 +242,7 @@ def test_annotation_can_be_switched_off(tmp_path: Path) -> None:
     assert _signature(result) == "def __extracted_func_0(prefix, value):"
 
 
-def test_class_defined_later_is_quoted_so_the_module_still_imports(tmp_path: Path) -> None:
+def test_class_defined_later_puts_the_helper_after_it_with_a_bare_name(tmp_path: Path) -> None:
     result = _refactor(
         tmp_path,
         """
@@ -256,7 +258,38 @@ def test_class_defined_later_is_quoted_so_the_module_still_imports(tmp_path: Pat
             value = 1
         """,
     )
+    assert _signature(result) == "def __extracted_func_0(box: Box) -> None:"
+    assert result.index("class Box") < result.index("def __extracted_func_0")
+    exec(compile(result, "<bare>", "exec"), {})
+
+
+def test_import_time_code_before_the_class_keeps_the_helper_early_and_quoted(
+    tmp_path: Path,
+) -> None:
+    # ``configure()`` runs at import and may call the functions above it, so
+    # the helper cannot move below it; the class name is a forward reference.
+    result = _refactor(
+        tmp_path,
+        """
+        def configure() -> None:
+            pass
+
+        configure()
+
+        def first(box: Box) -> None:
+            total = box.value * 2
+            print(total, box)
+
+        def second(box: Box) -> None:
+            total = box.value * 2
+            print(total, box)
+
+        class Box:
+            value = 1
+        """,
+    )
     assert _signature(result) == "def __extracted_func_0(box: 'Box') -> None:"
+    assert result.index("def __extracted_func_0") < result.index("configure()")
     exec(compile(result, "<quoted>", "exec"), {})
 
 
@@ -321,25 +354,3 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     header = ast.unparse(proposals[0].extracted_function).split("\n", 1)[0]
     # ``Optional[str]`` needs typing; its members ``str | None`` are builtins.
     assert header == "def __extracted_func(label: str | None, value: int) -> None:"
-
-
-@pytest.mark.parametrize(
-    "narrow, wide, expected",
-    [
-        ("int", "int", True),
-        ("int", "object", True),
-        ("bool", "int", True),
-        ("int", "float", True),
-        ("float", "int", False),
-        ("int", "int | None", True),
-        ("int", "Optional[int]", True),
-        ("int | None", "int", False),
-        ("bool | None", "Union[int, None]", True),
-        ("str", "int | None", False),
-    ],
-)
-def test_syntactic_subtyping(narrow: str, wide: str, expected: bool) -> None:
-    from towel.unification.annotations import _is_syntactic_subtype
-
-    parse = lambda text: ast.parse(text, mode="eval").body  # noqa: E731
-    assert _is_syntactic_subtype(parse(narrow), parse(wide)) is expected

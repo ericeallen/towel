@@ -58,9 +58,21 @@ ecosystem evidence behind each claim. The format follows
   subclass under its base disappears), the declared return types' meet is
   found through it, and the helper's revealed return type is written only
   when mypy confirms it is a subtype of every site's declared return type,
-  which is what keeps the sites type-checking. Without mypy a syntactic
-  relation (identity, union membership, the numeric tower, `object`) stands
-  in.
+  which is what keeps the sites type-checking. Without mypy Towel copies
+  and does not reason: unions are written unreduced and the meet needs
+  identical declarations, since there is no second implementation of the
+  subtype relation.
+- Thunk and callee arguments get `Callable` annotations from mypy's callable
+  spelling (`Callable[[], int]`, `Callable[[int, str], bool]`,
+  `Callable[..., T]`), with `from typing import Callable` added as needed.
+- A module-level helper whose annotations name classes or functions defined
+  in the module is placed after the last such definition, so those names are
+  written bare instead of as quoted forward references; it stays at the top,
+  with quotes, when any statement before that point could run code at
+  import time.
+- With mypy installed the generated code is type-checked: each modified file
+  is checked before and after, and if the change introduces an error the
+  helper's annotations degrade to `Any`, and then to none, until it does not.
 - Analysis facts are computed once per function instead of once per candidate
   block (definite assignment, locally bound names, nested scopes), and the
   same-file clustering pass applies its constant-time filters before the

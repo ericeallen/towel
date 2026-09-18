@@ -77,6 +77,10 @@ class TypeOracle(Protocol):
         """Whether each narrow type is assignable to its wide type, in the module's context."""
         raise NotImplementedError
 
+    def check(self, file_path: str, source: str) -> Sequence[str]:
+        """The checker's error messages for ``source`` as ``file_path``, without positions."""
+        raise NotImplementedError
+
 
 TypeInferrer = TypeOracle
 """Earlier name of the protocol, kept for callers that used it."""
@@ -201,6 +205,30 @@ class MypyInferrer:
             elif line in return_line and verdicts[return_line[line]] is not None:
                 verdicts[return_line[line]] = False
         return verdicts
+
+    def check(self, file_path: str, source: str) -> Sequence[str]:
+        """Error messages mypy reports for ``source`` in place of ``file_path``.
+
+        Positions are stripped so two versions of a file can be compared for
+        new errors regardless of where lines moved.
+        """
+        from mypy import build
+        from mypy.build import BuildSource
+        from mypy.errors import CompileError
+
+        module, root = _module_name_and_root(Path(file_path))
+        try:
+            result = build.build(
+                sources=[BuildSource(file_path, module, source)], options=self._options([str(root)])
+            )
+        except CompileError as error:
+            return [line for line in error.messages if "error:" in line]
+        messages: List[str] = []
+        for message in result.errors:
+            match = _ERROR.match(message)
+            if match is not None and match.group("path") == file_path:
+                messages.append(message[match.end() :].strip())
+        return messages
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         from mypy import build

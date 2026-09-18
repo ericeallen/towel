@@ -123,7 +123,9 @@ from .annotations import (
     call_in_statement,
     complete_with_any,
     infer_missing_annotations,
+    respell_bare,
     sites_use_annotations,
+    typing_imports_needed,
 )
 from ..type_inference import TypeOracle
 from .pipeline import run_pipeline, AnalysisSession
@@ -3930,9 +3932,13 @@ class UnificationRefactorEngine:
         """
         if not proposal.wants_type_inference or proposal.reused_function is not None:
             return
+        module_level = proposal.insert_into_class is None and proposal.insert_into_function is None
+        host_source = self._read_source(proposal.file_path)
+        bare_ok = self.placeable_after(host_source) if module_level and host_source else set()
+        host = self._parsed_host(proposal.file_path)
         if self.type_inferrer is None:
-            host = self._parsed_host(proposal.file_path)
-            completed = complete_with_any(proposal.extracted_function, host)
+            respelled = respell_bare(proposal.extracted_function, host, bare_ok)
+            completed = complete_with_any(respelled, host)
             proposal.extracted_function = completed.helper
             proposal.required_imports = completed.required_imports
             return
@@ -3964,17 +3970,37 @@ class UnificationRefactorEngine:
                 )
             )
         inferred = infer_missing_annotations(
-            proposal.extracted_function,
+            respell_bare(proposal.extracted_function, host, bare_ok),
             sites,
             proposal.file_path,
             proposal.return_variables,
             self.type_inferrer,
+            bare_ok,
         )
-        completed = complete_with_any(inferred.helper, self._parsed_host(proposal.file_path))
+        completed = complete_with_any(respell_bare(inferred.helper, host, bare_ok), host)
         proposal.extracted_function = completed.helper
         proposal.required_imports = tuple(
             dict.fromkeys(inferred.required_imports + completed.required_imports)
         )
+
+    @staticmethod
+    def _annotation_names(helper: ast.FunctionDef) -> Set[str]:
+        """Names the helper's unquoted annotations refer to."""
+        names: Set[str] = set()
+        annotations = [arg.annotation for arg in helper.args.posonlyargs + helper.args.args] + [
+            helper.returns
+        ]
+        for annotation in annotations:
+            if annotation is not None and not isinstance(annotation, ast.Constant):
+                names |= {n.id for n in ast.walk(annotation) if isinstance(n, ast.Name)}
+        return names
+
+    @staticmethod
+    def _read_source(file_path: str) -> Optional[str]:
+        try:
+            return Path(file_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
 
     @staticmethod
     def _declared_return_at(source: str, line: int) -> Optional[ast.expr]:
@@ -4066,6 +4092,82 @@ class UnificationRefactorEngine:
         # Materialization owns its ASTs; callers may reuse or inspect the proposal.
         proposal = copy.deepcopy(proposal)
         self._infer_helper_annotations(proposal)
+        variants = [proposal]
+        if self._checks_generated_types(proposal):
+            variants += [
+                self._with_every_annotation_any(proposal),
+                self._without_annotations(proposal),
+            ]
+        counters = dict(self._helper_name_counters)
+        for index, variant in enumerate(variants):
+            mark = len(self._change_log)
+            # Each attempt allocates the helper's name; restore the counters so
+            # every attempt gets the same name and none is consumed by a retry.
+            self._helper_name_counters = dict(counters)
+            files = self._materialize_once(variant)
+            if index == len(variants) - 1 or not self._introduces_type_errors(files):
+                return files
+            del self._change_log[mark:]
+        raise AssertionError("unreachable: the bare variant is always accepted")
+
+    def _checks_generated_types(self, proposal: RefactoringProposal) -> bool:
+        """Whether the generated code is to be type-checked: a checker exists and the helper is annotated."""
+        if self.type_inferrer is None or proposal.reused_function is not None:
+            return False
+        helper = proposal.extracted_function
+        return helper.returns is not None or any(
+            arg.annotation is not None for arg in helper.args.posonlyargs + helper.args.args
+        )
+
+    @staticmethod
+    def _with_every_annotation_any(proposal: RefactoringProposal) -> RefactoringProposal:
+        """The proposal with every helper annotation replaced by ``Any``."""
+        variant = copy.deepcopy(proposal)
+        helper = variant.extracted_function
+        for arg in helper.args.posonlyargs + helper.args.args:
+            arg.annotation = ast.Name(id="Any", ctx=ast.Load())
+        helper.returns = ast.Name(id="Any", ctx=ast.Load())
+        variant.required_imports = typing_imports_needed(
+            helper, UnificationRefactorEngine._parsed_host(variant.file_path)
+        )
+        return variant
+
+    @staticmethod
+    def _without_annotations(proposal: RefactoringProposal) -> RefactoringProposal:
+        """The proposal with the helper unannotated."""
+        variant = copy.deepcopy(proposal)
+        helper = variant.extracted_function
+        for arg in helper.args.posonlyargs + helper.args.args:
+            arg.annotation = None
+        helper.returns = None
+        variant.required_imports = ()
+        return variant
+
+    def _introduces_type_errors(self, modified_files: Dict[str, str]) -> bool:
+        """Whether the checker reports an error in a modified file that its original lacks.
+
+        Messages are compared without positions, as multisets, so errors the
+        project already has do not count and moved lines do not confuse it.
+        """
+        assert self.type_inferrer is not None
+        from collections import Counter
+
+        for path, after_source in modified_files.items():
+            before_source = self._read_source(path)
+            if before_source is None or before_source == after_source:
+                continue
+            before = Counter(self.type_inferrer.check(path, before_source))
+            after = Counter(self.type_inferrer.check(path, after_source))
+            new = after - before
+            if new:
+                if os.getenv("TOWEL_DEBUG_TYPES"):
+                    for message, count in new.items():
+                        print(f"[types] new error x{count} in {path}: {message}", file=sys.stderr)
+                return True
+        return False
+
+    def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
+        """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
         # Group replacements by file
         replacements_by_file: Dict[str, List[Replacement]] = {}
         for repl in proposal.replacements:
@@ -4268,7 +4370,9 @@ class UnificationRefactorEngine:
                 else:
                     func_code = self._render(proposal.extracted_function)
                     func_lines = [line + "\n" for line in func_code.split("\n")]
-                    insert_line = self._find_insert_position(lines)
+                    insert_line = self._find_insert_position(
+                        lines, self._annotation_names(proposal.extracted_function)
+                    )
                     lines_to_insert: List[str] = []
                     if insert_line > 0:
                         blank_lines_before = 0
@@ -4432,13 +4536,88 @@ class UnificationRefactorEngine:
         """Get the indentation of a line."""
         return line[: len(line) - len(line.lstrip())]
 
-    def _find_insert_position(self, lines: List[str]) -> int:
+    _DEFINITION_LIKE = (
+        ast.Import,
+        ast.ImportFrom,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Assign,
+        ast.AnnAssign,
+    )
+
+    @classmethod
+    def _is_definition_like(cls, statement: ast.stmt) -> bool:
+        """Whether a module-level statement runs no code of the module's own at import.
+
+        Definitions, imports, assignments and docstrings; an ``if`` or ``try``
+        whose bodies are all such statements (``TYPE_CHECKING`` guards,
+        optional imports). Anything else may call into the module, so a helper
+        must be defined before it.
+        """
+        if isinstance(statement, cls._DEFINITION_LIKE):
+            return True
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+            return True
+        if isinstance(statement, ast.If):
+            return all(cls._is_definition_like(s) for s in statement.body + statement.orelse)
+        if isinstance(statement, ast.Try):
+            nested = statement.body + statement.orelse + statement.finalbody
+            nested += [s for handler in statement.handlers for s in handler.body]
+            return all(cls._is_definition_like(s) for s in nested)
+        return False
+
+    @classmethod
+    def placeable_after(cls, source: str) -> Set[str]:
+        """Names of module-level definitions a helper can safely be placed after.
+
+        A helper placed after the definitions its annotations name can spell
+        them bare. It may move past a definition only if everything from the
+        top of the module to that definition is definition-like, so no code
+        that could call the helper runs before it is defined.
+        """
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return set()
+        names: Set[str] = set()
+        for statement in tree.body:
+            if not cls._is_definition_like(statement):
+                break
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(statement.name)
+            elif isinstance(statement, ast.Assign):
+                names.update(t.id for t in statement.targets if isinstance(t, ast.Name))
+            elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+                names.add(statement.target.id)
+        return names
+
+    def _find_insert_position(
+        self, lines: List[str], after_names: Optional[Set[str]] = None
+    ) -> int:
         """Place a helper before the first definition, after any leading imports.
 
-        Helpers have no evaluated defaults or annotations. Defining them early
-        preserves availability to module-time calls and decorators.
+        Helpers have no evaluated defaults. When ``after_names`` is given (the
+        names a helper's annotations refer to), the helper goes after the last
+        module-level definition of one of them instead, so those annotations
+        can be written bare; the caller guarantees through ``placeable_after``
+        that nothing before that point runs code at import.
         """
         tree = ast.parse("".join(lines))
+        after = 0
+        after_names = after_names or set()
+        for statement in tree.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if statement.name in after_names:
+                    after = max(after, statement.end_lineno or statement.lineno)
+            elif isinstance(statement, ast.Assign):
+                if any(isinstance(t, ast.Name) and t.id in after_names for t in statement.targets):
+                    after = max(after, statement.end_lineno or statement.lineno)
+            elif isinstance(statement, ast.AnnAssign):
+                if isinstance(statement.target, ast.Name) and statement.target.id in after_names:
+                    after = max(after, statement.end_lineno or statement.lineno)
+        if after:
+            return after
         for statement in tree.body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 return min([statement.lineno] + [d.lineno for d in statement.decorator_list]) - 1
