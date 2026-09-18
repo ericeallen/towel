@@ -46,7 +46,7 @@ from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize
 def _build_parser() -> argparse.ArgumentParser:
     """The command-line parser, shared by ``main`` and the tests."""
     parser = argparse.ArgumentParser(
-        prog="code-towel",
+        prog="towel",
         description="A Python tool that DRYs your code - finds and refactors repeated code",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -191,12 +191,18 @@ Examples:
 
     parser.add_argument(
         "--max-refactorings",
-        "--max-iterations",  # earlier spelling, kept for scripts
         dest="max_refactorings",
         type=_count,
         default=DEFAULT_MAX_ITERATIONS,
         metavar="N",
         help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
+    )
+    parser.add_argument(  # earlier spelling, kept for scripts
+        "--max-iterations",
+        dest="max_refactorings",
+        type=_count,
+        metavar="N",
+        help=argparse.SUPPRESS,
     )
 
     parser.add_argument(
@@ -204,8 +210,8 @@ Examples:
         dest="types",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Annotate generated helpers, in code that already uses annotations: the "
-        "annotations the call sites declare, and the types the project's checker (mypy or "
+        help="Annotate generated helpers (the default), in code that already uses annotations: "
+        "the annotations the call sites declare, and the types the project's checker (mypy or "
         "pyright, the 'types' extra) infers and verifies for the rest. --no-types leaves "
         "helpers bare.",
     )
@@ -214,23 +220,30 @@ Examples:
         dest="format",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Format generated code with the project's formatter (ruff when configured, else "
-        "Black; the 'format' extra) at the line length the project declares, and sort "
-        "inserted imports the way the project does (ruff's I rules or isort). --no-format "
-        "inserts code as rendered.",
+        help="Format generated code (the default) with the project's formatter (ruff when "
+        "configured, else Black; the 'format' extra) at the line length the project declares, "
+        "and sort inserted imports the way the project does (ruff's I rules or isort). "
+        "--no-format inserts code as rendered.",
     )
 
-    _add_progress_flag(parser)
+    _add_progress_flag(
+        parser,
+        detail="'detail' logs each pass's discovered proposals and follow-ups instead of a bar",
+    )
 
 
-def _add_progress_flag(parser: argparse.ArgumentParser) -> None:
-    """Add ``--progress``, shared by the commands that analyze a project."""
+def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
+    """Add ``--progress``, shared by the commands that analyze a project.
+
+    ``detail`` says what the ``detail`` mode does for this command: the
+    fixed-point driver logs per pass, a single analysis only drops the bar.
+    """
     parser.add_argument(
         "--progress",
         choices=["auto", "tqdm", "none", "detail"],
         default=DEFAULT_PROGRESS,
         help="Progress display mode: 'tqdm' shows bars (the default), 'auto' falls back if tqdm "
-        "is unavailable, 'none' disables output, 'detail' logs per-phase summaries.",
+        f"is unavailable, 'none' disables output, {detail}.",
     )
 
 
@@ -243,7 +256,10 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     )
 
     parser.add_argument("target", help="File or directory to analyze")
-    _add_progress_flag(parser)
+    _add_progress_flag(
+        parser,
+        detail="'detail' shows no bar either (a preview is one analysis, with no passes to log)",
+    )
 
     _add_import_layout_flags(parser)
 
@@ -284,8 +300,8 @@ Examples:
   # Apply renamings from a JSON file
   towel rename-helpers src/ --rename-file renames.json
 
-  # Dry run (preview only)
-  towel rename-helpers src/ --dry-run
+  # Show the renames without writing files
+  towel rename-helpers src/ --rename-file renames.json --preview
 
   # Specify specific files or functions
   towel rename-helpers src/ --file mymodule.py
@@ -316,10 +332,12 @@ Examples:
     )
     parser.add_argument(
         "--preview",
-        "--dry-run",  # earlier spelling, kept for scripts
         dest="preview",
         action="store_true",
         help="Show the renames without writing files",
+    )
+    parser.add_argument(  # earlier spelling, kept for scripts
+        "--dry-run", dest="preview", action="store_true", help=argparse.SUPPRESS
     )
 
     parser.add_argument(
@@ -1162,7 +1180,7 @@ def _apply_rename_file(
             )
         )
         return
-    print(f"\n{'[DRY RUN] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
+    print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
 
 
 def _apply_rename_mappings(
@@ -1280,7 +1298,7 @@ def _run_interactive_llm_mode(
     _banner("STEP 2: APPLYING RENAMINGS")
 
     total_changes = _apply_rename_mappings(target, renames, dry_run)
-    print(f"\n{'[DRY RUN] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
+    print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
 
 
 def _generate_llm_prompt(
