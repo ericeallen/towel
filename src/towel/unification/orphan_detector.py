@@ -22,7 +22,7 @@ but referenced in code that remains after the extraction point.
 import ast
 from typing import List, Set, Tuple, cast
 
-from .definite_assignment import definitely_bound_after
+from .definite_assignment import definitely_bound_before_each
 
 
 def _apply_visitor_to_nodes(
@@ -179,8 +179,9 @@ def has_orphaned_variables(
     # afterwards let networkx's ``if multigraph_key is not None: edge_id =
     # multigraph_key`` hide the read of ``edge_id`` that follows it.
     orphaned: Set[str] = set()
-    for index, statement in enumerate(remaining_code):
-        definite = definitely_bound_after(cast(List[ast.stmt], remaining_code[:index]))
+    for statement, definite in zip(
+        remaining_code, definitely_bound_before_each(cast(List[ast.stmt], remaining_code))
+    ):
         if definite is None:
             break  # no path reaches this statement
         used = get_used_variables([statement])

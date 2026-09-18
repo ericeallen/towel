@@ -12,7 +12,9 @@ from __future__ import annotations
 import ast
 from .parameters import parameter_names
 from .scope_analyzer import pattern_capture_names
-from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Union
+from functools import cached_property
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Union
+from weakref import WeakKeyDictionary
 
 Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
@@ -21,8 +23,84 @@ Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 Definite = Optional[FrozenSet[str]]
 
 
+class _FunctionFacts:
+    """Per-function results computed once and queried per block.
+
+    A function with n statements has O(n^2) candidate blocks, and each guard
+    runs per block, so anything that walks the whole function per block is
+    cubic in n. These facts are built on first use and cached on the function
+    node for as long as the analyzed tree lives.
+    """
+
+    def __init__(self, function: Function) -> None:
+        self.function = function
+
+    @cached_property
+    def locally_bound(self) -> FrozenSet[str]:
+        return frozenset(_locally_bound_names(self.function))
+
+    @cached_property
+    def definite_before(self) -> Dict[ast.AST, FrozenSet[str]]:
+        """Names definitely bound on entry to every statement, at every depth."""
+        before: Dict[ast.AST, FrozenSet[str]] = {}
+        _collect_definite_before(
+            self.function, frozenset(parameter_names(self.function.args)), before
+        )
+        return before
+
+
+_STATEMENT_LIST_FIELDS = ("body", "orelse", "finalbody", "handlers", "cases")
+
+
+def _collect_definite_before(
+    container: ast.AST, entry: FrozenSet[str], before: Dict[ast.AST, FrozenSet[str]]
+) -> None:
+    """One pass over the statement lists a path from the function root can follow.
+
+    Mirrors :func:`_definitely_bound_before_uncached`: at each level the
+    names bound before a child are those bound on entry to the container,
+    what the container binds before the list runs, and what every preceding
+    sibling definitely binds, with a sibling that never falls through making
+    the rest of the list contribute nothing.
+    """
+    for field in _STATEMENT_LIST_FIELDS:
+        children = getattr(container, field, None)
+        if not isinstance(children, list) or not children:
+            continue
+        on_entry = entry | frozenset(_bindings_on_entry(container, field))
+        accumulated: Definite = frozenset()
+        for child in children:
+            bound = on_entry | (accumulated or frozenset())
+            before[child] = bound
+            _collect_definite_before(child, bound, before)
+            if accumulated is not None:
+                result = _definite_statement(child)
+                accumulated = (
+                    None if result is None else (accumulated - _may_unbind(child)) | result
+                )
+
+
+_FACTS: "WeakKeyDictionary[ast.AST, _FunctionFacts]" = WeakKeyDictionary()
+
+
+def _facts(function: Function) -> _FunctionFacts:
+    facts = _FACTS.get(function)
+    if facts is None:
+        facts = _FunctionFacts(function)
+        _FACTS[function] = facts
+    return facts
+
+
 def definitely_bound_before(function: Function, statement: ast.stmt) -> Set[str]:
     """Names bound on every path from the function's entry to ``statement``."""
+    known = _facts(function).definite_before.get(statement)
+    if known is not None:
+        return set(known)
+    return _definitely_bound_before_uncached(function, statement)
+
+
+def _definitely_bound_before_uncached(function: Function, statement: ast.stmt) -> Set[str]:
+    """The path-walking form, kept as the reference and as the fallback."""
     parents: Dict[ast.AST, ast.AST] = {
         child: parent for parent in ast.walk(function) for child in ast.iter_child_nodes(parent)
     }
@@ -55,6 +133,23 @@ def definitely_bound_after(statements: Sequence[ast.stmt]) -> Optional[Set[str]]
     return None if result is None else set(result)
 
 
+def definitely_bound_before_each(statements: Sequence[ast.stmt]) -> Iterator[Optional[Set[str]]]:
+    """For each statement in turn, the names bound on every path that reaches it.
+
+    Equivalent to ``definitely_bound_after(statements[:index])`` for each
+    index, computed in one pass instead of one pass per prefix. ``None`` means
+    no path reaches the statement.
+    """
+    accumulated: Definite = frozenset()
+    for statement in statements:
+        yield None if accumulated is None else set(accumulated)
+        if accumulated is not None:
+            result = _definite_statement(statement)
+            accumulated = (
+                None if result is None else (accumulated - _may_unbind(statement)) | result
+            )
+
+
 def locally_bound_names(function: Function) -> Set[str]:
     """Names the function's own scope binds anywhere: parameters and local statements.
 
@@ -62,6 +157,10 @@ def locally_bound_names(function: Function) -> Set[str]:
     Any other name resolves lexically to an enclosing scope, a global, or a
     builtin, and reading it early cannot change which binding it sees.
     """
+    return set(_facts(function).locally_bound)
+
+
+def _locally_bound_names(function: Function) -> Set[str]:
     names: Set[str] = set(parameter_names(function.args))
     pending: List[ast.AST] = list(function.body)
     while pending:

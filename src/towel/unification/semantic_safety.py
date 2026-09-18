@@ -6,6 +6,7 @@ import ast
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, FrozenSet, Iterable, Optional, Sequence, Set, Tuple, Union
+from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
 from .project_layout import ProjectLayout
@@ -653,6 +654,35 @@ def _loaded_names(node: ast.AST) -> Set[str]:
     }
 
 
+class _ScopeFacts:
+    """Nested scopes and top-level bindings of one function, computed once.
+
+    The closure guard below runs once per candidate block; walking the whole
+    function each time made it quadratic in the function's size per block.
+    """
+
+    def __init__(self, function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+        self.nested: Tuple[Tuple[ast.AST, FrozenSet[str]], ...] = tuple(
+            (node, frozenset(_loaded_names(node)))
+            for node in ast.walk(function)
+            if isinstance(node, _NESTED_SCOPE_TYPES) and node is not function
+        )
+        self.top_level: Tuple[Tuple[ast.stmt, FrozenSet[str]], ...] = tuple(
+            (statement, frozenset(bound_names([statement]))) for statement in function.body
+        )
+
+
+_SCOPE_FACTS: "WeakKeyDictionary[ast.AST, _ScopeFacts]" = WeakKeyDictionary()
+
+
+def _scope_facts(function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> _ScopeFacts:
+    facts = _SCOPE_FACTS.get(function)
+    if facts is None:
+        facts = _ScopeFacts(function)
+        _SCOPE_FACTS[function] = facts
+    return facts
+
+
 def nested_scopes_cross_block_boundary(
     function: Union[ast.FunctionDef, ast.AsyncFunctionDef], nodes: Iterable[ast.AST]
 ) -> bool:
@@ -669,32 +699,30 @@ def nested_scopes_cross_block_boundary(
     block = tuple(nodes)
     extracted = {child for statement in block for child in ast.walk(statement)}
     written_in_block = bound_names(block)
-    outside_scopes = [
-        node
-        for node in ast.walk(function)
-        if isinstance(node, _NESTED_SCOPE_TYPES) and node is not function and node not in extracted
-    ]
+    facts = _scope_facts(function)
     if written_in_block and any(
-        _loaded_names(scope) & written_in_block for scope in outside_scopes
+        loaded & written_in_block for scope, loaded in facts.nested if scope not in extracted
     ):
         return True
-    inside_scopes = [node for node in extracted if isinstance(node, _NESTED_SCOPE_TYPES)]
-    if not inside_scopes:
-        return False
     captured: Set[str] = set()
-    for scope in inside_scopes:
-        captured.update(_loaded_names(scope))
+    inside = False
+    for scope, loaded in facts.nested:
+        if scope in extracted:
+            inside = True
+            captured.update(loaded)
+    if not inside:
+        return False
     captured -= written_in_block
     if not captured:
         return False
     top_level = all(node in function.body for node in block)
     block_end = max(getattr(node, "end_lineno", 0) or 0 for node in block)
-    for statement in function.body:
+    for statement, bound in facts.top_level:
         if statement in extracted:
             continue
         if top_level and (getattr(statement, "lineno", 0) or 0) <= block_end:
             continue
-        if bound_names([statement]) & captured:
+        if bound & captured:
             return True
     return False
 
