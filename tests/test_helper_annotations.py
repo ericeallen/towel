@@ -408,3 +408,26 @@ def test_a_union_of_forward_references_is_one_quoted_string(tmp_path: Path) -> N
     )
     assert _signature(result) == "def __extracted_func_0(item: 'Left | Right') -> None:"
     exec(compile(result, "<union>", "exec"), {})
+
+
+def test_inconsistent_subtype_verdicts_never_empty_a_union() -> None:
+    # A checker that cannot judge some pairs can return verdicts no real
+    # relation has: A under B, B under C, C under A, with the reverse
+    # directions unknown. Absorbing on those would drop every member.
+    from towel.unification.annotations import normalize_union
+
+    parse = lambda text: ast.parse(text, mode="eval").body  # noqa: E731
+    members = [parse("A"), parse("B"), parse("C")]
+    cyclic = {("A", "B"): True, ("B", "C"): True, ("C", "A"): True}
+
+    def relation(pairs):  # type: ignore[no-untyped-def]
+        return [cyclic.get((ast.unparse(n), ast.unparse(w))) for n, w in pairs]
+
+    kept = normalize_union(members, relation)
+    assert [ast.unparse(m) for m in kept] == ["A", "B", "C"]
+    consistent = {("bool", "int"): True, ("int", "bool"): False}
+    kept = normalize_union(
+        [parse("bool"), parse("int")],
+        lambda pairs: [consistent.get((ast.unparse(n), ast.unparse(w))) for n, w in pairs],
+    )
+    assert [ast.unparse(m) for m in kept] == ["int"]

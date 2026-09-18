@@ -336,6 +336,8 @@ def _joined(
         [m for candidate in present for m in _union_or_optional_members(_unquoted(candidate))],
         subtypes,
     )
+    if not members:
+        return None
     union = members[0]
     for member in members[1:]:
         union = ast.BinOp(left=union, op=ast.BitOr(), right=member)
@@ -362,15 +364,18 @@ def normalize_union(members: Sequence[ast.expr], subtypes: Subtypes) -> List[ast
         for index, member in enumerate(distinct):
             absorbed = False
             for other_index, other in enumerate(distinct):
-                if other is member or not verdicts.get((id(member), id(other))):
+                if other is member or verdicts.get((id(member), id(other))) is not True:
                     continue
-                mutual = bool(verdicts.get((id(other), id(member))))
+                mutual = verdicts.get((id(other), id(member))) is True
                 if not mutual or other_index < index:
                     absorbed = True
                     break
             if not absorbed:
                 kept.append(member)
-        distinct = kept
+        # A consistent relation cannot absorb every member; verdicts from a
+        # checker that could not judge some pairs can (sphinx). Then the
+        # union is left as it was rather than emptied.
+        distinct = kept or distinct
     none_members = [m for m in distinct if isinstance(m, ast.Constant) and m.value is None]
     others = [m for m in distinct if not (isinstance(m, ast.Constant) and m.value is None)]
     return others + none_members
