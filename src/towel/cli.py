@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -39,7 +40,7 @@ from towel.unification.exceptions import TowelError
 from towel.source_text import read_source
 from towel.unification.models import GENERATED_HELPER_NAME, ParameterKind
 from towel.unification.defaults import DEFAULT_MAX_ITERATIONS
-from towel.unification.progress import DEFAULT_PROGRESS, normalize_progress
+from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -523,14 +524,92 @@ def _existing_target(path: str) -> Tuple[bool, bool]:
     return is_file, is_dir
 
 
+@dataclass(frozen=True)
+class DryOptions:
+    """What ``towel dry`` was asked to do, read once from the parsed arguments."""
+
+    input: str
+    output: str
+    interactive: bool
+    max_refactorings: int
+    progress: ProgressMode
+    types: bool
+    format: bool
+    prefer_absolute_imports: Optional[bool]
+    pep420: Optional[bool]
+    exclude: Tuple[str, ...]
+
+    @classmethod
+    def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
+        return cls(
+            input=str(args.input),
+            output=str(args.output),
+            interactive=bool(args.interactive),
+            max_refactorings=int(args.max_refactorings),
+            progress=normalize_progress(args.progress),
+            types=bool(args.types),
+            format=bool(args.format),
+            prefer_absolute_imports=args.prefer_absolute_imports,
+            pep420=args.pep420,
+            exclude=tuple(args.exclude or ()),
+        )
+
+
+@dataclass(frozen=True)
+class PreviewOptions:
+    """What ``towel preview`` was asked to do."""
+
+    target: str
+    progress: ProgressMode
+    prefer_absolute_imports: Optional[bool]
+    pep420: Optional[bool]
+
+    @classmethod
+    def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
+        return cls(
+            target=str(args.target),
+            progress=normalize_progress(args.progress),
+            prefer_absolute_imports=args.prefer_absolute_imports,
+            pep420=args.pep420,
+        )
+
+
+@dataclass(frozen=True)
+class RenameOptions:
+    """What ``towel rename-helpers`` was asked to do."""
+
+    target: Path
+    files: Optional[List[str]]
+    functions: Optional[List[str]]
+    rename_file: Optional[Path]
+    list: bool
+    json: bool
+    preview: bool
+    llm: str
+
+    @classmethod
+    def from_namespace(cls, args: argparse.Namespace) -> "RenameOptions":
+        return cls(
+            target=Path(args.target),
+            files=list(args.files) if args.files else None,
+            functions=list(args.functions) if args.functions else None,
+            rename_file=Path(args.rename_file) if args.rename_file else None,
+            list=bool(args.list),
+            json=bool(args.json),
+            preview=bool(args.preview),
+            llm=str(args.llm),
+        )
+
+
 def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
+    options = DryOptions.from_namespace(args)
     # Import here to avoid loading heavy modules if not needed
     from towel.filesystem import copy_project
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
-    input_path = args.input
-    output_path = args.output
+    input_path = options.input
+    output_path = options.output
 
     is_file, is_dir = _existing_target(input_path)
 
@@ -554,13 +633,13 @@ def _run_dry(args: argparse.Namespace) -> None:
         max_parameters=5,
         min_lines=3,
         parameterize_constants=True,
-        prefer_absolute_imports=args.prefer_absolute_imports,
-        pep420_namespace_packages=args.pep420,
-        excluded_directories=tuple(getattr(args, "exclude", None) or ()),
-        snippet_formatter=(_generated_code_formatter(Path(input_path)) if args.format else None),
-        file_finisher=(_import_sorter(Path(input_path)) if args.format else None),
-        annotate_helpers=args.types,
-        type_oracle=(_type_oracle(Path(input_path)) if args.types else None),
+        prefer_absolute_imports=options.prefer_absolute_imports,
+        pep420_namespace_packages=options.pep420,
+        excluded_directories=options.exclude,
+        snippet_formatter=(_generated_code_formatter(Path(input_path)) if options.format else None),
+        file_finisher=(_import_sorter(Path(input_path)) if options.format else None),
+        annotate_helpers=options.types,
+        type_oracle=(_type_oracle(Path(input_path)) if options.types else None),
     )
 
     print("=" * 70)
@@ -570,7 +649,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     print("or inside the class or function the duplicates share.")
     print()
 
-    if args.interactive:
+    if options.interactive:
         if not _confirm("Proceed? (y/N): "):
             print("Aborted.")
             return
@@ -584,8 +663,8 @@ def _run_dry(args: argparse.Namespace) -> None:
         print(f"Refactoring file: {output_path}")
         final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
             output_path,
-            max_iterations=args.max_refactorings,
-            progress=normalize_progress(args.progress),
+            max_iterations=options.max_refactorings,
+            progress=options.progress,
         )
 
         if num_applied > 0:
@@ -599,8 +678,8 @@ def _run_dry(args: argparse.Namespace) -> None:
         results, termination_reason = engine.refactor_directory_to_fixed_point(
             output_path,
             output_path,
-            max_iterations=args.max_refactorings,
-            progress=normalize_progress(args.progress),
+            max_iterations=options.max_refactorings,
+            progress=options.progress,
         )
 
         if results:
@@ -693,10 +772,11 @@ def _print_call_sites(
 
 def _run_preview(args: argparse.Namespace) -> None:
     """Run the preview command."""
+    options = PreviewOptions.from_namespace(args)
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
 
-    target = args.target
+    target = options.target
 
     is_file, is_dir = _existing_target(target)
 
@@ -704,8 +784,8 @@ def _run_preview(args: argparse.Namespace) -> None:
         max_parameters=5,
         min_lines=3,
         parameterize_constants=True,
-        prefer_absolute_imports=args.prefer_absolute_imports,
-        pep420_namespace_packages=args.pep420,
+        prefer_absolute_imports=options.prefer_absolute_imports,
+        pep420_namespace_packages=options.pep420,
     )
 
     # Analyze
@@ -715,11 +795,11 @@ def _run_preview(args: argparse.Namespace) -> None:
             print()
 
         print(f"Analyzing file: {target}")
-        all_proposals = engine.analyze_files([target], progress=normalize_progress(args.progress))
+        all_proposals = engine.analyze_files([target], progress=options.progress)
     else:
         print(f"Analyzing directory: {target}")
         all_proposals = engine.analyze_directory(
-            target, recursive=True, verbose=True, progress=normalize_progress(args.progress)
+            target, recursive=True, verbose=True, progress=options.progress
         )
 
     print(f"\nFound {len(all_proposals)} refactoring opportunities")
@@ -756,7 +836,8 @@ def _run_preview(args: argparse.Namespace) -> None:
 
 def _run_rename_helpers(args: argparse.Namespace) -> None:
     """Run the rename-helpers command."""
-    target = Path(args.target)
+    options = RenameOptions.from_namespace(args)
+    target = options.target
 
     if not target.exists():
         print(f"Error: '{target}' does not exist")
@@ -766,19 +847,19 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
         print(f"Error: '{target}' must be a directory")
         sys.exit(1)
 
-    helpers = _find_extracted_helpers(target, args.files, args.functions)
+    helpers = _find_extracted_helpers(target, options.files, options.functions)
 
-    if not helpers and not args.rename_file:
+    if not helpers and not options.rename_file:
         # A mapping may still rename parameters of helpers renamed earlier;
         # the planner validates every key against the current source.
         print(f"No extracted helper functions found in {target}")
         return
 
     # List mode
-    if args.list and args.json:
+    if options.list and options.json:
         print(json.dumps(helper_inventory(target, helpers), indent=2))
         return
-    if args.list:
+    if options.list:
         print(f"\nFound {len(helpers)} extracted helper function(s):\n")
         for file_path, func_name, lineno, source_preview in helpers:
             rel_path = file_path.relative_to(target)
@@ -793,12 +874,12 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
             print()
         return
 
-    if args.rename_file:
-        _apply_rename_file(target, helpers, args.rename_file, args.preview, args.json)
+    if options.rename_file:
+        _apply_rename_file(target, helpers, options.rename_file, options.preview, options.json)
         return
 
     # Interactive LLM mode
-    _run_interactive_llm_mode(target, helpers, args.llm, args.preview)
+    _run_interactive_llm_mode(target, helpers, options.llm, options.preview)
 
 
 def _find_extracted_helpers(
