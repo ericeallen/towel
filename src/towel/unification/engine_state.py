@@ -26,7 +26,8 @@ stubs are implemented by the engine or by another mixin.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+import ast
+from typing import Dict, Optional, Sequence, Tuple
 
 from .semantic_safety import ImportGraphCache
 
@@ -39,3 +40,8 @@ class EngineState:
 
     import_graph: ImportGraphCache
     """What this run has learned about the project's import graph."""
+
+    @staticmethod
+    def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:
+        """The (start_line, end_line) of a contiguous block; provided by InsertionPoints."""
+        raise NotImplementedError
