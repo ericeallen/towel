@@ -131,6 +131,9 @@ class RefactoringProposal:
     # When set, ``extracted_function`` is that existing definition (for display)
     # and every replacement already calls it by name; nothing is inserted.
     reused_function: Optional[ReusedFunction] = None
+    # The call sites declare types, so parameters the copied annotations left
+    # bare may be filled by a type inferrer when the proposal is applied.
+    wants_type_inference: bool = False
 
     def __post_init__(self) -> None:
         """Coerce legacy tuple replacements into :class:`Replacement` instances."""

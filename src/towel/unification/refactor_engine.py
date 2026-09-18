@@ -116,7 +116,15 @@ from .models import (
     RefactoringProposal,
     ReusedFunction,
 )
-from .annotations import CallSite, annotate_helper, call_in_statement
+from .annotations import (
+    ApplySite,
+    CallSite,
+    annotate_helper,
+    call_in_statement,
+    infer_missing_annotations,
+    sites_use_annotations,
+)
+from ..type_inference import TypeInferrer
 from .pipeline import run_pipeline, AnalysisSession
 from .visitors import (
     MethodCallRewriter,
@@ -330,6 +338,7 @@ class UnificationRefactorEngine:
         skip_trivial_helpers: bool = True,
         reuse_existing_functions: bool = True,
         annotate_helpers: bool = True,
+        type_inferrer: Optional[TypeInferrer] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
     ):
         """
@@ -366,7 +375,13 @@ class UnificationRefactorEngine:
                 its call sites agree on -- an annotated, never-rebound parameter
                 of the enclosing function, a literal's builtin type, the sites'
                 declared return type -- in code that already uses annotations
-                (default: True). Nothing is inferred.
+                (default: True). Nothing is inferred unless ``type_inferrer``
+                is given.
+            type_inferrer: Asked, when a proposal is applied, for the types of
+                the argument expressions and returned values the copied
+                annotations could not name, for example ``MypyInferrer`` (see
+                ``towel.type_inference``). Used only where the sites declare
+                types. None (default) infers nothing.
             snippet_formatter: Renders each generated helper definition and
                 call statement from ``ast.unparse`` output to the text that is
                 inserted, for example Black (see ``towel.formatting``). None
@@ -378,6 +393,7 @@ class UnificationRefactorEngine:
         self.skip_trivial_helpers = skip_trivial_helpers
         self.reuse_existing_functions = reuse_existing_functions
         self.annotate_helpers = annotate_helpers
+        self.type_inferrer = type_inferrer
         self.snippet_formatter = snippet_formatter
         # Directory names left out of directory mode, such as ``tests`` when a
         # package carries its test suite inside itself (networkx: 77k of its
@@ -3817,7 +3833,56 @@ class UnificationRefactorEngine:
         annotated = annotate_helper(
             proposal.extracted_function, sites, proposal.file_path, proposal.return_variables
         )
-        return dataclasses.replace(proposal, extracted_function=annotated)
+        return dataclasses.replace(
+            proposal,
+            extracted_function=annotated,
+            wants_type_inference=sites_use_annotations(sites),
+        )
+
+    def _infer_helper_annotations(self, proposal: RefactoringProposal) -> None:
+        """Fill the helper's bare annotations from the type inferrer, in place.
+
+        Runs once per applied proposal, on the files as they stand, so the
+        cost is one incremental type-check per application rather than one
+        per candidate.
+        """
+        if self.type_inferrer is None or not proposal.wants_type_inference:
+            return
+        if proposal.reused_function is not None:
+            return
+        sites: List[ApplySite] = []
+        sources: Dict[str, str] = {}
+        for replacement in proposal.replacements:
+            file_path = replacement.file_path or proposal.file_path
+            call = call_in_statement(replacement.node, proposal.extracted_function.name)
+            if call is None:
+                return
+            source = sources.get(file_path)
+            if source is None:
+                source = Path(file_path).read_text(encoding="utf-8")
+                sources[file_path] = source
+            lines = source.splitlines(keepends=True)
+            start_line, end_line = replacement.line_range
+            if not 1 <= start_line <= len(lines):
+                return
+            sites.append(
+                ApplySite(
+                    file_path=file_path,
+                    source=source,
+                    start_line=start_line,
+                    end_line=end_line,
+                    indent=self._get_indent(lines[start_line - 1]),
+                    statement=cast(ast.stmt, replacement.node),
+                    call=call,
+                )
+            )
+        proposal.extracted_function = infer_missing_annotations(
+            proposal.extracted_function,
+            sites,
+            proposal.file_path,
+            proposal.return_variables,
+            self.type_inferrer,
+        )
 
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
         """
@@ -3884,6 +3949,7 @@ class UnificationRefactorEngine:
         """
         # Materialization owns its ASTs; callers may reuse or inspect the proposal.
         proposal = copy.deepcopy(proposal)
+        self._infer_helper_annotations(proposal)
         # Group replacements by file
         replacements_by_file: Dict[str, List[Replacement]] = {}
         for repl in proposal.replacements:

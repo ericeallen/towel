@@ -29,6 +29,7 @@ dependencies = []
 
 [project.optional-dependencies]
 format = ["black>=24.1.0"]
+types = ["mypy>=1.0.0"]
 dev = [
     "tomli>=2.0.1",
     "pytest>=9.0.3",

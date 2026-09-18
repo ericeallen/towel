@@ -176,6 +176,9 @@ dev = [
 format = [
     { name = "black" },
 ]
+types = [
+    { name = "mypy" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -186,13 +189,14 @@ requires-dist = [
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "mypy", marker = "extra == 'types'", specifier = ">=1.0.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "pydocstyle", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "tomli", marker = "extra == 'dev'", specifier = ">=2.0.1" },
     { name = "tqdm", marker = "extra == 'dev'", specifier = ">=4.66.0" },
 ]
-provides-extras = ["format", "dev"]
+provides-extras = ["format", "types", "dev"]
 
 [[package]]
 name = "colorama"

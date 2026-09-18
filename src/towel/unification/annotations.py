@@ -39,9 +39,11 @@ import ast
 import builtins
 import copy
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Optional, Sequence, Set, Union
+import re
+from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
 from .semantic_safety import _walk_own_scope
+from ..type_inference import RevealRequest, TypeInferrer
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
@@ -270,6 +272,233 @@ def _import_bound_names(module: ast.Module) -> Set[str]:
         elif isinstance(node, ast.ImportFrom):
             bound.update(alias.asname or alias.name for alias in node.names if alias.name != "*")
     return bound
+
+
+def sites_use_annotations(sites: Sequence[CallSite]) -> bool:
+    """Whether any site's function declares a type, the style gate for annotating."""
+    return any(_uses_annotations(site.function) for site in sites)
+
+
+_LITERAL = re.compile(r"Literal\[(?P<value>[^\]]*)\]\??")
+
+
+def annotation_from_revealed(
+    revealed: str, host: Optional[ast.Module], same_module: bool
+) -> Optional[ast.expr]:
+    """An annotation from mypy's spelling of a type, or None when it cannot be written.
+
+    Inferred-literal markers (``Literal['x']?``) become the literal's builtin
+    type and ``builtins.``/``?``/``*`` markers are dropped. Anything containing
+    ``Any``, a callable, or an unresolvable name is declined; a dotted name is
+    kept only when its head is bound in the host, or reduced to its last part
+    when that is bound there.
+    """
+    text = revealed.strip()
+    if not text or "Any" in text or "<" in text or text.startswith("def ") or "Never" in text:
+        return None
+
+    def literal_type(match: "re.Match[str]") -> str:
+        try:
+            value = ast.literal_eval(match.group("value"))
+        except (ValueError, SyntaxError):
+            return "Any"
+        kind = _literal_type(value)
+        return kind.id if isinstance(kind, ast.Name) else "Any"
+
+    text = _LITERAL.sub(literal_type, text)
+    if "Any" in text:
+        return None
+    text = text.replace("builtins.", "").replace("?", "").replace("*", "")
+    try:
+        expression = ast.parse(text, mode="eval").body
+    except SyntaxError:
+        return None
+    reduced = _reduce_dotted_names(expression, host)
+    if reduced is None:
+        return None
+    return _spelled_for_host(reduced, host, same_module)
+
+
+def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> Optional[ast.expr]:
+    """Rewrite ``pkg.mod.Name`` to what the host can spell, or None if it cannot."""
+    bound = _import_bound_names(host) | _defined_names(host) if host is not None else set()
+
+    class Reducer(ast.NodeTransformer):
+        failed = False
+
+        def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+            head = node
+            while isinstance(head, ast.Attribute):
+                head = head.value  # type: ignore[assignment]
+            if isinstance(head, ast.Name) and head.id in bound:
+                return node  # ``typing.Sequence`` with ``import typing`` in the host
+            if node.attr in bound:
+                return ast.Name(id=node.attr, ctx=ast.Load())
+            self.failed = True
+            return node
+
+    reducer = Reducer()
+    result = reducer.visit(copy.deepcopy(expression))
+    return None if reducer.failed else result
+
+
+def _defined_names(module: ast.Module) -> Set[str]:
+    return {
+        node.name
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+
+
+@dataclass(frozen=True)
+class ApplySite:
+    """A replacement as it stands in the file about to be rewritten."""
+
+    file_path: str
+    source: str
+    start_line: int
+    end_line: int
+    indent: str
+    statement: ast.stmt
+    call: ast.Call
+
+
+def infer_missing_annotations(
+    helper: ast.FunctionDef,
+    sites: Sequence[ApplySite],
+    host_file: str,
+    return_variables: Sequence[str],
+    inferrer: TypeInferrer,
+) -> ast.FunctionDef:
+    """A copy of ``helper`` with bare parameters and return filled from a type inferrer.
+
+    For each bare parameter, every site's argument expression is revealed at
+    the start of its block, where the call will stand; a lambda argument is
+    left alone. A bare return is revealed from the block's own ``return``
+    expressions, or from the returned variables just after the block. Sites
+    must agree, and the type must be writable where the helper is defined.
+    """
+    annotated = copy.deepcopy(helper)
+    parameters = annotated.args.posonlyargs + annotated.args.args
+    bare = [
+        index
+        for index, parameter in enumerate(parameters)
+        if parameter.annotation is None
+        and all(
+            index < len(site.call.args) and not isinstance(site.call.args[index], ast.Lambda)
+            for site in sites
+        )
+    ]
+    want_return = annotated.returns is None and bool(sites)
+    if not bare and not want_return:
+        return annotated
+    requests: List[RevealRequest] = []
+    return_probes: List[Tuple[str, int, int]] = []
+    for site in sites:
+        if bare:
+            requests.append(
+                RevealRequest(
+                    site.file_path,
+                    site.source,
+                    site.start_line,
+                    site.indent,
+                    tuple(ast.unparse(site.call.args[index]) for index in bare),
+                )
+            )
+        if want_return:
+            for line, indent, expressions in _return_probes(site, return_variables):
+                requests.append(
+                    RevealRequest(site.file_path, site.source, line, indent, expressions)
+                )
+                return_probes.append((site.file_path, line, len(expressions)))
+    revealed = inferrer(requests)
+    host = next((ast.parse(site.source) for site in sites if site.file_path == host_file), None)
+    same_module = all(site.file_path == host_file for site in sites)
+    for position, index in enumerate(bare):
+        texts = [revealed.get((site.file_path, site.start_line, position)) for site in sites]
+        parameters[index].annotation = _agreed_revealed(texts, host, same_module)
+    if want_return:
+        texts = [
+            revealed.get((path, line, offset))
+            for path, line, count in return_probes
+            for offset in range(count)
+        ]
+        if return_variables and len(return_variables) > 1:
+            annotated.returns = _agreed_tuple(texts, len(return_variables), host, same_module)
+        elif texts:
+            annotated.returns = _agreed_revealed(texts, host, same_module)
+    return annotated
+
+
+def _return_probes(
+    site: ApplySite, return_variables: Sequence[str]
+) -> List[Tuple[int, str, Tuple[str, ...]]]:
+    """Where to reveal what the helper will return: (line, indent, expressions)."""
+    lines = site.source.splitlines(keepends=True)
+    if return_variables:
+        after = site.end_line + 1
+        if after > len(lines):
+            return []
+        return [(after, site.indent, tuple(return_variables))]
+    if not isinstance(site.statement, ast.Return):
+        return []
+    block_source = "".join(lines[site.start_line - 1 : site.end_line])
+    try:
+        block = ast.parse(textwrap_dedent(block_source))
+    except SyntaxError:
+        return []
+    probes: List[Tuple[int, str, Tuple[str, ...]]] = []
+    for node in ast.walk(block):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if isinstance(node, ast.Return) and node.value is not None:
+            line = site.start_line + node.lineno - 1
+            indent = lines[line - 1][: len(lines[line - 1]) - len(lines[line - 1].lstrip())]
+            probes.append((line, indent, (ast.unparse(node.value),)))
+    return probes
+
+
+def textwrap_dedent(text: str) -> str:
+    import textwrap
+
+    return textwrap.dedent(text)
+
+
+def _agreed_revealed(
+    texts: Sequence[Optional[str]], host: Optional[ast.Module], same_module: bool
+) -> Optional[ast.expr]:
+    if not texts or any(text is None for text in texts):
+        return None
+    candidates = [annotation_from_revealed(cast_str(text), host, same_module) for text in texts]
+    if any(candidate is None for candidate in candidates):
+        return None
+    first = candidates[0]
+    assert first is not None
+    if any(ast.dump(candidate) != ast.dump(first) for candidate in candidates[1:]):  # type: ignore[arg-type]
+        return None
+    return first
+
+
+def _agreed_tuple(
+    texts: Sequence[Optional[str]], width: int, host: Optional[ast.Module], same_module: bool
+) -> Optional[ast.expr]:
+    """``tuple[...]`` of the returned variables' types when every site agrees per position."""
+    if len(texts) % width:
+        return None
+    columns = [texts[offset::width] for offset in range(width)]
+    elements = [_agreed_revealed(column, host, same_module) for column in columns]
+    if any(element is None for element in elements):
+        return None
+    return ast.Subscript(
+        value=ast.Name(id="tuple", ctx=ast.Load()),
+        slice=ast.Tuple(elts=[e for e in elements if e is not None], ctx=ast.Load()),
+        ctx=ast.Load(),
+    )
+
+
+def cast_str(text: Optional[str]) -> str:
+    assert text is not None
+    return text
 
 
 def annotated_names(annotated: ast.FunctionDef) -> List[str]:

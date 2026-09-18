@@ -38,6 +38,19 @@ ecosystem evidence behind each claim. The format follows
   names bound by a module-level import) and as strings otherwise; across
   modules only builtin names are used. Code without annotations stays that
   way. Construct the engine with `annotate_helpers=False` to disable it.
+- When mypy is installed (`pip install "code-towel[types]"`), the argument
+  expressions and return values those copied annotations could not name are
+  typed by mypy: `towel dry` reveals each one in an in-memory copy of the
+  site's module, at the point where the call will stand, once per applied
+  refactoring with an incremental cache. A type is written only when every
+  site agrees, it contains no `Any`, and every name in it resolves where the
+  helper is defined. `--no-types` leaves helpers unannotated; library callers
+  pass a `type_inferrer` to the engine.
+- Analysis facts are computed once per function instead of once per candidate
+  block (definite assignment, locally bound names, nested scopes), and the
+  same-file clustering pass applies its constant-time filters before the
+  semantic guards. Together these remove about half of the AST traversal on
+  a 16k-line project with an identical proposal list.
 
 ### Fixed
 - A block that binds a variable read after it is extracted again, with the

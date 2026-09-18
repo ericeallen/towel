@@ -11,7 +11,10 @@ import sys
 import argparse
 from importlib.metadata import version
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple, Optional, Mapping, cast
+from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, cast
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from towel.type_inference import TypeInferrer
 from towel.changes import apply_changes, recover
 
 
@@ -149,6 +152,15 @@ Examples:
         type=int,
         default=0,
         help="Maximum refactorings to apply (0 = unlimited until fixed point, default: 0)",
+    )
+
+    parser.add_argument(
+        "--no-types",
+        action="store_true",
+        help="Leave generated helpers without type annotations. By default a helper takes the "
+        "annotations its call sites declare and, when mypy is installed (the 'types' extra), "
+        "the types mypy infers for the remaining arguments and return; only in code that "
+        "already uses annotations.",
     )
 
     parser.add_argument(
@@ -332,6 +344,21 @@ def _write_change_sidecar(engine: object, output: str) -> None:
     print(f"\nWrote call-site before/after to {sidecar} (for naming; safe to delete).")
 
 
+def _type_inferrer() -> Optional["TypeInferrer"]:
+    """mypy-backed inference, or None with a note when mypy is absent."""
+    from towel.type_inference import MypyInferrer
+
+    try:
+        return MypyInferrer()
+    except ImportError:
+        print(
+            "Note: mypy is not installed, so helper annotations are copied from the call "
+            'sites but not inferred. Install the types extra (pip install "code-towel[types]") '
+            "to infer them."
+        )
+        return None
+
+
 def _generated_code_formatter(project_path: "Path") -> Optional[Callable[[str], str]]:
     """Black configured from the project's own settings, or None with a note when absent."""
     from towel.formatting import BlackSettings, black_formatter
@@ -400,6 +427,8 @@ def _run_dry(args: argparse.Namespace) -> None:
             if getattr(args, "no_format", False)
             else _generated_code_formatter(Path(input_path))
         ),
+        annotate_helpers=not getattr(args, "no_types", False),
+        type_inferrer=None if getattr(args, "no_types", False) else _type_inferrer(),
     )
 
     # Use fixed-point iteration
