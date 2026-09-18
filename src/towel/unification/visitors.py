@@ -431,12 +431,14 @@ class ClassLocator(DefinitionDepthVisitor):
                 self.result = None
 
 
-class FuncLocator(ast.NodeVisitor):
+class FuncLocator(OwnScopeVisitor):
     """Locate a function definition by name and determine its helper insertion point.
 
     Returns the line number and indentation suitable for inserting a new helper
     function inside the target function, after any existing nested definitions
-    but before the first executable statement.
+    but before the first executable statement. Every function is entered until
+    the named one is found; that one is not, so a same-named function nested
+    in it cannot displace the result.
     """
 
     def __init__(self, source: str, function_name: str) -> None:
@@ -444,15 +446,7 @@ class FuncLocator(ast.NodeVisitor):
         self.function_name = function_name
         self.result: Optional[Tuple[int, str]] = None
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        self._maybe_capture_insertion_point(node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        self._maybe_capture_insertion_point(node)
-
-    def _maybe_capture_insertion_point(
-        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
-    ) -> None:
+    def _nested_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
         if node.name != self.function_name:
             self.generic_visit(node)
             return
