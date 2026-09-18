@@ -18,12 +18,11 @@ import contextlib
 import io
 from pathlib import Path
 import shutil
-import subprocess
-import sys
 import tempfile
 
 import pytest
 
+from tests.hostile_execution import observe
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_crossfile"
@@ -46,17 +45,8 @@ def _python_files(root: Path) -> dict[str, bytes]:
     return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*.py"))}
 
 
-def _run(root: Path) -> tuple[int, str, str]:
-    completed = subprocess.run(
-        [sys.executable, "run.py"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-        env={"PYTHONDONTWRITEBYTECODE": "1", "PATH": ""},
-    )
-    return completed.returncode, completed.stdout, completed.stderr.strip().splitlines()[-1:]
+def _run(root: Path) -> tuple[int, str, list[str]]:
+    return observe("run.py", root)
 
 
 @pytest.mark.parametrize("case", sorted(path.name for path in CASES.iterdir() if path.is_dir()))

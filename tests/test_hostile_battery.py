@@ -14,12 +14,11 @@ import contextlib
 import io
 from pathlib import Path
 import shutil
-import subprocess
-import sys
 import tempfile
 
 import pytest
 
+from tests.hostile_execution import observe
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -86,16 +85,8 @@ TRANSFORMED = {
 }
 
 
-def _run(script: Path) -> tuple[int, str, str]:
-    completed = subprocess.run(
-        [sys.executable, script.name],
-        cwd=script.parent,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    return completed.returncode, completed.stdout, completed.stderr.strip().splitlines()[-1:]
+def _run(script: Path) -> tuple[int, str, list[str]]:
+    return observe(script.name, script.parent)
 
 
 @pytest.mark.parametrize("case", sorted(path.stem for path in CASES.glob("*.py")))

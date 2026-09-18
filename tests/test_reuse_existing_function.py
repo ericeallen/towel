@@ -62,6 +62,34 @@ def _body(function: ast.FunctionDef) -> str:
     return "\n".join(ast.unparse(statement) for statement in function.body)
 
 
+def _extracted_helper(
+    final: str, originals: tuple[str, ...], sites: tuple[str, ...] | None = None
+) -> str:
+    """The one function added to ``originals``, which every duplicate site calls.
+
+    The helper's name is not part of the contract; its shape is: exactly one
+    definition was added, and each site (all originals unless given) calls it.
+    """
+    sites = originals if sites is None else sites
+    definitions = [
+        node
+        for node in ast.parse(final).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    added = [node.name for node in definitions if node.name not in originals]
+    assert len(added) == 1, f"expected exactly one new helper, found {added}:\n{final}"
+    helper = added[0]
+    for node in definitions:
+        if node.name in sites:
+            calls = {
+                call.func.id
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+            }
+            assert helper in calls, f"{node.name} does not call {helper}:\n{final}"
+    return helper
+
+
 def test_identical_functions_keep_the_first_and_forward_the_second(tmp_path: Path) -> None:
     final = _fixed_point(_write(tmp_path, IDENTICAL_PAIR))
     functions = _functions(final)
@@ -235,7 +263,7 @@ def test_shadowed_name_at_the_site_falls_back_to_extraction(tmp_path: Path) -> N
             """,
         )
     )
-    assert "__extracted_func_0" in final
+    _extracted_helper(final, ("alpha", "beta"))
     assert "return alpha(value)" not in final
 
 
@@ -321,7 +349,7 @@ def test_only_async_duplicates_fall_back_to_extraction(tmp_path: Path) -> None:
             """,
         )
     )
-    assert "__extracted_func_0" in final
+    _extracted_helper(final, ("alpha", "gamma"))
 
 
 def test_globally_rebound_function_is_not_reused(tmp_path: Path) -> None:
@@ -345,14 +373,14 @@ def test_globally_rebound_function_is_not_reused(tmp_path: Path) -> None:
             """,
         )
     )
-    assert "__extracted_func_0" in final
+    _extracted_helper(final, ("alpha", "beta", "swap"), sites=("alpha", "beta"))
     assert "return alpha(value)" not in final
     assert "return beta(value)" not in final
 
 
 def test_reuse_can_be_switched_off(tmp_path: Path) -> None:
     final = _fixed_point(_write(tmp_path, IDENTICAL_PAIR), reuse_existing_functions=False)
-    assert "__extracted_func_0" in final
+    _extracted_helper(final, ("alpha", "beta"))
     assert "return alpha(value)" not in final
 
 
