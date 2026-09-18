@@ -38,6 +38,7 @@ class _FunctionFacts:
 
     @cached_property
     def locally_bound(self) -> FrozenSet[str]:
+        """Names the function's own scope binds anywhere; see ``locally_bound_names``."""
         return frozenset(_locally_bound_names(self.function))
 
     @cached_property

@@ -292,6 +292,7 @@ class MypyInferrer:
         return messages
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        """Reveal each request through one mypy build per module, probes appended in memory."""
         from mypy import build
         from mypy.build import BuildSource
         from mypy.errors import CompileError
@@ -389,27 +390,27 @@ def _probe_file(original: Path, text: str) -> Iterator[Path]:
         _PENDING_PROBES.discard(probe)
 
 
-class PyrightPosition(TypedDict, total=False):
+class _PyrightPosition(TypedDict, total=False):
     """A zero-based position in pyright's JSON output."""
 
     line: int
     character: int
 
 
-class PyrightRange(TypedDict, total=False):
+class _PyrightRange(TypedDict, total=False):
     """The span of a pyright diagnostic."""
 
-    start: PyrightPosition
-    end: PyrightPosition
+    start: _PyrightPosition
+    end: _PyrightPosition
 
 
-class PyrightDiagnostic(TypedDict, total=False):
+class _PyrightDiagnostic(TypedDict, total=False):
     """One entry of ``generalDiagnostics`` in ``pyright --outputjson``."""
 
     severity: str
     message: str
     rule: str
-    range: PyrightRange
+    range: _PyrightRange
 
 
 class PyrightOracle:
@@ -427,7 +428,7 @@ class PyrightOracle:
             raise ImportError("pyright is not installed")
         self._command: List[str] = command
 
-    def _diagnostics(self, file_path: str, text: str) -> List[PyrightDiagnostic]:
+    def _diagnostics(self, file_path: str, text: str) -> List[_PyrightDiagnostic]:
         """Pyright's diagnostics for ``text`` standing in for ``file_path``."""
         original = Path(file_path)
         with _probe_file(original, text) as probe:
@@ -450,15 +451,16 @@ class PyrightOracle:
             return []
         diagnostics = data.get("generalDiagnostics", [])
         # pyright's JSON is trusted to have this shape; the reads below use .get.
-        return [cast(PyrightDiagnostic, d) for d in diagnostics if isinstance(d, dict)]
+        return [cast(_PyrightDiagnostic, d) for d in diagnostics if isinstance(d, dict)]
 
     @staticmethod
-    def _line(diagnostic: PyrightDiagnostic) -> int:
+    def _line(diagnostic: _PyrightDiagnostic) -> int:
         """The one-based line of a diagnostic, or 0 when it carries no position."""
         start = diagnostic.get("range", {}).get("start")
         return start.get("line", -1) + 1 if start is not None else 0
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        """Reveal each request by running pyright on a probe copy of its module."""
         revealed: Dict[RevealKey, str] = {}
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
@@ -488,6 +490,7 @@ class PyrightOracle:
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
     ) -> Sequence[Subtyping]:
+        """Pyright's verdict on each pair, read from the errors its probe functions raise."""
         if not pairs:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
@@ -499,6 +502,7 @@ class PyrightOracle:
         return _verdicts_from_error_lines(len(pairs), error_lines, signature_line, return_line)
 
     def check(self, file_path: str, source: str) -> Sequence[str]:
+        """Pyright's errors for ``source`` standing at ``file_path``, one message each."""
         return [
             f"pyright: {diagnostic.get('rule') or ''}: {diagnostic.get('message', '')}"
             for diagnostic in self._diagnostics(file_path, source)
@@ -528,14 +532,17 @@ class CombinedOracle:
         self._all = [primary, *others]
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        """The primary oracle's revelations."""
         return self._primary.reveal(requests)
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
     ) -> Sequence[Subtyping]:
+        """The primary oracle's verdicts."""
         return self._primary.is_subtype(file_path, source, pairs)
 
     def check(self, file_path: str, source: str) -> Sequence[str]:
+        """Every oracle's errors, the primary's first, so each configured checker stays green."""
         messages: List[str] = []
         for oracle in self._all:
             messages.extend(oracle.check(file_path, source))
@@ -543,6 +550,7 @@ class CombinedOracle:
 
 
 def project_configures_mypy(root: Path) -> bool:
+    """Whether the project configures mypy (``mypy.ini``, ``[mypy]`` in setup.cfg, or ``[tool.mypy]``)."""
     if any((root / name).is_file() for name in ("mypy.ini", ".mypy.ini")):
         return True
     if _has_ini_section(root / "setup.cfg", "mypy"):
@@ -551,6 +559,7 @@ def project_configures_mypy(root: Path) -> bool:
 
 
 def project_configures_pyright(root: Path) -> bool:
+    """Whether the project configures pyright (``pyrightconfig.json`` or ``[tool.pyright]``)."""
     return (root / "pyrightconfig.json").is_file() or _has_tool_section(root, "pyright")
 
 

@@ -41,19 +41,19 @@ class OwnScopeVisitor(ast.NodeVisitor):
     of these, by overriding the hook, never by redefining the traversal.
     """
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._nested_function(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._nested_function(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._nested_class(node)
 
-    def visit_Lambda(self, node: ast.Lambda) -> None:  # noqa: N802
+    def visit_Lambda(self, node: ast.Lambda) -> None:
         self._lambda(node)
 
-    def visit_ListComp(  # noqa: N802
+    def visit_ListComp(
         self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
     ) -> None:
         self._comprehension(node)
@@ -91,7 +91,7 @@ class DefinitionDepthVisitor(ast.NodeVisitor):
 
     _depth = 0
 
-    def visit_FunctionDef(  # noqa: N802
+    def visit_FunctionDef(
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
     ) -> None:
         self._enter_definition(node)
@@ -132,9 +132,7 @@ class ScopeVisitor(ast.NodeVisitor):
     a comprehension in the enclosing scope, and say so where they do.
     """
 
-    def visit_FunctionDef(  # noqa: N802
-        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
-    ) -> None:
+    def visit_FunctionDef(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
         self._visit_definition_head(node)
         self._bind_definition_name(node)
         self._enter_scope(node)
@@ -145,7 +143,7 @@ class ScopeVisitor(ast.NodeVisitor):
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._visit_definition_head(node)
         self._bind_definition_name(node)
         self._enter_scope(node)
@@ -153,10 +151,10 @@ class ScopeVisitor(ast.NodeVisitor):
         self._leave_scope(node)
         self._visit_definition_tail(node)
 
-    def visit_Lambda(self, node: ast.Lambda) -> None:  # noqa: N802
+    def visit_Lambda(self, node: ast.Lambda) -> None:
         self._lambda(node)
 
-    def visit_ListComp(  # noqa: N802
+    def visit_ListComp(
         self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
     ) -> None:
         self._comprehension(node)
@@ -327,13 +325,13 @@ class LoopReturnFinder(OwnScopeVisitor):
         self.has_loop_return = False
         self.in_loop = False
 
-    def visit_For(self, node: ast.For) -> None:  # noqa: N802
+    def visit_For(self, node: ast.For) -> None:
         _visit_loop_and_restore_flag(self, node)
 
-    def visit_While(self, node: ast.While) -> None:  # noqa: N802
+    def visit_While(self, node: ast.While) -> None:
         _visit_loop_and_restore_flag(self, node)
 
-    def visit_Return(self, node: ast.Return) -> None:  # noqa: N802
+    def visit_Return(self, node: ast.Return) -> None:
         if self.in_loop:
             self.has_loop_return = True
 
@@ -347,10 +345,10 @@ class NameCollector(OwnScopeVisitor):
     def __init__(self) -> None:
         self.used: Set[str] = set()
 
-    def visit_Name(self, n: ast.Name) -> None:  # noqa: N802
+    def visit_Name(self, n: ast.Name) -> None:
         _record_load_name_and_visit(n, self.used, self)
 
-    def visit_AnnAssign(self, n: ast.AnnAssign) -> None:  # noqa: N802
+    def visit_AnnAssign(self, n: ast.AnnAssign) -> None:
         # An annotation inside a function body is never evaluated.
         if n.value is not None:
             self.visit(n.value)
@@ -366,7 +364,7 @@ class AugAssignFinder(OwnScopeVisitor):
     def __init__(self) -> None:
         self.aug_assign_targets: Set[str] = set()
 
-    def visit_AugAssign(self, node: ast.AugAssign) -> None:  # noqa: N802
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
         _record_simple_assignment(node, self.aug_assign_targets, self)
 
 
@@ -382,22 +380,22 @@ class AssignTargetVisitor(OwnScopeVisitor):
         self.declared_global_in_block: Set[str] = set()
         self.declared_nonlocal_in_block: Set[str] = set()
 
-    def visit_Assign(self, node: ast.Assign) -> None:  # noqa: N802
+    def visit_Assign(self, node: ast.Assign) -> None:
         for t in node.targets:
             _record_name_target(t, self.assigned_names)
         self.generic_visit(node)
 
-    def visit_AugAssign(self, node: ast.AugAssign) -> None:  # noqa: N802
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
         _record_simple_assignment(node, self.assigned_names, self)
 
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: N802
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         _record_simple_assignment(node, self.assigned_names, self)
 
-    def visit_Global(self, node: ast.Global) -> None:  # noqa: N802
+    def visit_Global(self, node: ast.Global) -> None:
         for n in node.names:
             self.declared_global_in_block.add(n)
 
-    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:  # noqa: N802
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
         for n in node.names:
             self.declared_nonlocal_in_block.add(n)
 

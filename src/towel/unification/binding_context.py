@@ -14,7 +14,7 @@
 
 """Which names an expression reads, and which of them the enclosing block binds.
 
-``get_free_variables`` lists the names an expression reads; ``BindingContextFinder``
+``get_free_variables`` lists the names an expression reads; ``_BindingContextFinder``
 walks the block that contains it, tracking loop, comprehension, lambda, and
 function binders, so ``get_bound_variables_in_context`` can say which of those
 names the block itself binds at the point of the expression.
@@ -79,7 +79,7 @@ class _VarCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-class BindingContextFinder(ast.NodeVisitor):
+class _BindingContextFinder(ast.NodeVisitor):
     """Bindings in effect around every textual occurrence of a target expression.
 
     Occurrences and containment are decided on the nodes' source text, as the
@@ -343,7 +343,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
         Set of variables bound in context surrounding target_expr
     """
 
-    finder = BindingContextFinder(target_expr)
+    finder = _BindingContextFinder(target_expr)
     finder.visit(node)
 
     # Filter to only include variables that are actually referenced in the target expression

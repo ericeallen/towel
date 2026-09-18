@@ -48,7 +48,7 @@ from .visitors import visit_each
 
 
 @dataclass
-class VariableCorrespondence:
+class _VariableCorrespondence:
     """
     Tracks how variables correspond across unified code blocks.
 
@@ -83,8 +83,8 @@ class NominalUnificationContext:
         self.num_blocks = num_blocks
 
         # Track variable correspondences across blocks
-        # Maps canonical variable name → VariableCorrespondence
-        self.correspondences: Dict[str, VariableCorrespondence] = {}
+        # Maps canonical variable name → _VariableCorrespondence
+        self.correspondences: Dict[str, _VariableCorrespondence] = {}
 
         # Track which variables are bound in each block
         # Maps block_idx → set of bound variable names
@@ -104,7 +104,7 @@ class NominalUnificationContext:
             original_name: The actual variable name in this block
         """
         if canonical_name not in self.correspondences:
-            self.correspondences[canonical_name] = VariableCorrespondence(
+            self.correspondences[canonical_name] = _VariableCorrespondence(
                 canonical_name=canonical_name
             )
 

@@ -172,7 +172,7 @@ def _tool_section(root: Path, name: str) -> Mapping[str, object]:
     return section if isinstance(section, Mapping) else {}
 
 
-def project_uses_ruff(path: Path) -> bool:
+def project_configures_ruff(path: Path) -> bool:
     """Whether the project configures ruff (``[tool.ruff]``, ``ruff.toml`` or ``.ruff.toml``)."""
     root = _root(path)
     return bool(_tool_section(root, "ruff")) or any(
@@ -180,7 +180,7 @@ def project_uses_ruff(path: Path) -> bool:
     )
 
 
-def project_selects_ruff_import_sorting(path: Path) -> bool:
+def project_configures_ruff_import_sorting(path: Path) -> bool:
     """Whether ruff's import-sorting rules (``I``) are selected in the project's configuration."""
     root = _root(path)
     ruff = _tool_section(root, "ruff")
@@ -196,7 +196,7 @@ def project_selects_ruff_import_sorting(path: Path) -> bool:
     return any(rule == "ALL" or rule == "I" or rule.startswith("I0") for rule in selected)
 
 
-def project_uses_isort(path: Path) -> bool:
+def project_configures_isort(path: Path) -> bool:
     """Whether the project configures isort (``[tool.isort]``, ``.isort.cfg``, or an ``[isort]`` section)."""
     root = _root(path)
     if _tool_section(root, "isort"):
@@ -260,7 +260,7 @@ def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
     ruff when the project configures it and it is installed; otherwise Black
     when installed; otherwise none. The note explains a fallback or absence.
     """
-    if project_uses_ruff(path):
+    if project_configures_ruff(path):
         try:
             return ToolChoice(ruff_formatter(path), "ruff (project configuration)")
         except FormatterUnavailable:
@@ -284,7 +284,7 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
     isort when the project configures it and isort is importable. A project
     that configures neither has its imports left where Towel put them.
     """
-    if project_selects_ruff_import_sorting(path):
+    if project_configures_ruff_import_sorting(path):
         command = _ruff_executable()
         if command is None:
             return ToolChoice(None, "ruff import sorting is configured but ruff is not installed")
@@ -313,7 +313,7 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
             return completed.stdout if completed.returncode == 0 and completed.stdout else source
 
         return ToolChoice(imports_permuted_only(sort_with_ruff), "ruff import sorting")
-    if project_uses_isort(path):
+    if project_configures_isort(path):
         try:
             import isort
         except ImportError:

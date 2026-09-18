@@ -76,7 +76,7 @@ def pattern_capture_names(pattern: ast.AST) -> Set[str]:
 
 
 # Custom visitor that doesn't descend into nested functions
-class ScopeRespectingWalker(ScopeVisitor):
+class _ScopeRespectingWalker(ScopeVisitor):
     """Collect the names a block uses and binds, following scopes but not entering nested functions.
 
     ``uses`` are the names read, ``bindings`` the names bound in the block's
@@ -440,7 +440,7 @@ class ScopeAnalyzer(ScopeVisitor):
         helpers are placed in and methods dispatched from; a lambda's body is
         read as part of the scope it appears in, its parameters unbound, as
         it always was. ``get_free_variables`` handles lambdas by their own
-        scope through ``ScopeRespectingWalker``.
+        scope through ``_ScopeRespectingWalker``.
         """
         self.generic_visit(node)
 
@@ -610,7 +610,7 @@ class ScopeAnalyzer(ScopeVisitor):
                 return set(cached)
 
         # Collect uses and bindings
-        walker = ScopeRespectingWalker()
+        walker = _ScopeRespectingWalker()
         for node in nodes:
             walker.visit(node)
 

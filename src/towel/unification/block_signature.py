@@ -50,6 +50,11 @@ class BlockSignature:
 
 
 def extract_block_signature(block: List[ast.AST]) -> BlockSignature:
+    """The structural summary two blocks must share before unification is attempted.
+
+    Nested definitions and lambdas are not looked into: their bodies are
+    other scopes, and the unifier treats them by structure.
+    """
     stmt_seq = tuple(type(s).__name__ for s in block)
     has_with = False
     has_try = False

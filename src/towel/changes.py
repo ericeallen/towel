@@ -30,6 +30,8 @@ class RecoveryRequired(OSError):
 
 @dataclass(frozen=True)
 class FileChange:
+    """One file's bytes before and after the change, with the mode to write it back under."""
+
     path: Path
     before: bytes
     after: bytes
@@ -38,10 +40,17 @@ class FileChange:
 
 @dataclass(frozen=True)
 class ChangePlan:
+    """The file changes of one refactoring, applied together or not at all."""
+
     changes: tuple[FileChange, ...]
 
     @classmethod
     def from_sources(cls, before: Mapping[str, bytes], after: Mapping[str, str]) -> ChangePlan:
+        """The plan that takes each file from its original bytes to its new source.
+
+        Every target must be a regular file, named once; each new source must
+        compile. Files whose bytes would not change are left out.
+        """
         changes = []
         seen: set[Path] = set()
         for name, source in sorted(after.items()):

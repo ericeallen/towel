@@ -226,11 +226,11 @@ def _annotated_locals(helper: ast.FunctionDef) -> Dict[str, ast.expr]:
     return found
 
 
-Subtypes = Callable[[Sequence[Tuple[ast.expr, ast.expr]]], Sequence[Subtyping]]
+_Subtypes = Callable[[Sequence[Tuple[ast.expr, ast.expr]]], Sequence[Subtyping]]
 """For each ``(narrow, wide)`` pair, the checker's verdict."""
 
 
-def unknown_subtypes(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Subtyping]:
+def _unknown_subtypes(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Subtyping]:
     """The relation without a type checker: only identical spellings are related.
 
     Towel copies without a checker and reasons only with one; there is no
@@ -242,7 +242,7 @@ def unknown_subtypes(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Sub
     ]
 
 
-def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> Subtypes:
+def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> _Subtypes:
     """The relation as the type checker judges it in ``file_path``.
 
     A pair the checker cannot judge stays None, which every caller treats as
@@ -265,7 +265,7 @@ def _met(
     candidates: Sequence[Optional[ast.expr]],
     host: Optional[ast.Module],
     same_module: bool,
-    subtypes: Subtypes = unknown_subtypes,
+    subtypes: _Subtypes = _unknown_subtypes,
 ) -> Optional[ast.expr]:
     """The greatest lower bound of the sites' declared types, when one of them is it.
 
@@ -301,7 +301,7 @@ def _joined(
     host: Optional[ast.Module],
     same_module: bool,
     extra_bound: Optional[Set[str]] = None,
-    subtypes: Subtypes = unknown_subtypes,
+    subtypes: _Subtypes = _unknown_subtypes,
 ) -> Optional[ast.expr]:
     """The least upper bound of the sites' types that can be written: their normalized union.
 
@@ -338,7 +338,7 @@ def _joined(
     return _spelled_for_host(union, host, same_module, extra_bound)
 
 
-def normalize_union(members: Sequence[ast.expr], subtypes: Subtypes) -> List[ast.expr]:
+def normalize_union(members: Sequence[ast.expr], subtypes: _Subtypes) -> List[ast.expr]:
     """Distinct members with every subtype of another member removed, ``None`` last.
 
     Between two members that are subtypes of each other (equivalent
@@ -489,7 +489,7 @@ def sites_use_annotations(sites: Sequence[CallSite]) -> bool:
 
 _LITERAL = re.compile(r"Literal\[(?P<value>[^\]]*)\]\??")
 _CALLABLE = re.compile(r"^(?:def )?\((?P<params>.*)\) -> (?P<returns>.+)$")
-TYPING_NAMES = frozenset({"Any", "Callable"})
+_TYPING_NAMES = frozenset({"Any", "Callable"})
 """Names an inferred annotation may use that the host must import from ``typing``."""
 
 
@@ -580,7 +580,7 @@ def annotation_from_revealed(
     reduced = _reduce_dotted_names(expression, host)
     if reduced is None:
         return None
-    return _spelled_for_host(reduced, host, same_module, set(TYPING_NAMES) | (bare_ok or set()))
+    return _spelled_for_host(reduced, host, same_module, set(_TYPING_NAMES) | (bare_ok or set()))
 
 
 def _is_type_expression(expression: ast.expr) -> bool:
@@ -614,7 +614,7 @@ def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> Op
     """Rewrite ``pkg.mod.Name`` to what the host can spell, or None if it cannot."""
     bound = (
         _import_bound_names(host) | _defined_names(host) if host is not None else set()
-    ) | TYPING_NAMES
+    ) | _TYPING_NAMES
 
     class Reducer(ast.NodeTransformer):
         failed = False
@@ -658,7 +658,7 @@ class ApplySite:
 
 
 @dataclass(frozen=True)
-class InferredHelper:
+class _InferredHelper:
     """The helper with inferred annotations, and the imports its host must gain."""
 
     helper: ast.FunctionDef
@@ -675,7 +675,7 @@ def typing_imports_needed(
         written.append(helper.returns)
     used: Set[str] = set()
     for annotation in written:
-        used |= _referenced_names(_unquoted(annotation)) & TYPING_NAMES
+        used |= _referenced_names(_unquoted(annotation)) & _TYPING_NAMES
     bound = _import_bound_names(host) | _defined_names(host) if host is not None else set()
     return tuple(("typing", name) for name in sorted(used - bound))
 
@@ -688,7 +688,7 @@ def respell_bare(
     Names in ``bare_ok`` are definitions the helper will be placed after.
     """
     respelled = copy.deepcopy(helper)
-    resolved = _BUILTIN_NAMES | TYPING_NAMES | bare_ok
+    resolved = _BUILTIN_NAMES | _TYPING_NAMES | bare_ok
     if host is not None:
         resolved |= _import_bound_names(host)
 
@@ -708,7 +708,7 @@ def respell_bare(
     return respelled
 
 
-def complete_with_any(helper: ast.FunctionDef, host: Optional[ast.Module]) -> InferredHelper:
+def complete_with_any(helper: ast.FunctionDef, host: Optional[ast.Module]) -> _InferredHelper:
     """Give every still-bare parameter, and a bare return, the annotation ``Any``.
 
     Applied only to a helper that already carries some annotation: a partly
@@ -720,13 +720,13 @@ def complete_with_any(helper: ast.FunctionDef, host: Optional[ast.Module]) -> In
     annotated = copy.deepcopy(helper)
     parameters = annotated.args.posonlyargs + annotated.args.args
     if annotated.returns is None and all(p.annotation is None for p in parameters):
-        return InferredHelper(annotated, ())
+        return _InferredHelper(annotated, ())
     for parameter in parameters:
         if parameter.annotation is None:
             parameter.annotation = ast.Name(id="Any", ctx=ast.Load())
     if annotated.returns is None:
         annotated.returns = ast.Name(id="Any", ctx=ast.Load())
-    return InferredHelper(annotated, typing_imports_needed(annotated, host))
+    return _InferredHelper(annotated, typing_imports_needed(annotated, host))
 
 
 def infer_missing_annotations(
@@ -736,7 +736,7 @@ def infer_missing_annotations(
     return_variables: Sequence[str],
     inferrer: TypeOracle,
     bare_ok: Optional[Set[str]] = None,
-) -> InferredHelper:
+) -> _InferredHelper:
     """A copy of ``helper`` with its annotations completed and normalized by a type checker.
 
     Parameters: each bare parameter's argument expression is revealed at every
@@ -760,18 +760,18 @@ def infer_missing_annotations(
         for index, parameter in enumerate(parameters)
         if parameter.annotation is None and all(index < len(site.call.args) for site in sites)
     ]
-    allowed = set(TYPING_NAMES) | (bare_ok or set())
+    allowed = set(_TYPING_NAMES) | (bare_ok or set())
     host_site = next((site for site in sites if site.file_path == host_file), None)
-    subtypes: Subtypes = (
+    subtypes: _Subtypes = (
         oracle_subtypes(inferrer, host_site.file_path, host_site.source)
         if host_site is not None
-        else unknown_subtypes
+        else _unknown_subtypes
     )
     declared = [site.declared_return for site in sites]
     returns_call = bool(sites) and all(isinstance(site.statement, ast.Return) for site in sites)
     want_return = bool(sites) and (annotated.returns is None or returns_call)
     if not bare and not want_return:
-        return InferredHelper(annotated, ())
+        return _InferredHelper(annotated, ())
     requests: List[RevealRequest] = []
     return_probes: List[Tuple[str, int, int]] = []
     for site in sites:
@@ -824,7 +824,7 @@ def infer_missing_annotations(
             )
         elif revealed_return is not None or annotated.returns is None:
             annotated.returns = revealed_return
-    return InferredHelper(annotated, typing_imports_needed(annotated, host))
+    return _InferredHelper(annotated, typing_imports_needed(annotated, host))
 
 
 def _return_under_declarations(
@@ -832,7 +832,7 @@ def _return_under_declarations(
     declared: Sequence[Optional[ast.expr]],
     host: Optional[ast.Module],
     same_module: bool,
-    subtypes: Subtypes,
+    subtypes: _Subtypes,
 ) -> Optional[ast.expr]:
     """The helper's return type given that every site returns it under a declared type.
 
@@ -853,7 +853,7 @@ def _renormalized(
     annotation: ast.expr,
     host: Optional[ast.Module],
     same_module: bool,
-    subtypes: Subtypes,
+    subtypes: _Subtypes,
     allowed: Set[str],
 ) -> ast.expr:
     """A copied union annotation with subsumed members dropped; anything else unchanged."""
@@ -908,14 +908,14 @@ def _joined_revealed(
     texts: Sequence[Optional[str]],
     host: Optional[ast.Module],
     same_module: bool,
-    subtypes: Subtypes = unknown_subtypes,
+    subtypes: _Subtypes = _unknown_subtypes,
     allowed: Optional[Set[str]] = None,
 ) -> Optional[ast.expr]:
     """The normalized union of what mypy revealed at every site, when all of it can be written."""
     present = [text for text in texts if text is not None]
     if not present or len(present) != len(texts):
         return None
-    extra = allowed if allowed is not None else set(TYPING_NAMES)
+    extra = allowed if allowed is not None else set(_TYPING_NAMES)
     candidates = [annotation_from_revealed(text, host, same_module, extra) for text in present]
     if any(candidate is None for candidate in candidates):
         return None
@@ -929,7 +929,7 @@ def _joined_tuple(
     width: int,
     host: Optional[ast.Module],
     same_module: bool,
-    subtypes: Subtypes = unknown_subtypes,
+    subtypes: _Subtypes = _unknown_subtypes,
     allowed: Optional[Set[str]] = None,
 ) -> Optional[ast.expr]:
     """``tuple[...]`` of the returned variables' types, each joined across sites."""

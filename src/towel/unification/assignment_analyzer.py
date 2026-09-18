@@ -50,12 +50,12 @@ def analyze_assignments(func: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> D
             result = result + 10  # Reassignment: id -> True
             return result
     """
-    analyzer = AssignmentAnalyzer()
+    analyzer = _AssignmentAnalyzer()
     analyzer.visit(func)
     return analyzer.reassignments
 
 
-class AssignmentAnalyzer(OwnScopeVisitor):
+class _AssignmentAnalyzer(OwnScopeVisitor):
     """
     Visitor that analyzes assignments to determine which are reassignments.
 

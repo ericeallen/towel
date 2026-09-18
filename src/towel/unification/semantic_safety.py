@@ -134,7 +134,7 @@ def snapshots_rebound_external_names(
     return False
 
 
-def has_comprehension_assignment(nodes: Iterable[ast.AST]) -> bool:
+def _has_comprehension_assignment(nodes: Iterable[ast.AST]) -> bool:
     """Whether a comprehension writes a binding in its containing function.
 
     This requires return/liveness analysis across the comprehension boundary;
@@ -242,7 +242,7 @@ def requires_original_frame(nodes: Iterable[ast.AST]) -> bool:
     Unknown shadowing of these call names is deliberately treated conservatively.
     """
     block = tuple(nodes)
-    if has_external_loop_control(block) or has_comprehension_assignment(block):
+    if has_external_loop_control(block) or _has_comprehension_assignment(block):
         return True
     for statement in block:
         for node in ast.walk(statement):
@@ -322,27 +322,27 @@ def has_external_loop_control(nodes: Iterable[ast.AST]) -> bool:
     return visitor.external
 
 
-K = TypeVar("K")
-V = TypeVar("V")
+_K = TypeVar("_K")
+_V = TypeVar("_V")
 
 
-class _Bounded(Generic[K, V]):
+class _Bounded(Generic[_K, _V]):
     """A small least-recently-used table; the newest entries survive."""
 
     def __init__(self, limit: int) -> None:
         self._limit = limit
-        self._table: "OrderedDict[K, V]" = OrderedDict()
+        self._table: "OrderedDict[_K, _V]" = OrderedDict()
 
-    def get(self, key: K) -> Optional[V]:
+    def get(self, key: _K) -> Optional[_V]:
         if key in self._table:
             self._table.move_to_end(key)
             return self._table[key]
         return None
 
-    def __contains__(self, key: K) -> bool:
+    def __contains__(self, key: _K) -> bool:
         return key in self._table
 
-    def put(self, key: K, value: V) -> V:
+    def put(self, key: _K, value: _V) -> _V:
         self._table[key] = value
         self._table.move_to_end(key)
         while len(self._table) > self._limit:
