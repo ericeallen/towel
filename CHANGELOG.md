@@ -104,6 +104,18 @@ ecosystem evidence behind each claim. The format follows
 - A helper whose body only binds parameters and literals to names and returns
   them is not proposed: the call that unpacks the tuple is longer than the
   assignments it replaces and shares no logic.
+- Candidate blocks are bucketed on their whole statement-type sequence,
+  which the unifier requires equal, so far fewer pairs reach the filter; the
+  unifier's bound-variable search caches each node's source text instead of
+  re-rendering it per query; the value-producing check is memoized per
+  block; and five visitor classes that were rebuilt on every call are
+  module-level. On Towel's own source these remove a further 28% of all
+  function calls (about half in total since 1.618) with an identical
+  proposal list.
+- An import sorter's result is accepted only if it permutes or merges import
+  statements, at any depth (a sorter also orders the imports under
+  `if TYPE_CHECKING:`); anything else is discarded and the file is left as
+  Towel assembled it, rather than failing the refactoring (trio).
 - The trivial-forwarding filter also recognizes `name = call(...)` followed
   by `return name`, and the tuple form `a, b = call(...)` then
   `return (a, b)`. Without it, once Black wrapped such a body over the

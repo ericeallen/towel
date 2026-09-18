@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Callable, List, Mapping, Optional, Sequence, Tuple
+from typing import Callable, List, Mapping, Optional, Tuple
 
 from .unification.project_layout import _find_project_root, _load_pyproject
 
@@ -321,36 +321,51 @@ def import_sorter_for_project(path: Path) -> Tuple[Optional[FileFinisher], str]:
 
 
 def imports_permuted_only(finisher: FileFinisher) -> FileFinisher:
-    """``finisher`` guarded so it can only reorder or merge top-level imports.
+    """``finisher`` guarded so it can only reorder or merge import statements.
 
-    The non-import statements must be the same, in the same order, and the
-    set of names the imports bind must be unchanged; otherwise
-    :class:`FormattingChangedCode` is raised.
+    Imports at any depth may move or merge (a sorter also orders the imports
+    under ``if TYPE_CHECKING:`` or in a ``try``); everything else must be the
+    same, in the same order, and the set of names the imports bind must be
+    unchanged. A result that fails that test is discarded and the text is
+    left as Towel assembled it: a sorter must never cost a refactoring.
     """
 
     def finish(file_path: str, source: str) -> str:
         finished = finisher(file_path, source)
         if finished == source:
             return source
-        before, after = ast.parse(source), ast.parse(finished)
-        if _non_import_dumps(before) != _non_import_dumps(after):
-            raise FormattingChangedCode("import sorting changed statements other than imports")
+        try:
+            before, after = ast.parse(source), ast.parse(finished)
+        except SyntaxError:
+            return source
+        if _imports_stripped(before) != _imports_stripped(after):
+            return source
         if _imported_names(before) != _imported_names(after):
-            raise FormattingChangedCode("import sorting changed what the imports bind")
+            return source
         return finished
 
     return finish
 
 
-def _non_import_dumps(module: ast.Module) -> Sequence[str]:
-    return [
-        ast.dump(node) for node in module.body if not isinstance(node, (ast.Import, ast.ImportFrom))
-    ]
+def _imports_stripped(module: ast.Module) -> str:
+    """The module's dump with every import statement, at any depth, removed."""
+    import copy
+
+    stripped = copy.deepcopy(module)
+    for node in ast.walk(stripped):
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list) and value and isinstance(value[0], ast.stmt):
+                setattr(
+                    node,
+                    field,
+                    [s for s in value if not isinstance(s, (ast.Import, ast.ImportFrom))],
+                )
+    return ast.dump(stripped)
 
 
 def _imported_names(module: ast.Module) -> frozenset[Tuple[object, ...]]:
     names: set[Tuple[object, ...]] = set()
-    for node in module.body:
+    for node in ast.walk(module):
         if isinstance(node, ast.Import):
             names.update((alias.name, alias.asname) for alias in node.names)
         elif isinstance(node, ast.ImportFrom):

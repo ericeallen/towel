@@ -229,11 +229,23 @@ def test_no_import_sorting_without_configuration(tmp_path: Path) -> None:
 def test_an_import_sorter_may_only_permute_imports() -> None:
     from towel.formatting import imports_permuted_only
 
+    original = "import os\nimport sys\nx = 1\n"
     dropping = imports_permuted_only(lambda path, source: source.replace("import os\n", ""))
-    with pytest.raises(FormattingChangedCode):
-        dropping("m.py", "import os\nimport sys\nx = 1\n")
+    assert dropping("m.py", original) == original  # refused: an import vanished
+    rewriting = imports_permuted_only(lambda path, source: source.replace("x = 1", "x = 2"))
+    assert rewriting("m.py", original) == original  # refused: code changed
     swapping = imports_permuted_only(lambda path, source: "import sys\nimport os\nx = 1\n")
-    assert swapping("m.py", "import os\nimport sys\nx = 1\n") == "import sys\nimport os\nx = 1\n"
+    assert swapping("m.py", original) == "import sys\nimport os\nx = 1\n"
+    guarded = (
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n"
+        "    import sys\n    import os\nx = 1\n"
+    )
+    nested = imports_permuted_only(
+        lambda path, source: source.replace(
+            "    import sys\n    import os\n", "    import os\n    import sys\n"
+        )
+    )
+    assert "    import os\n    import sys\n" in nested("m.py", guarded)
 
 
 def test_dry_sorts_inserted_imports_for_an_isort_project(tmp_path: Path) -> None:
