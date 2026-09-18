@@ -76,7 +76,9 @@ def outer():
 
             engine = UnificationRefactorEngine(min_lines=3)
             proposals = engine.analyze_file(fn)
-            self.assertTrue(proposals)
+            self.assertEqual(
+                [p.description for p in proposals], ["Extract common code from f and g"]
+            )
             modified = engine.apply_refactoring_multi_file(proposals[0])[fn]
             # Helper should be inserted inside outer(), look for indentation before def name
             lines = modified.splitlines()

@@ -761,6 +761,7 @@ def multiply(a, b):
         all_passed, differences = compare_function_behavior(code1, code2, "multiply", test_cases)
 
         self.assertTrue(all_passed)
+        self.assertEqual(differences, [])
         self.assertEqual(len(differences), 0)
 
     def test_compare_different_functions(self):
@@ -780,7 +781,8 @@ def process(x):
         all_passed, differences = compare_function_behavior(code1, code2, "process", test_cases)
 
         self.assertFalse(all_passed)
-        self.assertGreater(len(differences), 0)
+        (difference,) = differences
+        self.assertIn("Test case 0 with args=(5,), kwargs={}", difference)
 
 
 class TestAutomaticObservationalEquivalence(unittest.TestCase):

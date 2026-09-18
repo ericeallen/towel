@@ -125,17 +125,27 @@ def test_crossfile_qualified_method_adapter_uses_imported_class(tmp_path: Path) 
 
 
 @pytest.mark.parametrize(
-    "code, target",
+    "code, target, reason",
     [
-        ("class Base: pass\nclass C(Base):\n    def f(self): return 1\n", "C.f"),
-        ("class C:\n    def __init__(self, *, x): pass\n    def f(self): return 1\n", "C.f"),
-        ("def f(): return 1\ndef f(): return 2\n", "f"),
+        (
+            "class Base: pass\nclass C(Base):\n    def f(self): return 1\n",
+            "C.f",
+            "C.f: inherited, decorated, or metaclass construction is unsupported",
+        ),
+        (
+            "class C:\n    def __init__(self, *, x): pass\n    def f(self): return 1\n",
+            "C.f",
+            "C.f: exotic constructor/method signatures are unsupported",
+        ),
+        ("def f(): return 1\ndef f(): return 2\n", "f", "No unique top-level function f"),
     ],
 )
-def test_unsupported_or_ambiguous_callable_is_unverified(code: str, target: str) -> None:
+def test_unsupported_or_ambiguous_callable_is_unverified(
+    code: str, target: str, reason: str
+) -> None:
     passed, errors = check_affected_functions(code, code, (target,))
     assert not passed
-    assert errors
+    assert errors == [f"{target}: equivalence was not tested: {reason}"]
 
 
 def test_same_constructor_failures_do_not_claim_method_equivalence() -> None:

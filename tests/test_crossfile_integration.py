@@ -71,8 +71,12 @@ class TestCrossFileProposalStructure:
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
 
-        # Should find at least one cross-file duplication
-        assert len(proposals) > 0, "Should find duplicate email validation logic"
+        # The one duplicate is the whole body of validate_admin_email, so the
+        # user module is rewritten to call it.
+        assert [p.description for p in proposals] == [
+            "Reuse validate_admin_email (admin_service.py) for duplicated code in "
+            "validate_user_email"
+        ]
 
     def test_crossfile_proposal_has_replacements_in_multiple_files(self):
         """Cross-file proposals should have replacements spanning multiple files."""
@@ -80,9 +84,11 @@ class TestCrossFileProposalStructure:
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
 
-        # At least one proposal should span multiple files
-        cross_file_proposals = [p for p in proposals if len(_participating_files(p)) > 1]
-        assert len(cross_file_proposals) > 0, "Should have cross-file proposals"
+        # Every proposal spans both modules: the reused definition lives in one
+        # and the rewritten site in the other.
+        assert [sorted(Path(f).name for f in _participating_files(p)) for p in proposals] == [
+            ["admin_service.py", "user_service.py"]
+        ]
 
     def test_crossfile_proposal_has_valid_file_paths(self):
         """All file paths in proposals should point to actual input files."""
@@ -120,11 +126,10 @@ class TestCrossFileImportGeneration:
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
 
-        # All proposals should have a file_path
+        # Every proposal is hosted in one of the analyzed files.
+        assert proposals
         for proposal in proposals:
-            assert proposal.file_path is not None
-            assert isinstance(proposal.file_path, str)
-            assert len(proposal.file_path) > 0
+            assert proposal.file_path in set(files)
 
     def test_crossfile_extracted_function_name_is_valid(self):
         """Extracted function names should be valid Python identifiers."""
@@ -150,9 +155,10 @@ class TestCrossFileWithPipeline:
         files = get_crossfile_project_files("simple_crossfile")
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
 
-        assert isinstance(proposals, list)
-        # Should find cross-file duplications
-        assert len(proposals) > 0
+        assert [p.description for p in proposals] == [
+            "Reuse validate_admin_email (admin_service.py) for duplicated code in "
+            "validate_user_email"
+        ]
 
     def test_pipeline_crossfile_matches_engine(self):
         """Pipeline and engine should produce same results for cross-file."""

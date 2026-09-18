@@ -428,8 +428,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             self.assertIsNotNone(helper, "Shared class should gain extracted helper")
             assert helper is not None
             self.assertFalse(helper.decorator_list, "Instance helper should not add decorators")
-            self.assertGreater(len(helper.args.args), 0)
-            self.assertEqual(helper.args.args[0].arg, "self")
+            self.assertEqual([arg.arg for arg in helper.args.args], ["self", "value"])
 
             for src, cls_name, method_name in (
                 (first_src, "First", "alpha"),
@@ -530,8 +529,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             assert helper is not None
             decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
             self.assertIn("classmethod", decorator_ids)
-            self.assertGreater(len(helper.args.args), 0)
-            self.assertEqual(helper.args.args[0].arg, "cls")
+            self.assertEqual([arg.arg for arg in helper.args.args], ["cls", "value"])
 
             first_mod = ast.parse(first_src)
             first_cls = next(
@@ -551,7 +549,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 and isinstance(call.func, ast.Attribute)
                 and call.func.attr == helper.name
             ]
-            self.assertTrue(calls)
+            self.assertEqual(len(calls), 1, "the method body is one call to the helper")
             for call in calls:
                 assert isinstance(call.func, ast.Attribute)
                 self.assertIsInstance(call.func.value, ast.Name)

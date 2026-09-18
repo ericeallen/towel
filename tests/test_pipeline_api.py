@@ -10,10 +10,11 @@ def test_run_pipeline_smoke_single_file():
     files = example_paths(["example1_simple.py"])
     proposals = run_pipeline(files, engine=UnificationRefactorEngine())
 
-    # Contract: returns a list of RefactoringProposal, possibly non-empty for this example
-    assert isinstance(proposals, list)
-    # example1_simple is known to produce at least one proposal in the existing suite
-    assert len(proposals) >= 1
+    # example1_simple holds one duplicated validation block shared by two of
+    # its three functions.
+    assert [p.description for p in proposals] == [
+        "Extract common code from process_user_data and process_admin_data"
+    ]
 
 
 def test_run_pipeline_matches_engine_counts_multi_file():

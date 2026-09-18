@@ -158,8 +158,16 @@ class TestConstantParameterization(unittest.TestCase):
             for p in engine_const.analyze_file(str(self.example_path))
             if "const_parameterization" in p.description.lower()
         ]
-        self.assertGreater(len(with_flag), 0)
-        self.assertGreater(with_flag[0].parameters_count, 0)
+        self.assertEqual(
+            [(p.description, p.parameters_count) for p in with_flag],
+            [
+                (
+                    "Extract common code from const_parameterization_a and "
+                    "const_parameterization_b",
+                    2,
+                )
+            ],
+        )
 
 
 if __name__ == "__main__":

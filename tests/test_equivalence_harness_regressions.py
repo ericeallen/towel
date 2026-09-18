@@ -20,7 +20,9 @@ class TestExecutionObservations(unittest.TestCase):
                 changed = original.replace('"before"', '"after"')
                 passed, differences = compare_function_behavior(original, changed, "f", [((), {})])
                 self.assertFalse(passed)
-                self.assertTrue(differences)
+                (difference,) = differences
+                self.assertIn(f"{stream}='before\\n'", difference)
+                self.assertIn(f"{stream}='after\\n'", difference)
 
     def test_output_before_same_exception_is_observable(self) -> None:
         original = 'def f():\n print("before")\n raise ValueError("same")\n'

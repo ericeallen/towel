@@ -218,8 +218,15 @@ def process_data_b(x):
 
         try:
             proposals = self.engine.analyze_file(temp_path)
-            # Should find duplicates (docstrings are skipped)
-            self.assertGreater(len(proposals), 0)
+            # The docstrings are skipped, so the two bodies are whole-function
+            # duplicates and the second is rewritten to call the first.
+            self.assertEqual(
+                [p.description for p in proposals],
+                [
+                    f"Reuse process_data_a ({os.path.basename(temp_path)}) for duplicated "
+                    "code in process_data_b"
+                ],
+            )
         finally:
             os.unlink(temp_path)
 

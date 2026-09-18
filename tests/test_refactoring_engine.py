@@ -94,7 +94,10 @@ class TestRefactoringEngine(unittest.TestCase):
         original_content = example_path.read_text()
 
         proposals = self.engine.analyze_file(str(example_path))
-        self.assertGreater(len(proposals), 0)
+        self.assertEqual(
+            [p.description for p in proposals],
+            ["Extract common code from process_user_data and process_admin_data"],
+        )
 
         prop = proposals[0]
 

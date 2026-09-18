@@ -25,7 +25,7 @@ def test_receiver_operand_is_not_dropped(tmp_path: Path) -> None:
     path.write_text(source)
     engine = UnificationRefactorEngine(min_lines=2)
     proposals = engine.analyze_file(str(path))
-    assert proposals
+    assert [p.description for p in proposals] == ["Extract common code from reset and clone"]
     for proposal in proposals:
         result = engine.apply_refactoring(str(path), proposal)
         scope: dict[str, Any] = {}
