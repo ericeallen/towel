@@ -1,3 +1,7 @@
+# Release Log
+
+This log records notable repository states with all tests passing, to make it easy to revert or audit changes.
+
 ## 2026-09-17
 
 - Version: 1.618
@@ -17,7 +21,7 @@
 
 - Version: 1.414
 - Development status: Beta (PyPI classifier `4 - Beta`)
-- Commit: (this branch, `audit/open-source-2026-09-12`)
+- Commit: tag `v1.414`
 - Summary:
   - Soundness: every accepted proposal is verified by instantiating the helper with each call's arguments and comparing with the replaced block up to renamed binders; arguments that are not names, literals, or containers of those are passed as thunks evaluated at the original position.
   - Guards: closure/cell sharing across the block boundary, deletion and `except ... as` of pre-bound names, moved `global`/`nonlocal` declarations, slice and starred parameters, and opaque method decorators are rejected or handled explicitly; match captures bind in scope analysis; generated parameter names avoid block identifiers; clustered replacements may not overlap.
@@ -179,10 +183,6 @@ Notes:
 Notes:
 - To revert to this exact state: check out commit `91c89a309ef077a88af3f2a519e303a39f50524d` on branch `main`.
 - Changes were pushed to origin/main on 2025-11-03.
-
-# Release Log
-
-This log records notable repository states with all tests passing, to make it easy to revert or audit changes.
 
 ## 2025-11-03
 

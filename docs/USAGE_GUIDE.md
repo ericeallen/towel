@@ -190,7 +190,9 @@ Each proposal contains:
 proposal.description          # "Extract common code from func1 and func2"
 proposal.parameters_count     # Number of parameters in extracted function
 proposal.extracted_function   # The AST of the new function
-proposal.replacements         # List of (line_range, call_node, file_path)
+proposal.replacements         # List of Replacement dataclasses: line_range, node (the
+                              # generated call statement), file_path, class_name,
+                              # method_kind, implicit_param
 proposal.file_path            # Canonical location for the extracted function
 proposal.reused_function      # ReusedFunction(name, file_path, line_range) when the
                               # sites call an existing function; None for a helper
@@ -372,7 +374,8 @@ simple_proposals = [p for p in proposals if p.parameters_count <= 2]
 
 - Increase `min_lines` to focus on larger duplicates
 - Decrease `max_parameters` to avoid over-parameterized functions
-- Increase structural similarity threshold in code
+- Raise `DEFAULT_SIMILARITY_THRESHOLD` in `block_signature.py` (0.6; it is not an
+  engine option) so that fewer loosely similar pairs reach unification
 
 ### Import errors after refactoring
 

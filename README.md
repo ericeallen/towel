@@ -233,9 +233,12 @@ towel rename-helpers path/to/cleaned --rename-file renames.json
 
 The JSON inventory gives the assistant what it needs to name well: every helper with its scope, source, and call sites, and for each parameter its evaluation kind (`value`, `thunk`, `lifted`, `receiver`) and the actual argument expressions passed at every call site. A parameter that always receives `user.email` and `account.email` should become `email`, and the argument expressions are how the assistant sees that.
 
-Each helper also carries a `changes` list: for every call site, the exact original block it replaced (`before`) next to the generated call (`after`). Seeing what the code did before extraction is what lets an assistant finish good names, write a docstring, and infer parameter and return types. This comes from a small `.towel-helpers.json` that `towel dry` writes next to its output; it is only for the naming step and is safe to delete afterward.
+Each helper also carries a `changes` list: for every call site of a generated helper, the exact original block it replaced (`before`) next to the generated call (`after`); sites redirected to an existing function are not listed, since no helper was inserted for them. Seeing what the code did before extraction is what lets an assistant finish good names, write a docstring, and infer parameter and return types. This comes from a small `.towel-helpers.json` that `towel dry` writes next to its output; it is only for the naming step and is safe to delete afterward.
 
-Each inventory entry carries the exact mapping key to use as a rename target: `"path.py:helper"` renames a module-level helper together with its importers, `"helper"` renames a unique class-level helper together with every attribute reference, and `"path.py:helper.__param_0"` renames a parameter within the helper's scope. The rename is applied as one atomic batch with scope and importer checks; a name collision, a mangled name, or a dynamic reference aborts the whole batch and reports the reason, so a bad suggestion changes nothing. `--preview` reports the same JSON without writing.
+Each inventory entry carries the exact mapping key to use as a rename target: `"path.py:helper"` renames a module-level helper together with its importers, `"helper"` renames a unique class-level helper together with every attribute reference, and `"path.py:helper.__param_0"` renames a parameter within the helper's scope. The rename is applied as one atomic batch with scope and importer checks; a name collision, a mangled name, or a dynamic reference aborts the whole batch and reports the reason, so a bad suggestion changes nothing. `--preview` reports what would change without writing,
+as the same JSON when `--json` is given. `--file` and `--function` (each repeatable) limit
+the inventory to particular modules or helpers, and `--llm claude|gpt|copilot|generic`
+phrases the interactive prompt for a particular assistant.
 
 The shared `towel-rename` skill (in the agent-skills repository) walks an assistant through the whole loop: extract, review the diff, name, apply, and re-test. An interactive prompt mode is also available for naming by hand, and it calls no LLM service.
 
@@ -246,7 +249,7 @@ Use Python 3.13 for the shared formatting and typing gates. The lockfile also re
 ```bash
 uv sync --frozen --extra dev
 uv run --frozen black --check src/towel tests scripts
-uv run --frozen flake8 src/towel scripts
+uv run --frozen flake8 src/towel scripts tests
 uv run --frozen mypy
 uv run --frozen coverage run -m pytest -q
 uv run --frozen coverage report --fail-under=85

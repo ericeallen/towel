@@ -1,8 +1,11 @@
 # Performance roadmap: what is worth doing, in what order
 
 Status: measured 2026-09-17 on Towel's own source (16k lines, 28 files) and
-on arrow (10k lines); item 1 applied the same day. The Rust question is
-answered by the recorded decision rule, not by this document.
+on arrow (10k lines); item 1 applied the same day, items 2 to 5 in the days
+after (see *Done since*, at the end). The Rust question is answered by the
+recorded decision rule, not by this document. Function names below are as
+they were when measured; `_find_block_pairs_multi_file` is now
+`find_block_pairs` and `has_orphaned_variables` is `orphaned_variables`.
 
 ## Where the time goes
 
@@ -111,6 +114,17 @@ large-project timings still exceed minutes after the Python work, or if
 editor-latency becomes a goal. A compiled tree walker removes the traversal
 share, but most of that traversal is the repeated work items 2 to 4
 eliminate exactly, so the Rust figure must be re-measured after them.
-Today's baseline for the rule: 16k lines in 6 s forked (15 s serial);
+The baseline for the rule when this was written: 16k lines in 6 s forked
+(15 s serial); by 2026-09-18 the serial figure is 5.6 s without the type
+checker and formatter and 9.0 s with them (docs/KNOWN_LIMITATIONS.md);
 corpus worst cases networkx about 6 min and Sphinx about 340 s of serial
 initial analysis.
+
+## Done since (2026-09-18)
+
+Beyond the items above, the engine now computes what it can once per
+statement rather than once per block (`statement_facts.py`,
+`structural_memo.py`, the weak per-node memos), keys every id-keyed cache
+through one `BoundedCache`, re-pairs only changed files in later global
+passes, and clusters returning helpers as well as non-returning ones. The
+CHANGELOG's `[Unreleased]` section records each step with its measurement.

@@ -24,7 +24,7 @@ and pairing.
 
 ## The pipeline
 
-A single analysis runs these stages; the directory driver wraps them in a
+A single analysis runs these phases; the directory driver wraps them in a
 fixed-point loop (below).
 
 1. **Parse.** Read source and parse it to an AST, unchanged. Operators and
@@ -36,38 +36,50 @@ fixed-point loop (below).
 3. **Enumerate candidate blocks.** Contiguous runs of statements inside each
    function body become candidate blocks. Blocks that can never be accepted are
    never enumerated (see *Enumeration filter*).
-4. **Filter pairs.** `block_signature.py` computes a cheap structural signature
-   per block and rejects incompatible pairs before the expensive step.
-5. **Unify.** `unifier.py` attempts to anti-unify
-   each surviving pair into a template plus a substitution (below).
-6. **Guard.** `semantic_safety.py`, `orphan_detector.py`, and
-   `definite_assignment.py` reject a candidate whose extraction could change
-   behavior (frames, closures, liveness, import cycles; see *Guards*).
-7. **Verify.** The proposed helper is instantiated with each call site's
-   actual arguments and compared against the block it would replace, up to
-   renamed binders (see *The soundness invariant*). This gates every proposal.
-8. **Cluster.** `clustering.py` searches the rest of the file for further
-   blocks that unify with the accepted template and can share the helper.
-9. **Reuse or extract.** When an accepted block is the whole body of a plain
-   module-level function, no helper is generated: that function is kept and
-   the other sites call it (see *Reusing an existing function*). Otherwise
-   `extractor.py` renders the helper and the call sites, and a proposal whose
-   rendered helper body only forwards — a lone `raise`, a `return` of one
-   call, a bare call, a call whose result is bound and returned, or a body
-   that only binds parameters and literals to names and returns them — is
-   dropped: it would only add indirection. Construct the engine with
-   `skip_trivial_helpers=False` to keep such helpers.
-10. **Annotate, format, verify.** `annotations.py` gives the helper the
-    annotations its call sites declare and, through the project's type
-    checker, the types of the rest (see *Helper annotations*); the project's
-    formatter formats each inserted snippet and its import sorter finishes
-    each modified file (see *Generated code formatting*); the generated
-    Python is compiled to confirm it parses, overlapping replacements are
-    detected, and with a type checker installed each modified file is
-    type-checked before and after, the helper's annotations falling back to
-    `Any` and then to none if the change introduced an error.
-11. **Apply.** `changes.py` turns accepted proposals into an immutable byte
-    plan and applies it transactionally (see *Application and recovery*).
+4. **Pair.** `block_signature.py` computes a cheap structural signature per
+   block; `find_block_pairs` buckets blocks on their statement-type sequence
+   and rejects incompatible pairs before the expensive step.
+5. **Decide each pair.** `pair_evaluation.py` runs eleven stages, each
+   returning a typed result or a traced rejection:
+   1. guards on the blocks themselves (`semantic_safety.py`: frames, rebound
+      externals, closures, moved declarations; see *Guards*);
+   2. binding analysis of each block within its function, and the variables
+      later code reads that the helper must return;
+   3. the shape check: both blocks value-producing or neither, complete
+      return coverage, not a trivial `return name`, structurally similar;
+   4. unification (`unifier.py`, below) and alignment of the returned
+      variables across the blocks;
+   5. where the helper will be visible from, for hygienic naming;
+   6. the helper's free variables and their lifetimes, declarations, thunks;
+   7. rendering the helper (`extractor.py`), and dropping one whose body
+      only forwards: a lone `raise`, a `return` of one call, a bare call, a
+      call whose result is bound and returned, or a body that only binds
+      parameters and literals to names and returns them
+      (`skip_trivial_helpers=False` keeps such helpers);
+   8. the orphan check (`orphan_detector.py`, `definite_assignment.py`) on
+      what the blocks leave behind;
+   9. the call sites, each verified by instantiating the helper with its
+      arguments and comparing the result with the block it replaces, up to
+      renamed binders (see *The soundness invariant*), plus the further
+      same-file sites that can share the helper (`clustering.py`);
+   10. placement: function, class, or module, and a host module that closes
+       no import cycle (see *Helper placement* and *Cross-file*);
+   11. the proposal, redirected to an existing function when a site is one
+       (see *Reusing an existing function*) and declined when it would
+       reduce a helper from an earlier pass to a forwarder, then annotated.
+6. **Filter overlaps.** `overlap.py` keeps a non-overlapping set of the
+   accepted proposals, largest first.
+7. **Annotate, format, verify.** `annotations.py` gives the helper the
+   annotations its call sites declare and, through the project's type
+   checker, the types of the rest (see *Helper annotations*); the project's
+   formatter formats each inserted snippet and its import sorter finishes
+   each modified file (see *Generated code formatting*); the generated
+   Python is compiled to confirm it parses, overlapping replacements are
+   detected, and with a type checker installed each modified file is
+   type-checked before and after, the helper's annotations falling back to
+   `Any` and then to none if the change introduced an error.
+8. **Apply.** `changes.py` turns accepted proposals into an immutable byte
+   plan and applies it transactionally (see *Application and recovery*).
 
 `models.py` defines the data that flows between stages: parsed modules,
 function artifacts, class info, code-block pairs, replacements, and
@@ -169,9 +181,10 @@ and says why.
 a helper could change behavior even if the shapes match:
 
 - **Frames and suspension.** `yield`, `await`, `async for`/`with`, `locals()`,
-  `globals()`, no-argument `vars()`/`super()`, `eval`/`exec`, direct frame or
-  stack inspection, and `warnings.warn(..., stacklevel=...)` — a helper adds a
-  frame these would observe.
+  `globals()`, no-argument `vars()`/`dir()`/`super()`, `eval`/`exec`, direct
+  frame or stack inspection, and `warnings.warn(..., stacklevel=...)` — a
+  helper adds a frame these would observe. A `break` or `continue` whose
+  loop lies outside the block would leave the helper instead of the loop.
 - **Binding discipline.** A block that deletes, rebinds, or `except ... as`
   binds a name the caller keeps using; a moved `global`/`nonlocal`
   declaration; a comprehension assignment expression that would bind in the
@@ -479,8 +492,8 @@ proposal.
   verdicts, unification results, the clustering pipeline, per-block
   analyses — are keyed by structural id, so a fixed-point iteration that
   re-parses a file still reuses results for the blocks it did not change.
-  Those id-keyed caches are bounded LRU `OrderedDict`s
-  (`STRUCTURAL_CACHE_LIMIT`, 250,000 entries); every cache keyed by a node
+  Those id-keyed caches are `BoundedCache` instances (`bounded_cache.py`,
+  an LRU mapping; `STRUCTURAL_CACHE_LIMIT`, 250,000 entries); every cache keyed by a node
   (structural ids, signed blocks, value-producing verdicts, used names,
   assignment analyses, and the per-statement memos below) is a
   `WeakKeyDictionary` whose entries vanish with their tree, so a file the
@@ -710,7 +723,10 @@ but the ideas and their names are from the literature.
 | Parameter enumeration | `parameters.py` |
 | Progress reporting | `progress.py` |
 | Structural memoization | `structural_memo.py` |
-| Cross-file layout (packaging discovery) | `project_layout.py` (at `src/towel/`) |
+| The bounded LRU mapping behind every id-keyed cache | `bounded_cache.py` |
+| Engine and CLI defaults (parameters, lines, iterations) | `defaults.py` |
+| Decoding and re-encoding sources (BOM, cookie, newline) | `source_text.py` (at `src/towel/`) |
+| Cross-file layout (packaging discovery) | `project_layout.py` (at `src/towel/`); `unification/project_layout.py` re-exports it for the old import path |
 | Data model | `models.py` |
 | Transactional application | `changes.py` (at `src/towel/`) |
 | Atomic project copy | `filesystem.py` (at `src/towel/`) |

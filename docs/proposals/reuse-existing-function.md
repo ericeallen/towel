@@ -6,7 +6,8 @@ Author: design note from the 2026-09 audit sessions
 
 ## What was implemented
 
-`UnificationRefactorEngine._redirect_to_existing_function` runs after a
+`_redirect_to_existing_function` (the `ExistingFunctionReuse` mixin in
+`unification/reuse.py`, part of the engine) runs after a
 proposal is fully built and verified. When one replacement site is the entire
 body (after the docstring) of a plain module-level function, the generated
 call there passes each of that function's positional parameters exactly once,
@@ -104,7 +105,8 @@ def beta(value):
 
 This was observed directly while dogfooding: Towel proposed a third copy of the
 match-pattern capture logic that already existed as both
-`scope_analyzer.pattern_capture_names` and `definite_assignment._pattern_names`,
+`scope_analyzer.pattern_capture_names` and a private copy in
+`definite_assignment` (since removed in favour of the former),
 rather than routing the duplicates through the existing function. The audit
 fixed that particular case by hand.
 

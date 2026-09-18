@@ -28,6 +28,15 @@ For the exact candidate commit:
 
 `just release VERSION` prepares local artifacts. Inspect its current recipe before use; it does not replace the full evidence above or authorize publication.
 
+## Recording the release
+
+Once the version is chosen and the evidence is in:
+
+1. Convert the `[Unreleased]` heading of [CHANGELOG.md](../CHANGELOG.md) to `## [X.Y] - YYYY-MM-DD` and open a new, empty `[Unreleased]` above it.
+2. Add an entry at the top of [RELEASE_LOG.md](RELEASE_LOG.md): version, the commit or tag, a summary, and the test and ecosystem status.
+3. Update the first paragraph of this document (the latest release, its date, and what the next one carries).
+4. Tag the release commit `vX.Y` (the existing tags are `v1.414` and `v1.618`); the tag is created locally and pushed only as part of the maintainer's publication decision.
+
 ## Maintainer decisions before publication
 
 - Choose the exact unused version and approve the reviewed artifact hashes.

@@ -1,6 +1,6 @@
 # Dethunking: where the remaining `lambda` arguments come from
 
-Status: evidence gathered 2026-09-17; no engine change made. The exact,
+Status: evidence gathered 2026-09-17; no engine change made. The exact, (still accurate on 2026-09-18)
 meaning-preserving improvements left are small; the large buckets need an
 assumption the engine does not make today.
 

@@ -33,8 +33,11 @@ Never refactor in place on your first run — write to a new directory and diff 
 
 ```bash
 towel dry path/to/project path/to/cleaned --no-interactive
-diff -ru path/to/project path/to/cleaned | less
+diff -ru path/to/project path/to/cleaned | less   # or redirect to a file outside a terminal
 ```
+
+The diff also shows one file that is not code: `.towel-helpers.json`, which
+`dry` writes into the output for the naming step below. It is safe to delete.
 
 The output compiles and, for every proposal, the generated helper is verified to
 reproduce the exact code it replaced. Helpers get placeholder names like
