@@ -37,6 +37,364 @@ class UnsupportedExtraction(ValueError):
     """A valid source construct cannot be represented by this extractor."""
 
 
+# Create a transformer that replaces expressions with parameter names
+class ParameterSubstituter(ast.NodeTransformer):
+    """Replace the unified expressions of block 0 with the helper's parameter names.
+
+    Binding occurrences (loop targets, comprehension targets, assignment
+    targets) are never replaced; a name that shadows a parameter inside a
+    nested scope is left alone there.
+    """
+
+    def __init__(
+        self, subst: Substitution, param_names: List[str], rename_mapping: Dict[str, str]
+    ) -> None:
+        self.subst = subst
+        self.param_names = param_names
+        self.rename_mapping = rename_mapping
+        # Use block 0 as the template
+        self.block_idx = 0
+        # Track if we're inside a JoinedStr to avoid breaking f-string structure
+        self.in_joinedstr = False
+        # Track variables that are equivalent to parameters
+        # Maps variable names to parameter names
+        self.var_to_param: Dict[str, str] = {}
+        # Track canonical parameter assigned to a variable name (even if shadowed later)
+        self.param_name_by_var: Dict[str, str] = {}
+        # Track parameterized variables that have been rebound to local values
+        self.shadowed_vars: Set[str] = set()
+
+        # CRITICAL: Initialize var_to_param with variables that are parameterized
+        # For each parameter, if its expression in block 0 is a simple variable name,
+        # then that variable should be substituted with the parameter throughout
+        for param_name in param_names:
+            # Get the original parameter name (before renaming)
+            original_param_name = rename_mapping.get(param_name, param_name)
+            if original_param_name in subst.param_expressions:
+                # This is a unified parameter - check if it's a simple variable reference
+                for block_idx, expr in subst.param_expressions[original_param_name]:
+                    if block_idx == self.block_idx and isinstance(expr, ast.Name):
+                        # This parameter represents a variable in our block
+                        # Map the original variable name to the RENAMED parameter name
+                        self.var_to_param[expr.id] = param_name
+                        self.param_name_by_var[expr.id] = param_name
+                        break
+
+    def _alias_variable(self, var_name: str, param_name: str) -> None:
+        self.var_to_param[var_name] = param_name
+        self.param_name_by_var[var_name] = param_name
+        self.shadowed_vars.discard(var_name)
+
+    def _mark_shadowed(self, var_name: str) -> None:
+        if var_name in self.param_name_by_var:
+            self.var_to_param.pop(var_name, None)
+            self.shadowed_vars.add(var_name)
+
+    def _variables_from_target(self, target: ast.AST) -> List[str]:
+        names: List[str] = []
+
+        def _collect(node: ast.AST) -> None:
+            if isinstance(node, ast.Name):
+                names.append(node.id)
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for elt in node.elts:
+                    _collect(elt)
+
+        _collect(target)
+        return names
+
+    def _maybe_replace_node(self, node: ast.AST) -> Optional[ast.AST]:
+        # Only expressions participate in substitution mappings
+        if not isinstance(node, ast.expr):
+            return None
+
+        maybe_param_name: Optional[str] = self.subst.get_param_for_expr(self.block_idx, node)
+        if not maybe_param_name or maybe_param_name not in self.param_names:
+            return None
+
+        # CRITICAL: Never replace binding occurrences (Store/Del context)
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            return node
+
+        if isinstance(node, ast.Name) and node.id in self.shadowed_vars:
+            return node
+
+        # Inside an f-string literal component, keep constants intact
+        if self.in_joinedstr and isinstance(node, ast.Constant):
+            return node
+
+        # Don't replace FormattedValue nodes themselves; recurse into their value instead
+        if isinstance(node, ast.FormattedValue):
+            return None
+
+        if self.subst.is_function_param(maybe_param_name):
+            bound_vars = self.subst.get_function_param_vars(maybe_param_name)
+            call = ast.Call(
+                func=ast.Name(id=maybe_param_name, ctx=ast.Load()),
+                args=[ast.Name(id=var, ctx=ast.Load()) for var in bound_vars],
+                keywords=[],
+            )
+            return ast.copy_location(call, node)
+
+        # Regular parameter - just replace with parameter name
+        return ast.copy_location(ast.Name(id=maybe_param_name, ctx=ast.Load()), node)
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
+        # JoinedStr (f-string) can only have Constant or FormattedValue as direct children
+        # We must NEVER parameterize Constant nodes inside f-strings
+        # But we CAN parameterize expressions inside FormattedValue nodes
+        new_values: List[ast.expr] = []
+        previous_state = self.in_joinedstr
+        self.in_joinedstr = True
+        try:
+            for value in node.values:
+                if isinstance(value, ast.Constant):
+                    # String literal parts of f-string must stay as constants
+                    new_values.append(value)
+                elif isinstance(value, ast.FormattedValue):
+                    # For FormattedValue, recursively visit the value expression
+                    new_formatted = ast.FormattedValue(
+                        value=cast(ast.expr, self.visit(value.value)),
+                        conversion=value.conversion,
+                        format_spec=value.format_spec,
+                    )
+                    new_values.append(new_formatted)
+                else:
+                    # Shouldn't happen, but handle gracefully
+                    new_values.append(cast(ast.expr, self.visit(value)))
+        finally:
+            self.in_joinedstr = previous_state
+        return ast.JoinedStr(values=new_values)
+
+    def visit_For(self, node: ast.For) -> ast.For:
+        """
+        Special handling for For loops to avoid replacing binding occurrences.
+
+        In 'for target in iter: body', the 'target' is a BINDING occurrence
+        and should NOT be replaced with a parameter.
+        """
+        new_iter, new_body, new_orelse = self._loop_parts(node)
+        return ast.For(target=node.target, iter=new_iter, body=new_body, orelse=new_orelse)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
+        new_iter, new_body, new_orelse = self._loop_parts(node)
+        return ast.AsyncFor(target=node.target, iter=new_iter, body=new_body, orelse=new_orelse)
+
+    def _loop_parts(
+        self, node: Union[ast.For, ast.AsyncFor]
+    ) -> Tuple[ast.expr, List[ast.stmt], List[ast.stmt]]:
+        """The transformed iterator, body, and else of a loop; its target is a binding and stays."""
+        new_iter = cast(ast.expr, self.visit(node.iter))
+        for var_name in self._variables_from_target(node.target):
+            self._mark_shadowed(var_name)
+        new_body = self._visit_branch_statements(node.body)
+        new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
+        return new_iter, new_body, new_orelse
+
+    def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
+        """
+        Special handling for comprehensions to avoid replacing binding occurrences.
+
+        In 'for target in iter', the 'target' is a BINDING occurrence.
+        """
+        # Transform the iterator
+        new_iter = cast(ast.expr, self.visit(node.iter))
+
+        # Don't transform the target (comprehension variable) - it's a binding
+        new_target = node.target
+        for var_name in self._variables_from_target(node.target):
+            self._mark_shadowed(var_name)
+
+        # Transform the filters
+        new_ifs = [cast(ast.expr, self.visit(cond)) for cond in node.ifs]
+
+        return ast.comprehension(
+            target=new_target, iter=new_iter, ifs=new_ifs, is_async=node.is_async
+        )
+
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+        """
+        Special handling for assignments to handle both new bindings and reassignments.
+
+        For 'var = expr':
+        - If var is being assigned to a parameter (var = __param_N), track this mapping
+        - If var is in var_to_param and being reassigned to the SAME parameter, substitute target
+        - If var is in var_to_param but being reassigned to a DIFFERENT value, keep target as-is
+          and clear its mapping (creates new binding that shadows the parameter)
+        - Otherwise, keep the target unchanged (new binding)
+        """
+        # Transform the value expression first
+        new_value = cast(ast.expr, self.visit(node.value))
+
+        # Transform targets while preserving binding semantics
+        new_targets: List[ast.expr] = []
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                new_targets.append(target)
+            else:
+                new_targets.append(self._transform_assignment_target(target))
+
+        assigns_param = isinstance(new_value, ast.Name) and new_value.id in self.param_names
+        for target in node.targets:
+            for var_name in self._variables_from_target(target):
+                if assigns_param:
+                    self._alias_variable(var_name, cast(ast.Name, new_value).id)
+                else:
+                    self._mark_shadowed(var_name)
+
+        return ast.Assign(targets=new_targets, value=new_value)
+
+    def visit_If(self, node: ast.If) -> ast.If:
+        new_test = cast(ast.expr, self.visit(node.test))
+        new_body = self._visit_branch_statements(node.body)
+        new_orelse = self._visit_branch_statements(node.orelse)
+        return ast.If(test=new_test, body=new_body, orelse=new_orelse)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AugAssign:
+        new_value = cast(ast.expr, self.visit(node.value))
+        if isinstance(node.target, ast.Name):
+            self._mark_shadowed(node.target.id)
+            new_target: Union[ast.Name, ast.Attribute, ast.Subscript] = node.target
+        else:
+            new_target = cast(
+                Union[ast.Attribute, ast.Subscript],
+                self._transform_assignment_target(node.target),
+            )
+        return ast.AugAssign(target=new_target, op=node.op, value=new_value)
+
+    def visit_With(self, node: ast.With) -> ast.With:
+        new_items = [
+            ast.withitem(
+                context_expr=cast(ast.expr, self.visit(item.context_expr)),
+                optional_vars=item.optional_vars,
+            )
+            for item in node.items
+        ]
+        new_body = self._visit_branch_statements(node.body)
+        return ast.With(items=new_items, body=new_body)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AsyncWith:
+        new_items = [
+            ast.withitem(
+                context_expr=cast(ast.expr, self.visit(item.context_expr)),
+                optional_vars=item.optional_vars,
+            )
+            for item in node.items
+        ]
+        new_body = self._visit_branch_statements(node.body)
+        return ast.AsyncWith(items=new_items, body=new_body)
+
+    def visit_While(self, node: ast.While) -> ast.While:
+        new_test = cast(ast.expr, self.visit(node.test))
+        new_body = self._visit_branch_statements(node.body)
+        new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
+        return ast.While(test=new_test, body=new_body, orelse=new_orelse)
+
+    def visit_Try(self, node: ast.Try) -> ast.Try:
+        new_body = self._visit_branch_statements(node.body)
+        new_handlers = []
+        for handler in node.handlers:
+            new_type = cast(ast.expr, self.visit(handler.type)) if handler.type else None
+            new_handler_body = self._visit_branch_statements(handler.body)
+            new_handlers.append(
+                ast.ExceptHandler(type=new_type, name=handler.name, body=new_handler_body)
+            )
+        new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
+        new_finalbody = self._visit_branch_statements(node.finalbody) if node.finalbody else []
+        return ast.Try(
+            body=new_body,
+            handlers=new_handlers,
+            orelse=new_orelse,
+            finalbody=new_finalbody,
+        )
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
+        new_value = cast(ast.expr, self.visit(node.value)) if node.value else None
+        if isinstance(node.target, (ast.Tuple, ast.List, ast.Attribute, ast.Subscript)):
+            new_target = self._transform_assignment_target(node.target)
+        else:
+            new_target = node.target
+        if isinstance(node.target, ast.Name):
+            if (
+                isinstance(new_value, ast.Name)
+                and new_value is not None
+                and new_value.id in self.param_names
+            ):
+                self._alias_variable(node.target.id, new_value.id)
+            else:
+                self._mark_shadowed(node.target.id)
+        if not isinstance(new_target, (ast.Name, ast.Attribute, ast.Subscript)):
+            raise UnsupportedExtraction("Annotated assignment requires a single assignable target")
+        return ast.AnnAssign(
+            target=new_target,
+            annotation=node.annotation,
+            value=new_value,
+            simple=node.simple,
+        )
+
+    def _transform_assignment_target(self, target: ast.expr) -> ast.expr:
+        """Recursively transform assignment targets while preserving binding semantics."""
+        if isinstance(target, ast.Name):
+            return target
+        if isinstance(target, (ast.Tuple, ast.List)):
+            new_elts = [self._transform_assignment_target(elt) for elt in target.elts]
+            return cast(
+                ast.expr,
+                ast.copy_location(type(target)(elts=new_elts, ctx=target.ctx), target),
+            )
+        if isinstance(target, ast.Attribute):
+            new_value = cast(ast.expr, self.visit(target.value))
+            return cast(
+                ast.expr,
+                ast.copy_location(
+                    ast.Attribute(value=new_value, attr=target.attr, ctx=target.ctx), target
+                ),
+            )
+        if isinstance(target, ast.Subscript):
+            new_value = cast(ast.expr, self.visit(target.value))
+            new_slice = cast(ast.expr, self.visit(target.slice))
+            return cast(
+                ast.expr,
+                ast.copy_location(
+                    ast.Subscript(value=new_value, slice=new_slice, ctx=target.ctx), target
+                ),
+            )
+        # Fallback: rely on generic_visit to transform child nodes
+        return cast(ast.expr, super().generic_visit(target))
+
+    def _visit_branch_statements(self, statements: List[ast.stmt]) -> List[ast.stmt]:
+        snapshot = self.var_to_param.copy()
+        shadow_snapshot = self.shadowed_vars.copy()
+        try:
+            result = [cast(ast.stmt, self.visit(stmt)) for stmt in statements]
+            current_state = self.var_to_param.copy()
+        finally:
+            current_state = locals().get("current_state", self.var_to_param.copy())
+            restored = snapshot.copy()
+            for var_name, param_name in list(snapshot.items()):
+                if var_name not in current_state:
+                    restored.pop(var_name, None)
+                elif current_state[var_name] != param_name:
+                    restored.pop(var_name, None)
+            self.var_to_param = restored
+            current_shadowed = self.shadowed_vars.copy()
+            self.shadowed_vars = shadow_snapshot | current_shadowed
+        return result
+
+    def visit(self, node: ast.AST) -> ast.AST:
+        replacement = self._maybe_replace_node(node)
+        if replacement is not None:
+            return replacement
+
+        method_name = f"visit_{node.__class__.__name__}"
+        visitor = getattr(self, method_name, None)
+        if visitor is None:
+            generic_result = super().generic_visit(node)
+            return generic_result
+        visit_callable = cast(Callable[[ast.AST], ast.AST], visitor)
+        return visit_callable(node)
+
+
 class HygienicExtractor:
     """
     Extract code into a function while maintaining hygiene and
@@ -384,364 +742,6 @@ class HygienicExtractor:
         Returns:
             Transformed AST nodes
         """
-
-        # Create a transformer that replaces expressions with parameter names
-        class ParameterSubstituter(ast.NodeTransformer):
-            def __init__(
-                self, subst: Substitution, param_names: List[str], rename_mapping: Dict[str, str]
-            ) -> None:
-                self.subst = subst
-                self.param_names = param_names
-                self.rename_mapping = rename_mapping
-                # Use block 0 as the template
-                self.block_idx = 0
-                # Track if we're inside a JoinedStr to avoid breaking f-string structure
-                self.in_joinedstr = False
-                # Track variables that are equivalent to parameters
-                # Maps variable names to parameter names
-                self.var_to_param: Dict[str, str] = {}
-                # Track canonical parameter assigned to a variable name (even if shadowed later)
-                self.param_name_by_var: Dict[str, str] = {}
-                # Track parameterized variables that have been rebound to local values
-                self.shadowed_vars: Set[str] = set()
-
-                # CRITICAL: Initialize var_to_param with variables that are parameterized
-                # For each parameter, if its expression in block 0 is a simple variable name,
-                # then that variable should be substituted with the parameter throughout
-                for param_name in param_names:
-                    # Get the original parameter name (before renaming)
-                    original_param_name = rename_mapping.get(param_name, param_name)
-                    if original_param_name in subst.param_expressions:
-                        # This is a unified parameter - check if it's a simple variable reference
-                        for block_idx, expr in subst.param_expressions[original_param_name]:
-                            if block_idx == self.block_idx and isinstance(expr, ast.Name):
-                                # This parameter represents a variable in our block
-                                # Map the original variable name to the RENAMED parameter name
-                                self.var_to_param[expr.id] = param_name
-                                self.param_name_by_var[expr.id] = param_name
-                                break
-
-            def _alias_variable(self, var_name: str, param_name: str) -> None:
-                self.var_to_param[var_name] = param_name
-                self.param_name_by_var[var_name] = param_name
-                self.shadowed_vars.discard(var_name)
-
-            def _mark_shadowed(self, var_name: str) -> None:
-                if var_name in self.param_name_by_var:
-                    self.var_to_param.pop(var_name, None)
-                    self.shadowed_vars.add(var_name)
-
-            def _variables_from_target(self, target: ast.AST) -> List[str]:
-                names: List[str] = []
-
-                def _collect(node: ast.AST) -> None:
-                    if isinstance(node, ast.Name):
-                        names.append(node.id)
-                    elif isinstance(node, (ast.Tuple, ast.List)):
-                        for elt in node.elts:
-                            _collect(elt)
-
-                _collect(target)
-                return names
-
-            def _maybe_replace_node(self, node: ast.AST) -> Optional[ast.AST]:
-                # Only expressions participate in substitution mappings
-                if not isinstance(node, ast.expr):
-                    return None
-
-                maybe_param_name: Optional[str] = self.subst.get_param_for_expr(
-                    self.block_idx, node
-                )
-                if not maybe_param_name or maybe_param_name not in self.param_names:
-                    return None
-
-                # CRITICAL: Never replace binding occurrences (Store/Del context)
-                if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-                    return node
-
-                if isinstance(node, ast.Name) and node.id in self.shadowed_vars:
-                    return node
-
-                # Inside an f-string literal component, keep constants intact
-                if self.in_joinedstr and isinstance(node, ast.Constant):
-                    return node
-
-                # Don't replace FormattedValue nodes themselves; recurse into their value instead
-                if isinstance(node, ast.FormattedValue):
-                    return None
-
-                if self.subst.is_function_param(maybe_param_name):
-                    bound_vars = self.subst.get_function_param_vars(maybe_param_name)
-                    call = ast.Call(
-                        func=ast.Name(id=maybe_param_name, ctx=ast.Load()),
-                        args=[ast.Name(id=var, ctx=ast.Load()) for var in bound_vars],
-                        keywords=[],
-                    )
-                    return ast.copy_location(call, node)
-
-                # Regular parameter - just replace with parameter name
-                return ast.copy_location(ast.Name(id=maybe_param_name, ctx=ast.Load()), node)
-
-            def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
-                # JoinedStr (f-string) can only have Constant or FormattedValue as direct children
-                # We must NEVER parameterize Constant nodes inside f-strings
-                # But we CAN parameterize expressions inside FormattedValue nodes
-                new_values: List[ast.expr] = []
-                previous_state = self.in_joinedstr
-                self.in_joinedstr = True
-                try:
-                    for value in node.values:
-                        if isinstance(value, ast.Constant):
-                            # String literal parts of f-string must stay as constants
-                            new_values.append(value)
-                        elif isinstance(value, ast.FormattedValue):
-                            # For FormattedValue, recursively visit the value expression
-                            new_formatted = ast.FormattedValue(
-                                value=cast(ast.expr, self.visit(value.value)),
-                                conversion=value.conversion,
-                                format_spec=value.format_spec,
-                            )
-                            new_values.append(new_formatted)
-                        else:
-                            # Shouldn't happen, but handle gracefully
-                            new_values.append(cast(ast.expr, self.visit(value)))
-                finally:
-                    self.in_joinedstr = previous_state
-                return ast.JoinedStr(values=new_values)
-
-            def visit_For(self, node: ast.For) -> ast.For:
-                """
-                Special handling for For loops to avoid replacing binding occurrences.
-
-                In 'for target in iter: body', the 'target' is a BINDING occurrence
-                and should NOT be replaced with a parameter.
-                """
-                new_iter, new_body, new_orelse = self._loop_parts(node)
-                return ast.For(target=node.target, iter=new_iter, body=new_body, orelse=new_orelse)
-
-            def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
-                new_iter, new_body, new_orelse = self._loop_parts(node)
-                return ast.AsyncFor(
-                    target=node.target, iter=new_iter, body=new_body, orelse=new_orelse
-                )
-
-            def _loop_parts(
-                self, node: Union[ast.For, ast.AsyncFor]
-            ) -> Tuple[ast.expr, List[ast.stmt], List[ast.stmt]]:
-                """The transformed iterator, body, and else of a loop; its target is a binding and stays."""
-                new_iter = cast(ast.expr, self.visit(node.iter))
-                for var_name in self._variables_from_target(node.target):
-                    self._mark_shadowed(var_name)
-                new_body = self._visit_branch_statements(node.body)
-                new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
-                return new_iter, new_body, new_orelse
-
-            def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
-                """
-                Special handling for comprehensions to avoid replacing binding occurrences.
-
-                In 'for target in iter', the 'target' is a BINDING occurrence.
-                """
-                # Transform the iterator
-                new_iter = cast(ast.expr, self.visit(node.iter))
-
-                # Don't transform the target (comprehension variable) - it's a binding
-                new_target = node.target
-                for var_name in self._variables_from_target(node.target):
-                    self._mark_shadowed(var_name)
-
-                # Transform the filters
-                new_ifs = [cast(ast.expr, self.visit(cond)) for cond in node.ifs]
-
-                return ast.comprehension(
-                    target=new_target, iter=new_iter, ifs=new_ifs, is_async=node.is_async
-                )
-
-            def visit_Assign(self, node: ast.Assign) -> ast.Assign:
-                """
-                Special handling for assignments to handle both new bindings and reassignments.
-
-                For 'var = expr':
-                - If var is being assigned to a parameter (var = __param_N), track this mapping
-                - If var is in var_to_param and being reassigned to the SAME parameter, substitute target
-                - If var is in var_to_param but being reassigned to a DIFFERENT value, keep target as-is
-                  and clear its mapping (creates new binding that shadows the parameter)
-                - Otherwise, keep the target unchanged (new binding)
-                """
-                # Transform the value expression first
-                new_value = cast(ast.expr, self.visit(node.value))
-
-                # Transform targets while preserving binding semantics
-                new_targets: List[ast.expr] = []
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        new_targets.append(target)
-                    else:
-                        new_targets.append(self._transform_assignment_target(target))
-
-                assigns_param = isinstance(new_value, ast.Name) and new_value.id in self.param_names
-                for target in node.targets:
-                    for var_name in self._variables_from_target(target):
-                        if assigns_param:
-                            self._alias_variable(var_name, cast(ast.Name, new_value).id)
-                        else:
-                            self._mark_shadowed(var_name)
-
-                return ast.Assign(targets=new_targets, value=new_value)
-
-            def visit_If(self, node: ast.If) -> ast.If:
-                new_test = cast(ast.expr, self.visit(node.test))
-                new_body = self._visit_branch_statements(node.body)
-                new_orelse = self._visit_branch_statements(node.orelse)
-                return ast.If(test=new_test, body=new_body, orelse=new_orelse)
-
-            def visit_AugAssign(self, node: ast.AugAssign) -> ast.AugAssign:
-                new_value = cast(ast.expr, self.visit(node.value))
-                if isinstance(node.target, ast.Name):
-                    self._mark_shadowed(node.target.id)
-                    new_target: Union[ast.Name, ast.Attribute, ast.Subscript] = node.target
-                else:
-                    new_target = cast(
-                        Union[ast.Attribute, ast.Subscript],
-                        self._transform_assignment_target(node.target),
-                    )
-                return ast.AugAssign(target=new_target, op=node.op, value=new_value)
-
-            def visit_With(self, node: ast.With) -> ast.With:
-                new_items = [
-                    ast.withitem(
-                        context_expr=cast(ast.expr, self.visit(item.context_expr)),
-                        optional_vars=item.optional_vars,
-                    )
-                    for item in node.items
-                ]
-                new_body = self._visit_branch_statements(node.body)
-                return ast.With(items=new_items, body=new_body)
-
-            def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AsyncWith:
-                new_items = [
-                    ast.withitem(
-                        context_expr=cast(ast.expr, self.visit(item.context_expr)),
-                        optional_vars=item.optional_vars,
-                    )
-                    for item in node.items
-                ]
-                new_body = self._visit_branch_statements(node.body)
-                return ast.AsyncWith(items=new_items, body=new_body)
-
-            def visit_While(self, node: ast.While) -> ast.While:
-                new_test = cast(ast.expr, self.visit(node.test))
-                new_body = self._visit_branch_statements(node.body)
-                new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
-                return ast.While(test=new_test, body=new_body, orelse=new_orelse)
-
-            def visit_Try(self, node: ast.Try) -> ast.Try:
-                new_body = self._visit_branch_statements(node.body)
-                new_handlers = []
-                for handler in node.handlers:
-                    new_type = cast(ast.expr, self.visit(handler.type)) if handler.type else None
-                    new_handler_body = self._visit_branch_statements(handler.body)
-                    new_handlers.append(
-                        ast.ExceptHandler(type=new_type, name=handler.name, body=new_handler_body)
-                    )
-                new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
-                new_finalbody = (
-                    self._visit_branch_statements(node.finalbody) if node.finalbody else []
-                )
-                return ast.Try(
-                    body=new_body,
-                    handlers=new_handlers,
-                    orelse=new_orelse,
-                    finalbody=new_finalbody,
-                )
-
-            def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
-                new_value = cast(ast.expr, self.visit(node.value)) if node.value else None
-                if isinstance(node.target, (ast.Tuple, ast.List, ast.Attribute, ast.Subscript)):
-                    new_target = self._transform_assignment_target(node.target)
-                else:
-                    new_target = node.target
-                if isinstance(node.target, ast.Name):
-                    if (
-                        isinstance(new_value, ast.Name)
-                        and new_value is not None
-                        and new_value.id in self.param_names
-                    ):
-                        self._alias_variable(node.target.id, new_value.id)
-                    else:
-                        self._mark_shadowed(node.target.id)
-                if not isinstance(new_target, (ast.Name, ast.Attribute, ast.Subscript)):
-                    raise UnsupportedExtraction(
-                        "Annotated assignment requires a single assignable target"
-                    )
-                return ast.AnnAssign(
-                    target=new_target,
-                    annotation=node.annotation,
-                    value=new_value,
-                    simple=node.simple,
-                )
-
-            def _transform_assignment_target(self, target: ast.expr) -> ast.expr:
-                """Recursively transform assignment targets while preserving binding semantics."""
-                if isinstance(target, ast.Name):
-                    return target
-                if isinstance(target, (ast.Tuple, ast.List)):
-                    new_elts = [self._transform_assignment_target(elt) for elt in target.elts]
-                    return cast(
-                        ast.expr,
-                        ast.copy_location(type(target)(elts=new_elts, ctx=target.ctx), target),
-                    )
-                if isinstance(target, ast.Attribute):
-                    new_value = cast(ast.expr, self.visit(target.value))
-                    return cast(
-                        ast.expr,
-                        ast.copy_location(
-                            ast.Attribute(value=new_value, attr=target.attr, ctx=target.ctx), target
-                        ),
-                    )
-                if isinstance(target, ast.Subscript):
-                    new_value = cast(ast.expr, self.visit(target.value))
-                    new_slice = cast(ast.expr, self.visit(target.slice))
-                    return cast(
-                        ast.expr,
-                        ast.copy_location(
-                            ast.Subscript(value=new_value, slice=new_slice, ctx=target.ctx), target
-                        ),
-                    )
-                # Fallback: rely on generic_visit to transform child nodes
-                return cast(ast.expr, super().generic_visit(target))
-
-            def _visit_branch_statements(self, statements: List[ast.stmt]) -> List[ast.stmt]:
-                snapshot = self.var_to_param.copy()
-                shadow_snapshot = self.shadowed_vars.copy()
-                try:
-                    result = [cast(ast.stmt, self.visit(stmt)) for stmt in statements]
-                    current_state = self.var_to_param.copy()
-                finally:
-                    current_state = locals().get("current_state", self.var_to_param.copy())
-                    restored = snapshot.copy()
-                    for var_name, param_name in list(snapshot.items()):
-                        if var_name not in current_state:
-                            restored.pop(var_name, None)
-                        elif current_state[var_name] != param_name:
-                            restored.pop(var_name, None)
-                    self.var_to_param = restored
-                    current_shadowed = self.shadowed_vars.copy()
-                    self.shadowed_vars = shadow_snapshot | current_shadowed
-                return result
-
-            def visit(self, node: ast.AST) -> ast.AST:
-                replacement = self._maybe_replace_node(node)
-                if replacement is not None:
-                    return replacement
-
-                method_name = f"visit_{node.__class__.__name__}"
-                visitor = getattr(self, method_name, None)
-                if visitor is None:
-                    generic_result = super().generic_visit(node)
-                    return generic_result
-                visit_callable = cast(Callable[[ast.AST], ast.AST], visitor)
-                return visit_callable(node)
 
         substituter = ParameterSubstituter(substitution, param_names, rename_mapping)
         return [substituter.visit(node) for node in nodes]

@@ -228,16 +228,7 @@ class AssignmentAnalyzer(OwnScopeVisitor):
         - obj.attr = ... -> set()  # Not a variable binding
         - lst[i] = ... -> set()  # Not a variable binding
         """
-        names: Set[str] = set()
-
-        class NameCollector(ast.NodeVisitor):
-            def visit_Name(self, node: ast.Name) -> None:
-                if isinstance(node.ctx, ast.Store):
-                    names.add(node.id)
-
-        collector = NameCollector()
-        collector.visit(target)
-        return names
+        return stored_names(target)
 
 
 def has_reassignments_without_bindings(
@@ -356,18 +347,7 @@ def _collect_bindings_and_reassignments(
 
         def visit_For(self, node: ast.For) -> None:
             # For loop variables are initial bindings
-            if isinstance(node.target, ast.Name):
-                bound_vars.add(node.target.id)
-            else:
-                # Complex target
-                class NameCollector(ast.NodeVisitor):
-                    def visit_Name(self, n: ast.Name) -> None:
-                        if isinstance(n.ctx, ast.Store):
-                            bound_vars.add(n.id)
-
-                collector = NameCollector()
-                collector.visit(node.target)
-
+            bound_vars.update(stored_names(node.target))
             self.generic_visit(node)
 
         def visit_With(self, node: ast.With) -> None:

@@ -75,6 +75,227 @@ def pattern_capture_names(pattern: ast.AST) -> Set[str]:
     return names
 
 
+# Custom visitor that doesn't descend into nested functions
+class ScopeRespectingWalker(ScopeVisitor):
+    """Collect the names a block uses and binds, following scopes but not entering nested functions.
+
+    ``uses`` are the names read, ``bindings`` the names bound in the block's
+    own scope, and ``used_before_assigned`` the names read before the block
+    binds them, which Python would treat as locals of the whole function.
+    """
+
+    def __init__(self) -> None:
+        self._saved: List[Tuple[Set[str], Set[str], Set[str]]] = []
+        self.uses: Set[str] = set()
+        self.bindings: Set[str] = set()
+        self.used_before_assigned: Set[str] = set()  # Variables used before assignment
+        self.assigned_so_far: Set[str] = set()  # Variables assigned so far in traversal
+        self.global_vars: Set[str] = set()  # Variables declared global
+        self.nonlocal_vars: Set[str] = set()  # Variables declared nonlocal
+
+    def _extract_binding_names(self, target: ast.AST) -> Set[str]:
+        """Extract variable names from an assignment target."""
+        names: Set[str] = set()
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in ast.walk(target):
+                if isinstance(elt, ast.Name) and isinstance(elt.ctx, ast.Store):
+                    names.add(elt.id)
+        return names
+
+    def _enter_scope(self, node: ast.AST) -> None:
+        """Begin a nested scope: bindings made inside will not leak out."""
+        self._saved.append((self.bindings.copy(), self.assigned_so_far.copy(), self.uses.copy()))
+
+    def _leave_scope(self, node: ast.AST) -> None:
+        """End the nested scope, keeping only the uses it left free."""
+        saved_bindings, saved_assigned, saved_uses = self._saved.pop()
+        scope_bindings = self.bindings - saved_bindings
+        self.uses = saved_uses | (self.uses - scope_bindings)
+        self.bindings = saved_bindings
+        self.assigned_so_far = saved_assigned
+
+    def _bind_definition_name(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        self._add_current_scope_bindings({node.name})
+
+    def _bind_parameters(self, args: ast.arguments) -> None:
+        self._bind_callable_parameters(args)
+
+    def _bind_target(self, target: ast.AST) -> None:
+        self._add_current_scope_bindings(self._extract_binding_names(target))
+
+    def _visit_class_body(self, node: ast.ClassDef) -> None:
+        """A class body is not entered: it binds nothing the block can read.
+
+        The walker asks which names a block reads that the enclosing
+        function must supply; a class statement contributes only the
+        class name, as it always did here.
+        """
+
+    def _add_current_scope_bindings(self, new_bindings: Set[str]) -> None:
+        """Add bindings to the current scope (they persist)."""
+        self.bindings.update(new_bindings)
+        self.assigned_so_far.update(new_bindings)
+
+    def _bind_callable_parameters(self, args: ast.arguments) -> None:
+        """Bind a callable's parameters as locals of the current scope."""
+        for name in parameter_names(args):
+            self._add_current_scope_bindings({name})
+
+    def _visit_loop_with_bindings(self, node: Union[ast.For, ast.AsyncFor]) -> None:
+        """Visit a for/async-for loop, binding its target in the current scope."""
+        self.visit(node.iter)
+        loop_vars = self._extract_binding_names(node.target)
+        self._add_current_scope_bindings(loop_vars)
+        for stmt in node.body:
+            self.visit(stmt)
+        for stmt in node.orelse:
+            self.visit(stmt)
+
+    def _visit_with_like_block(self, node: Union[ast.With, ast.AsyncWith]) -> None:
+        """Visit a with/async-with block, binding each ``as`` target in the current scope."""
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars:
+                with_vars = self._extract_binding_names(item.optional_vars)
+                self._add_current_scope_bindings(with_vars)
+        for stmt in node.body:
+            self.visit(stmt)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.uses.add(node.id)
+            # If variable used before any assignment, mark it
+            if node.id not in self.assigned_so_far:
+                self.used_before_assigned.add(node.id)
+        elif isinstance(node.ctx, ast.Store):
+            # Check if this variable is global or nonlocal
+            if node.id in self.global_vars or node.id in self.nonlocal_vars:
+                # Global/nonlocal assignments are uses, not local bindings
+                self.uses.add(node.id)
+            else:
+                # Normal local binding
+                self.bindings.add(node.id)
+                self.assigned_so_far.add(node.id)
+        # Continue visiting (though Name has no children)
+        self.generic_visit(node)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        """Track global declarations."""
+        self.global_vars.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        """Track nonlocal declarations."""
+        self.nonlocal_vars.update(node.names)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        # CRITICAL: Visit RHS before LHS to correctly track used-before-assigned
+        # In "x = y + 1", we must see the use of 'y' before marking 'x' as assigned
+        self.visit(node.value)  # Visit RHS first
+        for target in node.targets:
+            self.visit(target)  # Then visit LHS targets
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # Inside a function body no annotation is evaluated, whatever
+        # the target, so names that appear only in one are not free
+        # variables (astroid: a class imported under TYPE_CHECKING).
+        if node.value is not None:
+            self.visit(node.value)
+        self.visit(node.target)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        # CRITICAL: Augmented assignments (x += 1) READ the variable
+        # They don't DEFINE it, so target should be in uses, NOT bindings
+        # (The variable must already exist for the augmented assignment to work)
+        if isinstance(node.target, ast.Name):
+            self.uses.add(node.target.id)
+        else:
+            # For subscripts (metrics["count"] += 1) or attributes (obj.x += 1),
+            # visit the target to capture the base variable
+            self.visit(node.target)
+        # Visit the RHS value
+        self.visit(node.value)
+
+    def visit_For(self, node: ast.For) -> None:
+        # Visit iterable first (before loop variable is bound)
+        self._visit_loop_with_bindings(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        # Same as regular for loop
+        self._visit_loop_with_bindings(node)
+
+    def visit_With(self, node: ast.With) -> None:
+        # Visit context expressions first
+        self._visit_with_like_block(node)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        # Same as regular with
+        self._visit_with_like_block(node)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        # Walrus operator: Visit RHS first, then add binding
+        self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            # Walrus bindings leak into the current scope
+            self.bindings.add(node.target.id)
+            self.assigned_so_far.add(node.target.id)
+
+    def visit_comprehension(self, node: ast.comprehension) -> None:
+        # Comprehension variable binds within comprehension scope
+        # This is called from _visit_comprehension_node which handles scoping
+        self.visit(node.iter)
+        comp_vars = self._extract_binding_names(node.target)
+        self._add_current_scope_bindings(comp_vars)
+        for condition in node.ifs:
+            self.visit(condition)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        # Capture patterns bind in the enclosing function scope
+        self.visit(node.subject)
+        for case in node.cases:
+            for child in ast.walk(case.pattern):
+                if isinstance(child, ast.MatchValue):
+                    self.visit(child.value)
+            self._add_current_scope_bindings(pattern_capture_names(case.pattern))
+            if case.guard:
+                self.visit(case.guard)
+            for stmt in case.body:
+                self.visit(stmt)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        # Exception variable binds in current scope
+        # In: except ValueError as e:
+        #     The variable 'e' is bound here
+        if node.name:
+            self._add_current_scope_bindings({node.name})
+        # Visit the rest (type, body)
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        # import foo, bar as baz
+        # Binds: foo, baz
+        imports: Set[str] = set()
+        for alias in node.names:
+            name = alias.asname if alias.asname else alias.name
+            imports.add(name)
+        self._add_current_scope_bindings(imports)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        # from module import foo, bar as baz
+        # Binds: foo, baz
+        imports: Set[str] = set()
+        for alias in node.names:
+            if alias.name == "*":
+                # from module import * - skip, can't determine bindings
+                continue
+            name = alias.asname if alias.asname else alias.name
+            imports.add(name)
+        self._add_current_scope_bindings(imports)
+
+
 class ScopeAnalyzer(ScopeVisitor):
     """
     Analyze scopes and identifier bindings in an AST.
@@ -379,221 +600,6 @@ class ScopeAnalyzer(ScopeVisitor):
 
         Excludes Python builtins.
         """
-
-        # Custom visitor that doesn't descend into nested functions
-        class ScopeRespectingWalker(ScopeVisitor):
-            def __init__(self) -> None:
-                self._saved: List[Tuple[Set[str], Set[str], Set[str]]] = []
-                self.uses: Set[str] = set()
-                self.bindings: Set[str] = set()
-                self.used_before_assigned: Set[str] = set()  # Variables used before assignment
-                self.assigned_so_far: Set[str] = set()  # Variables assigned so far in traversal
-                self.global_vars: Set[str] = set()  # Variables declared global
-                self.nonlocal_vars: Set[str] = set()  # Variables declared nonlocal
-
-            def _extract_binding_names(self, target: ast.AST) -> Set[str]:
-                """Extract variable names from an assignment target."""
-                names: Set[str] = set()
-                if isinstance(target, ast.Name):
-                    names.add(target.id)
-                elif isinstance(target, (ast.Tuple, ast.List)):
-                    for elt in ast.walk(target):
-                        if isinstance(elt, ast.Name) and isinstance(elt.ctx, ast.Store):
-                            names.add(elt.id)
-                return names
-
-            def _enter_scope(self, node: ast.AST) -> None:
-                """Begin a nested scope: bindings made inside will not leak out."""
-                self._saved.append(
-                    (self.bindings.copy(), self.assigned_so_far.copy(), self.uses.copy())
-                )
-
-            def _leave_scope(self, node: ast.AST) -> None:
-                """End the nested scope, keeping only the uses it left free."""
-                saved_bindings, saved_assigned, saved_uses = self._saved.pop()
-                scope_bindings = self.bindings - saved_bindings
-                self.uses = saved_uses | (self.uses - scope_bindings)
-                self.bindings = saved_bindings
-                self.assigned_so_far = saved_assigned
-
-            def _bind_definition_name(
-                self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
-            ) -> None:
-                self._add_current_scope_bindings({node.name})
-
-            def _bind_parameters(self, args: ast.arguments) -> None:
-                self._bind_callable_parameters(args)
-
-            def _bind_target(self, target: ast.AST) -> None:
-                self._add_current_scope_bindings(self._extract_binding_names(target))
-
-            def _visit_class_body(self, node: ast.ClassDef) -> None:
-                """A class body is not entered: it binds nothing the block can read.
-
-                The walker asks which names a block reads that the enclosing
-                function must supply; a class statement contributes only the
-                class name, as it always did here.
-                """
-
-            def _add_current_scope_bindings(self, new_bindings: Set[str]) -> None:
-                """Add bindings to the current scope (they persist)."""
-                self.bindings.update(new_bindings)
-                self.assigned_so_far.update(new_bindings)
-
-            def _bind_callable_parameters(self, args: ast.arguments) -> None:
-                """Bind a callable's parameters as locals of the current scope."""
-                for name in parameter_names(args):
-                    self._add_current_scope_bindings({name})
-
-            def _visit_loop_with_bindings(self, node: Union[ast.For, ast.AsyncFor]) -> None:
-                """Visit a for/async-for loop, binding its target in the current scope."""
-                self.visit(node.iter)
-                loop_vars = self._extract_binding_names(node.target)
-                self._add_current_scope_bindings(loop_vars)
-                for stmt in node.body:
-                    self.visit(stmt)
-                for stmt in node.orelse:
-                    self.visit(stmt)
-
-            def _visit_with_like_block(self, node: Union[ast.With, ast.AsyncWith]) -> None:
-                """Visit a with/async-with block, binding each ``as`` target in the current scope."""
-                for item in node.items:
-                    self.visit(item.context_expr)
-                    if item.optional_vars:
-                        with_vars = self._extract_binding_names(item.optional_vars)
-                        self._add_current_scope_bindings(with_vars)
-                for stmt in node.body:
-                    self.visit(stmt)
-
-            def visit_Name(self, node: ast.Name) -> None:
-                if isinstance(node.ctx, ast.Load):
-                    self.uses.add(node.id)
-                    # If variable used before any assignment, mark it
-                    if node.id not in self.assigned_so_far:
-                        self.used_before_assigned.add(node.id)
-                elif isinstance(node.ctx, ast.Store):
-                    # Check if this variable is global or nonlocal
-                    if node.id in self.global_vars or node.id in self.nonlocal_vars:
-                        # Global/nonlocal assignments are uses, not local bindings
-                        self.uses.add(node.id)
-                    else:
-                        # Normal local binding
-                        self.bindings.add(node.id)
-                        self.assigned_so_far.add(node.id)
-                # Continue visiting (though Name has no children)
-                self.generic_visit(node)
-
-            def visit_Global(self, node: ast.Global) -> None:
-                """Track global declarations."""
-                self.global_vars.update(node.names)
-
-            def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
-                """Track nonlocal declarations."""
-                self.nonlocal_vars.update(node.names)
-
-            def visit_Assign(self, node: ast.Assign) -> None:
-                # CRITICAL: Visit RHS before LHS to correctly track used-before-assigned
-                # In "x = y + 1", we must see the use of 'y' before marking 'x' as assigned
-                self.visit(node.value)  # Visit RHS first
-                for target in node.targets:
-                    self.visit(target)  # Then visit LHS targets
-
-            def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-                # Inside a function body no annotation is evaluated, whatever
-                # the target, so names that appear only in one are not free
-                # variables (astroid: a class imported under TYPE_CHECKING).
-                if node.value is not None:
-                    self.visit(node.value)
-                self.visit(node.target)
-
-            def visit_AugAssign(self, node: ast.AugAssign) -> None:
-                # CRITICAL: Augmented assignments (x += 1) READ the variable
-                # They don't DEFINE it, so target should be in uses, NOT bindings
-                # (The variable must already exist for the augmented assignment to work)
-                if isinstance(node.target, ast.Name):
-                    self.uses.add(node.target.id)
-                else:
-                    # For subscripts (metrics["count"] += 1) or attributes (obj.x += 1),
-                    # visit the target to capture the base variable
-                    self.visit(node.target)
-                # Visit the RHS value
-                self.visit(node.value)
-
-            def visit_For(self, node: ast.For) -> None:
-                # Visit iterable first (before loop variable is bound)
-                self._visit_loop_with_bindings(node)
-
-            def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
-                # Same as regular for loop
-                self._visit_loop_with_bindings(node)
-
-            def visit_With(self, node: ast.With) -> None:
-                # Visit context expressions first
-                self._visit_with_like_block(node)
-
-            def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
-                # Same as regular with
-                self._visit_with_like_block(node)
-
-            def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-                # Walrus operator: Visit RHS first, then add binding
-                self.visit(node.value)
-                if isinstance(node.target, ast.Name):
-                    # Walrus bindings leak into the current scope
-                    self.bindings.add(node.target.id)
-                    self.assigned_so_far.add(node.target.id)
-
-            def visit_comprehension(self, node: ast.comprehension) -> None:
-                # Comprehension variable binds within comprehension scope
-                # This is called from _visit_comprehension_node which handles scoping
-                self.visit(node.iter)
-                comp_vars = self._extract_binding_names(node.target)
-                self._add_current_scope_bindings(comp_vars)
-                for condition in node.ifs:
-                    self.visit(condition)
-
-            def visit_Match(self, node: ast.Match) -> None:
-                # Capture patterns bind in the enclosing function scope
-                self.visit(node.subject)
-                for case in node.cases:
-                    for child in ast.walk(case.pattern):
-                        if isinstance(child, ast.MatchValue):
-                            self.visit(child.value)
-                    self._add_current_scope_bindings(pattern_capture_names(case.pattern))
-                    if case.guard:
-                        self.visit(case.guard)
-                    for stmt in case.body:
-                        self.visit(stmt)
-
-            def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-                # Exception variable binds in current scope
-                # In: except ValueError as e:
-                #     The variable 'e' is bound here
-                if node.name:
-                    self._add_current_scope_bindings({node.name})
-                # Visit the rest (type, body)
-                self.generic_visit(node)
-
-            def visit_Import(self, node: ast.Import) -> None:
-                # import foo, bar as baz
-                # Binds: foo, baz
-                imports: Set[str] = set()
-                for alias in node.names:
-                    name = alias.asname if alias.asname else alias.name
-                    imports.add(name)
-                self._add_current_scope_bindings(imports)
-
-            def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-                # from module import foo, bar as baz
-                # Binds: foo, baz
-                imports: Set[str] = set()
-                for alias in node.names:
-                    if alias.name == "*":
-                        # from module import * - skip, can't determine bindings
-                        continue
-                    name = alias.asname if alias.asname else alias.name
-                    imports.add(name)
-                self._add_current_scope_bindings(imports)
 
         # Keyed by the nodes themselves: they hash by identity, and holding them
         # keeps an id from being reused by a later node within one analysis.

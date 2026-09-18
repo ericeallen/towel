@@ -460,6 +460,47 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
     return result
 
 
+class _CallContextFinder(OwnScopeVisitor):
+    """Whether a name is called, or passed to a call, anywhere in the statements visited."""
+
+    def __init__(self, var_name: str) -> None:
+        self.var_name = var_name
+        self.found = False
+
+    def visit_Call(self, node: ast.Call) -> None:
+        # Used as a callee
+        if isinstance(node.func, ast.Name) and node.func.id == self.var_name:
+            self.found = True
+        # Used as an argument to a call (higher-order usage)
+        for arg in node.args:
+            if isinstance(arg, ast.Name) and arg.id == self.var_name:
+                self.found = True
+        for kw in node.keywords:
+            if (
+                kw.arg is not None
+                and isinstance(kw.value, ast.Name)
+                and kw.value.id == self.var_name
+            ):
+                self.found = True
+        self.generic_visit(node)
+
+    def _nested_class(self, node: ast.ClassDef) -> None:
+        """A use inside a nested class body is not a use in this scope."""
+
+
+class _ConstantOccurrenceFinder(ast.NodeVisitor):
+    """Collect every constant node whose value equals the one sought."""
+
+    def __init__(self, value: object) -> None:
+        self.value = value
+        self.occurrences: List[ast.AST] = []
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if node.value == self.value:
+            self.occurrences.append(node)
+        self.generic_visit(node)
+
+
 class Unifier:
     """
     Unify AST blocks to find parameterizable differences.
@@ -613,31 +654,8 @@ class Unifier:
         def is_used_as_callable_or_value_later(
             block: List[ast.AST], start_stmt_idx: int, var_name: str
         ) -> bool:
-            class CallContextFinder(OwnScopeVisitor):
-                def __init__(self) -> None:
-                    self.found = False
 
-                def visit_Call(self, node: ast.Call) -> None:
-                    # Used as a callee
-                    if isinstance(node.func, ast.Name) and node.func.id == var_name:
-                        self.found = True
-                    # Used as an argument to a call (higher-order usage)
-                    for arg in node.args:
-                        if isinstance(arg, ast.Name) and arg.id == var_name:
-                            self.found = True
-                    for kw in node.keywords:
-                        if (
-                            kw.arg is not None
-                            and isinstance(kw.value, ast.Name)
-                            and kw.value.id == var_name
-                        ):
-                            self.found = True
-                    self.generic_visit(node)
-
-                def _nested_class(self, node: ast.ClassDef) -> None:
-                    """A use inside a nested class body is not a use in this scope."""
-
-            finder = CallContextFinder()
+            finder = _CallContextFinder(var_name)
             for sidx in range(start_stmt_idx + 1, len(block)):
                 finder.visit(block[sidx])
                 if finder.found:
@@ -1804,19 +1822,10 @@ class Unifier:
         Returns:
             List of ast.Constant nodes with matching value
         """
-        occurrences: List[ast.AST] = []
-
-        class OccurrenceFinder(ast.NodeVisitor):
-            def visit_Constant(self, node: ast.Constant) -> None:
-                if node.value == value:
-                    occurrences.append(node)
-                self.generic_visit(node)
-
+        finder = _ConstantOccurrenceFinder(value)
         for stmt in block:
-            finder = OccurrenceFinder()
             finder.visit(stmt)
-
-        return occurrences
+        return finder.occurrences
 
     def _constant_appears_identically_elsewhere(
         self, values: List[Any], block_indices: List[int]
