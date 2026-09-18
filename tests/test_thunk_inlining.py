@@ -133,3 +133,45 @@ def test_later_parameter_evaluated_first_is_inlined_alone() -> None:
     )
     assert inlined == {"__param_1"}
     assert "__param_0()" in rendered and "__param_1()" not in rendered
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("def h(__param_0):\n    x: int = __param_0()\n    return x\n", {"__param_0"}),
+        ("def h(__param_0, total):\n    total += __param_0()\n    return total\n", {"__param_0"}),
+        ("def h(__param_0, d):\n    del d[__param_0()]\n", {"__param_0"}),
+        ("def h(__param_0):\n    raise __param_0()\n", {"__param_0"}),
+        ("def h(__param_0):\n    with __param_0() as f:\n        f.read()\n", {"__param_0"}),
+        (
+            "def h(__param_0):\n    match __param_0():\n        case _:\n            pass\n",
+            {"__param_0"},
+        ),
+        ("def h(__param_0):\n    global g\n    g = __param_0()\n", {"__param_0"}),
+        ("def h(__param_0):\n    while __param_0():\n        pass\n", set()),
+        (
+            "def h(__param_0):\n    try:\n        x = __param_0()\n    except E:\n        pass\n",
+            set(),
+        ),
+        ("def h(__param_0):\n    assert __param_0()\n", set()),
+        ("def h(__param_0, c):\n    if c:\n        pass\n    x = __param_0()\n", set()),
+        ("def h(__param_0, c):\n    for _ in c:\n        pass\n    x = __param_0()\n", set()),
+    ],
+    ids=[
+        "annotated-assignment",
+        "augmented-assignment",
+        "delete",
+        "raise",
+        "with-first-context",
+        "match-subject",
+        "after-a-global-declaration",
+        "while-test-is-re-evaluated",
+        "try-body-is-not-unconditional",
+        "assert-depends-on-optimization",
+        "after-a-branch",
+        "after-a-loop",
+    ],
+)
+def test_statement_kinds_decide_what_is_evaluated_first(source: str, expected: set[str]) -> None:
+    inlined, _ = _inline(source, "__param_0")
+    assert inlined == expected
