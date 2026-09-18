@@ -235,7 +235,7 @@ class InsertionPoints(EngineState):
         Returns (insert_line_index, class_indent_str) or None.
         """
         try:
-            tree = ast.parse(source)
+            tree = self._parse_source(source)
         except SyntaxError:
             return None
 

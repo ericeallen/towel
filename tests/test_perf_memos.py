@@ -210,3 +210,14 @@ def test_hold_at_least_never_lowers_and_leaves_a_disabled_session_disabled() -> 
     disabled = AnalysisSession(max_entries=0)
     disabled.hold_at_least(300)
     assert disabled.max_entries == 0
+
+
+# --- shared parses ------------------------------------------------------------
+
+
+def test_class_insertion_position_uses_the_engine_parse_memo() -> None:
+    engine = UnificationRefactorEngine()
+    source = "class C:\n    def m(self):\n        return 1\n"
+    assert engine._find_class_insert_position(source, "C") is not None
+    assert source in engine._parse_cache
+    assert engine._find_class_insert_position("class C(:\n", "C") is None

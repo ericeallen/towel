@@ -595,6 +595,10 @@ def _module_level_import_bindings(
     key = (current, stat.st_mtime_ns, stat.st_size)
     if key in cache.bindings:
         return cache.bindings.get(key)
+    # A bare parse: this runs on the import-graph walk, which reaches modules
+    # outside the analysis through the graph cache alone and has no engine,
+    # so it cannot share the engine's parse memo. The bindings are remembered
+    # per (path, mtime, size) above, so each file version is parsed once.
     try:
         tree = ast.parse(read_source(current))
     except (OSError, UnicodeError, SyntaxError):
