@@ -17,6 +17,7 @@ repos:
         language: system
         types: [python]
         files: ^(src/towel/|scripts/|tests/)
+        exclude: ^tests/(hostile_cases|hostile_crossfile)/
       - id: mypy
         name: Mypy
         entry: python -m mypy

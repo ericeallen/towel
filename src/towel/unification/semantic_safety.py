@@ -6,6 +6,7 @@ import ast
 import os
 from pathlib import Path
 from typing import (
+    AbstractSet,
     TYPE_CHECKING,
     Dict,
     FrozenSet,
@@ -20,6 +21,8 @@ from typing import (
 from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
+from .builtins import is_builtin
+from .definite_assignment import definitely_bound_before
 from .models import FunctionNode
 from .bounded_cache import BoundedCache
 from .exceptions import UnsupportedLayoutError
@@ -222,16 +225,17 @@ def is_namespace_access_call(node: ast.AST) -> bool:
     """Whether ``node`` is a call that reads or writes the caller's namespace.
 
     That is ``locals()``, ``globals()``, ``eval()``, ``exec()``, or the
-    no-argument ``vars()`` (which returns ``locals()``). A local variable,
-    parameter, or attribute that merely shares one of these names is not such a
-    call, so callers can rely on this to avoid false positives on shadowing.
+    no-argument ``vars()`` and ``dir()`` (which read ``locals()``). A local
+    variable, parameter, or attribute that merely shares one of these names is
+    not such a call, so callers can rely on this to avoid false positives on
+    shadowing.
     """
     if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
         return False
     name = node.func.id
     if name in {"locals", "globals", "eval", "exec"}:
         return True
-    return name == "vars" and not node.args and not node.keywords
+    return name in {"vars", "dir"} and not node.args and not node.keywords
 
 
 def requires_original_frame(nodes: Iterable[ast.AST]) -> bool:
@@ -866,9 +870,11 @@ def nested_scopes_cross_block_boundary(function: FunctionNode, nodes: Iterable[a
     not when it is defined. If it is defined outside the block and the block
     rebinds one of those names, the helper rebinds its own local instead of the
     caller's cell. If it is defined inside the block and the caller rebinds one
-    of its free names after the block, the helper's parameter snapshot goes
-    stale. Both cases are rejected; reads of names bound only before a
-    top-level block remain eligible.
+    of its free names after the block, the closure keeps the helper's cell
+    while the original saw the caller's rebinding; that holds whether the
+    block bound the name itself (a loop target the caller assigns again
+    later) or read it from the caller. Both cases are rejected; reads of
+    names bound only before a top-level block remain eligible.
     """
     block = tuple(nodes)
     extracted = {child for statement in block for child in ast.walk(statement)}
@@ -884,10 +890,7 @@ def nested_scopes_cross_block_boundary(function: FunctionNode, nodes: Iterable[a
         if scope in extracted:
             inside = True
             captured.update(loaded)
-    if not inside:
-        return False
-    captured -= written_in_block
-    if not captured:
+    if not inside or not captured:
         return False
     top_level = all(node in function.body for node in block)
     block_end = max(getattr(node, "end_lineno", 0) or 0 for node in block)
@@ -901,34 +904,64 @@ def nested_scopes_cross_block_boundary(function: FunctionNode, nodes: Iterable[a
     return False
 
 
-def is_eagerly_evaluable(expression: ast.AST) -> bool:
+def is_eagerly_evaluable(expression: ast.AST, available: AbstractSet[str]) -> bool:
     """Whether hoisting this expression to the call site is unobservable.
 
     A parameter argument runs once, before the block, even when the block would
     have evaluated it later, repeatedly, conditionally, or not at all. Only
     expressions with no effects, no failure modes, and no fresh identity may
-    move that way: local names, literals, and tuples of those. Attribute
-    access can run a property, subscripts and operators can call arbitrary
-    methods, calls are effects by definition, and mutable displays allocate.
+    move that way: literals, names the call site can resolve (``available``:
+    a builtin, a module-level binding, a name bound on every path before the
+    block, or a binding of an enclosing function), and tuples of those. A
+    name the site cannot resolve raises NameError when hoisted out of a
+    branch the block would not have taken. Attribute access can run a
+    property, subscripts and operators can call arbitrary methods, calls are
+    effects by definition, and mutable displays allocate.
     """
-    if isinstance(expression, (ast.Constant, ast.Name)):
+    if isinstance(expression, ast.Constant):
         return True
+    if isinstance(expression, ast.Name):
+        return expression.id in available or is_builtin(expression.id)
     # A tuple of such values is immutable, so one evaluation is as good as
     # many. List, set and dict displays create a fresh mutable object each
     # time they run; hoisting one out of a loop would alias every iteration.
     if isinstance(expression, ast.Tuple):
-        return all(is_eagerly_evaluable(element) for element in expression.elts)
+        return all(is_eagerly_evaluable(element, available) for element in expression.elts)
     if isinstance(expression, ast.UnaryOp) and isinstance(expression.operand, ast.Constant):
         return isinstance(expression.op, (ast.USub, ast.UAdd, ast.Invert, ast.Not))
     return False
 
 
-def has_impure_eager_parameters(substitution: "Substitution") -> bool:
+def available_argument_names(
+    function: FunctionNode, block: Sequence[ast.stmt], analyzer: "ScopeAnalyzer"
+) -> FrozenSet[str]:
+    """Names a call standing where ``block`` stands can read without raising.
+
+    Module-level bindings, names bound on every path from the function's
+    entry to the block, and bindings of the enclosing functions. Builtins are
+    always available and are not listed.
+    """
+    names: Set[str] = set(analyzer.root_scope.bindings)
+    if block:
+        names |= definitely_bound_before(function, block[0])
+    scope = analyzer.node_scopes.get(function)
+    while scope is not None and scope.parent is not None:
+        scope = scope.parent
+        if scope is not analyzer.root_scope:
+            names |= set(scope.bindings)
+    return frozenset(names)
+
+
+def has_impure_eager_parameters(
+    substitution: "Substitution", available: Sequence[AbstractSet[str]]
+) -> bool:
     """Whether any eagerly passed parameter argument may be observable when hoisted.
 
-    Lambda-lifted parameters and forwarded callees are evaluated inside the
-    helper at the original position, so any expression is acceptable there.
-    Call this after extraction, which is when callee parameters are known.
+    ``available`` gives, per block, the names its call site can resolve (see
+    ``available_argument_names``). Lambda-lifted parameters and forwarded
+    callees are evaluated inside the helper at the original position, so any
+    expression is acceptable there. Call this after extraction, which is when
+    callee parameters are known.
     """
     deferred = (
         set(substitution.function_params)
@@ -936,20 +969,23 @@ def has_impure_eager_parameters(substitution: "Substitution") -> bool:
         | set(substitution.inlined_parameters)
     )
     return any(
-        not is_eagerly_evaluable(expression)
+        not is_eagerly_evaluable(expression, available[block_idx])
         for name, expressions in substitution.param_expressions.items()
         if name not in deferred
-        for _, expression in expressions
+        for block_idx, expression in expressions
     )
 
 
 def defer_impure_parameters(
-    substitution: "Substitution", template_block: Iterable[ast.AST]
+    substitution: "Substitution",
+    template_block: Iterable[ast.AST],
+    available: Sequence[AbstractSet[str]],
 ) -> None:
     """Turn parameters whose arguments cannot be hoisted into zero-argument thunks.
 
     The helper then evaluates ``__param_n()`` at the original position, as often
-    and as conditionally as the block did. Parameters already lambda-lifted keep
+    and as conditionally as the block did. ``available`` gives, per block, the
+    names its call site can resolve. Parameters already lambda-lifted keep
     their arguments; parameters used only as callees are forwarded lazily by
     the extractor and need no thunk.
     """
@@ -963,7 +999,10 @@ def defer_impure_parameters(
     for name, expressions in substitution.param_expressions.items():
         if name in substitution.function_params or name in callees:
             continue
-        if any(not is_eagerly_evaluable(expression) for _, expression in expressions):
+        if any(
+            not is_eagerly_evaluable(expression, available[block_idx])
+            for block_idx, expression in expressions
+        ):
             substitution.function_params[name] = []
 
 

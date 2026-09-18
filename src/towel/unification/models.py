@@ -25,7 +25,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Dict, List, Literal, NamedTuple, Optional, Set, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    List,
+    Literal,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    FrozenSet,
+)
 import ast
 import hashlib
 
@@ -285,6 +296,8 @@ class HelperTemplate:
     is_value_producing: bool
     globals_to_declare: Set[str]
     nonlocals_to_declare: Set[str]
+    # Names the template block's call site can resolve (see ``available_argument_names``).
+    available_names: FrozenSet[str]
 
 
 def encloses(outer: FunctionNode, inner: FunctionNode) -> bool:

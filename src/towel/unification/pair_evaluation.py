@@ -37,14 +37,18 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple, cast
+from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple, cast, FrozenSet
 
 from ..diagnostics import VALIDATION, debugging
 from .definite_assignment import definitely_bound_after
 from .assignment_analyzer import has_reassignments_without_bindings
 from .builtins import CALL_ARGUMENT_BUILTINS
 from .definite_assignment import definitely_bound_before, locally_bound_names
-from .semantic_safety import defer_impure_parameters, has_impure_eager_parameters
+from .semantic_safety import (
+    available_argument_names,
+    defer_impure_parameters,
+    has_impure_eager_parameters,
+)
 from .engine_state import EngineState
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
@@ -130,6 +134,9 @@ class _FreeVariables:
     free_vars2: Set[str]
     globals_to_declare: Set[str]
     nonlocals_to_declare: Set[str]
+    # Per block, the names its call site can resolve; an argument that is a
+    # bare name is hoisted only when it is one of these.
+    available_names: Tuple[FrozenSet[str], FrozenSet[str]]
 
 
 @dataclass(frozen=True)
@@ -764,7 +771,11 @@ class PairEvaluation(EngineState):
         globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
             pair, scope_analyzer, free_vars
         )
-        defer_impure_parameters(substitution, pair.block1_nodes)
+        available = (
+            available_argument_names(ctx.func1, pair.block1_nodes, ctx.scope_analyzer),
+            available_argument_names(ctx.func2, pair.block2_nodes, ctx.scope_analyzer2),
+        )
+        defer_impure_parameters(substitution, pair.block1_nodes, available)
         free_vars = _thunk_uncertain_free_variables(
             substitution,
             free_vars,
@@ -772,7 +783,7 @@ class PairEvaluation(EngineState):
             unified.hygienic_renames,
         )
         return _FreeVariables(
-            free_vars, free_vars1, free_vars2, globals_to_declare, nonlocals_to_declare
+            free_vars, free_vars1, free_vars2, globals_to_declare, nonlocals_to_declare, available
         )
 
     # -- 7 ---------------------------------------------------------------------
@@ -803,8 +814,15 @@ class PairEvaluation(EngineState):
         except UnsupportedExtraction:
             return None
         inline_leading_thunks(func_def, unified.substitution, param_order)
-        if has_impure_eager_parameters(unified.substitution):
+        if has_impure_eager_parameters(unified.substitution, free.available_names):
             self._debug_reject(RejectReason.IMPURE_EAGER_PARAMETER, pair)
+            return None
+        # A helper that only forwards (a lone raise, a return of one call, a
+        # bare call, or an assignment returned as is) adds indirection and
+        # shares no logic; decline it here, before the call sites, clustering
+        # and placement are worked out for a helper that will be dropped.
+        if self.skip_trivial_helpers and self._helper_is_trivial_forwarding(func_def):
+            self._debug_reject(RejectReason.TRIVIAL_FORWARDING_HELPER, pair)
             return None
         preamble_length = int(bool(free.globals_to_declare)) + int(bool(free.nonlocals_to_declare))
         return _RenderedHelper(func_def, param_order, preamble_length)
@@ -885,6 +903,7 @@ class PairEvaluation(EngineState):
                     is_value_producing=value_producing,
                     globals_to_declare=free.globals_to_declare,
                     nonlocals_to_declare=free.nonlocals_to_declare,
+                    available_names=free.available_names[0],
                 ),
                 scope.dce_node,
                 functions,
@@ -1132,7 +1151,7 @@ class PairEvaluation(EngineState):
         placement: _Placement,
         functions: FunctionIndex,
     ) -> Optional[RefactoringProposal]:
-        """The proposal, unless the helper only forwards; redirected to an existing function or annotated."""
+        """The proposal, redirected to an existing function or annotated as configured."""
         is_cross_file = pair.is_cross_file
         desc = f"Extract common code from {pair.function1_name}"
         if is_cross_file:
@@ -1162,11 +1181,6 @@ class PairEvaluation(EngineState):
                 )
             ),
         )
-        if self.skip_trivial_helpers and self._helper_is_trivial_forwarding(
-            proposal.extracted_function
-        ):
-            self._debug_reject(RejectReason.TRIVIAL_FORWARDING_HELPER, pair)
-            return None
         if self.reuse_existing_functions:
             redirected = self._redirect_to_existing_function(proposal, functions)
             if redirected is not None:

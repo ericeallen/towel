@@ -71,6 +71,9 @@ TRANSFORMED = {
     "r102_whole_body_reuse",
     "r103_lambda_parameter_spelling",
     "r104_walrus_target_spelling",
+    # The unbound name of each site is thunked, so the helper reads it only
+    # in the branch the original took.
+    "r107_unbound_global_argument",
     # Blocks that bind a variable read afterwards, returned by the helper and
     # rebound by the generated call.
     "h01_side_effect_order",

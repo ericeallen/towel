@@ -103,10 +103,19 @@ class TestNestedScopesCrossBlockBoundary:
         ("lambda: 1", False),
         ("(a, b())", False),
         ("-x", False),
+        # A name the call site cannot resolve raises when hoisted out of a branch.
+        ("MISSING", False),
+        ("(a, MISSING)", False),
+        # Builtins are always available.
+        ("len", True),
     ],
 )
 def test_is_eagerly_evaluable(source: str, expected: bool) -> None:
-    assert is_eagerly_evaluable(ast.parse(source, mode="eval").body) is expected
+    available = frozenset({"a", "b", "x", "k"})
+    assert is_eagerly_evaluable(ast.parse(source, mode="eval").body, available) is expected
+
+
+AVAILABLE = (frozenset({"k", "self", "obj"}), frozenset({"k", "self", "obj"}))
 
 
 def _substitution(*expressions: str, callee: bool = False) -> tuple[Substitution, list[ast.AST]]:
@@ -119,29 +128,35 @@ def _substitution(*expressions: str, callee: bool = False) -> tuple[Substitution
 
 def test_impure_arguments_become_thunks() -> None:
     substitution, template = _substitution("self.email", "self.phone")
-    defer_impure_parameters(substitution, template)
+    defer_impure_parameters(substitution, template, AVAILABLE)
     assert substitution.function_params == {"__param_0": []}
-    assert not has_impure_eager_parameters(substitution)
+    assert not has_impure_eager_parameters(substitution, AVAILABLE)
 
 
 def test_pure_arguments_stay_eager() -> None:
     substitution, template = _substitution("k", "k")
-    defer_impure_parameters(substitution, template)
+    defer_impure_parameters(substitution, template, AVAILABLE)
     assert substitution.function_params == {}
-    assert not has_impure_eager_parameters(substitution)
+    assert not has_impure_eager_parameters(substitution, AVAILABLE)
 
 
 def test_callee_parameters_are_forwarded_not_thunked() -> None:
     substitution, template = _substitution("obj.strip", "obj.upper", callee=True)
-    defer_impure_parameters(substitution, template)
+    defer_impure_parameters(substitution, template, AVAILABLE)
     assert substitution.function_params == {}
     substitution.params_used_as_callee.add("__param_0")
-    assert not has_impure_eager_parameters(substitution)
+    assert not has_impure_eager_parameters(substitution, AVAILABLE)
 
 
 def test_undeferred_impure_argument_is_detected() -> None:
     substitution, _ = _substitution("a.b", "c.d")
-    assert has_impure_eager_parameters(substitution)
+    assert has_impure_eager_parameters(substitution, AVAILABLE)
+
+
+def test_an_unresolvable_name_becomes_a_thunk() -> None:
+    substitution, template = _substitution("MISSING_A", "MISSING_B")
+    defer_impure_parameters(substitution, template, AVAILABLE)
+    assert substitution.function_params == {"__param_0": []}
 
 
 class TestMovesScopeDeclaration:

@@ -40,6 +40,7 @@ from .overlap import line_ranges_intersect
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import statement_shape
 from .semantic_safety import (
+    available_argument_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
     moves_scope_declaration,
@@ -90,7 +91,11 @@ class Clustering(EngineState):
         )
         if not subst2:
             return None
-        defer_impure_parameters(subst2, pair.block1_nodes)
+        available = (
+            template.available_names,
+            available_argument_names(candidate.function, candidate.nodes, candidate.analyzer),
+        )
+        defer_impure_parameters(subst2, pair.block1_nodes, available)
         # Unifying another occurrence may require a different,
         # more general helper. Its parameter numbers alone do
         # not identify the meanings of the existing helper's
@@ -112,7 +117,7 @@ class Clustering(EngineState):
             or ast.dump(candidate_helper) != template.func_def_dump
         ):
             return None
-        if has_impure_eager_parameters(subst2):
+        if has_impure_eager_parameters(subst2, available):
             return None
         # Orphan check for candidate within its function body
         indices = self._get_block_indices(candidate.function, candidate.nodes)
