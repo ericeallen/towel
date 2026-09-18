@@ -2582,9 +2582,30 @@ class UnificationRefactorEngine:
         structure. Anything with real computation or more than one statement is
         left for the ordinary gates.
         """
-        if len(func.body) != 1:
+        body = [
+            statement
+            for statement in func.body
+            if not isinstance(statement, (ast.Global, ast.Nonlocal))
+        ]
+        if len(body) == 2:
+            # ``name = call(...)`` then ``return name``, or ``a, b = call(...)``
+            # then ``return (a, b)``, forwards just as a lone ``return call(...)``
+            # does. Left unfiltered, two such helpers pair with each other and
+            # extract a third, without end (h2 under Black, whose wrapping of
+            # the call took the body over the line minimum).
+            first, second = body
+            if not (
+                isinstance(first, ast.Assign)
+                and len(first.targets) == 1
+                and isinstance(first.value, ast.Call)
+                and isinstance(second, ast.Return)
+                and second.value is not None
+            ):
+                return False
+            return UnificationRefactorEngine._same_names(first.targets[0], second.value)
+        if len(body) != 1:
             return False
-        statement = func.body[0]
+        statement = body[0]
         if isinstance(statement, ast.Raise):
             return True
         if isinstance(statement, ast.Return) and isinstance(statement.value, ast.Call):
@@ -2935,6 +2956,20 @@ class UnificationRefactorEngine:
                 ),
             )
         return None
+
+    @staticmethod
+    def _same_names(target: ast.expr, returned: ast.expr) -> bool:
+        """Whether ``returned`` is exactly the name, or tuple of names, ``target`` binds."""
+        if isinstance(target, ast.Name) and isinstance(returned, ast.Name):
+            return target.id == returned.id
+        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(
+            returned, (ast.Tuple, ast.List)
+        ):
+            return len(target.elts) == len(returned.elts) and all(
+                isinstance(bound, ast.Name) and isinstance(used, ast.Name) and bound.id == used.id
+                for bound, used in zip(target.elts, returned.elts)
+            )
+        return False
 
     def _try_refactor_pair_multi_file(
         self,

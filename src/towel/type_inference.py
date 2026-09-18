@@ -63,11 +63,18 @@ _REVEALED = re.compile(
 
 
 def _module_name_and_root(path: Path) -> Tuple[str, Path]:
-    """The dotted module name of ``path`` and the directory that must be on the search path."""
+    """The dotted module name of ``path`` and the directory that must be on the search path.
+
+    A package directory need not be a valid identifier: an out-of-place
+    refactoring writes the package under an arbitrary output name, and mypy
+    spells that name into every type it reveals. Such a component becomes a
+    placeholder identifier, which the annotation writer then drops in favour
+    of the name the host module binds.
+    """
     parts = [path.stem]
     directory = path.parent
     while (directory / "__init__.py").is_file():
-        parts.append(directory.name)
+        parts.append(directory.name if directory.name.isidentifier() else "_towel_package")
         parent = directory.parent
         if parent == directory:
             break

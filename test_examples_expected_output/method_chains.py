@@ -6,17 +6,12 @@ and object-oriented code patterns correctly.
 """
 
 
-def __extracted_func_6(model, validator):
+def __extracted_func_5(model, validator):
     if validator.is_valid(model):
         model.save()
         model.notify_observers()
         return True
     return False
-
-
-def __extracted_func_5(__param_0, __param_1, __param_2, average, formatter, maximum, total):
-    formatted = formatter.create_summary().add_metric(__param_0, total).add_metric(__param_1, average).add_metric(__param_2, maximum).finalize()
-    return formatted
 
 
 def __extracted_func_4(__param_0, __param_1, response, transformer, validator):
@@ -90,7 +85,7 @@ def update_model_fields_a(model, updates, validator):
         "active"
     ).validate()
 
-    return __extracted_func_6(model, validator)
+    return __extracted_func_5(model, validator)
 
 
 def update_model_fields_b(model, updates, validator):
@@ -100,7 +95,7 @@ def update_model_fields_b(model, updates, validator):
         "active"
     ).validate()
 
-    return __extracted_func_6(model, validator)
+    return __extracted_func_5(model, validator)
 
 
 def query_database_v1(db, filters, mapper):
@@ -158,7 +153,15 @@ def aggregate_results_a(results, aggregator, formatter):
     average = aggregator.average([r.get_value() for r in results])
     maximum = aggregator.max([r.get_value() for r in results])
 
-    return __extracted_func_5('total', 'average', 'maximum', average, formatter, maximum, total)
+    formatted = (
+        formatter.create_summary()
+        .add_metric("total", total)
+        .add_metric("average", average)
+        .add_metric("maximum", maximum)
+        .finalize()
+    )
+
+    return formatted
 
 
 def aggregate_results_b(results, aggregator, formatter):
@@ -168,4 +171,12 @@ def aggregate_results_b(results, aggregator, formatter):
     average = aggregator.average([r.get_amount() for r in results])
     maximum = aggregator.max([r.get_amount() for r in results])
 
-    return __extracted_func_5('sum', 'mean', 'max', average, formatter, maximum, total)
+    formatted = (
+        formatter.create_summary()
+        .add_metric("sum", total)
+        .add_metric("mean", average)
+        .add_metric("max", maximum)
+        .finalize()
+    )
+
+    return formatted

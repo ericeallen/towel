@@ -53,3 +53,46 @@ def test_real_two_statement_body_is_still_extracted(tmp_path):
         "    return tmp * 2\n",
     )
     assert UnificationRefactorEngine(min_lines=1).analyze_file(path)
+
+
+def test_assign_then_return_of_the_call_is_forwarding_too(tmp_path):
+    # ``events = f(...)`` then ``return events`` is the same indirection as
+    # ``return f(...)``. Two such helpers would otherwise pair with each other
+    # and extract a third, without end, once a formatter wraps the call over
+    # enough lines to pass the size gate.
+    path = _write(
+        tmp_path,
+        "def first(a, b):\n"
+        "    events = forward(a,\n"
+        "                     b)\n"
+        "    return events\n\n"
+        "def second(a, b):\n"
+        "    events = forward(a,\n"
+        "                     b)\n"
+        "    return events\n",
+    )
+    assert (
+        UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False).analyze_file(path)
+        == []
+    )
+    assert UnificationRefactorEngine(
+        min_lines=3, reuse_existing_functions=False, skip_trivial_helpers=False
+    ).analyze_file(path)
+
+
+def test_unpacked_call_result_returned_as_a_tuple_is_forwarding(tmp_path):
+    path = _write(
+        tmp_path,
+        "def first(a, b):\n"
+        "    events, headers = forward(a,\n"
+        "                              b)\n"
+        "    return (events, headers)\n\n"
+        "def second(a, b):\n"
+        "    events, headers = forward(a,\n"
+        "                              b)\n"
+        "    return (events, headers)\n",
+    )
+    assert (
+        UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False).analyze_file(path)
+        == []
+    )

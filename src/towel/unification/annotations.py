@@ -38,6 +38,8 @@ from __future__ import annotations
 import ast
 import builtins
 import copy
+import os
+import sys
 from dataclasses import dataclass
 import re
 from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
@@ -313,10 +315,30 @@ def annotation_from_revealed(
         expression = ast.parse(text, mode="eval").body
     except SyntaxError:
         return None
+    if not _is_type_expression(expression):
+        return None
     reduced = _reduce_dotted_names(expression, host)
     if reduced is None:
         return None
     return _spelled_for_host(reduced, host, same_module)
+
+
+def _is_type_expression(expression: ast.expr) -> bool:
+    """Whether the tree is made only of what a type annotation is made of.
+
+    Names, attributes, subscripts, tuples, constants, and ``|`` unions. A
+    module name that is not an identifier, for example, parses as arithmetic.
+    """
+    for node in ast.walk(expression):
+        if isinstance(node, ast.BinOp):
+            if not isinstance(node.op, ast.BitOr):
+                return False
+        elif not isinstance(
+            node,
+            (ast.Name, ast.Attribute, ast.Subscript, ast.Tuple, ast.Constant, ast.Load, ast.BitOr),
+        ):
+            return False
+    return True
 
 
 def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> Optional[ast.expr]:
@@ -412,6 +434,12 @@ def infer_missing_annotations(
                 )
                 return_probes.append((site.file_path, line, len(expressions)))
     revealed = inferrer(requests)
+    if os.getenv("TOWEL_DEBUG_TYPES"):
+        for key, text in sorted(revealed.items()):
+            print(
+                f"[types] {key[0].rsplit('/', 1)[-1]}:{key[1]}#{key[2]} -> {text!r}",
+                file=sys.stderr,
+            )
     host = next((ast.parse(site.source) for site in sites if site.file_path == host_file), None)
     same_module = all(site.file_path == host_file for site in sites)
     for position, index in enumerate(bare):

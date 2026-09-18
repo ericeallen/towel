@@ -51,6 +51,11 @@ ecosystem evidence behind each claim. The format follows
   same-file clustering pass applies its constant-time filters before the
   semantic guards. Together these remove about half of the AST traversal on
   a 16k-line project with an identical proposal list.
+- The trivial-forwarding filter also recognizes `name = call(...)` followed
+  by `return name`, and the tuple form `a, b = call(...)` then
+  `return (a, b)`. Without it, once Black wrapped such a body over the
+  three-line minimum, two generated helpers of that shape paired with each
+  other and extracted a third, without end (h2).
 
 ### Fixed
 - A block that binds a variable read after it is extracted again, with the

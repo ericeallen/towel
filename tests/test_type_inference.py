@@ -131,3 +131,20 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
     assert invoke(["dry", str(source_dir), str(bare), *common, "--no-types"]).status == 0
     assert "(items: list[int]) -> int:" in (typed / "m.py").read_text()
     assert "(__param_0, items):" in (bare / "m.py").read_text()
+
+
+def test_non_identifier_package_names_never_reach_an_annotation() -> None:
+    host = ast.parse("class H2Stream: ...\n")
+    assert annotation_from_revealed("h2-dbg.stream.H2Stream", host, True) is None
+    assert ast.unparse(annotation_from_revealed("_towel_package.stream.H2Stream", host, True)) == "'H2Stream'"  # type: ignore[arg-type]
+
+
+def test_inferrer_names_a_non_identifier_package_with_a_placeholder(tmp_path: Path) -> None:
+    package = tmp_path / "cleaned-out"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    source = "class Box:\n    pass\n\ndef f(box: Box) -> None:\n    print(box)\n"
+    module = package / "m.py"
+    module.write_text(source)
+    revealed = MypyInferrer()([RevealRequest(str(module), source, 5, "    ", ("box",))])
+    assert revealed[(str(module), 5, 0)] == "_towel_package.m.Box"
