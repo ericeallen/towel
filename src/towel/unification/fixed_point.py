@@ -27,14 +27,15 @@ through tqdm when available, else an inline bar, else nothing.
 from __future__ import annotations
 
 import os
-import time
+import textwrap
 
 from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 from .models import RefactoringProposal
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
+    ProgressBar,
     ProgressBarFactory,
     ProgressMode,
     load_tqdm,
@@ -229,9 +230,7 @@ class FixedPointDrivers(EngineState):
             termination_reason ∈ {"fixed_point", "iteration_cap"}
         """
         self._change_log = []
-        import textwrap
-
-        progress_mode, tqdm_wrapper, use_tqdm = self._resolve_progress_backend(progress)
+        reporter = _ApplyProgress(*self._resolve_progress_backend(progress))
 
         input_path = Path(input_dir)
         output_path = Path(output_dir)
@@ -269,37 +268,6 @@ class FixedPointDrivers(EngineState):
         iterations = 0
         total_applied = 0
         termination_reason = "fixed_point"
-
-        # Timing / ETA state (for heuristic ETA when total unknown)
-        per_proposal_durations: List[float] = []
-
-        # Progress helpers -------------------------------------------------
-        progress_bar = None
-
-        # Fallback inline bar (only when not using tqdm and not in detail/none)
-        def _fallback_bar(applied: int, queued: int, phase: str, desc: str) -> None:
-            # Suppress inline fallback bar when tqdm is selected or active, or in 'none'/'detail' modes
-            if progress_mode != "auto" or use_tqdm:
-                return
-            denom = max(applied + queued, 1)
-            pct = int((applied / denom) * 100)
-            bar = render_inline_bar(pct, bar_len=32)
-            short = desc if len(desc) <= 48 else desc[:45] + "..."
-            quietly(
-                lambda: print(
-                    f"\r[towel] {phase:<10} [{bar}] {pct:3d}% "
-                    f"| applied={applied} queued={queued} | {short}",
-                    end="",
-                    flush=True,
-                )
-            )
-
-        def _update_progress_postfix(applied: int, queued: int) -> None:
-            """Keep tqdm postfix updates consistent."""
-            if not (use_tqdm and progress_bar is not None):
-                return
-            bar = progress_bar
-            quietly(lambda: bar.set_postfix({"A": applied, "Q": queued}, refresh=True))
 
         def _apply_proposal_and_refresh_queue(
             proposal: RefactoringProposal, queue: List[RefactoringProposal]
@@ -347,8 +315,8 @@ class FixedPointDrivers(EngineState):
                     ]
                     if localized:
                         queue = localized + queue
-                        _detail(f"Localized +{len(localized)} follow-up(s)")
-                        _fallback_bar(
+                        reporter.detail(f"Localized +{len(localized)} follow-up(s)")
+                        reporter.inline(
                             total_applied,
                             len(queue),
                             "localized",
@@ -357,27 +325,11 @@ class FixedPointDrivers(EngineState):
 
             return queue
 
-        # Note: We defer tqdm progress bar creation until we have proposals to apply.
-        # This avoids an early line like "analyzing: 0it" with unknown totals.
-
-        def _detail(msg: str) -> None:
-            if progress_mode == "detail":
-                LOG.info("[towel] %s", msg)
-
         # Main loop -------------------------------------------------------
         while True:
             if not proposal_queue:
                 # Global analysis pass
-                if progress_mode != "none":
-                    try:
-                        file_count = sum(1 for _ in output_path.rglob("*.py"))
-                        _detail(f"Analyzing {file_count} file(s)...")
-                    except OSError:
-                        # Only the directory walk for a progress message; a real
-                        # I/O problem will resurface in the analysis that follows.
-                        pass
-                # Show pairing progress during global analysis if user requested progress bars.
-                analysis_progress_flag = progress_mode if wants_bar(progress_mode) else "none"
+                reporter.announce_analysis(output_path)
                 restrict = (
                     frozenset(changed_since_global)
                     if self.incremental_global_passes and global_passes > 0 and changed_since_global
@@ -387,52 +339,16 @@ class FixedPointDrivers(EngineState):
                     str(output_path),
                     recursive=True,
                     verbose=False,
-                    progress=analysis_progress_flag,
+                    progress=reporter.analysis_mode,
                     changed_files=restrict,
                 )
                 global_passes += 1
                 changed_since_global.clear()
                 if not proposals:
-                    # Fixed point reached
-                    if use_tqdm and progress_bar is not None:
-                        # Ensure a clean newline so the last line doesn't meld with following prints
-                        bar = progress_bar
-
-                        def finish() -> None:
-                            bar.refresh()
-                            bar.close()
-
-                        quietly(finish)
-                    else:
-                        if wants_bar(progress_mode) and not use_tqdm:
-                            print()  # finish inline bar line
+                    reporter.finish_at_fixed_point()
                     break
                 proposal_queue = filter_overlapping_proposals(proposals)
-                _detail(f"Discovered {len(proposal_queue)} proposal(s)")
-                if progress_mode == "detail":
-                    for i, p in enumerate(proposal_queue[:25], 1):  # cap verbose listing
-                        short = textwrap.shorten(p.description, width=100, placeholder="...")
-                        LOG.info("    %2d. %s", i, short)
-                    if len(proposal_queue) > 25:
-                        LOG.info("    ... %d more", len(proposal_queue) - 25)
-                _fallback_bar(total_applied, len(proposal_queue), "discovered", "proposals queued")
-                if use_tqdm and progress_bar is None:
-                    # Lazily create tqdm now that we have proposals to apply
-                    assert tqdm_wrapper is not None
-                    try:
-                        total_known = max_iterations > 0
-                        # Use leave=False so subsequent prints don't duplicate the bar line.
-                        progress_bar = tqdm_wrapper(
-                            total=max_iterations if total_known else None,
-                            desc="apply",
-                            unit="it",
-                            dynamic_ncols=True,
-                            leave=False,
-                        )
-                        queued_ct = len(proposal_queue)
-                        _update_progress_postfix(0, queued_ct)
-                    except Exception:
-                        progress_bar = None
+                reporter.discovered(proposal_queue, total_applied, max_iterations)
 
             if not proposal_queue:
                 break
@@ -440,13 +356,8 @@ class FixedPointDrivers(EngineState):
             proposal = self._pop_next_proposal(proposal_queue)
             if proposal is None:
                 break
-            iter_start = time.time()
             last_desc = proposal.description
-            # Suppress separate applying log line when tqdm active to avoid duplicate lines
-            if not (use_tqdm and progress_bar is not None):
-                _fallback_bar(
-                    total_applied, len(proposal_queue), "apply", f"#{iterations+1}: {last_desc}"
-                )
+            reporter.applying(total_applied, len(proposal_queue), iterations + 1, last_desc)
 
             # Apply proposal. A proposal computed before an earlier application
             # changed one of its files is stale: drop it and re-analyze those
@@ -455,7 +366,7 @@ class FixedPointDrivers(EngineState):
                 proposal_queue = _apply_proposal_and_refresh_queue(proposal, proposal_queue)
             except ChangeConflict as conflict:
                 stale_paths = sorted({path for path, _ in proposal.source_digests})
-                _detail(
+                reporter.detail(
                     f"Dropped stale proposal ({conflict}); re-analyzing {len(stale_paths)} file(s)"
                 )
                 if debugging(REJECTIONS):
@@ -476,30 +387,147 @@ class FixedPointDrivers(EngineState):
                     proposal_queue = filter_overlapping_proposals(refreshed) + proposal_queue
                 continue
 
-            # Record duration for this iteration (include localized follow-up analysis time)
-            per_proposal_durations.append(time.time() - iter_start)
             iterations += 1
             total_applied += 1
-            if use_tqdm and progress_bar is not None:
-                bar = progress_bar
-
-                def advance() -> None:
-                    bar.update(1)
-                    _update_progress_postfix(total_applied, len(proposal_queue))
-
-                quietly(advance)
-            else:
-                _fallback_bar(
-                    total_applied, len(proposal_queue), "applied", f"#{iterations}: {last_desc}"
-                )
+            reporter.applied(total_applied, len(proposal_queue), iterations, last_desc)
 
             if max_iterations > 0 and iterations >= max_iterations:
                 termination_reason = "iteration_cap"
-                if use_tqdm and progress_bar is not None:
-                    progress_bar.close()
-                else:
-                    if wants_bar(progress_mode) and not use_tqdm:
-                        print()
+                reporter.finish_at_cap()
                 break
 
         return results, termination_reason
+
+
+class _ApplyProgress:
+    """How the directory driver reports progress: a tqdm bar, an inline bar, or detail lines.
+
+    Which of the three applies is fixed by the progress mode and by whether
+    tqdm loaded. The driver reports what happened and never asks which one
+    is showing it. The tqdm bar is created only once there are proposals to
+    apply, so a run never opens with an empty bar.
+    """
+
+    _LISTING_CAP = 25
+
+    def __init__(
+        self, mode: ProgressMode, factory: Optional[ProgressBarFactory], use_tqdm: bool
+    ) -> None:
+        self._mode = mode
+        self._factory = factory
+        self._use_tqdm = use_tqdm
+        self._bar: Optional[ProgressBar] = None
+
+    @property
+    def analysis_mode(self) -> ProgressMode:
+        """The mode each global analysis pass runs under: a bar when one is wanted."""
+        return self._mode if wants_bar(self._mode) else "none"
+
+    def _active_bar(self) -> Optional[ProgressBar]:
+        return self._bar if self._use_tqdm else None
+
+    def detail(self, message: str) -> None:
+        """A line of the detail log, in detail mode only."""
+        if self._mode == "detail":
+            LOG.info("[towel] %s", message)
+
+    def inline(self, applied: int, queued: int, phase: str, desc: str) -> None:
+        """Redraw the inline bar; only the automatic mode without tqdm shows one."""
+        if self._mode != "auto" or self._use_tqdm:
+            return
+        denom = max(applied + queued, 1)
+        pct = int((applied / denom) * 100)
+        bar = render_inline_bar(pct, bar_len=32)
+        short = desc if len(desc) <= 48 else desc[:45] + "..."
+        quietly(
+            lambda: print(
+                f"\r[towel] {phase:<10} [{bar}] {pct:3d}% "
+                f"| applied={applied} queued={queued} | {short}",
+                end="",
+                flush=True,
+            )
+        )
+
+    def announce_analysis(self, output_path: Path) -> None:
+        """Say how many files the coming global pass will analyze."""
+        if self._mode == "none":
+            return
+        try:
+            file_count = sum(1 for _ in output_path.rglob("*.py"))
+        except OSError:
+            # Only the directory walk for a progress message; a real I/O
+            # problem will resurface in the analysis that follows.
+            return
+        self.detail(f"Analyzing {file_count} file(s)...")
+
+    def discovered(
+        self, queue: Sequence[RefactoringProposal], applied: int, max_iterations: int
+    ) -> None:
+        """A global pass queued ``queue``; list them in detail mode and open the bar."""
+        self.detail(f"Discovered {len(queue)} proposal(s)")
+        if self._mode == "detail":
+            for position, proposal in enumerate(queue[: self._LISTING_CAP], 1):
+                short = textwrap.shorten(proposal.description, width=100, placeholder="...")
+                LOG.info("    %2d. %s", position, short)
+            if len(queue) > self._LISTING_CAP:
+                LOG.info("    ... %d more", len(queue) - self._LISTING_CAP)
+        self.inline(applied, len(queue), "discovered", "proposals queued")
+        if self._use_tqdm and self._bar is None:
+            assert self._factory is not None
+            try:
+                # leave=False, so later prints do not duplicate the bar line.
+                self._bar = self._factory(
+                    total=max_iterations if max_iterations > 0 else None,
+                    desc="apply",
+                    unit="it",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+                self._postfix(0, len(queue))
+            except Exception:
+                # A bar that cannot be created costs only its display.
+                self._bar = None
+
+    def applying(self, applied: int, queued: int, iteration: int, desc: str) -> None:
+        """About to apply the ``iteration``-th proposal; the tqdm bar already says so."""
+        if self._active_bar() is None:
+            self.inline(applied, queued, "apply", f"#{iteration}: {desc}")
+
+    def applied(self, applied: int, queued: int, iteration: int, desc: str) -> None:
+        """The ``iteration``-th proposal was applied."""
+        bar = self._active_bar()
+        if bar is None:
+            self.inline(applied, queued, "applied", f"#{iteration}: {desc}")
+            return
+
+        def advance() -> None:
+            bar.update(1)
+            self._postfix(applied, queued)
+
+        quietly(advance)
+
+    def _postfix(self, applied: int, queued: int) -> None:
+        bar = self._active_bar()
+        if bar is not None:
+            quietly(lambda: bar.set_postfix({"A": applied, "Q": queued}, refresh=True))
+
+    def finish_at_fixed_point(self) -> None:
+        """No proposals remain: close the bar, or end the inline bar's line."""
+        bar = self._active_bar()
+        if bar is not None:
+
+            def finish() -> None:
+                bar.refresh()
+                bar.close()
+
+            quietly(finish)
+        elif wants_bar(self._mode) and not self._use_tqdm:
+            print()
+
+    def finish_at_cap(self) -> None:
+        """The iteration cap was reached: close the bar, or end the inline bar's line."""
+        bar = self._active_bar()
+        if bar is not None:
+            bar.close()
+        elif wants_bar(self._mode) and not self._use_tqdm:
+            print()
