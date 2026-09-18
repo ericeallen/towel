@@ -45,14 +45,20 @@ def test_detail_progress_lists_proposals(tmp_path: Path, caplog: pytest.LogCaptu
         results, termination = engine.refactor_directory_to_fixed_point(
             str(fixture), str(out_dir), max_iterations=1, progress="detail"
         )
-    output = "\n".join(record.getMessage() for record in caplog.records)
-    assert "Discovered" in output
-    assert "Reuse f1" in output or "Extract common code" in output  # a proposal listed
-    # iteration_cap expected because we limited iterations to 1 with >1 proposals available
+    messages = [record.getMessage() for record in caplog.records]
+    # The fixture holds two duplicate pairs; detail mode announces the count
+    # and then lists every discovered proposal, numbered, in discovery order.
+    assert "[towel] Discovered 2 proposal(s)" in messages
+    listed = [message.strip() for message in messages if message.strip()[:2] in {"1.", "2."}]
+    assert listed == [
+        "1. Reuse f1 (sample.py) for duplicated code in f2",
+        "2. Reuse g1 (sample.py) for duplicated code in g2",
+    ]
+    # One iteration applies only the first proposal, so the cap ends the run
+    # with the second still pending.
     assert termination == "iteration_cap"
-    # We applied exactly one refactoring
-    total_applied = sum(c for c, _ in results.values())
-    assert total_applied == 1
+    applied = [description for _, descriptions in results.values() for description in descriptions]
+    assert applied == ["Reuse f1 (sample.py) for duplicated code in f2"]
 
 
 def test_termination_reason_fixed_point(tmp_path: Path) -> None:

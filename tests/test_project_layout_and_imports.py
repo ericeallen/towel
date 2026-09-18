@@ -1,20 +1,16 @@
 import tempfile
 from pathlib import Path
 
+from tests.test_helpers import write_file
 from towel.project_layout import ProjectLayout
 from towel.unification.refactor_engine import UnificationRefactorEngine
-
-
-def _write(p: Path, content: str):
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
 
 
 def test_project_layout_module_name_src_layout_pep420():
     # Create a temporary src-layout project with pyproject.toml
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        _write(
+        write_file(
             root / "pyproject.toml",
             """
 [build-system]
@@ -29,7 +25,7 @@ package-dir = {"" = "src"}
         a_py = root / "src" / "acme" / "core" / "a.py"
         b_py = root / "src" / "acme" / "core" / "b.py"
 
-        _write(
+        write_file(
             a_py,
             """
 def f1(x):
@@ -43,7 +39,7 @@ def f1(x):
 """.lstrip(),
         )
 
-        _write(
+        write_file(
             b_py,
             """
 def f2(x):
@@ -71,7 +67,7 @@ def test_import_insertion_prefers_absolute_even_same_dir_when_requested():
     # even when files are in the same directory within a package.
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        _write(
+        write_file(
             root / "pyproject.toml",
             """
 [build-system]
@@ -88,7 +84,7 @@ package-dir = {"" = "src"}
         b_py = pkg_dir / "beta.py"
 
         # Two functions with identical blocks to trigger extraction
-        _write(
+        write_file(
             a_py,
             """
 def fa(x):
@@ -99,7 +95,7 @@ def fa(x):
 """.lstrip(),
         )
 
-        _write(
+        write_file(
             b_py,
             """
 def fb(x):
@@ -159,10 +155,10 @@ def test_module_name_none_for_non_identifier_root():
         # no packaging metadata, so discovery falls back to the directory name.
         root = Path(td) / "my-clean-copy"
         pkg = root / "unification"
-        _write(root / "__init__.py", "")
-        _write(pkg / "__init__.py", "")
+        write_file(root / "__init__.py", "")
+        write_file(pkg / "__init__.py", "")
         module = pkg / "scope_analyzer.py"
-        _write(module, "VALUE = 1\n")
+        write_file(module, "VALUE = 1\n")
 
         layout = ProjectLayout.discover(module)
         # The only candidate absolute name would contain the invalid component
@@ -189,14 +185,14 @@ def test_same_dir_helper_uses_relative_import_under_non_identifier_root():
         # Hyphenated package root, no pyproject: mirrors `towel dry X /tmp/my-out`.
         root = Path(td) / "my-out-dir"
         pkg = root / "unification"
-        _write(root / "__init__.py", "")
-        _write(pkg / "__init__.py", "")
-        _write(
+        write_file(root / "__init__.py", "")
+        write_file(pkg / "__init__.py", "")
+        write_file(
             pkg / "alpha.py",
             "def f1(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
         )
-        _write(
+        write_file(
             pkg / "beta.py",
             "def f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
@@ -238,13 +234,13 @@ def test_out_of_place_package_import_is_relative_not_output_dir_name():
         # A classic package whose directory name is a valid identifier but is NOT
         # the real installed package name — e.g. a temp output directory.
         pkg = Path(td) / "cleaned_output"
-        _write(pkg / "__init__.py", "")
-        _write(
+        write_file(pkg / "__init__.py", "")
+        write_file(
             pkg / "alpha.py",
             "def f1(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
         )
-        _write(
+        write_file(
             pkg / "beta.py",
             "def f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",

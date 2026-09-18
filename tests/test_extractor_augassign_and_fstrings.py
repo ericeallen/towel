@@ -1,14 +1,9 @@
 import ast
 import unittest
 
+from tests.test_helpers import fix_locations
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution
-
-
-def _fix(nodes):
-    m = ast.Module(body=nodes, type_ignores=[])
-    ast.fix_missing_locations(m)
-    return m.body
 
 
 class TestExtractorAugAssignAndFStrings(unittest.TestCase):
@@ -23,7 +18,7 @@ class TestExtractorAugAssignAndFStrings(unittest.TestCase):
             ),
             ast.Return(value=ast.Name(id="acc", ctx=ast.Load())),
         ]
-        block = _fix(block)
+        block = fix_locations(block)
 
         subst = Substitution()
         # Suppose it was originally parameterized as __param_9 mapping to acc in block 0 and total in block 1, but removed.
@@ -64,10 +59,13 @@ class TestExtractorAugAssignAndFStrings(unittest.TestCase):
             hygienic_renames=[{}, {}],
         )
         # First call should pass Name('acc'), second should pass Name('total') per mapping
+        assert isinstance(call0, ast.Assign) and isinstance(call0.value, ast.Call)
+        assert isinstance(call1, ast.Assign) and isinstance(call1.value, ast.Call)
         arg0 = call0.value.args[order["acc"]]
         arg1 = call1.value.args[order["acc"]]
         self.assertIsInstance(arg0, ast.Name)
         self.assertIsInstance(arg1, ast.Name)
+        assert isinstance(arg0, ast.Name) and isinstance(arg1, ast.Name)
         self.assertEqual(arg0.id, "acc")
         self.assertEqual(arg1.id, "total")
 
@@ -82,8 +80,7 @@ class TestExtractorAugAssignAndFStrings(unittest.TestCase):
                 ),
             ]
         )
-        block = [ast.Expr(value=fstr)]
-        block = _fix(block)
+        block = fix_locations([ast.Expr(value=fstr)])
 
         subst = Substitution()
         # Map a different expression for block 1 to force parameterization attempt, but since it's a JoinedStr, extractor should not break it

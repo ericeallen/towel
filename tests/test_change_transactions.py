@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -113,12 +114,12 @@ apply_changes(plan)
     assert result.returncode == 91
     assert files[0].read_bytes() == b"value = 2\n"
     journal = next(tmp_path.glob(".towel-transaction-*"))
-    result = subprocess.run(
+    recovery = subprocess.run(
         [sys.executable, "-c", "from towel.cli import main; main()", "recover", str(journal)],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, result.stderr
+    assert recovery.returncode == 0, recovery.stderr
     assert all(p.read_bytes() == b"value = 1\n" for p in files)
 
 
@@ -248,6 +249,6 @@ def test_crlf_fixed_point_uses_original_bytes_for_stale_check(tmp_path):
     # The file keeps its line endings; the returned text is LF like every source in memory.
     assert b"\n" not in path.read_bytes().replace(b"\r\n", b"")
     assert path.read_bytes() == result.encode("utf-8").replace(b"\n", b"\r\n")
-    scope = {}
+    scope: dict[str, Any] = {}
     exec(result, scope)
     assert scope["a"](3) == scope["b"](3) == 8

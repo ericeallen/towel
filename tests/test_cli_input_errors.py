@@ -12,6 +12,7 @@ import argparse
 import contextlib
 import io
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -24,7 +25,9 @@ def _dry_arguments(source: Path, destination: Path) -> argparse.Namespace:
     )
 
 
-def _run_quietly(handler, arguments: argparse.Namespace) -> str:  # type: ignore[no-untyped-def]
+def _run_quietly(
+    handler: Callable[[argparse.Namespace], None], arguments: argparse.Namespace
+) -> str:
     with contextlib.redirect_stdout(io.StringIO()) as out:
         handler(arguments)
     return out.getvalue()

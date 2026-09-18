@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 from typing import List
 
 import pytest
 
+from tests.test_helpers import PROJECT_ROOT, example_paths
 from towel.unification.pipeline import (
     parse_modules,
     analyze_scopes,
@@ -20,13 +20,6 @@ from towel.unification.pipeline import (
 )
 from towel.unification.models import ParsedModule
 from towel.unification.refactor_engine import UnificationRefactorEngine
-
-PROJECT_ROOT = Path(__file__).parent.parent
-EXAMPLES_DIR = PROJECT_ROOT / "test_examples"
-
-
-def example_paths(names: List[str]) -> List[str]:
-    return [str(EXAMPLES_DIR / n) for n in names]
 
 
 class TestParseModules:
@@ -41,7 +34,8 @@ class TestParseModules:
         assert isinstance(mods[0], ParsedModule)
         assert mods[0].file_path == files[0]
         assert isinstance(mods[0].tree, ast.Module)
-        assert len(mods[0].source) > 0
+        with open(files[0], encoding="utf-8") as handle:
+            assert mods[0].source == handle.read()
 
     def test_parse_modules_multiple_files(self):
         """parse_modules should parse multiple valid files."""
@@ -92,9 +86,9 @@ class TestAnalyzeScopes:
             assert mod.root_scope is not None
 
     def test_analyze_scopes_empty_list(self):
-        """analyze_scopes on no modules is a no-op that returns None."""
+        """analyze_scopes on no modules is a no-op."""
         modules: List[ParsedModule] = []
-        assert analyze_scopes(modules) is None
+        analyze_scopes(modules)
         assert modules == []
 
 
@@ -107,10 +101,11 @@ class TestCollectClasses:
         mods = parse_modules(files)
         classes = collect_classes(mods)
 
-        assert len(classes) > 0
-        # example2_classes.py contains EmailProcessor, SMSProcessor, PushNotificationProcessor
-        class_names = {c.name for c in classes}
-        assert "EmailProcessor" in class_names
+        assert {c.name for c in classes} == {
+            "EmailProcessor",
+            "PushNotificationProcessor",
+            "SMSProcessor",
+        }
 
     def test_collect_classes_handles_inheritance(self):
         """collect_classes should extract base class names."""
@@ -229,10 +224,11 @@ class TestCollectFunctions:
         analyze_scopes(mods)
         funcs = collect_functions(mods)
 
-        assert len(funcs) > 0
-        # example1_simple.py has process_user_data, process_admin_data, process_guest_data
-        func_names = {f.node.name for f in funcs}
-        assert "process_user_data" in func_names
+        assert {f.node.name for f in funcs} == {
+            "process_admin_data",
+            "process_guest_data",
+            "process_user_data",
+        }
 
     def test_collect_functions_multiple_modules(self):
         """collect_functions should collect from all modules."""
@@ -258,8 +254,10 @@ class TestPairBlocks:
         eng = UnificationRefactorEngine()
 
         pairs = pair_blocks(eng, funcs, progress="none")
-        assert isinstance(pairs, list)
-        assert len(pairs) > 0
+        # The three functions of example1_simple pair into 48 candidate block
+        # pairs, all within that one file.
+        assert len(pairs) == 48
+        assert {(p.file_path, p.file_path2) for p in pairs} == {(files[0], files[0])}
 
     def test_pair_blocks_with_auto_progress(self):
         """pair_blocks should work with progress='auto'."""

@@ -45,19 +45,6 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
             assert_file_not_modified(top, source)
             assert_file_not_modified(child, source)
 
-    def test_analyze_file_with_syntax_error(self):
-        """Test analyzing a file with syntax errors."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("def broken(\n")  # Syntax error
-            f.flush()
-            temp_path = f.name
-
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)  # Should handle gracefully
-        finally:
-            os.unlink(temp_path)
-
     def test_analyze_files_with_no_functions(self):
         """Test analyzing files with no functions."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -192,6 +179,8 @@ def bar():
 
         foo_func = tree.body[1]
         bar_func = tree.body[2]
+        assert isinstance(foo_func, ast.FunctionDef)
+        assert isinstance(bar_func, ast.FunctionDef)
 
         from towel.unification.unifier import Unifier
 

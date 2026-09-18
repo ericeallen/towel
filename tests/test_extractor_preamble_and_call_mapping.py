@@ -1,8 +1,17 @@
 import ast
 import unittest
+from typing import Sequence
 
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution
+
+
+def _name_ids(nodes: Sequence[ast.expr]) -> list[str]:
+    ids: list[str] = []
+    for node in nodes:
+        assert isinstance(node, ast.Name)
+        ids.append(node.id)
+    return ids
 
 
 class TestExtractorPreambleAndCallMapping(unittest.TestCase):
@@ -10,7 +19,7 @@ class TestExtractorPreambleAndCallMapping(unittest.TestCase):
         # Template block contains a call where unified Name 'x' is used as callee:
         # res = x(1)
         # This should mark __param_0 as params_used_as_callee
-        template_block_raw = [
+        template_block_raw: list[ast.stmt] = [
             ast.Assign(
                 targets=[ast.Name(id="res", ctx=ast.Store())],
                 value=ast.Call(
@@ -44,17 +53,18 @@ class TestExtractorPreambleAndCallMapping(unittest.TestCase):
         )
 
         # Preamble Global/Nonlocal should be injected at top, sorted names
-        self.assertIsInstance(func_def.body[0], ast.Global)
-        self.assertEqual(func_def.body[0].names, ["g1", "g2"])
-        self.assertIsInstance(func_def.body[1], ast.Nonlocal)
-        self.assertEqual(func_def.body[1].names, ["n"])
+        global_decl = func_def.body[0]
+        assert isinstance(global_decl, ast.Global)
+        self.assertEqual(global_decl.names, ["g1", "g2"])
+        nonlocal_decl = func_def.body[1]
+        assert isinstance(nonlocal_decl, ast.Nonlocal)
+        self.assertEqual(nonlocal_decl.names, ["n"])
 
         # Last statement should be a return of tuple (rv1, rv2)
-        self.assertIsInstance(func_def.body[-1], ast.Return)
         ret = func_def.body[-1]
-        self.assertIsInstance(ret.value, ast.Tuple)
-        tuple_elts = ret.value.elts  # type: ignore[attr-defined]
-        self.assertEqual([e.id for e in tuple_elts], ["rv1", "rv2"])  # type: ignore
+        assert isinstance(ret, ast.Return)
+        assert isinstance(ret.value, ast.Tuple)
+        self.assertEqual(_name_ids(ret.value.elts), ["rv1", "rv2"])
 
         # The callee param should be recorded for call-site wrapping
         self.assertIn("__param_0", subst.params_used_as_callee)
@@ -75,7 +85,7 @@ class TestExtractorPreambleAndCallMapping(unittest.TestCase):
         subst.hygienic_renames = hygienic_renames
 
         # Force an augmented assignment rename override for block 1
-        subst.aug_assign_mappings = {"fv": {1: "fv_aug"}}  # type: ignore[attr-defined]
+        subst.aug_assign_mappings = {"fv": {1: "fv_aug"}}
 
         # Generate call for block 1 (index 1), value-producing with mapped return vars
         call_stmt = extractor.generate_call(
@@ -90,16 +100,15 @@ class TestExtractorPreambleAndCallMapping(unittest.TestCase):
         )
 
         # Expect an Assign to (res1, res2) = extracted_function(...)
-        self.assertIsInstance(call_stmt, ast.Assign)
-        target = call_stmt.targets[0]  # type: ignore[index]
-        self.assertIsInstance(target, ast.Tuple)
-        t_elts = target.elts  # type: ignore[attr-defined]
-        self.assertEqual([e.id for e in t_elts], ["res1", "res2"])  # type: ignore
+        assert isinstance(call_stmt, ast.Assign)
+        target = call_stmt.targets[0]
+        assert isinstance(target, ast.Tuple)
+        self.assertEqual(_name_ids(target.elts), ["res1", "res2"])
 
         # Call should be to the extracted function
-        self.assertIsInstance(call_stmt.value, ast.Call)
-        call = call_stmt.value  # type: ignore[assignment]
-        self.assertIsInstance(call.func, ast.Name)
+        assert isinstance(call_stmt.value, ast.Call)
+        call = call_stmt.value
+        assert isinstance(call.func, ast.Name)
         self.assertEqual(call.func.id, func_def.name)
 
         # Args should include a lambda wrapping the callee param (g) and the free var name overridden by aug-assign mapping
@@ -108,19 +117,19 @@ class TestExtractorPreambleAndCallMapping(unittest.TestCase):
         self.assertEqual(len(call.args), len(param_order))
         # Arg for __param_0 should be a lambda(*args, **kwargs): g(*args, **kwargs)
         callee_arg = call.args[list(param_order.keys()).index("__param_0")]
-        self.assertIsInstance(callee_arg, ast.Lambda)
-        lam = callee_arg  # type: ignore[assignment]
+        assert isinstance(callee_arg, ast.Lambda)
+        lam = callee_arg
         # vararg and kwarg present
         self.assertIsNotNone(lam.args.vararg)
         self.assertIsNotNone(lam.args.kwarg)
-        self.assertIsInstance(lam.body, ast.Call)
-        self.assertIsInstance(lam.body.func, ast.Name)
+        assert isinstance(lam.body, ast.Call)
+        assert isinstance(lam.body.func, ast.Name)
         self.assertEqual(lam.body.func.id, "g")
 
         # Arg for free variable 'fv' should be Name('fv_aug') per mapping
         fv_idx = list(param_order.keys()).index("fv")
         fv_arg = call.args[fv_idx]
-        self.assertIsInstance(fv_arg, ast.Name)
+        assert isinstance(fv_arg, ast.Name)
         self.assertEqual(fv_arg.id, "fv_aug")
 
 

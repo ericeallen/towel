@@ -49,7 +49,7 @@ def structural_id(nodes: Sequence[ast.AST]) -> str:
     return digest.hexdigest()
 
 
-def path_map(block: Sequence[ast.stmt]) -> Dict[ast.AST, Path]:
+def path_map(block: Sequence[ast.AST]) -> Dict[ast.AST, Path]:
     """The position of every node in ``block``."""
     paths: Dict[ast.AST, Path] = {}
     for statement_index, statement in enumerate(block):
@@ -67,7 +67,7 @@ def path_map(block: Sequence[ast.stmt]) -> Dict[ast.AST, Path]:
     return paths
 
 
-def resolve_path(block: Sequence[ast.stmt], path: Path) -> ast.AST:
+def resolve_path(block: Sequence[ast.AST], path: Path) -> ast.AST:
     """The node at ``path`` in ``block``."""
     statement_index, steps = path
     node: ast.AST = block[statement_index]
@@ -93,7 +93,7 @@ class StoredSubstitution:
 
 def store_substitution(
     substitution: Substitution,
-    blocks: Sequence[Sequence[ast.stmt]],
+    blocks: Sequence[Sequence[ast.AST]],
     renames: Sequence[Dict[str, str]],
 ) -> StoredSubstitution:
     """Freeze a unification result so it no longer refers to ``blocks``' nodes."""
@@ -125,7 +125,7 @@ def store_substitution(
 
 
 def load_substitution(
-    stored: StoredSubstitution, blocks: Sequence[Sequence[ast.stmt]]
+    stored: StoredSubstitution, blocks: Sequence[Sequence[ast.AST]]
 ) -> Tuple[Substitution, List[Dict[str, str]]]:
     """A fresh substitution over ``blocks``, plus the hygienic renames to hand back."""
     substitution = Substitution(

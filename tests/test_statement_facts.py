@@ -188,10 +188,10 @@ def _reference_requires_original_frame(block: Sequence[ast.AST]) -> bool:
     return False
 
 
-def _reference_bound_names(block: Sequence[ast.AST]) -> set:
-    from towel.unification.scope_analyzer import pattern_capture_names
+def _reference_bound_names(block: Sequence[ast.AST]) -> set[str]:
+    from towel.unification.statement_facts import pattern_capture_names
 
-    names: set = set()
+    names: set[str] = set()
     for statement in block:
         for node in ast.walk(statement):
             if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -209,8 +209,8 @@ def _reference_bound_names(block: Sequence[ast.AST]) -> set:
     return names
 
 
-def _reference_deleted_names(block: Sequence[ast.AST]) -> set:
-    names: set = set()
+def _reference_deleted_names(block: Sequence[ast.AST]) -> set[str]:
+    names: set[str] = set()
     for statement in block:
         for node in ast.walk(statement):
             if isinstance(node, ast.Delete):
@@ -251,7 +251,7 @@ def test_memoized_guards_match_the_whole_block_walk(path: Path) -> None:
 def test_structural_id_stays_injective_on_structure() -> None:
     from towel.unification.structural_memo import structural_id
 
-    by_id: dict = {}
+    by_id: dict[str, tuple[str, ...]] = {}
     for path in sorted(SOURCE_ROOT.rglob("*.py"))[:15]:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for statements in _statement_lists(tree):

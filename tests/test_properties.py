@@ -273,8 +273,8 @@ def test_unifier_treats_consistently_renamed_binders_as_alpha_equivalent(
     second = Naming("w", "j")
     source_first = render_statements(block, first)
     source_second = render_statements(block, second)
-    parsed_first: List[ast.AST] = list(ast.parse(source_first).body)
-    parsed_second: List[ast.AST] = list(ast.parse(source_second).body)
+    parsed_first: List[ast.stmt] = list(ast.parse(source_first).body)
+    parsed_second: List[ast.stmt] = list(ast.parse(source_second).body)
 
     renames: List[Dict[str, str]] = [{}, {}]
     unifier = Unifier(max_parameters=5, parameterize_constants=True)
@@ -579,9 +579,9 @@ def render_module(first: Sequence[Stmt], second: Sequence[Stmt]) -> str:
     )
 
 
-def statements_in_range(module: ast.Module, start: int, end: int) -> List[ast.AST]:
+def statements_in_range(module: ast.Module, start: int, end: int) -> List[ast.stmt]:
     """The outermost statements whose lines lie within ``start``..``end``."""
-    inside: List[ast.AST] = []
+    inside: List[ast.stmt] = []
 
     def visit(statements: Sequence[ast.stmt]) -> None:
         for statement in statements:

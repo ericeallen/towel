@@ -1,4 +1,5 @@
 import ast
+from typing import Any
 
 import pytest
 import textwrap
@@ -6,10 +7,15 @@ import textwrap
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
-def _engine(**kwargs) -> UnificationRefactorEngine:
-    defaults = dict(max_parameters=5, min_lines=2, parameterize_constants=True)
-    defaults.update(kwargs)
-    return UnificationRefactorEngine(**defaults)
+def _engine(
+    min_lines: int = 2, *, promote_equal_hof_literals: bool = False
+) -> UnificationRefactorEngine:
+    return UnificationRefactorEngine(
+        max_parameters=5,
+        min_lines=min_lines,
+        parameterize_constants=True,
+        promote_equal_hof_literals=promote_equal_hof_literals,
+    )
 
 
 def test_module_level_helper_call_from_class_uses_direct_name(tmp_path):
@@ -41,7 +47,7 @@ def test_module_level_helper_call_from_class_uses_direct_name(tmp_path):
 
     # Calls inside class methods must use the same unmangled module name.
     assert "return _extracted_func_" in new_src
-    namespace = {}
+    namespace: dict[str, Any] = {}
     exec(new_src, namespace)
     assert namespace["A"]().m(3) == 8
     assert namespace["B"]().m(3) == 8

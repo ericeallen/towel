@@ -29,6 +29,7 @@ from typing import List, Tuple
 from towel.unification.instantiation import instantiation_mismatch
 from towel.unification.orphan_detector import orphaned_variables
 from towel.unification.pipeline import AnalysisSession
+from towel.unification.models import RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.semantic_safety import uses_class_private_names
 
@@ -45,17 +46,19 @@ def _similar_module(count: int) -> str:
     return "".join(SIMILAR_FUNCTION.format(index=index) for index in range(count))
 
 
-def _analyze(engine: UnificationRefactorEngine, paths: List[Path]) -> list:
+def _analyze(engine: UnificationRefactorEngine, paths: List[Path]) -> List[RefactoringProposal]:
     with contextlib.redirect_stdout(io.StringIO()):
         return engine.analyze_files([str(path) for path in paths], progress="none")
 
 
-def _sites(proposals: list) -> List[Tuple[str, Tuple[Tuple[int, int], str], ...]]:
+def _sites(
+    proposals: List[RefactoringProposal],
+) -> List[Tuple[str, Tuple[Tuple[Tuple[int, int], str], ...]]]:
     """Each proposal as its description and every replacement's range and call text."""
     return sorted(
         (
             proposal.description,
-            *((r.line_range, ast.unparse(r.node)) for r in proposal.replacements),
+            tuple((r.line_range, ast.unparse(r.node)) for r in proposal.replacements),
         )
         for proposal in proposals
     )
@@ -72,7 +75,7 @@ def test_clustered_proposals_are_the_same_cold_and_warm(tmp_path: Path) -> None:
     scans_after_warmup = 0
     original = engine._scan_clustered_sites
 
-    def counting_scan(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def counting_scan(*args, **kwargs):
         nonlocal scans_after_warmup
         scans_after_warmup += 1
         return original(*args, **kwargs)

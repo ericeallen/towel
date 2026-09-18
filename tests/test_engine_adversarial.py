@@ -5,6 +5,7 @@ import textwrap
 import unittest
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
@@ -30,10 +31,15 @@ class TempModule:
 
 
 class TestRefactorEngineAdversarial(unittest.TestCase):
-    def _engine(self, **kwargs) -> UnificationRefactorEngine:
-        defaults = dict(max_parameters=5, min_lines=2, parameterize_constants=True)
-        defaults.update(kwargs)
-        return UnificationRefactorEngine(**defaults)
+    def _engine(
+        self, *, min_lines: int = 2, reuse_existing_functions: bool = True
+    ) -> UnificationRefactorEngine:
+        return UnificationRefactorEngine(
+            max_parameters=5,
+            min_lines=min_lines,
+            parameterize_constants=True,
+            reuse_existing_functions=reuse_existing_functions,
+        )
 
     def test_value_producing_mismatch_is_rejected(self):
         code = """
@@ -140,7 +146,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.addCleanup(m.cleanup)
 
         # Execute original and capture outputs
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
         orig_a = [ns["a"](i) for i in (0, 1, 5)]
         orig_b = [ns["b"](i) for i in (0, 1, 5)]
@@ -151,7 +157,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         new_src = engine.apply_refactoring(str(m.path), props[0])
 
         # Execute refactored and compare outputs
-        ns2 = {}
+        ns2: dict[str, Any] = {}
         exec(new_src, ns2)
         new_a = [ns2["a"](i) for i in (0, 1, 5)]
         new_b = [ns2["b"](i) for i in (0, 1, 5)]
@@ -242,6 +248,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         proposals = engine.analyze_file(str(m.path))
         target = next((p for p in proposals if p.insert_into_class == "C"), None)
         self.assertIsNotNone(target, "Expected a class-level extraction proposal")
+        assert target is not None
         out = engine.apply_refactoring(str(m.path), target)
         mod = ast.parse(out)
         cls_nodes = [n for n in mod.body if isinstance(n, ast.ClassDef) and n.name == "C"]
@@ -257,6 +264,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(helper, "Extracted helper should be present inside the class")
+        assert helper is not None
         self.assertTrue(
             any(
                 isinstance(dec, ast.Name) and dec.id == "staticmethod"
@@ -280,6 +288,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             self.assertTrue(call_targets, f"Method {method_name} should call the helper")
             for attr in call_targets:
                 self.assertIsInstance(attr.value, ast.Name)
+                assert isinstance(attr.value, ast.Name)
                 self.assertEqual(attr.value.id, "C")
 
     def test_classmethod_extraction_uses_cls_dispatch(self):
@@ -301,6 +310,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         proposals = engine.analyze_file(str(m.path))
         target = next((p for p in proposals if p.insert_into_class == "C"), None)
         self.assertIsNotNone(target, "Expected a class-level extraction proposal")
+        assert target is not None
         out = engine.apply_refactoring(str(m.path), target)
         mod = ast.parse(out)
         cls_nodes = [n for n in mod.body if isinstance(n, ast.ClassDef) and n.name == "C"]
@@ -316,6 +326,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(helper)
+        assert helper is not None
         self.assertTrue(
             any(
                 isinstance(dec, ast.Name) and dec.id == "classmethod"
@@ -342,7 +353,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             ]
             self.assertTrue(call_targets, f"Method {method_name} should call the helper")
             for call in call_targets:
+                assert isinstance(call.func, ast.Attribute)
                 self.assertIsInstance(call.func.value, ast.Name)
+                assert isinstance(call.func.value, ast.Name)
                 self.assertEqual(call.func.value.id, binder_name)
                 self.assertFalse(
                     any(isinstance(arg, ast.Name) and arg.id == binder_name for arg in call.args),
@@ -389,6 +402,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             proposals = engine.analyze_files([str(base_path), str(first_path), str(second_path)])
             target = next((p for p in proposals if p.insert_into_class == "Shared"), None)
             self.assertIsNotNone(target, "Expected helper to be inserted into Shared base class")
+            assert target is not None
             self.assertEqual(target.file_path, str(base_path))
 
             result = engine.apply_refactoring_multi_file(target)
@@ -412,9 +426,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 None,
             )
             self.assertIsNotNone(helper, "Shared class should gain extracted helper")
+            assert helper is not None
             self.assertFalse(helper.decorator_list, "Instance helper should not add decorators")
-            self.assertGreater(len(helper.args.args), 0)
-            self.assertEqual(helper.args.args[0].arg, "self")
+            self.assertEqual([arg.arg for arg in helper.args.args], ["self", "value"])
 
             for src, cls_name, method_name in (
                 (first_src, "First", "alpha"),
@@ -440,7 +454,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 ]
                 self.assertTrue(calls, f"{cls_name}.{method_name} should call shared helper")
                 for call in calls:
+                    assert isinstance(call.func, ast.Attribute)
                     self.assertIsInstance(call.func.value, ast.Name)
+                    assert isinstance(call.func.value, ast.Name)
                     self.assertEqual(call.func.value.id, method.args.args[0].arg)
 
                 self.assertNotIn("from shared import _", src)
@@ -487,6 +503,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             proposals = engine.analyze_files([str(base_path), str(first_path), str(second_path)])
             target = next((p for p in proposals if p.insert_into_class == "Shared"), None)
             self.assertIsNotNone(target, "Expected classmethod helper to be inserted into Shared")
+            assert target is not None
             self.assertEqual(target.file_path, str(base_path))
 
             result = engine.apply_refactoring_multi_file(target)
@@ -509,10 +526,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 None,
             )
             self.assertIsNotNone(helper)
+            assert helper is not None
             decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
             self.assertIn("classmethod", decorator_ids)
-            self.assertGreater(len(helper.args.args), 0)
-            self.assertEqual(helper.args.args[0].arg, "cls")
+            self.assertEqual([arg.arg for arg in helper.args.args], ["cls", "value"])
 
             first_mod = ast.parse(first_src)
             first_cls = next(
@@ -532,9 +549,11 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 and isinstance(call.func, ast.Attribute)
                 and call.func.attr == helper.name
             ]
-            self.assertTrue(calls)
+            self.assertEqual(len(calls), 1, "the method body is one call to the helper")
             for call in calls:
+                assert isinstance(call.func, ast.Attribute)
                 self.assertIsInstance(call.func.value, ast.Name)
+                assert isinstance(call.func.value, ast.Name)
                 self.assertEqual(call.func.value.id, method.args.args[0].arg)
                 self.assertTrue(
                     all(
@@ -591,6 +610,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             self.assertIsNotNone(
                 target, "Expected helper to target nearest shared ancestor Intermediate"
             )
+            assert target is not None
             self.assertEqual(target.file_path, str(base_path))
 
             result = engine.apply_refactoring_multi_file(target)
@@ -648,7 +668,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.addCleanup(m.cleanup)
 
         # Capture original behavior
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
         orig = ns["outer"](2, 5)
 
@@ -674,7 +694,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 name.startswith(("_extracted_func", "__extracted_func")) for name in top_level_names
             ):
                 # Runtime equivalence: calling outer should still work and match original
-                ns2 = {}
+                ns2: dict[str, Any] = {}
                 exec(new_src, ns2)
                 new_val = ns2["outer"](2, 5)
                 self.assertEqual(orig, new_val)
@@ -707,7 +727,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         """
         m = TempModule(code)
         self.addCleanup(m.cleanup)
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
         orig = ns["f"](5)
 
@@ -738,7 +758,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.assertIsNotNone(
             picked, "No proposal inserted helper into the deepest common ancestor f"
         )
-        ns2 = {}
+        assert new_src is not None
+        ns2: dict[str, Any] = {}
         exec(new_src, ns2)
         self.assertEqual(orig, ns2["f"](5))
 
@@ -766,7 +787,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         m = TempModule(code)
         self.addCleanup(m.cleanup)
 
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
         orig = asyncio.run(ns["outer"](2, 5))
 
@@ -799,7 +820,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             ) and not any(
                 name.startswith(("_extracted_func", "__extracted_func")) for name in top_level_names
             ):
-                ns2 = {}
+                ns2: dict[str, Any] = {}
                 exec(new_src, ns2)
                 new_val = asyncio.run(ns2["outer"](2, 5))
                 self.assertEqual(orig, new_val)
@@ -831,7 +852,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         m = TempModule(code)
         self.addCleanup(m.cleanup)
 
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
         orig = ns["C"]().m(2, 5)
 
@@ -877,7 +898,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 name.startswith(("_extracted_func", "__extracted_func")) for name in top_level_names
             )
             if inner_has_helper and not class_has_helper and not top_level_has_helper:
-                ns2 = {}
+                ns2: dict[str, Any] = {}
                 exec(new_src, ns2)
                 new_val = ns2["C"]().m(2, 5)
                 self.assertEqual(orig, new_val)
@@ -909,7 +930,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         m = TempModule(code)
         self.addCleanup(m.cleanup)
 
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
         orig = ns["f"](5)
 
@@ -947,7 +968,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             ) and not any(
                 name.startswith(("_extracted_func", "__extracted_func")) for name in top_level
             ):
-                ns2 = {}
+                ns2: dict[str, Any] = {}
                 exec(out, ns2)
                 self.assertEqual(orig, ns2["f"](5))
                 found_common_insertion = True
@@ -982,7 +1003,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         m = TempModule(code)
         self.addCleanup(m.cleanup)
 
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
         orig = asyncio.run(ns["outer"](2, 5))
 
@@ -1015,7 +1036,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             ) and not any(
                 name.startswith(("_extracted_func", "__extracted_func")) for name in top_level
             ):
-                ns2 = {}
+                ns2: dict[str, Any] = {}
                 exec(out, ns2)
                 self.assertEqual(orig, asyncio.run(ns2["outer"](2, 5)))
                 found_insertion = True
@@ -1056,7 +1077,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         m = TempModule(code)
         self.addCleanup(m.cleanup)
 
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
         orig = ns["outer"](7)
 
@@ -1092,7 +1113,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 break
 
         self.assertTrue(found_outer, "Expected at least one proposal inserting helper into outer()")
-        ns2 = {}
+        assert new_src is not None
+        ns2: dict[str, Any] = {}
         exec(new_src, ns2)
         self.assertEqual(orig, ns2["outer"](7))
 
@@ -1141,7 +1163,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         m2 = TempModule(code_global)
         self.addCleanup(m2.cleanup)
 
-        ns = {}
+        ns: dict[str, Any] = {}
         exec(m2.path.read_text(), ns)
         orig = ns["outer"](5)
 
@@ -1170,7 +1192,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             ) and not any(
                 name.startswith(("_extracted_func", "__extracted_func")) for name in top_level
             ):
-                ns2 = {}
+                ns2: dict[str, Any] = {}
                 exec(out, ns2)
                 self.assertEqual(orig, ns2["outer"](5))
                 found = True
@@ -1188,14 +1210,15 @@ class TestUnifierExtractorCalleeThunk(unittest.TestCase):
         b1 = ast.parse(src1).body
         b2 = ast.parse(src2).body
         uni = Unifier(max_parameters=3, parameterize_constants=False)
-        hygienic = [{}, {}]
+        hygienic: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b1, b2], hygienic)
         self.assertIsNotNone(subst, "Unification should succeed for differing callee names")
+        assert subst is not None
         # Extract function from block1
         extractor = HygienicExtractor()
         fn, param_order = extractor.extract_function(
             template_block=b1,
-            substitution=subst,  # type: ignore[arg-type]
+            substitution=subst,
             free_variables=set(),
             enclosing_names=set(),
             is_value_producing=True,
@@ -1204,7 +1227,7 @@ class TestUnifierExtractorCalleeThunk(unittest.TestCase):
         call0 = extractor.generate_call(
             function_name=fn.name,
             block_idx=0,
-            substitution=subst,  # type: ignore[arg-type]
+            substitution=subst,
             param_order=param_order,
             free_variables=set(),
             is_value_producing=True,
@@ -1212,7 +1235,7 @@ class TestUnifierExtractorCalleeThunk(unittest.TestCase):
         call1 = extractor.generate_call(
             function_name=fn.name,
             block_idx=1,
-            substitution=subst,  # type: ignore[arg-type]
+            substitution=subst,
             param_order=param_order,
             free_variables=set(),
             is_value_producing=True,

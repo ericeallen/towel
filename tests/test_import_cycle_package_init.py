@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from towel.unification.semantic_safety import would_create_import_cycle
-from towel.unification.semantic_safety import ImportGraphCache
+from towel.unification.import_graph import would_create_import_cycle
+from towel.unification.import_graph import ImportGraphCache
 
 
 def test_relative_import_of_a_package_attribute_is_an_edge_to_the_initializer(

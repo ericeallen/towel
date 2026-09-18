@@ -42,15 +42,18 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 assert_file_not_modified(path, contents)
 
     def test_analyze_file_with_syntax_error(self):
-        """Engine returns no proposals when a syntax error blocks parsing."""
+        """A file that does not parse is skipped with a warning naming it, not analyzed."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as handle:
             handle.write("def broken(\n")
             handle.flush()
             temp_path = handle.name
 
         try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)
+            with self.assertLogs("towel", level="WARNING") as logs:
+                proposals = self.engine.analyze_file(temp_path)
+            self.assertEqual(proposals, [])
+            (message,) = logs.output
+            self.assertIn(f"Skipping {temp_path}: '(' was never closed", message)
         finally:
             os.unlink(temp_path)
 
@@ -180,8 +183,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         )
         helper_name = helper.name
         self.assertFalse(helper.decorator_list, "Instance helper should have no decorators")
-        self.assertGreater(len(helper.args.args), 0)
-        self.assertEqual(helper.args.args[0].arg, "self")
+        self.assertEqual([arg.arg for arg in helper.args.args], ["self", "value"])
 
         for method_name in ("alpha", "beta"):
             method = next(
@@ -194,11 +196,14 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 for n in ast.walk(method)
                 if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
             ]
-            self.assertTrue(returns)
+            self.assertEqual(len(returns), 1, "the method returns the helper call")
             for ret in returns:
                 call = ret.value
+                assert isinstance(call, ast.Call)
                 self.assertIsInstance(call.func, ast.Attribute)
+                assert isinstance(call.func, ast.Attribute)
                 self.assertIsInstance(call.func.value, ast.Name)
+                assert isinstance(call.func.value, ast.Name)
                 self.assertEqual(call.func.value.id, "self")
                 self.assertEqual(call.func.attr, helper_name)
 
@@ -230,8 +235,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         helper_name = helper.name
         decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
         self.assertIn("classmethod", decorator_ids)
-        self.assertGreater(len(helper.args.args), 0)
-        self.assertEqual(helper.args.args[0].arg, "cls")
+        self.assertEqual([arg.arg for arg in helper.args.args], ["cls", "value"])
 
         for method_name in ("alpha", "beta"):
             method = next(
@@ -239,12 +243,8 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 for node in cls.body
                 if isinstance(node, ast.FunctionDef) and node.name == method_name
             )
-            call_sites = [n for n in ast.walk(method) if isinstance(n, ast.Call)]
-            self.assertTrue(call_sites)
-            for call in call_sites:
-                if isinstance(call.func, ast.Attribute) and call.func.attr == helper_name:
-                    self.assertIsInstance(call.func.value, ast.Name)
-                    self.assertEqual(call.func.value.id, method.args.args[0].arg)
+            call_sites = [ast.unparse(n) for n in ast.walk(method) if isinstance(n, ast.Call)]
+            self.assertEqual(call_sites, [f"cls.{helper_name}(value)"])
 
     def test_staticmethods_extracted_into_class(self):
         """Duplicate static methods should place helper inside the class with @staticmethod."""
@@ -285,12 +285,8 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 for node in cls.body
                 if isinstance(node, ast.FunctionDef) and node.name == method_name
             )
-            call_sites = [n for n in ast.walk(method) if isinstance(n, ast.Call)]
-            self.assertTrue(call_sites)
-            for call in call_sites:
-                if isinstance(call.func, ast.Attribute) and call.func.attr == helper_name:
-                    self.assertIsInstance(call.func.value, ast.Name)
-                    self.assertEqual(call.func.value.id, "Example")
+            call_sites = [ast.unparse(n) for n in ast.walk(method) if isinstance(n, ast.Call)]
+            self.assertEqual(call_sites, [f"Example.{helper_name}(value)"])
 
     def test_sibling_instance_methods_promote_to_common_base(self):
         """Sibling instance methods should extract helpers into their nearest shared base class."""
@@ -316,8 +312,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
         )
         helper = next(node for node in base.body if isinstance(node, ast.FunctionDef))
         self.assertFalse(helper.decorator_list, "Base helper should default to instance semantics")
-        self.assertGreater(len(helper.args.args), 0)
-        self.assertEqual(helper.args.args[0].arg, "self")
+        self.assertEqual([arg.arg for arg in helper.args.args], ["self", "value"])
 
         for cls_name, method_name in (("First", "alpha"), ("Second", "beta")):
             cls = next(
@@ -337,9 +332,11 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 and isinstance(call.func, ast.Attribute)
                 and call.func.attr == helper.name
             ]
-            self.assertTrue(helper_calls)
+            self.assertEqual(len(helper_calls), 1, "each sibling method calls the helper once")
             for call in helper_calls:
+                assert isinstance(call.func, ast.Attribute)
                 self.assertIsInstance(call.func.value, ast.Name)
+                assert isinstance(call.func.value, ast.Name)
                 self.assertEqual(call.func.value.id, method.args.args[0].arg)
 
 

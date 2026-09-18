@@ -58,8 +58,10 @@ def test_revealed_spellings_become_annotations(revealed: str, expected: str | No
 
 def test_dotted_names_reduce_to_what_the_host_binds() -> None:
     host = ast.parse("import typing\nfrom .other import Box\n")
-    assert ast.unparse(annotation_from_revealed("pkg.other.Box", host, True)) == "Box"  # type: ignore[arg-type]
-    assert ast.unparse(annotation_from_revealed("typing.Sequence[int]", host, True)) == "typing.Sequence[int]"  # type: ignore[arg-type]
+    box = annotation_from_revealed("pkg.other.Box", host, True)
+    assert box is not None and ast.unparse(box) == "Box"
+    sequence = annotation_from_revealed("typing.Sequence[int]", host, True)
+    assert sequence is not None and ast.unparse(sequence) == "typing.Sequence[int]"
     assert annotation_from_revealed("pkg.elsewhere.Thing", host, True) is None
 
 
@@ -141,7 +143,8 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
 def test_non_identifier_package_names_never_reach_an_annotation() -> None:
     host = ast.parse("class H2Stream: ...\n")
     assert annotation_from_revealed("h2-dbg.stream.H2Stream", host, True) is None
-    assert ast.unparse(annotation_from_revealed("_towel_package.stream.H2Stream", host, True)) == "'H2Stream'"  # type: ignore[arg-type]
+    stream = annotation_from_revealed("_towel_package.stream.H2Stream", host, True)
+    assert stream is not None and ast.unparse(stream) == "'H2Stream'"
 
 
 def test_inferrer_names_a_non_identifier_package_with_a_placeholder(tmp_path: Path) -> None:
@@ -348,13 +351,13 @@ class _Oracle:
     def __init__(self) -> None:
         self.inner = MypyInferrer()
 
-    def reveal(self, requests):  # type: ignore[no-untyped-def]
+    def reveal(self, requests):
         return self.inner.reveal(requests)
 
-    def is_subtype(self, file_path, source, pairs):  # type: ignore[no-untyped-def]
+    def is_subtype(self, file_path, source, pairs):
         return self.inner.is_subtype(file_path, source, pairs)
 
-    def check(self, file_path, source):  # type: ignore[no-untyped-def]
+    def check(self, file_path, source):
         errors = list(self.inner.check(file_path, source))
         if "extracted_func" in source and ": Any" not in source and "-> Any" not in source:
             errors.append("Simulated: annotated helper does not type-check")

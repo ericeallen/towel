@@ -1,4 +1,4 @@
-import ast
+from tests.test_helpers import parse_block
 from towel.unification.block_signature import (
     extract_block_signature,
     quick_filter,
@@ -6,33 +6,29 @@ from towel.unification.block_signature import (
 )
 
 
-def _block(code: str):
-    return ast.parse(code).body
-
-
 def test_quick_filter_rejects_stmt_count_mismatch():
-    b1 = _block("a = 1\nb = 2\n")
-    b2 = _block("a = 1\n")
+    b1 = parse_block("a = 1\nb = 2\n")
+    b2 = parse_block("a = 1\n")
     s1, s2 = extract_block_signature(b1), extract_block_signature(b2)
     assert quick_filter(s1, s2) is False
 
 
 def test_quick_filter_rejects_first_last_mismatch():
-    b1 = _block("a = f(x)\nreturn a\n")
-    b2 = _block("if True:\n    a = f(x)\nelse:\n    a = f(x)\n")
+    b1 = parse_block("a = f(x)\nreturn a\n")
+    b2 = parse_block("if True:\n    a = f(x)\nelse:\n    a = f(x)\n")
     s1, s2 = extract_block_signature(b1), extract_block_signature(b2)
     assert quick_filter(s1, s2) is False
 
 
 def test_quick_filter_within_name_and_call_tolerance_passes():
     # Create blocks with close counts of loads/stores/calls
-    b1 = _block("""
+    b1 = parse_block("""
 foo = a + b
 bar = foo + c
 if cond:
     bar = bar + d
 """)
-    b2 = _block("""
+    b2 = parse_block("""
 foo = a + b
 bar = foo + c
 bar = bar + d
@@ -50,10 +46,10 @@ x = z
 
 def test_extract_block_signature_skips_nested_defs():
     # Calls and names inside nested defs/classes should not contribute
-    b_outer = _block("""
+    b_outer = parse_block("""
 value = top(a)
 """)
-    b_nested = _block("""
+    b_nested = parse_block("""
 value = top(a)
 
 def inner():

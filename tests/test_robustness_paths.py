@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from towel import formatting, type_inference
+from towel import formatting
 from towel.changes import ChangeConflict, recover
 from towel.cli import _confirm, _find_extracted_helpers, helper_inventory
 from towel.diagnostics import Settings
@@ -87,7 +87,7 @@ def test_pyright_output_of_the_wrong_shape_infers_nothing(
     module.write_text("x = 1\n")
     oracle = PyrightOracle.__new__(PyrightOracle)
     oracle._command = ["pyright"]
-    monkeypatch.setattr(type_inference.subprocess, "run", lambda *a, **k: _completed(stdout))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(stdout))
     with caplog.at_level(logging.WARNING, logger="towel"):
         assert oracle._diagnostics(str(module), "x = 1\n") == []
     assert fragment in caplog.text
@@ -104,7 +104,7 @@ def test_a_hung_pyright_is_abandoned_with_a_warning(
     def hang(*args: Any, **kwargs: Any) -> Any:
         raise subprocess.TimeoutExpired(cmd="pyright", timeout=kwargs["timeout"])
 
-    monkeypatch.setattr(type_inference.subprocess, "run", hang)
+    monkeypatch.setattr(subprocess, "run", hang)
     with caplog.at_level(logging.WARNING, logger="towel"):
         assert oracle._diagnostics(str(module), "x = 1\n") == []
     assert "timed out" in caplog.text
@@ -118,7 +118,7 @@ def test_ruff_import_sorting_failures_are_reported_not_swallowed(
     sorter = import_sorter_for_project(tmp_path).tool
     assert sorter is not None
     source = "import sys\nimport os\n"
-    monkeypatch.setattr(formatting.subprocess, "run", lambda *a, **k: _completed("", 1, "boom"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed("", 1, "boom"))
     with caplog.at_level(logging.WARNING, logger="towel"):
         assert sorter(str(tmp_path / "m.py"), source) == source
     assert "boom" in caplog.text
@@ -126,7 +126,7 @@ def test_ruff_import_sorting_failures_are_reported_not_swallowed(
     def hang(*args: Any, **kwargs: Any) -> Any:
         raise subprocess.TimeoutExpired(cmd="ruff", timeout=kwargs["timeout"])
 
-    monkeypatch.setattr(formatting.subprocess, "run", hang)
+    monkeypatch.setattr(subprocess, "run", hang)
     with caplog.at_level(logging.WARNING, logger="towel"):
         assert sorter(str(tmp_path / "m.py"), source) == source
     assert "timed out" in caplog.text

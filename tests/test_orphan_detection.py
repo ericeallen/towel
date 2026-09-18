@@ -55,7 +55,8 @@ result = x + y
 print(result)
 """
         tree = ast.parse(code)
-        used = get_used_variables(tree.body)
+        nodes: list[ast.AST] = list(tree.body)
+        used = get_used_variables(nodes)
         self.assertIn("x", used)
         self.assertIn("y", used)
         self.assertIn("print", used)
@@ -72,6 +73,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
         body = func.body
 
         # Extract entire function body - no remaining code
@@ -92,6 +94,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
         body = func.body
 
         # Extract first 3 statements (lines that bind x, y, total)
@@ -112,6 +115,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
         body = func.body
 
         # Extract first 3 statements
@@ -134,6 +138,7 @@ def process():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
         body = func.body
 
         # Extract first 3 statements
@@ -158,6 +163,7 @@ def process(data):
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
         body = func.body
 
         # Extract first 3 statements

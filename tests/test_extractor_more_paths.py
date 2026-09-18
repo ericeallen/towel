@@ -63,7 +63,7 @@ class TestExtractorMorePaths(unittest.TestCase):
             return_variables=["a", "b"],
             hygienic_renames=[{}, {}],
         )
-        self.assertIsInstance(call_tuple, ast.Assign)
+        assert isinstance(call_tuple, ast.Assign)
         self.assertIsInstance(call_tuple.targets[0], ast.Tuple)
 
         # Value-producing without explicit return variables -> Return
@@ -93,8 +93,8 @@ class TestExtractorMorePaths(unittest.TestCase):
         self.assertIsInstance(call_expr, ast.Expr)
 
     def test_preamble_and_unique_name(self):
-        block = [ast.Pass()]
-        mod = ast.Module(body=block, type_ignores=[])
+        block_raw: list[ast.stmt] = [ast.Pass()]
+        mod = ast.Module(body=block_raw, type_ignores=[])
         ast.fix_missing_locations(mod)
         block = mod.body
         subst = Substitution()

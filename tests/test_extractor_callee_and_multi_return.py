@@ -1,14 +1,9 @@
 import ast
 import unittest
 
+from tests.test_helpers import fix_locations
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution
-
-
-def _fix(nodes):
-    m = ast.Module(body=nodes, type_ignores=[])
-    ast.fix_missing_locations(m)
-    return m.body
 
 
 class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
@@ -22,7 +17,7 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
             ),
             ast.Return(value=ast.Name(id="res", ctx=ast.Load())),
         ]
-        block = _fix(block)
+        block = fix_locations(block)
 
         subst = Substitution()
         subst.param_expressions["__param_0"] = [
@@ -55,8 +50,11 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
         )
         # Expect assignment with lambda wrapping forwarding args/kwargs
         self.assertIsInstance(call_stmt, ast.Assign)
+        assert isinstance(call_stmt, ast.Assign)
+        assert isinstance(call_stmt.value, ast.Call)
         arg_expr = call_stmt.value.args[0]  # first argument passed to extracted function
         self.assertIsInstance(arg_expr, ast.Lambda)
+        assert isinstance(arg_expr, ast.Lambda)
         # Lambda should have vararg/kwarg and body making a call to original f
         self.assertIsNotNone(arg_expr.args.vararg)
         self.assertIsNotNone(arg_expr.args.kwarg)
@@ -79,7 +77,7 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
                 )
             ),
         ]
-        block = _fix(block)
+        block = fix_locations(block)
         subst = Substitution()
         subst.param_expressions["__param_0"] = [
             (0, ast.Name(id="x", ctx=ast.Load())),
@@ -114,8 +112,10 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
             hygienic_renames=[{}, {}],
         )
         self.assertIsInstance(call_stmt, ast.Assign)
+        assert isinstance(call_stmt, ast.Assign)
         target = call_stmt.targets[0]
         self.assertIsInstance(target, ast.Tuple)
+        assert isinstance(target, ast.Tuple)
         self.assertEqual(len(target.elts), 2)
 
 

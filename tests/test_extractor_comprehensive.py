@@ -214,10 +214,12 @@ return result
 """
 
         tree = ast.parse(code)
-        block = tree.body
+        block: list[ast.stmt] = list(tree.body)
 
         subst = Substitution()
-        name_expr = ast.parse("result").body[0].value  # type: ignore[assignment]
+        name_stmt = ast.parse("result").body[0]
+        assert isinstance(name_stmt, ast.Expr)
+        name_expr = name_stmt.value
         subst.add_mapping(0, name_expr, "__param_0")
 
         extractor = HygienicExtractor()
@@ -230,7 +232,7 @@ return result
 
         if_stmt = cast(ast.If, transformed[0])
         first_return = cast(ast.Return, if_stmt.body[0])
-        self.assertIsInstance(first_return.value, ast.Name)
+        assert isinstance(first_return.value, ast.Name)
         self.assertEqual(first_return.value.id, "__param_0")
 
         reassignment = cast(ast.Assign, transformed[1])
@@ -239,7 +241,7 @@ return result
         self.assertEqual(cast(ast.Name, bin_op.left).id, "__param_0")
 
         final_return = cast(ast.Return, transformed[2])
-        self.assertIsInstance(final_return.value, ast.Name)
+        assert isinstance(final_return.value, ast.Name)
         self.assertEqual(final_return.value.id, "result")
 
 
@@ -319,7 +321,7 @@ class TestHygienicExtractorEnsureUniqueName(unittest.TestCase):
 
     def test_tracks_used_names(self):
         """Test that used names are tracked."""
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
 
         name1 = self.extractor._ensure_unique_name("foo", enclosing_names)
         name2 = self.extractor._ensure_unique_name("foo", enclosing_names)
@@ -341,8 +343,8 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         tree = ast.parse(code)
 
         substitution = Substitution()
-        free_variables = set()
-        enclosing_names = set()
+        free_variables: set[str] = set()
+        enclosing_names: set[str] = set()
 
         func_def, param_order = self.extractor.extract_function(
             template_block=tree.body,
@@ -361,8 +363,8 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         tree = ast.parse(code)
 
         substitution = Substitution()
-        free_variables = set()
-        enclosing_names = set()
+        free_variables: set[str] = set()
+        enclosing_names: set[str] = set()
 
         func_def, param_order = self.extractor.extract_function(
             template_block=tree.body,
@@ -381,7 +383,7 @@ class TestHygienicExtractorBasics(unittest.TestCase):
         tree = ast.parse(code)
 
         substitution = Substitution()
-        free_variables = set()
+        free_variables: set[str] = set()
         enclosing_names = {"extracted_function"}
 
         func_def, param_order = self.extractor.extract_function(
@@ -401,7 +403,7 @@ class TestHygienicExtractorBasics(unittest.TestCase):
 
         substitution = Substitution()
         free_variables = {"x"}
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
 
         func_def, param_order = self.extractor.extract_function(
             template_block=tree.body,
@@ -418,8 +420,8 @@ class TestHygienicExtractorBasics(unittest.TestCase):
     def test_extract_function_empty_body(self):
         """Test extraction with empty body."""
         substitution = Substitution()
-        free_variables = set()
-        enclosing_names = set()
+        free_variables: set[str] = set()
+        enclosing_names: set[str] = set()
 
         func_def, param_order = self.extractor.extract_function(
             template_block=[],  # Empty body
@@ -444,8 +446,8 @@ class TestGenerateCall(unittest.TestCase):
     def test_generate_call_creates_call_node(self):
         """Test that generate_call creates appropriate call structure."""
         substitution = Substitution()
-        param_order = {}
-        free_variables = set()
+        param_order: dict[str, int] = {}
+        free_variables: set[str] = set()
 
         result = self.extractor.generate_call(
             function_name="my_function",
@@ -457,15 +459,16 @@ class TestGenerateCall(unittest.TestCase):
         )
 
         # Should be Expr wrapping a Call
-        self.assertIsInstance(result, ast.Expr)
-        self.assertIsInstance(result.value, ast.Call)
+        assert isinstance(result, ast.Expr)
+        assert isinstance(result.value, ast.Call)
+        assert isinstance(result.value.func, ast.Name)
         self.assertEqual(result.value.func.id, "my_function")
 
     def test_generate_call_value_producing(self):
         """Test that value-producing calls are wrapped in Return."""
         substitution = Substitution()
-        param_order = {}
-        free_variables = set()
+        param_order: dict[str, int] = {}
+        free_variables: set[str] = set()
 
         result = self.extractor.generate_call(
             function_name="my_function",
@@ -477,7 +480,7 @@ class TestGenerateCall(unittest.TestCase):
         )
 
         # Should be Return wrapping a Call
-        self.assertIsInstance(result, ast.Return)
+        assert isinstance(result, ast.Return)
         self.assertIsInstance(result.value, ast.Call)
 
     def test_generate_call_with_free_variables(self):
@@ -495,7 +498,9 @@ class TestGenerateCall(unittest.TestCase):
             is_value_producing=False,
         )
 
+        assert isinstance(result, ast.Expr)
         call = result.value
+        assert isinstance(call, ast.Call)
         self.assertEqual(len(call.args), 2, "Should have 2 arguments")
 
 
@@ -511,7 +516,7 @@ class TestIntegration(unittest.TestCase):
 
         substitution = Substitution()
         free_variables = {"x"}
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
 
         # Extract function
         func_def, param_order = extractor.extract_function(
@@ -537,7 +542,7 @@ class TestIntegration(unittest.TestCase):
         )
 
         # Verify call structure
-        self.assertIsInstance(call, ast.Return)
+        assert isinstance(call, ast.Return)
         self.assertIsInstance(call.value, ast.Call)
 
 

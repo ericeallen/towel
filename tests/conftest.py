@@ -1,8 +1,10 @@
 import os
 from pathlib import Path
 
+import pytest
 
-def pytest_ignore_collect(collection_path: Path, config) -> bool:  # type: ignore[override]
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     """Prevent pytest from treating example and temporary directories as tests.
 
     We exclude:

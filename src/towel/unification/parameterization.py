@@ -159,7 +159,7 @@ class Parameterization(UnifierState):
             return set()
         return ScopeAnalyzer().get_free_variables(self.current_blocks[idx])
 
-    def _setup_bound_variable_alpha_renamings(self, blocks: Sequence[Sequence[ast.stmt]]) -> None:
+    def _setup_bound_variable_alpha_renamings(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         """
         Setup alpha-renamings for block-level bound variables.
 

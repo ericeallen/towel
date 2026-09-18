@@ -115,7 +115,11 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 - Comment complex logic
 - Run Black explicitly to format code (line length 100); hooks check formatting
 - All code must pass flake8 linting
-- Strict mypy is enforced on `src/towel` and the typed test helpers (`[tool.mypy] files` in `pyproject.toml`)
+- Strict mypy is enforced on `src/towel` and on `tests/` (`[tool.mypy]` in
+  `pyproject.toml`). Test bodies are checked with every strict flag; the only
+  relaxation is that test functions and unittest methods need no signatures
+  (`tests.*` override). `warn_unused_ignores` is on, so a `# type: ignore`
+  must be necessary and must name its error code
 
 ## Testing
 
@@ -128,6 +132,10 @@ All code contributions should include tests:
 - A library module never prints: warnings go to the `towel` logger and traces
   to its child loggers (see `src/towel/diagnostics.py`); a new engine setting
   read from the environment goes into `Settings`, not into `os.environ` reads
+- A change to what the engine extracts from `test_examples/` shows up in
+  `tests/test_regression.py`: regenerate the goldens only after verifying the
+  new output, and if an example starts or stops being refactored, move it in
+  or out of `EXPECTED_UNCHANGED_EXAMPLES` there and explain why in the commit
 - Ensure existing tests continue to pass
 - Run the test suite before submitting:
   ```bash
@@ -145,8 +153,10 @@ pytest
 # Run specific test file
 pytest tests/test_file.py
 
-# Run with coverage
+# Run with coverage (pair evaluation forks workers, so each process writes
+# its own data file and `combine` must precede the report)
 coverage run -m pytest
+coverage combine
 coverage report --fail-under=85
 ```
 

@@ -20,7 +20,9 @@ class TestExecutionObservations(unittest.TestCase):
                 changed = original.replace('"before"', '"after"')
                 passed, differences = compare_function_behavior(original, changed, "f", [((), {})])
                 self.assertFalse(passed)
-                self.assertTrue(differences)
+                (difference,) = differences
+                self.assertIn(f"{stream}='before\\n'", difference)
+                self.assertIn(f"{stream}='after\\n'", difference)
 
     def test_output_before_same_exception_is_observable(self) -> None:
         original = 'def f():\n print("before")\n raise ValueError("same")\n'
@@ -38,7 +40,11 @@ class TestExecutionObservations(unittest.TestCase):
     def test_positional_and_keyword_mutations_are_observable(self) -> None:
         original = "def f(values):\n values.append(1)\n"
         changed = original.replace("append(1)", "append(2)")
-        for case in ((([],), {}), ((), {"values": []})):
+        cases: tuple[tuple[tuple[object, ...], dict[str, object]], ...] = (
+            (([],), {}),
+            ((), {"values": []}),
+        )
+        for case in cases:
             with self.subTest(case=case):
                 self.assertFalse(compare_function_behavior(original, changed, "f", [case])[0])
 

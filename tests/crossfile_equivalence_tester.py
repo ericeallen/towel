@@ -314,7 +314,7 @@ class CrossFileEquivalenceTester:
                 "error": f"Projects directory not found: {projects_dir}",
             }
 
-        results = {
+        results: Dict[str, Any] = {
             "total_projects": 0,
             "total_proposals_tested": 0,
             "total_passed": 0,

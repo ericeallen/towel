@@ -13,7 +13,7 @@ import ast
 import re
 import tempfile
 import os
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, TypedDict
 from pathlib import Path
 
 from tests.test_observational_equivalence import (
@@ -23,10 +23,10 @@ from tests.edge_case_values import EdgeCaseValues
 from tests.equivalence_targets import affected_functions, invocation_definitions
 
 # Global test file paths created once and reused
-_TEST_FILES = None
+_TEST_FILES: Optional[List[str]] = None
 
 
-def get_test_files():
+def get_test_files() -> List[str]:
     """
     Get or create temporary test files for filename parameters.
 
@@ -339,7 +339,10 @@ def generate_test_values_for_type(
     ]
 
 
-def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tuple, Dict]]:
+TestCase = Tuple[Tuple[object, ...], Dict[str, object]]
+
+
+def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[TestCase]:
     """
     Generate test cases (args, kwargs) for a function based on its signature.
 
@@ -373,7 +376,7 @@ def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tu
 
     # Generate combinations of test values
     # For now, use a simple strategy: test each parameter with a few values
-    test_cases = []
+    test_cases: List[TestCase] = []
 
     # Test 1: Use first value for all parameters
     if all(values for _, values in params):
@@ -383,16 +386,16 @@ def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[Tuple[Tu
     # Test 2-N: Vary one parameter at a time
     for param_idx, (param_name, values) in enumerate(params):
         for value in values:  # Test ALL values per parameter for comprehensive edge-case coverage
-            args = []
+            varied_args: List[object] = []
             for i, (_, param_values) in enumerate(params):
                 if i == param_idx:
-                    args.append(value)
+                    varied_args.append(value)
                 else:
                     # Use first value for other parameters
-                    args.append(param_values[0] if param_values else None)
+                    varied_args.append(param_values[0] if param_values else None)
 
-            if None not in args:  # Only add if all params have values
-                test_cases.append((tuple(args), {}))
+            if None not in varied_args:  # Only add if all params have values
+                test_cases.append((tuple(varied_args), {}))
 
     # Remove duplicates while preserving order
     seen = set()
@@ -462,9 +465,7 @@ def test_all_refactored_functions(
     return len(all_errors) == 0, all_errors
 
 
-def prepare_target_cases(
-    source: str, target: str
-) -> Tuple[str, str, List[Tuple[Tuple[object, ...], Dict[str, object]]]]:
+def prepare_target_cases(source: str, target: str) -> Tuple[str, str, List[TestCase]]:
     """Generate cases for an actual function or a class-method invocation adapter."""
     adapter, name, definition, constructor = invocation_definitions(source, target)
     method_cases = generate_test_cases_for_function(definition)
@@ -504,6 +505,20 @@ def check_affected_functions(
         except (ValueError, SyntaxError) as error:
             errors.append(f"{target}: equivalence was not tested: {error}")
     return not errors, errors
+
+
+class FileResult(TypedDict):
+    passed: int
+    failed: int
+    errors: List[str]
+
+
+class ExampleResults(TypedDict):
+    total_files: int
+    total_proposals_tested: int
+    total_passed: int
+    total_failed: int
+    file_results: Dict[str, FileResult]
 
 
 class AutomaticEquivalenceTester:
@@ -574,7 +589,7 @@ class AutomaticEquivalenceTester:
 
     def test_all_examples(
         self, examples_dir: str = "test_examples", verbose: bool = True
-    ) -> Dict[str, Any]:
+    ) -> ExampleResults:
         """
         Test all example files automatically.
 
@@ -586,7 +601,7 @@ class AutomaticEquivalenceTester:
             Dictionary with test results
         """
         examples_path = Path(examples_dir)
-        results = {
+        results: ExampleResults = {
             "total_files": 0,
             "total_proposals_tested": 0,
             "total_passed": 0,

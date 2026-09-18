@@ -12,6 +12,7 @@ from typing import List, Optional, Tuple, Union
 
 import pytest
 
+from towel.unification.models import MethodKind
 from towel.unification.visitors import (
     AssignTargetVisitor,
     AugAssignFinder,
@@ -108,16 +109,22 @@ def _drop_keyword(keywords: List[ast.keyword], implicit_name: str) -> List[ast.k
     return [k for k in keywords if k.arg != implicit_name]
 
 
-def _rewrite(source: str, **options: object) -> str:
-    settings = dict(
+def _rewrite(
+    source: str,
+    *,
+    method_kind: Optional[MethodKind] = "instance",
+    implicit_name: Optional[str] = None,
+    class_name: Optional[str] = None,
+) -> str:
+    rewriter = MethodCallRewriter(
+        _drop_positional,
+        _drop_keyword,
         original_name="helper",
         new_name="_helper",
-        method_kind="instance",
-        implicit_name=None,
-        class_name=None,
+        method_kind=method_kind,
+        implicit_name=implicit_name,
+        class_name=class_name,
     )
-    settings.update(options)
-    rewriter = MethodCallRewriter(_drop_positional, _drop_keyword, **settings)  # type: ignore[arg-type]
     return ast.unparse(rewriter.visit(_parse(source)))
 
 
@@ -205,7 +212,7 @@ def test_loop_return_finder_ignores_returns_outside_loops_and_in_nested_function
 # NameCollector
 
 
-def _used_names(source: str) -> set:
+def _used_names(source: str) -> set[str]:
     collector = NameCollector()
     collector.visit(_parse(source))
     return collector.used
@@ -239,7 +246,7 @@ def test_name_collector_enters_comprehensions_and_compound_statements() -> None:
 # AugAssignFinder
 
 
-def _aug_targets(source: str) -> set:
+def _aug_targets(source: str) -> set[str]:
     finder = AugAssignFinder()
     finder.visit(_parse(source))
     return finder.aug_assign_targets

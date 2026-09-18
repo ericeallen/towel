@@ -1,6 +1,7 @@
 import ast
 import unittest
 
+from tests.test_helpers import fix_locations
 from towel.unification.extractor import (
     HygienicExtractor,
     contains_return,
@@ -10,12 +11,6 @@ from towel.unification.extractor import (
 from towel.unification.substitution import Substitution
 
 
-def _fix(block):
-    m = ast.Module(body=block, type_ignores=[])
-    ast.fix_missing_locations(m)
-    return m.body
-
-
 class TestExtractorRemainingBranches(unittest.TestCase):
     def test_single_return_variable_branch(self):
         # Block returns a single variable -> exercise single-return path (line ~199)
@@ -23,7 +18,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             ast.Assign(targets=[ast.Name("x", ast.Store())], value=ast.Constant(1)),
             ast.Return(value=ast.Name("x", ast.Load())),
         ]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         extractor = HygienicExtractor()
         func_def, order = extractor.extract_function(
@@ -37,7 +32,8 @@ class TestExtractorRemainingBranches(unittest.TestCase):
         # Single return variable path: ensure Return(Name('x')) appended and param_order empty since no params
         self.assertIsInstance(func_def.body[-1], ast.Return)
         ret = func_def.body[-1]
-        self.assertIsInstance(ret.value, ast.Name)
+        assert isinstance(ret, ast.Return)
+        assert isinstance(ret.value, ast.Name)
         self.assertEqual(ret.value.id, "x")
         self.assertEqual(order, {})
 
@@ -54,7 +50,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 ],
             )
         ]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         subst.add_mapping(0, ast.Name("items", ast.Load()), "__param_0")
         subst.add_mapping(0, ast.Name("use", ast.Load()), "__param_1")
@@ -67,8 +63,8 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             is_value_producing=False,
         )
         loop = func_def.body[0]
-        self.assertIsInstance(loop, ast.For)
-        self.assertIsInstance(loop.iter, ast.Name)
+        assert isinstance(loop, ast.For)
+        assert isinstance(loop.iter, ast.Name)
         self.assertEqual(loop.iter.id, "__param_0")
         self.assertEqual(len(loop.orelse), 1)
 
@@ -88,7 +84,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 ],
             ),
         )
-        block = _fix([comp])
+        block = fix_locations([comp])
         subst = Substitution()
         # Parameterize seq and conditions
         subst.add_mapping(0, ast.Name("seq", ast.Load()), "__param_0")
@@ -103,14 +99,15 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             is_value_producing=False,
         )
         assign = func_def.body[0]
-        self.assertIsInstance(assign, ast.Assign)
+        assert isinstance(assign, ast.Assign)
         list_comp = assign.value
-        self.assertIsInstance(list_comp, ast.ListComp)
+        assert isinstance(list_comp, ast.ListComp)
         gen = list_comp.generators[0]
-        self.assertIsInstance(gen.iter, ast.Name)
+        assert isinstance(gen.iter, ast.Name)
         self.assertEqual(gen.iter.id, "__param_0")
-        self.assertIsInstance(gen.ifs[0], ast.Name)
-        self.assertIn(gen.ifs[0].id, {"__param_1"})
+        first_if = gen.ifs[0]
+        assert isinstance(first_if, ast.Name)
+        self.assertIn(first_if.id, {"__param_1"})
 
     def test_idempotent_assignment_and_mapping_clear(self):
         # result = x; result = x; result = 5; use result -> second reassignment same param, third clears
@@ -122,7 +119,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 targets=[ast.Name("final", ast.Store())], value=ast.Name("result", ast.Load())
             ),
         ]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         subst.add_mapping(0, ast.Name("x", ast.Load()), "__param_0")
         extractor = HygienicExtractor()
@@ -134,14 +131,17 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             is_value_producing=False,
         )
         s1, s2, s3, s4 = func_def.body
+        assert isinstance(s1, ast.Assign)
+        assert isinstance(s2, ast.Assign)
+        assert isinstance(s4, ast.Assign)
         # first assignment value substituted
-        self.assertIsInstance(s1.value, ast.Name)
+        assert isinstance(s1.value, ast.Name)
         self.assertEqual(s1.value.id, "__param_0")
         # second assignment still substituted (idempotent)
-        self.assertIsInstance(s2.value, ast.Name)
+        assert isinstance(s2.value, ast.Name)
         self.assertIn(s2.value.id, {"__param_0", "x"})
         # third assignment constant leaves mapping cleared; final uses original name (not parameter)
-        self.assertIsInstance(s4.value, ast.Name)
+        assert isinstance(s4.value, ast.Name)
         self.assertEqual(s4.value.id, "result")
 
     def test_tuple_assignment_parameter_binding(self):
@@ -156,7 +156,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 value=ast.Name("val", ast.Load()),
             )
         ]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         subst.add_mapping(0, ast.Name("val", ast.Load()), "__param_0")
         extractor = HygienicExtractor()
@@ -168,7 +168,8 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             is_value_producing=False,
         )
         assign = func_def.body[0]
-        self.assertIsInstance(assign.value, ast.Name)
+        assert isinstance(assign, ast.Assign)
+        assert isinstance(assign.value, ast.Name)
         self.assertEqual(assign.value.id, "__param_0")
 
     def test_function_parameter_substitution(self):
@@ -177,7 +178,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             left=ast.Name("x", ast.Load()), op=ast.Add(), right=ast.Name("y", ast.Load())
         )
         block_raw = [ast.Assign(targets=[ast.Name("res", ast.Store())], value=expr)]
-        block = _fix(block_raw)
+        block = fix_locations(block_raw)
         subst = Substitution()
         subst.add_mapping(0, expr, "__param_0", bound_vars=["x", "y"])
         extractor = HygienicExtractor()
@@ -189,10 +190,15 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             is_value_producing=False,
         )
         assign = func_def.body[0]
-        self.assertIsInstance(assign.value, ast.Call)
-        self.assertIsInstance(assign.value.func, ast.Name)
+        assert isinstance(assign, ast.Assign)
+        assert isinstance(assign.value, ast.Call)
+        assert isinstance(assign.value.func, ast.Name)
         self.assertEqual(assign.value.func.id, "__param_0")
-        self.assertEqual([a.id for a in assign.value.args], ["x", "y"])  # type: ignore
+        arg_names = []
+        for arg in assign.value.args:
+            assert isinstance(arg, ast.Name)
+            arg_names.append(arg.id)
+        self.assertEqual(arg_names, ["x", "y"])
 
     def test_fstring_constant_guard(self):
         fstr = ast.JoinedStr(
@@ -203,7 +209,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
                 ),
             ]
         )
-        block = _fix([ast.Assign(targets=[ast.Name("s", ast.Store())], value=fstr)])
+        block = fix_locations([ast.Assign(targets=[ast.Name("s", ast.Store())], value=fstr)])
         subst = Substitution()
         subst.add_mapping(0, ast.Name("x", ast.Load()), "__param_0")
         extractor = HygienicExtractor()
@@ -215,12 +221,13 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             is_value_producing=False,
         )
         assign = func_def.body[0]
-        self.assertIsInstance(assign.value, ast.JoinedStr)
+        assert isinstance(assign, ast.Assign)
+        assert isinstance(assign.value, ast.JoinedStr)
         const_part, formatted = assign.value.values
-        self.assertIsInstance(const_part, ast.Constant)
+        assert isinstance(const_part, ast.Constant)
         self.assertEqual(const_part.value, "hi ")
-        self.assertIsInstance(formatted, ast.FormattedValue)
-        self.assertIsInstance(formatted.value, ast.Name)
+        assert isinstance(formatted, ast.FormattedValue)
+        assert isinstance(formatted.value, ast.Name)
         self.assertIn(formatted.value.id, {"__param_0", "x"})
 
     def test_incomplete_return_coverage_block(self):
@@ -230,7 +237,7 @@ class TestExtractorRemainingBranches(unittest.TestCase):
             body=[ast.Return(value=ast.Constant(1))],
             orelse=[],
         )
-        block = _fix([if_node])
+        block = fix_locations([if_node])
         self.assertTrue(contains_return(block))
         self.assertTrue(is_value_producing(block))
         self.assertFalse(has_complete_return_coverage(block))

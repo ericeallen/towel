@@ -27,6 +27,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         from towel.unification.substitution import Substitution
 
@@ -127,6 +128,8 @@ def gen():
         tree2 = ast.parse(code2)
         func1 = tree1.body[0]
         func2 = tree2.body[0]
+        assert isinstance(func1, ast.FunctionDef)
+        assert isinstance(func2, ast.FunctionDef)
 
         result = self.unifier.unify_blocks([func1.body, func2.body], [{}, {}])
         self.assertIsNotNone(result)
@@ -215,8 +218,15 @@ def process_data_b(x):
 
         try:
             proposals = self.engine.analyze_file(temp_path)
-            # Should find duplicates (docstrings are skipped)
-            self.assertGreater(len(proposals), 0)
+            # The docstrings are skipped, so the two bodies are whole-function
+            # duplicates and the second is rewritten to call the first.
+            self.assertEqual(
+                [p.description for p in proposals],
+                [
+                    f"Reuse process_data_a ({os.path.basename(temp_path)}) for duplicated "
+                    "code in process_data_b"
+                ],
+            )
         finally:
             os.unlink(temp_path)
 

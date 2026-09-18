@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from towel.unification.semantic_safety import imported_definition_sites
-from towel.unification.semantic_safety import ImportGraphCache
+from towel.unification.import_graph import imported_definition_sites
+from towel.unification.import_graph import ImportGraphCache
 
 
 def _project(root: Path) -> Path:

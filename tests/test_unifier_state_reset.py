@@ -57,6 +57,7 @@ class TestUnifierStateReset(unittest.TestCase):
         blocks2 = [self._fn_body(f2_a), self._fn_body(f2_b)]
         subst2 = self.unifier.unify_blocks(blocks2, hygienic_renames=[{}, {}])
         self.assertIsNotNone(subst2, "Second unification should succeed independently")
+        assert subst2 is not None
         # Ensure no parameters were introduced for identical blocks
         self.assertEqual(
             len(subst2.param_expressions), 0, "Identical blocks should not introduce params"

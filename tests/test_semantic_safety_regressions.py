@@ -6,12 +6,13 @@ import io
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
-from typing import Callable, cast
+from typing import Callable, Iterator, cast
 import unittest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from towel.unification.semantic_safety import nested_bindings_escape, would_create_import_cycle
-from towel.unification.semantic_safety import ImportGraphCache
+from towel.unification.semantic_safety import nested_bindings_escape
+from towel.unification.import_graph import would_create_import_cycle
+from towel.unification.import_graph import ImportGraphCache
 from towel.cli import _find_extracted_helpers
 
 
@@ -142,7 +143,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         )
 
     def test_nested_extraction_preserves_bindings_used_later_in_loop(self) -> None:
-        cases = (
+        cases: tuple[tuple[str, tuple[str, str], tuple[object, ...]], ...] = (
             (
                 "nested_structures.py",
                 ("build_complex_structure_v1", "build_complex_structure_v2"),
@@ -158,7 +159,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
             with self.subTest(filename=filename):
                 fixture = Path(__file__).parents[1] / "test_examples" / filename
                 module = ast.parse(fixture.read_text(encoding="utf-8"))
-                functions = [
+                functions: list[ast.stmt] = [
                     node
                     for node in module.body
                     if isinstance(node, ast.FunctionDef) and node.name in names
@@ -271,7 +272,9 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
                         self.assertEqual(
                             cast(Callable[..., object], namespace["first"])(True, value), expected
                         )
-                        iterator = cast(Callable[..., object], namespace["second"])([value])
+                        iterator = cast(Callable[..., Iterator[object]], namespace["second"])(
+                            [value]
+                        )
                         self.assertEqual(list(iterator), [expected])
 
     def test_clustering_requires_the_existing_helper_template(self) -> None:

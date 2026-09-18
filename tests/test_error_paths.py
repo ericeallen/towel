@@ -104,7 +104,7 @@ def test_pyright_output_that_is_not_json_yields_no_diagnostics_and_a_warning(
         assert Path(command[-1]).is_file(), "the probe exists while pyright runs"
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(type_inference.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     with caplog.at_level(logging.WARNING, logger="towel"):
         diagnostics = _oracle_without_pyright()._diagnostics(str(module), "x: int = 1\n")
     assert diagnostics == []

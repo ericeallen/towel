@@ -4,6 +4,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from typing import Any
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -66,7 +67,7 @@ class TestAncestorInsertion(unittest.TestCase):
             ]
             self.assertEqual(len(helpers), 1)
             self.assertIn(f"self.{helpers[0].name}(", modified)
-            namespace = {}
+            namespace: dict[str, Any] = {}
             exec(modified, namespace)
             for name in ("EmailProcessor", "SMSProcessor"):
                 processor = namespace[name]()

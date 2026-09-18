@@ -76,56 +76,56 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
 
         # 1) result = __param_0
         stmt1 = func_def.body[0]
-        self.assertIsInstance(stmt1, ast.Assign)
-        self.assertIsInstance(stmt1.value, ast.Name)
+        assert isinstance(stmt1, ast.Assign)
+        assert isinstance(stmt1.value, ast.Name)
         self.assertEqual(stmt1.value.id, "__param_0")
-        self.assertIsInstance(stmt1.targets[0], ast.Name)
+        assert isinstance(stmt1.targets[0], ast.Name)
         self.assertEqual(stmt1.targets[0].id, "result")
 
         # 2) ycall = f"{__param_0}-ok"
         stmt2 = func_def.body[1]
-        self.assertIsInstance(stmt2, ast.Assign)
-        self.assertIsInstance(stmt2.value, ast.JoinedStr)
+        assert isinstance(stmt2, ast.Assign)
+        assert isinstance(stmt2.value, ast.JoinedStr)
         values = stmt2.value.values
         self.assertEqual(len(values), 2)
-        self.assertIsInstance(values[0], ast.FormattedValue)
-        self.assertIsInstance(values[0].value, ast.Name)
+        assert isinstance(values[0], ast.FormattedValue)
+        assert isinstance(values[0].value, ast.Name)
         # Depending on internal substitution ordering, this may or may not be rewritten;
         # both are acceptable for our purposes here.
         self.assertIn(values[0].value.id, {"__param_0", "result"})
-        self.assertIsInstance(values[1], ast.Constant)
+        assert isinstance(values[1], ast.Constant)
         self.assertEqual(values[1].value, "-ok")
 
         # 3a) Inside loop: acc = __param_0
         stmt3 = func_def.body[2]
-        self.assertIsInstance(stmt3, ast.For)
+        assert isinstance(stmt3, ast.For)
         # loop target should stay as binding 'i'
-        self.assertIsInstance(stmt3.target, ast.Name)
+        assert isinstance(stmt3.target, ast.Name)
         self.assertEqual(stmt3.target.id, "i")
         # iter should be parameterized to __param_2
-        self.assertIsInstance(stmt3.iter, ast.Name)
+        assert isinstance(stmt3.iter, ast.Name)
         self.assertEqual(stmt3.iter.id, "__param_2")
 
         loop_assign1 = stmt3.body[0]
-        self.assertIsInstance(loop_assign1, ast.Assign)
-        self.assertIsInstance(loop_assign1.value, ast.Name)
+        assert isinstance(loop_assign1, ast.Assign)
+        assert isinstance(loop_assign1.value, ast.Name)
         # Accept either substituted parameter name or original variable depending on mapping timing.
         self.assertIn(loop_assign1.value.id, {"__param_0", "result"})
-        self.assertIsInstance(loop_assign1.targets[0], ast.Name)
+        assert isinstance(loop_assign1.targets[0], ast.Name)
         self.assertEqual(loop_assign1.targets[0].id, "acc")
 
         # 3b) result = __param_1 (reassignment to different value clears mapping)
         loop_assign2 = stmt3.body[1]
-        self.assertIsInstance(loop_assign2, ast.Assign)
-        self.assertIsInstance(loop_assign2.value, ast.Name)
+        assert isinstance(loop_assign2, ast.Assign)
+        assert isinstance(loop_assign2.value, ast.Name)
         self.assertEqual(loop_assign2.value.id, "__param_1")
-        self.assertIsInstance(loop_assign2.targets[0], ast.Name)
+        assert isinstance(loop_assign2.targets[0], ast.Name)
         self.assertEqual(loop_assign2.targets[0].id, "result")
 
         # 4) final = result (NOT replaced after mapping cleared)
         stmt4 = func_def.body[3]
-        self.assertIsInstance(stmt4, ast.Assign)
-        self.assertIsInstance(stmt4.value, ast.Name)
+        assert isinstance(stmt4, ast.Assign)
+        assert isinstance(stmt4.value, ast.Name)
         self.assertEqual(stmt4.value.id, "result")
 
         # ast.unparse should succeed for readability/debug
@@ -134,14 +134,14 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
 
     def test_contains_return_and_value_producing_and_coverage(self) -> None:
         # Build blocks for helper functions
-        block_with_return_raw = [ast.Return(value=ast.Constant(value=1))]
+        block_with_return_raw: list[ast.stmt] = [ast.Return(value=ast.Constant(value=1))]
         m1 = ast.Module(body=block_with_return_raw, type_ignores=[])
         ast.fix_missing_locations(m1)
         block_with_return = m1.body
         self.assertTrue(contains_return(block_with_return))
         self.assertTrue(is_value_producing(block_with_return))
 
-        block_single_expr_raw = [ast.Expr(value=ast.Constant(value=42))]
+        block_single_expr_raw: list[ast.stmt] = [ast.Expr(value=ast.Constant(value=42))]
         m2 = ast.Module(body=block_single_expr_raw, type_ignores=[])
         ast.fix_missing_locations(m2)
         block_single_expr = m2.body
@@ -183,16 +183,16 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
         self.assertTrue(colliding.startswith("__bar_"))
 
         # get_enclosing_names should collect bindings from parent scopes
-        class FakeScope:
-            def __init__(self, bindings: dict, parent: "FakeScope | None") -> None:
-                self.bindings = bindings
-                self.parent = parent
-
-        root = FakeScope({"a": 1}, None)
-        child = FakeScope({"b": 2}, root)
-        grandchild = FakeScope({"c": 3}, child)
-
         from towel.unification.extractor import get_enclosing_names
+        from towel.unification.scope_analyzer import Scope, ScopeBinding
+
+        def make_scope(scope_id: int, names: list[str], parent: Scope | None) -> Scope:
+            bindings = {name: ScopeBinding(name, scope_id, ast.Pass()) for name in names}
+            return Scope(scope_id=scope_id, parent=parent, bindings=bindings)
+
+        root = make_scope(0, ["a"], None)
+        child = make_scope(1, ["b"], root)
+        grandchild = make_scope(2, ["c"], child)
 
         names = get_enclosing_names(root, root)
         self.assertEqual(names, set())
@@ -234,35 +234,36 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
             hygienic_renames=hygienic_renames,
         )
 
-        self.assertIsInstance(call_stmt, ast.Assign)
+        assert isinstance(call_stmt, ast.Assign)
         self.assertEqual(len(call_stmt.targets), 1)
         assign_target = call_stmt.targets[0]
-        self.assertIsInstance(assign_target, ast.Name)
+        assert isinstance(assign_target, ast.Name)
         # Return variable should map back to the original (inverse rename)
         self.assertEqual(assign_target.id, "result_alias")
 
-        self.assertIsInstance(call_stmt.value, ast.Call)
+        assert isinstance(call_stmt.value, ast.Call)
         call = call_stmt.value
+        assert isinstance(call.func, ast.Name)
         self.assertEqual(call.func.id, "extracted")
         self.assertEqual(len(call.args), 3)
 
         fn_lambda = call.args[0]
-        self.assertIsInstance(fn_lambda, ast.Lambda)
+        assert isinstance(fn_lambda, ast.Lambda)
         self.assertEqual([arg.arg for arg in fn_lambda.args.args], ["alpha"])
-        self.assertIsInstance(fn_lambda.body, ast.Name)
+        assert isinstance(fn_lambda.body, ast.Name)
         self.assertEqual(fn_lambda.body.id, "invoke")
 
         callee_lambda = call.args[1]
-        self.assertIsInstance(callee_lambda, ast.Lambda)
+        assert isinstance(callee_lambda, ast.Lambda)
         self.assertEqual(callee_lambda.args.kwonlyargs, [])
         self.assertIsNotNone(callee_lambda.args.vararg)
         self.assertIsNotNone(callee_lambda.args.kwarg)
-        self.assertIsInstance(callee_lambda.body, ast.Call)
-        self.assertIsInstance(callee_lambda.body.func, ast.Name)
+        assert isinstance(callee_lambda.body, ast.Call)
+        assert isinstance(callee_lambda.body.func, ast.Name)
         self.assertEqual(callee_lambda.body.func.id, "target")
 
         free_arg = call.args[2]
-        self.assertIsInstance(free_arg, ast.Name)
+        assert isinstance(free_arg, ast.Name)
         self.assertEqual(free_arg.id, "aug_value")
 
     def test_generate_call_value_producing_without_return_vars(self) -> None:
@@ -280,8 +281,9 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
             return_variables=None,
         )
 
-        self.assertIsInstance(stmt, ast.Return)
-        self.assertIsInstance(stmt.value, ast.Call)
+        assert isinstance(stmt, ast.Return)
+        assert isinstance(stmt.value, ast.Call)
+        assert isinstance(stmt.value.func, ast.Name)
         self.assertEqual(stmt.value.func.id, "extracted")
 
     def test_parameter_substituter_comprehension_and_function_params(self) -> None:
@@ -353,55 +355,55 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
 
         # result = __param_0
         stmt0 = func_def.body[0]
-        self.assertIsInstance(stmt0, ast.Assign)
-        self.assertIsInstance(stmt0.value, ast.Name)
+        assert isinstance(stmt0, ast.Assign)
+        assert isinstance(stmt0.value, ast.Name)
         self.assertEqual(stmt0.value.id, "__param_0")
 
         # result = __param_0 (reassignment keeps the local binding; avoids mutating parameter symbol)
         stmt1 = func_def.body[1]
-        self.assertIsInstance(stmt1, ast.Assign)
-        self.assertIsInstance(stmt1.targets[0], ast.Name)
+        assert isinstance(stmt1, ast.Assign)
+        assert isinstance(stmt1.targets[0], ast.Name)
         self.assertEqual(stmt1.targets[0].id, "result")
-        self.assertIsInstance(stmt1.value, ast.Name)
+        assert isinstance(stmt1.value, ast.Name)
         self.assertEqual(stmt1.value.id, "__param_0")
         # helper = result propagates mapping but maintains binding context
         stmt2 = func_def.body[2]
-        self.assertIsInstance(stmt2, ast.Assign)
-        self.assertIsInstance(stmt2.value, ast.Name)
+        assert isinstance(stmt2, ast.Assign)
+        assert isinstance(stmt2.value, ast.Name)
 
         # filtered = [result for item in __param_1 if item != result]
         stmt3 = func_def.body[3]
-        self.assertIsInstance(stmt3, ast.Assign)
-        self.assertIsInstance(stmt3.value, ast.ListComp)
+        assert isinstance(stmt3, ast.Assign)
+        assert isinstance(stmt3.value, ast.ListComp)
         comp = stmt3.value
-        self.assertIsInstance(comp.elt, ast.Name)
+        assert isinstance(comp.elt, ast.Name)
         self.assertIn(comp.elt.id, {"result", "__param_0"})
         self.assertEqual(len(comp.generators), 1)
         gen = comp.generators[0]
-        self.assertIsInstance(gen.target, ast.Name)
+        assert isinstance(gen.target, ast.Name)
         self.assertEqual(gen.target.id, "item")
-        self.assertIsInstance(gen.iter, ast.Name)
+        assert isinstance(gen.iter, ast.Name)
         self.assertEqual(gen.iter.id, "__param_1")
         self.assertEqual(len(gen.ifs), 1)
-        self.assertIsInstance(gen.ifs[0], ast.Compare)
+        assert isinstance(gen.ifs[0], ast.Compare)
 
         # cb = __param_2(helper) ensures thunked callee rewrite
         stmt4 = func_def.body[4]
-        self.assertIsInstance(stmt4, ast.Assign)
-        self.assertIsInstance(stmt4.value, ast.Call)
-        self.assertIsInstance(stmt4.value.func, ast.Name)
+        assert isinstance(stmt4, ast.Assign)
+        assert isinstance(stmt4.value, ast.Call)
+        assert isinstance(stmt4.value.func, ast.Name)
         self.assertEqual(stmt4.value.func.id, "__param_2")
         self.assertEqual(len(stmt4.value.args), 1)
-        self.assertIsInstance(stmt4.value.args[0], ast.Name)
+        assert isinstance(stmt4.value.args[0], ast.Name)
         self.assertEqual(stmt4.value.args[0].id, "helper")
 
         # result = 0 clears mapping; subsequent load stays as 'result'
         stmt6 = func_def.body[6]
-        self.assertIsInstance(stmt6, ast.Assign)
-        self.assertIsInstance(stmt6.value, ast.Constant)
+        assert isinstance(stmt6, ast.Assign)
+        assert isinstance(stmt6.value, ast.Constant)
         stmt7 = func_def.body[7]
-        self.assertIsInstance(stmt7, ast.Expr)
-        self.assertIsInstance(stmt7.value, ast.Name)
+        assert isinstance(stmt7, ast.Expr)
+        assert isinstance(stmt7.value, ast.Name)
         self.assertEqual(stmt7.value.id, "result")
 
 

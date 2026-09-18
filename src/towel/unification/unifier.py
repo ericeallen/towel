@@ -69,11 +69,11 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self._set_feature_flags(parameterize_constants, promote_equal_hof_literals)
         self.param_counter = 0
         self.alpha_renamings: Dict[Tuple[int, str], str] = {}
-        self.current_blocks: Optional[Sequence[Sequence[ast.stmt]]] = None
+        self.current_blocks: Optional[Sequence[Sequence[ast.AST]]] = None
         self.constant_positions = {}
 
     def unify_blocks(
-        self, blocks: Sequence[Sequence[ast.stmt]], hygienic_renames: List[Dict[str, str]]
+        self, blocks: Sequence[Sequence[ast.AST]], hygienic_renames: List[Dict[str, str]]
     ) -> Optional[Substitution]:
         """
         Unify multiple code blocks.
@@ -889,7 +889,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.parameterize_constants = parameterize_constants
         self.promote_equal_hof_literals = promote_equal_hof_literals
 
-    def _reset_unification_state(self, blocks: Sequence[Sequence[ast.stmt]]) -> None:
+    def _reset_unification_state(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         self.param_counter = 0
         self.current_blocks = blocks
         # A helper extracted on an earlier pass already binds names such as

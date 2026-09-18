@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from tests.test_helpers import function_def
 from towel.unification.semantic_safety import (
     defer_impure_parameters,
     has_impure_eager_parameters,
@@ -18,22 +19,18 @@ from towel.unification.semantic_safety import (
 from towel.unification.substitution import Substitution
 
 
-def _function(source: str) -> ast.FunctionDef:
-    return cast(ast.FunctionDef, ast.parse(source).body[0])
-
-
 def _slice(function: ast.FunctionDef, start: int, stop: int) -> list[ast.AST]:
     return list(function.body[start:stop])
 
 
 class TestUnbindsExternalName:
     def test_explicit_del_of_prebound_name(self) -> None:
-        function = _function("def f(v):\n    x = v\n    print(x)\n    del x\n    return 1\n")
+        function = function_def("def f(v):\n    x = v\n    print(x)\n    del x\n    return 1\n")
         assert unbinds_external_name(function, _slice(function, 1, 3), {"x", "v"})
         assert not unbinds_external_name(function, _slice(function, 1, 3), {"v"})
 
     def test_except_clause_unbinds_prebound_name(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(v):\n    e = 'orig'\n    try:\n        r = 1 / v\n"
             "    except ZeroDivisionError as e:\n        r = None\n    return e\n"
         )
@@ -41,41 +38,41 @@ class TestUnbindsExternalName:
         assert not unbinds_external_name(function, _slice(function, 1, 2), {"v"})
 
     def test_global_name_deleted_in_block(self) -> None:
-        function = _function("def f():\n    global state\n    state = 1\n    del state\n")
+        function = function_def("def f():\n    global state\n    state = 1\n    del state\n")
         assert unbinds_external_name(function, _slice(function, 1, 3), set())
 
 
 class TestNestedScopesCrossBlockBoundary:
     def test_block_rebinds_cell_read_by_earlier_closure(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(items):\n    def show():\n        return factor\n"
             "    out = [show for _ in items]\n    factor = 10\n    return out\n"
         )
         assert nested_scopes_cross_block_boundary(function, _slice(function, 1, 3))
 
     def test_closure_inside_block_reads_name_rebound_after(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(items):\n    factor = 2\n    def scale(v):\n        return v * factor\n"
             "    factor = 3\n    return [scale(i) for i in items]\n"
         )
         assert nested_scopes_cross_block_boundary(function, _slice(function, 1, 2))
 
     def test_closure_inside_block_reading_earlier_binding_is_allowed(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(items):\n    factor = 2\n    def scale(v):\n        return v * factor\n"
             "    return [scale(i) for i in items]\n"
         )
         assert not nested_scopes_cross_block_boundary(function, _slice(function, 1, 3))
 
     def test_block_and_closure_with_disjoint_names_are_allowed(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(items):\n    def show():\n        return other\n"
             "    total = sum(items)\n    return show, total\n"
         )
         assert not nested_scopes_cross_block_boundary(function, _slice(function, 1, 2))
 
     def test_nested_block_closure_with_any_outside_binding_is_rejected(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(items):\n    limit = 0\n    for i in items:\n"
             "        check = lambda v: v < limit\n        use(check)\n        limit = i\n"
         )
@@ -161,21 +158,21 @@ def test_an_unresolvable_name_becomes_a_thunk() -> None:
 
 class TestMovesScopeDeclaration:
     def test_declaration_used_after_block_is_rejected(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(items):\n    global counter\n    for i in items:\n        counter += i\n"
             "    counter += 1\n    return counter\n"
         )
         assert moves_scope_declaration(function, _slice(function, 0, 2))
 
     def test_declaration_fully_inside_block_is_allowed(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(items):\n    global counter\n    for i in items:\n        counter += i\n"
             "    return len(items)\n"
         )
         assert not moves_scope_declaration(function, _slice(function, 0, 2))
 
     def test_nested_function_declaration_moves_with_it(self) -> None:
-        function = _function(
+        function = function_def(
             "def f(items):\n    count = 0\n    def inc():\n        nonlocal count\n"
             "        count += 1\n    for i in items:\n        inc()\n    return count\n"
         )

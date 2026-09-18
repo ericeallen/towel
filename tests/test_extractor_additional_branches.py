@@ -37,10 +37,12 @@ class TestExtractorInjectedPreamble(unittest.TestCase):
 
         # First statements must be Global then Nonlocal with sorted names
         self.assertGreaterEqual(len(func_def.body), 3)
-        self.assertIsInstance(func_def.body[0], ast.Global)
-        self.assertEqual(func_def.body[0].names, ["G1", "G2"])  # sorted order
-        self.assertIsInstance(func_def.body[1], ast.Nonlocal)
-        self.assertEqual(func_def.body[1].names, ["n1"])  # sorted order
+        global_stmt = func_def.body[0]
+        assert isinstance(global_stmt, ast.Global)
+        self.assertEqual(global_stmt.names, ["G1", "G2"])  # sorted order
+        nonlocal_stmt = func_def.body[1]
+        assert isinstance(nonlocal_stmt, ast.Nonlocal)
+        self.assertEqual(nonlocal_stmt.names, ["n1"])  # sorted order
 
 
 class TestExtractorGenerateCallSpecialParams(unittest.TestCase):
@@ -65,11 +67,11 @@ class TestExtractorGenerateCallSpecialParams(unittest.TestCase):
             is_value_producing=False,
         )
 
-        self.assertIsInstance(call_stmt, ast.Expr)
-        self.assertIsInstance(call_stmt.value, ast.Call)
+        assert isinstance(call_stmt, ast.Expr)
+        assert isinstance(call_stmt.value, ast.Call)
         self.assertEqual(len(call_stmt.value.args), 1)
         lam = call_stmt.value.args[0]
-        self.assertIsInstance(lam, ast.Lambda)
+        assert isinstance(lam, ast.Lambda)
         # Check lambda args are the bound vars in order
         arg_names = [a.arg for a in lam.args.args]
         self.assertEqual(arg_names, ["a", "b"])
@@ -92,18 +94,18 @@ class TestExtractorGenerateCallSpecialParams(unittest.TestCase):
             is_value_producing=False,
         )
 
-        self.assertIsInstance(call_stmt, ast.Expr)
-        self.assertIsInstance(call_stmt.value, ast.Call)
+        assert isinstance(call_stmt, ast.Expr)
+        assert isinstance(call_stmt.value, ast.Call)
         self.assertEqual(len(call_stmt.value.args), 1)
         lam = call_stmt.value.args[0]
-        self.assertIsInstance(lam, ast.Lambda)
+        assert isinstance(lam, ast.Lambda)
         # Check vararg/kwarg forwarding signature
-        self.assertIsNotNone(lam.args.vararg)
+        assert lam.args.vararg is not None
         self.assertEqual(lam.args.vararg.arg, "args")
-        self.assertIsNotNone(lam.args.kwarg)
+        assert lam.args.kwarg is not None
         self.assertEqual(lam.args.kwarg.arg, "kwargs")
         # Body should call the original callee with *args, **kwargs
-        self.assertIsInstance(lam.body, ast.Call)
+        assert isinstance(lam.body, ast.Call)
         self.assertEqual(len(lam.body.args), 1)
         self.assertIsInstance(lam.body.args[0], ast.Starred)
         self.assertEqual(len(lam.body.keywords), 1)

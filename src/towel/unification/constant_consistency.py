@@ -103,7 +103,7 @@ class ConstantConsistency(UnifierState):
         # Positions align - can parameterize consistently
         return True
 
-    def _collect_constant_positions(self, blocks: Sequence[Sequence[ast.stmt]]) -> None:
+    def _collect_constant_positions(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         """
         Collect all constant occurrences and their structural positions.
 

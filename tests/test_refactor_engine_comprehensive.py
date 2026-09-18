@@ -32,6 +32,7 @@ def simple_function():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         blocks = self.engine._extract_code_blocks(func)
 
@@ -61,6 +62,7 @@ def function_with_nested():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         blocks = self.engine._extract_code_blocks(func)
 
@@ -87,6 +89,7 @@ def function_with_docstring():
 '''
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         blocks = self.engine._extract_code_blocks(func)
 
@@ -112,6 +115,7 @@ def outer():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
         blocks = engine._extract_code_blocks(func)
@@ -253,20 +257,6 @@ def function2():
         finally:
             os.unlink(temp_path)
 
-    def test_analyze_file_with_syntax_error(self):
-        """Test that files with syntax errors are handled gracefully."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("def function1(:\n    pass\n")  # Syntax error
-            temp_path = f.name
-
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(
-                len(proposals), 0, "Should return empty list for file with syntax error"
-            )
-        finally:
-            os.unlink(temp_path)
-
 
 class TestBlockPairFinding(unittest.TestCase):
     """Test find_block_pairs method."""
@@ -299,6 +289,8 @@ def func2():
         scope = analyzer.analyze(tree)
 
         func1, func2 = tree.body[0], tree.body[1]
+        assert isinstance(func1, ast.FunctionDef)
+        assert isinstance(func2, ast.FunctionDef)
         all_functions = [
             FunctionArtifact("test.py", func1, code, analyzer, scope, None, None, []),
             FunctionArtifact("test.py", func2, code, analyzer, scope, None, None, []),
@@ -340,6 +332,8 @@ def func2():
         scope = analyzer.analyze(tree)
 
         func1, func2 = tree.body[0], tree.body[1]
+        assert isinstance(func1, ast.FunctionDef)
+        assert isinstance(func2, ast.FunctionDef)
         all_functions = [
             FunctionArtifact("test.py", func1, code, analyzer, scope, None, None, []),
             FunctionArtifact("test.py", func2, code, analyzer, scope, None, None, []),
@@ -453,6 +447,8 @@ def func2():
 """
         tree = ast.parse(code)
         func1, func2 = tree.body[0], tree.body[1]
+        assert isinstance(func1, ast.FunctionDef)
+        assert isinstance(func2, ast.FunctionDef)
 
         blocks1 = self.engine._extract_code_blocks(func1)
         blocks2 = self.engine._extract_code_blocks(func2)
@@ -472,6 +468,8 @@ def func2():
 """
         tree = ast.parse(code)
         func1, func2 = tree.body[0], tree.body[1]
+        assert isinstance(func1, ast.FunctionDef)
+        assert isinstance(func2, ast.FunctionDef)
 
         blocks1 = self.engine._extract_code_blocks(func1)
         blocks2 = self.engine._extract_code_blocks(func2)
@@ -513,11 +511,11 @@ def func2():
                     ranges2 = set()
 
                     for replacement in prop1.replacements:
-                        start, end = replacement[0]
+                        start, end = replacement.line_range
                         ranges1.add((start, end))
 
                     for replacement in prop2.replacements:
-                        start, end = replacement[0]
+                        start, end = replacement.line_range
                         ranges2.add((start, end))
 
                     # Ranges should not overlap

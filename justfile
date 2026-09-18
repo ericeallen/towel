@@ -45,17 +45,20 @@ test:
 # Run the suite under coverage and enforce the 85% gate
 coverage:
     uv run --frozen coverage run -m pytest -q
+    uv run --frozen coverage combine
     uv run --frozen coverage report --fail-under=85
 
 # Write an HTML coverage report to htmlcov/index.html
 coverage-html:
     uv run --frozen coverage run -m pytest -q
+    uv run --frozen coverage combine
     uv run --frozen coverage html
     @echo "Report at htmlcov/index.html"
 
 # Coverage for the active unification package only
 coverage-unification:
     uv run --frozen coverage run -m pytest -q
+    uv run --frozen coverage combine
     uv run --frozen coverage report --include="src/towel/unification/*"
 
 # Fast subset: signature gate, pairing, unifier, extractor, regression stability

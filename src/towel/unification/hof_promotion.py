@@ -61,7 +61,7 @@ class _CallContextFinder(OwnScopeVisitor):
 
 
 def _is_used_as_callable_or_value_later(
-    block: Sequence[ast.stmt], start_stmt_idx: int, var_name: str
+    block: Sequence[ast.AST], start_stmt_idx: int, var_name: str
 ) -> bool:
     """Whether ``var_name`` is read in a call context by a later statement of ``block``."""
     finder = _CallContextFinder(var_name)
@@ -127,7 +127,7 @@ class LiteralPromotion(UnifierState):
     """See the module docstring."""
 
     def _promote_hof_literals(
-        self, blocks: Sequence[Sequence[ast.stmt]], substitution: Substitution
+        self, blocks: Sequence[Sequence[ast.AST]], substitution: Substitution
     ) -> None:
         """
         Promote literal arguments in higher-order factory calls into parameters,
@@ -185,7 +185,7 @@ class LiteralPromotion(UnifierState):
 
     def _promote_argument(
         self,
-        blocks: Sequence[Sequence[ast.stmt]],
+        blocks: Sequence[Sequence[ast.AST]],
         stmt_idx: int,
         arg_path: Tuple[Any, ...],
         substitution: Substitution,

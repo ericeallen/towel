@@ -54,10 +54,11 @@ if not admin.get("id"):
         block2 = ast.parse(code2).body
 
         # Unify the blocks
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         self.assertIsNotNone(substitution, "Blocks should unify")
+        assert substitution is not None
 
         # Extract function (only the validation part for simplicity)
         validation_code = """
@@ -68,7 +69,7 @@ if not var.get("id"):
 
         # Extract function with 'var' as parameter
         free_variables = {"var"}
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
 
         func_def, param_order = self.extractor.extract_function(
             template_block=template_block,
@@ -146,19 +147,20 @@ if not guest.get("name"):
         block_guest = ast.parse(code_guest).body
 
         # Unify all three blocks
-        hygienic_renames = [{}, {}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}, {}]
         substitution = self.unifier.unify_blocks(
             [block_user, block_admin, block_guest], hygienic_renames
         )
 
         self.assertIsNotNone(substitution, "All three blocks should unify")
+        assert substitution is not None
 
         # The unified template uses a canonical name (e.g., 'user')
         # But hygienic_renames should map admin→user and guest→user
 
         # Extract function
         free_variables = {"user"}  # Canonical name
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
 
         func_def, param_order = self.extractor.extract_function(
             template_block=block_user,  # Use first block as template

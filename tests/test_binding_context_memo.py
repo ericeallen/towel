@@ -44,8 +44,9 @@ def test_memoized_query_matches_the_walk_on_towels_source() -> None:
 
 def test_memo_distinguishes_blocks_of_different_length() -> None:
     block = ast.parse("print(x)\nx = 1\n").body
-    call = block[0].value  # type: ignore[attr-defined]
-    target = call.args[0]
+    statement = block[0]
+    assert isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)
+    target = statement.value.args[0]
     assert isinstance(target, ast.Name)
     assert bound_variables_in_block(block[:1], target) == set()
     # The second statement assigns ``x``, so the longer block binds it.

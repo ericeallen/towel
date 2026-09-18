@@ -329,7 +329,7 @@ _BOUND_IN_BLOCK: "WeakKeyDictionary[ast.AST, Dict[Tuple[int, str], FrozenSet[str
 """Per block (first statement, then length) and target text, what the finder collected."""
 
 
-def bound_variables_in_block(block: Sequence[ast.stmt], target_expr: ast.AST) -> Set[str]:
+def bound_variables_in_block(block: Sequence[ast.AST], target_expr: ast.AST) -> Set[str]:
     """``get_bound_variables_in_context`` over a block, memoized per block and target text.
 
     The finder's answer depends only on the block's statements and the
@@ -352,7 +352,9 @@ def bound_variables_in_block(block: Sequence[ast.stmt], target_expr: ast.AST) ->
     bound = by_target.get(key)
     if bound is None:
         finder = _BindingContextFinder(target_expr)
-        finder.visit(ast.Module(body=list(block), type_ignores=[]))
+        finder.visit(
+            ast.Module(body=[node for node in block if isinstance(node, ast.stmt)], type_ignores=[])
+        )
         bound = frozenset(finder.bound_vars)
         by_target[key] = bound
     return set(bound & get_free_variables(target_expr))

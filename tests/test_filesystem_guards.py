@@ -7,7 +7,6 @@ import shutil
 
 import pytest
 
-from towel import filesystem
 from towel.filesystem import copy_project
 
 
@@ -61,13 +60,13 @@ def test_a_destination_appearing_during_the_copy_is_refused(
     destination = tmp_path / "out"
     original = shutil.copytree
 
-    def copytree_then_race(src: Path, dst: Path, **kwargs: object) -> object:
-        result = original(src, dst, **kwargs)
+    def copytree_then_race(src: Path, dst: Path, *, symlinks: bool = False) -> Path:
+        result = original(src, dst, symlinks=symlinks)
         destination.mkdir()
         (destination / "intruder.txt").write_text("")
         return result
 
-    monkeypatch.setattr(filesystem.shutil, "copytree", copytree_then_race)
+    monkeypatch.setattr(shutil, "copytree", copytree_then_race)
     with pytest.raises(ValueError, match="appeared or changed"):
         copy_project(source, destination)
     assert sorted(p.name for p in destination.iterdir()) == ["intruder.txt"]

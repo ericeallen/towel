@@ -33,6 +33,7 @@ return x + y
         )
 
         self.assertIsNotNone(result, "Unification of identical blocks should succeed")
+        assert result is not None
         self.assertEqual(
             len(result.param_expressions), 0, "Identical blocks should require 0 parameters"
         )
@@ -48,6 +49,7 @@ return x + y
         result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
 
         self.assertIsNotNone(result, "Unification with single difference should succeed")
+        assert result is not None
         self.assertEqual(
             len(result.param_expressions),
             1,
@@ -71,6 +73,7 @@ return result
         self.assertIsNotNone(
             result, "Unification of identical blocks with nested functions should succeed"
         )
+        assert result is not None
 
         # Identical blocks should require 0 parameters
         self.assertEqual(
@@ -109,6 +112,7 @@ return result
         self.assertIsNotNone(
             result, "Unification of blocks with TWO nested functions should succeed"
         )
+        assert result is not None
 
         # Identical blocks should have 0 parameters
         self.assertEqual(
@@ -156,6 +160,7 @@ return transformed
         self.assertIsNotNone(
             result, "Unification of higher_order_function_c/d Block 0 should succeed"
         )
+        assert result is not None
 
         # Identical blocks should have 0 parameters
         self.assertEqual(
@@ -209,6 +214,7 @@ return result
         result = self.unifier.unify_blocks([tree1.body, tree2.body], [{}, {}])
 
         self.assertIsNotNone(result, "Should unify with one parameter")
+        assert result is not None
         self.assertEqual(
             len(result.param_expressions),
             1,
@@ -228,6 +234,7 @@ class TestUnifierEdgeCases(unittest.TestCase):
         result = self.unifier.unify_blocks([[], []], [{}, {}])
 
         self.assertIsNotNone(result, "Empty blocks should unify")
+        assert result is not None
         self.assertEqual(
             len(result.param_expressions), 0, "Empty blocks should require 0 parameters"
         )
@@ -284,6 +291,8 @@ class TestUnifierWithActualFunctionalPatternsCode(unittest.TestCase):
         """Test unifying actual Block 0 from higher_order_function_c/d."""
         self.assertIsNotNone(self.func_c, "Function c should be found")
         self.assertIsNotNone(self.func_d, "Function d should be found")
+        assert self.func_c is not None
+        assert self.func_d is not None
 
         # Get function bodies (skip docstring)
         body_c = self.func_c.body
@@ -317,6 +326,7 @@ class TestUnifierWithActualFunctionalPatternsCode(unittest.TestCase):
         self.assertIsNotNone(
             result, "Block 0 from higher_order_function_c/d should unify successfully"
         )
+        assert result is not None
 
         # Verify minimal parameters (should be 0 since blocks are identical)
         self.assertEqual(

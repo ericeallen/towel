@@ -11,7 +11,9 @@ from towel.unification.parameters import parameter_names, parameter_nodes
 
 
 def _args(src: str) -> ast.arguments:
-    return ast.parse(src).body[0].args  # type: ignore[attr-defined]
+    function = ast.parse(src).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    return function.args
 
 
 def test_parameter_names_covers_every_category():

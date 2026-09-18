@@ -198,7 +198,7 @@ def test_external_rebinding_is_not_snapshotted(tmp_path: Path, closure: bool) ->
         source = "def outer():\n" + "".join("    " + line + "\n" for line in inner.splitlines())
         source += "    return first(), second()\n"
         observed = "observed = outer()"
-        expected = ((1, 42), (42, 42))
+        expected: tuple[tuple[float, int], tuple[int, int]] = ((1, 42), (42, 42))
     else:
         source = (
             "from math import pi as value\ndef update():\n    global value\n    value = 42\n"
@@ -261,46 +261,38 @@ def test_caller_parameter_captured_by_mutating_closure(tmp_path: Path) -> None:
             assert cast(Callable[..., object], namespace[name])(2) == 4
 
 
-def test_external_hazard_summary_is_owned_reused_and_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_external_hazard_summary_is_owned_reused_and_reset() -> None:
+    """The hazard summary is taken once per analysis, reused by every query, and replaced by the next."""
     from dataclasses import FrozenInstanceError
 
     from towel.unification.semantic_safety import snapshots_rebound_external_names
 
-    source = (
-        "from math import pi as value\n"
-        "def update():\n    global value\n    value = 42\n"
-        "def first():\n    return value + 1\n"
-    )
-    tree = ast.parse(source)
-    original_walk = ast.walk
-    module_walks = 0
-
-    def counted_walk(node: ast.AST):
-        nonlocal module_walks
-        if node is tree:
-            module_walks += 1
-        return original_walk(node)
-
-    monkeypatch.setattr(ast, "walk", counted_walk)
+    tree = ast.parse("from math import pi as value\ndef first():\n    return value + 1\n")
     analyzer = ScopeAnalyzer()
     analyzer.analyze(tree)
     function = tree.body[-1]
     assert isinstance(function, ast.FunctionDef)
     summary = analyzer.external_binding_hazards
     assert summary is not None
-    assert module_walks == 1
+    assert not snapshots_rebound_external_names(analyzer, function, function.body)
+
+    # A rebinding added to the tree after analysis is invisible until the tree
+    # is analyzed again: the queries read the snapshot, they do not rescan.
+    tree.body.extend(ast.parse("def update():\n    global value\n    value = 42\n").body)
     for _ in range(10):
-        assert snapshots_rebound_external_names(analyzer, function, function.body)
+        assert not snapshots_rebound_external_names(analyzer, function, function.body)
         assert analyzer.external_binding_hazards is summary
-    assert module_walks == 1
     with pytest.raises(FrozenInstanceError):
         setattr(summary, "reflective", True)
+
+    analyzer.analyze(tree)
+    assert analyzer.external_binding_hazards is not summary
+    assert snapshots_rebound_external_names(analyzer, function, function.body)
 
     replacement = ast.parse("from math import pi as value\ndef first():\n    return value + 1\n")
     analyzer.analyze(replacement)
     replacement_function = replacement.body[-1]
     assert isinstance(replacement_function, ast.FunctionDef)
-    assert analyzer.external_binding_hazards is not summary
     assert not snapshots_rebound_external_names(
         analyzer, replacement_function, replacement_function.body
     )

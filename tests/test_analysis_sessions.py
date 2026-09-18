@@ -28,6 +28,7 @@ def test_reuses_parse_and_scope_work_without_copying(tmp_path):
     # Reuse hands back the cached graph itself, so an engine's node-identity
     # caches stay valid for the file across fixed-point iterations.
     assert second is first
+    assert isinstance(second.module.tree, ast.Module)
     assert second.functions[0].node is second.module.tree.body[0]
     assert second.functions[0].scope_analyzer is second.module.scope_analyzer
     assert second.functions[0].root_scope is second.module.root_scope
@@ -201,7 +202,9 @@ def test_mutating_returned_engine_proposal_does_not_change_reanalysis(tmp_path):
     path = write_module(tmp_path, source=source)
     engine = UnificationRefactorEngine(min_lines=2)
     proposals = engine.analyze_files([path], progress="none")
-    assert proposals
+    assert [p.description for p in proposals] == [
+        "Reuse first (module.py) for duplicated code in second"
+    ]
     expected = [ast.dump(proposal.extracted_function) for proposal in proposals]
     proposals[0].extracted_function.body.clear()
     proposals[0].replacements.clear()

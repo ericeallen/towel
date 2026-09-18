@@ -14,20 +14,21 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 import textwrap
+from typing import Unpack
 
-
+from tests.test_helpers import EngineOptions
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.type_inference import Subtyping
 
 YES, NO, UNKNOWN = Subtyping.YES, Subtyping.NO, Subtyping.UNKNOWN
 
 
-def _refactor(tmp_path: Path, code: str, **engine_options: object) -> str:
+def _refactor(tmp_path: Path, code: str, **engine_options: Unpack[EngineOptions]) -> str:
     """Extract from ``code``; reuse is off so a helper is always produced."""
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent(code))
-    options = {"reuse_existing_functions": False, **engine_options}
-    engine = UnificationRefactorEngine(min_lines=2, **options)  # type: ignore[arg-type]
+    options: EngineOptions = {"reuse_existing_functions": False, **engine_options}
+    engine = UnificationRefactorEngine(min_lines=2, **options)
     proposals = engine.analyze_file(str(path))
     assert proposals, "the fixture must produce a proposal"
     return engine.apply_refactoring(str(path), proposals[0])
@@ -422,7 +423,7 @@ def test_inconsistent_subtype_verdicts_never_empty_a_union() -> None:
     members = [parse("A"), parse("B"), parse("C")]
     cyclic = {("A", "B"): YES, ("B", "C"): YES, ("C", "A"): YES}
 
-    def relation(pairs):  # type: ignore[no-untyped-def]
+    def relation(pairs):
         return [cyclic.get((ast.unparse(n), ast.unparse(w)), UNKNOWN) for n, w in pairs]
 
     kept = normalize_union(members, relation)

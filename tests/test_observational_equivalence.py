@@ -16,8 +16,13 @@ from contextlib import redirect_stdout, redirect_stderr
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import get_test_example_path, assert_file_not_modified
 
+CallCase = Tuple[Tuple[object, ...], Dict[str, object]]
+"""The positional and keyword arguments of one call to a function under test."""
 
-def compare_callable_returns(func1: Callable, func2: Callable, max_test_cases: int = 5) -> bool:
+
+def compare_callable_returns(
+    func1: Callable[..., object], func2: Callable[..., object], max_test_cases: int = 5
+) -> bool:
     """
     Compare two callable functions for observational equivalence.
 
@@ -51,9 +56,10 @@ def compare_callable_returns(func1: Callable, func2: Callable, max_test_cases: i
 
     # Generate test cases based on signature
     # Generate test cases for each parameter
-    param_values = []
+    param_values: List[List[object]] = []
     for param in params1:
         # Use simple heuristics for generating test values
+        values: List[object]
         if param.name in ["x", "y", "z", "n", "i", "j"]:
             values = [0, 1, -1, 5]
         elif "item" in param.name.lower():
@@ -70,6 +76,7 @@ def compare_callable_returns(func1: Callable, func2: Callable, max_test_cases: i
     num_params = len(params1)
 
     # Generate test cases (use simple combinations)
+    test_cases: List[Tuple[object, ...]]
     if num_params == 0:
         # No parameters - just call both functions
         test_cases = [()]
@@ -100,6 +107,8 @@ def compare_callable_returns(func1: Callable, func2: Callable, max_test_cases: i
 
     # Execute both functions with test cases and compare results
     for test_args in test_cases[:max_test_cases]:
+        result1: object
+        result2: object
         try:
             result1 = func1(*test_args)
             exception1 = None
@@ -225,7 +234,7 @@ class FunctionExecutionResult:
 
     def __repr__(self):
         if self.exception:
-            return f"FunctionExecutionResult(exception={self.exception_type.__name__}: {self.exception})"
+            return f"FunctionExecutionResult(exception={type(self.exception).__name__}: {self.exception})"
         return f"FunctionExecutionResult(return_value={repr(self.return_value)})"
 
     @staticmethod
@@ -265,8 +274,8 @@ class TestFunctionExecutionResult(unittest.TestCase):
 def execute_function(
     code: str,
     function_name: str,
-    args: Tuple = (),
-    kwargs: Dict = None,
+    args: Tuple[object, ...] = (),
+    kwargs: Optional[Dict[str, object]] = None,
     capture_output: bool = True,
 ) -> FunctionExecutionResult:
     """
@@ -328,7 +337,7 @@ def compare_function_behavior(
     original_code: str,
     refactored_code: str,
     function_name: str,
-    test_cases: List[Tuple[Tuple, Dict]],
+    test_cases: List[CallCase],
 ) -> Tuple[bool, List[str]]:
     """
     Compare behavior of a function in original vs refactored code.
@@ -352,7 +361,7 @@ def compare_function_behavior(
 def compare_executions(
     original: Callable[[Tuple[object, ...], Dict[str, object]], FunctionExecutionResult],
     refactored: Callable[[Tuple[object, ...], Dict[str, object]], FunctionExecutionResult],
-    test_cases: List[Tuple[Tuple[object, ...], Dict[str, object]]],
+    test_cases: List[CallCase],
 ) -> Tuple[bool, List[str]]:
     """Compare executions and observable input mutations on independent copies."""
     if not test_cases:
@@ -484,7 +493,7 @@ class TestObservationalEquivalence(unittest.TestCase):
         refactored_content = self.engine.apply_refactoring(str(example_path), proposals[0])
 
         # Test process_user_data function
-        test_cases = [
+        test_cases: List[CallCase] = [
             ((123,), {}),
             ((456,), {}),
             ((0,), {}),
@@ -527,7 +536,7 @@ class TestObservationalEquivalence(unittest.TestCase):
         refactored_content = self.engine.apply_refactoring(str(example_path), proposals[0])
 
         # Test early_return functions
-        test_cases = [
+        test_cases: List[CallCase] = [
             ((-5,), {}),
             ((0,), {}),
             ((10,), {}),
@@ -561,7 +570,7 @@ class TestObservationalEquivalence(unittest.TestCase):
         refactored_content = self.engine.apply_refactoring(str(example_path), proposals[0])
 
         # Test process_list functions
-        test_cases = [
+        test_cases: List[CallCase] = [
             (([1, 2, 3],), {}),
             (([],), {}),
             (([10, 20, 30, 40],), {}),
@@ -622,7 +631,7 @@ def calculate_b(y):
             refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
 
             # Test both functions with same inputs
-            test_cases = [
+            test_cases: List[CallCase] = [
                 ((5,), {}),
                 ((0,), {}),
                 ((-3,), {}),
@@ -672,7 +681,7 @@ def calculate_b(y):
                 self.skipTest("No refactorings applied")
 
             # Test update_mutable_state functions
-            test_cases = [
+            test_cases: List[CallCase] = [
                 (([10, 20, 30], {}), {}),
                 (([5], {}), {}),
             ]
@@ -743,7 +752,7 @@ def multiply(a, b):
 def multiply(a, b):
     return a * b
 """
-        test_cases = [
+        test_cases: List[CallCase] = [
             ((2, 3), {}),
             ((0, 5), {}),
             ((-1, 4), {}),
@@ -752,6 +761,7 @@ def multiply(a, b):
         all_passed, differences = compare_function_behavior(code1, code2, "multiply", test_cases)
 
         self.assertTrue(all_passed)
+        self.assertEqual(differences, [])
         self.assertEqual(len(differences), 0)
 
     def test_compare_different_functions(self):
@@ -764,14 +774,15 @@ def process(x):
 def process(x):
     return x * 3
 """
-        test_cases = [
+        test_cases: List[CallCase] = [
             ((5,), {}),
         ]
 
         all_passed, differences = compare_function_behavior(code1, code2, "process", test_cases)
 
         self.assertFalse(all_passed)
-        self.assertGreater(len(differences), 0)
+        (difference,) = differences
+        self.assertIn("Test case 0 with args=(5,), kwargs={}", difference)
 
 
 class TestAutomaticObservationalEquivalence(unittest.TestCase):

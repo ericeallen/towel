@@ -27,6 +27,12 @@ from towel.unification.substitution import Substitution
 from towel.unification.extractor import HygienicExtractor
 
 
+def _name_id(node: ast.expr) -> str:
+    """Return the identifier of a Name node, failing on any other expression."""
+    assert isinstance(node, ast.Name), f"Expected ast.Name, got {type(node).__name__}"
+    return node.id
+
+
 class TestExtractorReturnStatements(unittest.TestCase):
     """Test extractor adds return statements for value-producing extraction."""
 
@@ -59,7 +65,7 @@ result = result * 2
 
         # x is a free variable
         free_variables = {"x"}
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
 
         # result is a return variable
         return_variables = ["result"]
@@ -85,9 +91,11 @@ result = result * 2
 
         last_stmt = func_def.body[-1]
         self.assertIsInstance(last_stmt, ast.Return)
+        assert isinstance(last_stmt, ast.Return)
 
         # Verify return value is the return variable
         self.assertIsInstance(last_stmt.value, ast.Name)
+        assert isinstance(last_stmt.value, ast.Name)
         self.assertEqual(last_stmt.value.id, "result")
 
     def test_multiple_return_variables(self):
@@ -112,7 +120,7 @@ b = y + 1
 
         substitution = Substitution()
         free_variables = {"x", "y"}
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
         return_variables = ["a", "b"]
 
         func_def, param_order = self.extractor.extract_function(
@@ -130,15 +138,16 @@ b = y + 1
 
         last_stmt = func_def.body[-1]
         self.assertIsInstance(last_stmt, ast.Return)
+        assert isinstance(last_stmt, ast.Return)
 
         # Verify return value is a tuple
         self.assertIsInstance(last_stmt.value, ast.Tuple)
+        assert isinstance(last_stmt.value, ast.Tuple)
 
         # Verify tuple contains both variables
         tuple_elts = last_stmt.value.elts
         self.assertEqual(len(tuple_elts), 2)
-        self.assertEqual(tuple_elts[0].id, "a")
-        self.assertEqual(tuple_elts[1].id, "b")
+        self.assertEqual([_name_id(elt) for elt in tuple_elts], ["a", "b"])
 
     def test_no_return_variables_backward_compatibility(self):
         """
@@ -153,8 +162,8 @@ print(x)
 
         substitution = Substitution()
         free_variables = {"x"}
-        enclosing_names = set()
-        return_variables = []  # No return variables
+        enclosing_names: set[str] = set()
+        return_variables: list[str] = []  # No return variables
 
         func_def, param_order = self.extractor.extract_function(
             template_block=block,
@@ -185,7 +194,7 @@ __temp_0 = __temp_0 * 2
 
         substitution = Substitution()
         free_variables = {"x"}
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
 
         # The hygienic rename is __temp_0 (from unifier)
         return_variables = ["__temp_0"]
@@ -203,6 +212,8 @@ __temp_0 = __temp_0 * 2
         # Verify return statement uses hygienic name
         last_stmt = func_def.body[-1]
         self.assertIsInstance(last_stmt, ast.Return)
+        assert isinstance(last_stmt, ast.Return)
+        assert isinstance(last_stmt.value, ast.Name)
         self.assertEqual(last_stmt.value.id, "__temp_0")
 
     def test_return_variables_maintain_order(self):
@@ -220,7 +231,7 @@ third = z + 1
 
         substitution = Substitution()
         free_variables = {"x", "y", "z"}
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
 
         # Order matters!
         return_variables = ["first", "second", "third"]
@@ -237,11 +248,11 @@ third = z + 1
 
         # Verify return tuple maintains order
         last_stmt = func_def.body[-1]
+        assert isinstance(last_stmt, ast.Return)
+        assert isinstance(last_stmt.value, ast.Tuple)
         tuple_elts = last_stmt.value.elts
 
-        self.assertEqual(tuple_elts[0].id, "first")
-        self.assertEqual(tuple_elts[1].id, "second")
-        self.assertEqual(tuple_elts[2].id, "third")
+        self.assertEqual([_name_id(elt) for elt in tuple_elts], ["first", "second", "third"])
 
     def test_return_statement_ast_correctness(self):
         """
@@ -256,7 +267,7 @@ result = x + 1
 
         substitution = Substitution()
         free_variables = {"x"}
-        enclosing_names = set()
+        enclosing_names: set[str] = set()
         return_variables = ["result"]
 
         func_def, param_order = self.extractor.extract_function(
@@ -285,11 +296,11 @@ result = x + 1
 
         Should handle gracefully (though this shouldn't happen in practice).
         """
-        block = []  # Empty block
+        block: list[ast.stmt] = []  # Empty block
 
         substitution = Substitution()
-        free_variables = set()
-        enclosing_names = set()
+        free_variables: set[str] = set()
+        enclosing_names: set[str] = set()
         return_variables = ["result"]
 
         func_def, param_order = self.extractor.extract_function(

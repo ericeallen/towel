@@ -10,6 +10,9 @@ observational equivalence, focusing on:
 
 from __future__ import annotations
 
+import contextlib
+import io
+import shutil
 from pathlib import Path
 from typing import List
 
@@ -22,7 +25,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 CROSSFILE_DIR = PROJECT_ROOT / "test_examples_crossfile"
 
 
-def _participating_files(proposal) -> set:
+def _participating_files(proposal) -> set[str]:
     """Files a proposal touches, counting a reused definition's module.
 
     When one duplicate is the whole body of an existing function, that
@@ -71,8 +74,12 @@ class TestCrossFileProposalStructure:
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
 
-        # Should find at least one cross-file duplication
-        assert len(proposals) > 0, "Should find duplicate email validation logic"
+        # The one duplicate is the whole body of validate_admin_email, so the
+        # user module is rewritten to call it.
+        assert [p.description for p in proposals] == [
+            "Reuse validate_admin_email (admin_service.py) for duplicated code in "
+            "validate_user_email"
+        ]
 
     def test_crossfile_proposal_has_replacements_in_multiple_files(self):
         """Cross-file proposals should have replacements spanning multiple files."""
@@ -80,9 +87,11 @@ class TestCrossFileProposalStructure:
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
 
-        # At least one proposal should span multiple files
-        cross_file_proposals = [p for p in proposals if len(_participating_files(p)) > 1]
-        assert len(cross_file_proposals) > 0, "Should have cross-file proposals"
+        # Every proposal spans both modules: the reused definition lives in one
+        # and the rewritten site in the other.
+        assert [sorted(Path(f).name for f in _participating_files(p)) for p in proposals] == [
+            ["admin_service.py", "user_service.py"]
+        ]
 
     def test_crossfile_proposal_has_valid_file_paths(self):
         """All file paths in proposals should point to actual input files."""
@@ -120,11 +129,10 @@ class TestCrossFileImportGeneration:
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
 
-        # All proposals should have a file_path
+        # Every proposal is hosted in one of the analyzed files.
+        assert proposals
         for proposal in proposals:
-            assert proposal.file_path is not None
-            assert isinstance(proposal.file_path, str)
-            assert len(proposal.file_path) > 0
+            assert proposal.file_path in set(files)
 
     def test_crossfile_extracted_function_name_is_valid(self):
         """Extracted function names should be valid Python identifiers."""
@@ -150,9 +158,10 @@ class TestCrossFileWithPipeline:
         files = get_crossfile_project_files("simple_crossfile")
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
 
-        assert isinstance(proposals, list)
-        # Should find cross-file duplications
-        assert len(proposals) > 0
+        assert [p.description for p in proposals] == [
+            "Reuse validate_admin_email (admin_service.py) for duplicated code in "
+            "validate_user_email"
+        ]
 
     def test_pipeline_crossfile_matches_engine(self):
         """Pipeline and engine should produce same results for cross-file."""
@@ -316,7 +325,7 @@ class TestCrossFilePerformance:
 
         files = get_crossfile_project_files("simple_crossfile")
         engine = UnificationRefactorEngine()
-        evaluated = []
+        evaluated: list[tuple[str, tuple[int, int], str, tuple[int, int]]] = []
         original = UnificationRefactorEngine.process_block_pairs
 
         def record(self, block_pairs, *args, **kwargs):
@@ -340,26 +349,58 @@ class TestCrossFilePerformance:
         assert isinstance(proposals, list)
 
 
+EXAMPLE3_REUSE = (
+    "Reuse calculate_discount_for_regular_customer (example3_file1.py) for duplicated code "
+    "in calculate_discount_for_premium_customer"
+)
+
+
 class TestExampleThreeCrossFile:
-    """Test the example3 cross-file scenario (file1 and file2)."""
+    """The example3 pair: a duplicate that lives in two modules.
+
+    Single-file mode finds nothing in either file (their goldens equal their
+    inputs); analyzed together, the premium module's discount function is the
+    whole body of the regular module's, so it is rewritten to import and call
+    it. The directory run is what generates the import line.
+    """
 
     def test_example3_finds_cross_file_duplication(self):
-        """Example 3 files should have duplicate discount calculation logic."""
         file1, file2 = get_example3_files()
 
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files([file1, file2])
 
-        # Should find the duplicate discount calculation
-        assert len(proposals) > 0, "Should find duplicate discount logic"
+        assert [p.description for p in proposals] == [EXAMPLE3_REUSE]
+        assert _participating_files(proposals[0]) == {file1, file2}
+        assert engine.analyze_file(file1) == [] and engine.analyze_file(file2) == []
 
-    def test_example3_proposals_span_both_files(self):
-        """Example 3 proposals should reference both files."""
-        file1, file2 = get_example3_files()
+    def test_example3_directory_run_imports_the_reused_function(self, tmp_path: Path):
+        source = tmp_path / "example3"
+        source.mkdir()
+        for path in get_example3_files():
+            shutil.copy(path, source / Path(path).name)
+        out = tmp_path / "out"
 
-        engine = UnificationRefactorEngine()
-        proposals = engine.analyze_files([file1, file2])
+        with contextlib.redirect_stdout(io.StringIO()):
+            results, termination = UnificationRefactorEngine().refactor_directory_to_fixed_point(
+                str(source), str(out), progress="none"
+            )
 
-        # At least one proposal should touch both files
-        cross_file = [p for p in proposals if len(_participating_files(p)) == 2]
-        assert len(cross_file) > 0, "Should have proposals spanning both files"
+        assert termination == "fixed_point"
+        # Both modules take part in the one proposal: the regular module hosts the
+        # reused definition and the premium module is rewritten to call it.
+        assert results == {
+            str(out / "example3_file1.py"): (1, [EXAMPLE3_REUSE]),
+            str(out / "example3_file2.py"): (1, [EXAMPLE3_REUSE]),
+        }
+        assert (out / "example3_file1.py").read_bytes() == (
+            source / "example3_file1.py"
+        ).read_bytes()
+        premium = (out / "example3_file2.py").read_text()
+        assert "from example3_file1 import calculate_discount_for_regular_customer\n" in premium
+        assert (
+            "def calculate_discount_for_premium_customer(price, customer):\n"
+            '    """Calculate discount for premium customer."""\n'
+            "    # Calculate discount (DUPLICATE across files!)\n"
+            "    return calculate_discount_for_regular_customer(price, customer)\n"
+        ) in premium

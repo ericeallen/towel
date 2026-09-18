@@ -12,10 +12,12 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 import textwrap
+from typing import Unpack
 
 import pytest
 
 from tests.test_cli_integration import invoke
+from tests.test_helpers import EngineOptions
 from towel.formatting import BlackSettings, FormattingChangedCode, black_formatter, checked
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -32,8 +34,8 @@ DUPLICATED_STRINGS = textwrap.dedent("""
     """)
 
 
-def _refactor(path: Path, **engine_options: object) -> str:
-    engine = UnificationRefactorEngine(min_lines=2, **engine_options)  # type: ignore[arg-type]
+def _refactor(path: Path, **engine_options: Unpack[EngineOptions]) -> str:
+    engine = UnificationRefactorEngine(min_lines=2, **engine_options)
     (proposal,) = engine.analyze_file(str(path))
     return engine.apply_refactoring(str(path), proposal)
 

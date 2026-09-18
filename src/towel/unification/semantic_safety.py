@@ -29,13 +29,6 @@ from .statement_facts import (
 from .structural_memo import structural_id
 from .visitors import OwnScopeVisitor
 
-# The import-graph half lives in import_graph.py; the tests still import it here.
-from .import_graph import (  # noqa: F401
-    ImportGraphCache,
-    imported_definition_sites,
-    would_create_import_cycle,
-)
-
 if TYPE_CHECKING:
     from .substitution import Substitution
 

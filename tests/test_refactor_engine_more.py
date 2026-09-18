@@ -3,12 +3,9 @@ import os
 import tempfile
 import unittest
 
-from towel.unification.refactor_engine import (
-    UnificationRefactorEngine,
-    RefactoringProposal,
-)
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.overlap import filter_overlapping_proposals
-from towel.unification.models import Replacement
+from towel.unification.models import RefactoringProposal, Replacement
 
 
 def write_file(path: str, content: str) -> None:
@@ -79,7 +76,9 @@ def outer():
 
             engine = UnificationRefactorEngine(min_lines=3)
             proposals = engine.analyze_file(fn)
-            self.assertTrue(proposals)
+            self.assertEqual(
+                [p.description for p in proposals], ["Extract common code from f and g"]
+            )
             modified = engine.apply_refactoring_multi_file(proposals[0])[fn]
             # Helper should be inserted inside outer(), look for indentation before def name
             lines = modified.splitlines()
