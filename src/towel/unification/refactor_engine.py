@@ -84,6 +84,7 @@ from .models import (
     FunctionNode,
 )
 from ..type_inference import TypeOracle
+from ..source_text import read_source
 from .pipeline import run_pipeline, AnalysisSession
 
 # Configuration defaults
@@ -545,8 +546,8 @@ class UnificationRefactorEngine(
         """Prime the helper counter based on existing helper names in a file."""
 
         try:
-            content = Path(file_path).read_text(encoding="utf-8")
-        except FileNotFoundError:
+            content = read_source(file_path)
+        except (OSError, UnicodeError, SyntaxError):
             return 0
 
         pattern = re.compile(r"(?<!\w)_{1,2}extracted_func(?:_(\d+))?(?!\w)")

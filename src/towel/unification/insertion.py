@@ -35,6 +35,7 @@ from .visitors import ClassLocator, FuncLocator, body_without_docstring
 
 from .engine_state import EngineState
 from .models import FunctionNode
+from ..source_text import read_source
 
 
 def reindent(line: str, prefix: str) -> str:
@@ -164,8 +165,7 @@ class InsertionPoints(EngineState):
         cached = self._source_lines_cache.get(file_path)
         if cached is not None and cached[0] == signature:
             return cached[1]
-        with open(file_path, "r", encoding="utf-8") as handle:
-            lines = tuple(handle.readlines())
+        lines = tuple(read_source(file_path).splitlines(keepends=True))
         self._source_lines_cache[file_path] = (signature, lines)
         if len(self._source_lines_cache) > 64:
             self._source_lines_cache.pop(next(iter(self._source_lines_cache)))

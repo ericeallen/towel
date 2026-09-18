@@ -21,6 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
+from towel.source_text import read_source
 from towel.unification.models import ParameterKind
 from towel.unification.progress import DEFAULT_PROGRESS, normalize_progress
 
@@ -690,8 +691,8 @@ def _run_preview(args: argparse.Namespace) -> None:
             start, end = repl.line_range
             if fpath not in source_cache:
                 try:
-                    source_cache[fpath] = open(fpath, encoding="utf-8").readlines()
-                except OSError:
+                    source_cache[fpath] = read_source(fpath).splitlines(keepends=True)
+                except (OSError, UnicodeError, SyntaxError):
                     source_cache[fpath] = []
             file_lines = source_cache[fpath]
             if not (1 <= start <= end <= len(file_lines)):
@@ -791,9 +792,9 @@ def _find_extracted_helpers(
                 continue
 
         try:
-            source = py_file.read_text()
+            source = read_source(py_file)
             tree = ast.parse(source)
-        except (SyntaxError, UnicodeDecodeError):
+        except (OSError, SyntaxError, UnicodeError):
             continue
 
         for node in ast.walk(tree):
@@ -879,9 +880,9 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
         if path.is_symlink():
             continue
         try:
-            source = path.read_text(encoding="utf-8")
+            source = read_source(path)
             modules[path] = (source, ast.parse(source))
-        except (SyntaxError, UnicodeDecodeError):
+        except (OSError, SyntaxError, UnicodeError):
             continue
     calls: Dict[str, List[CallRecord]] = {name: [] for name in wanted}
     for path, (source, tree) in modules.items():

@@ -26,6 +26,7 @@ from .binding_detector import BindingDetector
 from .project_layout import ProjectLayout
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
 from .visitors import OwnScopeVisitor
+from ..source_text import read_source
 
 if TYPE_CHECKING:
     from .substitution import Substitution
@@ -495,7 +496,7 @@ def _import_edges(
     if key in cache.edges:
         return cache.edges.get(key)
     try:
-        tree = ast.parse(current.read_text(encoding="utf-8"))
+        tree = ast.parse(read_source(current))
     except (OSError, UnicodeError, SyntaxError):
         return cache.edges.put(key, None)
     dependencies: Set[Path] = set()
@@ -568,7 +569,7 @@ def _module_level_import_bindings(
     if key in cache.bindings:
         return cache.bindings.get(key)
     try:
-        tree = ast.parse(current.read_text(encoding="utf-8"))
+        tree = ast.parse(read_source(current))
     except (OSError, UnicodeError, SyntaxError):
         return cache.bindings.put(key, None)
     bindings: Dict[str, Tuple[str, ...]] = {}

@@ -42,6 +42,7 @@ from .models import AppliedChange, RefactoringProposal, Replacement
 from .pipeline import parse_cached
 from .project_layout import ProjectLayout, is_package_dir
 from towel.changes import ChangeConflict, ChangePlan
+from ..source_text import read_source
 
 from .engine_state import EngineState
 
@@ -101,10 +102,7 @@ class Materialization(EngineState):
     def apply_refactoring_multi_file(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render without writing or mutating caller-owned proposal ASTs."""
         for path, digest in proposal.source_digests:
-            if (
-                hashlib.sha256(Path(path).read_text(encoding="utf-8").encode("utf-8")).hexdigest()
-                != digest
-            ):
+            if hashlib.sha256(read_source(path).encode("utf-8")).hexdigest() != digest:
                 raise ChangeConflict(f"Stale proposal; analyze again: {path}")
         counters = self._helper_name_counters.copy()
         try:

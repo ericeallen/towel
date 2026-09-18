@@ -245,7 +245,9 @@ def test_crlf_fixed_point_uses_original_bytes_for_stale_check(tmp_path):
     engine = UnificationRefactorEngine(min_lines=3)
     result, count, _ = engine.refactor_to_fixed_point(str(path), max_iterations=1)
     assert count == 1
-    assert path.read_bytes() == result.encode("utf-8")
+    # The file keeps its line endings; the returned text is LF like every source in memory.
+    assert b"\n" not in path.read_bytes().replace(b"\r\n", b"")
+    assert path.read_bytes() == result.encode("utf-8").replace(b"\n", b"\r\n")
     scope = {}
     exec(result, scope)
     assert scope["a"](3) == scope["b"](3) == 8

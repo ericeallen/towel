@@ -28,7 +28,6 @@ from collections import Counter
 import copy
 import dataclasses
 
-from pathlib import Path
 from typing import Dict, List, Optional, Set, cast
 from .annotations import (
     ApplySite,
@@ -45,6 +44,7 @@ from .models import FunctionNode, RefactoringProposal
 from ..diagnostics import TYPES
 
 from .engine_state import EngineState
+from ..source_text import read_source
 from .function_index import FunctionIndex
 
 
@@ -117,7 +117,7 @@ class HelperAnnotationWiring(EngineState):
                 return
             source = sources.get(file_path)
             if source is None:
-                source = Path(file_path).read_text(encoding="utf-8")
+                source = read_source(file_path)
                 sources[file_path] = source
             lines = source.splitlines(keepends=True)
             start_line, end_line = replacement.line_range
@@ -164,8 +164,8 @@ class HelperAnnotationWiring(EngineState):
     @staticmethod
     def _read_source(file_path: str) -> Optional[str]:
         try:
-            return Path(file_path).read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
+            return read_source(file_path)
+        except (OSError, UnicodeError, SyntaxError):
             return None
 
     @staticmethod
@@ -188,7 +188,7 @@ class HelperAnnotationWiring(EngineState):
     @staticmethod
     def _parsed_host(file_path: str) -> Optional[ast.Module]:
         try:
-            return ast.parse(Path(file_path).read_text(encoding="utf-8"))
+            return ast.parse(read_source(file_path))
         except (OSError, SyntaxError, UnicodeError):
             return None
 

@@ -46,7 +46,6 @@ from collections import OrderedDict
 import hashlib
 from dataclasses import dataclass
 import os
-from pathlib import Path
 
 from .models import (
     ParsedModule,
@@ -67,6 +66,7 @@ from .progress import (
     wants_bar,
 )
 from ..diagnostics import LOG, Settings
+from ..source_text import read_source
 from .visitors import DefinitionDepthVisitor, FunctionCollector
 
 
@@ -296,8 +296,8 @@ class AnalysisSession:
         if cached is None:
             return False
         try:
-            return Path(path).read_text(encoding="utf-8") == cached.module.source
-        except (OSError, UnicodeError):
+            return read_source(path) == cached.module.source
+        except (OSError, UnicodeError, SyntaxError):
             return False
 
     @staticmethod
@@ -320,8 +320,8 @@ class AnalysisSession:
         """
         key = (os.path.abspath(path), path)
         try:
-            source = Path(path).read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
+            source = read_source(path)
+        except (OSError, UnicodeError, SyntaxError) as error:
             self._discard(key)
             raise SourceFileError(str(error)) from error
         cached = self._entries.get(key)
@@ -377,7 +377,7 @@ def parse_cached(source: str) -> ast.Module:
 
 def _read_and_normalize_module(path: str) -> Tuple[str, ast.AST]:
     """Read a module without changing Python operator or mutation semantics."""
-    src = Path(path).read_text(encoding="utf-8")
+    src = read_source(path)
     tree: ast.AST = ast.parse(src)
     return src, tree
 

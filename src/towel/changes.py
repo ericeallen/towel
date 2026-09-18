@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from .source_text import encode_like
 import stat
 import tempfile
 from typing import Mapping
@@ -62,7 +63,7 @@ class ChangePlan:
                 raise ChangeConflict(f"Duplicate change target: {path}")
             seen.add(path)
             original = before[name]
-            updated = source.encode("utf-8")
+            updated = encode_like(original, source)
             compile(updated, str(path), "exec")
             if original != updated:
                 changes.append(

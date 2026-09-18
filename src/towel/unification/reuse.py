@@ -40,6 +40,7 @@ from .semantic_safety import would_create_import_cycle
 from .visitors import body_without_docstring
 
 from .engine_state import EngineState
+from ..source_text import read_source
 from .function_index import FunctionIndex
 
 
@@ -401,7 +402,7 @@ class ExistingFunctionReuse(EngineState):
         """
         source = modified_files.get(target.file_path)
         if source is None:
-            source = Path(target.file_path).read_text(encoding="utf-8")
+            source = read_source(target.file_path)
         definitions = [
             node
             for node in parse_cached(source).body

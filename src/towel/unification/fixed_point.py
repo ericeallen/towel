@@ -48,6 +48,7 @@ from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangeConflict, ChangePlan, apply_changes
 from ..diagnostics import LOG, REJECTIONS, debugging
 from ..filesystem import copy_project
+from ..source_text import decode_source, encode_like, read_source
 
 from .engine_state import EngineState
 
@@ -123,7 +124,7 @@ class FixedPointDrivers(EngineState):
         """
         self._change_log = []
         current_bytes = Path(file_path).read_bytes()
-        current_code = current_bytes.decode("utf-8")
+        current_code = decode_source(current_bytes)
         num_applied = 0
         descriptions = []
 
@@ -148,7 +149,7 @@ class FixedPointDrivers(EngineState):
                 ChangePlan.from_sources({file_path: current_bytes}, {file_path: new_code})
             )
             current_code = new_code
-            current_bytes = new_code.encode("utf-8")
+            current_bytes = encode_like(current_bytes, new_code)
             num_applied += 1
             descriptions.append(proposal.description)
 
@@ -179,8 +180,9 @@ class FixedPointDrivers(EngineState):
         flagged: List[Tuple[str, FrozenSet[str]]] = []
         for path in self._find_python_files(directory):
             try:
-                markers = frame_sensitivity_markers(Path(path).read_text(encoding="utf-8"))
-            except OSError:
+                markers = frame_sensitivity_markers(read_source(path))
+            except (OSError, UnicodeError, SyntaxError):
+                # An unreadable file is reported by the analysis that follows.
                 continue
             if markers:
                 flagged.append((path, markers))
