@@ -156,6 +156,9 @@ def test_index_extracts_blocks_and_signatures_once_per_function(tmp_path):
 
 
 def test_bucket_gates_never_exclude_quick_filter_matches():
+    # Every enumerated block has at least one statement, so a signature's
+    # statement sequence is never empty; the bucket key partitions on the
+    # whole sequence, which ``quick_filter`` requires equal too.
     template = extract_block_signature(ast.parse("result = value").body)
     signatures = [
         replace(
@@ -167,9 +170,21 @@ def test_bucket_gates_never_exclude_quick_filter_matches():
             name_load_count=loads,
         )
         for count, sequence, has_with, has_try, loads in product(
-            (0, 1, 2), ((), ("Assign",), ("Return",)), (False, True), (False, True), (0, 2, 3)
+            (1, 2),
+            (("Assign",), ("Return",), ("Assign", "Return"), ("Return", "Assign")),
+            (False, True),
+            (False, True),
+            (0, 2, 3),
         )
     ]
     for first, second in product(signatures, repeat=2):
         if quick_filter(first, second):
             assert signature_bucket_key(first) == signature_bucket_key(second)
+
+
+def test_enumerated_blocks_always_have_a_statement(tmp_path):
+    engine = UnificationRefactorEngine(min_lines=1)
+    source = "def f(a):\n    x = a\n    if x:\n        return 1\n    return 0\n"
+    function = ast.parse(source).body[0]
+    for _span, nodes, signature in engine._signed_blocks(function):
+        assert nodes and signature.stmt_seq

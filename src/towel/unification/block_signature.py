@@ -89,18 +89,21 @@ def extract_block_signature(block: List[ast.AST]) -> BlockSignature:
     )
 
 
-BlockBucketKey = Tuple[int, bool, bool]
+BlockBucketKey = Tuple[int, bool, bool, Tuple[str, ...]]
 
 
 def signature_bucket_key(signature: BlockSignature) -> BlockBucketKey:
-    """Return exact gates that every quick_filter-compatible pair must share.
+    """Return exact gates that every unifiable pair must share.
 
-    Endpoint statement types intentionally remain outside this key: an empty
-    stmt_seq is a wildcard in the public quick_filter compatibility contract.
-    Name and call count tolerances are not equivalence relations and likewise
-    must not be partitioned into disjoint buckets.
+    The statement-type sequence is part of the key: the unifier walks the
+    two blocks in lockstep and cannot unify statements of different kinds
+    (a statement is not an expression it could turn into a parameter), so
+    two blocks whose sequences differ never unify, and partitioning on the
+    sequence changes what is compared, not what is accepted. ``quick_filter``
+    requires the same. Name and call count tolerances are not equivalence
+    relations and stay out of the key.
     """
-    return signature.stmt_count, signature.has_with, signature.has_try
+    return signature.stmt_count, signature.has_with, signature.has_try, signature.stmt_seq
 
 
 def quick_filter(sig1: BlockSignature, sig2: BlockSignature) -> bool:
@@ -119,9 +122,8 @@ def quick_filter(sig1: BlockSignature, sig2: BlockSignature) -> bool:
         return False
     if abs(sig1.call_count - sig2.call_count) > IDENT_COUNT_TOLERANCE:
         return False
-    if sig1.stmt_seq and sig2.stmt_seq:
-        if sig1.stmt_seq[0] != sig2.stmt_seq[0] or sig1.stmt_seq[-1] != sig2.stmt_seq[-1]:
-            return False
+    if sig1.stmt_seq and sig2.stmt_seq and sig1.stmt_seq != sig2.stmt_seq:
+        return False
     return True
 
 

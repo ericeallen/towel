@@ -59,6 +59,15 @@ arrow has the same shape: guards 48%, clustering 27%, unification 4%.
 Items 2 to 4 are pure-Python and change no output, so the goldens and the
 hostile batteries verify them exactly.
 
+## Items 3 to 5 (done 2026-09-18)
+
+Cached `ast.unparse` in the unifier's bound-variable search, `is_value_
+producing` memoized per block, five per-call visitor classes hoisted, and
+the bucket key extended to the whole statement-type sequence (exact: the
+unifier cannot unify statements of different kinds). Function calls on
+Towel's source: 339.8M before this round, 246.0M after (−28%; −47% from
+the 464.5M measured before item 1), proposal list identical.
+
 ## End-to-end measurement after items 1 and 2 (2026-09-18)
 
 Serial `towel dry`, out of place, idle machine, two runs each agreeing

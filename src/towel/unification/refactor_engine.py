@@ -424,6 +424,9 @@ class UnificationRefactorEngine:
         # Memoization caches keyed by the identity of AST nodes parsed for this engine run.
         self._assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]] = WeakKeyDictionary()
         self._used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
+        self._value_producing_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]] = (
+            WeakKeyDictionary()
+        )
         # Block guards are pure in (guard, function, block); a block takes part
         # in every pair it forms, so its verdicts are computed once.
         self._block_guard_cache: "OrderedDict[Tuple[Any, ...], bool]" = OrderedDict()
@@ -749,6 +752,21 @@ class UnificationRefactorEngine:
             verdict = bool(guard(list(nodes)))
         self._bounded_put(self._block_guard_cache, key, verdict)
         return verdict
+
+    def _is_value_producing(self, block: Sequence[ast.AST]) -> bool:
+        """``is_value_producing`` memoized per block: a block is paired many times."""
+        if not block:
+            return False
+        first = block[0]
+        by_length = self._value_producing_cache.get(first)
+        if by_length is None:
+            by_length = {}
+            self._value_producing_cache[first] = by_length
+        result = by_length.get(len(block))
+        if result is None:
+            result = is_value_producing(cast(List[ast.stmt], list(block)))
+            by_length[len(block)] = result
+        return result
 
     def _get_assignment_reuse(self, func: FunctionNode) -> Dict[int, bool]:
         """Return (and cache) assignment analysis for a function definition."""
@@ -3222,12 +3240,8 @@ class UnificationRefactorEngine:
         # Check if both blocks are value-producing or both are not
         # Blocks with return_variables are treated as value-producing because
         # we will add return statements for those variables
-        value_prod1 = is_value_producing(cast(List[ast.stmt], pair.block1_nodes)) or bool(
-            return_variables_block1
-        )
-        value_prod2 = is_value_producing(cast(List[ast.stmt], pair.block2_nodes)) or bool(
-            return_variables_block2
-        )
+        value_prod1 = self._is_value_producing(pair.block1_nodes) or bool(return_variables_block1)
+        value_prod2 = self._is_value_producing(pair.block2_nodes) or bool(return_variables_block2)
 
         if debug_enabled:
             print(f"  Value-producing check: block1={value_prod1}, block2={value_prod2}")
@@ -3327,8 +3341,8 @@ class UnificationRefactorEngine:
             return None
         ordered_return_variables = aligned
         if ordered_return_variables[0] and (
-            is_value_producing(cast(List[ast.stmt], pair.block1_nodes))
-            or is_value_producing(cast(List[ast.stmt], pair.block2_nodes))
+            self._is_value_producing(pair.block1_nodes)
+            or self._is_value_producing(pair.block2_nodes)
         ):
             # A call statement is either `x = helper()` or `return helper()`;
             # a block that both returns early and binds live variables needs both.

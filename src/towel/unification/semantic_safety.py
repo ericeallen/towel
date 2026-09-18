@@ -279,45 +279,46 @@ def _is_frame_relative_call(call: ast.Call) -> bool:
     return name in _FRAME_RELATIVE_CALLEES
 
 
+class _LoopControlVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.depth = 0
+        self.external = False
+
+    def visit_Break(self, node: ast.Break) -> None:
+        if self.depth == 0:
+            self.external = True
+
+    def visit_Continue(self, node: ast.Continue) -> None:
+        if self.depth == 0:
+            self.external = True
+
+    def _visit_loop(self, node: Union[ast.For, ast.AsyncFor, ast.While]) -> None:
+        self.depth += 1
+        for statement in node.body:
+            self.visit(statement)
+        self.depth -= 1
+        # A loop's else-suite is outside that loop's break/continue scope.
+        for statement in node.orelse:
+            self.visit(statement)
+
+    visit_For = _visit_loop
+    visit_AsyncFor = _visit_loop
+    visit_While = _visit_loop
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        pass
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        pass
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        pass
+
+
 def has_external_loop_control(nodes: Iterable[ast.AST]) -> bool:
     """Whether break/continue targets a loop outside the extraction boundary."""
 
-    class LoopControlVisitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.depth = 0
-            self.external = False
-
-        def visit_Break(self, node: ast.Break) -> None:
-            if self.depth == 0:
-                self.external = True
-
-        def visit_Continue(self, node: ast.Continue) -> None:
-            if self.depth == 0:
-                self.external = True
-
-        def _visit_loop(self, node: Union[ast.For, ast.AsyncFor, ast.While]) -> None:
-            self.depth += 1
-            for statement in node.body:
-                self.visit(statement)
-            self.depth -= 1
-            # A loop's else-suite is outside that loop's break/continue scope.
-            for statement in node.orelse:
-                self.visit(statement)
-
-        visit_For = _visit_loop
-        visit_AsyncFor = _visit_loop
-        visit_While = _visit_loop
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            pass
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            pass
-
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            pass
-
-    visitor = LoopControlVisitor()
+    visitor = _LoopControlVisitor()
     for statement in nodes:
         visitor.visit(statement)
     return visitor.external

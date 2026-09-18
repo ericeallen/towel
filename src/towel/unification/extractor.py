@@ -788,27 +788,28 @@ class HygienicExtractor:
             counter += 1
 
 
+class _ReturnFinder(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.found_return: bool = False
+
+    def visit_Return(self, node: ast.Return) -> None:
+        self.found_return = True
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # Don't visit nested function definitions
+        pass
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        # Don't visit nested async function definitions
+        pass
+
+
 def contains_return(block: List[ast.stmt]) -> bool:
     """
     Check if a block contains any return statements (including nested ones).
     """
 
-    class ReturnFinder(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.found_return: bool = False
-
-        def visit_Return(self, node: ast.Return) -> None:
-            self.found_return = True
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            # Don't visit nested function definitions
-            pass
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            # Don't visit nested async function definitions
-            pass
-
-    finder = ReturnFinder()
+    finder = _ReturnFinder()
     for stmt in block:
         finder.visit(stmt)
         if finder.found_return:
