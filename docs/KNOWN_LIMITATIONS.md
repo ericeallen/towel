@@ -302,7 +302,7 @@ core, identical output between the on and off settings of each:
 
 | Target | 1.618 | Now, `--no-types --no-format` | Now, defaults |
 |---|---|---|---|
-| Towel's own source (16,000 lines), fixed point | 47.8 s | 33.9 s | 41.8 s |
+| Towel's own source, the 1.618 snapshot the exactness baselines use (16,000 lines, 45 applied), fixed point | 47.8 s | 33.9 s | 41.8 s |
 | h2 (hyper-h2), fixed point | 5.2 s | 7.0 s | 11.9 s |
 | Sphinx, fixed point, in the ecosystem check | 2513 s | not measured | 2058 s |
 
@@ -311,7 +311,10 @@ then spend part of it type-checking each applied refactoring, a cost
 proportional to the number of applied changes rather than to project size.
 The current engine also applies more refactorings than 1.618 did on the
 same input (h2: 20 against 14; Towel's source: 45 against 41), so the
-times compare a larger amount of work.
+times compare a larger amount of work. The times depend on the input as
+much as on the engine: today's Towel source, with the third audit's
+removals, has 18 duplicates to apply and runs in 5.6 s without the type
+checker and formatter and 9.0 s with them (one core, September 2026).
 
 The remaining cost is the pairwise evaluation of structurally distinct
 candidates, which no cache can share; large test modules with hundreds of
@@ -334,7 +337,9 @@ constraint on the largest projects. A single analysis process holds the parsed
 modules and its bounded caches: about 36 MB for one small module, 85 MB for
 boltons (24,000 lines), 103 MB for Click (29,000 lines), and 247 MB for
 pygments (137,000 lines), measured as peak resident size with
-`TOWEL_WORKERS=1`. Forking multiplies that: each worker is a copy-on-write fork
+`TOWEL_WORKERS=1` and `--no-types`. With the type checker on (the default
+when mypy is installed) mypy runs in-process and its own footprint is added:
+Towel's source peaks at about 160 MB without it and about 900 MB with it. Forking multiplies that: each worker is a copy-on-write fork
 whose caches then diverge, so peak memory scales with the worker count.
 networkx (200,000 lines, tests excluded) peaked at about 1 GB in one process
 with `TOWEL_WORKERS=1`, and near 7.4 GB across twenty processes when forking

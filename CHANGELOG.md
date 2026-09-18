@@ -153,6 +153,36 @@ ecosystem evidence behind each claim. The format follows
   actions and the `uv`-managed Python dependencies.
 
 ### Fixed
+- A refactored file keeps its own encoding, byte-order mark and newline
+  convention: a CRLF file used to come back with every line changed, a file
+  with a UTF-8 BOM was skipped, and one latin-1 file with a coding cookie
+  failed a whole directory run. Sources are decoded as the interpreter
+  decodes them and written back in the file's own bytes.
+- A project whose packaging layout Towel cannot model (a `hatch.toml`, some
+  flit, poetry and pdm forms) no longer aborts the run when it has a
+  cross-file candidate: the pair is declined (`unknown_layout` in the
+  rejection trace) and every same-file extraction proceeds. Layout
+  discovery raises `UnsupportedLayoutError`, and the command line reports
+  any `TowelError` as an error line instead of a traceback.
+- `--progress none` is silent through the localized and stale re-analyses
+  that follow each applied proposal, the single-file driver takes a
+  progress mode, and `preview` accepts `--progress`. Both drivers run to a
+  fixed point by default, as the CLI always did; they used to stop after
+  ten iterations, and the goldens generated through them were ten-step
+  snapshots rather than fixed points.
+- `rename-helpers --list --json` no longer crashes on a symlinked module; a
+  confirmation prompt at a closed stdin declines instead of raising; an
+  isort skip setting, a failing or hung ruff, a hung pyright, and pyright
+  output of an unexpected shape each degrade with a warning naming the
+  file instead of aborting or being swallowed; a non-integer
+  `TOWEL_WORKERS` is reported; a configured worker count never reaches a
+  platform without `fork`; a corrupt transaction manifest and a concurrent
+  transaction are reported as the journal's own errors; the engine forgets
+  a rewritten file's cached lines when it invalidates the file; the parallel
+  fallback no longer hides worker exceptions behind a serial retry; and the
+  command line's stderr handler follows a redirected stderr.
+- The cross-file fixture package named `lib` was hidden from fresh checkouts
+  by the `lib/` ignore pattern; the pattern exempts the fixtures.
 - Two blocks that differed only in the spelling of a lambda's parameter
   (`lambda value: value * 2` against `lambda other: other * 2`), or of an
   assignment expression's target (`(t := f())` against `(temp := f())`),
@@ -198,6 +228,28 @@ ecosystem evidence behind each claim. The format follows
   spellings still parse and are left out of the help.
 
 ### Changed (library)
+- `refactor_directory_to_fixed_point` returns a `TerminationReason` literal;
+  `CodeBlockPair` carries every field pairing always gives it (only the
+  class and enclosing-function names are Optional) and answers
+  `is_cross_file`; `RefactoringProposal.replacements` holds `Replacement`
+  values only, the tuple coercion is gone; the unused exception classes are
+  gone and `UnsupportedLayoutError` joins `RefactoringError` under
+  `TowelError`; `towel.project_layout` is a top-level module (the old path
+  re-exports it); the import-graph cache is a required argument of the
+  cycle and resolution checks (no process-global default); the engine
+  constructor no longer changes logger levels (`Settings.enable_debug_logging`
+  is the library caller's to call); one `BoundedCache` replaces three LRU
+  implementations and the parse cache is the engine's own; `FunctionNode`
+  is the one name for a function definition node; the defaults live in
+  `towel.unification.defaults`; `towel.source_text` decodes and re-encodes
+  sources.
+- A third structural pass: the block signatures, clustering guards, cache
+  keys, pair context and stage records are typed; the remaining long
+  functions (materialization, the drivers, layout discovery, the pairing
+  loop, the call generator, the clustering pass, the rename planner, the
+  compound-node unifier, the thunk walker) are named steps or dispatch
+  tables; every function and closure with no caller is removed, mypy runs
+  with `warn_unreachable`, and flake8 checks `tests/` for pyflakes errors.
 - The engine computes what it can once per statement instead of once per
   block: block signatures, return checks, the frame-sensitivity and
   name-binding guards, structural digests, the unifier's per-statement
@@ -285,7 +337,19 @@ ecosystem evidence behind each claim. The format follows
   progress-bar calls are one `quietly`; four unjustified `type: ignore`
   comments and three `pragma: no cover` exclusions are gone.
 
+### Removed
+- `nominal_unifier.py`, which nothing imported, and the TOML backport for
+  Python 3.10, below the supported floor, with its `tomli` dev dependency.
+
 ### Security
+- Pyright runs with Towel's interpreter (`--pythonpath`), so a `venv`
+  setting in the analyzed project's pyright configuration can no longer
+  execute that project's interpreter; SECURITY.md says exactly what each
+  checker does and when to pass `--no-types`. Ruff and pyright are resolved
+  from the current interpreter before PATH. The ecosystem job runs
+  third-party test suites without the checkout token persisted and with a
+  scratch HOME; the workflows pin actions to commits. The rename file is
+  read as UTF-8 and the change sidecar is never written through a symlink.
 - The ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`)
   clones public repositories and runs their setup, dependency installation
   and test suites with the caller's privileges. It now refuses to run

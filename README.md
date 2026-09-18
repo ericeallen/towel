@@ -123,11 +123,11 @@ Rough expectations with the defaults:
 | One module | a 2,000-line file | seconds |
 | Small package | boltons, 24,000 lines | about 5 s |
 | Medium package | Click, 29,000 lines | about 12 s |
-| Towel's own source | 16,000 annotated lines, fixed point | about 40 s |
+| Towel's own source | 21,000 lines (16,600 of code), fixed point, September 2026 | about 9 s (5.6 s without the type checker and formatter) |
 | Large package | pygments, 137,000 lines | tens of seconds |
 | Largest in the corpus | networkx and Sphinx, 150,000 to 200,000 lines | several minutes to about half an hour |
 
-The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add about a quarter to an annotated project's time, spent type-checking each applied refactoring: Towel's own source takes 34 s with `--no-types --no-format` and 42 s with the defaults.
+The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (18 applied) takes 5.6 s with `--no-types --no-format` and 9.0 s with the defaults, one core; the type checker also holds mypy in-process, which raises peak memory from about 160 MB to about 900 MB there.
 
 ## Use
 

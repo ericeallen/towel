@@ -86,10 +86,19 @@ for each:
   loop-return and name collection, assignment targets, class and function
   insertion points) driven through its public surface.
 - **Boundaries and seams** — `test_filesystem_guards.py`,
-  `test_lazy_engine_import.py`, `test_insertion_scan.py`,
-  `test_function_index.py`: the refusals of the atomic project copy, the
-  lazy engine import, the docstring-and-imports scan, and the per-analysis
-  function index.
+  `test_lazy_engine_import.py`, `test_function_index.py`,
+  `test_source_encoding.py`, `test_unsupported_layout.py`: the refusals of
+  the atomic project copy, the lazy engine import, the per-analysis
+  function index, byte-convention preservation, and a layout Towel cannot
+  model.
+- **Error paths and recovery** — `test_robustness_paths.py`,
+  `test_error_paths.py`, `test_recovery_journal.py`,
+  `test_stale_proposal_recovery.py`, `test_parallel_evaluation.py`,
+  `test_semantic_guard_traces.py`: tool failures and timeouts, the
+  command line's error exits and JSON contract, every guard of the
+  recovery journal with a Hypothesis round trip, a proposal that goes stale
+  mid-run, the forked pool against the serial path, and the rejection
+  reasons reached by name.
 
 ### Test Examples (`test_examples/`, at the repository root)
 

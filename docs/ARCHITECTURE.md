@@ -545,8 +545,9 @@ proposal.
   [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#resources-and-platform) for
   measured memory and time.
 
-Measured on Towel's own source (16,000 annotated lines, fixed point, one
-core, September 2026): 47.8 s under 1.618, 33.9 s after the per-function
+Measured on the 1.618 snapshot of Towel's own source that the exactness
+baselines use (16,000 annotated lines, 45 applied, fixed point, one core,
+September 2026): 47.8 s under 1.618, 33.9 s after the per-function
 facts with `--no-types --no-format`, 41.8 s with the defaults, the
 difference being the type check of each applied refactoring; Sphinx in the
 ecosystem check went from 2513 s to 2058 s. Function calls on Towel's
