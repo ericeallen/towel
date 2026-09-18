@@ -170,7 +170,8 @@ class ParallelEvaluation(EngineState):
     ) -> List[RefactoringProposal]:
         proposals: List[RefactoringProposal] = []
 
-        progress_mode, tqdm_cls, use_tqdm = self._resolve_progress_backend(progress)
+        progress_mode, tqdm_cls = self._resolve_progress_backend(progress)
+        use_tqdm = tqdm_cls is not None
         tqdm_iter = None
         # Always show progress for pair evaluation when progress is enabled, even if verbose=False
         if use_tqdm and tqdm_cls is not None:

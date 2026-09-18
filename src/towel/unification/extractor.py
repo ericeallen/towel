@@ -582,12 +582,9 @@ class HygienicExtractor:
         """
         if return_variables is None:
             return_variables = []
-        if hygienic_renames is None or not hygienic_renames:
-            # Fallback: if the substitution carries hygienic renames, use them
-            if hasattr(substitution, "hygienic_renames") and substitution.hygienic_renames:
-                hygienic_renames = substitution.hygienic_renames
-            else:
-                hygienic_renames = []
+        if not hygienic_renames:
+            # Fallback: the renames the substitution recorded during unification
+            hygienic_renames = substitution.hygienic_renames
 
         # Build inverse mapping: canonical name → original name for this block
         # hygienic_renames[block_idx] maps original → canonical, we need the reverse

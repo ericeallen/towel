@@ -15,7 +15,7 @@ from __future__ import annotations
 import ast
 import hashlib
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 from .substitution import Substitution
 
@@ -69,7 +69,7 @@ class StoredSubstitution:
     mappings: Tuple[Tuple[Tuple[int, str], str], ...]
     param_expressions: Tuple[Tuple[str, Tuple[Tuple[int, Path], ...]], ...]
     function_params: Tuple[Tuple[str, Tuple[str, ...]], ...]
-    hygienic_renames: Optional[Tuple[Tuple[Tuple[str, str], ...], ...]]
+    hygienic_renames: Tuple[Tuple[Tuple[str, str], ...], ...]
     params_used_as_callee: Tuple[str, ...]
     inlined_parameters: Tuple[str, ...]
     promoted_literal_args: Tuple[Tuple[str, Tuple[Tuple[int, Path], ...]], ...]
@@ -96,10 +96,8 @@ def store_substitution(
         function_params=tuple(
             (name, tuple(params)) for name, params in substitution.function_params.items()
         ),
-        hygienic_renames=(
-            tuple(tuple(sorted(mapping.items())) for mapping in substitution.hygienic_renames)
-            if substitution.hygienic_renames is not None
-            else None
+        hygienic_renames=tuple(
+            tuple(sorted(mapping.items())) for mapping in substitution.hygienic_renames
         ),
         params_used_as_callee=tuple(sorted(substitution.params_used_as_callee)),
         inlined_parameters=tuple(sorted(substitution.inlined_parameters)),
@@ -122,11 +120,7 @@ def load_substitution(
             for name, expressions in stored.param_expressions
         },
         function_params={name: list(params) for name, params in stored.function_params},
-        hygienic_renames=(
-            [dict(mapping) for mapping in stored.hygienic_renames]
-            if stored.hygienic_renames is not None
-            else None
-        ),
+        hygienic_renames=[dict(mapping) for mapping in stored.hygienic_renames],
         params_used_as_callee=set(stored.params_used_as_callee),
         inlined_parameters=set(stored.inlined_parameters),
         promoted_literal_args={

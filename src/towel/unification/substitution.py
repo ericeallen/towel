@@ -36,7 +36,7 @@ class Substitution:
     # If a parameter is in this dict, it should be a function parameter
     function_params: Dict[str, List[str]] = field(default_factory=dict)
     # Optional hygienic renames captured during unification (one mapping per block)
-    hygienic_renames: Optional[List[Dict[str, str]]] = field(default_factory=list)
+    hygienic_renames: List[Dict[str, str]] = field(default_factory=list)
     # Parameters that, after substitution, are used in call position (as a callee)
     # within the extracted function body. These should be passed as thunks (lambdas)
     # that perform the call to avoid eager evaluation at the call site.

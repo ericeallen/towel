@@ -30,9 +30,9 @@ import os
 import textwrap
 
 from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
+from typing import Literal, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 from .defaults import DEFAULT_MAX_ITERATIONS
-from .models import RefactoringProposal
+from .models import RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
@@ -91,16 +91,11 @@ class FixedPointDrivers(EngineState):
 
     def _resolve_progress_backend(
         self, progress: ProgressMode
-    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory], bool]:
-        """Resolve the progress mode and load tqdm if it is available."""
-
+    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory]]:
+        """The normalized progress mode and, when the mode wants tqdm and it loads, its factory."""
         normalized = normalize_progress(progress)
-        use_tqdm = normalized in {"auto", "tqdm"}
-        tqdm_cls: Optional[ProgressBarFactory] = None
-        if use_tqdm:
-            tqdm_cls = load_tqdm()
-            use_tqdm = tqdm_cls is not None
-        return normalized, tqdm_cls, use_tqdm
+        factory = load_tqdm() if normalized in {"auto", "tqdm"} else None
+        return normalized, factory
 
     def refactor_to_fixed_point(
         self,
@@ -218,7 +213,7 @@ class FixedPointDrivers(EngineState):
         output_dir: str,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         progress: ProgressMode = DEFAULT_PROGRESS,
-    ) -> Tuple[Dict[str, Tuple[int, List[str]]], str]:
+    ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
         """
         Apply refactorings across a directory (recursively) until a fixed point.
 
@@ -276,7 +271,7 @@ class FixedPointDrivers(EngineState):
         global_passes = 0
         iterations = 0
         total_applied = 0
-        termination_reason = "fixed_point"
+        termination_reason: TerminationReason = "fixed_point"
 
         def _apply_proposal_and_refresh_queue(
             proposal: RefactoringProposal, queue: List[RefactoringProposal]
@@ -408,6 +403,9 @@ class FixedPointDrivers(EngineState):
         return results, termination_reason
 
 
+ProgressPhase = Literal["discovered", "localized", "apply", "applied"]
+
+
 class _ApplyProgress:
     """How the directory driver reports progress: a tqdm bar, an inline bar, or detail lines.
 
@@ -419,13 +417,14 @@ class _ApplyProgress:
 
     _LISTING_CAP = 25
 
-    def __init__(
-        self, mode: ProgressMode, factory: Optional[ProgressBarFactory], use_tqdm: bool
-    ) -> None:
+    def __init__(self, mode: ProgressMode, factory: Optional[ProgressBarFactory]) -> None:
         self._mode = mode
         self._factory = factory
-        self._use_tqdm = use_tqdm
         self._bar: Optional[ProgressBar] = None
+
+    @property
+    def _use_tqdm(self) -> bool:
+        return self._factory is not None
 
     @property
     def analysis_mode(self) -> ProgressMode:
@@ -440,7 +439,7 @@ class _ApplyProgress:
         if self._mode == "detail":
             LOG.info("[towel] %s", message)
 
-    def inline(self, applied: int, queued: int, phase: str, desc: str) -> None:
+    def inline(self, applied: int, queued: int, phase: ProgressPhase, desc: str) -> None:
         """Redraw the inline bar; only the automatic mode without tqdm shows one."""
         if self._mode != "auto" or self._use_tqdm:
             return
@@ -481,8 +480,7 @@ class _ApplyProgress:
             if len(queue) > self._LISTING_CAP:
                 LOG.info("    ... %d more", len(queue) - self._LISTING_CAP)
         self.inline(applied, len(queue), "discovered", "proposals queued")
-        if self._use_tqdm and self._bar is None:
-            assert self._factory is not None
+        if self._factory is not None and self._bar is None:
             try:
                 # leave=False, so later prints do not duplicate the bar line.
                 self._bar = self._factory(

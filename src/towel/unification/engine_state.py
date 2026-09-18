@@ -129,6 +129,7 @@ class EngineState:
         """The (start_line, end_line) of a contiguous block; provided by InsertionPoints."""
         raise NotImplementedError
 
+    # The project's type checker, when one is installed and wanted.
     type_oracle: Optional[TypeOracle]
     # The unifier every pair is matched with; its options are fixed at
     # construction.
@@ -152,7 +153,6 @@ class EngineState:
     _block_guard_cache: "OrderedDict[Tuple[Any, ...], bool]"
     _unify_cache: "OrderedDict[Tuple[str, str], Optional[StoredSubstitution]]"
     _per_block_cache: "OrderedDict[Tuple[str, str, str], Any]"
-    """The project's type checker, when one is installed and wanted."""
 
     def _get_indent(self, line: str) -> str:
         """The indentation of a line; provided by InsertionPoints."""
@@ -310,7 +310,7 @@ class EngineState:
 
     def _resolve_progress_backend(
         self, progress: ProgressMode
-    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory], bool]:
+    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory]]:
         """Provided by FixedPointDrivers."""
         raise NotImplementedError
 

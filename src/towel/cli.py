@@ -14,7 +14,7 @@ import os
 import sys
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, TypedDict
+from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, TypedDict, Literal
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from towel.type_inference import TypeOracle
@@ -358,6 +358,10 @@ class ParameterRecord(TypedDict):
     kind: ParameterKind
     rename_key: str
     bindings: List[BindingRecord]
+
+
+ScopeKind = Literal["module", "class", "function"]
+"""Where a helper was placed; the inventory's ``scope`` is this, then ``:<name>`` unless module."""
 
 
 class HelperRecord(TypedDict):
@@ -940,12 +944,14 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
             if not isinstance(node, ast.FunctionDef) or node.name != name or node.lineno != lineno:
                 continue
             enclosing = parents.get(node)
+            scope_kind: ScopeKind
             if isinstance(enclosing, ast.ClassDef):
-                scope = f"class:{enclosing.name}"
+                scope_kind, scope_name = "class", enclosing.name
             elif isinstance(enclosing, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                scope = f"function:{enclosing.name}"
+                scope_kind, scope_name = "function", enclosing.name
             else:
-                scope = "module"
+                scope_kind, scope_name = "module", None
+            scope = scope_kind if scope_name is None else f"{scope_kind}:{scope_name}"
             decorators = {
                 (d.id if isinstance(d, ast.Name) else getattr(d, "attr", ""))
                 for d in node.decorator_list
@@ -956,7 +962,7 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                 if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
                     if child.func.id in names:
                         kinds[child.func.id] = "thunk" if not child.args else "lifted"
-            has_receiver = scope.startswith("class:") and "staticmethod" not in decorators
+            has_receiver = scope_kind == "class" and "staticmethod" not in decorators
             relative = str(path.relative_to(target))
             parameters: List[ParameterRecord] = []
             for index, parameter in enumerate(names):
@@ -990,9 +996,9 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                     "line": lineno,
                     "name": name,
                     "scope": scope,
-                    "rename_key": f"{relative}:{name}" if scope == "module" else name,
-                    "renameable": scope == "module"
-                    or (scope.startswith("class:") and not name.startswith("__")),
+                    "rename_key": f"{relative}:{name}" if scope_kind == "module" else name,
+                    "renameable": scope_kind == "module"
+                    or (scope_kind == "class" and not name.startswith("__")),
                     "parameters": parameters,
                     "source": ast.get_source_segment(source, node) or "",
                     "calls": calls[name],

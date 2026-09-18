@@ -177,6 +177,9 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 """A function definition of either kind."""
 
+TerminationReason = Literal["fixed_point", "iteration_cap"]
+"""Why a fixed-point driver stopped: nothing left to apply, or the cap was reached."""
+
 ParameterKind = Literal["value", "thunk", "lifted", "receiver"]
 """How a helper parameter receives its argument: a plain value, a zero-argument
 thunk called where the expression stood, a lambda over block-local names, or
