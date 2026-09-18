@@ -266,6 +266,21 @@ def test_apply_changes_refuses_duplicate_targets_in_one_plan(tmp_path: Path) -> 
     assert path.read_bytes() == b"value = 1\n" and not list(tmp_path.glob(".towel-*"))
 
 
+def test_planning_refuses_two_names_for_one_file(tmp_path: Path) -> None:
+    """Two spellings of one path would replace the file twice; planning refuses the second."""
+    path = tmp_path / "a.py"
+    path.write_bytes(b"value = 1\n")
+    # A raw string keeps the ``.`` segment that ``Path`` would collapse.
+    spellings = [str(path), os.path.join(str(tmp_path), ".", "a.py")]
+    assert len(set(spellings)) == 2
+    with pytest.raises(ChangeConflict, match="Duplicate change target"):
+        ChangePlan.from_sources(
+            {name: path.read_bytes() for name in spellings},
+            {name: "value = 2\n" for name in spellings},
+        )
+    assert path.read_bytes() == b"value = 1\n"
+
+
 def test_apply_changes_with_an_empty_plan_writes_nothing(tmp_path: Path) -> None:
     apply_changes(ChangePlan(()))
     assert not list(tmp_path.glob(".towel-*"))
