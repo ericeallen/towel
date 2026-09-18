@@ -238,7 +238,8 @@ uncertainty. Common reasons a real duplicate is not extracted:
   reports it as `UNSUPPORTED`. Poetry ``packages`` entries with ``to`` or glob
   patterns, and a pdm ``package-dir`` pattern, are refused likewise.
 
-Set `DEBUG_PROPOSAL_REJECTIONS=1` to print the reason for each rejected pair.
+Set `DEBUG_PROPOSAL_REJECTIONS=1` to log the reason for each rejected pair
+(the `towel.rejections` logger, at DEBUG, on stderr).
 
 ## Performance
 

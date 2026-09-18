@@ -21,13 +21,18 @@ ecosystem evidence behind each claim. The format follows
   variadic, shadowed, or rebound function falls back to ordinary extraction.
   Construct the engine with `reuse_existing_functions=False` to restore the
   old behavior.
-- `towel dry` formats the code it inserts with Black when Black is installed
-  (`pip install "code-towel[format]"`), using the project's own `[tool.black]`
-  line length and string quoting. Only the generated helper and the rewritten
-  call statements are formatted, never the surrounding file, and each snippet
-  is checked to have the same syntax tree before and after. Pass `--no-format`
-  to insert the unformatted rendering; without Black a note says so. Library
-  callers pass any `snippet_formatter` callable to the engine.
+- `towel dry` formats the code it inserts with the formatter the project
+  configures (`pip install "code-towel[format]"`): `ruff format` when
+  `[tool.ruff]` (or `ruff.toml`) is present and ruff is installed, otherwise
+  Black with the project's own line length and string quoting. Only the
+  generated helper and the rewritten call statements are formatted, never
+  the surrounding file, and each snippet is checked to have the same syntax
+  tree before and after. Inserted imports are sorted the way the project
+  sorts them, with ruff's `I` rules when selected or isort when configured;
+  a sorter may only reorder or merge the import statements, which is
+  verified. Pass `--no-format` to insert the unformatted rendering; without
+  a formatter a note says so. Library callers pass any `snippet_formatter`
+  and `file_finisher` callables to the engine.
 - Extracted helpers carry the type annotations their call sites declare. A
   parameter is annotated when every site passes an annotated, never-rebound
   parameter of its enclosing function, or a literal of one builtin type, and
@@ -38,9 +43,14 @@ ecosystem evidence behind each claim. The format follows
   names bound by a module-level import) and as strings otherwise; across
   modules only builtin names are used. Code without annotations stays that
   way. Construct the engine with `annotate_helpers=False` to disable it.
-- When mypy is installed (`pip install "code-towel[types]"`), the argument
-  expressions and return values those copied annotations could not name are
-  typed by mypy: `towel dry` reveals each one in an in-memory copy of the
+- When a type checker is installed (`pip install "code-towel[types]"`), the
+  argument expressions and return values those copied annotations could not
+  name are typed by it. The checker is the one the project configures: mypy
+  for a project with `[tool.mypy]` or `mypy.ini`, pyright for one with
+  `[tool.pyright]` or `pyrightconfig.json`, and for a project configuring
+  both mypy infers while both verify the generated code, so the project's
+  own check stays green; pyright runs as a command on a temporary sibling
+  copy of the module. With mypy, `towel dry` reveals each one in an in-memory copy of the
   site's module, at the point where the call will stand, once per applied
   refactoring with an incremental cache. A type is written only when every
   site agrees, it contains no `Any`, and every name in it resolves where the
@@ -62,12 +72,6 @@ ecosystem evidence behind each claim. The format follows
   and does not reason: unions are written unreduced and the meet needs
   identical declarations, since there is no second implementation of the
   subtype relation.
-- The type checker is the one the project configures: mypy for a project
-  with `[tool.mypy]` or `mypy.ini`, pyright for one with `[tool.pyright]` or
-  `pyrightconfig.json`, and for a project configuring both mypy infers while
-  both verify the generated code, so the project's own check stays green.
-  Pyright is run as a command on a temporary sibling copy of the module and
-  joins mypy in the `types` extra.
 - Thunk and callee arguments get `Callable` annotations from mypy's callable
   spelling (`Callable[[], int]`, `Callable[[int, str], bool]`,
   `Callable[..., T]`), with `from typing import Callable` added as needed.
@@ -82,7 +86,7 @@ ecosystem evidence behind each claim. The format follows
   string annotation: `memoryview[int]`, copied from tornado's own signatures,
   raised `TypeError` at import on an interpreter where `memoryview` is not
   generic.
-- With mypy installed the generated code is type-checked: each modified file
+- With a type checker installed the generated code is type-checked: each modified file
   is checked before and after, and if the change introduces an error the
   helper's annotations degrade to `Any`, and then to none, until it does not.
 - Analysis facts are computed once per function instead of once per candidate
@@ -90,12 +94,6 @@ ecosystem evidence behind each claim. The format follows
   same-file clustering pass applies its constant-time filters before the
   semantic guards. Together these remove about half of the AST traversal on
   a 16k-line project with an identical proposal list.
-- Generated code is formatted with the formatter the project configures:
-  `ruff format` when `[tool.ruff]` (or `ruff.toml`) is present and ruff is
-  installed, otherwise Black. Inserted imports are sorted the way the
-  project sorts them, with ruff's `I` rules when selected or isort when
-  configured; a sorter may only reorder or merge the import statements, which
-  is verified. ruff and isort join Black in the `format` extra.
 - Black's line length for generated code is the limit the project declares
   anywhere: `[tool.black]`, `[tool.ruff]`, `[tool.pycodestyle]`, or a
   `[flake8]`/`[pycodestyle]` section in `setup.cfg`, `tox.ini` or `.flake8`
@@ -200,6 +198,24 @@ ecosystem evidence behind each claim. The format follows
   operations each may rely on; `refactor_engine.py` went from 5,600 lines
   to 1,400 and the 871-line pair decision is eleven typed stages. The
   outputs are byte-identical on the exactness baselines.
+- A second pass over the same seams: the per-block analyses are a
+  `BlockAnalysis` mixin of their own and the engine core is 700 lines; the
+  unifier is split the same way (`UnifierState` under constant consistency,
+  parameterization and literal promotion, with `Substitution` and the
+  binding-context finder in leaf modules); every state stub names the class
+  that implements it. The functions of an analysis are indexed once
+  (`FunctionIndex`: by file, by name, by enclosing range) instead of scanned
+  per pair, and the engine's per-function maps are weak. Materialization,
+  the directory driver's progress reporting and the rename planner are
+  each a set of named steps rather than one long function. Blocks are
+  narrowed by checks rather than casts, and the `dry` change sidecar is
+  validated on read.
+- Progress modes are a `ProgressMode` literal (`normalize_progress`,
+  `wants_bar`, `DEFAULT_PROGRESS`); `orphaned_variables` returns the set of
+  orphaned names and `bound_names_in_block` the names a block binds; the
+  engine's `type_inferrer` parameter is `type_oracle`. Module-internal
+  helpers that read as public are private, and the predicates that ask
+  whether a project configures a tool all say `project_configures_*`.
 - `run_pipeline` takes the engine it drives (`engine=`) and the pipeline no
   longer imports the engine; the two phase entry points it calls are public
   (`find_block_pairs`, `process_block_pairs`). `from towel.unification

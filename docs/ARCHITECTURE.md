@@ -529,10 +529,13 @@ give the per-project figures.
 
 ## Diagnostics and settings
 
-The library prints no diagnostics. User-facing warnings (a skipped file, a
-pool that fell back to serial, modules that inspect their own frames) go to
-the `towel` logger, which Python routes to stderr even when nothing
-configures logging; the command line installs a plain stderr handler. The
+The library never writes to stdout or stderr itself; everything it has to
+say goes through logging. User-facing warnings (a skipped file, a pool that
+fell back to serial, modules that inspect their own frames) go to the
+`towel` logger, which Python routes to stderr even when nothing configures
+logging; the command line installs a plain stderr handler. The directory
+driver's detail mode (`progress="detail"`) reports discovered proposals and
+follow-ups on the same logger at INFO. The
 traces that explain a decision go to child loggers at DEBUG, off unless
 enabled: `towel.rejections` (why each pair was declined),
 `towel.validation` (the pair stages step by step), `towel.overlap` (which
@@ -642,7 +645,7 @@ but the ideas and their names are from the literature.
 | Overlap filtering | `overlap.py` |
 | Parse/analyze cache, pair-processor protocol | `pipeline.py` |
 | Loggers and settings | `diagnostics.py` (at `src/towel/`) |
-| Anti-unification | `unifier.py`, `nominal_unifier.py` |
+| Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py`; `nominal_unifier.py` |
 | Pair pre-filter | `block_signature.py` |
 | Verification | `instantiation.py` |
 | Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py` |
@@ -659,3 +662,8 @@ but the ideas and their names are from the literature.
 | Cross-file layout | `project_layout.py` |
 | Data model | `models.py` |
 | Transactional application | `changes.py` (at `src/towel/`) |
+| Atomic project copy | `filesystem.py` (at `src/towel/`) |
+| Helper renaming | `renaming.py` (at `src/towel/`) |
+| Tool selection (`ToolChoice`) | `project_tools.py` (at `src/towel/`) |
+| Command line | `cli.py` (at `src/towel/`) |
+| Builtin names, exceptions | `builtins.py`, `exceptions.py` |

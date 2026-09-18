@@ -19,7 +19,7 @@ uv run --frozen pytest tests/test_bindings.py
 
 ### Unit Tests (`tests/`)
 
-The suite is roughly 110 `test_*.py` files. Rather than list them all (they
+The suite is over a hundred `test_*.py` files. Rather than list them all (they
 change often), here is how they group by concern, with a representative file
 for each:
 
@@ -72,8 +72,9 @@ for each:
   `hostile_crossfile/` (`xf*`), with its own `TRANSFORMED` set: every
   package is in exactly one state, and today all of them are transformed.
   When the engine gains or loses a cross-file extraction, move the package
-  and say why in the commit. Each fixture is a repaired defect and has a
-  row in `docs/ADVERSARIAL_REVIEW.md`.
+  and say why in the commit. A fixture that came from a repaired ecosystem
+  defect (`xf9_same_named_base_class`) is cited in
+  `docs/ADVERSARIAL_REVIEW.md`; the others pin behaviour the engine must keep.
 - **Property-based tests** — `test_properties.py` generates programs from
   small grammars with Hypothesis (fifty deterministic examples per property,
   no deadline) and checks three invariants: consistently renamed binders
@@ -84,6 +85,11 @@ for each:
   `towel.unification.visitors` (function collection, method-call rewriting,
   loop-return and name collection, assignment targets, class and function
   insertion points) driven through its public surface.
+- **Boundaries and seams** — `test_filesystem_guards.py`,
+  `test_lazy_engine_import.py`, `test_insertion_scan.py`,
+  `test_function_index.py`: the refusals of the atomic project copy, the
+  lazy engine import, the docstring-and-imports scan, and the per-analysis
+  function index.
 
 ### Test Examples (`test_examples/`, at the repository root)
 

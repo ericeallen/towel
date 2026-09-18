@@ -72,7 +72,9 @@ When using the fixed-point directory refactoring loop (`refactor_directory_to_fi
 | `tqdm`  | Rich progress bar showing applied count & queue length. |
 | `auto`  | Attempts `tqdm`, falls back to a textual single-line bar. |
 | `none`  | Suppresses all progress output (quiet for CI). |
-| `detail`| Verbose listing of discovered proposals (first 25) and localized follow-ups after each application. |
+| `detail`| Lists the discovered proposals (first 25) and the localized follow-ups after each application, on the `towel` logger at INFO. |
+
+The default is `tqdm`; the CLI's `--progress` option accepts the same values.
 
 Call signature returns `(results_dict, termination_reason)` where `termination_reason` is:
 
@@ -138,6 +140,8 @@ The keyword-only parameters, all defaulting to what the CLI does:
 | `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
 | `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports. |
 | `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). |
+| `promote_equal_hof_literals` | `False` | Expose literal arguments of higher-order factory calls as helper parameters even when they are equal in every block. |
+| `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). Read once from the environment when omitted. |
 
 The CLI's `dry` command wires the formatter, import sorter, and type oracle
 from the project's own configuration. Library callers can do the same:
