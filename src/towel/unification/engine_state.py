@@ -27,7 +27,7 @@ stubs are implemented by the engine or by another mixin.
 from __future__ import annotations
 
 import ast
-from typing import Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Set, Tuple
 
 from ..type_inference import TypeOracle
 from .models import AppliedChange, FunctionArtifact, RefactoringProposal, ReusedFunction
@@ -45,6 +45,9 @@ class EngineState:
 
     _helper_name_counters: Dict[str, int]
     """Next helper number per file, so generated names are unique across a run."""
+
+    incremental_global_passes: bool
+    """Whether later global passes re-pair only the files rewritten since the last one."""
 
     _change_log: List[AppliedChange]
     """Every call site rewritten so far in the current run."""
@@ -185,4 +188,44 @@ class EngineState:
     @staticmethod
     def _without_annotations(proposal: RefactoringProposal) -> RefactoringProposal:
         """Provided by HelperAnnotationWiring."""
+        raise NotImplementedError
+
+    def _find_python_files(self, directory: str, recursive: bool = True) -> List[str]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def analyze_directory(
+        self,
+        directory: str,
+        recursive: bool = True,
+        *,
+        verbose: bool = False,
+        progress: str = "tqdm",
+        changed_files: Optional[FrozenSet[str]] = None,
+    ) -> List[RefactoringProposal]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def analyze_files(
+        self,
+        file_paths: List[str],
+        *,
+        verbose: bool = False,
+        progress: str = "tqdm",
+        invalidate_paths: Optional[List[str]] = None,
+        changed_files: Optional[FrozenSet[str]] = None,
+    ) -> List[RefactoringProposal]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def apply_refactoring_multi_file(self, proposal: RefactoringProposal) -> Dict[str, str]:
+        """Provided by Materialization."""
+        raise NotImplementedError
+
+    def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
+        """Provided by Materialization."""
+        raise NotImplementedError
+
+    def invalidate_paths(self, paths: List[str]) -> None:
+        """Provided by the engine."""
         raise NotImplementedError
