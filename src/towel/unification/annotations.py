@@ -42,10 +42,10 @@ import os
 import sys
 from dataclasses import dataclass
 import re
-from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
+from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
 from .semantic_safety import _walk_own_scope
-from ..type_inference import RevealRequest, TypeInferrer
+from ..type_inference import RevealRequest, TypeOracle
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
@@ -235,25 +235,57 @@ def _agreed(
     return _spelled_for_host(copy.deepcopy(first), host, same_module)
 
 
+Subtypes = Callable[[Sequence[Tuple[ast.expr, ast.expr]]], Sequence[Optional[bool]]]
+"""For each ``(narrow, wide)`` pair: True, False, or None when unknown."""
+
+
+def syntactic_subtypes(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Optional[bool]]:
+    """The relation without a type checker: identity, unions, the numeric tower, ``object``."""
+    return [_is_syntactic_subtype(narrow, wide) for narrow, wide in pairs]
+
+
+def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> Subtypes:
+    """The relation as the type checker judges it in ``file_path``, falling back per pair.
+
+    A pair the checker cannot judge (None) is answered syntactically, so an
+    unresolvable spelling never blocks what the syntactic rule can settle.
+    """
+
+    def relation(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Optional[bool]]:
+        if not pairs:
+            return []
+        judged = oracle.is_subtype(
+            file_path, source, [(ast.unparse(n), ast.unparse(w)) for n, w in pairs]
+        )
+        return [
+            verdict if verdict is not None else _is_syntactic_subtype(narrow, wide)
+            for verdict, (narrow, wide) in zip(judged, pairs)
+        ]
+
+    return relation
+
+
 def _met(
     candidates: Sequence[Optional[ast.expr]],
     host: Optional[ast.Module],
     same_module: bool,
+    subtypes: Subtypes = syntactic_subtypes,
 ) -> Optional[ast.expr]:
-    """The greatest lower bound of the sites' declared types, when it can be recognized.
+    """The greatest lower bound of the sites' declared types, when one of them is it.
 
     Every site returns the helper's value under its own declared return type,
-    so the helper's type lies below all of them. When one declared type is a
-    subtype of every other, it is that bound; subtyping is recognized
-    syntactically (identity, a member of a union or ``Optional``, the numeric
-    tower, anything under ``object``). Unrelated declarations leave the return
-    unannotated.
+    so the helper's type lies below all of them: their intersection, which
+    Python cannot write. When one declared type is a subtype of every other it
+    is that intersection. Unrelated declarations leave the return unannotated.
     """
     present = [candidate for candidate in candidates if candidate is not None]
     if not present or len(present) != len(candidates):
         return None
-    for candidate in present:
-        if all(_is_syntactic_subtype(candidate, other) for other in present):
+    pairs = [(candidate, other) for candidate in present for other in present]
+    verdicts = list(subtypes(pairs))
+    width = len(present)
+    for index, candidate in enumerate(present):
+        if all(verdicts[index * width + j] for j in range(width)):
             return _spelled_for_host(copy.deepcopy(candidate), host, same_module)
     return None
 
@@ -293,33 +325,69 @@ def _joined(
     host: Optional[ast.Module],
     same_module: bool,
     extra_bound: Optional[Set[str]] = None,
+    subtypes: Subtypes = syntactic_subtypes,
 ) -> Optional[ast.expr]:
-    """The least upper bound of the sites' types that can be written: their union.
+    """The least upper bound of the sites' types that can be written: their normalized union.
 
     A helper parameter must accept every site's argument, and a helper may
     return any site's value, so the annotation must be a supertype of each.
-    A union is that bound exactly; ``int | None`` when one site passes
-    ``None``, ``int | str`` when they differ, duplicates removed and ``None``
+    A union is that bound exactly. It is normalized by the subtype relation:
+    a member that is a subtype of another member is dropped, so ``int | bool``
+    is ``int`` and ``float | int`` is ``float``; duplicates go, ``None`` comes
     last. Any site without a type leaves the annotation off.
     """
     present = [candidate for candidate in candidates if candidate is not None]
     if not present or len(present) != len(candidates):
         return None
-    members: List[ast.expr] = []
-    seen: Set[str] = set()
-    for candidate in present:
-        for member in _union_members(candidate):
-            key = ast.dump(member)
-            if key not in seen:
-                seen.add(key)
-                members.append(copy.deepcopy(member))
-    none_members = [m for m in members if isinstance(m, ast.Constant) and m.value is None]
-    others = [m for m in members if not (isinstance(m, ast.Constant) and m.value is None)]
-    ordered = others + none_members
-    union = ordered[0]
-    for member in ordered[1:]:
+    first = present[0]
+    if all(ast.dump(candidate) == ast.dump(first) for candidate in present[1:]):
+        # One spelling everywhere: keep it as written (``Optional[int]`` stays)
+        # when the host can write it; otherwise its members may still be
+        # writable (``str | None`` needs no import where ``Optional`` does).
+        as_written = _spelled_for_host(copy.deepcopy(first), host, same_module, extra_bound)
+        if as_written is not None:
+            return as_written
+    members = normalize_union(
+        [m for candidate in present for m in _union_or_optional_members(candidate)], subtypes
+    )
+    union = members[0]
+    for member in members[1:]:
         union = ast.BinOp(left=union, op=ast.BitOr(), right=member)
     return _spelled_for_host(union, host, same_module, extra_bound)
+
+
+def normalize_union(members: Sequence[ast.expr], subtypes: Subtypes) -> List[ast.expr]:
+    """Distinct members with every subtype of another member removed, ``None`` last.
+
+    Between two members that are subtypes of each other (equivalent
+    spellings), the first is kept.
+    """
+    distinct: List[ast.expr] = []
+    seen: Set[str] = set()
+    for member in members:
+        key = ast.dump(member)
+        if key not in seen:
+            seen.add(key)
+            distinct.append(copy.deepcopy(member))
+    if len(distinct) > 1:
+        pairs = [(a, b) for a in distinct for b in distinct if a is not b]
+        verdicts = dict(zip([(id(a), id(b)) for a, b in pairs], subtypes(pairs)))
+        kept: List[ast.expr] = []
+        for index, member in enumerate(distinct):
+            absorbed = False
+            for other_index, other in enumerate(distinct):
+                if other is member or not verdicts.get((id(member), id(other))):
+                    continue
+                mutual = bool(verdicts.get((id(other), id(member))))
+                if not mutual or other_index < index:
+                    absorbed = True
+                    break
+            if not absorbed:
+                kept.append(member)
+        distinct = kept
+    none_members = [m for m in distinct if isinstance(m, ast.Constant) and m.value is None]
+    others = [m for m in distinct if not (isinstance(m, ast.Constant) and m.value is None)]
+    return others + none_members
 
 
 def _union_members(expression: ast.expr) -> List[ast.expr]:
@@ -490,6 +558,7 @@ class ApplySite:
     indent: str
     statement: ast.stmt
     call: ast.Call
+    declared_return: Optional[ast.expr] = None
 
 
 @dataclass(frozen=True)
@@ -529,15 +598,23 @@ def infer_missing_annotations(
     sites: Sequence[ApplySite],
     host_file: str,
     return_variables: Sequence[str],
-    inferrer: TypeInferrer,
+    inferrer: TypeOracle,
 ) -> InferredHelper:
-    """A copy of ``helper`` with bare parameters and return filled from a type inferrer.
+    """A copy of ``helper`` with its annotations completed and normalized by a type checker.
 
-    For each bare parameter, every site's argument expression is revealed at
-    the start of its block, where the call will stand; a lambda argument is
-    left alone. A bare return is revealed from the block's own ``return``
-    expressions, or from the returned variables just after the block. Sites
-    must agree, and the type must be writable where the helper is defined.
+    Parameters: each bare parameter's argument expression is revealed at every
+    site, at the start of its block where the call will stand (a lambda is
+    left alone); the annotation is the join of the revealed types, a union
+    normalized by the checker's subtype relation, and unions the sites'
+    declarations already supplied are normalized the same way.
+
+    Return: the helper's own return type is revealed from the block's
+    ``return`` expressions, or from the returned variables just after the
+    block, and joined across sites. Where the sites return the call under a
+    declared return type, that type is a constraint the helper's annotation
+    must satisfy for the sites to keep type-checking, so the revealed type is
+    written only if the checker confirms it is a subtype of every declared
+    one; failing that, a declared type that is a subtype of all the others.
     """
     annotated = copy.deepcopy(helper)
     parameters = annotated.args.posonlyargs + annotated.args.args
@@ -550,7 +627,15 @@ def infer_missing_annotations(
             for site in sites
         )
     ]
-    want_return = annotated.returns is None and bool(sites)
+    host_site = next((site for site in sites if site.file_path == host_file), None)
+    subtypes: Subtypes = (
+        oracle_subtypes(inferrer, host_site.file_path, host_site.source)
+        if host_site is not None
+        else syntactic_subtypes
+    )
+    declared = [site.declared_return for site in sites]
+    returns_call = bool(sites) and all(isinstance(site.statement, ast.Return) for site in sites)
+    want_return = bool(sites) and (annotated.returns is None or returns_call)
     if not bare and not want_return:
         return InferredHelper(annotated, ())
     requests: List[RevealRequest] = []
@@ -572,7 +657,7 @@ def infer_missing_annotations(
                     RevealRequest(site.file_path, site.source, line, indent, expressions)
                 )
                 return_probes.append((site.file_path, line, len(expressions)))
-    revealed = inferrer(requests)
+    revealed = inferrer.reveal(requests)
     if os.getenv("TOWEL_DEBUG_TYPES"):
         for key, text in sorted(revealed.items()):
             print(
@@ -583,17 +668,29 @@ def infer_missing_annotations(
     same_module = all(site.file_path == host_file for site in sites)
     for position, index in enumerate(bare):
         texts = [revealed.get((site.file_path, site.start_line, position)) for site in sites]
-        parameters[index].annotation = _joined_revealed(texts, host, same_module)
+        parameters[index].annotation = _joined_revealed(texts, host, same_module, subtypes)
+    for index, parameter in enumerate(parameters):
+        if index not in bare and parameter.annotation is not None:
+            parameter.annotation = _renormalized(parameter.annotation, host, same_module, subtypes)
     if want_return:
         texts = [
             revealed.get((path, line, offset))
             for path, line, count in return_probes
             for offset in range(count)
         ]
+        revealed_return: Optional[ast.expr] = None
         if return_variables and len(return_variables) > 1:
-            annotated.returns = _joined_tuple(texts, len(return_variables), host, same_module)
+            revealed_return = _joined_tuple(
+                texts, len(return_variables), host, same_module, subtypes
+            )
         elif texts:
-            annotated.returns = _joined_revealed(texts, host, same_module)
+            revealed_return = _joined_revealed(texts, host, same_module, subtypes)
+        if returns_call and any(d is not None for d in declared):
+            annotated.returns = _return_under_declarations(
+                revealed_return, declared, host, same_module, subtypes
+            )
+        elif revealed_return is not None or annotated.returns is None:
+            annotated.returns = revealed_return
     required: List[Tuple[str, str]] = []
     written = [p.annotation for p in parameters if p.annotation is not None]
     if annotated.returns is not None:
@@ -603,6 +700,42 @@ def infer_missing_annotations(
     ):
         required.append(("typing", "Any"))
     return InferredHelper(annotated, tuple(required))
+
+
+def _return_under_declarations(
+    revealed: Optional[ast.expr],
+    declared: Sequence[Optional[ast.expr]],
+    host: Optional[ast.Module],
+    same_module: bool,
+    subtypes: Subtypes,
+) -> Optional[ast.expr]:
+    """The helper's return type given that every site returns it under a declared type.
+
+    The revealed type is the most precise statement of what the helper
+    returns, and it keeps every site type-checking exactly when it is a
+    subtype of each declared type, which the checker confirms. Otherwise the
+    declared types' own greatest lower bound, when one of them is it.
+    """
+    constraints = [d for d in declared if d is not None]
+    if revealed is not None and len(constraints) == len(declared):
+        verdicts = subtypes([(_unquoted(revealed), _unquoted(d)) for d in constraints])
+        if all(verdicts):
+            return revealed
+    return _met(declared, host, same_module, subtypes)
+
+
+def _renormalized(
+    annotation: ast.expr, host: Optional[ast.Module], same_module: bool, subtypes: Subtypes
+) -> ast.expr:
+    """A copied union annotation with subsumed members dropped; anything else unchanged."""
+    members = _union_or_optional_members(_unquoted(annotation))
+    if len(members) < 2:
+        return annotation
+    kept = normalize_union(members, subtypes)
+    if len(kept) == len(members):
+        return annotation  # nothing subsumed: keep the spelling the site used
+    joined = _joined(kept, host, same_module, {"Any"}, subtypes)
+    return joined if joined is not None else annotation
 
 
 def _unquoted(annotation: ast.expr) -> ast.expr:
@@ -649,25 +782,34 @@ def textwrap_dedent(text: str) -> str:
 
 
 def _joined_revealed(
-    texts: Sequence[Optional[str]], host: Optional[ast.Module], same_module: bool
+    texts: Sequence[Optional[str]],
+    host: Optional[ast.Module],
+    same_module: bool,
+    subtypes: Subtypes = syntactic_subtypes,
 ) -> Optional[ast.expr]:
-    """The union of what mypy revealed at every site, when all of it can be written."""
+    """The normalized union of what mypy revealed at every site, when all of it can be written."""
     if not texts or any(text is None for text in texts):
         return None
     candidates = [annotation_from_revealed(cast_str(text), host, same_module) for text in texts]
     if any(candidate is None for candidate in candidates):
         return None
-    return _joined([_unquoted(c) for c in candidates if c is not None], host, same_module, {"Any"})
+    return _joined(
+        [_unquoted(c) for c in candidates if c is not None], host, same_module, {"Any"}, subtypes
+    )
 
 
 def _joined_tuple(
-    texts: Sequence[Optional[str]], width: int, host: Optional[ast.Module], same_module: bool
+    texts: Sequence[Optional[str]],
+    width: int,
+    host: Optional[ast.Module],
+    same_module: bool,
+    subtypes: Subtypes = syntactic_subtypes,
 ) -> Optional[ast.expr]:
     """``tuple[...]`` of the returned variables' types, each joined across sites."""
     if len(texts) % width:
         return None
     columns = [texts[offset::width] for offset in range(width)]
-    elements = [_joined_revealed(column, host, same_module) for column in columns]
+    elements = [_joined_revealed(column, host, same_module, subtypes) for column in columns]
     if any(element is None for element in elements):
         return None
     return ast.Subscript(

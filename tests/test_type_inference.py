@@ -203,6 +203,99 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
     proposals = engine.analyze_file(str(path))
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert (
-        _signature(result) == "def __extracted_func_0(__param_0: int | float, box: 'Box') -> str:"
+    assert _signature(result) == "def __extracted_func_0(__param_0: float, box: 'Box') -> str:"
+
+
+def test_subtype_oracle_judges_pairs_in_the_module_context(tmp_path: Path) -> None:
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    source = "from typing import Sequence\n\nclass Base: ...\nclass Box(Base): ...\n"
+    module = package / "m.py"
+    module.write_text(source)
+    verdicts = MypyInferrer().is_subtype(
+        str(module),
+        source,
+        [
+            ("bool", "int"),
+            ("int", "bool"),
+            ("Box", "Base"),
+            ("Base", "Box"),
+            ("list[int]", "Sequence[int]"),
+            ("'Box'", "Base"),
+            ("None", "int | None"),
+            ("int", "Unknown"),
+        ],
     )
+    assert verdicts == [True, False, True, False, True, True, True, None]
+
+
+def test_unions_are_normalized_by_the_oracle(tmp_path: Path) -> None:
+    from towel.unification.annotations import normalize_union, oracle_subtypes
+
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    source = "from typing import Sequence\nclass Base: ...\nclass Box(Base): ...\n"
+    module = package / "m.py"
+    module.write_text(source)
+    relation = oracle_subtypes(MypyInferrer(), str(module), source)
+    parse = lambda text: ast.parse(text, mode="eval").body  # noqa: E731
+    normalized = normalize_union(
+        [parse(t) for t in ("Box", "bool", "Base", "int", "None", "list[int]", "Sequence[int]")],
+        relation,
+    )
+    assert [ast.unparse(m) for m in normalized] == ["Base", "int", "Sequence[int]", "None"]
+
+
+def test_revealed_return_is_written_when_it_satisfies_every_declaration(tmp_path: Path) -> None:
+    # Sites declare ``-> int`` and ``-> object``; the helper returns an int,
+    # which mypy confirms is a subtype of both, so ``int`` is written.
+    path = tmp_path / "m.py"
+    path.write_text(textwrap.dedent("""
+            def first(value: int) -> int:
+                total = value * 2
+                text = str(total)
+                return len(text.strip())
+
+            def second(value: int) -> object:
+                total = value * 2
+                text = str(total)
+                return len(text.strip())
+            """))
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+    )
+    proposals = engine.analyze_file(str(path))
+    assert proposals
+    result = engine.apply_refactoring(str(path), proposals[0])
+    assert _signature(result) == "def __extracted_func_0(value: int) -> int:"
+
+
+def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
+    # ``Box`` is a subclass of ``Base``; only mypy knows, and the meet is Box.
+    path = tmp_path / "m.py"
+    path.write_text(textwrap.dedent("""
+            class Base: ...
+            class Box(Base): ...
+
+            def make(flag: bool) -> Box:
+                box = Box()
+                print(flag, box)
+                return box
+
+            def build(flag: bool) -> Base:
+                box = Box()
+                print(flag, box)
+                return box
+            """))
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+    )
+    proposals = engine.analyze_file(str(path))
+    assert proposals
+    result = engine.apply_refactoring(str(path), proposals[0])
+    # ``Box`` the class is passed as a parameter (its revealed type is a
+    # callable, so it stays ``Any``), and the return is quoted because the
+    # helper is inserted above the class definition.
+    assert _signature(result) == "def __extracted_func_0(Box: Any, flag: bool) -> 'Box':"

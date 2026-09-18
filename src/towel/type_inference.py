@@ -33,7 +33,10 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import tempfile
-from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from mypy.options import Options
 
 RevealKey = Tuple[str, int, int]
 """(file path, line the probe was inserted before, index of the expression)."""
@@ -54,9 +57,31 @@ class RevealRequest:
     expressions: Tuple[str, ...]
 
 
-TypeInferrer = Callable[[Sequence[RevealRequest]], Mapping[RevealKey, str]]
-"""Maps each requested expression to mypy's spelling of its type, when known."""
+class TypeOracle(Protocol):
+    """What the annotation writer asks a type checker.
 
+    ``reveal`` maps each requested expression to the checker's spelling of
+    its type, when known. ``is_subtype`` answers, for each ``(narrow, wide)``
+    pair spelled as annotations in the given module, whether ``narrow`` is
+    assignable to ``wide``: True, False, or None when the checker could not
+    judge (a name it cannot resolve).
+    """
+
+    def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        """The checker's spelling of each requested expression's type."""
+        raise NotImplementedError
+
+    def is_subtype(
+        self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
+    ) -> Sequence[Optional[bool]]:
+        """Whether each narrow type is assignable to its wide type, in the module's context."""
+        raise NotImplementedError
+
+
+TypeInferrer = TypeOracle
+"""Earlier name of the protocol, kept for callers that used it."""
+
+_ERROR = re.compile(r"^(?P<path>.*?):(?P<line>\d+):(?:\d+:)? error: ")
 _REVEALED = re.compile(
     r'^(?P<path>.*?):(?P<line>\d+):(?:\d+:)? note: Revealed type is "(?P<type>.*)"$'
 )
@@ -112,10 +137,75 @@ class MypyInferrer:
         self._cache_dir = cache_dir if cache_dir is not None else Path(self._cache.name)  # type: ignore[union-attr]
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        return self.reveal(requests)
+
+    def _options(self, roots: Sequence[str]) -> "Options":
+        from mypy.options import Options
+
+        options = Options()
+        options.ignore_missing_imports = True
+        options.follow_imports = "silent"
+        options.incremental = True
+        options.cache_dir = str(self._cache_dir)
+        options.check_untyped_defs = True
+        options.explicit_package_bases = True
+        options.mypy_path = list(roots)
+        options.hide_error_codes = True
+        return options
+
+    def is_subtype(
+        self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
+    ) -> Sequence[Optional[bool]]:
+        """Whether each ``narrow`` is assignable to its ``wide``, judged in the module's context.
+
+        One probe function per pair is appended to an in-memory copy of the
+        module, ``def probe(v: narrow) -> wide: return v``. An error on the
+        ``return`` line means not a subtype; an error on the signature line
+        means a name the checker could not resolve, which is reported as None.
+        """
         from mypy import build
         from mypy.build import BuildSource
         from mypy.errors import CompileError
-        from mypy.options import Options
+
+        if not pairs:
+            return []
+        lines = source.splitlines(keepends=True)
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        base = len(lines)
+        probe_lines: List[str] = ["\n"]
+        signature_line: Dict[int, int] = {}
+        return_line: Dict[int, int] = {}
+        for index, (narrow, wide) in enumerate(pairs):
+            signature_line[base + len(probe_lines) + 1] = index
+            probe_lines.append(f"def __towel_probe_{index}(__towel_value: {narrow}) -> {wide}:\n")
+            return_line[base + len(probe_lines) + 1] = index
+            probe_lines.append("    return __towel_value\n")
+            probe_lines.append("\n")
+        text = "".join(lines) + "".join(probe_lines)
+        module, root = _module_name_and_root(Path(file_path))
+        try:
+            result = build.build(
+                sources=[BuildSource(file_path, module, text)], options=self._options([str(root)])
+            )
+        except CompileError:
+            return [None] * len(pairs)
+        verdicts: List[Optional[bool]] = [True] * len(pairs)
+        for message in result.errors:
+            match = _ERROR.match(message)
+            if match is None or match.group("path") != file_path:
+                continue
+            line = int(match.group("line"))
+            if line in signature_line:
+                verdicts[signature_line[line]] = None
+            elif line in return_line and verdicts[return_line[line]] is not None:
+                verdicts[return_line[line]] = False
+        return verdicts
+
+    def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        from mypy import build
+        from mypy.build import BuildSource
+        from mypy.errors import CompileError
 
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
@@ -151,17 +241,8 @@ class MypyInferrer:
                 roots.append(str(root))
         if not sources:
             return {}
-        options = Options()
-        options.ignore_missing_imports = True
-        options.follow_imports = "silent"
-        options.incremental = True
-        options.cache_dir = str(self._cache_dir)
-        options.check_untyped_defs = True
-        options.explicit_package_bases = True
-        options.mypy_path = roots
-        options.hide_error_codes = True
         try:
-            result = build.build(sources=sources, options=options)
+            result = build.build(sources=sources, options=self._options(roots))
         except CompileError:
             return {}
         revealed: Dict[RevealKey, str] = {}

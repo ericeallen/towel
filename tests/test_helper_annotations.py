@@ -61,9 +61,10 @@ def test_parameters_and_none_return_come_from_agreeing_sites(tmp_path: Path) -> 
     exec(compile(result, "<annotated>", "exec"), {})
 
 
-def test_disagreeing_sites_join_into_a_union(tmp_path: Path) -> None:
+def test_disagreeing_sites_join_into_a_normalized_union(tmp_path: Path) -> None:
     # The parameter must accept every site's argument, so its annotation is
-    # the least upper bound the sites spell: their union.
+    # the least upper bound the sites spell: their union, normalized by the
+    # subtype relation (``int`` is under ``float`` in the numeric tower).
     result = _refactor(
         tmp_path,
         f"""
@@ -71,7 +72,18 @@ def test_disagreeing_sites_join_into_a_union(tmp_path: Path) -> None:
         def second(value: float, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int | float) -> None:"
+    assert _signature(result) == "def __extracted_func_0(prefix: str, value: float) -> None:"
+
+
+def test_unrelated_sites_join_into_a_union(tmp_path: Path) -> None:
+    result = _refactor(
+        tmp_path,
+        f"""
+        def first(value: int, prefix: str) -> None:{BODY}
+        def second(value: str, prefix: str) -> None:{BODY}
+        """,
+    )
+    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int | str) -> None:"
 
 
 def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
@@ -307,7 +319,8 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     proposals = engine.analyze_directory(str(package))
     assert proposals
     header = ast.unparse(proposals[0].extracted_function).split("\n", 1)[0]
-    assert header == "def __extracted_func(label, value: int) -> None:"
+    # ``Optional[str]`` needs typing; its members ``str | None`` are builtins.
+    assert header == "def __extracted_func(label: str | None, value: int) -> None:"
 
 
 @pytest.mark.parametrize(

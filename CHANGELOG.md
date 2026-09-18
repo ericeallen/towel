@@ -52,6 +52,15 @@ ecosystem evidence behind each claim. The format follows
   becomes `Any`, so the signature is complete (a partial one is an error
   under mypy's `disallow-incomplete-defs`); `from typing import Any` is
   added to the host when it lacks it. Code with no annotations stays bare.
+  With mypy installed the subtype relation is mypy's own, asked through
+  probe functions appended to an in-memory copy of the host module: unions
+  are normalized by it (`int | bool` is `int`, `float | int` is `float`, a
+  subclass under its base disappears), the declared return types' meet is
+  found through it, and the helper's revealed return type is written only
+  when mypy confirms it is a subtype of every site's declared return type,
+  which is what keeps the sites type-checking. Without mypy a syntactic
+  relation (identity, union membership, the numeric tower, `object`) stands
+  in.
 - Analysis facts are computed once per function instead of once per candidate
   block (definite assignment, locally bound names, nested scopes), and the
   same-file clustering pass applies its constant-time filters before the

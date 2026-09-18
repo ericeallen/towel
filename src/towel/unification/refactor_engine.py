@@ -125,7 +125,7 @@ from .annotations import (
     infer_missing_annotations,
     sites_use_annotations,
 )
-from ..type_inference import TypeInferrer
+from ..type_inference import TypeOracle
 from .pipeline import run_pipeline, AnalysisSession
 from .visitors import (
     MethodCallRewriter,
@@ -339,7 +339,7 @@ class UnificationRefactorEngine:
         skip_trivial_helpers: bool = True,
         reuse_existing_functions: bool = True,
         annotate_helpers: bool = True,
-        type_inferrer: Optional[TypeInferrer] = None,
+        type_inferrer: Optional[TypeOracle] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
     ):
         """
@@ -3917,6 +3917,7 @@ class UnificationRefactorEngine:
                     indent=self._get_indent(lines[start_line - 1]),
                     statement=cast(ast.stmt, replacement.node),
                     call=call,
+                    declared_return=self._declared_return_at(source, start_line),
                 )
             )
         inferred = infer_missing_annotations(
@@ -3931,6 +3932,23 @@ class UnificationRefactorEngine:
         proposal.required_imports = tuple(
             dict.fromkeys(inferred.required_imports + completed.required_imports)
         )
+
+    @staticmethod
+    def _declared_return_at(source: str, line: int) -> Optional[ast.expr]:
+        """The return annotation of the innermost function containing ``line``."""
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return None
+        innermost: Optional[FunctionNode] = None
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.lineno <= line <= (node.end_lineno or node.lineno)
+                and (innermost is None or node.lineno > innermost.lineno)
+            ):
+                innermost = node
+        return innermost.returns if innermost is not None else None
 
     @staticmethod
     def _parsed_host(file_path: str) -> Optional[ast.Module]:
