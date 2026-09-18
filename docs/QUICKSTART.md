@@ -30,7 +30,7 @@ For each opportunity, `preview` prints the extracted helper and, per call site, 
 Never refactor in place on your first run — write to a new directory and diff it.
 
 ```bash
-towel dry path/to/project path/to/cleaned --non-interactive
+towel dry path/to/project path/to/cleaned --no-interactive
 diff -ru path/to/project path/to/cleaned | less
 ```
 
@@ -44,7 +44,7 @@ reproduce the exact code it replaced. Helpers get placeholder names like
 towel rename-helpers path/to/cleaned --list --json > helpers.json
 # Have a coding assistant read helpers.json and write renames.json,
 # then apply the batch (it aborts whole if any name is unsafe):
-towel rename-helpers path/to/cleaned --rename-file renames.json --dry-run
+towel rename-helpers path/to/cleaned --rename-file renames.json --preview
 towel rename-helpers path/to/cleaned --rename-file renames.json
 ```
 

@@ -101,7 +101,7 @@ def test_cli_rename_file_reports_structured_result_and_rejection(tmp_path: Path)
         str(mapping),
         "--json",
     ]
-    dry = subprocess.run([*command, "--dry-run"], capture_output=True, text=True, check=True)
+    dry = subprocess.run([*command, "--preview"], capture_output=True, text=True, check=True)
     assert json.loads(dry.stdout)["applied"] is False and json.loads(dry.stdout)["changes"] > 0
     assert "__extracted_func_0" in (target / "pkg" / "a.py").read_text()
     applied = subprocess.run(command, capture_output=True, text=True, check=True)
@@ -111,7 +111,7 @@ def test_cli_rename_file_reports_structured_result_and_rejection(tmp_path: Path)
     assert "if not current_email():" in text and "self._scaled_width(lambda w:" in text
     assert "__extracted_func_0" not in text and "_extracted_func_1" not in text
     mapping.write_text(json.dumps({"pkg/a.py:require_email.__param_1": "items"}))
-    rejected = subprocess.run([*command, "--dry-run"], capture_output=True, text=True, check=False)
+    rejected = subprocess.run([*command, "--preview"], capture_output=True, text=True, check=False)
     assert rejected.returncode == 2
     payload = json.loads(rejected.stdout)
     assert payload["applied"] is False and "collide" in payload["error"]

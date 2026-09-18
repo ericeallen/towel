@@ -13,10 +13,10 @@ def arguments(source: Path, destination: Path) -> argparse.Namespace:
     return argparse.Namespace(
         input=str(source),
         output=str(destination),
-        non_interactive=False,
+        interactive=True,
         prefer_absolute_imports=None,
         pep420=None,
-        max_iterations=1,
+        max_refactorings=1,
         progress="none",
     )
 

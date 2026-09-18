@@ -102,7 +102,7 @@ and adopt:
 
 ```bash
 towel preview src/
-towel dry src/ src_cleaned/ --non-interactive
+towel dry src/ src_cleaned/ --no-interactive
 ```
 
 `preview` lists each opportunity with the extracted helper and, per call site,

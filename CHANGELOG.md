@@ -130,6 +130,15 @@ ecosystem evidence behind each claim. The format follows
   it a helper could return a handler's name and raise `UnboundLocalError`
   where the original code did not.
 
+### Changed (command line)
+- Boolean options come in `--x/--no-x` pairs with the default on:
+  `--types/--no-types`, `--format/--no-format`, `--interactive/--no-interactive`,
+  and the tri-state `--prefer-absolute-imports/--no-prefer-absolute-imports`
+  and `--pep420/--no-pep420` (unset lets the project decide). `--max-refactorings N`
+  names what `--max-iterations` always did, and `rename-helpers --preview`
+  replaces `--dry-run`, since "dry" already means DRY here. The earlier
+  spellings still parse and are left out of the help.
+
 ## [1.618] — 2026-09-17
 
 ### Changed

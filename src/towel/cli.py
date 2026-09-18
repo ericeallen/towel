@@ -18,8 +18,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 from towel.changes import apply_changes, recover
 
 
-def main() -> None:
-    """Main entry point with subcommands."""
+def _build_parser() -> argparse.ArgumentParser:
+    """The command-line parser, shared by ``main`` and the tests."""
     parser = argparse.ArgumentParser(
         prog="code-towel",
         description="A Python tool that DRYs your code - finds and refactors repeated code",
@@ -50,7 +50,12 @@ For more help on a specific command:
     _add_rename_helpers_parser(subparsers)
     recovery = subparsers.add_parser("recover", help="Roll back an interrupted local transaction")
     recovery.add_argument("journal", type=Path)
+    return parser
 
+
+def main() -> None:
+    """Main entry point with subcommands."""
+    parser = _build_parser()
     args = parser.parse_args()
 
     if not args.command:
@@ -83,35 +88,23 @@ def _add_import_layout_flags(parser: argparse.ArgumentParser) -> None:
     The dry and preview subcommands both infer cross-file import paths, so they
     expose the same two mutually-exclusive toggles.
     """
-    pref_group = parser.add_mutually_exclusive_group()
-    pref_group.add_argument(
+    parser.add_argument(
         "--prefer-absolute-imports",
         dest="prefer_absolute_imports",
-        action="store_true",
-        help="Prefer absolute imports for cross-file extractions when possible",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Prefer an absolute import for a cross-file helper (honored when packaging "
+        "metadata anchors the module name); --no-prefer-absolute-imports prefers a relative "
+        "one. Unset: the discovered layout decides.",
     )
-    pref_group.add_argument(
-        "--no-prefer-absolute-imports",
-        dest="prefer_absolute_imports",
-        action="store_false",
-        help="Prefer local/same-dir imports when possible",
-    )
-    parser.set_defaults(prefer_absolute_imports=None)
-
-    pep_group = parser.add_mutually_exclusive_group()
-    pep_group.add_argument(
+    parser.add_argument(
         "--pep420",
         dest="pep420",
-        action="store_true",
-        help="Treat directories as namespace packages (PEP 420) when deriving module paths",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Treat directories without __init__.py as namespace packages when deriving "
+        "module paths; --no-pep420 requires __init__.py. Unset: inferred from the project.",
     )
-    pep_group.add_argument(
-        "--no-pep420",
-        dest="pep420",
-        action="store_false",
-        help="Require __init__.py for packages when deriving module paths",
-    )
-    parser.set_defaults(pep420=None)
 
 
 def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -124,8 +117,8 @@ def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentPar
         epilog="""
 Examples:
   towel dry src/ cleaned/                         # Refactor directory until fixed point
-  towel dry file.py file_out.py --non-interactive # Non-interactive single file
-  towel dry src/ out/ --max-iterations 50         # Cap at 50 applied refactorings
+  towel dry file.py file_out.py --no-interactive  # Skip the confirmation prompt
+  towel dry src/ out/ --max-refactorings 50       # Stop after 50 applied refactorings
   towel dry src/ out/ --progress detail           # Verbose per-phase output
         """,
     )
@@ -133,9 +126,14 @@ Examples:
     parser.add_argument("input", help="Input file or directory")
     parser.add_argument("output", help="Output file or directory (can be same as input)")
     parser.add_argument(
-        "--non-interactive",
-        action="store_true",
-        help="Run without interactive confirmation (skip prompt)",
+        "--interactive",
+        dest="interactive",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Ask for confirmation before writing; --no-interactive skips the prompt",
+    )
+    parser.add_argument(  # earlier spelling, kept for scripts
+        "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
     )
     parser.add_argument(
         "--exclude",
@@ -148,29 +146,34 @@ Examples:
     _add_import_layout_flags(parser)
 
     parser.add_argument(
-        "--max-iterations",
+        "--max-refactorings",
+        "--max-iterations",  # earlier spelling, kept for scripts
+        dest="max_refactorings",
         type=int,
         default=0,
-        help="Maximum refactorings to apply (0 = unlimited until fixed point, default: 0)",
+        metavar="N",
+        help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
     )
 
     parser.add_argument(
-        "--no-types",
-        action="store_true",
-        help="Leave generated helpers without type annotations. By default a helper takes the "
-        "annotations its call sites declare and, when mypy is installed (the 'types' extra), "
-        "the types mypy infers for the remaining arguments and return; only in code that "
-        "already uses annotations.",
+        "--types",
+        dest="types",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Annotate generated helpers, in code that already uses annotations: the "
+        "annotations the call sites declare, and the types the project's checker (mypy or "
+        "pyright, the 'types' extra) infers and verifies for the rest. --no-types leaves "
+        "helpers bare.",
     )
-
     parser.add_argument(
-        "--no-format",
-        action="store_true",
-        help="Insert generated helpers and calls as rendered, without formatting them. By "
-        "default they are formatted with ruff when the project configures it, else Black, "
-        "when installed (the 'format' extra), at the line length the project declares; "
-        "and inserted imports are sorted with ruff's I rules or isort when the project "
-        "configures them.",
+        "--format",
+        dest="format",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Format generated code with the project's formatter (ruff when configured, else "
+        "Black; the 'format' extra) at the line length the project declares, and sort "
+        "inserted imports the way the project does (ruff's I rules or isort). --no-format "
+        "inserts code as rendered.",
     )
 
     parser.add_argument(
@@ -262,9 +265,11 @@ Examples:
         ),
     )
     parser.add_argument(
-        "--dry-run",
+        "--preview",
+        "--dry-run",  # earlier spelling, kept for scripts
+        dest="preview",
         action="store_true",
-        help="Preview changes without writing files",
+        help="Show the renames without writing files",
     )
 
     parser.add_argument(
@@ -344,6 +349,13 @@ def _write_change_sidecar(engine: object, output: str) -> None:
         json.dumps({"version": 1, "helpers": helpers}, indent=2) + "\n", encoding="utf-8"
     )
     print(f"\nWrote call-site before/after to {sidecar} (for naming; safe to delete).")
+
+
+def _flag(args: argparse.Namespace, name: str) -> bool:
+    """A boolean option's value; hand-built namespaces may carry the earlier ``no_<name>``."""
+    if hasattr(args, name):
+        return bool(getattr(args, name))
+    return not getattr(args, f"no_{name}", False)
 
 
 def _type_inferrer(project_path: "Path") -> Optional["TypeInferrer"]:
@@ -436,17 +448,11 @@ def _run_dry(args: argparse.Namespace) -> None:
         pep420_namespace_packages=args.pep420,
         excluded_directories=tuple(getattr(args, "exclude", None) or ()),
         snippet_formatter=(
-            None
-            if getattr(args, "no_format", False)
-            else _generated_code_formatter(Path(input_path))
+            _generated_code_formatter(Path(input_path)) if _flag(args, "format") else None
         ),
-        file_finisher=(
-            None if getattr(args, "no_format", False) else _import_sorter(Path(input_path))
-        ),
-        annotate_helpers=not getattr(args, "no_types", False),
-        type_inferrer=(
-            None if getattr(args, "no_types", False) else _type_inferrer(Path(input_path))
-        ),
+        file_finisher=(_import_sorter(Path(input_path)) if _flag(args, "format") else None),
+        annotate_helpers=_flag(args, "types"),
+        type_inferrer=(_type_inferrer(Path(input_path)) if _flag(args, "types") else None),
     )
 
     # Use fixed-point iteration
@@ -458,7 +464,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     print("Extracted functions will be placed at the end of files.")
     print()
 
-    if not args.non_interactive:
+    if getattr(args, "interactive", not getattr(args, "non_interactive", False)):
         response = input("Proceed? (y/N): ").strip().lower()
         if response != "y":
             print("Aborted.")
@@ -474,7 +480,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         print(f"Refactoring file: {output_path}")
         final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
             output_path,
-            max_iterations=args.max_iterations,
+            max_iterations=getattr(args, "max_refactorings", getattr(args, "max_iterations", 0)),
         )
 
         if num_applied > 0:
@@ -488,7 +494,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         results, termination_reason = engine.refactor_directory_to_fixed_point(
             output_path,
             output_path,
-            max_iterations=args.max_iterations,
+            max_iterations=getattr(args, "max_refactorings", getattr(args, "max_iterations", 0)),
             progress=args.progress,
         )
 
@@ -701,11 +707,11 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
 
     # Apply renamings from file
     if args.rename_file:
-        _apply_rename_file(target, helpers, args.rename_file, args.dry_run, args.json)
+        _apply_rename_file(target, helpers, args.rename_file, args.preview, args.json)
         return
 
     # Interactive LLM mode
-    _run_interactive_llm_mode(target, helpers, args.llm, args.dry_run)
+    _run_interactive_llm_mode(target, helpers, args.llm, args.preview)
 
 
 def _find_extracted_helpers(

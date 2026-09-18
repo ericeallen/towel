@@ -127,7 +127,7 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
             """))
     typed = tmp_path / "typed"
     bare = tmp_path / "bare"
-    common = ["--non-interactive", "--progress", "none", "--no-format"]
+    common = ["--no-interactive", "--progress", "none", "--no-format"]
     assert invoke(["dry", str(source_dir), str(typed), *common]).status == 0
     assert invoke(["dry", str(source_dir), str(bare), *common, "--no-types"]).status == 0
     assert "(items: list[int]) -> int:" in (typed / "m.py").read_text()
@@ -421,7 +421,7 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
             """))
     typed = tmp_path / "typed"
     bare = tmp_path / "bare"
-    common = ["--non-interactive", "--progress", "none", "--no-format"]
+    common = ["--no-interactive", "--progress", "none", "--no-format"]
     assert invoke(["dry", str(source_dir), str(typed), *common]).status == 0
     assert invoke(["dry", str(source_dir), str(bare), *common, "--no-types"]).status == 0
     assert "(items: list[int]) -> int:" in (typed / "m.py").read_text()

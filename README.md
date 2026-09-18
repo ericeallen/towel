@@ -130,13 +130,13 @@ The two largest projects in the ecosystem check, networkx and Sphinx, are the sl
 towel preview path/to/project
 
 # Write to a new output directory
-towel dry path/to/project path/to/cleaned --non-interactive
+towel dry path/to/project path/to/cleaned --no-interactive
 
 # Explicit in-place refactoring: review through version control afterward
-towel dry path/to/project path/to/project --non-interactive
+towel dry path/to/project path/to/project --no-interactive
 
 # Bound the number of changes
-towel dry example.py cleaned.py --non-interactive --max-iterations 10
+towel dry example.py cleaned.py --no-interactive --max-refactorings 10
 ```
 
 A separate output must not already exist or overlap the input. Cancellation leaves the filesystem unchanged. Symlinked Python files are excluded from directory analysis. The API accepts an empty output directory for fixture and integration workflows. Complete changes are staged and checked before the first write. Each file is replaced atomically; caught application failures roll back, and interrupted batches retain a recovery journal. Readers can observe a partially applied batch. Keep exclusive write access to the project and its parent while applying or recovering: snapshot checks detect stale files but cannot prevent a noncooperating editor from writing in the final check/replace interval.
@@ -206,14 +206,14 @@ The round trip is: extract, export an inventory, let the LLM propose names, appl
 
 ```bash
 # 1. Extract with placeholder names, then export the inventory the LLM reads.
-towel dry path/to/project path/to/cleaned --non-interactive
+towel dry path/to/project path/to/cleaned --no-interactive
 towel rename-helpers path/to/cleaned --list --json > helpers.json
 
 # 2. Have the assistant read helpers.json and write renames.json:
 #    a mapping from each inventory key to the name it chose.
 
 # 3. Preview the batch, then apply it, then re-run your tests.
-towel rename-helpers path/to/cleaned --rename-file renames.json --dry-run
+towel rename-helpers path/to/cleaned --rename-file renames.json --preview
 towel rename-helpers path/to/cleaned --rename-file renames.json
 ```
 

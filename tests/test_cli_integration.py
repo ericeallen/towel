@@ -115,8 +115,8 @@ def test_dry_creates_refactored_output_with_same_runtime_results(
             "dry",
             str(source_root if directory else source),
             str(destination),
-            "--non-interactive",
-            "--max-iterations",
+            "--no-interactive",
+            "--max-refactorings",
             "1",
             "--progress",
             "none",
@@ -138,7 +138,7 @@ def test_missing_input_has_failure_status_and_no_output(tmp_path: Path, command:
     missing, output = tmp_path / "missing.py", tmp_path / "output.py"
     arguments = [command, str(missing)]
     if command == "dry":
-        arguments += [str(output), "--non-interactive"]
+        arguments += [str(output), "--no-interactive"]
     result = invoke(arguments)
     assert result.status == 1
     assert "does not exist" in result.stdout + result.stderr
@@ -174,7 +174,7 @@ def test_interactive_helper_prompt_accepts_manual_markdown_json(
     source.write_text(HELPER)
     arguments = ["rename-helpers", str(tmp_path), "--llm", "claude"]
     if dry_run:
-        arguments.append("--dry-run")
+        arguments.append("--preview")
     response = '```json\n{"helpers.py:__extracted_func_0": "double_value"}\n```\n'
     result = invoke(arguments, stdin=response)
     assert result.status == 0
@@ -199,7 +199,7 @@ def test_helper_rename_file_runs_through_dispatch(tmp_path: Path, dry_run: bool)
     mapping.write_text(json.dumps({"__extracted_func_0": "double_value"}))
     arguments = ["rename-helpers", str(tmp_path), "--rename-file", str(mapping)]
     if dry_run:
-        arguments.append("--dry-run")
+        arguments.append("--preview")
     result = invoke(arguments)
     assert result.status == 0
     assert "double_value" in result.stdout
@@ -263,3 +263,30 @@ def test_import_layout_flags_shared_by_dry_and_preview() -> None:
         result = invoke(args + ["--pep420", "--no-prefer-absolute-imports", "--help"])
         assert "--prefer-absolute-imports" in result.stdout
         assert "--pep420" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "old, new",
+    [
+        (["--non-interactive"], ["--no-interactive"]),
+        (["--max-iterations", "1"], ["--max-refactorings", "1"]),
+    ],
+)
+def test_earlier_option_spellings_still_parse(old: list[str], new: list[str]) -> None:
+    # Scripts written against the earlier names keep working; the help lists
+    # only the current ones.
+    parser = cli._build_parser()
+    parsed_old = parser.parse_args(["dry", "in", "out", *old])
+    parsed_new = parser.parse_args(["dry", "in", "out", *new])
+    assert vars(parsed_old) == vars(parsed_new)
+    assert "--non-interactive" not in parser.format_help()
+
+
+def test_boolean_options_take_both_spellings() -> None:
+    parser = cli._build_parser()
+    assert parser.parse_args(["dry", "in", "out"]).types is True
+    assert parser.parse_args(["dry", "in", "out", "--no-types"]).types is False
+    assert parser.parse_args(["dry", "in", "out", "--types"]).types is True
+    assert parser.parse_args(["dry", "in", "out", "--no-format"]).format is False
+    assert parser.parse_args(["dry", "in", "out"]).prefer_absolute_imports is None
+    assert parser.parse_args(["dry", "in", "out", "--no-pep420"]).pep420 is False

@@ -281,7 +281,7 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
             "dry",
             project.package,
             str(cleaned),
-            "--non-interactive",
+            "--no-interactive",
             "--progress",
             "none",
             *(argument for name in project.exclude for argument in ("--exclude", name)),

@@ -124,7 +124,7 @@ def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
     plain = tmp_path / "plain"
     assert (
         invoke(
-            ["dry", str(source), str(formatted), "--non-interactive", "--progress", "none"]
+            ["dry", str(source), str(formatted), "--no-interactive", "--progress", "none"]
         ).status
         == 0
     )
@@ -134,7 +134,7 @@ def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
                 "dry",
                 str(source),
                 str(plain),
-                "--non-interactive",
+                "--no-interactive",
                 "--progress",
                 "none",
                 "--no-format",
@@ -255,7 +255,7 @@ def test_dry_sorts_inserted_imports_for_an_isort_project(tmp_path: Path) -> None
             """))
     out = tmp_path / "out"
     assert (
-        invoke(["dry", str(source_dir), str(out), "--non-interactive", "--progress", "none"]).status
+        invoke(["dry", str(source_dir), str(out), "--no-interactive", "--progress", "none"]).status
         == 0
     )
     text = (out / "m.py").read_text()
