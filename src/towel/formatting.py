@@ -28,12 +28,17 @@ import ast
 import configparser
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Optional
+import shutil
+import subprocess
+from typing import Callable, List, Mapping, Optional, Sequence, Tuple
 
 from .unification.project_layout import _find_project_root, _load_pyproject
 
 SnippetFormatter = Callable[[str], str]
 """Maps one generated snippet (a definition or a statement) to its formatted text."""
+
+FileFinisher = Callable[[str, str], str]
+"""Maps ``(path, source)`` of a modified file to its finished text, e.g. with imports sorted."""
 
 DEFAULT_LINE_LENGTH = 88
 
@@ -142,3 +147,214 @@ def black_formatter(settings: BlackSettings) -> SnippetFormatter:
         return black.format_str(source, mode=mode)
 
     return checked(run_black)
+
+
+class FormatterUnavailable(RuntimeError):
+    """The tool a project configures is not installed."""
+
+
+def _root(path: Path) -> Path:
+    return _find_project_root(path)
+
+
+def _tool_section(root: Path, name: str) -> Mapping[str, object]:
+    tool = _load_pyproject(root).get("tool", {})
+    section = tool.get(name, {}) if isinstance(tool, Mapping) else {}
+    return section if isinstance(section, Mapping) else {}
+
+
+def project_uses_ruff(path: Path) -> bool:
+    """Whether the project configures ruff (``[tool.ruff]``, ``ruff.toml`` or ``.ruff.toml``)."""
+    root = _root(path)
+    return bool(_tool_section(root, "ruff")) or any(
+        (root / name).is_file() for name in ("ruff.toml", ".ruff.toml")
+    )
+
+
+def project_selects_ruff_import_sorting(path: Path) -> bool:
+    """Whether ruff's import-sorting rules (``I``) are selected in the project's configuration."""
+    root = _root(path)
+    ruff = _tool_section(root, "ruff")
+    lint = ruff.get("lint", {}) if isinstance(ruff.get("lint", {}), Mapping) else {}
+    selected: List[str] = []
+    for section in (ruff, lint):
+        if not isinstance(section, Mapping):
+            continue
+        for key in ("select", "extend-select"):
+            value = section.get(key)
+            if isinstance(value, list):
+                selected.extend(str(item) for item in value)
+    return any(rule == "ALL" or rule == "I" or rule.startswith("I0") for rule in selected)
+
+
+def project_uses_isort(path: Path) -> bool:
+    """Whether the project configures isort (``[tool.isort]``, ``.isort.cfg``, or an ``[isort]`` section)."""
+    root = _root(path)
+    if _tool_section(root, "isort"):
+        return True
+    if (root / ".isort.cfg").is_file():
+        return True
+    for filename in ("setup.cfg", "tox.ini"):
+        candidate = root / filename
+        if candidate.is_file():
+            parser = configparser.ConfigParser()
+            try:
+                parser.read(candidate, encoding="utf-8")
+            except (configparser.Error, OSError, UnicodeError):
+                continue
+            if parser.has_section("isort"):
+                return True
+    return False
+
+
+def _ruff_executable() -> Optional[List[str]]:
+    executable = shutil.which("ruff")
+    if executable:
+        return [executable]
+    try:
+        import ruff  # noqa: F401
+    except ImportError:
+        return None
+    import sys
+
+    return [sys.executable, "-m", "ruff"]
+
+
+def ruff_formatter(path: Path) -> SnippetFormatter:
+    """A checked formatter that runs ``ruff format`` with the project's configuration.
+
+    Raises :class:`FormatterUnavailable` when ruff is not installed.
+    """
+    command = _ruff_executable()
+    if command is None:
+        raise FormatterUnavailable("ruff")
+    root = _root(path)
+    target = str(path.resolve())
+
+    def run_ruff(source: str) -> str:
+        completed = subprocess.run(
+            [*command, "format", "--stdin-filename", target, "-"],
+            input=source,
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise FormattingChangedCode(f"ruff format failed: {completed.stderr.strip()}")
+        return completed.stdout
+
+    return checked(run_ruff)
+
+
+def formatter_for_project(path: Path) -> Tuple[Optional[SnippetFormatter], str]:
+    """The formatter the project's configuration calls for, and a note on what was chosen.
+
+    ruff when the project configures it and it is installed; otherwise Black
+    when installed; otherwise none. The note explains a fallback or absence.
+    """
+    if project_uses_ruff(path):
+        try:
+            return ruff_formatter(path), "ruff (project configuration)"
+        except FormatterUnavailable:
+            note = "ruff is configured but not installed"
+            try:
+                return black_formatter(BlackSettings.for_project(path)), f"Black; {note}"
+            except ImportError:
+                return None, f"{note}, and Black is not installed either"
+    try:
+        return black_formatter(BlackSettings.for_project(path)), "Black"
+    except ImportError:
+        return None, "Black is not installed"
+
+
+def import_sorter_for_project(path: Path) -> Tuple[Optional[FileFinisher], str]:
+    """A finisher that sorts a modified file's imports the way the project does, if it does.
+
+    ruff's ``I`` rules when the project selects them and ruff is installed;
+    isort when the project configures it and isort is importable. A project
+    that configures neither has its imports left where Towel put them.
+    """
+    if project_selects_ruff_import_sorting(path):
+        command = _ruff_executable()
+        if command is None:
+            return None, "ruff import sorting is configured but ruff is not installed"
+        root = _root(path)
+
+        def sort_with_ruff(file_path: str, source: str) -> str:
+            completed = subprocess.run(
+                [
+                    *command,
+                    "check",
+                    "--select",
+                    "I",
+                    "--fix",
+                    "--exit-zero",
+                    "--quiet",
+                    "--stdin-filename",
+                    str(Path(file_path).resolve()),
+                    "-",
+                ],
+                input=source,
+                capture_output=True,
+                text=True,
+                cwd=str(root),
+                check=False,
+            )
+            return completed.stdout if completed.returncode == 0 and completed.stdout else source
+
+        return imports_permuted_only(sort_with_ruff), "ruff import sorting"
+    if project_uses_isort(path):
+        try:
+            import isort
+        except ImportError:
+            return None, "isort is configured but not installed"
+        settings_path = str(_root(path))
+
+        def sort_with_isort(file_path: str, source: str) -> str:
+            return isort.code(
+                source, config=isort.Config(settings_path=settings_path), file_path=Path(file_path)
+            )
+
+        return imports_permuted_only(sort_with_isort), "isort"
+    return None, ""
+
+
+def imports_permuted_only(finisher: FileFinisher) -> FileFinisher:
+    """``finisher`` guarded so it can only reorder or merge top-level imports.
+
+    The non-import statements must be the same, in the same order, and the
+    set of names the imports bind must be unchanged; otherwise
+    :class:`FormattingChangedCode` is raised.
+    """
+
+    def finish(file_path: str, source: str) -> str:
+        finished = finisher(file_path, source)
+        if finished == source:
+            return source
+        before, after = ast.parse(source), ast.parse(finished)
+        if _non_import_dumps(before) != _non_import_dumps(after):
+            raise FormattingChangedCode("import sorting changed statements other than imports")
+        if _imported_names(before) != _imported_names(after):
+            raise FormattingChangedCode("import sorting changed what the imports bind")
+        return finished
+
+    return finish
+
+
+def _non_import_dumps(module: ast.Module) -> Sequence[str]:
+    return [
+        ast.dump(node) for node in module.body if not isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+
+
+def _imported_names(module: ast.Module) -> frozenset[Tuple[object, ...]]:
+    names: set[Tuple[object, ...]] = set()
+    for node in module.body:
+        if isinstance(node, ast.Import):
+            names.update((alias.name, alias.asname) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names.update(
+                (node.level, node.module, alias.name, alias.asname) for alias in node.names
+            )
+    return frozenset(names)

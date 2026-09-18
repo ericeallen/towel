@@ -28,7 +28,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-format = ["black>=24.1.0"]
+format = ["black>=24.1.0", "isort>=5.12", "ruff>=0.4"]
 types = ["mypy>=1.0.0"]
 dev = [
     "tomli>=2.0.1",
@@ -37,6 +37,8 @@ dev = [
     "bandit>=1.7.6",
     "coverage>=7.0.0",
     "black>=26.3.1",
+    "isort>=5.12",
+    "ruff>=0.4",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
     "pre-commit>=3.0.0",

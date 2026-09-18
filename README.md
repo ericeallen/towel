@@ -36,9 +36,11 @@ def quote_summary(quote):
 
 Towel proposes the shared block as a helper (emitted with a placeholder name you
 rename afterward) and rewrites both functions to call it. The inserted code is
-formatted with Black when it is installed (`pip install "code-towel[format]"`),
-following the project's own `[tool.black]` settings; `--no-format` turns that
-off. In annotated code the helper also carries the parameter and return
+formatted the way the project formats its own (`ruff format` when the project
+configures ruff, else Black, at the line length the project declares) and any
+imports Towel adds are sorted with ruff's import rules or isort when the
+project uses them, all when installed (`pip install "code-towel[format]"`);
+`--no-format` turns that off. In annotated code the helper also carries the parameter and return
 annotations its call sites declare, and, when mypy is installed
 (`pip install "code-towel[types]"`), the types mypy infers for the rest;
 `--no-types` turns that off:

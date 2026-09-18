@@ -166,9 +166,11 @@ Examples:
     parser.add_argument(
         "--no-format",
         action="store_true",
-        help="Insert generated helpers and calls as rendered, without formatting them with "
-        "Black. By default they are formatted when Black is installed (the 'format' extra), "
-        "using the project's [tool.black] line length and string quoting.",
+        help="Insert generated helpers and calls as rendered, without formatting them. By "
+        "default they are formatted with ruff when the project configures it, else Black, "
+        "when installed (the 'format' extra), at the line length the project declares; "
+        "and inserted imports are sorted with ruff's I rules or isort when the project "
+        "configures them.",
     )
 
     parser.add_argument(
@@ -360,17 +362,28 @@ def _type_inferrer() -> Optional["TypeInferrer"]:
 
 
 def _generated_code_formatter(project_path: "Path") -> Optional[Callable[[str], str]]:
-    """Black configured from the project's own settings, or None with a note when absent."""
-    from towel.formatting import BlackSettings, black_formatter
+    """The formatter the project's configuration calls for, or None with a note."""
+    from towel.formatting import formatter_for_project
 
-    try:
-        return black_formatter(BlackSettings.for_project(project_path))
-    except ImportError:
+    formatter, note = formatter_for_project(project_path)
+    if formatter is None:
         print(
-            "Note: Black is not installed, so generated code is inserted unformatted. "
+            f"Note: {note}, so generated code is inserted unformatted. "
             'Install the format extra (pip install "code-towel[format]") to format it.'
         )
-        return None
+    elif "not installed" in note:
+        print(f"Note: {note}; formatting generated code with {note.split(';')[0]}.")
+    return formatter
+
+
+def _import_sorter(project_path: "Path") -> Optional[Callable[[str, str], str]]:
+    """Import sorting the project configures, or None (with a note if the tool is missing)."""
+    from towel.formatting import import_sorter_for_project
+
+    finisher, note = import_sorter_for_project(project_path)
+    if finisher is None and note:
+        print(f"Note: {note}; inserted imports are left where Towel put them.")
+    return finisher
 
 
 def _run_dry(args: argparse.Namespace) -> None:
@@ -426,6 +439,9 @@ def _run_dry(args: argparse.Namespace) -> None:
             None
             if getattr(args, "no_format", False)
             else _generated_code_formatter(Path(input_path))
+        ),
+        file_finisher=(
+            None if getattr(args, "no_format", False) else _import_sorter(Path(input_path))
         ),
         annotate_helpers=not getattr(args, "no_types", False),
         type_inferrer=None if getattr(args, "no_types", False) else _type_inferrer(),

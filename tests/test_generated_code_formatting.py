@@ -164,3 +164,100 @@ def test_line_length_follows_the_projects_own_declaration(
     if filename != "pyproject.toml":
         (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
     assert BlackSettings.for_project(tmp_path / "m.py").line_length == expected
+
+
+def test_ruff_formats_when_the_project_configures_it(tmp_path: Path) -> None:
+    from towel.formatting import formatter_for_project
+
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 60\n")
+    module = tmp_path / "m.py"
+    module.write_text("x = 1\n")
+    formatter, note = formatter_for_project(module)
+    assert formatter is not None and note.startswith("ruff")
+    formatted = formatter(
+        "value = helper('a', 'bbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccc', 'dddddddddd')"
+    )
+    assert max(len(line) for line in formatted.splitlines()) <= 60
+    assert '"a"' in formatted
+
+
+def test_black_is_the_formatter_without_ruff_configuration(tmp_path: Path) -> None:
+    from towel.formatting import formatter_for_project
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    formatter, note = formatter_for_project(tmp_path / "m.py")
+    assert formatter is not None and note == "Black"
+
+
+def test_isort_sorts_the_inserted_import_when_configured(tmp_path: Path) -> None:
+    from towel.formatting import import_sorter_for_project
+
+    (tmp_path / "pyproject.toml").write_text('[tool.isort]\nprofile = "black"\n')
+    module = tmp_path / "m.py"
+    source = (
+        "from typing import Any\nimport os\nimport sys\n\n\ndef f() -> Any:\n    return os, sys\n"
+    )
+    module.write_text(source)
+    finisher, note = import_sorter_for_project(module)
+    assert finisher is not None and note == "isort"
+    finished = finisher(str(module), source)
+    assert finished.startswith("import os\nimport sys\nfrom typing import Any\n")
+
+
+def test_ruff_import_rules_sort_when_selected(tmp_path: Path) -> None:
+    from towel.formatting import import_sorter_for_project
+
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff.lint]\nselect = ["E", "I"]\n')
+    module = tmp_path / "m.py"
+    source = (
+        "from typing import Any\nimport os\nimport sys\n\n\ndef f() -> Any:\n    return os, sys\n"
+    )
+    module.write_text(source)
+    finisher, note = import_sorter_for_project(module)
+    assert finisher is not None and note == "ruff import sorting"
+    finished = finisher(str(module), source)
+    assert finished.index("import os") < finished.index("from typing import Any")
+
+
+def test_no_import_sorting_without_configuration(tmp_path: Path) -> None:
+    from towel.formatting import import_sorter_for_project
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    assert import_sorter_for_project(tmp_path / "m.py") == (None, "")
+
+
+def test_an_import_sorter_may_only_permute_imports() -> None:
+    from towel.formatting import imports_permuted_only
+
+    dropping = imports_permuted_only(lambda path, source: source.replace("import os\n", ""))
+    with pytest.raises(FormattingChangedCode):
+        dropping("m.py", "import os\nimport sys\nx = 1\n")
+    swapping = imports_permuted_only(lambda path, source: "import sys\nimport os\nx = 1\n")
+    assert swapping("m.py", "import os\nimport sys\nx = 1\n") == "import sys\nimport os\nx = 1\n"
+
+
+def test_dry_sorts_inserted_imports_for_an_isort_project(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "pyproject.toml").write_text('[tool.isort]\nprofile = "black"\n')
+    (source_dir / "m.py").write_text(textwrap.dedent("""
+            import os
+
+            def first(items: list[int]) -> int:
+                total = sum(items) + 1
+                print(total, os.sep)
+                return total * 2
+
+            def second(items: list[int]) -> int:
+                total = sum(items) + 1
+                print(total, os.sep)
+                return total * 3
+            """))
+    out = tmp_path / "out"
+    assert (
+        invoke(["dry", str(source_dir), str(out), "--non-interactive", "--progress", "none"]).status
+        == 0
+    )
+    text = (out / "m.py").read_text()
+    if "from typing import" in text:
+        assert text.index("import os") < text.index("from typing import")

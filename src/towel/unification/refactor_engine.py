@@ -343,6 +343,7 @@ class UnificationRefactorEngine:
         annotate_helpers: bool = True,
         type_inferrer: Optional[TypeOracle] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
+        file_finisher: Optional[Callable[[str, str], str]] = None,
     ):
         """
         Initialize the refactoring engine.
@@ -389,6 +390,10 @@ class UnificationRefactorEngine:
                 call statement from ``ast.unparse`` output to the text that is
                 inserted, for example Black (see ``towel.formatting``). None
                 (default) inserts the ``ast.unparse`` text as is.
+            file_finisher: Maps ``(path, source)`` of each modified file to its
+                final text, for example with imports sorted the way the project
+                sorts them (see ``towel.formatting.import_sorter_for_project``).
+                None (default) leaves files as assembled.
         """
         self.analysis_session = AnalysisSession()
         self.max_parameters = max_parameters
@@ -398,6 +403,7 @@ class UnificationRefactorEngine:
         self.annotate_helpers = annotate_helpers
         self.type_inferrer = type_inferrer
         self.snippet_formatter = snippet_formatter
+        self.file_finisher = file_finisher
         # Directory names left out of directory mode, such as ``tests`` when a
         # package carries its test suite inside itself (networkx: 77k of its
         # 198k lines).
@@ -4422,7 +4428,10 @@ class UnificationRefactorEngine:
                         import_pos = self._find_import_position(lines)
                         lines.insert(import_pos, import_line)
 
-            modified_files[file_path] = "".join(lines)
+            assembled = "".join(lines)
+            if self.file_finisher is not None:
+                assembled = self.file_finisher(file_path, assembled)
+            modified_files[file_path] = assembled
 
         for path, content in modified_files.items():
             compile(content, path, "exec")

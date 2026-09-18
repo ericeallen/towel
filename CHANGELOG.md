@@ -78,6 +78,12 @@ ecosystem evidence behind each claim. The format follows
   same-file clustering pass applies its constant-time filters before the
   semantic guards. Together these remove about half of the AST traversal on
   a 16k-line project with an identical proposal list.
+- Generated code is formatted with the formatter the project configures:
+  `ruff format` when `[tool.ruff]` (or `ruff.toml`) is present and ruff is
+  installed, otherwise Black. Inserted imports are sorted the way the
+  project sorts them, with ruff's `I` rules when selected or isort when
+  configured; a sorter may only reorder or merge the import statements, which
+  is verified. ruff and isort join Black in the `format` extra.
 - Black's line length for generated code is the limit the project declares
   anywhere: `[tool.black]`, `[tool.ruff]`, `[tool.pycodestyle]`, or a
   `[flake8]`/`[pycodestyle]` section in `setup.cfg`, `tox.ini` or `.flake8`
