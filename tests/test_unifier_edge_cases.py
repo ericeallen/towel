@@ -77,7 +77,8 @@ def test_unifier_with_walrus_and_with_optional_vars():
     blocks = [_parse_stmt_list(code1), _parse_stmt_list(code2)]
     u = Unifier()
     subst = u.unify_blocks(blocks, [{}, {}])
-    assert subst is None, "Current engine rejects walrus alpha-renaming scenario"
+    assert subst is not None, "with-target and walrus-target spellings are alpha-equivalent"
+    assert subst.param_expressions == {}
 
 
 def test_unifier_fstring_format_spec():

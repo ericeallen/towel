@@ -128,6 +128,27 @@ def get_free_variables(expr: ast.AST) -> Set[str]:
     return collector.vars
 
 
+def _named_expr_targets(statement: ast.AST) -> List[ast.AST]:
+    """Walrus targets in ``statement`` that bind in its own scope, in source order.
+
+    An assignment expression inside a lambda, function, or class body binds
+    there instead, so those scopes are not entered; one inside a
+    comprehension binds in the enclosing scope and is included.
+    """
+    found: List[ast.AST] = []
+    pending: List[ast.AST] = [statement]
+    while pending:
+        node = pending.pop()
+        if node is not statement and isinstance(
+            node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        if isinstance(node, ast.NamedExpr):
+            found.append(node.target)
+        pending.extend(reversed(list(ast.iter_child_nodes(node))))
+    return found
+
+
 class _VarCollector(ast.NodeVisitor):
     """Names loaded anywhere in an expression."""
 
@@ -2027,8 +2048,10 @@ class Unifier:
             seen_vars = set()
 
             for stmt_idx, stmt in enumerate(block):
-                # Get all assignment targets in this statement
-                targets = self._get_assignment_targets(stmt)
+                # Assignment targets first, then walrus targets in source order:
+                # an assignment expression binds in the enclosing scope, so its
+                # name is a block-level binding like any assignment's.
+                targets = self._get_assignment_targets(stmt) + _named_expr_targets(stmt)
 
                 for target_idx, target in enumerate(targets):
                     if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):

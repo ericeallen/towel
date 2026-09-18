@@ -89,6 +89,9 @@ def _alpha_normalize(module: ast.Module) -> ast.Module:
     for node in ast.walk(module):
         if isinstance(node, ast.AnnAssign):
             node.annotation = ast.Name(id="__annotation__", ctx=ast.Load())
+    # A lambda's parameters are visible only inside it; they are renamed
+    # there, by position, before the block-level binders are.
+    module = cast(ast.Module, _LambdaBinderRenamer().visit(module))
     bound = bound_names(module.body) - _fixed_import_names(module.body)
     order: Dict[str, str] = {}
     for node in ast.walk(module):
@@ -271,6 +274,51 @@ def _beta_reduce(
         parameter.arg: actual for parameter, actual in zip(signature.args, actual_args)
     }
     return cast(ast.AST, _Reducer(bindings).visit(copy.deepcopy(thunk.body)))
+
+
+class _LambdaBinderRenamer(ast.NodeTransformer):
+    """Rename each lambda's parameters to positional names, scoped to that lambda.
+
+    ``lambda value: value * 2`` and ``lambda other: other * 2`` are the same
+    function. A parameter is renamed inside its own lambda and nowhere else,
+    so a free name spelled the same outside the lambda is untouched, and an
+    inner lambda that rebinds a name shadows the outer renaming. Lambdas are
+    numbered in visiting order, so a helper and a block of the same shape
+    receive the same names. Defaults evaluate in the enclosing scope and are
+    visited under it.
+    """
+
+    def __init__(self) -> None:
+        self._scopes: List[Dict[str, str]] = []
+        self._count = 0
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        index = self._count
+        self._count += 1
+        arguments = node.args
+        arguments.defaults = [cast(ast.expr, self.visit(default)) for default in arguments.defaults]
+        arguments.kw_defaults = [
+            cast(ast.expr, self.visit(default)) if default is not None else None
+            for default in arguments.kw_defaults
+        ]
+        parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+        if arguments.vararg is not None:
+            parameters.append(arguments.vararg)
+        if arguments.kwarg is not None:
+            parameters.append(arguments.kwarg)
+        mapping = dict(self._scopes[-1]) if self._scopes else {}
+        for position, parameter in enumerate(parameters):
+            mapping[parameter.arg] = f"__lambda_{index}_{position}"
+            parameter.arg = mapping[parameter.arg]
+        self._scopes.append(mapping)
+        node.body = cast(ast.expr, self.visit(node.body))
+        self._scopes.pop()
+        return node
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        if self._scopes:
+            node.id = self._scopes[-1].get(node.id, node.id)
+        return node
 
 
 class _IdentifierRenamer(ast.NodeTransformer):

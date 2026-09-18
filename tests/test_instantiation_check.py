@@ -220,3 +220,24 @@ def test_early_return_requires_return_call() -> None:
         )
         is not None
     )
+
+
+def test_lambda_parameters_are_alpha_equivalent_only_inside_their_lambda() -> None:
+    """``lambda v: v`` equals ``lambda w: w``; a free ``v`` outside the lambda is a different name."""
+    from towel.unification.instantiation import _alpha_normalize
+
+    def normalized(source: str) -> str:
+        return ast.dump(_alpha_normalize(ast.parse(source)), include_attributes=False)
+
+    assert normalized("f = lambda v: v * 2") == normalized("f = lambda w: w * 2")
+    assert normalized("f = lambda v: v * 2\ntotal = v + 1") == normalized(
+        "f = lambda w: w * 2\ntotal = v + 1"
+    )
+    assert normalized("f = lambda v: v * 2\ntotal = v + 1") != normalized(
+        "f = lambda w: w * 2\ntotal = w + 1"
+    )
+    assert normalized("f = lambda v: (lambda v: v)(v)") == normalized(
+        "f = lambda a: (lambda b: b)(a)"
+    )
+    assert normalized("f = lambda v=x: v") == normalized("f = lambda w=x: w")
+    assert normalized("f = lambda v=x: v") != normalized("f = lambda w=y: w")

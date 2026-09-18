@@ -222,15 +222,14 @@ class TestScopingEdgeCases(unittest.TestCase):
         self.assertEqual(proposals[0].parameters_count, 0)
         ast.parse(ast.unparse(helper))
 
-    def test_lambda_parameter_spelled_differently_stays_at_the_site(self):
-        """A lambda whose parameter is spelled differently is not unified.
+    def test_lambda_parameter_spelled_differently_is_alpha_equivalent(self):
+        """A lambda whose parameter is spelled differently unifies whole.
 
-        The unifier alpha-renames lambda parameters, but the instantiation
-        check compares the reduced helper body against the site without
-        renaming lambda binders, so a pair differing only in ``value`` versus
-        ``other`` is rejected. The engine instead extracts the statements after
-        the lambda and passes the lambda in as a parameter. This pins the
-        conservative outcome; unifying the whole pair would be an improvement.
+        ``lambda value: value * 2`` and ``lambda other: other * 2`` are the same
+        function: the unifier alpha-renames the parameters and the
+        instantiation check renames them within their lambda, so the whole
+        pair unifies, lambda included; here that makes the two bodies
+        identical and the second function is redirected to the first.
         """
         proposals = self._analyze_source(
             "def first(items):\n"
@@ -248,10 +247,12 @@ class TestScopingEdgeCases(unittest.TestCase):
             "    return out\n"
         )
         self.assertEqual(len(proposals), 1, [p.description for p in proposals])
-        helper = proposals[0].extracted_function
-        self.assertEqual([n for n in ast.walk(helper) if isinstance(n, ast.Lambda)], [])
-        self.assertIn("double", [arg.arg for arg in helper.args.args])
-        self.assertEqual([r.line_range for r in proposals[0].replacements], [(3, 6), (10, 13)])
+        # The whole bodies match, so the second function simply calls the first.
+        proposal = proposals[0]
+        self.assertIsNotNone(proposal.reused_function)
+        assert proposal.reused_function is not None
+        self.assertEqual(proposal.reused_function.name, "first")
+        self.assertEqual([r.line_range for r in proposal.replacements], [(9, 13)])
 
 
 if __name__ == "__main__":

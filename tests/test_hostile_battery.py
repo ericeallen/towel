@@ -70,6 +70,8 @@ TRANSFORMED = {
     "r99_partial_return_branches",
     "r100_clustered_site_with_live_binding",
     "r102_whole_body_reuse",
+    "r103_lambda_parameter_spelling",
+    "r104_walrus_target_spelling",
     # Blocks that bind a variable read afterwards, returned by the helper and
     # rebound by the generated call.
     "h01_side_effect_order",
