@@ -14,10 +14,22 @@ import os
 import sys
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, TypedDict, Literal
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Dict,
+    List,
+    Tuple,
+    Optional,
+    Mapping,
+    TypedDict,
+    Literal,
+    Set,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from towel.type_inference import TypeOracle
+    from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
@@ -594,9 +606,82 @@ def _run_dry(args: argparse.Namespace) -> None:
     _write_change_sidecar(engine, output_path)
 
 
+def _print_proposal(
+    index: int,
+    prop: "RefactoringProposal",
+    target: str,
+    is_dir: bool,
+    source_cache: Dict[str, List[str]],
+) -> None:
+    """Print one proposal: its scope, the helper it adds or the function it reuses, its call sites."""
+    print(f"\n{index}. {prop.description}")
+    print(f"   Parameters: {prop.parameters_count}")
+    files_affected = {replacement.file_path or prop.file_path for replacement in prop.replacements}
+    if len(files_affected) > 1:
+        print(f"   Type: Cross-file ({len(files_affected)} files)")
+        for f in sorted(files_affected):
+            print(f"      - {f}")
+    else:
+        print(f"   Type: Same file ({prop.file_path})")
+    if prop.reused_function is not None:
+        print(
+            f"\n   Calls existing function {prop.reused_function.name} "
+            f"({prop.reused_function.file_path}); no helper is added"
+        )
+    else:
+        print("\n   Extracted function preview:")
+        try:
+            lines = ast.unparse(prop.extracted_function).split("\n")
+            for line in lines[:8]:
+                print(f"      {line}")
+            if len(lines) > 8:
+                print(f"      ... ({len(lines) - 8} more lines)")
+        except ValueError as e:
+            print(f"      (Preview unavailable: {e})")
+            print(f"      Function name: {prop.extracted_function.name}")
+    _print_call_sites(prop, target, is_dir, source_cache)
+
+
+def _print_call_sites(
+    prop: "RefactoringProposal", target: str, is_dir: bool, source_cache: Dict[str, List[str]]
+) -> None:
+    """Print each call site's original block (before) and the generated call (after)."""
+    import textwrap
+
+    print("\n   Call sites (- before / + after):")
+    shown = 0
+    for repl in sorted(
+        prop.replacements, key=lambda r: ((r.file_path or prop.file_path), r.line_range[0])
+    ):
+        if shown >= 3:
+            print(f"      ... ({len(prop.replacements) - shown} more call site(s))")
+            break
+        fpath = repl.file_path or prop.file_path
+        start, end = repl.line_range
+        if fpath not in source_cache:
+            try:
+                source_cache[fpath] = read_source(fpath).splitlines(keepends=True)
+            except (OSError, UnicodeError, SyntaxError):
+                source_cache[fpath] = []
+        file_lines = source_cache[fpath]
+        if not (1 <= start <= end <= len(file_lines)):
+            continue
+        before = textwrap.dedent("".join(file_lines[start - 1 : end])).rstrip("\n")
+        try:
+            after = ast.unparse(repl.node)
+        except ValueError:
+            continue
+        location = os.path.relpath(fpath, target) if is_dir else os.path.basename(fpath)
+        print(f"      {location}:{start}")
+        for line in before.split("\n"):
+            print(f"        - {line}")
+        for line in after.split("\n"):
+            print(f"        + {line}")
+        shown += 1
+
+
 def _run_preview(args: argparse.Namespace) -> None:
     """Run the preview command."""
-    import textwrap
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
 
@@ -646,76 +731,7 @@ def _run_preview(args: argparse.Namespace) -> None:
 
     source_cache: Dict[str, List[str]] = {}
     for i, prop in enumerate(proposals[:10], 1):
-        print(f"\n{i}. {prop.description}")
-        print(f"   Parameters: {prop.parameters_count}")
-
-        # Show which files are affected
-        files_affected = set()
-        for replacement in prop.replacements:
-            if replacement.file_path:
-                files_affected.add(replacement.file_path)
-            else:
-                files_affected.add(prop.file_path)
-
-        if len(files_affected) > 1:
-            print(f"   Type: Cross-file ({len(files_affected)} files)")
-            for f in sorted(files_affected):
-                print(f"      - {f}")
-        else:
-            print(f"   Type: Same file ({prop.file_path})")
-
-        # Show extracted function preview, or the existing function the sites will call
-        if prop.reused_function is not None:
-            print(
-                f"\n   Calls existing function {prop.reused_function.name} "
-                f"({prop.reused_function.file_path}); no helper is added"
-            )
-        else:
-            print("\n   Extracted function preview:")
-            try:
-                func_code = ast.unparse(prop.extracted_function)
-                lines = func_code.split("\n")
-                for line in lines[:8]:
-                    print(f"      {line}")
-                if len(lines) > 8:
-                    print(f"      ... ({len(lines) - 8} more lines)")
-            except ValueError as e:
-                print(f"      (Preview unavailable: {e})")
-                print(f"      Function name: {prop.extracted_function.name}")
-
-        # Show each call site's original block (before) and the generated call
-        # (after), so a reader sees exactly what would change.
-        print("\n   Call sites (- before / + after):")
-        shown = 0
-        for repl in sorted(
-            prop.replacements,
-            key=lambda r: ((r.file_path or prop.file_path), r.line_range[0]),
-        ):
-            if shown >= 3:
-                print(f"      ... ({len(prop.replacements) - shown} more call site(s))")
-                break
-            fpath = repl.file_path or prop.file_path
-            start, end = repl.line_range
-            if fpath not in source_cache:
-                try:
-                    source_cache[fpath] = read_source(fpath).splitlines(keepends=True)
-                except (OSError, UnicodeError, SyntaxError):
-                    source_cache[fpath] = []
-            file_lines = source_cache[fpath]
-            if not (1 <= start <= end <= len(file_lines)):
-                continue
-            before = textwrap.dedent("".join(file_lines[start - 1 : end])).rstrip("\n")
-            try:
-                after = ast.unparse(repl.node)
-            except ValueError:
-                continue
-            location = os.path.relpath(fpath, target) if is_dir else os.path.basename(fpath)
-            print(f"      {location}:{start}")
-            for line in before.split("\n"):
-                print(f"        - {line}")
-            for line in after.split("\n"):
-                print(f"        + {line}")
-            shown += 1
+        _print_proposal(i, prop, target, is_dir, source_cache)
 
     if len(proposals) > 10:
         print(f"\n... and {len(proposals) - 10} more proposals")
@@ -890,21 +906,10 @@ def _read_change_sidecar(sidecar: Path) -> Dict[str, List[ChangeRecord]]:
     return changes
 
 
-def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) -> HelperInventory:
-    """Describe every generated helper for a naming assistant.
-
-    Each entry gives the helper's scope, source, parameters with their
-    evaluation kind (``thunk`` parameters are called as ``name()`` inside the
-    helper, ``lifted`` ones are called with block variables, ``receiver`` is
-    the bound instance or class), every call site with the argument
-    expression bound to each parameter, and the exact mapping keys that
-    rename the helper or one of its parameters.
-    """
-
-    changes_by_helper = _read_change_sidecar(_change_sidecar_path(target))
-
-    wanted = {name for _, name, _, _ in helpers}
-    modules = _load_modules(target)
+def _helper_calls(
+    modules: Dict[Path, Tuple[str, ast.Module]], wanted: Set[str], target: Path
+) -> Dict[str, List[CallRecord]]:
+    """Every call of a wanted helper, by helper name, with the statement and arguments it stands in."""
     calls: Dict[str, List[CallRecord]] = {name: [] for name in wanted}
     for path, (source, tree) in modules.items():
         statements = {
@@ -934,6 +939,25 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                     "arguments": [ast.get_source_segment(source, arg) or "" for arg in node.args],
                 }
             )
+    return calls
+
+
+def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) -> HelperInventory:
+    """Describe every generated helper for a naming assistant.
+
+    Each entry gives the helper's scope, source, parameters with their
+    evaluation kind (``thunk`` parameters are called as ``name()`` inside the
+    helper, ``lifted`` ones are called with block variables, ``receiver`` is
+    the bound instance or class), every call site with the argument
+    expression bound to each parameter, and the exact mapping keys that
+    rename the helper or one of its parameters.
+    """
+
+    changes_by_helper = _read_change_sidecar(_change_sidecar_path(target))
+
+    wanted = {name for _, name, _, _ in helpers}
+    modules = _load_modules(target)
+    calls = _helper_calls(modules, wanted, target)
     entries: List[HelperRecord] = []
     for path, name, lineno, _ in helpers:
         source, tree = modules[path]

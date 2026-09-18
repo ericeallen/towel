@@ -13,7 +13,7 @@ and turns the thunk back into an ordinary argument, so the helper reads
 from __future__ import annotations
 
 import ast
-from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple, Any, Callable, Union
 
 from .substitution import Substitution
 
@@ -204,70 +204,131 @@ def _target_order(target: ast.AST) -> List[ast.AST]:
 
 def _walk(node: ast.AST) -> Iterator[ast.AST]:
     """Yield nodes in CPython evaluation order until a region that may not run once."""
-    if isinstance(node, (ast.Name, ast.Constant, ast.Lambda)):
-        yield node
-    elif isinstance(node, ast.Attribute):
-        yield from _walk(node.value)
-        yield node
-    elif isinstance(node, ast.Subscript):
-        yield from _walk(node.value)
-        yield from _walk(node.slice)
-        yield node
-    elif isinstance(node, ast.Slice):
-        for part in (node.lower, node.upper, node.step):
-            if part is not None:
-                yield from _walk(part)
-    elif isinstance(node, ast.Call):
-        yield from _walk(node.func)
-        for argument in node.args:
-            yield from _walk(argument)
-        for keyword in node.keywords:
-            yield from _walk(keyword.value)
-        yield node
-    elif isinstance(node, ast.Starred):
-        yield from _walk(node.value)
-    elif isinstance(node, ast.BinOp):
-        yield from _walk(node.left)
-        yield from _walk(node.right)
-        yield node
-    elif isinstance(node, ast.UnaryOp):
-        yield from _walk(node.operand)
-        yield node
-    elif isinstance(node, ast.BoolOp):
-        yield from _walk(node.values[0])
+    for kinds, walker in _WALKERS:
+        if isinstance(node, kinds):
+            yield from walker(node)
+            return
+    # Await, Yield, and anything unmodeled: treat as an effect that ends the prefix.
+    yield node
+
+
+def _walk_leaf(node: ast.AST) -> Iterator[ast.AST]:
+    yield node
+
+
+def _walk_attribute(node: ast.Attribute) -> Iterator[ast.AST]:
+    yield from _walk(node.value)
+    yield node
+
+
+def _walk_subscript(node: ast.Subscript) -> Iterator[ast.AST]:
+    yield from _walk(node.value)
+    yield from _walk(node.slice)
+    yield node
+
+
+def _walk_slice(node: ast.Slice) -> Iterator[ast.AST]:
+    for part in (node.lower, node.upper, node.step):
+        if part is not None:
+            yield from _walk(part)
+
+
+def _walk_call(node: ast.Call) -> Iterator[ast.AST]:
+    yield from _walk(node.func)
+    for argument in node.args:
+        yield from _walk(argument)
+    for keyword in node.keywords:
+        yield from _walk(keyword.value)
+    yield node
+
+
+def _walk_starred(node: ast.Starred) -> Iterator[ast.AST]:
+    yield from _walk(node.value)
+
+
+def _walk_binop(node: ast.BinOp) -> Iterator[ast.AST]:
+    yield from _walk(node.left)
+    yield from _walk(node.right)
+    yield node
+
+
+def _walk_unaryop(node: ast.UnaryOp) -> Iterator[ast.AST]:
+    yield from _walk(node.operand)
+    yield node
+
+
+def _walk_boolop(node: ast.BoolOp) -> Iterator[ast.AST]:
+    yield from _walk(node.values[0])
+    raise _Stop([])
+
+
+def _walk_ifexp(node: ast.IfExp) -> Iterator[ast.AST]:
+    yield from _walk(node.test)
+    raise _Stop([])
+
+
+def _walk_compare(node: ast.Compare) -> Iterator[ast.AST]:
+    yield from _walk(node.left)
+    yield from _walk(node.comparators[0])
+    yield node
+    if len(node.comparators) > 1:
         raise _Stop([])
-    elif isinstance(node, ast.IfExp):
-        yield from _walk(node.test)
-        raise _Stop([])
-    elif isinstance(node, ast.Compare):
-        yield from _walk(node.left)
-        yield from _walk(node.comparators[0])
-        yield node
-        if len(node.comparators) > 1:
-            raise _Stop([])
-    elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        for element in node.elts:
-            yield from _walk(element)
-        yield node
-    elif isinstance(node, ast.Dict):
-        for key, value in zip(node.keys, node.values):
-            if key is not None:
-                yield from _walk(key)
-            yield from _walk(value)
-        yield node
-    elif isinstance(node, ast.JoinedStr):
-        for value in node.values:
-            yield from _walk(value)
-        yield node
-    elif isinstance(node, ast.FormattedValue):
-        yield from _walk(node.value)
-        yield node
-    elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-        yield from _walk(node.generators[0].iter)
-        raise _Stop([])
-    elif isinstance(node, ast.NamedExpr):
-        yield from _walk(node.value)
-        yield node
-    else:
-        # Await, Yield, and anything unmodeled: treat as an effect that ends the prefix.
-        yield node
+
+
+def _walk_elements(node: Union[ast.Tuple, ast.List, ast.Set]) -> Iterator[ast.AST]:
+    for element in node.elts:
+        yield from _walk(element)
+    yield node
+
+
+def _walk_dict(node: ast.Dict) -> Iterator[ast.AST]:
+    for key, value in zip(node.keys, node.values):
+        if key is not None:
+            yield from _walk(key)
+        yield from _walk(value)
+    yield node
+
+
+def _walk_joined_str(node: ast.JoinedStr) -> Iterator[ast.AST]:
+    for value in node.values:
+        yield from _walk(value)
+    yield node
+
+
+def _walk_formatted_value(node: ast.FormattedValue) -> Iterator[ast.AST]:
+    yield from _walk(node.value)
+    yield node
+
+
+def _walk_comprehension(
+    node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp],
+) -> Iterator[ast.AST]:
+    yield from _walk(node.generators[0].iter)
+    raise _Stop([])
+
+
+def _walk_named_expr(node: ast.NamedExpr) -> Iterator[ast.AST]:
+    yield from _walk(node.value)
+    yield node
+
+
+#: Node kinds in evaluation-order terms and the generator that walks each; first match wins.
+_WALKERS: Tuple[Tuple[Union[type, Tuple[type, ...]], Callable[[Any], Iterator[ast.AST]]], ...] = (
+    ((ast.Name, ast.Constant, ast.Lambda), _walk_leaf),
+    (ast.Attribute, _walk_attribute),
+    (ast.Subscript, _walk_subscript),
+    (ast.Slice, _walk_slice),
+    (ast.Call, _walk_call),
+    (ast.Starred, _walk_starred),
+    (ast.BinOp, _walk_binop),
+    (ast.UnaryOp, _walk_unaryop),
+    (ast.BoolOp, _walk_boolop),
+    (ast.IfExp, _walk_ifexp),
+    (ast.Compare, _walk_compare),
+    ((ast.Tuple, ast.List, ast.Set), _walk_elements),
+    (ast.Dict, _walk_dict),
+    (ast.JoinedStr, _walk_joined_str),
+    (ast.FormattedValue, _walk_formatted_value),
+    ((ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp), _walk_comprehension),
+    (ast.NamedExpr, _walk_named_expr),
+)

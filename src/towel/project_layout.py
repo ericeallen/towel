@@ -24,7 +24,7 @@ from __future__ import annotations
 from keyword import iskeyword
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from .diagnostics import LOG
 from .unification.exceptions import UnsupportedLayoutError
@@ -382,6 +382,110 @@ def _valid_module_path(name: Optional[str]) -> Optional[str]:
     return None
 
 
+_SETUPTOOLS_BACKENDS = (None, "setuptools.build_meta", "setuptools.build_meta:__legacy__")
+_RECOGNIZED_BACKENDS = _SETUPTOOLS_BACKENDS + (
+    "hatchling.build",
+    "flit_core.buildapi",
+    "poetry.core.masonry.api",
+    "pdm.backend",
+)
+
+
+def _build_backend(data: Dict[str, Any]) -> Optional[str]:
+    """The declared build backend, or None when the project declares none."""
+    build = data.get("build-system", {})
+    backend = build.get("build-backend") if isinstance(build, dict) else None
+    return backend if isinstance(backend, str) else None
+
+
+def _declared_source_roots(
+    project_root: Path, data: Dict[str, Any], backend: Optional[str]
+) -> Tuple[List[Path], Dict[Path, str]]:
+    """The source roots the project's packaging declares, with any package prefixes.
+
+    ``[tool.setuptools.package-dir]`` is read only under setuptools (or no
+    declared backend, which defaults to it): a foreign backend's incidental
+    setuptools table is not trusted. Then the flit, poetry, pdm and hatch
+    tables in turn; an unrecognized backend gets conventional, name-based
+    inference and is refused only when that finds nothing; a setuptools
+    project that leaves discovery implicit gets its ``src`` layout.
+    """
+    source_roots: List[Path] = []
+    package_prefixes: Dict[Path, str] = {}
+    mapping = _table(_table(data.get("tool", {}), "setuptools"), "package-dir")
+    if backend in _SETUPTOOLS_BACKENDS:
+        for prefix, rel in mapping.items():
+            if not isinstance(prefix, str) or not isinstance(rel, str):
+                continue
+            root = (project_root / rel).resolve()
+            if root.is_dir():
+                source_roots.append(root)
+                if prefix:
+                    package_prefixes[root] = prefix
+    if not source_roots and backend == "flit_core.buildapi":
+        source_roots = _flit_source_roots(project_root, data)
+    if not source_roots and backend == "poetry.core.masonry.api":
+        source_roots = _poetry_source_roots(project_root, data)
+    if not source_roots and backend == "pdm.backend":
+        source_roots = _pdm_source_roots(project_root, data)
+    if not source_roots:
+        source_roots = _hatch_source_roots(project_root, data)
+    if not source_roots and backend not in _RECOGNIZED_BACKENDS:
+        source_roots = _conventional_source_roots(project_root, data)
+        if not source_roots:
+            raise UnsupportedLayoutError(
+                f"Unsupported build backend {backend!r}; no conventional "
+                "name-based package or src layout to infer safe imports from"
+            )
+    if not source_roots:
+        inferred_root = _setuptools_default_src_root(project_root, data)
+        source_roots = [inferred_root if inferred_root is not None else project_root]
+    return source_roots, package_prefixes
+
+
+def _roots_around(
+    start_dir: Path, project_root: Path, source_roots: List[Path]
+) -> Tuple[Path, List[Path]]:
+    """The project root and source roots as seen from ``start_dir``.
+
+    Roots that contain the starting directory win. When none does (a fixture
+    or a copy of the tree analyzed outside the package), the longest suffix of
+    the starting path that exists under a root maps the copy back onto it;
+    failing that, the starting directory is its own root so relative imports
+    stay valid.
+    """
+    containing = [root for root in source_roots if _is_under(start_dir, root)]
+    if containing:
+        return project_root, containing
+    best_candidate: Optional[Path] = None
+    max_match_len = 0
+    start_parts = start_dir.parts
+    for root in source_roots:
+        for i in range(len(start_parts)):
+            suffix = Path(*start_parts[i:])
+            if suffix.is_absolute():
+                continue
+            if (root / suffix).exists():
+                match_len = len(start_parts) - i
+                if match_len > max_match_len:
+                    max_match_len = match_len
+                    best_candidate = Path(*start_parts[:i])
+                break
+    if best_candidate:
+        return project_root, [best_candidate]
+    if start_dir != project_root:
+        return start_dir, [start_dir]
+    return project_root, source_roots
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
 @dataclass
 class ProjectLayout:
     """Represents the directory structure and import configuration of a Python project.
@@ -417,119 +521,14 @@ class ProjectLayout:
         """
         project_root = find_project_root(start_path)
         data = load_pyproject(project_root)
-        build = data.get("build-system", {})
-        backend = build.get("build-backend") if isinstance(build, dict) else None
-        recognized_backend = backend in (
-            None,
-            "setuptools.build_meta",
-            "setuptools.build_meta:__legacy__",
-            "hatchling.build",
-            "flit_core.buildapi",
-            "poetry.core.masonry.api",
-            "pdm.backend",
-        )
-
-        # Default settings
+        backend = _build_backend(data)
         prefer_abs = True if prefer_absolute_imports is None else prefer_absolute_imports
         pep420 = True if pep420_namespace_packages is None else pep420_namespace_packages
 
-        # Determine source roots
-        source_roots: List[Path] = []
-
-        package_prefixes: Dict[Path, str] = {}
-        tool = data.get("tool", {})
-        setuptools = _table(tool, "setuptools")
-        mapping = _table(setuptools, "package-dir")
-        # ``[tool.setuptools]`` is meaningful only under setuptools (or an
-        # undeclared backend, which defaults to setuptools); a foreign backend's
-        # incidental setuptools table is not trusted.
-        if backend in (
-            None,
-            "setuptools.build_meta",
-            "setuptools.build_meta:__legacy__",
-        ) and isinstance(mapping, dict):
-            for prefix, rel in mapping.items():
-                if not isinstance(prefix, str) or not isinstance(rel, str):
-                    continue
-                root = (project_root / rel).resolve()
-                if root.is_dir():
-                    source_roots.append(root)
-                    if prefix:
-                        package_prefixes[root] = prefix
-        if not source_roots and backend == "flit_core.buildapi":
-            source_roots = _flit_source_roots(project_root, data)
-        if not source_roots and backend == "poetry.core.masonry.api":
-            source_roots = _poetry_source_roots(project_root, data)
-        if not source_roots and backend == "pdm.backend":
-            source_roots = _pdm_source_roots(project_root, data)
-        if not source_roots:
-            source_roots = _hatch_source_roots(project_root, data)
-
+        source_roots, package_prefixes = _declared_source_roots(project_root, data, backend)
         start_resolved = start_path.resolve()
         start_dir = start_resolved.parent if start_resolved.is_file() else start_resolved
-
-        # An unrecognized backend gets conventional, name-based inference rather
-        # than an outright rejection: a package or module named after the
-        # distribution, in the project root or under ``src``. Only a layout that
-        # cannot be inferred that way is refused.
-        if not source_roots and not recognized_backend:
-            conventional = _conventional_source_roots(project_root, data)
-            if conventional:
-                source_roots = conventional
-            else:
-                raise UnsupportedLayoutError(
-                    f"Unsupported build backend {backend!r}; no conventional "
-                    "name-based package or src layout to infer safe imports from"
-                )
-
-        # Setuptools discovers classic packages under src when project metadata
-        # leaves package discovery implicit. Unconfigured trees and other build
-        # systems retain the project-root fallback rather than guessing layout.
-        if not source_roots:
-            inferred_root = _setuptools_default_src_root(project_root, data)
-            source_roots = [inferred_root if inferred_root is not None else project_root]
-
-        # Prefer source roots that actually contain the starting directory. When none of the
-        # discovered roots include the path we're analyzing (common for test fixtures copied
-        # outside the main package tree), fall back to treating the starting directory as the
-        # root so relative imports remain valid.
-        filtered_roots: List[Path] = []
-        for root in source_roots:
-            try:
-                start_dir.relative_to(root)
-                filtered_roots.append(root)
-            except ValueError:
-                continue
-
-        if filtered_roots:
-            source_roots = filtered_roots
-        else:
-            # Fallback: try to map start_dir to an existing source root by matching directory structure
-            # This handles cases where we are running on a copy of the source tree (e.g. 'cleaned' dir)
-            best_candidate = None
-            max_match_len = 0
-
-            start_parts = start_dir.parts
-
-            for root in source_roots:
-                # Try to find the longest suffix of start_dir that exists under root
-                for i in range(len(start_parts)):
-                    suffix = Path(*start_parts[i:])
-                    if suffix.is_absolute():
-                        continue
-
-                    if (root / suffix).exists():
-                        match_len = len(start_parts) - i
-                        if match_len > max_match_len:
-                            max_match_len = match_len
-                            best_candidate = Path(*start_parts[:i])
-                        break
-
-            if best_candidate:
-                source_roots = [best_candidate]
-            elif start_dir != project_root:
-                project_root = start_dir
-                source_roots = [start_dir]
+        project_root, source_roots = _roots_around(start_dir, project_root, source_roots)
 
         metadata_root = any(
             (project_root / marker).exists()

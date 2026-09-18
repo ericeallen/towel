@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import ast
 
-from typing import Any, List, Optional, Tuple, cast, Sequence
+from typing import Any, List, Optional, Tuple, Sequence, Callable, Iterable
 from .visitors import OwnScopeVisitor
 
 from .substitution import Substitution
@@ -60,6 +60,69 @@ class _CallContextFinder(OwnScopeVisitor):
         """A use inside a nested class body is not a use in this scope."""
 
 
+def _is_used_as_callable_or_value_later(
+    block: Sequence[ast.AST], start_stmt_idx: int, var_name: str
+) -> bool:
+    """Whether ``var_name`` is read in a call context by a later statement of ``block``."""
+    finder = _CallContextFinder(var_name)
+    for sidx in range(start_stmt_idx + 1, len(block)):
+        finder.visit(block[sidx])
+        if finder.found:
+            return True
+    return False
+
+
+def _calls_with_paths(
+    stmt: ast.AST, iter_child_fields: Callable[[ast.AST], Iterable[Tuple[str, Any]]]
+) -> List[Tuple[Tuple[Any, ...], ast.Call]]:
+    """Every call in ``stmt`` with its field-and-index path from the statement root."""
+    result: List[Tuple[Tuple[Any, ...], ast.Call]] = []
+
+    def walk(node: ast.AST, path: Tuple[Any, ...]) -> None:
+        if isinstance(node, ast.Call):
+            result.append((path, node))
+        for field_name, value in iter_child_fields(node):
+            if isinstance(value, list):
+                for i, item in enumerate(value):
+                    if isinstance(item, ast.AST):
+                        walk(item, path + (field_name, i))
+            elif isinstance(value, ast.AST):
+                walk(value, path + (field_name,))
+
+    walk(stmt, ("$root",))
+    return result
+
+
+def _node_at_path(stmt: ast.AST, path: Tuple[Any, ...]) -> Optional[ast.AST]:
+    """The node ``path`` (as ``_calls_with_paths`` spells it) names in ``stmt``, or None."""
+    node: ast.AST = stmt
+    idx = 1  # past "$root"
+    while idx < len(path):
+        part = path[idx]
+        if not isinstance(part, str):
+            return None
+        field = part
+        idx += 1
+        if idx < len(path) and isinstance(path[idx], int):
+            list_index = path[idx]
+            idx += 1
+        else:
+            list_index = None
+        value = getattr(node, field, None)
+        if list_index is None:
+            if not isinstance(value, ast.AST):
+                return None
+            node = value
+        else:
+            if not isinstance(value, list) or list_index >= len(value):
+                return None
+            next_node = value[list_index]
+            if not isinstance(next_node, ast.AST):
+                return None
+            node = next_node
+    return node
+
+
 class LiteralPromotion(UnifierState):
     """See the module docstring."""
 
@@ -87,72 +150,6 @@ class LiteralPromotion(UnifierState):
 
         if not blocks or len(blocks) < 2:
             return
-
-        num_blocks = len(blocks)
-
-        # Utility: collect whether a variable is used later in a Call context (as a callee or as an argument)
-        def is_used_as_callable_or_value_later(
-            block: Sequence[ast.AST], start_stmt_idx: int, var_name: str
-        ) -> bool:
-
-            finder = _CallContextFinder(var_name)
-            for sidx in range(start_stmt_idx + 1, len(block)):
-                finder.visit(block[sidx])
-                if finder.found:
-                    return True
-            return False
-
-        # Utility: yield all (path, call_node) pairs within a statement in block 0
-        def iter_calls_with_paths(stmt: ast.AST) -> List[Tuple[Tuple[Any, ...], ast.Call]]:
-            result: List[Tuple[Tuple[Any, ...], ast.Call]] = []
-
-            def walk(node: ast.AST, path: Tuple[Any, ...]) -> None:
-                if isinstance(node, ast.Call):
-                    result.append((path, node))
-                for field_name, value in self._iter_child_fields(node):
-                    if isinstance(value, list):
-                        for i, item in enumerate(value):
-                            if isinstance(item, ast.AST):
-                                walk(item, path + (field_name, i))
-                    elif isinstance(value, ast.AST):
-                        walk(value, path + (field_name,))
-
-            walk(stmt, ("$root",))
-            return result
-
-        # Utility: follow a path within a statement to retrieve the corresponding node
-
-        # Utility: get child by (field, index) sequence from current node
-        def get_node_by_field_index_path(stmt: ast.AST, path: Tuple[Any, ...]) -> Optional[ast.AST]:
-            node: ast.AST = stmt
-            # Skip "$root"
-            idx = 1
-            while idx < len(path):
-                part = path[idx]
-                if not isinstance(part, str):
-                    return None
-                field = part
-                idx += 1
-                if idx < len(path) and isinstance(path[idx], int):
-                    list_index = path[idx]
-                    idx += 1
-                else:
-                    list_index = None
-
-                value = getattr(node, field, None)
-                if list_index is None:
-                    if not isinstance(value, ast.AST):
-                        return None
-                    node = value
-                else:
-                    if not isinstance(value, list) or list_index >= len(value):
-                        return None
-                    next_node = value[list_index]
-                    if not isinstance(next_node, ast.AST):
-                        return None
-                    node = next_node
-            return node
-
         # Iterate over statements in block 0 and attempt promotions
         for stmt_idx, stmt0 in enumerate(blocks[0]):
             # Consider only simple assignments to a single Name
@@ -166,11 +163,11 @@ class LiteralPromotion(UnifierState):
 
             target_name = target0.id
             # Only promote when the assigned variable is used later in a call context
-            if not is_used_as_callable_or_value_later(blocks[0], stmt_idx, target_name):
+            if not _is_used_as_callable_or_value_later(blocks[0], stmt_idx, target_name):
                 continue
 
             # For each arg in the call in block 0, if Constant, attempt to promote
-            call_paths = iter_calls_with_paths(stmt0)
+            call_paths = _calls_with_paths(stmt0, self._iter_child_fields)
             # Find the specific call path corresponding to stmt0.value
             # Since stmt0.value is a Call, find its path (should exist)
             call_path = None
@@ -181,52 +178,40 @@ class LiteralPromotion(UnifierState):
             if call_path is None:
                 continue
 
-            call0 = stmt0.value
-            for arg_pos, arg0 in enumerate(call0.args):
-                # Only consider literal constants for now
-                if not isinstance(arg0, ast.Constant):
-                    continue
+            for arg_pos, arg0 in enumerate(stmt0.value.args):
+                if isinstance(arg0, ast.Constant):
+                    self._promote_argument(blocks, stmt_idx, call_path + ("args", arg_pos), subst)
 
-                # Build path to this arg: call_path + ("args", arg_pos)
-                arg_path = call_path + ("args", arg_pos)
+    def _promote_argument(
+        self,
+        blocks: Sequence[Sequence[ast.AST]],
+        stmt_idx: int,
+        arg_path: Tuple[Any, ...],
+        subst: Substitution,
+    ) -> None:
+        """Promote the literal at ``arg_path`` of statement ``stmt_idx`` to a fresh parameter.
 
-                # Collect per-block corresponding arg expressions
-                per_block_exprs: List[Optional[ast.AST]] = []
-                missing = False
-                for bidx in range(num_blocks):
-                    stmt_b = blocks[bidx][stmt_idx] if stmt_idx < len(blocks[bidx]) else None
-                    if not isinstance(stmt_b, ast.Assign):
-                        missing = True
-                        break
-                    # Retrieve the node at arg_path within this statement
-                    node_b = get_node_by_field_index_path(stmt_b, arg_path)
-                    if node_b is None or not isinstance(node_b, ast.expr):
-                        missing = True
-                        break
-                    per_block_exprs.append(node_b)
-
-                if missing or len(per_block_exprs) != num_blocks:
-                    continue
-
-                # At this point, all per_block_exprs are non-None (validated above)
-                valid_exprs = cast(List[ast.AST], per_block_exprs)
-
-                # Skip if any of these expressions are already parameterized
-                already_param = False
-                for bidx, expr_b in enumerate(valid_exprs):
-                    if subst.get_param_for_expr(bidx, expr_b) is not None:
-                        already_param = True
-                        break
-                if already_param:
-                    continue
-
-                # Create fresh parameter name and record mappings for all blocks
-                param_name = self._fresh_parameter_name()
-
-                for bidx, expr_b in enumerate(valid_exprs):
-                    subst.add_mapping(bidx, expr_b, param_name, bound_vars=None)
-
-                # Also store per-block expr under promoted_literal_args for clarity
-                promoted = subst.promoted_literal_args.setdefault(param_name, {})
-                for bidx, expr_b in enumerate(valid_exprs):
-                    promoted[bidx] = expr_b
+        Every block must carry an expression at that path and none of them
+        may already be parameterized; then each block's expression is mapped
+        to one new parameter and recorded as its promoted argument.
+        """
+        per_block_exprs: List[ast.AST] = []
+        for block in blocks:
+            statement = block[stmt_idx] if stmt_idx < len(block) else None
+            if not isinstance(statement, ast.Assign):
+                return
+            node = _node_at_path(statement, arg_path)
+            if node is None or not isinstance(node, ast.expr):
+                return
+            per_block_exprs.append(node)
+        if any(
+            subst.get_param_for_expr(bidx, expr) is not None
+            for bidx, expr in enumerate(per_block_exprs)
+        ):
+            return
+        param_name = self._fresh_parameter_name()
+        for bidx, expr in enumerate(per_block_exprs):
+            subst.add_mapping(bidx, expr, param_name, bound_vars=None)
+        promoted = subst.promoted_literal_args.setdefault(param_name, {})
+        for bidx, expr in enumerate(per_block_exprs):
+            promoted[bidx] = expr

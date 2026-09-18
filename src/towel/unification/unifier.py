@@ -224,6 +224,21 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # For compound nodes, recursively unify all fields
         return self._unify_compound_node(nodes, subst, block_indices)
 
+    #: Node types whose bound names are alpha-equivalent, and the method that unifies each.
+    _BINDING_CONSTRUCT_UNIFIERS: Dict[type, str] = {
+        ast.For: "_unify_for_loop",
+        ast.Lambda: "_unify_lambda",
+        ast.JoinedStr: "_unify_joined_str",
+        ast.ListComp: "_unify_elt_comprehension",
+        ast.SetComp: "_unify_elt_comprehension",
+        ast.GeneratorExp: "_unify_elt_comprehension",
+        ast.DictComp: "_unify_dict_comp",
+        ast.AnnAssign: "_unify_ann_assign",
+        ast.With: "_unify_with",
+        ast.ExceptHandler: "_unify_except_handler",
+        ast.NamedExpr: "_unify_named_expr",
+    }
+
     def _unify_compound_node(
         self, nodes: Sequence[ast.AST], subst: Substitution, block_indices: Sequence[int]
     ) -> bool:
@@ -240,71 +255,18 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         """
         first_node = nodes[0]
 
-        # Special handling for binding constructs
-        # Loop variables, comprehension variables, etc. are BOUND by the construct
-        # If they differ (like 'i' vs 'j'), they're alpha-equivalent, not parameterizable
-        if isinstance(first_node, ast.For):
-            # For loops: the target variable is bound
-            # It can differ between blocks (like 'i' vs 'j') and that's OK
-            # We just need to unify the structure, not the variable name
-            return self._unify_for_loop(cast(List[ast.For], nodes), subst, list(block_indices))
-
-        # Special handling for Lambda: parameters are bindings (alpha-renaming)
-        # lambda x: x * 2 and lambda y: y * 2 are equivalent (alpha-equivalent)
-        # The parameter names should NOT be parameterized
-        if isinstance(first_node, ast.Lambda):
-            return self._unify_lambda(cast(List[ast.Lambda], nodes), subst, list(block_indices))
-
-        # Special handling for f-strings (JoinedStr)
-        # F-string literal parts (Constant nodes) must NEVER be parameterized
-        # Only the expressions inside FormattedValue can be parameterized
-        if isinstance(first_node, ast.JoinedStr):
-            return self._unify_joined_str(
-                cast(List[ast.JoinedStr], nodes), subst, list(block_indices)
+        # A construct that binds names (loop targets, lambda parameters,
+        # comprehension targets, with-items, handler names, walrus targets)
+        # is unified by a method of its own: the bound names are
+        # alpha-equivalent, never parameterized, and f-string literal parts
+        # and annotations are compared, never parameterized, likewise.
+        handler_name = self._BINDING_CONSTRUCT_UNIFIERS.get(type(first_node))
+        if handler_name is not None:
+            handler = cast(
+                Callable[[Sequence[ast.AST], Substitution, List[int]], bool],
+                getattr(self, handler_name),
             )
-
-        # Special handling for comprehensions: targets are bindings and may differ
-        # Treat generator targets as alpha-equivalent like for-loop variables
-        if isinstance(first_node, ast.ListComp):
-            return self._unify_elt_comprehension(
-                cast(List[ast.ListComp], nodes), subst, list(block_indices)
-            )
-        if isinstance(first_node, ast.SetComp):
-            return self._unify_elt_comprehension(
-                cast(List[ast.SetComp], nodes), subst, list(block_indices)
-            )
-        if isinstance(first_node, ast.DictComp):
-            return self._unify_dict_comp(
-                cast(List[ast.DictComp], nodes), subst, list(block_indices)
-            )
-        if isinstance(first_node, ast.GeneratorExp):
-            return self._unify_elt_comprehension(
-                cast(List[ast.GeneratorExp], nodes), subst, list(block_indices)
-            )
-
-        # Annotated assignments: inside a function body the annotation is
-        # never evaluated, so it is neither compared nor parameterized; the
-        # helper keeps the template's spelling.
-        if isinstance(first_node, ast.AnnAssign):
-            return self._unify_ann_assign(
-                cast(List[ast.AnnAssign], nodes), subst, list(block_indices)
-            )
-
-        # Special handling for with-statements: optional_vars are bindings
-        if isinstance(first_node, ast.With):
-            return self._unify_with(cast(List[ast.With], nodes), subst, list(block_indices))
-
-        # Special handling for except handlers: name is a binding identifier
-        if isinstance(first_node, ast.ExceptHandler):
-            return self._unify_except_handler(
-                cast(List[ast.ExceptHandler], nodes), subst, list(block_indices)
-            )
-
-        # Special handling for walrus operator: target is a binding (alpha-equivalent)
-        if isinstance(first_node, ast.NamedExpr):
-            return self._unify_named_expr(
-                cast(List[ast.NamedExpr], nodes), subst, list(block_indices)
-            )
+            return handler(nodes, subst, list(block_indices))
 
         # For each field in the node
         for field_name in first_node._fields:

@@ -395,6 +395,100 @@ class ParameterSubstituter(ast.NodeTransformer):
         return visit_callable(node)
 
 
+def _thunk(expr: ast.AST, bound_vars: List[str]) -> ast.Lambda:
+    """``lambda v1, v2, ...: expr``: a function parameter's expression, evaluated lazily."""
+    return ast.Lambda(
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[ast.arg(arg=var) for var in bound_vars],
+            kwonlyargs=[],
+            kw_defaults=[],
+            defaults=[],
+        ),
+        body=cast(ast.expr, expr),
+    )
+
+
+def _forwarding_lambda(callee: ast.AST) -> ast.Lambda:
+    """``lambda *args, **kwargs: callee(*args, **kwargs)``.
+
+    A parameter the helper calls is passed as a callable of the same arity,
+    so the call site evaluates nothing eagerly and the callee keeps its
+    signature.
+    """
+    call_body = ast.Call(
+        func=cast(ast.expr, callee),
+        args=[ast.Starred(value=ast.Name(id="args", ctx=ast.Load()), ctx=ast.Load())],
+        keywords=[ast.keyword(arg=None, value=ast.Name(id="kwargs", ctx=ast.Load()))],
+    )
+    return ast.Lambda(
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[],
+            vararg=ast.arg(arg="args"),
+            kwonlyargs=[],
+            kw_defaults=[],
+            kwarg=ast.arg(arg="kwargs"),
+            defaults=[],
+        ),
+        body=call_body,
+    )
+
+
+def _unified_argument(
+    substitution: Substitution, param_name: str, block_idx: int
+) -> Optional[ast.expr]:
+    """The argument ``block_idx`` passes for a parameter the unifier introduced.
+
+    The block's own expression, wrapped as a thunk when the parameter is a
+    function parameter and as a forwarding lambda when the helper calls it;
+    None when the substitution records no expression for this block.
+    """
+    for expr_block_idx, expr in substitution.param_expressions[param_name]:
+        if expr_block_idx != block_idx:
+            continue
+        if substitution.is_function_param(param_name):
+            return _thunk(expr, substitution.get_function_param_vars(param_name))
+        if param_name in substitution.params_used_as_callee:
+            return _forwarding_lambda(expr)
+        return cast(ast.expr, expr)
+    return None
+
+
+def _free_variable_argument(
+    substitution: Substitution, param_name: str, block_idx: int, inverse_renames: Dict[str, str]
+) -> ast.expr:
+    """The argument ``block_idx`` passes for a free variable: its own spelling of the name.
+
+    The spelling comes from the hygienic renames, then from an augmented
+    assignment's per-block name; a parameter introduced by literal promotion
+    passes the block's original expression, which need not be a name the
+    call site binds.
+    """
+    var_name = inverse_renames.get(param_name, param_name)
+    var_name = substitution.aug_assign_mappings.get(param_name, {}).get(block_idx, var_name)
+    promoted = substitution.promoted_literal_args.get(param_name, {})
+    if block_idx in promoted:
+        return cast(ast.expr, promoted[block_idx])
+    return ast.Name(id=var_name, ctx=ast.Load())
+
+
+def _call_statement(call: ast.Call, return_vars: List[str], is_value_producing: bool) -> ast.stmt:
+    """The statement that stands for the block: an assignment, a return, or a bare call."""
+    if return_vars:
+        assign_target: ast.expr
+        if len(return_vars) == 1:
+            assign_target = ast.Name(id=return_vars[0], ctx=ast.Store())
+        else:
+            assign_target = ast.Tuple(
+                elts=[ast.Name(id=var, ctx=ast.Store()) for var in return_vars], ctx=ast.Store()
+            )
+        return ast.Assign(targets=[assign_target], value=call)
+    if is_value_producing:
+        return ast.Return(value=call)
+    return ast.Expr(value=call)
+
+
 class HygienicExtractor:
     """
     Extract code into a function while maintaining hygiene and
@@ -580,139 +674,30 @@ class HygienicExtractor:
         Returns:
             AST node representing the call (either Return, Assign, or Expr)
         """
-        if return_variables is None:
-            return_variables = []
         if not hygienic_renames:
             # Fallback: the renames the substitution recorded during unification
             hygienic_renames = substitution.hygienic_renames
-
-        # Build inverse mapping: canonical name → original name for this block
-        # hygienic_renames[block_idx] maps original → canonical, we need the reverse
+        # hygienic_renames[block_idx] maps original → canonical; the call needs the reverse
         inverse_renames: Dict[str, str] = {}
         if block_idx < len(hygienic_renames):
             for original_name, canonical_name in hygienic_renames[block_idx].items():
                 inverse_renames[canonical_name] = original_name
 
-        # Build arguments in correct order
-        # Build argument list (exprs); initialize as optional then cast when filled
         args_list: List[Optional[ast.expr]] = [None] * len(param_order)
-
-        # Add unified parameters
         for param_name, param_idx in param_order.items():
             if param_name in substitution.param_expressions:
-                # This is a unified parameter - find the expression for this block
-                exprs = substitution.param_expressions[param_name]
-                for expr_block_idx, expr in exprs:
-                    if expr_block_idx == block_idx:
-                        # Check if this is a function parameter
-                        if substitution.is_function_param(param_name):
-                            # Wrap expression in lambda with bound variables
-                            bound_vars = substitution.get_function_param_vars(param_name)
-                            # Create lambda: lambda var1, var2, ...: expr
-                            lambda_node = ast.Lambda(
-                                args=ast.arguments(
-                                    posonlyargs=[],
-                                    args=[ast.arg(arg=var) for var in bound_vars],
-                                    kwonlyargs=[],
-                                    kw_defaults=[],
-                                    defaults=[],
-                                ),
-                                body=cast(ast.expr, expr),
-                            )
-                            args_list[param_idx] = lambda_node
-                        elif (
-                            hasattr(substitution, "params_used_as_callee")
-                            and param_name in substitution.params_used_as_callee
-                        ):
-                            # Parameter is used as a callee in the extracted body (e.g., __param_0())
-                            # Wrap it in a forwarding lambda that passes through any args/kwargs
-                            # from the call site to the original callee expression.
-                            # This avoids eager evaluation at the caller and preserves arity.
-                            call_func = cast(ast.expr, expr if isinstance(expr, ast.expr) else expr)
-                            call_body = ast.Call(
-                                func=call_func,
-                                args=[
-                                    ast.Starred(
-                                        value=ast.Name(id="args", ctx=ast.Load()), ctx=ast.Load()
-                                    )
-                                ],
-                                keywords=[
-                                    ast.keyword(
-                                        arg=None, value=ast.Name(id="kwargs", ctx=ast.Load())
-                                    )
-                                ],
-                            )
-
-                            lambda_node = ast.Lambda(
-                                args=ast.arguments(
-                                    posonlyargs=[],
-                                    args=[],
-                                    vararg=ast.arg(arg="args"),
-                                    kwonlyargs=[],
-                                    kw_defaults=[],
-                                    kwarg=ast.arg(arg="kwargs"),
-                                    defaults=[],
-                                ),
-                                body=call_body,
-                            )
-                            args_list[param_idx] = lambda_node
-                        else:
-                            # Regular parameter - use expression as-is
-                            args_list[param_idx] = cast(ast.expr, expr)
-                        break
+                args_list[param_idx] = _unified_argument(substitution, param_name, block_idx)
             else:
-                # This is a free variable - use the correct name for this block
-                # First check hygienic renames to find the original name for this block
-                var_name = inverse_renames.get(param_name, param_name)
-
-                # Also check if the name varies across blocks (augmented assignments)
-                var_name = substitution.aug_assign_mappings.get(param_name, {}).get(
-                    block_idx, var_name
+                args_list[param_idx] = _free_variable_argument(
+                    substitution, param_name, block_idx, inverse_renames
                 )
-                args_list[param_idx] = ast.Name(id=var_name, ctx=ast.Load())
-                # A parameter introduced by higher-order literal promotion passes
-                # the original per-block expression rather than a free-variable
-                # reference, which need not exist at the call site.
-                promoted = substitution.promoted_literal_args.get(param_name, {})
-                if block_idx in promoted:
-                    args_list[param_idx] = cast(ast.expr, promoted[block_idx])
-
-        # Create function call
         call = ast.Call(
             func=ast.Name(id=function_name, ctx=ast.Load()),
             args=[cast(ast.expr, a) for a in args_list],
             keywords=[],
         )
-
-        # Map return variables to this block's original names when needed
-        mapped_return_vars: List[str] = []
-        if return_variables:
-            for var in return_variables:
-                # inverse_renames is Dict[str, str], default is the original var (str)
-                mapped_return_vars.append(inverse_renames.get(var, var))
-
-        # Handle wrapping based on return variables and is_value_producing
-        result_stmt: ast.stmt
-        if mapped_return_vars:
-            # Value-producing extraction with return variables
-            # Create assignment statement: result = func(args) or result, other = func(args)
-            if len(mapped_return_vars) == 1:
-                # Single variable: result = func(args)
-                assign_target: ast.expr = ast.Name(id=mapped_return_vars[0], ctx=ast.Store())
-            else:
-                # Multiple variables: result, other = func(args)
-                assign_target = ast.Tuple(
-                    elts=[ast.Name(id=var, ctx=ast.Store()) for var in mapped_return_vars],
-                    ctx=ast.Store(),
-                )
-            result_stmt = ast.Assign(targets=[assign_target], value=call)
-        elif is_value_producing:
-            # Value-producing extraction without return variables (has explicit return statements)
-            result_stmt = ast.Return(value=call)
-        else:
-            # Non-value-producing extraction
-            result_stmt = ast.Expr(value=call)
-
+        mapped_return_vars = [inverse_renames.get(var, var) for var in return_variables or []]
+        result_stmt = _call_statement(call, mapped_return_vars, is_value_producing)
         # Arguments may refer to expressions owned by the substitution. Detach
         # them before location repair, and before returning a mutable AST to a
         # caller that may subsequently edit it.

@@ -27,6 +27,7 @@ through tqdm when available, else an inline bar, else nothing.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 import textwrap
 
 from pathlib import Path
@@ -256,76 +257,11 @@ class FixedPointDrivers(EngineState):
 
         self._warn_about_frame_sensitive_files(output_dir)
 
-        # Aggregate results per file
-        results: Dict[str, Tuple[int, List[str]]] = {}
-
-        def _bump_result(path: str, desc: str) -> None:
-            count, descs = results.get(path, (0, []))
-            results[path] = (count + 1, descs + [desc])
-
-        # Proposal processing state
+        run = _DirectoryRun()
         proposal_queue: List[RefactoringProposal] = []
-        # Files rewritten since the last global pass: the next global pass
-        # re-pairs only functions in these (see ``incremental_global_passes``).
-        changed_since_global: Set[str] = set()
         global_passes = 0
         iterations = 0
-        total_applied = 0
         termination_reason: TerminationReason = "fixed_point"
-
-        def _apply_proposal_and_refresh_queue(
-            proposal: RefactoringProposal, queue: List[RefactoringProposal]
-        ) -> List[RefactoringProposal]:
-            """Apply a proposal, invalidate the affected caches, and refresh the queue."""
-            before = {
-                path: Path(path).read_bytes()
-                for path in {
-                    proposal.file_path,
-                    *(rep.file_path or proposal.file_path for rep in proposal.replacements),
-                }
-            }
-            modified_files = self.apply_refactoring_multi_file(proposal)
-            changed_paths = list(modified_files.keys())
-
-            apply_changes(ChangePlan.from_sources(before, modified_files))
-            for fpath in modified_files:
-                _bump_result(fpath, proposal.description)
-                changed_since_global.add(os.path.abspath(str(fpath)))
-
-            if changed_paths:
-                self.invalidate_paths(changed_paths)
-
-            if changed_paths:
-                changed_set = set(map(str, changed_paths))
-                queue = [
-                    p for p in queue if not ({path for path, _ in p.source_digests} & changed_set)
-                ]
-
-                localized = self.analyze_files(
-                    list(changed_paths),
-                    invalidate_paths=list(changed_paths),
-                    progress=reporter.analysis_mode,
-                )
-                if localized:
-                    localized = filter_overlapping_proposals(localized)
-                    localized = [
-                        p
-                        for p in localized
-                        if any(
-                            (rep.file_path or p.file_path) in changed_set for rep in p.replacements
-                        )
-                    ]
-                    if localized:
-                        queue = localized + queue
-                        reporter.detail(f"Localized +{len(localized)} follow-up(s)")
-                        reporter.inline(
-                            total_applied,
-                            len(queue),
-                            "localized",
-                            f"+{len(localized)} follow-ups",
-                        )
-
-            return queue
 
         # Main loop -------------------------------------------------------
         while True:
@@ -333,8 +269,10 @@ class FixedPointDrivers(EngineState):
                 # Global analysis pass
                 reporter.announce_analysis(output_path)
                 restrict = (
-                    frozenset(changed_since_global)
-                    if self.incremental_global_passes and global_passes > 0 and changed_since_global
+                    frozenset(run.changed_since_global)
+                    if self.incremental_global_passes
+                    and global_passes > 0
+                    and run.changed_since_global
                     else None
                 )
                 proposals = self.analyze_directory(
@@ -345,12 +283,12 @@ class FixedPointDrivers(EngineState):
                     changed_files=restrict,
                 )
                 global_passes += 1
-                changed_since_global.clear()
+                run.changed_since_global.clear()
                 if not proposals:
                     reporter.finish_at_fixed_point()
                     break
                 proposal_queue = filter_overlapping_proposals(proposals)
-                reporter.discovered(proposal_queue, total_applied, max_iterations)
+                reporter.discovered(proposal_queue, run.applied, max_iterations)
 
             if not proposal_queue:
                 break
@@ -359,13 +297,13 @@ class FixedPointDrivers(EngineState):
             if proposal is None:
                 break
             last_desc = proposal.description
-            reporter.applying(total_applied, len(proposal_queue), iterations + 1, last_desc)
+            reporter.applying(run.applied, len(proposal_queue), iterations + 1, last_desc)
 
             # Apply proposal. A proposal computed before an earlier application
             # changed one of its files is stale: drop it and re-analyze those
             # files so a fresh proposal can take its place.
             try:
-                proposal_queue = _apply_proposal_and_refresh_queue(proposal, proposal_queue)
+                proposal_queue = self._apply_and_refresh(proposal, proposal_queue, run, reporter)
             except ChangeConflict as conflict:
                 stale_paths = sorted({path for path, _ in proposal.source_digests})
                 reporter.detail(
@@ -392,15 +330,79 @@ class FixedPointDrivers(EngineState):
                 continue
 
             iterations += 1
-            total_applied += 1
-            reporter.applied(total_applied, len(proposal_queue), iterations, last_desc)
+            run.applied += 1
+            reporter.applied(run.applied, len(proposal_queue), iterations, last_desc)
 
             if max_iterations > 0 and iterations >= max_iterations:
                 termination_reason = "iteration_cap"
                 reporter.finish_at_cap()
                 break
 
-        return results, termination_reason
+        return run.results, termination_reason
+
+    def _apply_and_refresh(
+        self,
+        proposal: RefactoringProposal,
+        queue: List[RefactoringProposal],
+        run: "_DirectoryRun",
+        reporter: "_ApplyProgress",
+    ) -> List[RefactoringProposal]:
+        """Apply ``proposal``, invalidate what it touched, and refresh ``queue``.
+
+        Queued proposals that were computed against a rewritten file are
+        dropped; the rewritten files are re-analyzed at once and any follow-up
+        that touches them goes to the front of the queue.
+        """
+        before = {
+            path: Path(path).read_bytes()
+            for path in {
+                proposal.file_path,
+                *(rep.file_path or proposal.file_path for rep in proposal.replacements),
+            }
+        }
+        modified_files = self.apply_refactoring_multi_file(proposal)
+        changed_paths = list(modified_files.keys())
+        apply_changes(ChangePlan.from_sources(before, modified_files))
+        for fpath in modified_files:
+            run.record(fpath, proposal.description)
+        if not changed_paths:
+            return queue
+        self.invalidate_paths(changed_paths)
+        changed_set = set(map(str, changed_paths))
+        queue = [p for p in queue if not ({path for path, _ in p.source_digests} & changed_set)]
+        localized = self.analyze_files(
+            list(changed_paths),
+            invalidate_paths=list(changed_paths),
+            progress=reporter.analysis_mode,
+        )
+        if localized:
+            localized = [
+                p
+                for p in filter_overlapping_proposals(localized)
+                if any((rep.file_path or p.file_path) in changed_set for rep in p.replacements)
+            ]
+        if localized:
+            queue = localized + queue
+            reporter.detail(f"Localized +{len(localized)} follow-up(s)")
+            reporter.inline(run.applied, len(queue), "localized", f"+{len(localized)} follow-ups")
+        return queue
+
+
+@dataclass
+class _DirectoryRun:
+    """What one directory run has done so far."""
+
+    # Per file: how many proposals rewrote it, and their descriptions.
+    results: Dict[str, Tuple[int, List[str]]] = field(default_factory=dict)
+    # Files rewritten since the last global pass: the next global pass
+    # re-pairs only functions in these (see ``incremental_global_passes``).
+    changed_since_global: Set[str] = field(default_factory=set)
+    applied: int = 0
+
+    def record(self, path: str, description: str) -> None:
+        count, descriptions = self.results.get(path, (0, []))
+        self.results[path] = (count + 1, descriptions + [description])
+        self.changed_since_global.add(os.path.abspath(str(path)))
 
 
 ProgressPhase = Literal["discovered", "localized", "apply", "applied"]
