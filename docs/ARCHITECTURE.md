@@ -47,8 +47,9 @@ fixed-point loop (below).
    and rejects incompatible pairs before the expensive step.
 5. **Decide each pair.** `pair_evaluation.py` runs eleven stages, each
    returning a typed result or a traced rejection:
-   1. guards on the blocks themselves (`semantic_safety.py`: frames, rebound
-      externals, closures, moved declarations; see *Guards*);
+   1. guards on the blocks themselves (`semantic_safety.py`: frames, async
+      comprehensions, rebound externals, closures, moved declarations; see
+      *Guards*);
    2. binding analysis of each block within its function, and the variables
       later code reads that the helper must return;
    3. the shape check: both blocks value-producing or neither, complete
@@ -188,11 +189,23 @@ and says why.
 `semantic_safety.py` rejects a block, before verification, when moving it into
 a helper could change behavior even if the shapes match:
 
-- **Frames and suspension.** `yield`, `await`, `async for`/`with`, `locals()`,
-  `globals()`, no-argument `vars()`/`dir()`/`super()`, `eval`/`exec`, direct
-  frame or stack inspection, and `warnings.warn(..., stacklevel=...)` — a
-  helper adds a frame these would observe. A `break` or `continue` whose
+- **Frames and suspension.** `yield`, `await`, `async for`/`with`, an async
+  comprehension, `locals()`, `globals()`, no-argument `vars()`/`dir()`/
+  `super()`, `eval`/`exec`, direct frame or stack inspection, and
+  `warnings.warn` (with a `stacklevel`, or without one, since the helper's
+  frame would then be the one attributed) — a helper adds a frame these
+  would observe. The frame-reading builtins and `eval`/`exec` decline the
+  block when they appear anywhere in the enclosing function, not only
+  inside the block: a `locals()` after the block sees the names the block
+  bound, which a helper would bind in its own frame. A name that reaches
+  one of these through a binding (`look = locals`, `from warnings import
+  warn as w`) is resolved through the enclosing scopes' bindings, so the
+  alias is caught as the builtin would be. A `break` or `continue` whose
   loop lies outside the block would leave the helper instead of the loop.
+- **Lifetimes.** An object the block binds and a later statement observes
+  through its lifetime rather than its value (a temporary file read after
+  the block, a weak reference) is returned from the helper, so it is not
+  finalized when the helper's frame ends.
 - **Binding discipline.** A block that deletes, rebinds, or `except ... as`
   binds a name the caller keeps using; a moved `global`/`nonlocal`
   declaration; a comprehension assignment expression that would bind in the
@@ -202,9 +215,10 @@ a helper could change behavior even if the shapes match:
 - **Import cycles.** A cross-file helper whose new import would close a static
   import cycle (see *Cross-file*).
 
-Only constructs written directly in the block are caught here; frame use
-reached through a callee is handled by the pre-run scan (below), and reflection
-reached through aliases is outside the model.
+Only constructs written in the block or its enclosing function, directly or
+through an alias the bindings resolve, are caught here; frame use reached
+through a callee is handled by the pre-run scan (below), and reflection
+reached through a callee or a dynamic lookup is outside the model.
 
 ## Helper placement
 
