@@ -10,7 +10,18 @@ project qualifies when both runs are identical in exit status and summary line.
 Progress is printed as each phase completes; the exit status is nonzero when
 any project breaks or the refactoring crashes.
 
-    python scripts/ecosystem_check.py --work /tmp/towel-ecosystem --workers 4
+Trust boundary: this script executes code it does not review. It clones
+public repositories, runs each manifest entry's ``prepare`` command, installs
+the projects' test dependencies, and runs their test suites, all with the
+invoking user's privileges. That is remote code execution by design, so the
+script refuses to run unless the caller opts in with ``--run-untrusted-code``
+or ``TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1``, and it belongs on a disposable
+machine, a container, or an ephemeral CI runner, never on a workstation
+holding credentials. The manifest pins every project to a reviewed commit;
+``--print-pins`` lists the commits the last run tested so the pins can be
+refreshed after review.
+
+    python scripts/ecosystem_check.py --run-untrusted-code --work /tmp/towel-ecosystem --workers 4
 """
 
 from __future__ import annotations
@@ -24,6 +35,7 @@ import os
 import signal
 import threading
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -172,7 +184,13 @@ def clone(project: Project, source: Path, log_dir: Path) -> str:
             capture_output=True,
         )
     if project.prepare:
-        subprocess.run(project.prepare, shell=True, cwd=source, check=True, capture_output=True)
+        # The command is split into an argument vector and run without a shell.
+        # The manifest's only ``prepare`` is ``git submodule update --init
+        # --quiet``; no entry needs pipes, globs, or variable expansion, and
+        # going through a shell would let a manifest edit smuggle in more than
+        # one command. A future entry that needs shell features should be
+        # rewritten as a small script the manifest names instead.
+        subprocess.run(shlex.split(project.prepare), cwd=source, check=True, capture_output=True)
     return subprocess.run(
         ["git", "-C", str(source), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
@@ -442,8 +460,48 @@ def _lock_work_directory(work: Path) -> int:
     return handle
 
 
+OPT_IN_FLAG = "--run-untrusted-code"
+OPT_IN_ENV = "TOWEL_ECOSYSTEM_RUN_UNTRUSTED"
+
+REFUSAL_MESSAGE = f"""\
+refusing to run: this script executes code it does not review.
+
+It clones the public repositories named in the manifest, runs each entry's
+`prepare` command, installs the projects' test dependencies, and runs their
+test suites, all with your privileges and your environment. A hijacked or
+malicious upstream could do anything you can do from this account.
+
+Run it only on a disposable machine, a container, or an ephemeral CI runner,
+and opt in explicitly with {OPT_IN_FLAG} or {OPT_IN_ENV}=1.
+"""
+
+
+def untrusted_code_allowed(flag: bool, environ: Dict[str, str]) -> bool:
+    """Whether the caller opted in to executing the manifest's projects."""
+    return flag or environ.get(OPT_IN_ENV) == "1"
+
+
+def print_pins(report_dir: Path) -> int:
+    """Print ``name = sha`` for every project in the last run's report.
+
+    Reads only the per-project JSON the harness wrote; nothing is executed. The
+    output is the input for refreshing the manifest's ``rev`` fields after the
+    new commits have been reviewed (towel-main deliberately stays at HEAD).
+    """
+    reports = sorted(path for path in report_dir.glob("*.json") if path.stem != "summary")
+    if not reports:
+        print(f"no per-project reports under {report_dir}", file=sys.stderr)
+        return 1
+    for path in reports:
+        entry = json.loads(path.read_text(encoding="utf-8"))
+        print(f"{entry['name']} = {entry.get('commit', '')}")
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--manifest", type=Path, default=REPO / "scripts" / "ecosystem" / "manifest.toml"
     )
@@ -452,7 +510,24 @@ def main() -> int:
     parser.add_argument("--only", nargs="*", default=[])
     parser.add_argument("--timeout", type=int, default=1800, help="seconds per phase")
     parser.add_argument("--towel-src", type=Path, default=REPO / "src")
+    parser.add_argument(
+        OPT_IN_FLAG,
+        action="store_true",
+        help=f"acknowledge that the manifest's projects run with your privileges "
+        f"(or set {OPT_IN_ENV}=1); use a disposable machine or container",
+    )
+    parser.add_argument(
+        "--print-pins",
+        action="store_true",
+        help="print `name = commit` from the last run's report under --work and exit; "
+        "executes nothing",
+    )
     args = parser.parse_args()
+    if args.print_pins:
+        return print_pins(args.work / "report")
+    if not untrusted_code_allowed(args.run_untrusted_code, dict(os.environ)):
+        print(REFUSAL_MESSAGE, file=sys.stderr, end="")
+        return 2
     projects = load_manifest(args.manifest, args.only)
     args.work.mkdir(parents=True, exist_ok=True)
     _lock_work_directory(args.work)
