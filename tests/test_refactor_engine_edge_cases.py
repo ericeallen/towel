@@ -42,15 +42,18 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
                 assert_file_not_modified(path, contents)
 
     def test_analyze_file_with_syntax_error(self):
-        """Engine returns no proposals when a syntax error blocks parsing."""
+        """A file that does not parse is skipped with a warning naming it, not analyzed."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as handle:
             handle.write("def broken(\n")
             handle.flush()
             temp_path = handle.name
 
         try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)
+            with self.assertLogs("towel", level="WARNING") as logs:
+                proposals = self.engine.analyze_file(temp_path)
+            self.assertEqual(proposals, [])
+            (message,) = logs.output
+            self.assertIn(f"Skipping {temp_path}: '(' was never closed", message)
         finally:
             os.unlink(temp_path)
 

@@ -257,20 +257,6 @@ def function2():
         finally:
             os.unlink(temp_path)
 
-    def test_analyze_file_with_syntax_error(self):
-        """Test that files with syntax errors are handled gracefully."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("def function1(:\n    pass\n")  # Syntax error
-            temp_path = f.name
-
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(
-                len(proposals), 0, "Should return empty list for file with syntax error"
-            )
-        finally:
-            os.unlink(temp_path)
-
 
 class TestBlockPairFinding(unittest.TestCase):
     """Test find_block_pairs method."""
