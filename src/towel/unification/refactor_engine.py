@@ -25,7 +25,6 @@ This orchestrates the entire refactoring process:
 
 import ast
 import copy
-import dataclasses
 import hashlib
 from towel.changes import ChangePlan, ChangeConflict, apply_changes
 import os
@@ -89,10 +88,11 @@ from .assignment_analyzer import (
 from .project_layout import ProjectLayout, is_package_dir
 from .progress import ProgressBarFactory, load_tqdm, quietly, render_inline_bar
 from .overlap import filter_overlapping_proposals, line_ranges_intersect
+from .annotation_wiring import HelperAnnotationWiring
 from .reuse import ExistingFunctionReuse
 from .placement import HelperPlacement
 from .insertion import InsertionPoints, reindent, relative_import_module
-from ..diagnostics import LOG, REJECTIONS, TYPES, VALIDATION, Settings, debugging
+from ..diagnostics import LOG, REJECTIONS, VALIDATION, Settings, debugging
 from .parameters import parameter_names, fresh_parameter_name
 from .semantic_safety import (
     frame_sensitivity_markers,
@@ -119,17 +119,6 @@ from .models import (
     RejectReason,
     AppliedChange,
     FunctionNode,
-)
-from .annotations import (
-    ApplySite,
-    CallSite,
-    annotate_helper,
-    call_in_statement,
-    complete_with_any,
-    infer_missing_annotations,
-    respell_bare,
-    sites_use_annotations,
-    typing_imports_needed,
 )
 from ..type_inference import TypeOracle
 from .pipeline import run_pipeline, AnalysisSession, parse_cached
@@ -270,7 +259,9 @@ def _encloses(outer: FunctionNode, inner: FunctionNode) -> bool:
     return outer.lineno <= inner.lineno and inner_end <= outer_end and outer is not inner
 
 
-class UnificationRefactorEngine(InsertionPoints, HelperPlacement, ExistingFunctionReuse):
+class UnificationRefactorEngine(
+    InsertionPoints, HelperPlacement, ExistingFunctionReuse, HelperAnnotationWiring
+):
     """
     Main engine for unification-based refactoring.
 
@@ -3002,147 +2993,6 @@ class UnificationRefactorEngine(InsertionPoints, HelperPlacement, ExistingFuncti
             proposal = self._with_helper_annotations(proposal, all_functions)
         return proposal
 
-    def _with_helper_annotations(
-        self, proposal: RefactoringProposal, all_functions: Sequence[FunctionArtifact]
-    ) -> RefactoringProposal:
-        """The proposal with its helper annotated from what the call sites declare.
-
-        Runs after every verification, since annotations play no part in the
-        instantiation check, and after clustering, which compares helper
-        bodies structurally.
-        """
-        sites: List[CallSite] = []
-        for replacement in proposal.replacements:
-            file_path = replacement.file_path or proposal.file_path
-            call = call_in_statement(replacement.node, proposal.extracted_function.name)
-            function = self._innermost_function_at(file_path, replacement.line_range, all_functions)
-            module = function.scope_analyzer.analyzed_tree if function is not None else None
-            if call is None or function is None or not isinstance(module, ast.Module):
-                return proposal
-            sites.append(
-                CallSite(
-                    statement=cast(ast.stmt, replacement.node),
-                    call=call,
-                    function=function.node,
-                    module=module,
-                    file_path=file_path,
-                )
-            )
-        annotated = annotate_helper(
-            proposal.extracted_function, sites, proposal.file_path, proposal.return_variables
-        )
-        return dataclasses.replace(
-            proposal,
-            extracted_function=annotated,
-            wants_type_inference=sites_use_annotations(sites),
-        )
-
-    def _infer_helper_annotations(self, proposal: RefactoringProposal) -> None:
-        """Finish the helper's annotations in place when the proposal is applied.
-
-        The type inferrer, when there is one, fills what the copied
-        annotations could not; then a helper that carries any annotation gets
-        ``Any`` on whatever is still bare, so its signature is complete. Runs
-        once per applied proposal, on the files as they stand, so the cost is
-        one incremental type-check per application rather than one per
-        candidate.
-        """
-        if not proposal.wants_type_inference or proposal.reused_function is not None:
-            return
-        module_level = proposal.insert_into_class is None and proposal.insert_into_function is None
-        host_source = self._read_source(proposal.file_path)
-        bare_ok = self.placeable_after(host_source) if module_level and host_source else set()
-        host = self._parsed_host(proposal.file_path)
-        if self.type_inferrer is None:
-            respelled = respell_bare(proposal.extracted_function, host, bare_ok)
-            completed = complete_with_any(respelled, host)
-            proposal.extracted_function = completed.helper
-            proposal.required_imports = completed.required_imports
-            return
-        sites: List[ApplySite] = []
-        sources: Dict[str, str] = {}
-        for replacement in proposal.replacements:
-            file_path = replacement.file_path or proposal.file_path
-            call = call_in_statement(replacement.node, proposal.extracted_function.name)
-            if call is None:
-                return
-            source = sources.get(file_path)
-            if source is None:
-                source = Path(file_path).read_text(encoding="utf-8")
-                sources[file_path] = source
-            lines = source.splitlines(keepends=True)
-            start_line, end_line = replacement.line_range
-            if not 1 <= start_line <= len(lines):
-                return
-            sites.append(
-                ApplySite(
-                    file_path=file_path,
-                    source=source,
-                    start_line=start_line,
-                    end_line=end_line,
-                    indent=self._get_indent(lines[start_line - 1]),
-                    statement=cast(ast.stmt, replacement.node),
-                    call=call,
-                    declared_return=self._declared_return_at(source, start_line),
-                )
-            )
-        inferred = infer_missing_annotations(
-            respell_bare(proposal.extracted_function, host, bare_ok),
-            sites,
-            proposal.file_path,
-            proposal.return_variables,
-            self.type_inferrer,
-            bare_ok,
-        )
-        completed = complete_with_any(respell_bare(inferred.helper, host, bare_ok), host)
-        proposal.extracted_function = completed.helper
-        proposal.required_imports = tuple(
-            dict.fromkeys(inferred.required_imports + completed.required_imports)
-        )
-
-    @staticmethod
-    def _annotation_names(helper: ast.FunctionDef) -> Set[str]:
-        """Names the helper's unquoted annotations refer to."""
-        names: Set[str] = set()
-        annotations = [arg.annotation for arg in helper.args.posonlyargs + helper.args.args] + [
-            helper.returns
-        ]
-        for annotation in annotations:
-            if annotation is not None and not isinstance(annotation, ast.Constant):
-                names |= {n.id for n in ast.walk(annotation) if isinstance(n, ast.Name)}
-        return names
-
-    @staticmethod
-    def _read_source(file_path: str) -> Optional[str]:
-        try:
-            return Path(file_path).read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            return None
-
-    @staticmethod
-    def _declared_return_at(source: str, line: int) -> Optional[ast.expr]:
-        """The return annotation of the innermost function containing ``line``."""
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
-            return None
-        innermost: Optional[FunctionNode] = None
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.lineno <= line <= (node.end_lineno or node.lineno)
-                and (innermost is None or node.lineno > innermost.lineno)
-            ):
-                innermost = node
-        return innermost.returns if innermost is not None else None
-
-    @staticmethod
-    def _parsed_host(file_path: str) -> Optional[ast.Module]:
-        try:
-            return ast.parse(Path(file_path).read_text(encoding="utf-8"))
-        except (OSError, SyntaxError, UnicodeError):
-            return None
-
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
         """
         Apply a refactoring proposal to a file.
@@ -3226,65 +3076,6 @@ class UnificationRefactorEngine(InsertionPoints, HelperPlacement, ExistingFuncti
                 return files
             del self._change_log[mark:]
         raise AssertionError("unreachable: the bare variant is always accepted")
-
-    def _checks_generated_types(self, proposal: RefactoringProposal) -> bool:
-        """Whether the generated code is to be type-checked: a checker exists and the helper is annotated."""
-        if self.type_inferrer is None or proposal.reused_function is not None:
-            return False
-        helper = proposal.extracted_function
-        return helper.returns is not None or any(
-            arg.annotation is not None for arg in helper.args.posonlyargs + helper.args.args
-        )
-
-    @staticmethod
-    def _with_every_annotation_any(proposal: RefactoringProposal) -> RefactoringProposal:
-        """The proposal with every helper annotation replaced by ``Any``.
-
-        Only the helper is copied: the replacements are shared with the
-        proposal, and materialization copies each one before touching it.
-        """
-        helper = copy.deepcopy(proposal.extracted_function)
-        variant = dataclasses.replace(proposal, extracted_function=helper)
-        for arg in helper.args.posonlyargs + helper.args.args:
-            arg.annotation = ast.Name(id="Any", ctx=ast.Load())
-        helper.returns = ast.Name(id="Any", ctx=ast.Load())
-        variant.required_imports = typing_imports_needed(
-            helper, UnificationRefactorEngine._parsed_host(variant.file_path)
-        )
-        return variant
-
-    @staticmethod
-    def _without_annotations(proposal: RefactoringProposal) -> RefactoringProposal:
-        """The proposal with the helper unannotated; see ``_with_every_annotation_any``."""
-        helper = copy.deepcopy(proposal.extracted_function)
-        variant = dataclasses.replace(proposal, extracted_function=helper)
-        for arg in helper.args.posonlyargs + helper.args.args:
-            arg.annotation = None
-        helper.returns = None
-        variant.required_imports = ()
-        return variant
-
-    def _introduces_type_errors(self, modified_files: Dict[str, str]) -> bool:
-        """Whether the checker reports an error in a modified file that its original lacks.
-
-        Messages are compared without positions, as multisets, so errors the
-        project already has do not count and moved lines do not confuse it.
-        """
-        assert self.type_inferrer is not None
-        from collections import Counter
-
-        for path, after_source in modified_files.items():
-            before_source = self._read_source(path)
-            if before_source is None or before_source == after_source:
-                continue
-            before = Counter(self.type_inferrer.check(path, before_source))
-            after = Counter(self.type_inferrer.check(path, after_source))
-            new = after - before
-            if new:
-                for message, count in new.items():
-                    TYPES.debug("new error x%d in %s: %s", count, path, message)
-                return True
-        return False
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""

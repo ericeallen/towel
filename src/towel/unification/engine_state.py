@@ -27,8 +27,10 @@ stubs are implemented by the engine or by another mixin.
 from __future__ import annotations
 
 import ast
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Set, Tuple
 
+from ..type_inference import TypeOracle
+from .models import FunctionArtifact
 from .semantic_safety import ImportGraphCache
 
 
@@ -44,4 +46,25 @@ class EngineState:
     @staticmethod
     def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:
         """The (start_line, end_line) of a contiguous block; provided by InsertionPoints."""
+        raise NotImplementedError
+
+    type_inferrer: Optional[TypeOracle]
+    """The project's type checker, when one is installed and wanted."""
+
+    def _get_indent(self, line: str) -> str:
+        """The indentation of a line; provided by InsertionPoints."""
+        raise NotImplementedError
+
+    @classmethod
+    def placeable_after(cls, source: str) -> Set[str]:
+        """Module-level definitions a helper may follow; provided by InsertionPoints."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _innermost_function_at(
+        file_path: str,
+        line_range: Tuple[int, int],
+        all_functions: Sequence[FunctionArtifact],
+    ) -> Optional[FunctionArtifact]:
+        """The innermost function containing a line range; provided by ExistingFunctionReuse."""
         raise NotImplementedError
