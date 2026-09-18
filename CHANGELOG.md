@@ -135,6 +135,18 @@ ecosystem evidence behind each claim. The format follows
   cross-file hostile battery pins which packages must transform; ten
   cross-file integration tests fail instead of skipping when a fixture is
   missing; six assertion-free tests assert what their names claim.
+- The suite now drives the forked pair-evaluation pool on a small project and
+  checks it against the serial path, including the fallback when a worker
+  raises or dies; corrupts the recovery journal one guard at a time and
+  round-trips interrupted transactions under Hypothesis; drops a proposal
+  that goes stale mid-run and covers the three progress displays; reaches
+  the return-coverage and free-variable-lifetime rejections by name (and
+  pins that the first block's coverage guard is shadowed by block
+  enumeration); and adds idempotence, byte-convention and observational
+  equivalence properties, with `with` in the flow grammar. The cross-file
+  timing test no longer measures the machine, the watchdog test finishes
+  in a fraction of a second, and both hostile batteries execute fixtures
+  the same isolated way.
 - CI runs `pip-audit --strict` against the locked dependency set, and
   Dependabot proposes weekly, grouped minor/patch updates for the workflow
   actions and the `uv`-managed Python dependencies.

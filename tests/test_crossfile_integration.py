@@ -305,21 +305,32 @@ class TestCrossFileProposalApplication:
 class TestCrossFilePerformance:
     """Test performance characteristics of cross-file analysis."""
 
-    def test_crossfile_analysis_completes_in_reasonable_time(self):
-        """Cross-file analysis should complete without hanging."""
-        import time
+    def test_crossfile_analysis_evaluates_each_block_pair_once(self):
+        """Cross-file analysis does bounded work: no block pair is evaluated twice.
+
+        A wall-clock bound would measure the machine; the property behind it
+        is that the pair enumeration is finite and free of repeats, which
+        holds on any machine.
+        """
+        from unittest.mock import patch
 
         files = get_crossfile_project_files("simple_crossfile")
-
         engine = UnificationRefactorEngine()
+        evaluated = []
+        original = UnificationRefactorEngine.process_block_pairs
 
-        start = time.time()
-        proposals = engine.analyze_files(files)
-        duration = time.time() - start
+        def record(self, block_pairs, *args, **kwargs):
+            evaluated.extend(
+                (p.file_path, p.block1_range, p.file_path2, p.block2_range) for p in block_pairs
+            )
+            return original(self, block_pairs, *args, **kwargs)
 
-        # Should complete in under 30 seconds for simple project
-        assert duration < 30.0, f"Analysis took {duration:.1f}s (too slow)"
+        with patch.object(UnificationRefactorEngine, "process_block_pairs", record):
+            proposals = engine.analyze_files(files, progress="none")
+
         assert isinstance(proposals, list)
+        assert evaluated, "the project has duplicate blocks to pair"
+        assert len(evaluated) == len(set(evaluated)), "a block pair was evaluated twice"
 
     def test_crossfile_with_progress_disabled(self):
         """Cross-file analysis with progress='none' should work."""

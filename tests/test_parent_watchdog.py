@@ -16,12 +16,16 @@ import pytest
 DRIVER = textwrap.dedent("""
     import multiprocessing, sys, time
     from concurrent.futures import ProcessPoolExecutor
+    from towel.unification import parallel
     from towel.unification.parallel import _start_parent_watchdog
 
     def idle(seconds):
         time.sleep(seconds)
 
     if __name__ == "__main__":
+        # Workers inherit the module at fork time, so they poll ten times a
+        # second here instead of once; the production interval is not under test.
+        parallel.PARENT_WATCH_INTERVAL_SECONDS = 0.1
         context = multiprocessing.get_context("fork")
         with ProcessPoolExecutor(
             max_workers=3, mp_context=context, initializer=_start_parent_watchdog
@@ -54,18 +58,22 @@ def test_workers_exit_after_the_parent_is_killed() -> None:
     try:
         assert driver.stdout is not None
         assert driver.stdout.readline().strip() == "ready"
-        deadline = time.monotonic() + 20
+        # Deadlines bound a failure, not a success: polling stops as soon as
+        # the condition holds, so a fast machine spends milliseconds here.
+        deadline = time.monotonic() + 10
         workers: list[int] = []
         while time.monotonic() < deadline and len(workers) < 3:
-            time.sleep(0.2)
+            time.sleep(0.05)
             workers = _children_of(driver.pid)
         assert len(workers) == 3, f"expected three forked workers, saw {workers}"
     finally:
         driver.kill()
         driver.wait()
-    deadline = time.monotonic() + 10
+    # The watchdog polls every 0.1 s; a worker outliving its parent by two
+    # seconds has failed regardless of machine speed.
+    deadline = time.monotonic() + 2
     while time.monotonic() < deadline and _alive(workers):
-        time.sleep(0.2)
+        time.sleep(0.05)
     survivors = _alive(workers)
     for pid in survivors:
         os.kill(pid, signal.SIGKILL)
