@@ -480,6 +480,51 @@ def test_identical_absolute_imports_are_ambient_across_files(tmp_path: Path) -> 
     )
 
 
+def test_identical_from_imports_are_ambient_across_files(tmp_path: Path) -> None:
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    for name, function in (("a.py", "alpha"), ("b.py", "beta")):
+        write_module(
+            package,
+            f"""
+            from math import floor
+
+            def {function}(value):
+                tmp = floor(value) + 1
+                total = tmp * 2
+                return total
+            """,
+            name,
+        )
+    assert _fixed_point_directory(package) == ["Reuse alpha (a.py) for duplicated code in beta"]
+    assert (
+        unparsed_body(module_functions((package / "b.py").read_text())["beta"])
+        == "return alpha(value)"
+    )
+
+
+def test_from_imports_of_different_modules_are_not_ambient(tmp_path: Path) -> None:
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    for name, function, module in (("a.py", "alpha", "math"), ("b.py", "beta", "numpy")):
+        write_module(
+            package,
+            f"""
+            from {module} import floor
+
+            def {function}(value):
+                tmp = floor(value) + 1
+                total = tmp * 2
+                return total
+            """,
+            name,
+        )
+    descriptions = _fixed_point_directory(package)
+    assert not any(description.startswith("Reuse") for description in descriptions)
+
+
 def test_same_named_definitions_in_different_modules_are_not_ambient(tmp_path: Path) -> None:
     package = tmp_path / "pkg"
     package.mkdir()
