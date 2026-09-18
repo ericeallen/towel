@@ -119,3 +119,4 @@ mytmp
 # a pyright probe is a copy of a module that a kill signal can leave behind.
 .towel-transaction-*
 _towel_probe_*.py
+.coverage.*
