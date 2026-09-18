@@ -24,7 +24,6 @@ This orchestrates the entire refactoring process:
 """
 
 import ast
-import hashlib
 import os
 import re
 from collections import OrderedDict
@@ -40,7 +39,6 @@ from typing import (
     Iterable,
     MutableMapping,
     Sequence,
-    cast,
 )
 from weakref import WeakKeyDictionary
 from pathlib import Path
@@ -239,12 +237,14 @@ class UnificationRefactorEngine(
             OrderedDict()
         )
         self._cluster_cache: "OrderedDict[Tuple[Any, ...], Optional[ast.AST]]" = OrderedDict()
-        self._structural_ids: Dict[Tuple[ast.AST, ...], str] = {}
+        # Structural ids per block, keyed weakly by the block's first node and
+        # then by its length, so an entry vanishes with its tree instead of
+        # pinning it (block entries were never evicted before).
+        self._structural_ids: WeakKeyDictionary[ast.AST, Dict[int, str]] = WeakKeyDictionary()
         # Which file each analyzed function came from, and a digest of that
         # file's source: weak, so a function whose tree the analysis session
         # has dropped is forgotten with it instead of pinning the tree.
         self._function_sources: WeakKeyDictionary[FunctionNode, str] = WeakKeyDictionary()
-        self._source_digests: Dict[str, str] = {}
         # Per-block analyses (binding snapshot, reassignment and unbinding
         # checks) depend only on the function and the block; a block takes
         # part in every pair it forms, so each is computed once per analysis.
@@ -415,14 +415,25 @@ class UnificationRefactorEngine(
             cache.popitem(last=False)
 
     def _sid(self, nodes: Sequence[ast.AST]) -> str:
-        """The structural id of a block or function, computed once per node tuple."""
-        key = tuple(nodes)
-        cached = self._structural_ids.get(key)
+        """The structural id of a contiguous block, or of a function, computed once.
+
+        Memoized per (first node, length): the engine only asks about
+        contiguous statement blocks and single functions, and two such
+        sequences that start at one node and have one length are the same
+        sequence. The memo is weak on the first node, so it needs no
+        registration by path: a re-parsed file's old nodes take their
+        entries with them.
+        """
+        if not nodes:
+            return structural_id(nodes)
+        by_length = self._structural_ids.get(nodes[0])
+        if by_length is None:
+            by_length = {}
+            self._structural_ids[nodes[0]] = by_length
+        cached = by_length.get(len(nodes))
         if cached is None:
-            cached = structural_id(key)
-            self._structural_ids[key] = cached
-            owner = self._function_paths.get(cast(FunctionNode, key[0])) if key else None
-            self._remember((owner,), self._structural_ids, key)
+            cached = structural_id(nodes)
+            by_length[len(nodes)] = cached
         return cached
 
     def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
@@ -467,12 +478,7 @@ class UnificationRefactorEngine(
     def _record_function_paths(self, all_functions: Sequence[FunctionArtifact]) -> None:
         for entry in all_functions:
             self._function_paths[entry.node] = entry.file_path
-            source = entry.source
-            digest = self._source_digests.get(source)
-            if digest is None:
-                digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-                self._source_digests[source] = digest
-            self._function_sources[entry.node] = digest
+            self._function_sources[entry.node] = entry.module_digest
 
     def process_block_pairs(
         self,

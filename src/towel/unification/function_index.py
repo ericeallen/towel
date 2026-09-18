@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from hashlib import sha256
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 from .models import FunctionArtifact
@@ -102,6 +101,6 @@ class FunctionIndex:
             functions = self.in_file(file_path)
             if not functions:
                 return None
-            digest = sha256(functions[0].source.encode("utf-8")).hexdigest()
+            digest = functions[0].module_digest
             self._source_digests[file_path] = digest
         return digest

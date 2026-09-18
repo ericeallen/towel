@@ -197,6 +197,7 @@ def collect_functions(mods: Sequence[ParsedModule]) -> List[FunctionArtifact]:
                     class_name=class_name,
                     enclosing_function=enclosing_function,
                     ancestry=ancestry,
+                    source_digest=mod.source_digest,
                 )
             )
 
