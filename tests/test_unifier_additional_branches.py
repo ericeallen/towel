@@ -34,7 +34,12 @@ return result
         res = self.unifier.unify_blocks([b1, b2], [{}, {}])
         self.assertIsNotNone(res)
 
-    def test_unify_named_expr_alpha(self) -> None:
+    def test_unify_named_expr_differing_targets_is_rejected(self) -> None:
+        """A walrus target is not alpha-renamed: ``t`` versus ``temp`` fails to unify.
+
+        This is the unifier's conservative treatment of NamedExpr, not the
+        alpha-equivalence it applies to assignment targets.
+        """
         b1 = _parse_block("""
 if (t := get()):
     x = t
@@ -43,8 +48,21 @@ if (t := get()):
 if (temp := get()):
     x = temp
 """)
-        # NamedExpr handling is conservative in current unifier; ensure it doesn't crash
-        _ = self.unifier.unify_blocks([b1, b2], [{}, {}])
+        self.assertIsNone(self.unifier.unify_blocks([b1, b2], [{}, {}]))
+
+    def test_unify_named_expr_identical_targets(self) -> None:
+        b1 = _parse_block("""
+if (t := get()):
+    x = t
+""")
+        b2 = _parse_block("""
+if (t := get()):
+    x = t
+""")
+        res = self.unifier.unify_blocks([b1, b2], [{}, {}])
+        self.assertIsNotNone(res)
+        assert res is not None
+        self.assertEqual(res.param_expressions, {})
 
 
 class TestUnifierLambdaAndComprehensions(unittest.TestCase):
