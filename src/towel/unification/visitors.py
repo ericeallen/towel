@@ -28,7 +28,211 @@ MethodKind = Literal["instance", "classmethod", "staticmethod"]
 T = TypeVar("T")
 
 
-class FunctionCollector(ast.NodeVisitor):
+class OwnScopeVisitor(ast.NodeVisitor):
+    """A visitor of one scope's own code (Template Method).
+
+    The traversal is fixed here: a nested ``def`` or ``async def`` is handed
+    to :meth:`_nested_function`, a nested ``class`` to :meth:`_nested_class`,
+    a lambda to :meth:`_lambda`, and a comprehension to
+    :meth:`_comprehension`. The defaults are what most collectors want: a
+    nested function is not entered (its body is another scope), while a
+    class body, a lambda, and a comprehension are, since they run where they
+    stand. A subclass records a definition's name, or declines to enter one
+    of these, by overriding the hook, never by redefining the traversal.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+        self._nested_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
+        self._nested_function(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
+        self._nested_class(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:  # noqa: N802
+        self._lambda(node)
+
+    def visit_ListComp(  # noqa: N802
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        self._comprehension(node)
+
+    visit_SetComp = visit_ListComp
+    visit_DictComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+
+    def _nested_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+        """Hook: a function defined in this scope. The default does not enter it."""
+
+    def _nested_class(self, node: ast.ClassDef) -> None:
+        """Hook: a class defined in this scope. The default enters its body."""
+        self.generic_visit(node)
+
+    def _lambda(self, node: ast.Lambda) -> None:
+        """Hook: a lambda in this scope. The default enters it."""
+        self.generic_visit(node)
+
+    def _comprehension(
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        """Hook: a comprehension in this scope. The default enters it."""
+        self.generic_visit(node)
+
+
+class DefinitionDepthVisitor(ast.NodeVisitor):
+    """A visitor that enters every definition and knows how deeply it sits (Template Method).
+
+    Each function or class definition is announced to :meth:`_enter_definition`
+    with ``_depth`` still at the enclosing level, entered, and then announced
+    to :meth:`_leave_definition`. Subclasses keep whatever stack they need in
+    those hooks.
+    """
+
+    _depth = 0
+
+    def visit_FunctionDef(  # noqa: N802
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        self._enter_definition(node)
+        self._depth += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self._depth -= 1
+            self._leave_definition(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+    visit_ClassDef = visit_FunctionDef
+
+    def _enter_definition(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        """Hook: about to enter ``node``, whose enclosing depth is ``_depth``."""
+
+    def _leave_definition(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        """Hook: ``node`` has been entered and left."""
+
+
+class ScopeVisitor(ast.NodeVisitor):
+    """An analysis that follows Python's lexical scopes (Template Method).
+
+    The order in which a definition's parts are visited is fixed here, once,
+    for every scope-tracking analysis: the expressions evaluated in the
+    enclosing scope, the name the definition binds there, the new scope, its
+    parameters, its body, and finally anything the analysis visits after. A
+    comprehension evaluates its first iterable outside, then binds every
+    target inside its own scope before the remaining iterables, conditions,
+    and result are visited, which is Python's scoping. Subclasses implement
+    :meth:`_enter_scope` and :meth:`_leave_scope` and override the binding
+    hooks; the two hooks with a traversal of their own, :meth:`_lambda` and
+    :meth:`_comprehension`, exist for an analysis that must keep a lambda or
+    a comprehension in the enclosing scope, and say so where they do.
+    """
+
+    def visit_FunctionDef(  # noqa: N802
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
+    ) -> None:
+        self._visit_definition_head(node)
+        self._bind_definition_name(node)
+        self._enter_scope(node)
+        self._bind_parameters(node.args)
+        self._visit_statements(node.body)
+        self._leave_scope(node)
+        self._visit_definition_tail(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
+        self._visit_definition_head(node)
+        self._bind_definition_name(node)
+        self._enter_scope(node)
+        self._visit_class_body(node)
+        self._leave_scope(node)
+        self._visit_definition_tail(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:  # noqa: N802
+        self._lambda(node)
+
+    def visit_ListComp(  # noqa: N802
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        self._comprehension(node)
+
+    visit_SetComp = visit_ListComp
+    visit_DictComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+
+    # -- hooks with a traversal of their own ---------------------------------
+
+    def _lambda(self, node: ast.Lambda) -> None:
+        """A lambda is a scope of its own: its parameters bind inside, its body runs there."""
+        self._visit_definition_head(node)
+        self._enter_scope(node)
+        self._bind_parameters(node.args)
+        self.visit(node.body)
+        self._leave_scope(node)
+
+    def _comprehension(
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        """A comprehension is a scope of its own; only its first iterable is evaluated outside."""
+        if node.generators:
+            self.visit(node.generators[0].iter)
+        self._enter_scope(node)
+        for generator in node.generators:
+            self._bind_target(generator.target)
+        for index, generator in enumerate(node.generators):
+            if index:
+                self.visit(generator.iter)
+            for condition in generator.ifs:
+                self.visit(condition)
+        visit_comprehension_result(self, node)
+        self._leave_scope(node)
+
+    # -- primitive operations ------------------------------------------------
+
+    def _enter_scope(self, node: ast.AST) -> object:
+        """Begin the scope ``node`` introduces."""
+        raise NotImplementedError
+
+    def _leave_scope(self, node: ast.AST) -> None:
+        """End the scope ``node`` introduced."""
+        raise NotImplementedError
+
+    def _visit_definition_head(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda]
+    ) -> None:
+        """Hook: the parts evaluated in the enclosing scope before the definition (decorators, defaults, bases)."""
+
+    def _visit_definition_tail(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        """Hook: parts an analysis visits after the definition's scope has been left."""
+
+    def _bind_definition_name(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        """Hook: the definition's name is bound in the enclosing scope."""
+
+    def _bind_parameters(self, args: ast.arguments) -> None:
+        """Hook: a callable's parameters are bound in the scope just entered."""
+
+    def _bind_target(self, target: ast.AST) -> None:
+        """Hook: an assignment-like target is bound in the current scope."""
+
+    def _visit_statements(self, statements: Sequence[ast.stmt]) -> None:
+        for statement in statements:
+            self.visit(statement)
+
+    def _visit_class_body(self, node: ast.ClassDef) -> None:
+        """Hook: the class body, in the class's scope."""
+        self._visit_statements(node.body)
+
+
+class FunctionCollector(DefinitionDepthVisitor):
     """Collect functions with enclosing class/function context for a module tree.
 
     Calls sink with (node, class_name, enclosing_function, ancestry).
@@ -45,20 +249,20 @@ class FunctionCollector(ast.NodeVisitor):
         self.class_stack: List[Optional[str]] = [None]
         self.func_stack: List[Optional[str]] = [None]
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-        _push_value_and_visit(self.class_stack, node.name, self, node)
-
-    def _record(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+    def _enter_definition(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        if isinstance(node, ast.ClassDef):
+            self.class_stack.append(node.name)
+            return
         ancestry = [n for n in self.func_stack if n is not None]
         self.sink(node, self.class_stack[-1], self.func_stack[-1], ancestry)
+        self.func_stack.append(node.name)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        self._record(node)
-        _push_value_and_visit(self.func_stack, node.name, self, node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        self._record(node)
-        _push_value_and_visit(self.func_stack, node.name, self, node)
+    def _leave_definition(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        (self.class_stack if isinstance(node, ast.ClassDef) else self.func_stack).pop()
 
 
 class MethodCallRewriter(ast.NodeTransformer):
@@ -113,7 +317,7 @@ class MethodCallRewriter(ast.NodeTransformer):
         return n
 
 
-class LoopReturnFinder(ast.NodeVisitor):
+class LoopReturnFinder(OwnScopeVisitor):
     """Detect whether a code block contains return statements inside loops.
 
     Used to identify control flow patterns that may prevent safe refactoring.
@@ -133,14 +337,8 @@ class LoopReturnFinder(ast.NodeVisitor):
         if self.in_loop:
             self.has_loop_return = True
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        return None
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        return None
-
-
-class NameCollector(ast.NodeVisitor):
+class NameCollector(OwnScopeVisitor):
     """Collect all names referenced in Load context within a code block.
 
     Stops at nested function boundaries to avoid capturing scopes outside the block.
@@ -158,14 +356,8 @@ class NameCollector(ast.NodeVisitor):
             self.visit(n.value)
         self.visit(n.target)
 
-    def visit_FunctionDef(self, n: ast.FunctionDef) -> None:  # noqa: N802
-        return None
 
-    def visit_AsyncFunctionDef(self, n: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        return None
-
-
-class AugAssignFinder(ast.NodeVisitor):
+class AugAssignFinder(OwnScopeVisitor):
     """Find all variables modified by augmented assignment operators (+=, -=, etc.).
 
     Stops at nested function boundaries to avoid capturing scopes outside the block.
@@ -177,14 +369,8 @@ class AugAssignFinder(ast.NodeVisitor):
     def visit_AugAssign(self, node: ast.AugAssign) -> None:  # noqa: N802
         _record_simple_assignment(node, self.aug_assign_targets, self)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        return None
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        return None
-
-
-class AssignTargetVisitor(ast.NodeVisitor):
+class AssignTargetVisitor(OwnScopeVisitor):
     """Collect all assignment targets and global/nonlocal declarations in a block.
 
     Tracks simple name assignments from Assign, AugAssign, and AnnAssign nodes,
@@ -215,14 +401,8 @@ class AssignTargetVisitor(ast.NodeVisitor):
         for n in node.names:
             self.declared_nonlocal_in_block.add(n)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        return None
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        return None
-
-
-class ClassLocator(ast.NodeVisitor):
+class ClassLocator(DefinitionDepthVisitor):
     """Locate a class definition by name and determine its insertion point.
 
     Returns the line number and indentation suitable for inserting a new method
@@ -236,8 +416,10 @@ class ClassLocator(ast.NodeVisitor):
         self.matches = 0
         self._depth = 0
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-        if node.name == self.target_name:
+    def _enter_definition(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        if isinstance(node, ast.ClassDef) and node.name == self.target_name:
             self.matches += 1
             # Only a unique module-level class is an unambiguous target. A
             # class nested in a function is a fresh object per call, and two
@@ -247,19 +429,6 @@ class ClassLocator(ast.NodeVisitor):
                 self.result = ((node.end_lineno or node.lineno) - 1, indent)
             else:
                 self.result = None
-        self._depth += 1
-        self.generic_visit(node)
-        self._depth -= 1
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        self._depth += 1
-        self.generic_visit(node)
-        self._depth -= 1
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        self._depth += 1
-        self.generic_visit(node)
-        self._depth -= 1
 
 
 class FuncLocator(ast.NodeVisitor):
@@ -305,16 +474,6 @@ class FuncLocator(ast.NodeVisitor):
             else:
                 insert_line = node.lineno
         self.result = (insert_line, indent)
-
-
-def _push_value_and_visit(
-    stack: List[T], value: T, visitor: ast.NodeVisitor, node: ast.AST
-) -> None:
-    stack.append(value)
-    try:
-        visitor.generic_visit(node)
-    finally:
-        stack.pop()
 
 
 def _visit_loop_and_restore_flag(

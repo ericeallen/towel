@@ -20,10 +20,10 @@ but referenced in code that remains after the extraction point.
 """
 
 import ast
-from typing import List, Set, Tuple, cast
+from typing import List, Set, Tuple, Union, cast
 
 from .definite_assignment import definitely_bound_before_each
-from .visitors import visit_each
+from .visitors import OwnScopeVisitor, visit_each
 
 
 def _apply_visitor_to_nodes(
@@ -53,7 +53,7 @@ def _apply_visitor_to_nodes(
     return result_set
 
 
-class _BindingCollector(ast.NodeVisitor):
+class _BindingCollector(OwnScopeVisitor):
     def __init__(self) -> None:
         self.bindings: Set[str] = set()
         self.in_comprehension: bool = False
@@ -76,30 +76,17 @@ class _BindingCollector(ast.NodeVisitor):
         self._collect_names(node.target)
         self.generic_visit(node)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+    def _nested_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
         self.bindings.add(node.name)
-        # Don't visit inside nested functions
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+    def _nested_class(self, node: ast.ClassDef) -> None:
+        """A class binds its name here; what its body binds is the class's."""
         self.bindings.add(node.name)
-        # Don't visit inside nested functions
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self.bindings.add(node.name)
-        # Don't visit inside nested classes
-
-    def visit_ListComp(self, node: ast.ListComp) -> None:
-        # Comprehension variables are local, don't collect them
-        pass
-
-    def visit_SetComp(self, node: ast.SetComp) -> None:
-        pass
-
-    def visit_DictComp(self, node: ast.DictComp) -> None:
-        pass
-
-    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
-        pass
+    def _comprehension(
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        """Comprehension variables are local to it and are not bindings of this scope."""
 
     def _collect_names(self, node: ast.AST) -> None:
         """Collect all name nodes from a target."""

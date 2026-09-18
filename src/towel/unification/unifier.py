@@ -25,6 +25,7 @@ from typing import Callable, Dict, Optional, List, Tuple, Set, Any, cast, Sequen
 from dataclasses import dataclass, field
 
 from .parameters import parameter_names, fresh_parameter_name
+from .visitors import OwnScopeVisitor
 from ..diagnostics import UNIFIER
 
 
@@ -611,7 +612,7 @@ class Unifier:
         def is_used_as_callable_or_value_later(
             block: List[ast.AST], start_stmt_idx: int, var_name: str
         ) -> bool:
-            class CallContextFinder(ast.NodeVisitor):
+            class CallContextFinder(OwnScopeVisitor):
                 def __init__(self) -> None:
                     self.found = False
 
@@ -632,15 +633,8 @@ class Unifier:
                             self.found = True
                     self.generic_visit(node)
 
-                def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                    # Do not descend into nested function scopes
-                    pass
-
-                def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-                    pass
-
-                def visit_ClassDef(self, node: ast.ClassDef) -> None:
-                    pass
+                def _nested_class(self, node: ast.ClassDef) -> None:
+                    """A use inside a nested class body is not a use in this scope."""
 
             finder = CallContextFinder()
             for sidx in range(start_stmt_idx + 1, len(block)):

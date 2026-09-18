@@ -25,6 +25,7 @@ from weakref import WeakKeyDictionary
 from .binding_detector import BindingDetector
 from .project_layout import ProjectLayout
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
+from .visitors import OwnScopeVisitor
 
 if TYPE_CHECKING:
     from .unifier import Substitution
@@ -282,7 +283,7 @@ def _is_frame_relative_call(call: ast.Call) -> bool:
     return name in _FRAME_RELATIVE_CALLEES
 
 
-class _LoopControlVisitor(ast.NodeVisitor):
+class _LoopControlVisitor(OwnScopeVisitor):
     def __init__(self) -> None:
         self.depth = 0
         self.external = False
@@ -308,14 +309,8 @@ class _LoopControlVisitor(ast.NodeVisitor):
     visit_AsyncFor = _visit_loop
     visit_While = _visit_loop
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        pass
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        pass
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        pass
+    def _nested_class(self, node: ast.ClassDef) -> None:
+        """A loop inside a nested class body is not the block's loop."""
 
 
 def has_external_loop_control(nodes: Iterable[ast.AST]) -> bool:

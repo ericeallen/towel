@@ -59,7 +59,7 @@ from .scope_analyzer import ScopeAnalyzer
 from .overlap import filter_overlapping_proposals
 from .progress import ProgressBar, load_tqdm, quietly, render_inline_bar
 from ..diagnostics import LOG, Settings
-from .visitors import FunctionCollector
+from .visitors import DefinitionDepthVisitor, FunctionCollector
 
 
 class PairProcessor(Protocol):
@@ -128,12 +128,16 @@ def collect_classes(mods: Sequence[ParsedModule]) -> List[ClassInfo]:
                 return ".".join(reversed(parts))
         return None
 
-    class Collector(ast.NodeVisitor):
+    class Collector(DefinitionDepthVisitor):
         def __init__(self, file_path: str) -> None:
             self.file_path = file_path
             self.class_stack: List[str] = []
 
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
+        def _enter_definition(
+            self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+        ) -> None:
+            if not isinstance(node, ast.ClassDef):
+                return
             qualname = ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
             bases: List[str] = []
             for b in node.bases:
@@ -144,8 +148,12 @@ def collect_classes(mods: Sequence[ParsedModule]) -> List[ClassInfo]:
                 ClassInfo(name=node.name, qualname=qualname, file_path=self.file_path, bases=bases)
             )
             self.class_stack.append(node.name)
-            self.generic_visit(node)
-            self.class_stack.pop()
+
+        def _leave_definition(
+            self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+        ) -> None:
+            if isinstance(node, ast.ClassDef):
+                self.class_stack.pop()
 
     for m in mods:
         Collector(m.file_path).visit(m.tree)

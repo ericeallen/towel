@@ -27,6 +27,7 @@ import copy
 from typing import List, Dict, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
 from .unifier import Substitution
 from .definite_assignment import definitely_bound_after
+from .visitors import OwnScopeVisitor
 
 if TYPE_CHECKING:
     from .scope_analyzer import Scope
@@ -770,20 +771,12 @@ class HygienicExtractor:
             counter += 1
 
 
-class _ReturnFinder(ast.NodeVisitor):
+class _ReturnFinder(OwnScopeVisitor):
     def __init__(self) -> None:
         self.found_return: bool = False
 
     def visit_Return(self, node: ast.Return) -> None:
         self.found_return = True
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        # Don't visit nested function definitions
-        pass
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        # Don't visit nested async function definitions
-        pass
 
 
 def contains_return(block: List[ast.stmt]) -> bool:

@@ -15,14 +15,22 @@ import keyword
 from pathlib import Path
 import tokenize
 import unicodedata
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, cast
 
 from .changes import ChangePlan
 from .unification.project_layout import ProjectLayout
 from .unification.semantic_safety import is_namespace_access_call
-from .unification.visitors import visit_comprehension_result
+from .unification.visitors import OwnScopeVisitor, ScopeVisitor, visit_comprehension_result
 
 Function = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+def _class_head_expressions(node: ast.ClassDef) -> Iterable[ast.AST]:
+    """The expressions a class statement evaluates in the enclosing scope."""
+    yield from node.bases
+    yield from node.decorator_list
+    for item in node.keywords:
+        yield item.value
 
 
 def _outer_expressions(node: Function | ast.Lambda) -> Iterable[ast.AST]:
@@ -40,7 +48,7 @@ def _outer_expressions(node: Function | ast.Lambda) -> Iterable[ast.AST]:
             yield node.returns
 
 
-class _Bindings(ast.NodeVisitor):
+class _Bindings(OwnScopeVisitor):
     def __init__(self) -> None:
         self.local: set[str] = set()
         self.global_names: set[str] = set()
@@ -56,23 +64,19 @@ class _Bindings(ast.NodeVisitor):
     def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
         self.nonlocal_names.update(node.names)
 
-    def visit_FunctionDef(self, node: Function) -> None:
+    def _nested_function(self, node: Function) -> None:
         self.local.add(node.name)
         for expression in _outer_expressions(node):
             self.visit(expression)
 
-    visit_AsyncFunctionDef = visit_FunctionDef
-
-    def visit_Lambda(self, node: ast.Lambda) -> None:
+    def _lambda(self, node: ast.Lambda) -> None:
         for expression in _outer_expressions(node):
             self.visit(expression)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+    def _nested_class(self, node: ast.ClassDef) -> None:
         self.local.add(node.name)
-        for expression in (*node.bases, *node.decorator_list):
+        for expression in _class_head_expressions(node):
             self.visit(expression)
-        for keyword_node in node.keywords:
-            self.visit(keyword_node.value)
 
     def visit_Import(self, node: ast.Import) -> None:
         self.local.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
@@ -99,7 +103,7 @@ class _Bindings(ast.NodeVisitor):
             self.local.add(node.rest)
         self.generic_visit(node)
 
-    def visit_ListComp(
+    def _comprehension(
         self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
     ) -> None:
         # Comprehension iteration targets are local to the comprehension, while
@@ -109,10 +113,6 @@ class _Bindings(ast.NodeVisitor):
             for condition in generator.ifs:
                 self.visit(condition)
         visit_comprehension_result(self, node)
-
-    visit_SetComp = visit_ListComp
-    visit_DictComp = visit_ListComp
-    visit_GeneratorExp = visit_ListComp
 
 
 @dataclass(frozen=True, eq=False)
@@ -147,10 +147,11 @@ def _scope(
     )
 
 
-class _Scopes(ast.NodeVisitor):
+class _Scopes(ScopeVisitor):
     def __init__(self, tree: ast.Module) -> None:
         self.root = _scope(None, "module", tree.body)
         self.current = self.root
+        self._previous: list[_Scope] = []
         self.nodes: dict[ast.AST, _Scope] = {}
         self.visit(tree)
 
@@ -158,56 +159,39 @@ class _Scopes(ast.NodeVisitor):
         self.nodes[node] = self.current
         super().visit(node)
 
-    def _body(self, scope: _Scope, nodes: Iterable[ast.AST]) -> None:
-        previous = self.current
-        self.current = scope
-        for node in nodes:
-            self.visit(node)
-        self.current = previous
-
-    def visit_FunctionDef(self, node: Function) -> None:
-        for expression in _outer_expressions(node):
-            self.visit(expression)
-        self._body(_scope(self.current, "function", node.body, node.args), node.body)
-
-    visit_AsyncFunctionDef = visit_FunctionDef
-
-    def visit_Lambda(self, node: ast.Lambda) -> None:
-        for expression in _outer_expressions(node):
-            self.visit(expression)
-        self._body(_scope(self.current, "function", [node.body], node.args), [node.body])
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        for expression in (*node.bases, *node.decorator_list):
-            self.visit(expression)
-        for item in node.keywords:
-            self.visit(item.value)
-        self._body(_scope(self.current, "class", node.body), node.body)
-
-    def visit_ListComp(
-        self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+    def _visit_definition_head(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
     ) -> None:
-        self.visit(node.generators[0].iter)
-        collector = _Bindings()
-        for generator in node.generators:
-            collector.visit(generator.target)
-        nested = _Scope(
-            self.current, "comprehension", frozenset(collector.local), frozenset(), frozenset()
+        expressions = (
+            _class_head_expressions(node)
+            if isinstance(node, ast.ClassDef)
+            else _outer_expressions(node)
         )
-        previous = self.current
-        self.current = nested
-        for index, generator in enumerate(node.generators):
-            self.visit(generator.target)
-            if index:
-                self.visit(generator.iter)
-            for condition in generator.ifs:
-                self.visit(condition)
-        visit_comprehension_result(self, node)
-        self.current = previous
+        for expression in expressions:
+            self.visit(expression)
 
-    visit_SetComp = visit_ListComp
-    visit_DictComp = visit_ListComp
-    visit_GeneratorExp = visit_ListComp
+    def _enter_scope(self, node: ast.AST) -> None:
+        self._previous.append(self.current)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            self.current = _scope(self.current, "function", node.body, node.args)
+        elif isinstance(node, ast.Lambda):
+            self.current = _scope(self.current, "function", [node.body], node.args)
+        elif isinstance(node, ast.ClassDef):
+            self.current = _scope(self.current, "class", node.body)
+        else:
+            comprehension = cast(ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp, node)
+            collector = _Bindings()
+            for generator in comprehension.generators:
+                collector.visit(generator.target)
+            self.current = _Scope(
+                self.current, "comprehension", frozenset(collector.local), frozenset(), frozenset()
+            )
+
+    def _leave_scope(self, node: ast.AST) -> None:
+        self.current = self._previous.pop()
+
+    def _bind_target(self, target: ast.AST) -> None:
+        self.visit(target)
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
         self.visit(node.value)

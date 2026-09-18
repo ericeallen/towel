@@ -17,11 +17,11 @@ Analyze identifier bindings and scopes in Python code.
 """
 
 import ast
-from typing import Callable, Dict, Set, List, Optional, Tuple, Union, FrozenSet
+from typing import Dict, Set, List, Optional, Tuple, Union, FrozenSet
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 from .parameters import parameter_names, parameter_nodes
-from .visitors import visit_comprehension_result
+from .visitors import ScopeVisitor
 
 
 @dataclass(frozen=True)
@@ -75,7 +75,7 @@ def pattern_capture_names(pattern: ast.AST) -> Set[str]:
     return names
 
 
-class ScopeAnalyzer(ast.NodeVisitor):
+class ScopeAnalyzer(ScopeVisitor):
     """
     Analyze scopes and identifier bindings in an AST.
 
@@ -192,22 +192,36 @@ class ScopeAnalyzer(ast.NodeVisitor):
         if self.current_scope and self.current_scope.parent:
             self.current_scope = self.current_scope.parent
 
-    def _enter_named_scope(
+    # The traversal of definitions and comprehensions is ScopeVisitor's; the
+    # analyzer supplies the scope objects and the bindings.
+
+    def _bind_definition_name(
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
     ) -> None:
         assert self.current_scope is not None
         self.current_scope.add_binding(node.name, node)
-        self._enter_scope(node)
 
-    def _visit_body_and_exit(self, body: List[ast.stmt]) -> None:
-        for stmt in body:
-            self.visit(stmt)
+    def _leave_scope(self, node: ast.AST) -> None:
         self._exit_scope()
 
-    def _bind_function_parameters(self, args: ast.arguments) -> None:
+    def _bind_parameters(self, args: ast.arguments) -> None:
         assert self.current_scope is not None
         for arg in parameter_nodes(args):
             self.current_scope.add_binding(arg.arg, arg)
+
+    def _bind_target(self, target: ast.AST) -> None:
+        self._add_assignment_bindings(target)
+
+    def _lambda(self, node: ast.Lambda) -> None:
+        """A lambda gets no scope of its own here.
+
+        The analyzer's scopes are those of functions and classes, the ones
+        helpers are placed in and methods dispatched from; a lambda's body is
+        read as part of the scope it appears in, its parameters unbound, as
+        it always was. ``get_free_variables`` handles lambdas by their own
+        scope through ``ScopeRespectingWalker``.
+        """
+        self.generic_visit(node)
 
     def _visit_loop(self, node: Union[ast.For, ast.AsyncFor]) -> None:
         self.visit(node.iter)
@@ -230,22 +244,6 @@ class ScopeAnalyzer(ast.NodeVisitor):
             return
         scope_id = self.current_scope.scope_id
         table.setdefault(scope_id, set()).update(names)
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """Visit a function definition."""
-        self._enter_named_scope(node)
-        self._bind_function_parameters(node.args)
-        self._visit_body_and_exit(node.body)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Visit an async function definition."""
-        # Type ignore needed because mypy doesn't recognize structural compatibility
-        self.visit_FunctionDef(node)  # type: ignore[arg-type]
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Visit a class definition."""
-        self._enter_named_scope(node)
-        self._visit_body_and_exit(node.body)
 
     def visit_Assign(self, node: ast.Assign) -> None:
         """Visit an assignment."""
@@ -307,28 +305,6 @@ class ScopeAnalyzer(ast.NodeVisitor):
         self._add_assignment_bindings(node.target)
         for condition in node.ifs:
             self.visit(condition)
-
-    def _visit_comprehension_scope(
-        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
-    ) -> None:
-        # Only the first iterable is evaluated in the containing scope.
-        if node.generators:
-            self.visit(node.generators[0].iter)
-        self._enter_scope(node)
-        for generator in node.generators:
-            self._add_assignment_bindings(generator.target)
-        for index, generator in enumerate(node.generators):
-            if index:
-                self.visit(generator.iter)
-            for condition in generator.ifs:
-                self.visit(condition)
-        visit_comprehension_result(self, node)
-        self._exit_scope()
-
-    visit_ListComp = _visit_comprehension_scope
-    visit_SetComp = _visit_comprehension_scope
-    visit_DictComp = _visit_comprehension_scope
-    visit_GeneratorExp = _visit_comprehension_scope
 
     def visit_Import(self, node: ast.Import) -> None:
         assert self.current_scope is not None
@@ -405,8 +381,9 @@ class ScopeAnalyzer(ast.NodeVisitor):
         """
 
         # Custom visitor that doesn't descend into nested functions
-        class ScopeRespectingWalker(ast.NodeVisitor):
+        class ScopeRespectingWalker(ScopeVisitor):
             def __init__(self) -> None:
+                self._saved: List[Tuple[Set[str], Set[str], Set[str]]] = []
                 self.uses: Set[str] = set()
                 self.bindings: Set[str] = set()
                 self.used_before_assigned: Set[str] = set()  # Variables used before assignment
@@ -425,30 +402,38 @@ class ScopeAnalyzer(ast.NodeVisitor):
                             names.add(elt.id)
                 return names
 
-            def _with_new_scope(
-                self, new_bindings: Set[str], body_visitor: Callable[[], None]
-            ) -> None:
-                """
-                Execute body_visitor with new bindings in a nested scope.
-                Bindings don't leak out, but uses of free variables are captured.
-                """
-                saved_bindings = self.bindings.copy()
-                saved_assigned = self.assigned_so_far.copy()
-                saved_uses = self.uses.copy()
+            def _enter_scope(self, node: ast.AST) -> None:
+                """Begin a nested scope: bindings made inside will not leak out."""
+                self._saved.append(
+                    (self.bindings.copy(), self.assigned_so_far.copy(), self.uses.copy())
+                )
 
-                self.bindings.update(new_bindings)
-                self.assigned_so_far.update(new_bindings)
-
-                body_visitor()
-
-                # Remove ALL variables bound in this scope from uses
-                # This includes both new_bindings and any added during body_visitor
+            def _leave_scope(self, node: ast.AST) -> None:
+                """End the nested scope, keeping only the uses it left free."""
+                saved_bindings, saved_assigned, saved_uses = self._saved.pop()
                 scope_bindings = self.bindings - saved_bindings
                 self.uses = saved_uses | (self.uses - scope_bindings)
-
-                # Restore bindings (they don't leak out of nested scope)
                 self.bindings = saved_bindings
                 self.assigned_so_far = saved_assigned
+
+            def _bind_definition_name(
+                self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+            ) -> None:
+                self._add_current_scope_bindings({node.name})
+
+            def _bind_parameters(self, args: ast.arguments) -> None:
+                self._bind_callable_parameters(args)
+
+            def _bind_target(self, target: ast.AST) -> None:
+                self._add_current_scope_bindings(self._extract_binding_names(target))
+
+            def _visit_class_body(self, node: ast.ClassDef) -> None:
+                """A class body is not entered: it binds nothing the block can read.
+
+                The walker asks which names a block reads that the enclosing
+                function must supply; a class statement contributes only the
+                class name, as it always did here.
+                """
 
             def _add_current_scope_bindings(self, new_bindings: Set[str]) -> None:
                 """Add bindings to the current scope (they persist)."""
@@ -566,70 +551,6 @@ class ScopeAnalyzer(ast.NodeVisitor):
                 self._add_current_scope_bindings(comp_vars)
                 for condition in node.ifs:
                     self.visit(condition)
-
-            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                # Function name binds in outer scope
-                self._add_current_scope_bindings({node.name})
-
-                # Visit function body in a nested scope to capture free variables
-                # that the function closes over. This is important when the function
-                # definition itself is part of the extracted code.
-                def visit_func_body() -> None:
-                    # Add function parameters as bindings in the nested scope
-                    self._bind_callable_parameters(node.args)
-
-                    # Visit function body
-                    for stmt in node.body:
-                        self.visit(stmt)
-
-                self._with_new_scope(set(), visit_func_body)
-
-            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-                # Same as FunctionDef
-                # Type ignore needed because mypy doesn't recognize structural compatibility
-                self.visit_FunctionDef(node)  # type: ignore[arg-type]
-
-            def visit_ClassDef(self, node: ast.ClassDef) -> None:
-                # Class name binds in outer scope
-                self._add_current_scope_bindings({node.name})
-                # DON'T visit body - it's a different scope!
-
-            def visit_Lambda(self, node: ast.Lambda) -> None:
-                # Lambda creates a nested scope
-                # Parameters bind within the lambda, but don't leak out
-                # Free variables used in body are captured from outer scope
-                def visit_body() -> None:
-                    # Add lambda parameters as bindings
-                    self._bind_callable_parameters(node.args)
-
-                    # Visit lambda body
-                    self.visit(node.body)
-
-                self._with_new_scope(set(), visit_body)
-
-            def _visit_comprehension_scope(
-                self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
-            ) -> None:
-                if node.generators:
-                    self.visit(node.generators[0].iter)
-
-                def visit_body() -> None:
-                    for index, generator in enumerate(node.generators):
-                        if index:
-                            self.visit(generator.iter)
-                        self._add_current_scope_bindings(
-                            self._extract_binding_names(generator.target)
-                        )
-                        for condition in generator.ifs:
-                            self.visit(condition)
-                    visit_comprehension_result(self, node)
-
-                self._with_new_scope(set(), visit_body)
-
-            visit_ListComp = _visit_comprehension_scope
-            visit_DictComp = _visit_comprehension_scope
-            visit_SetComp = _visit_comprehension_scope
-            visit_GeneratorExp = _visit_comprehension_scope
 
             def visit_Match(self, node: ast.Match) -> None:
                 # Capture patterns bind in the enclosing function scope

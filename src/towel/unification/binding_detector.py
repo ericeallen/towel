@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 
 from .parameters import parameter_nodes
+from .visitors import ScopeVisitor
 from typing import List, Optional, Set, Union
 from dataclasses import dataclass
 from enum import Enum
@@ -67,7 +68,7 @@ class Binding:
     line_number: int  # Line number for debugging
 
 
-class BindingDetector(ast.NodeVisitor):
+class BindingDetector(ScopeVisitor):
     """
     Detects all variable bindings in a Python AST.
 
@@ -184,40 +185,45 @@ class BindingDetector(ast.NodeVisitor):
                 self._extract_names_from_target(item.optional_vars, BindingKind.WITH_STMT)
         self.generic_visit(node)
 
-    # Function and class definitions
+    # Function and class definitions: the traversal is ScopeVisitor's; the
+    # detector binds the definition's name, keeps a stack of scope nodes, and
+    # visits decorators, bases, and keywords after the body, in the enclosing
+    # scope, which is where its bindings for them are recorded.
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """Handle function definitions: def foo(x, y):"""
-        self._visit_function_definition(node)
+    def _bind_definition_name(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        kind = BindingKind.CLASS_DEF if isinstance(node, ast.ClassDef) else BindingKind.FUNCTION_DEF
+        self._add_binding(node.name, kind, node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Handle async function definitions: async def foo():"""
-        self._visit_function_definition(node)
-
-    def visit_Lambda(self, node: ast.Lambda) -> None:
-        """Handle lambda expressions: lambda x, y: x + y"""
-        self._enter_function_like_scope(node)
-        self.visit(node.body)
-        self.scope_stack.pop()
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Handle class definitions: class Foo:"""
-        # The class name is a binding in the enclosing scope
-        self._add_binding(node.name, BindingKind.CLASS_DEF, node)
-
-        # Enter class scope
+    def _enter_scope(self, node: ast.AST) -> None:
         self.scope_stack.append(node)
 
-        # Visit class body
-        self._visit_body_and_pop(node)
+    def _leave_scope(self, node: ast.AST) -> None:
+        self.scope_stack.pop()
 
-        # Visit decorators and bases (in enclosing scope)
+    def _visit_definition_tail(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
         for decorator in node.decorator_list:
             self.visit(decorator)
-        for base in node.bases:
-            self.visit(base)
-        for keyword in node.keywords:
-            self.visit(keyword.value)
+        if isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                self.visit(base)
+            for keyword in node.keywords:
+                self.visit(keyword.value)
+
+    def _comprehension(
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        """A comprehension's bindings are recorded in the enclosing scope node.
+
+        The detector reports where a name is bound, keyed by the function or
+        class it belongs to; a comprehension is not one of those, so its
+        targets are recorded (as ``COMPREHENSION`` bindings, by
+        ``visit_comprehension``) without a scope of their own.
+        """
+        self.generic_visit(node)
 
     # Import statements
 
@@ -295,27 +301,7 @@ class BindingDetector(ast.NodeVisitor):
 
         # Other patterns (MatchValue, MatchSingleton) don't bind variables
 
-    def _visit_function_definition(
-        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
-    ) -> None:
-        self._add_binding(node.name, BindingKind.FUNCTION_DEF, node)
-        self._enter_function_like_scope(node)
-        self._visit_body_and_pop(node)
-        for decorator in node.decorator_list:
-            self.visit(decorator)
-
-    def _enter_function_like_scope(
-        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda]
-    ) -> None:
-        self.scope_stack.append(node)
-        self._bind_function_parameters(node.args)
-
-    def _visit_body_and_pop(self, node: ast.AST) -> None:
-        for stmt in getattr(node, "body", []):
-            self.visit(stmt)
-        self.scope_stack.pop()
-
-    def _bind_function_parameters(self, args: ast.arguments) -> None:
+    def _bind_parameters(self, args: ast.arguments) -> None:
         for arg in parameter_nodes(args):
             self._add_binding(arg.arg, BindingKind.FUNCTION_PARAM, arg)
 

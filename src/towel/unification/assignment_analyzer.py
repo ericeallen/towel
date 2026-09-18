@@ -29,6 +29,7 @@ from typing import Dict, List, Set, Tuple, Union
 
 from .scope_analyzer import pattern_capture_names
 from .parameters import parameter_names
+from .visitors import OwnScopeVisitor
 
 
 def analyze_assignments(func: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> Dict[int, bool]:
@@ -54,7 +55,7 @@ def analyze_assignments(func: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> D
     return analyzer.reassignments
 
 
-class AssignmentAnalyzer(ast.NodeVisitor):
+class AssignmentAnalyzer(OwnScopeVisitor):
     """
     Visitor that analyzes assignments to determine which are reassignments.
 
@@ -66,30 +67,15 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         self.bound_vars: Set[str] = set()
         self.reassignments: Dict[int, bool] = {}  # node id -> is_reassignment
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """
-        Visit function definition.
+    def _nested_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+        """The first function seen is the one analyzed: its parameters are bound, its body visited.
 
-        For the top-level function being analyzed:
-        - Parameters are considered bound variables
-        - Visit the function body
-
-        For nested functions:
-        - Don't descend (they have their own scope)
+        A function nested inside it is another scope and is not entered.
         """
-        # If this is the first function we're visiting, analyze it
         if not self.bound_vars:
             self.bound_vars.update(parameter_names(node.args))
-
-            # Visit function body
             for stmt in node.body:
                 self.visit(stmt)
-        # else: Don't descend into nested functions (different scope)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Visit async function definition (same as FunctionDef)."""
-        # Type ignore needed because mypy doesn't recognize structural compatibility
-        self.visit_FunctionDef(node)  # type: ignore[arg-type]
 
     def visit_Assign(self, node: ast.Assign) -> None:
         """
@@ -227,21 +213,10 @@ class AssignmentAnalyzer(ast.NodeVisitor):
         # Don't analyze comprehension targets as they create their own scope
         pass
 
-    def visit_ListComp(self, node: ast.ListComp) -> None:
-        """Don't descend into list comprehensions (own scope)."""
-        pass
-
-    def visit_DictComp(self, node: ast.DictComp) -> None:
-        """Don't descend into dict comprehensions (own scope)."""
-        pass
-
-    def visit_SetComp(self, node: ast.SetComp) -> None:
-        """Don't descend into set comprehensions (own scope)."""
-        pass
-
-    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
-        """Don't descend into generator expressions (own scope)."""
-        pass
+    def _comprehension(
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        """A comprehension's targets are its own; nothing in it is an assignment of this scope."""
 
     def _collect_assignment_names(self, target: ast.AST) -> Set[str]:
         """
@@ -333,7 +308,7 @@ def _collect_bindings_and_reassignments(
         reassigned_vars: Set to add reassigned variables to
     """
 
-    class BindingCollector(ast.NodeVisitor):
+    class BindingCollector(OwnScopeVisitor):
         def visit_Assign(self, node: ast.Assign) -> None:
             # A tuple or list target binds every name inside it (astroid:
             # ``frame, stmts = self.lookup(name)`` read after the block).
@@ -407,14 +382,6 @@ def _collect_bindings_and_reassignments(
             for case in node.cases:
                 bound_vars.update(pattern_capture_names(case.pattern))
             self.generic_visit(node)
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            # Don't descend into nested functions
-            pass
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            # Don't descend into nested async functions
-            pass
 
     collector = BindingCollector()
     collector.visit(node)
