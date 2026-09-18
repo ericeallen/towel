@@ -239,7 +239,7 @@ ecosystem evidence behind each claim. The format follows
   (fifteen `type: ignore` comments ignored nothing; the AST accesses behind
   the rest are `isinstance` assertions now), coverage traces the forked
   pair workers (`parallel.py` 85% to 95%), the helpers copied across test
-  modules live in `conftest.py`, thirty-odd non-emptiness assertions state
+  modules live in `tests/test_helpers.py`, thirty-odd non-emptiness assertions state
   the value they are about, the goldens expected to equal their inputs are
   named and checked exactly, the example3 tests run the cross-file path
   they describe, a symlinked input directory is pinned, and the engine and
@@ -248,8 +248,10 @@ ecosystem evidence behind each claim. The format follows
   once per distinct helper template instead of once per pair, and the
   reuse redirect finds a function whose body starts at a site through an
   index instead of scanning the file per replacement: 50 identical
-  functions took 17 s and now 8 s, 100 took 134 s and now 42 s, 200 took
-  over 800 s and now 262 s, with identical output. Orphan detection, the
+  functions took 17 s and 100 took 134 s before; re-measured with
+  `scripts/bench_similar_blocks.py` on September 18, 2026, one core of a
+  machine shared with other work, 50 take 6.8 s and 100 take 36 s, with
+  identical output. Orphan detection, the
   instantiation check's normalized block and the class-private-name scan
   are memoized on structure, so the re-parse after each applied proposal
   hits too. The analysis session grows to the number of files an analysis

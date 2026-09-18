@@ -141,7 +141,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports. |
 | `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). |
 | `promote_equal_hof_literals` | `False` | Expose literal arguments of higher-order factory calls as helper parameters even when they are equal in every block. |
-| `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). Read once from the environment when omitted. |
+| `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). When omitted, the engine reads the environment once at construction; the command line and the analysis session each read it once as well (see *Diagnostics and settings* in [ARCHITECTURE.md](ARCHITECTURE.md)). |
 
 The CLI's `dry` command wires the formatter, import sorter, and type oracle
 from the project's own configuration. Library callers can do the same:

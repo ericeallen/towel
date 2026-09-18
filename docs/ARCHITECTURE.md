@@ -520,7 +520,11 @@ measure is exact and changes no proposal.
 - **Shared analysis graphs.** Each engine owns an `AnalysisSession`
   ([`pipeline.py`](../src/towel/unification/pipeline.py)) that parses and
   analyzes each module once and returns the *same* graph on every access,
-  keyed by path and current content (LRU, 128 entries / 8 MiB of source). The
+  keyed by path and current content. The session is an LRU bounded two
+  ways: its entry limit starts at 128 and is raised to the file count of
+  each directory analysis, so the session holds at least the files an
+  analysis covers; its 8 MiB source budget does not grow, so a file larger
+  than the budget is analyzed but not kept. The
   graph is shared by reference, not copied, because the analysis treats it as
   read-only; `TOWEL_CHECK_AST_IMMUTABLE=1` verifies that on every reuse by
   comparing an AST digest and raising if the tree changed. A session is owned
@@ -560,7 +564,8 @@ measure is exact and changes no proposal.
 - **Incremental global passes.** See the section above; only the files
   rewritten since the previous global pass are re-paired, exactly.
 - **The apply path parses once.** The files a proposal touches are parsed
-  once per source text (`parse_cached` in `pipeline.py`) for the arity
+  once per source text (`_parse_source` over the engine's `_parse_cache`
+  in `refactor_engine.py`) for the arity
   check and the insertion-point searches, and re-read from disk only when
   their size or modification time changed; the annotation fallback variants
   copy the helper alone, not the whole proposal.
@@ -617,15 +622,17 @@ enabled: `towel.rejections` (why each pair was declined),
 `towel.validation` (the pair stages step by step), `towel.overlap` (which
 overlapping proposals were dropped), and `towel.types` (what the checker
 revealed and the errors that made annotations fall back). Everything Towel
-takes from the environment is read once, at engine construction, into a
-frozen `Settings` ([`diagnostics.py`](../src/towel/diagnostics.py)):
-`TOWEL_WORKERS`, `TOWEL_CHECK_AST_IMMUTABLE`, and the four debug switches
+takes from the environment goes through a frozen `Settings`
+([`diagnostics.py`](../src/towel/diagnostics.py)): `TOWEL_WORKERS`,
+`TOWEL_CHECK_AST_IMMUTABLE`, and the four debug switches
 `DEBUG_PROPOSAL_REJECTIONS`, `DEBUG_VALIDATION`, `DEBUG_OVERLAP_FILTER`,
-and `TOWEL_DEBUG_TYPES`. The command line turns the corresponding loggers
-on at startup; the engine never changes logger levels itself, so a library
-caller who wants the switches honoured calls
-`Settings.from_environ().enable_debug_logging()` once. No other module
-consults `os.environ`.
+and `TOWEL_DEBUG_TYPES`. Three places read it today, each once: the
+command line at startup, to turn the corresponding loggers on; the engine
+at construction (`settings=` overrides it for library callers); and the
+analysis session at construction, for `TOWEL_CHECK_AST_IMMUTABLE`. No
+other module consults `os.environ`. The engine never changes logger levels
+itself, so a library caller who wants the switches honoured calls
+`Settings.from_environ().enable_debug_logging()` once.
 
 ## Application and recovery
 
