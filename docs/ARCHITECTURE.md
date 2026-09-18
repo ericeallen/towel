@@ -545,8 +545,11 @@ takes from the environment is read once, at engine construction, into a
 frozen `Settings` ([`diagnostics.py`](../src/towel/diagnostics.py)):
 `TOWEL_WORKERS`, `TOWEL_CHECK_AST_IMMUTABLE`, and the four debug switches
 `DEBUG_PROPOSAL_REJECTIONS`, `DEBUG_VALIDATION`, `DEBUG_OVERLAP_FILTER`,
-and `TOWEL_DEBUG_TYPES`, which turn the corresponding loggers on. No other
-module consults `os.environ`.
+and `TOWEL_DEBUG_TYPES`. The command line turns the corresponding loggers
+on at startup; the engine never changes logger levels itself, so a library
+caller who wants the switches honoured calls
+`Settings.from_environ().enable_debug_logging()` once. No other module
+consults `os.environ`.
 
 ## Application and recovery
 
@@ -659,7 +662,7 @@ but the ideas and their names are from the literature.
 | Parameter enumeration | `parameters.py` |
 | Progress reporting | `progress.py` |
 | Structural memoization | `structural_memo.py` |
-| Cross-file layout | `project_layout.py` |
+| Cross-file layout (packaging discovery) | `project_layout.py` (at `src/towel/`) |
 | Data model | `models.py` |
 | Transactional application | `changes.py` (at `src/towel/`) |
 | Atomic project copy | `filesystem.py` (at `src/towel/`) |

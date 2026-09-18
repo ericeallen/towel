@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from towel.unification.project_layout import ProjectLayout
+from towel.project_layout import ProjectLayout
 
 
 def package(root: Path, relative: str) -> Path:

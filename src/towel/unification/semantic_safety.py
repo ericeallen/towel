@@ -24,7 +24,7 @@ from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
 from .exceptions import UnsupportedLayoutError
-from .project_layout import ProjectLayout
+from ..project_layout import ProjectLayout
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
 from .visitors import OwnScopeVisitor
 from ..source_text import read_source
@@ -382,10 +382,6 @@ class ImportGraphCache:
             table.clear()
 
 
-DEFAULT_IMPORT_GRAPH = ImportGraphCache()
-"""For callers without an engine of their own."""
-
-
 def layout_is_known(canonical_file: str, cache: ImportGraphCache) -> bool:
     """Whether the project around ``canonical_file`` has a layout Towel can model.
 
@@ -632,7 +628,7 @@ def _dotted_path_files(current: Path, roots: Iterable[Path], parts: Tuple[str, .
 
 
 def imported_definition_sites(
-    current_file: str, dotted_name: str, cache: ImportGraphCache = DEFAULT_IMPORT_GRAPH
+    current_file: str, dotted_name: str, cache: ImportGraphCache
 ) -> Optional[FrozenSet[Tuple[Path, str]]]:
     """Where a name used in ``current_file`` may be defined, as (file, qualname) pairs.
 
@@ -697,7 +693,7 @@ def _package_initializers(module: Path, roots: FrozenSet[Path]) -> List[Path]:
 
 
 def would_create_import_cycle(
-    canonical_file: str, replacement_files: Set[str], cache: ImportGraphCache = DEFAULT_IMPORT_GRAPH
+    canonical_file: str, replacement_files: Set[str], cache: ImportGraphCache
 ) -> bool:
     """Check whether adding imports of the helper closes a local import cycle.
 

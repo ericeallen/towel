@@ -18,7 +18,7 @@ import unicodedata
 from typing import Iterable, Literal, Sequence, cast
 
 from .changes import ChangePlan
-from .unification.project_layout import ProjectLayout
+from .project_layout import ProjectLayout
 from .unification.semantic_safety import is_namespace_access_call
 from .unification.visitors import OwnScopeVisitor, ScopeVisitor, visit_comprehension_result
 

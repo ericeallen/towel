@@ -40,7 +40,7 @@ import shutil
 import subprocess
 from typing import Callable, List, Mapping, Optional, Tuple
 
-from .unification.project_layout import find_project_root, load_pyproject
+from .project_layout import find_project_root, load_pyproject
 from .project_tools import ToolChoice
 from .diagnostics import LOG
 

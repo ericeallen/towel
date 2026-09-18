@@ -40,7 +40,7 @@ from .exceptions import RefactoringError
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, RefactoringProposal, Replacement
 from .pipeline import parse_cached
-from .project_layout import ProjectLayout, is_package_dir
+from ..project_layout import ProjectLayout, is_package_dir
 from towel.changes import ChangeConflict, ChangePlan
 from ..source_text import read_source
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from towel.unification.semantic_safety import would_create_import_cycle
+from towel.unification.semantic_safety import ImportGraphCache
 
 
 def test_relative_import_of_a_package_attribute_is_an_edge_to_the_initializer(
@@ -24,10 +25,16 @@ def test_relative_import_of_a_package_attribute_is_an_edge_to_the_initializer(
     (package / "sub.py").write_text("from . import Base\n")
     (package / "other.py").write_text("x = 1\n")
     # Hosting a helper in ``sub`` for a site in ``__init__`` closes the cycle.
-    assert would_create_import_cycle(str(package / "sub.py"), {str(package / "__init__.py")})
+    assert would_create_import_cycle(
+        str(package / "sub.py"), {str(package / "__init__.py")}, ImportGraphCache()
+    )
     # The initializer itself is a safe host: ``sub`` already imports it.
-    assert not would_create_import_cycle(str(package / "__init__.py"), {str(package / "sub.py")})
-    assert not would_create_import_cycle(str(package / "other.py"), {str(package / "sub.py")})
+    assert not would_create_import_cycle(
+        str(package / "__init__.py"), {str(package / "sub.py")}, ImportGraphCache()
+    )
+    assert not would_create_import_cycle(
+        str(package / "other.py"), {str(package / "sub.py")}, ImportGraphCache()
+    )
 
 
 def test_a_cycle_through_the_hosts_package_initializer_is_seen(tmp_path: Path) -> None:
@@ -46,8 +53,8 @@ def test_a_cycle_through_the_hosts_package_initializer_is_seen(tmp_path: Path) -
     (package / "sub" / "leaf.py").write_text("x = 1\n")
     leaf = str(package / "sub" / "leaf.py")
     tool = str(package / "vendor" / "tool.py")
-    assert would_create_import_cycle(leaf, {tool})
-    assert not would_create_import_cycle(tool, {leaf})
+    assert would_create_import_cycle(leaf, {tool}, ImportGraphCache())
+    assert not would_create_import_cycle(tool, {leaf}, ImportGraphCache())
 
 
 def test_a_relocated_copy_resolves_its_own_absolute_imports_in_tree(tmp_path: Path) -> None:
@@ -63,5 +70,5 @@ def test_a_relocated_copy_resolves_its_own_absolute_imports_in_tree(tmp_path: Pa
         (package / "sub" / "mod.py").write_text("from pkg.sub import X\n")
     copy = tmp_path / "pkg-cleaned"
     assert would_create_import_cycle(
-        str(copy / "sub" / "mod.py"), {str(copy / "sub" / "__init__.py")}
+        str(copy / "sub" / "mod.py"), {str(copy / "sub" / "__init__.py")}, ImportGraphCache()
     )

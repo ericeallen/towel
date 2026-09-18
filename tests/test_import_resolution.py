@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from towel.unification.semantic_safety import imported_definition_sites
+from towel.unification.semantic_safety import ImportGraphCache
 
 
 def _project(root: Path) -> Path:
@@ -21,7 +22,7 @@ def _project(root: Path) -> Path:
 def _sites(pkg: Path, source: str) -> set[tuple[str, str]]:
     module = pkg / "one" / "user.py"
     module.write_text(source)
-    resolved = imported_definition_sites(str(module), "Base")
+    resolved = imported_definition_sites(str(module), "Base", ImportGraphCache())
     assert resolved is not None
     return {(str(path.relative_to(pkg)), qualname) for path, qualname in resolved}
 
@@ -47,8 +48,8 @@ def test_dotted_reference_through_a_module_import(tmp_path: Path) -> None:
     pkg = _project(tmp_path)
     module = pkg / "one" / "user.py"
     module.write_text("import proj.two.base\nfrom . import base\n")
-    dotted = imported_definition_sites(str(module), "proj.two.base.Base")
-    nested = imported_definition_sites(str(module), "base.Base.Inner")
+    dotted = imported_definition_sites(str(module), "proj.two.base.Base", ImportGraphCache())
+    nested = imported_definition_sites(str(module), "base.Base.Inner", ImportGraphCache())
     assert dotted is not None and {(p.name, q) for p, q in dotted} >= {("base.py", "Base")}
     assert nested is not None and ("Base.Inner" in {q for _, q in nested})
     assert all(p.parent.name == "one" for p, q in nested if q == "Base.Inner")
@@ -61,5 +62,5 @@ def test_names_without_an_unconditional_import_resolve_to_nothing(tmp_path: Path
         "try:\n    from .base import Base\nexcept ImportError:\n    Base = object\n"
         "from .other import *\n"
     )
-    assert imported_definition_sites(str(module), "Base") is None
-    assert imported_definition_sites(str(module), "Unbound") is None
+    assert imported_definition_sites(str(module), "Base", ImportGraphCache()) is None
+    assert imported_definition_sites(str(module), "Unbound", ImportGraphCache()) is None

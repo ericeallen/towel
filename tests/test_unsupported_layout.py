@@ -10,7 +10,7 @@ import sys
 import pytest
 
 from towel.cli import main
-from towel.unification.project_layout import ProjectLayout
+from towel.project_layout import ProjectLayout
 from towel.unification.exceptions import UnsupportedLayoutError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 

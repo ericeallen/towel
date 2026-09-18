@@ -11,6 +11,7 @@ import unittest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.semantic_safety import nested_bindings_escape, would_create_import_cycle
+from towel.unification.semantic_safety import ImportGraphCache
 from towel.cli import _find_extracted_helpers
 
 
@@ -359,7 +360,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         a.write_text("import bridge\n", encoding="utf-8")
         bridge.write_text("import b\n", encoding="utf-8")
         b.write_text("", encoding="utf-8")
-        self.assertTrue(would_create_import_cycle(str(a), {str(a), str(b)}))
+        self.assertTrue(would_create_import_cycle(str(a), {str(a), str(b)}, ImportGraphCache()))
 
     def test_relative_import_cycle(self) -> None:
         package = self.root / "pkg"
@@ -368,13 +369,13 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         a, b = package / "a.py", package / "b.py"
         a.write_text("from . import b\n", encoding="utf-8")
         b.write_text("", encoding="utf-8")
-        self.assertTrue(would_create_import_cycle(str(a), {str(a), str(b)}))
+        self.assertTrue(would_create_import_cycle(str(a), {str(a), str(b)}, ImportGraphCache()))
 
     def test_independent_modules_do_not_create_cycle(self) -> None:
         a, b = self.root / "a.py", self.root / "b.py"
         a.write_text("import math\n", encoding="utf-8")
         b.write_text("", encoding="utf-8")
-        self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}))
+        self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}, ImportGraphCache()))
 
     def test_absolute_import_cycle_detected_in_relocated_flat_layout(self) -> None:
         # Out-of-place refactoring writes a package's modules into a flat output
@@ -388,7 +389,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         a, b = self.root / "a.py", self.root / "b.py"
         a.write_text("from app.b import seed\n\ndef first(x):\n    return x\n", encoding="utf-8")
         b.write_text("seed = 1\n", encoding="utf-8")
-        self.assertTrue(would_create_import_cycle(str(a), {str(a), str(b)}))
+        self.assertTrue(would_create_import_cycle(str(a), {str(a), str(b)}, ImportGraphCache()))
 
     def test_absolute_import_no_cycle_in_relocated_flat_layout(self) -> None:
         # The mirror of the regression: when the relocated module imports an
@@ -398,7 +399,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
             "from app.other import seed\n\ndef first(x):\n    return x\n", encoding="utf-8"
         )
         b.write_text("seed = 1\n", encoding="utf-8")
-        self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}))
+        self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}, ImportGraphCache()))
 
     def test_relocated_self_package_import_cycles_through_package_init(self) -> None:
         # tenacity regression: the flat output has a subpackage whose module
@@ -417,5 +418,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         helper_home = sub / "helper_home.py"
         helper_home.write_text("from app import leaf\n", encoding="utf-8")
         self.assertTrue(
-            would_create_import_cycle(str(helper_home), {str(self.root / "borrower.py")})
+            would_create_import_cycle(
+                str(helper_home), {str(self.root / "borrower.py")}, ImportGraphCache()
+            )
         )

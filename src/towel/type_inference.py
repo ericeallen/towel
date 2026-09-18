@@ -67,6 +67,7 @@ from typing import (
 
 from .diagnostics import LOG
 from .project_tools import ToolChoice
+from .project_layout import find_project_root, load_pyproject
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mypy.options import Options
@@ -588,8 +589,6 @@ def project_configures_pyright(root: Path) -> bool:
 
 
 def _has_tool_section(root: Path, name: str) -> bool:
-    from .unification.project_layout import load_pyproject
-
     tool = load_pyproject(root).get("tool", {})
     return isinstance(tool, dict) and bool(tool.get(name))
 
@@ -614,8 +613,6 @@ def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
     gets mypy when installed, else pyright. The note names any configured
     checker that is not installed.
     """
-    from .unification.project_layout import find_project_root
-
     root = find_project_root(path)
     wants_mypy = project_configures_mypy(root)
     wants_pyright = project_configures_pyright(root)

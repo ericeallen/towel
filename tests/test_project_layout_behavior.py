@@ -5,7 +5,7 @@ import tempfile
 import textwrap
 import unittest
 
-from towel.unification.project_layout import ProjectLayout, is_package_dir
+from towel.project_layout import ProjectLayout, is_package_dir
 
 
 class TestProjectLayoutBehavior(unittest.TestCase):

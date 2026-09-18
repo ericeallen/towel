@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 
-from towel.unification.project_layout import ProjectLayout
+from towel.project_layout import ProjectLayout
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 

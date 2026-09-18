@@ -190,7 +190,6 @@ class UnificationRefactorEngine(
         self._settings = settings if settings is not None else Settings.from_environ()
         self.import_graph = ImportGraphCache()
         self._source_lines_cache: Dict[str, Tuple[Tuple[int, int, int], Tuple[str, ...]]] = {}
-        self._settings.enable_debug_logging()
         self.max_parameters = max_parameters
         self.min_lines = min_lines
         self.skip_trivial_helpers = skip_trivial_helpers
