@@ -104,6 +104,15 @@ ecosystem evidence behind each claim. The format follows
 - A helper whose body only binds parameters and literals to names and returns
   them is not proposed: the call that unpacks the tuple is longer than the
   assignments it replaces and shares no logic.
+- In directory mode, a global re-pass after the first re-pairs only the
+  functions in files rewritten since the previous global pass. This is exact
+  (the argument is in `docs/ARCHITECTURE.md`): an unchanged pair's verdict
+  depends on its two files, the class hierarchy, which refactoring never
+  alters, and the import graph, to which refactoring only adds edges, and
+  every proposal such a pair produced has been applied, dropped, or
+  filtered along with a rewritten file. `dry` output is byte-identical with
+  the restriction on and off; `incremental_global_passes=False` restores
+  full re-pairing.
 - Candidate blocks are bucketed on their whole statement-type sequence,
   which the unifier requires equal, so far fewer pairs reach the filter; the
   unifier's bound-variable search caches each node's source text instead of

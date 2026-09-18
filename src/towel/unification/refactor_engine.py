@@ -344,6 +344,7 @@ class UnificationRefactorEngine:
         type_inferrer: Optional[TypeOracle] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
         file_finisher: Optional[Callable[[str, str], str]] = None,
+        incremental_global_passes: bool = True,
     ):
         """
         Initialize the refactoring engine.
@@ -394,6 +395,15 @@ class UnificationRefactorEngine:
                 final text, for example with imports sorted the way the project
                 sorts them (see ``towel.formatting.import_sorter_for_project``).
                 None (default) leaves files as assembled.
+            incremental_global_passes: In directory mode, after the first
+                analysis, re-pair only functions in files that changed since
+                the previous global pass (default: True). This is exact: an
+                unchanged pair's verdict depends on its two files, the class
+                hierarchy (which refactoring never alters) and the import
+                graph (to which refactoring only adds edges, so a pair
+                declined for a cycle stays declined), and any proposal it
+                produced was applied, which changed its files. False re-pairs
+                everything on every global pass.
         """
         self.analysis_session = AnalysisSession()
         self.max_parameters = max_parameters
@@ -404,6 +414,7 @@ class UnificationRefactorEngine:
         self.type_inferrer = type_inferrer
         self.snippet_formatter = snippet_formatter
         self.file_finisher = file_finisher
+        self.incremental_global_passes = incremental_global_passes
         # Directory names left out of directory mode, such as ``tests`` when a
         # package carries its test suite inside itself (networkx: 77k of its
         # 198k lines).
@@ -508,6 +519,7 @@ class UnificationRefactorEngine:
         *,
         verbose: bool = False,
         progress: str = "tqdm",
+        changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
         """
         Analyze all Python files in a directory and find refactoring opportunities.
@@ -529,7 +541,9 @@ class UnificationRefactorEngine:
             print(f"Found {len(python_files)} Python files in {directory}")
 
         # Analyze all files together
-        return self.analyze_files(python_files, verbose=verbose, progress=progress)
+        return self.analyze_files(
+            python_files, verbose=verbose, progress=progress, changed_files=changed_files
+        )
 
     def _find_python_files(self, directory: str, recursive: bool = True) -> List[str]:
         """
@@ -784,10 +798,13 @@ class UnificationRefactorEngine:
         verbose: bool = False,
         progress: str = "tqdm",
         invalidate_paths: Optional[List[str]] = None,
+        changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
         """Analyze multiple files using the compiler-style pipeline and return proposals.
 
         invalidate_paths: If provided, forces reparse/reanalysis of these paths even if cached.
+        changed_files: If provided, only pairs with a function in one of these
+            files are considered (see ``incremental_global_passes``).
         """
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
@@ -803,6 +820,7 @@ class UnificationRefactorEngine:
             progress=progress,
             invalidate_paths=invalidate_paths,
             session=self.analysis_session,
+            changed_files=changed_files,
         )
 
     #: Entries kept per structural cache; oldest are dropped beyond this.
@@ -2069,6 +2087,7 @@ class UnificationRefactorEngine:
         all_functions: Sequence[FunctionArtifact],
         *,
         progress: str = "none",
+        changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[CodeBlockPair]:
         """
         Find all non-overlapping pairs of code blocks across multiple files.
@@ -2139,7 +2158,10 @@ class UnificationRefactorEngine:
                 encl1 = None
                 anc1 = []
 
+            file1_changed = changed_files is None or file1 in changed_files
             for j, entry2 in enumerate(all_functions[i + 1 :], i + 1):
+                if not file1_changed and entry2[0] not in changed_files:  # type: ignore[operator]
+                    continue  # both files unchanged since the last global pass: verdict stands
                 if len(entry2) >= 8:
                     file2, func2, source2, analyzer2, scope2, class2, encl2, anc2 = entry2
                 elif len(entry2) == 7:
@@ -4950,6 +4972,10 @@ class UnificationRefactorEngine:
 
         # Proposal processing state
         proposal_queue: List[RefactoringProposal] = []
+        # Files rewritten since the last global pass: the next global pass
+        # re-pairs only functions in these (see ``incremental_global_passes``).
+        changed_since_global: Set[str] = set()
+        global_passes = 0
         iterations = 0
         total_applied = 0
         termination_reason = "fixed_point"
@@ -5008,6 +5034,7 @@ class UnificationRefactorEngine:
             apply_changes(ChangePlan.from_sources(before, modified_files))
             for fpath in modified_files:
                 _bump_result(fpath, proposal.description)
+                changed_since_global.add(os.path.abspath(str(fpath)))
 
             if changed_paths:
                 self.invalidate_paths(changed_paths)
@@ -5065,9 +5092,20 @@ class UnificationRefactorEngine:
                 analysis_progress_flag = (
                     progress_mode if progress_mode in ("tqdm", "auto") else "none"
                 )
-                proposals = self.analyze_directory(
-                    str(output_path), recursive=True, verbose=False, progress=analysis_progress_flag
+                restrict = (
+                    frozenset(changed_since_global)
+                    if self.incremental_global_passes and global_passes > 0 and changed_since_global
+                    else None
                 )
+                proposals = self.analyze_directory(
+                    str(output_path),
+                    recursive=True,
+                    verbose=False,
+                    progress=analysis_progress_flag,
+                    changed_files=restrict,
+                )
+                global_passes += 1
+                changed_since_global.clear()
                 if not proposals:
                     # Fixed point reached
                     if use_tqdm and progress_bar is not None:

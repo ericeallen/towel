@@ -228,6 +228,67 @@ each step verifiable and lets a later iteration extract a helper that a newly
 introduced call site now shares. The single-file `refactor_to_fixed_point` is
 the same loop over one module.
 
+### Incremental global passes, and why they are exact
+
+Directory mode alternates two kinds of analysis. After each applied
+refactoring a *localized* pass re-analyzes only the files it rewrote and
+queues the follow-ups found inside them. When the queue drains, a *global*
+pass re-pairs the whole project, because a change in one file can create a
+cross-file duplicate with a file the localized pass never looked at. The
+loop ends when a global pass proposes nothing.
+
+A global pass after the first re-pairs only functions in files rewritten
+since the previous global pass (`incremental_global_passes`, on by
+default). Every pair of functions in two *unchanged* files is skipped. This
+is exact, in the sense that the skipped pairs' verdicts cannot differ from
+the verdicts the previous global pass computed, and every proposal the
+previous pass produced from them has since been consumed:
+
+1. *What a verdict depends on.* `_try_refactor_pair_multi_file` decides a
+   pair from the two functions' syntax trees and the scope analyses of their
+   modules; from the same-file clustering scan (`_add_clustered_replacements`
+   looks only at the pair's own file); from the class hierarchy (method
+   placement, ancestor insertion); and from the project's import graph (the
+   cycle guard). Nothing else. Proposal priority is a pure function of the
+   proposals themselves (size, then position).
+2. *Unchanged files, unchanged scans.* An unchanged file has the same
+   syntax tree, the same scope analysis, and the same clustering scan, since
+   the analysis session reuses the parsed module.
+3. *The class hierarchy is invariant.* Refactoring inserts helper functions
+   and methods and rewrites call sites; it never adds, removes, or renames a
+   class, and never changes a base list. `ClassInfo` for every module is
+   therefore the same in every pass.
+4. *The import graph only grows.* Refactoring adds imports (a cross-file
+   helper's import, `typing` imports for annotations) and never removes one.
+   The cycle guard declines a pair when hosting the helper would close a
+   cycle; adding edges can only turn a non-cycle into a cycle, never the
+   reverse, so a pair declined for a cycle by the previous pass is declined
+   again. A pair *accepted* by the previous pass is not left over to be
+   re-judged: see 5.
+5. *Every earlier proposal from a skipped pair has been consumed.* A global
+   pass runs only when the queue is empty. A proposal the previous pass
+   produced from an unchanged-by-unchanged pair either (a) was applied, which
+   rewrote its files, so the pair is not unchanged and is re-paired; (b) was
+   dropped as stale, which happens only when a file among its own source
+   digests was rewritten, again making its pair re-paired; or (c) was removed
+   by overlap filtering in favour of a larger proposal sharing a file with it,
+   and that larger proposal was in turn applied, dropped, or filtered; the
+   chain ends in an application that rewrote the shared file, or in the whole
+   chain staying unapplied with its files untouched, in which case the same
+   filtering yields the same result again. In every case, a pair whose
+   proposal could still be pending involves a rewritten file.
+6. *Rejections stand.* A pair rejected by the previous pass is rejected by
+   the same guards on the same inputs (1 to 3), except for the cycle guard,
+   whose input grew monotonically (4).
+
+Hence the set of proposals a full re-pair would produce equals the set the
+restricted re-pair produces, in the same order. The check that backs this
+argument is byte-identical `dry` output with the restriction on and off
+(`tests/test_incremental_global_passes.py` on the multi-file examples;
+2026-09-18 on h2 and on Towel's own source). Turning the restriction off
+(`incremental_global_passes=False`) re-pairs everything and is the
+reference behavior.
+
 ## Performance architecture
 
 Analysis is quadratic in candidate blocks per file, so the engine spends its

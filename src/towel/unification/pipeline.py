@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from typing import (
     Dict,
+    FrozenSet,
     List,
     Mapping,
     Optional,
@@ -170,13 +171,17 @@ def pair_blocks(
     funcs: Sequence[FunctionArtifact],
     *,
     progress: str = "none",
+    changed_files: Optional[FrozenSet[str]] = None,
 ) -> List[CodeBlockPair]:
     """Enumerate candidate block pairs with optional progress display.
 
     The engine owns candidate generation and its progress reporting; this adapter
-    only packs the analyzed function context.
+    only packs the analyzed function context. ``changed_files`` restricts pairs
+    to those with a function in one of them.
     """
-    return engine._find_block_pairs_multi_file(list(funcs), progress=progress)
+    return engine._find_block_pairs_multi_file(
+        list(funcs), progress=progress, changed_files=changed_files
+    )
 
 
 def unify_blocks(
@@ -371,6 +376,7 @@ def run_pipeline(
     verbose: bool = False,
     progress: str = "auto",
     invalidate_paths: Optional[Sequence[str]] = None,
+    changed_files: Optional[FrozenSet[str]] = None,
 ) -> List[RefactoringProposal]:
     """Analyze current files and propose changes using isolated analysis graphs.
 
@@ -418,6 +424,6 @@ def run_pipeline(
 
     functions = [function for analysis in analyses for function in analysis.functions]
     classes = [info for analysis in analyses for info in analysis.module.class_infos]
-    pairs = pair_blocks(engine, functions, progress=progress)
+    pairs = pair_blocks(engine, functions, progress=progress, changed_files=changed_files)
     proposals = unify_blocks(engine, pairs, functions, classes, verbose=verbose, progress=progress)
     return filter_overlaps(proposals)
