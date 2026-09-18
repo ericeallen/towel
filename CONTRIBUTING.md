@@ -56,7 +56,7 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 1. **Fork the repository** and create your branch from `main`
 2. **Make your changes** following our coding standards
 3. **Add tests** for any new functionality
-4. **Ensure all tests pass** (run `pytest`)
+4. **Ensure all tests pass** (run `uv run --frozen pytest -q`)
 5. **Update documentation** as needed
 6. **Write clear commit messages**
 7. **Submit a pull request** with a clear description of your changes
@@ -93,8 +93,8 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
    uv run --frozen pre-commit install
    ```
 
-   The hooks run Black formatting, flake8 linting, strict mypy over the whole
-   tree, Bandit, and other checks before each commit. They call `python` from
+   The hooks check Black formatting, run flake8 linting and strict mypy over the
+   whole tree (`src/towel` and `tests`), Bandit, and other checks before each commit. They call `python` from
    the environment, so activate it or prefix commits with
    `PATH="$PWD/.venv/bin:$PATH"`; a file in progress must already type-check
    for a commit to go through. Never bypass the hooks.
@@ -139,7 +139,7 @@ All code contributions should include tests:
 - Ensure existing tests continue to pass
 - Run the test suite before submitting:
   ```bash
-  pytest
+  uv run --frozen pytest -q
   ```
 - Aim for high test coverage of new code
 - Include both positive and negative test cases
@@ -148,16 +148,16 @@ All code contributions should include tests:
 
 ```bash
 # Run all tests
-pytest
+uv run --frozen pytest -q
 
 # Run specific test file
-pytest tests/test_file.py
+uv run --frozen pytest -q tests/test_file.py
 
 # Run with coverage (pair evaluation forks workers, so each process writes
 # its own data file and `combine` must precede the report)
-coverage run -m pytest
-coverage combine
-coverage report --fail-under=85
+uv run --frozen coverage run -m pytest -q
+uv run --frozen coverage combine
+uv run --frozen coverage report --fail-under=85
 ```
 
 ## Documentation

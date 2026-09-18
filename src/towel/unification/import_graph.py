@@ -64,16 +64,6 @@ class ImportGraphCache:
             resolved = self.resolved_paths.put(path, Path(path).resolve())
         return resolved
 
-    def clear(self) -> None:
-        for table in (
-            self.edges,
-            self.bindings,
-            self.module_files,
-            self.source_roots,
-            self.resolved_paths,
-        ):
-            table.clear()
-
 
 def layout_is_known(canonical_file: str, cache: ImportGraphCache) -> bool:
     """Whether the project around ``canonical_file`` has a layout Towel can model.
