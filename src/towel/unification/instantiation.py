@@ -15,7 +15,18 @@ import ast
 import copy
 from typing import Dict, List, Mapping, Optional, Sequence, Set, cast
 
+from .bounded_cache import BoundedCache
 from .semantic_safety import bound_names, walk_own_scope
+from .structural_memo import structural_id
+
+_EXPECTED_DUMPS: BoundedCache[str, str] = BoundedCache(16_384)
+"""The alpha-normalized dump of a block, by structural id.
+
+A block is checked against every call that reproduces it, once per pair it
+forms, and its normalized form is a function of its structure alone: the
+same code re-parsed after a rewrite hits too. Per process; the workers fork
+after parsing and each keeps its own copy.
+"""
 
 
 class InstantiationError(Exception):
@@ -67,13 +78,30 @@ def instantiation_mismatch(
     except InstantiationError as error:
         return str(error)
     restored = [_IdentifierRenamer(inverse).visit(statement) for statement in reduced]
-    expected = _alpha_normalize(
+    actual = _alpha_normalize(ast.Module(body=restored, type_ignores=[]))
+    if _normalized_dump(actual) != _expected_dump(block):
+        return f"body: {ast.unparse(actual)!r} != {ast.unparse(_expected_form(block))!r}"
+    return None
+
+
+def _expected_form(block: Sequence[ast.AST]) -> ast.Module:
+    """The block as the reduced helper body must read, on a copy."""
+    return _alpha_normalize(
         ast.Module(body=[cast(ast.stmt, copy.deepcopy(node)) for node in block], type_ignores=[])
     )
-    actual = _alpha_normalize(ast.Module(body=restored, type_ignores=[]))
-    if ast.dump(actual, include_attributes=False) != ast.dump(expected, include_attributes=False):
-        return f"body: {ast.unparse(actual)!r} != {ast.unparse(expected)!r}"
-    return None
+
+
+def _normalized_dump(module: ast.Module) -> str:
+    return ast.dump(module, include_attributes=False)
+
+
+def _expected_dump(block: Sequence[ast.AST]) -> str:
+    """``_normalized_dump(_expected_form(block))``, memoized on the block's structure."""
+    key = structural_id(block)
+    cached = _EXPECTED_DUMPS.get(key)
+    if cached is None:
+        cached = _EXPECTED_DUMPS.put(key, _normalized_dump(_expected_form(block)))
+    return cached
 
 
 def _alpha_normalize(module: ast.Module) -> ast.Module:

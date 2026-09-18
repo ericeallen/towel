@@ -69,7 +69,7 @@ from .clustering import Clustering
 from .pair_evaluation import PairEvaluation
 from .block_analysis import BlockAnalysis
 from .bounded_cache import BoundedCache
-from .engine_state import ClusterKey, GuardKey
+from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, GuardKey
 from .defaults import DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from .insertion import InsertionPoints
@@ -328,6 +328,15 @@ class UnificationRefactorEngine(
         self._cluster_cache: BoundedCache[ClusterKey, Optional[ast.AST]] = BoundedCache(
             self.STRUCTURAL_CACHE_LIMIT
         )
+        # Every pair that yields one template scans the whole file for sites
+        # that can share its helper; with N similar blocks that is N^2 pairs
+        # each scanning N sites. The scan is a function of the file's content
+        # and the template alone, so it is computed once per template and its
+        # sites are shared (the pair's own blocks are filtered out on the way
+        # out). Keyed by content digest, so never evicted by path.
+        self._cluster_scan_cache: BoundedCache[ClusterScanKey, Tuple[ClusteredSite, ...]] = (
+            BoundedCache(self.CLUSTER_SCAN_CACHE_LIMIT)
+        )
         # Structural ids per block, keyed weakly by the block's first node and
         # then by its length, so an entry vanishes with its tree instead of
         # pinning it (block entries were never evicted before).
@@ -486,6 +495,8 @@ class UnificationRefactorEngine(
             changed_files: When given, only pairs with a function in one of
                 these files are considered (see ``incremental_global_passes``).
         """
+        # Every file of the analysis must fit, or each pass re-parses them all.
+        self.analysis_session.hold_at_least(len(file_paths))
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)
@@ -505,6 +516,8 @@ class UnificationRefactorEngine(
 
     #: Entries kept per structural cache; oldest are dropped beyond this.
     STRUCTURAL_CACHE_LIMIT = 250_000
+    #: Whole-file clustering scans kept; each holds every site of one template.
+    CLUSTER_SCAN_CACHE_LIMIT = 4096
     #: When a file's eviction-index list grows past this, drop entries the caches no longer hold.
     _EVICTION_INDEX_PRUNE_AT = 4096
 

@@ -21,15 +21,22 @@ and, for a method helper, is a method of the same classes with the same
 receiver kind; a site whose scope cannot see the helper is skipped. The
 per-candidate pipeline is memoized on the template, the candidate, and the
 helper, and its constant-time filters run before the semantic guards.
+
+The scan of a file is itself memoized on the file's content and the
+template: with N similar blocks in one file, N^2 pairs each produce the same
+template, and each used to scan all N sites again. A scan lists every
+admissible site; the pair's own blocks and overlaps are filtered out on the
+way out, so every pair sees exactly what its own scan would have found.
+Cached call nodes and replacements are shared, never copied: nothing
+downstream mutates a replacement's node without deep-copying it first.
 """
 
 from __future__ import annotations
 
 import ast
-import copy
 
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
@@ -37,7 +44,6 @@ from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .models import FunctionArtifact, FunctionNode, Replacement
 from .orphan_detector import orphaned_variables
-from .overlap import line_ranges_intersect
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import statement_shape
 from .semantic_safety import (
@@ -55,7 +61,7 @@ from .thunk_inlining import inline_leading_thunks
 from .visitors import body_without_docstring
 
 from .builtins import CALL_ARGUMENT_BUILTINS
-from .engine_state import ClusterKey, EngineState
+from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, EngineState, TemplateKey
 from .function_index import FunctionIndex
 from .models import BlockBindingSnapshot, HelperTemplate, encloses
 
@@ -71,6 +77,11 @@ class _ClusterCandidate:
     snapshot: BlockBindingSnapshot
     # Names the block binds for the first time that are read after it.
     return_variables: FrozenSet[str]
+
+
+def _lines_of(line_range: Tuple[int, int]) -> range:
+    """The lines an inclusive range covers."""
+    return range(line_range[0], line_range[1] + 1)
 
 
 class Clustering(EngineState):
@@ -196,17 +207,73 @@ class Clustering(EngineState):
     ) -> None:
         """Append same-file occurrences that can share the extracted helper.
 
-        Scans every function in the pair's file for additional blocks that unify
-        with the template and reproduce its helper, appending a call for each and
-        recording the method context needed to decide, later, whether that call
-        can dispatch through a receiver. Mutates ``replacements`` and
+        Takes the file's admissible sites for the template (scanned once per
+        template, see ``_clustered_sites``) and appends, in scan order, each
+        that overlaps neither the pair's own blocks nor a site already taken,
+        recording the method context needed to decide, later, whether that
+        call can dispatch through a receiver. Mutates ``replacements`` and
         ``cluster_contexts`` in place.
         """
         pair = template.pair
-        covered = {(pair.file_path, pair.block1_range), (pair.file_path2, pair.block2_range)}
+        covered: Set[int] = set(_lines_of(pair.block1_range))
+        covered.update(_lines_of(pair.block2_range))
+        for site in self._clustered_sites(template, dce_node, functions):
+            lines = _lines_of(site.replacement.line_range)
+            if not covered.isdisjoint(lines):
+                continue
+            cluster_contexts[len(replacements)] = site.context
+            replacements.append(site.replacement)
+            covered.update(lines)
+
+    def _clustered_sites(
+        self,
+        template: "HelperTemplate",
+        dce_node: Optional[FunctionNode],
+        functions: FunctionIndex,
+    ) -> Tuple[ClusteredSite, ...]:
+        """Every block of the pair's file that can call the template's helper, in file order.
+
+        Memoized on the file's content and the template, since every pair
+        that produces the template asks the same question of the same file.
+        A file whose digest is unknown is scanned afresh.
+        """
+        pair = template.pair
+        module_digest = self._module_digest(pair.function1_node)
+        if module_digest is None:
+            return tuple(self._scan_clustered_sites(template, dce_node, functions))
+        key = ClusterScanKey(
+            self._template_key(template),
+            pair.file_path,
+            module_digest,
+            (
+                None
+                if dce_node is None
+                else (dce_node.lineno, dce_node.col_offset, self._sid([dce_node]))
+            ),
+            self.min_lines,
+        )
+        cached = self._cluster_scan_cache.get(key)
+        if cached is None:
+            cached = self._cluster_scan_cache.put(
+                key, tuple(self._scan_clustered_sites(template, dce_node, functions))
+            )
+        return cached
+
+    def _scan_clustered_sites(
+        self,
+        template: "HelperTemplate",
+        dce_node: Optional[FunctionNode],
+        functions: FunctionIndex,
+    ) -> Iterator[ClusteredSite]:
+        """Scan every function in the pair's file for blocks that unify with the template.
+
+        Yields every admissible block, overlapping ones included: which of
+        them a pair takes depends on the pair's own blocks, so that choice is
+        made by the caller.
+        """
+        pair = template.pair
         template_signature = extract_block_signature(pair.block1_nodes)
-        template_id = self._sid(pair.block1_nodes)
-        func_def_dump = ast.dump(template.func_def)
+        template_key = self._template_key(template)
 
         for entry in functions.in_file(pair.file_path):
             fn = entry.node
@@ -219,13 +286,15 @@ class Clustering(EngineState):
             # known, whether it can share a method call.
             candidate_class = self._method_class(fn, entry.class_name, entry.scope_analyzer)
             candidate_info = self._get_method_context(fn, candidate_class)
+            context = (
+                candidate_class,
+                candidate_info.kind,
+                candidate_info.implicit_param,
+                candidate_info.receiver_known,
+            )
             fn_id = self._sid([fn])
+            module_digest = self._module_digest(fn)
             for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
-                if any(
-                    path == entry.file_path and line_ranges_intersect(cand_range, taken)
-                    for path, taken in covered
-                ):
-                    continue
                 # The size gate and signature filter are constant-time and
                 # reject most blocks; the semantic guards each walk the
                 # candidate's function, so they run only on survivors. Every
@@ -238,17 +307,11 @@ class Clustering(EngineState):
                 candidate = self._admissible_candidate(entry, fn_id, cand_nodes, cand_id)
                 if candidate is None:
                     continue
-                key = self._cluster_key(template, template_id, cand_id, fn_id, fn, func_def_dump)
+                key = ClusterKey(template_key, cand_id, fn_id, module_digest)
                 call_node = self._clustered_call(key, template, candidate)
                 if call_node is None:
                     continue
-                cluster_contexts[len(replacements)] = (
-                    candidate_class,
-                    candidate_info.kind,
-                    candidate_info.implicit_param,
-                    candidate_info.receiver_known,
-                )
-                replacements.append(
+                yield ClusteredSite(
                     Replacement(
                         line_range=cand_range,
                         node=call_node,
@@ -256,9 +319,9 @@ class Clustering(EngineState):
                         class_name=entry.class_name,
                         method_kind=None,
                         implicit_param=None,
-                    )
+                    ),
+                    context,
                 )
-                covered.add((entry.file_path, cand_range))
 
     def _admissible_candidate(
         self,
@@ -328,42 +391,31 @@ class Clustering(EngineState):
             ),
         )
 
-    def _cluster_key(
-        self,
-        template: "HelperTemplate",
-        template_id: str,
-        cand_id: str,
-        fn_id: str,
-        fn: FunctionNode,
-        func_def_dump: str,
-    ) -> ClusterKey:
-        """Everything the candidate's call depends on: the two blocks, the module, and the helper."""
-        return ClusterKey(
-            template_id,
-            cand_id,
-            fn_id,
-            self._module_digest(fn),
+    def _template_key(self, template: "HelperTemplate") -> TemplateKey:
+        """Everything the template carries that a clustered call depends on, hashable."""
+        return TemplateKey(
+            self._sid(template.pair.block1_nodes),
             frozenset(template.free_vars),
             frozenset(template.enclosing_names),
             template.is_value_producing,
             tuple(sorted(template.globals_to_declare)),
             tuple(sorted(template.nonlocals_to_declare)),
             template.func_def.name,
-            func_def_dump,
+            template.func_def_dump,
             tuple(sorted(template.param_order.items())),
             template.preamble_length,
+            template.available_names,
+            template.return_variables,
+            template.bound_in_block,
         )
 
     def _clustered_call(
         self, key: ClusterKey, template: "HelperTemplate", candidate: "_ClusterCandidate"
     ) -> Optional[ast.AST]:
-        """The candidate's call, memoized under ``key``; a fresh copy on every hit."""
+        """The candidate's call, memoized under ``key``; every hit is the same node, never mutated."""
         if key in self._cluster_cache:
-            cached = self._cluster_cache[key]
-            return None if cached is None else copy.deepcopy(cached)
-        computed = self._cluster_candidate_call(template, candidate)
-        self._cluster_cache[key] = None if computed is None else copy.deepcopy(computed)
-        return computed
+            return self._cluster_cache[key]
+        return self._cluster_cache.put(key, self._cluster_candidate_call(template, candidate))
 
     def _are_structurally_similar(
         self,

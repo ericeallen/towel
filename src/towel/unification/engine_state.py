@@ -28,6 +28,7 @@ implements it.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from typing import (
     NamedTuple,
     Any,
@@ -83,13 +84,10 @@ class GuardKey(NamedTuple):
     module_digest: Optional[str]
 
 
-class ClusterKey(NamedTuple):
-    """What a clustered call site depends on: the candidate, its module, and the helper template."""
+class TemplateKey(NamedTuple):
+    """Everything a helper template carries that a clustered call site depends on."""
 
-    template_id: str
-    candidate_id: str
-    function_id: str
-    module_digest: Optional[str]
+    block_id: str
     free_vars: FrozenSet[str]
     enclosing_names: FrozenSet[str]
     is_value_producing: bool
@@ -99,6 +97,45 @@ class ClusterKey(NamedTuple):
     helper_dump: str
     param_order: Tuple[Tuple[str, int], ...]
     preamble_length: int
+    available_names: FrozenSet[str]
+    return_variables: Tuple[str, ...]
+    bound_in_block: FrozenSet[str]
+
+
+class ClusterKey(NamedTuple):
+    """What a clustered call site depends on: the candidate, its module, and the helper template."""
+
+    template: TemplateKey
+    candidate_id: str
+    function_id: str
+    module_digest: Optional[str]
+
+
+class ClusterScanKey(NamedTuple):
+    """What the scan of a file for clustered sites depends on.
+
+    The file's content, where the helper will be visible from (the position
+    and structure of the function it is inserted into, or None for the
+    module), the template, and the size gate.
+    """
+
+    template: TemplateKey
+    file_path: str
+    module_digest: str
+    helper_scope: Optional[Tuple[int, int, str]]
+    min_lines: int
+
+
+@dataclass(frozen=True)
+class ClusteredSite:
+    """A block that can call a template's helper, with the method context of its function.
+
+    The scan's sites are shared by every pair that produces the template;
+    the replacement and its call node are never mutated.
+    """
+
+    replacement: Replacement
+    context: Tuple[Optional[str], Optional[str], Optional[str], bool]
 
 
 class EngineState:
@@ -126,7 +163,10 @@ class EngineState:
     """Renders helpers and call sites."""
 
     _cluster_cache: BoundedCache["ClusterKey", Optional[ast.AST]]
-    """Memo of the per-candidate clustering pipeline."""
+    """Memo of the per-candidate clustering pipeline; a hit is the same node, never mutated."""
+
+    _cluster_scan_cache: BoundedCache["ClusterScanKey", Tuple[ClusteredSite, ...]]
+    """Memo of the whole scan of a file for a template's clustered sites, before overlap filtering."""
 
     skip_trivial_helpers: bool
     """Whether a helper that only forwards, renames, or unpacks is declined."""
