@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, List, Literal, NamedTuple, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, NamedTuple, Optional, Set, Tuple, Union
 import ast
 
 
@@ -275,3 +275,43 @@ class AppliedChange:
     line: int
     before: str
     after: str
+
+
+@dataclass(frozen=True)
+class BlockBindingSnapshot:
+    """Summarized binding data for a block: what it binds, reassigns, and what is bound around it."""
+
+    bound_in_block: Set[str]
+    reassigned_in_block: Set[str]
+    bound_before_block: Set[str]
+    bound_after_block: Set[str]
+    initially_bound: Set[str]
+
+
+@dataclass(frozen=True)
+class HelperTemplate:
+    """The template helper a clustered occurrence must reproduce to reuse it.
+
+    These values are fixed for a given (pair, extracted helper) and are shared
+    across every candidate occurrence tested against that helper.
+    """
+
+    pair: CodeBlockPair
+    func_def: ast.FunctionDef
+    func_def_dump: str
+    param_order: Dict[str, int]
+    preamble_length: int
+    free_vars: Set[str]
+    enclosing_names: Set[str]
+    is_value_producing: bool
+    globals_to_declare: Set[str]
+    nonlocals_to_declare: Set[str]
+
+
+def encloses(outer: FunctionNode, inner: FunctionNode) -> bool:
+    """Whether ``inner`` is ``outer`` or lies within its source span."""
+    if outer is inner:
+        return True
+    outer_end = outer.end_lineno or outer.lineno
+    inner_end = inner.end_lineno or inner.lineno
+    return outer.lineno <= inner.lineno and inner_end <= outer_end and outer is not inner

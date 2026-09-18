@@ -27,18 +27,26 @@ stubs are implemented by the engine or by another mixin.
 from __future__ import annotations
 
 import ast
-from typing import Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Set, Tuple
+from collections import OrderedDict
+from typing import Any, Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Set, Tuple
 
 from ..diagnostics import Settings
 from ..type_inference import TypeOracle
+from .block_signature import BlockSignature
+from .extractor import HygienicExtractor
 from .models import (
     AppliedChange,
+    BlockBindingSnapshot,
     ClassInfo,
     CodeBlockPair,
     FunctionArtifact,
+    FunctionNode,
+    MethodInfo,
     RefactoringProposal,
     ReusedFunction,
 )
+from .scope_analyzer import ScopeAnalyzer
+from .unifier import Substitution
 from .progress import ProgressBarFactory
 from .semantic_safety import ImportGraphCache
 
@@ -60,6 +68,15 @@ class EngineState:
 
     _settings: Settings
     """What Towel read from the environment at construction."""
+
+    min_lines: int
+    """Minimum source lines a duplicated block must span."""
+
+    extractor: HygienicExtractor
+    """Renders helpers and call sites."""
+
+    _cluster_cache: "OrderedDict[Tuple[Any, ...], Optional[ast.AST]]"
+    """Memo of the per-candidate clustering pipeline."""
 
     _change_log: List[AppliedChange]
     """Every call site rewritten so far in the current run."""
@@ -272,4 +289,92 @@ class EngineState:
         cls, label: str, pct: int, *, bar_len: int = 24, suffix: str = ""
     ) -> None:
         """Provided by FixedPointDrivers."""
+        raise NotImplementedError
+
+    def _block_rejected(
+        self,
+        guard: Callable[..., bool],
+        nodes: Sequence[ast.AST],
+        func: Optional[FunctionNode] = None,
+        analyzer: Optional[ScopeAnalyzer] = None,
+        path: Optional[str] = None,
+    ) -> bool:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _bounded_put(cache: "OrderedDict[Any, Any]", key: Any, value: Any) -> None:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _build_block_binding_snapshot(
+        self,
+        func: FunctionNode,
+        block_nodes: List[ast.AST],
+        block_range: Tuple[int, int],
+        reassignments: Dict[int, bool],
+    ) -> BlockBindingSnapshot:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _get_assignment_reuse(self, func: FunctionNode) -> Dict[int, bool]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _get_block_indices(
+        self, function: FunctionNode, block_nodes: List[ast.AST]
+    ) -> Optional[Tuple[int, int]]:
+        """Provided by InsertionPoints."""
+        raise NotImplementedError
+
+    def _get_method_context(
+        self, func: Optional[FunctionNode], class_name: Optional[str]
+    ) -> MethodInfo:
+        """Provided by HelperPlacement."""
+        raise NotImplementedError
+
+    def _get_used_names(self, node: ast.AST) -> Set[str]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _method_class(
+        func: Optional[FunctionNode],
+        class_name: Optional[str],
+        analyzer: Optional[ScopeAnalyzer],
+    ) -> Optional[str]:
+        """Provided by HelperPlacement."""
+        raise NotImplementedError
+
+    def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _per_block(
+        self,
+        name: str,
+        func: FunctionNode,
+        block_nodes: Sequence[ast.AST],
+        compute: Callable[[], Any],
+    ) -> Any:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _sid(self, nodes: Sequence[ast.AST]) -> str:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _signed_blocks(
+        self, function: FunctionNode
+    ) -> List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _unify_memoized(
+        self,
+        blocks: List[List[ast.AST]],
+        hygienic_renames: List[Dict[str, str]],
+        paths: Sequence[Optional[str]] = (),
+    ) -> Optional[Substitution]:
+        """Provided by the engine."""
         raise NotImplementedError
