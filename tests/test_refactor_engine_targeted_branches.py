@@ -8,8 +8,8 @@ from pathlib import Path
 from towel.unification.refactor_engine import (
     RefactoringProposal,
     UnificationRefactorEngine,
-    filter_overlapping_proposals,
 )
+from towel.unification.overlap import filter_overlapping_proposals
 
 
 class TestRefactorEngineTargetedBranches(unittest.TestCase):

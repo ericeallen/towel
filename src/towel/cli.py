@@ -586,10 +586,8 @@ def _run_preview(args: argparse.Namespace) -> None:
     import os
     import ast
     import textwrap
-    from towel.unification.refactor_engine import (
-        UnificationRefactorEngine,
-        filter_overlapping_proposals,
-    )
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+    from towel.unification.overlap import filter_overlapping_proposals
 
     target = args.target
 

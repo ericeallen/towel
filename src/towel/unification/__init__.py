@@ -17,8 +17,23 @@ Unification-based code refactoring.
 
 This module implements a principled approach to detecting and extracting
 duplicate code using unification from automated theorem proving.
+
+``UnificationRefactorEngine`` is imported on first use, so importing one
+analysis module (the unifier, the scope analyzer) does not load the engine
+and everything it depends on.
 """
 
-from .refactor_engine import UnificationRefactorEngine
+from typing import TYPE_CHECKING, List
 
-__all__ = ["UnificationRefactorEngine"]
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .refactor_engine import UnificationRefactorEngine
+
+__all__: List[str] = ["UnificationRefactorEngine"]
+
+
+def __getattr__(name: str) -> object:
+    if name == "UnificationRefactorEngine":
+        from .refactor_engine import UnificationRefactorEngine
+
+        return UnificationRefactorEngine
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

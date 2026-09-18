@@ -14,8 +14,8 @@ from pathlib import Path
 from towel.unification.refactor_engine import (
     UnificationRefactorEngine,
     RefactoringProposal,
-    filter_overlapping_proposals,
 )
+from towel.unification.overlap import filter_overlapping_proposals
 from tests.test_helpers import temporary_test_directory
 
 

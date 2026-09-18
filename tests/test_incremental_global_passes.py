@@ -45,14 +45,14 @@ def test_restriction_skips_unchanged_pairs(tmp_path: Path) -> None:
     source = EXAMPLES / PROJECTS[0]
     engine = UnificationRefactorEngine(incremental_global_passes=True)
     seen: list[object] = []
-    original = engine._find_block_pairs_multi_file
+    original = engine.find_block_pairs
 
     def spy(functions, *, progress="none", changed_files=None):  # type: ignore[no-untyped-def]
         seen.append(changed_files)
         return original(functions, progress=progress, changed_files=changed_files)
 
     with (
-        patch.object(engine, "_find_block_pairs_multi_file", spy),
+        patch.object(engine, "find_block_pairs", spy),
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
     ):

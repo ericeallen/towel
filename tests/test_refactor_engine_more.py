@@ -6,8 +6,8 @@ import unittest
 from towel.unification.refactor_engine import (
     UnificationRefactorEngine,
     RefactoringProposal,
-    filter_overlapping_proposals,
 )
+from towel.unification.overlap import filter_overlapping_proposals
 
 
 def write_file(path: str, content: str) -> None:

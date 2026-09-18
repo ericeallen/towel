@@ -148,7 +148,7 @@ class TestCrossFileWithPipeline:
     def test_pipeline_handles_crossfile_correctly(self):
         """run_pipeline should work with cross-file scenarios."""
         files = get_crossfile_project_files("simple_crossfile")
-        proposals = run_pipeline(files, progress="none")
+        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
 
         assert isinstance(proposals, list)
         # Should find cross-file duplications
@@ -325,7 +325,7 @@ class TestCrossFilePerformance:
         """Cross-file analysis with progress='none' should work."""
         files = get_crossfile_project_files("simple_crossfile")
 
-        proposals = run_pipeline(files, progress="none")
+        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
         assert isinstance(proposals, list)
 
 

@@ -13,9 +13,9 @@ def test_analysis_observes_external_edits(tmp_path: Path) -> None:
     path = tmp_path / "example.py"
     body = "    a = x + 1\n    b = a * 2\n    c = b + 3\n    return c\n"
     path.write_text("def first(x):\n" + body + "\ndef second(x):\n" + body)
-    assert run_pipeline([str(path)], progress="none")
+    assert run_pipeline([str(path)], engine=UnificationRefactorEngine(), progress="none")
     path.write_text("def unrelated():\n    return None\n")
-    assert run_pipeline([str(path)], progress="none") == []
+    assert run_pipeline([str(path)], engine=UnificationRefactorEngine(), progress="none") == []
 
 
 def test_directory_api_rejects_nested_output_before_creation(tmp_path: Path) -> None:

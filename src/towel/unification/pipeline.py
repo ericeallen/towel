@@ -36,8 +36,8 @@ from typing import (
     FrozenSet,
     List,
     Optional,
+    Protocol,
     Sequence,
-    TYPE_CHECKING,
     Tuple,
     Union,
 )
@@ -56,18 +56,40 @@ from .models import (
     RefactoringProposal,
 )
 from .scope_analyzer import ScopeAnalyzer
+from .overlap import filter_overlapping_proposals
 from .progress import ProgressBar, load_tqdm, quietly, render_inline_bar
 from ..diagnostics import LOG, Settings
 from .visitors import FunctionCollector
 
-if TYPE_CHECKING:  # pragma: no cover
-    from .refactor_engine import UnificationRefactorEngine
 
+class PairProcessor(Protocol):
+    """The two phases the engine supplies: candidate pairing and pair evaluation.
 
-# The current engine already implements substantial logic. This module orchestrates
-# a clean compiler-style sequence by delegating to the engine for heavy lifting while
-# making explicit the inputs/outputs between phases. This keeps public API stable
-# and allows future migration of inner logic into dedicated phase modules.
+    The pipeline depends on this protocol, never on the engine, so the engine
+    can depend on the pipeline's parse and analysis phases without a cycle.
+    """
+
+    def find_block_pairs(
+        self,
+        all_functions: Sequence[FunctionArtifact],
+        *,
+        progress: str = "none",
+        changed_files: Optional[FrozenSet[str]] = None,
+    ) -> List[CodeBlockPair]:
+        """Candidate block pairs across ``all_functions``."""
+        ...
+
+    def process_block_pairs(
+        self,
+        block_pairs: List[CodeBlockPair],
+        all_functions: Sequence[FunctionArtifact],
+        class_infos: List[ClassInfo],
+        *,
+        verbose: bool,
+        progress: str,
+    ) -> List[RefactoringProposal]:
+        """Verified proposals for the pairs that unify."""
+        ...
 
 
 def parse_modules(paths: Sequence[str]) -> List[ParsedModule]:
@@ -164,7 +186,7 @@ def collect_functions(mods: Sequence[ParsedModule]) -> List[FunctionArtifact]:
 
 
 def pair_blocks(
-    engine: "UnificationRefactorEngine",
+    engine: PairProcessor,
     funcs: Sequence[FunctionArtifact],
     *,
     progress: str = "none",
@@ -176,13 +198,11 @@ def pair_blocks(
     only packs the analyzed function context. ``changed_files`` restricts pairs
     to those with a function in one of them.
     """
-    return engine._find_block_pairs_multi_file(
-        list(funcs), progress=progress, changed_files=changed_files
-    )
+    return engine.find_block_pairs(list(funcs), progress=progress, changed_files=changed_files)
 
 
 def unify_blocks(
-    engine: "UnificationRefactorEngine",
+    engine: PairProcessor,
     pairs: Sequence[CodeBlockPair],
     funcs: Sequence[FunctionArtifact],
     classes: Sequence[ClassInfo],
@@ -190,16 +210,14 @@ def unify_blocks(
     verbose: bool = False,
     progress: str = "auto",
 ) -> List[RefactoringProposal]:
-    return engine._process_block_pairs(
+    return engine.process_block_pairs(
         list(pairs), list(funcs), list(classes), verbose=verbose, progress=progress
     )
 
 
 def filter_overlaps(proposals: List[RefactoringProposal]) -> List[RefactoringProposal]:
-    # Delegate to existing implementation for stability
-    from .refactor_engine import filter_overlapping_proposals as _filter
-
-    return _filter(proposals)
+    """Phase 7: keep a non-overlapping set of proposals (see ``overlap.py``)."""
+    return filter_overlapping_proposals(proposals)
 
 
 class SourceFileError(Exception):
@@ -371,7 +389,7 @@ def _close_progress_bar(bar: Optional[ProgressBar]) -> None:
 def run_pipeline(
     paths: Sequence[str],
     *,
-    engine: Optional["UnificationRefactorEngine"] = None,
+    engine: PairProcessor,
     session: Optional[AnalysisSession] = None,
     verbose: bool = False,
     progress: str = "auto",
@@ -380,14 +398,11 @@ def run_pipeline(
 ) -> List[RefactoringProposal]:
     """Analyze current files and propose changes using isolated analysis graphs.
 
+    ``engine`` pairs and evaluates blocks (an ``UnificationRefactorEngine``).
     Standalone calls use a fresh session. Engines explicitly supply their own
     bounded session to reuse unchanged files. Invalidation forces fresh analysis;
     ordinary calls still read and compare source content before reusing an entry.
     """
-    if engine is None:
-        from .refactor_engine import UnificationRefactorEngine
-
-        engine = UnificationRefactorEngine()
     analysis_session = session if session is not None else AnalysisSession()
     if invalidate_paths:
         analysis_session.invalidate(invalidate_paths)

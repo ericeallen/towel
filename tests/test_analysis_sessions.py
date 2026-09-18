@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from towel.unification.pipeline import AnalysisSession, SourceFileError, run_pipeline
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 SOURCE = "def value(x):\n    local = x + 1\n    return local\n"
 
@@ -112,8 +113,8 @@ def test_session_owners_and_standalone_runs_are_independent(tmp_path):
     assert first.entry_count == 0
     assert second.entry_count == 1
     with patch("towel.unification.pipeline.ast.parse", wraps=ast.parse) as parse:
-        run_pipeline([path], progress="none")
-        run_pipeline([path], progress="none")
+        run_pipeline([path], engine=UnificationRefactorEngine(), progress="none")
+        run_pipeline([path], engine=UnificationRefactorEngine(), progress="none")
         assert parse.call_count == 2
 
 
@@ -134,7 +135,12 @@ def test_missing_file_is_reported_and_cached_snapshot_is_discarded(tmp_path, cap
     session.analyze_module(path)
     Path(path).rename(tmp_path / "moved.py")
     with caplog.at_level(logging.WARNING, logger="towel"):
-        assert run_pipeline([path], session=session, progress="none") == []
+        assert (
+            run_pipeline(
+                [path], engine=UnificationRefactorEngine(), session=session, progress="none"
+            )
+            == []
+        )
     assert any("Skipping" in record.getMessage() for record in caplog.records)
     assert session.entry_count == 0
 
@@ -145,7 +151,9 @@ def test_unexpected_analysis_errors_propagate_and_do_not_cache(tmp_path, error):
     session = AnalysisSession()
     with patch("towel.unification.pipeline.analyze_scopes", side_effect=error):
         with pytest.raises(type(error), match="defect"):
-            run_pipeline([path], session=session, progress="none")
+            run_pipeline(
+                [path], engine=UnificationRefactorEngine(), session=session, progress="none"
+            )
     assert session.entry_count == 0
 
 

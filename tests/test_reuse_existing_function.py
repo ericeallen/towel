@@ -16,7 +16,8 @@ import io
 from pathlib import Path
 import textwrap
 
-from towel.unification.refactor_engine import UnificationRefactorEngine, get_affected_lines
+from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.overlap import get_affected_lines
 
 IDENTICAL_PAIR = """
 def alpha(value):

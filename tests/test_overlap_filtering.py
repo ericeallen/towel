@@ -9,9 +9,8 @@ import unittest
 import ast
 from towel.unification.refactor_engine import (
     RefactoringProposal,
-    get_affected_lines,
-    filter_overlapping_proposals,
 )
+from towel.unification.overlap import get_affected_lines, filter_overlapping_proposals
 
 
 class TestGetAffectedLines(unittest.TestCase):

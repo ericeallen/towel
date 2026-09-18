@@ -331,10 +331,12 @@ class TestCacheInvalidation:
         files = example_paths(["example1_simple.py"])
 
         # Run once to populate cache
-        proposals1 = run_pipeline(files, progress="none")
+        proposals1 = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
 
         # Run again with invalidation
-        proposals2 = run_pipeline(files, progress="none", invalidate_paths=files)
+        proposals2 = run_pipeline(
+            files, engine=UnificationRefactorEngine(), progress="none", invalidate_paths=files
+        )
 
         # Should produce same results (cache invalidation shouldn't affect correctness)
         assert len(proposals1) == len(proposals2)
@@ -344,10 +346,10 @@ class TestCacheInvalidation:
         files = example_paths(["example1_simple.py", "example2_classes.py"])
 
         # Run once
-        run_pipeline(files, progress="none")
+        run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
 
         # Run again - should use cache
-        proposals = run_pipeline(files, progress="none")
+        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
         assert isinstance(proposals, list)
 
 
@@ -357,17 +359,17 @@ class TestProgressBars:
     def test_run_pipeline_with_auto_progress(self):
         """run_pipeline should handle progress='auto'."""
         files = example_paths(["example1_simple.py"])
-        proposals = run_pipeline(files, progress="auto")
+        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="auto")
         assert isinstance(proposals, list)
 
     def test_run_pipeline_with_tqdm_progress(self):
         """run_pipeline should handle progress='tqdm' (may fall back)."""
         files = example_paths(["example1_simple.py"])
-        proposals = run_pipeline(files, progress="tqdm")
+        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="tqdm")
         assert isinstance(proposals, list)
 
     def test_run_pipeline_with_none_progress(self):
         """run_pipeline should handle progress='none'."""
         files = example_paths(["example1_simple.py"])
-        proposals = run_pipeline(files, progress="none")
+        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
         assert isinstance(proposals, list)

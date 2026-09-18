@@ -116,7 +116,7 @@ class Container:
     functions = analyzed_functions(paths)
     engine = UnificationRefactorEngine(min_lines=min_lines)
     expected = exhaustive_pairs(engine, functions)
-    actual = engine._find_block_pairs_multi_file(functions, progress="none")
+    actual = engine.find_block_pairs(functions, progress="none")
     assert expected
     assert actual == expected
 
@@ -128,7 +128,7 @@ def test_index_matches_all_original_example_files():
     for path in paths:
         functions = analyzed_functions([str(path)])
         engine = UnificationRefactorEngine()
-        assert engine._find_block_pairs_multi_file(functions) == exhaustive_pairs(engine, functions)
+        assert engine.find_block_pairs(functions) == exhaustive_pairs(engine, functions)
 
 
 def test_index_extracts_blocks_and_signatures_once_per_function(tmp_path):
@@ -149,7 +149,7 @@ def test_index_extracts_blocks_and_signatures_once_per_function(tmp_path):
             wraps=extract_block_signature,
         ) as signature,
     ):
-        pairs = engine._find_block_pairs_multi_file(functions)
+        pairs = engine.find_block_pairs(functions)
     assert pairs
     assert extract.call_count == len(functions)
     assert signature.call_count == expected_blocks

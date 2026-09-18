@@ -269,7 +269,7 @@ def function2():
 
 
 class TestBlockPairFinding(unittest.TestCase):
-    """Test _find_block_pairs_multi_file method."""
+    """Test find_block_pairs method."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -304,7 +304,7 @@ def func2():
             FunctionArtifact("test.py", func2, code, analyzer, scope, None, None, []),
         ]
 
-        pairs = self.engine._find_block_pairs_multi_file(all_functions)
+        pairs = self.engine.find_block_pairs(all_functions)
 
         self.assertGreater(len(pairs), 0, "Should find at least one pair")
 
@@ -345,7 +345,7 @@ def func2():
             FunctionArtifact("test.py", func2, code, analyzer, scope, None, None, []),
         ]
 
-        pairs = self.engine._find_block_pairs_multi_file(all_functions)
+        pairs = self.engine.find_block_pairs(all_functions)
 
         # All pairs should meet min_lines requirement
         for pair in pairs:
