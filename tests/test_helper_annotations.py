@@ -15,6 +15,8 @@ import ast
 from pathlib import Path
 import textwrap
 
+import pytest
+
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -88,9 +90,9 @@ def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
     assert _signature(result) == "def __extracted_func_0(items: list, limit: int | None) -> None:"
 
 
-def test_declared_return_types_must_agree(tmp_path: Path) -> None:
-    # The sites' declared return types bound the helper's value from above,
-    # so a union would not be a bound; only agreement is written.
+def test_declared_return_types_take_the_narrower_one(tmp_path: Path) -> None:
+    # The sites' declared return types bound the helper's value from above;
+    # when one is a subtype of the other it is the greatest lower bound.
     result = _refactor(
         tmp_path,
         """
@@ -99,7 +101,25 @@ def test_declared_return_types_must_agree(tmp_path: Path) -> None:
             text = str(total)
             return len(text.strip())
 
-        def second(value: int) -> object:
+        def second(value: int) -> int | None:
+            total = value * 2
+            text = str(total)
+            return len(text.strip())
+        """,
+    )
+    assert _signature(result) == "def __extracted_func_0(value: int) -> int:"
+
+
+def test_unrelated_declared_return_types_leave_the_return_to_any(tmp_path: Path) -> None:
+    result = _refactor(
+        tmp_path,
+        """
+        def first(value: int) -> int:
+            total = value * 2
+            text = str(total)
+            return len(text.strip())
+
+        def second(value: int) -> str:
             total = value * 2
             text = str(total)
             return len(text.strip())
@@ -288,3 +308,25 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     assert proposals
     header = ast.unparse(proposals[0].extracted_function).split("\n", 1)[0]
     assert header == "def __extracted_func(label, value: int) -> None:"
+
+
+@pytest.mark.parametrize(
+    "narrow, wide, expected",
+    [
+        ("int", "int", True),
+        ("int", "object", True),
+        ("bool", "int", True),
+        ("int", "float", True),
+        ("float", "int", False),
+        ("int", "int | None", True),
+        ("int", "Optional[int]", True),
+        ("int | None", "int", False),
+        ("bool | None", "Union[int, None]", True),
+        ("str", "int | None", False),
+    ],
+)
+def test_syntactic_subtyping(narrow: str, wide: str, expected: bool) -> None:
+    from towel.unification.annotations import _is_syntactic_subtype
+
+    parse = lambda text: ast.parse(text, mode="eval").body  # noqa: E731
+    assert _is_syntactic_subtype(parse(narrow), parse(wide)) is expected

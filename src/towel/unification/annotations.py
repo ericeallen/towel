@@ -101,7 +101,7 @@ def annotate_helper(
     for index, parameter in enumerate(parameters):
         candidates = [_argument_annotation(site, index) for site in sites]
         parameter.annotation = _joined(candidates, host, same_module)
-    annotated.returns = _agreed(
+    annotated.returns = _met(
         [_return_annotation(site, annotated, return_variables) for site in sites],
         host,
         same_module,
@@ -233,6 +233,59 @@ def _agreed(
     if any(ast.dump(candidate) != ast.dump(first) for candidate in present[1:]):
         return None
     return _spelled_for_host(copy.deepcopy(first), host, same_module)
+
+
+def _met(
+    candidates: Sequence[Optional[ast.expr]],
+    host: Optional[ast.Module],
+    same_module: bool,
+) -> Optional[ast.expr]:
+    """The greatest lower bound of the sites' declared types, when it can be recognized.
+
+    Every site returns the helper's value under its own declared return type,
+    so the helper's type lies below all of them. When one declared type is a
+    subtype of every other, it is that bound; subtyping is recognized
+    syntactically (identity, a member of a union or ``Optional``, the numeric
+    tower, anything under ``object``). Unrelated declarations leave the return
+    unannotated.
+    """
+    present = [candidate for candidate in candidates if candidate is not None]
+    if not present or len(present) != len(candidates):
+        return None
+    for candidate in present:
+        if all(_is_syntactic_subtype(candidate, other) for other in present):
+            return _spelled_for_host(copy.deepcopy(candidate), host, same_module)
+    return None
+
+
+_NUMERIC_TOWER = ("bool", "int", "float", "complex")
+
+
+def _is_syntactic_subtype(narrow: ast.expr, wide: ast.expr) -> bool:
+    if ast.dump(narrow) == ast.dump(wide):
+        return True
+    if isinstance(wide, ast.Name) and wide.id == "object":
+        return True
+    if isinstance(narrow, ast.Name) and isinstance(wide, ast.Name):
+        if narrow.id in _NUMERIC_TOWER and wide.id in _NUMERIC_TOWER:
+            return _NUMERIC_TOWER.index(narrow.id) <= _NUMERIC_TOWER.index(wide.id)
+    wide_members = _union_or_optional_members(wide)
+    if len(wide_members) > 1:
+        return all(
+            any(_is_syntactic_subtype(member, option) for option in wide_members)
+            for member in _union_or_optional_members(narrow)
+        )
+    return False
+
+
+def _union_or_optional_members(expression: ast.expr) -> List[ast.expr]:
+    """Members of ``A | B``, ``Union[A, B]`` or ``Optional[A]``; the expression itself otherwise."""
+    if isinstance(expression, ast.Subscript) and isinstance(expression.value, ast.Name):
+        if expression.value.id == "Optional":
+            return _union_or_optional_members(expression.slice) + [ast.Constant(value=None)]
+        if expression.value.id == "Union" and isinstance(expression.slice, ast.Tuple):
+            return [m for elt in expression.slice.elts for m in _union_or_optional_members(elt)]
+    return _union_members(expression)
 
 
 def _joined(
