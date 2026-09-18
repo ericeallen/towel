@@ -751,6 +751,7 @@ url = "https://github.com/pyinvoke/invoke.git"
 rev = "HEAD"
 package = "invoke"
 deps = ["pytest-relaxed", "pytest-cov", "icecream", "lexicon"]
+install = true
 
 [[project]]
 name = "python-fire"
@@ -780,7 +781,7 @@ name = "gunicorn"
 url = "https://github.com/benoitc/gunicorn.git"
 rev = "HEAD"
 package = "gunicorn"
-deps = ["packaging", "coverage", "pytest-cov"]
+deps = ["packaging", "coverage", "pytest-cov", "tornado", "pytest-asyncio"]
 install = true
 
 [[project]]
@@ -884,7 +885,8 @@ test = ["{python}", "-m", "unittest", "discover", "-q", "-p", "*tests.py", "mkdo
 name = "chardet"
 url = "https://github.com/chardet/chardet.git"
 rev = "HEAD"
-package = "chardet"
+package = "src/chardet"
+pythonpath = "src"
 deps = ["hypothesis"]
 install = true
 
@@ -917,7 +919,7 @@ url = "https://github.com/dabeaz/ply.git"
 rev = "HEAD"
 package = "src/ply"
 pythonpath = "src"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "python_files=*.py", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/testlex.py", "tests/testyacc.py"]
 
 [[project]]
 name = "inflect"
