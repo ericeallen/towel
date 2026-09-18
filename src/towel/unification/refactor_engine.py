@@ -115,7 +115,9 @@ from .models import (
     ClassInsertionPlan,
     Replacement,
     RefactoringProposal,
+    RejectReason,
     ReusedFunction,
+    AppliedChange,
 )
 from .annotations import (
     ApplySite,
@@ -477,7 +479,7 @@ class UnificationRefactorEngine:
         self._helper_name_counters: Dict[str, int] = {}
         # Per-run record of what each applied extraction replaced: the original
         # block and the generated call, for the naming step's before/after view.
-        self._change_log: List[Dict[str, object]] = []
+        self._change_log: List[AppliedChange] = []
         # Every file of the current analysis: helper names must be unique
         # across all of them, because any module may import from any other.
         self._analysis_paths: Tuple[str, ...] = ()
@@ -487,7 +489,7 @@ class UnificationRefactorEngine:
 
     # --- Debug helpers ---
     def _debug_reject(
-        self, reason: str, pair: "CodeBlockPair", detail: Optional[str] = None
+        self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
     ) -> None:
         """Emit a concise rejection line when DEBUG_PROPOSAL_REJECTIONS is set.
 
@@ -2597,7 +2599,7 @@ class UnificationRefactorEngine:
                             binding.node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Name)
                         )
                     ):
-                        self._debug_reject("module_data_lookup", pair)
+                        self._debug_reject(RejectReason.MODULE_DATA_LOOKUP, pair)
                         return True
         return False
 
@@ -3066,7 +3068,7 @@ class UnificationRefactorEngine:
         ) or self._block_rejected(
             requires_original_frame, pair.block2_nodes, path=pair.file_path2 or pair.file_path
         ):
-            self._debug_reject("frame_sensitive_block", pair)
+            self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
             return None
 
         debug_enabled = debugging(VALIDATION)
@@ -3098,7 +3100,7 @@ class UnificationRefactorEngine:
                 snapshots_rebound_external_names, pair.block2_nodes, func2, scope_analyzer2
             )
         ):
-            self._debug_reject("rebound_external_binding", pair)
+            self._debug_reject(RejectReason.REBOUND_EXTERNAL_BINDING, pair)
             return None
 
         # A function nested inside a method shares the class for name mangling
@@ -3112,9 +3114,9 @@ class UnificationRefactorEngine:
         )
 
         for guard, reason in (
-            (nested_bindings_escape, "nested_binding_escapes"),
-            (nested_scopes_cross_block_boundary, "closure_crosses_block_boundary"),
-            (moves_scope_declaration, "moves_scope_declaration"),
+            (nested_bindings_escape, RejectReason.NESTED_BINDING_ESCAPES),
+            (nested_scopes_cross_block_boundary, RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY),
+            (moves_scope_declaration, RejectReason.MOVES_SCOPE_DECLARATION),
         ):
             if (func1 is not None and self._block_rejected(guard, pair.block1_nodes, func1)) or (
                 func2 is not None and self._block_rejected(guard, pair.block2_nodes, func2)
@@ -3163,7 +3165,9 @@ class UnificationRefactorEngine:
                 ),
             )
             if has_unsafe1:
-                self._debug_reject("unsafe_reassignment_block1", pair, str(problematic_vars1))
+                self._debug_reject(
+                    RejectReason.UNSAFE_REASSIGNMENT_BLOCK1, pair, str(problematic_vars1)
+                )
                 return None
 
             # Check if block2 contains reassignments without bindings
@@ -3176,7 +3180,9 @@ class UnificationRefactorEngine:
                 ),
             )
             if has_unsafe2:
-                self._debug_reject("unsafe_reassignment_block2", pair, str(problematic_vars2))
+                self._debug_reject(
+                    RejectReason.UNSAFE_REASSIGNMENT_BLOCK2, pair, str(problematic_vars2)
+                )
                 return None
 
             block1_snapshot = self._build_block_binding_snapshot(
@@ -3207,7 +3213,7 @@ class UnificationRefactorEngine:
                 pair.block2_nodes,
                 lambda: unbinds_external_name(func2, pair.block2_nodes, bound_before_block2),
             ):
-                self._debug_reject("unbinds_external_name", pair)
+                self._debug_reject(RejectReason.UNBINDS_EXTERNAL_NAME, pair)
                 return None
 
             if debug_enabled:
@@ -3256,7 +3262,7 @@ class UnificationRefactorEngine:
         if value_prod1 != value_prod2:
             if debug_enabled:
                 VALIDATION.debug("  REJECTED: Value-producing mismatch")
-            self._debug_reject("value_producing_mismatch", pair)
+            self._debug_reject(RejectReason.VALUE_PRODUCING_MISMATCH, pair)
             return None
 
         # CRITICAL: If blocks are NATURALLY value-producing (have return statements),
@@ -3268,12 +3274,12 @@ class UnificationRefactorEngine:
             if not has_complete_return_coverage(cast(List[ast.stmt], pair.block1_nodes)):
                 if debug_enabled:
                     VALIDATION.debug("  REJECTED: Block1 missing complete return coverage")
-                self._debug_reject("incomplete_return_coverage_block1", pair)
+                self._debug_reject(RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK1, pair)
                 return None
             if not has_complete_return_coverage(cast(List[ast.stmt], pair.block2_nodes)):
                 if debug_enabled:
                     VALIDATION.debug("  REJECTED: Block2 missing complete return coverage")
-                self._debug_reject("incomplete_return_coverage_block2", pair)
+                self._debug_reject(RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2, pair)
                 return None
 
         # Heuristic: avoid extracting trivial single-line return blocks that just
@@ -3301,14 +3307,14 @@ class UnificationRefactorEngine:
                 VALIDATION.debug(
                     "  REJECTED: Trivial single-line return blocks (prefer extracting computation)"
                 )
-            self._debug_reject("trivial_return_blocks", pair)
+            self._debug_reject(RejectReason.TRIVIAL_RETURN_BLOCKS, pair)
             return None
 
         # Check structural similarity
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
             if debug_enabled:
                 VALIDATION.debug("  REJECTED: Not structurally similar")
-            self._debug_reject("not_structurally_similar", pair)
+            self._debug_reject(RejectReason.NOT_STRUCTURALLY_SIMILAR, pair)
             return None
 
         # Attempt unification
@@ -3325,7 +3331,7 @@ class UnificationRefactorEngine:
         if not substitution:
             if debug_enabled:
                 VALIDATION.debug("  REJECTED: Unification failed (no substitution)")
-            self._debug_reject("unification_failed", pair)
+            self._debug_reject(RejectReason.UNIFICATION_FAILED, pair)
             return None
 
         if debug_enabled:
@@ -3340,7 +3346,7 @@ class UnificationRefactorEngine:
             hygienic_renames,
         )
         if aligned is None:
-            self._debug_reject("return_variables_not_aligned", pair)
+            self._debug_reject(RejectReason.RETURN_VARIABLES_NOT_ALIGNED, pair)
             return None
         ordered_return_variables = aligned
         if ordered_return_variables[0] and (
@@ -3349,7 +3355,7 @@ class UnificationRefactorEngine:
         ):
             # A call statement is either `x = helper()` or `return helper()`;
             # a block that both returns early and binds live variables needs both.
-            self._debug_reject("mixed_return_and_variables", pair)
+            self._debug_reject(RejectReason.MIXED_RETURN_AND_VARIABLES, pair)
             return None
 
         # Pre-compute the deepest common enclosing function (for same-file cases)
@@ -3436,7 +3442,7 @@ class UnificationRefactorEngine:
                 if name not in entering and name not in bound_at_exit
             ]
             if not_definite:
-                self._debug_reject("conditionally_bound_return", pair, str(not_definite))
+                self._debug_reject(RejectReason.CONDITIONALLY_BOUND_RETURN, pair, str(not_definite))
                 return None
         if free_vars1 & bound_after_block1:
             incomplete_vars = free_vars1 & bound_after_block1
@@ -3445,7 +3451,7 @@ class UnificationRefactorEngine:
                     f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}"
                 )
                 VALIDATION.debug("    These variables would be used before they're defined")
-            self._debug_reject("incomplete_lifetime_block1", pair, str(incomplete_vars))
+            self._debug_reject(RejectReason.INCOMPLETE_LIFETIME_BLOCK1, pair, str(incomplete_vars))
             return None
 
         if free_vars2 & bound_after_block2:
@@ -3454,7 +3460,7 @@ class UnificationRefactorEngine:
                 VALIDATION.debug(
                     f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}"
                 )
-            self._debug_reject("incomplete_lifetime_block2", pair, str(incomplete_vars))
+            self._debug_reject(RejectReason.INCOMPLETE_LIFETIME_BLOCK2, pair, str(incomplete_vars))
             return None
 
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
@@ -3511,7 +3517,7 @@ class UnificationRefactorEngine:
 
         inline_leading_thunks(func_def, substitution, param_order)
         if has_impure_eager_parameters(substitution):
-            self._debug_reject("impure_eager_parameter", pair)
+            self._debug_reject(RejectReason.IMPURE_EAGER_PARAMETER, pair)
             return None
         helper_preamble_length = int(bool(globals_to_declare_in_extracted)) + int(
             bool(nonlocals_to_declare_in_extracted)
@@ -3571,7 +3577,9 @@ class UnificationRefactorEngine:
                 if orphans1 or orphans2:
                     # Cannot extract - would create orphaned variable references
                     self._debug_reject(
-                        "orphaned_variables", pair, detail=str(sorted(orphans1 | orphans2))
+                        RejectReason.ORPHANED_VARIABLES,
+                        pair,
+                        detail=str(sorted(orphans1 | orphans2)),
                     )
                     return None
 
@@ -3652,7 +3660,7 @@ class UnificationRefactorEngine:
                 if invalid_names:
                     # Reject this proposal as it would introduce undefined names
                     self._debug_reject(
-                        "undefined_names_in_call",
+                        RejectReason.UNDEFINED_NAMES_IN_CALL,
                         pair,
                         detail=f"block{block_idx+1}: {sorted(invalid_names)}",
                     )
@@ -3668,7 +3676,9 @@ class UnificationRefactorEngine:
                 )
                 if mismatch is not None:
                     self._debug_reject(
-                        "instantiation_mismatch", pair, detail=f"block{block_idx+1}: {mismatch}"
+                        RejectReason.INSTANTIATION_MISMATCH,
+                        pair,
+                        detail=f"block{block_idx+1}: {mismatch}",
                     )
                     return None
                 # Store file_path and class context
@@ -3811,7 +3821,7 @@ class UnificationRefactorEngine:
         if self._declares_nonlocal(func1, scope_analyzer1) or self._declares_nonlocal(
             func2, scope_analyzer2
         ):
-            self._debug_reject("nonlocal_safety_skip", pair)
+            self._debug_reject(RejectReason.NONLOCAL_SAFETY_SKIP, pair)
             return None
 
         participating_paths = {canonical_file} | {
@@ -3823,7 +3833,7 @@ class UnificationRefactorEngine:
             if a.file_path in participating_paths
             for node in ast.walk(a.node)
         ):
-            self._debug_reject("cross_module_global_declaration", pair)
+            self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
             return None
 
         # The helper lives in ``canonical_file`` and every other participating
@@ -3847,7 +3857,7 @@ class UnificationRefactorEngine:
                         safe_home = candidate
                         break
             if safe_home is None:
-                self._debug_reject("import_cycle", pair)
+                self._debug_reject(RejectReason.IMPORT_CYCLE, pair)
                 return None
             canonical_file = safe_home
 
@@ -3870,7 +3880,7 @@ class UnificationRefactorEngine:
                         and (a.node.end_lineno or a.node.lineno) >= replacement.line_range[1]
                         and uses_class_private_names([a.node])
                     ):
-                        self._debug_reject("private_name_lexical_class", pair)
+                        self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)
                         return None
 
         proposal = RefactoringProposal(
@@ -3898,7 +3908,7 @@ class UnificationRefactorEngine:
         if self.skip_trivial_helpers and self._helper_is_trivial_forwarding(
             proposal.extracted_function
         ):
-            self._debug_reject("trivial_forwarding_helper", pair)
+            self._debug_reject(RejectReason.TRIVIAL_FORWARDING_HELPER, pair)
             return None
         if self.reuse_existing_functions:
             redirected = self._redirect_to_existing_function(proposal, all_functions)
@@ -4305,15 +4315,15 @@ class UnificationRefactorEngine:
                 # A call to an existing function needs no naming, so it is not logged.
                 if proposal.reused_function is None:
                     self._change_log.append(
-                        {
-                            "helper": final_func_name,
-                            "path": file_path,
-                            "line": start_line,
-                            "before": textwrap.dedent(
+                        AppliedChange(
+                            helper=final_func_name,
+                            path=file_path,
+                            line=start_line,
+                            before=textwrap.dedent(
                                 "".join(lines[start_line - 1 : end_line])
                             ).rstrip("\n"),
-                            "after": replacement_code,
-                        }
+                            after=replacement_code,
+                        )
                     )
                 # Splice into source
                 lines[start_line - 1 : end_line] = replacement_lines
@@ -5197,6 +5207,11 @@ class UnificationRefactorEngine:
         return results, termination_reason
 
     # Optional analysis cache invalidation hook used by directory fixed-point runner
+    @property
+    def change_log(self) -> Sequence[AppliedChange]:
+        """Every call site the last directory run rewrote, in application order."""
+        return tuple(self._change_log)
+
     def invalidate_paths(self, paths: List[str]) -> None:
         self.analysis_session.invalidate(paths)
 

@@ -39,6 +39,7 @@ import subprocess
 from typing import Callable, List, Mapping, Optional, Tuple
 
 from .unification.project_layout import find_project_root, load_pyproject
+from .project_tools import ToolChoice
 
 SnippetFormatter = Callable[[str], str]
 """Maps one generated snippet (a definition or a statement) to its formatted text."""
@@ -253,7 +254,7 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
     return checked(run_ruff)
 
 
-def formatter_for_project(path: Path) -> Tuple[Optional[SnippetFormatter], str]:
+def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
     """The formatter the project's configuration calls for, and a note on what was chosen.
 
     ruff when the project configures it and it is installed; otherwise Black
@@ -261,20 +262,22 @@ def formatter_for_project(path: Path) -> Tuple[Optional[SnippetFormatter], str]:
     """
     if project_uses_ruff(path):
         try:
-            return ruff_formatter(path), "ruff (project configuration)"
+            return ToolChoice(ruff_formatter(path), "ruff (project configuration)")
         except FormatterUnavailable:
             note = "ruff is configured but not installed"
             try:
-                return black_formatter(BlackSettings.for_project(path)), f"Black; {note}"
+                return ToolChoice(
+                    black_formatter(BlackSettings.for_project(path)), f"Black; {note}"
+                )
             except ImportError:
-                return None, f"{note}, and Black is not installed either"
+                return ToolChoice(None, f"{note}, and Black is not installed either")
     try:
-        return black_formatter(BlackSettings.for_project(path)), "Black"
+        return ToolChoice(black_formatter(BlackSettings.for_project(path)), "Black")
     except ImportError:
-        return None, "Black is not installed"
+        return ToolChoice(None, "Black is not installed")
 
 
-def import_sorter_for_project(path: Path) -> Tuple[Optional[FileFinisher], str]:
+def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
     """A finisher that sorts a modified file's imports the way the project does, if it does.
 
     ruff's ``I`` rules when the project selects them and ruff is installed;
@@ -284,7 +287,7 @@ def import_sorter_for_project(path: Path) -> Tuple[Optional[FileFinisher], str]:
     if project_selects_ruff_import_sorting(path):
         command = _ruff_executable()
         if command is None:
-            return None, "ruff import sorting is configured but ruff is not installed"
+            return ToolChoice(None, "ruff import sorting is configured but ruff is not installed")
         root = _root(path)
 
         def sort_with_ruff(file_path: str, source: str) -> str:
@@ -309,12 +312,12 @@ def import_sorter_for_project(path: Path) -> Tuple[Optional[FileFinisher], str]:
             )
             return completed.stdout if completed.returncode == 0 and completed.stdout else source
 
-        return imports_permuted_only(sort_with_ruff), "ruff import sorting"
+        return ToolChoice(imports_permuted_only(sort_with_ruff), "ruff import sorting")
     if project_uses_isort(path):
         try:
             import isort
         except ImportError:
-            return None, "isort is configured but not installed"
+            return ToolChoice(None, "isort is configured but not installed")
         settings_path = str(_root(path))
 
         def sort_with_isort(file_path: str, source: str) -> str:
@@ -322,8 +325,8 @@ def import_sorter_for_project(path: Path) -> Tuple[Optional[FileFinisher], str]:
                 source, config=isort.Config(settings_path=settings_path), file_path=Path(file_path)
             )
 
-        return imports_permuted_only(sort_with_isort), "isort"
-    return None, ""
+        return ToolChoice(imports_permuted_only(sort_with_isort), "isort")
+    return ToolChoice(None, "")
 
 
 def imports_permuted_only(finisher: FileFinisher) -> FileFinisher:

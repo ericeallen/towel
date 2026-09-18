@@ -22,6 +22,10 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 pytest.importorskip("mypy")
 
+from towel.type_inference import Subtyping  # noqa: E402
+
+YES, NO, UNKNOWN = Subtyping.YES, Subtyping.NO, Subtyping.UNKNOWN
+
 
 def _signature(source: str) -> str:
     for node in ast.walk(ast.parse(source)):
@@ -227,7 +231,7 @@ def test_subtype_oracle_judges_pairs_in_the_module_context(tmp_path: Path) -> No
             ("int", "Unknown"),
         ],
     )
-    assert verdicts == [True, False, True, False, True, True, True, None]
+    assert verdicts == [YES, NO, YES, NO, YES, YES, YES, UNKNOWN]
 
 
 def test_unions_are_normalized_by_the_oracle(tmp_path: Path) -> None:
@@ -521,7 +525,7 @@ def test_subtype_oracle_judges_pairs_in_the_module_context(tmp_path: Path) -> No
             ("int", "Unknown"),
         ],
     )
-    assert verdicts == [True, False, True, False, True, True, True, None]
+    assert verdicts == [YES, NO, YES, NO, YES, YES, YES, UNKNOWN]
 
 
 def test_unions_are_normalized_by_the_oracle(tmp_path: Path) -> None:
@@ -741,7 +745,7 @@ def test_pyright_oracle_judges_subtypes_and_checks(tmp_path: Path) -> None:
     oracle = PyrightOracle()
     assert oracle.is_subtype(
         str(module), source, [("bool", "int"), ("int", "bool"), ("Box", "Base"), ("int", "Unknown")]
-    ) == [True, False, True, None]
+    ) == [YES, NO, YES, UNKNOWN]
     assert oracle.check(str(module), source) == []
     assert any(
         "pyright" in message for message in oracle.check(str(module), source + "x: int = 'a'\n")
@@ -764,18 +768,22 @@ def test_checker_follows_the_projects_configuration(tmp_path: Path) -> None:
     )
 
     (tmp_path / "pyproject.toml").write_text("[tool.pyright]\nstrict = []\n")
-    oracle, note = type_oracle_for_project(tmp_path / "m.py")
+    choice = type_oracle_for_project(tmp_path / "m.py")
+    oracle, note = choice.tool, choice.note
     assert isinstance(oracle, PyrightOracle) and note == "pyright"
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
-    oracle, note = type_oracle_for_project(tmp_path / "m.py")
+    choice = type_oracle_for_project(tmp_path / "m.py")
+    oracle, note = choice.tool, choice.note
     assert isinstance(oracle, MypyInferrer) and note == "mypy"
     (tmp_path / "pyproject.toml").write_text(
         "[tool.mypy]\nstrict = true\n[tool.pyright]\nstrict = []\n"
     )
-    oracle, note = type_oracle_for_project(tmp_path / "m.py")
+    choice = type_oracle_for_project(tmp_path / "m.py")
+    oracle, note = choice.tool, choice.note
     assert isinstance(oracle, CombinedOracle) and note.startswith("mypy for inference")
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
-    oracle, note = type_oracle_for_project(tmp_path / "m.py")
+    choice = type_oracle_for_project(tmp_path / "m.py")
+    oracle, note = choice.tool, choice.note
     assert isinstance(oracle, MypyInferrer)
 
 

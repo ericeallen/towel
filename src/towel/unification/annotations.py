@@ -54,7 +54,7 @@ import re
 from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
 from .semantic_safety import walk_own_scope
-from ..type_inference import RevealRequest, TypeOracle
+from ..type_inference import RevealRequest, Subtyping, TypeOracle
 from ..diagnostics import TYPES, debugging
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
@@ -226,17 +226,20 @@ def _annotated_locals(helper: ast.FunctionDef) -> Dict[str, ast.expr]:
     return found
 
 
-Subtypes = Callable[[Sequence[Tuple[ast.expr, ast.expr]]], Sequence[Optional[bool]]]
-"""For each ``(narrow, wide)`` pair: True, False, or None when unknown."""
+Subtypes = Callable[[Sequence[Tuple[ast.expr, ast.expr]]], Sequence[Subtyping]]
+"""For each ``(narrow, wide)`` pair, the checker's verdict."""
 
 
-def unknown_subtypes(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Optional[bool]]:
+def unknown_subtypes(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Subtyping]:
     """The relation without a type checker: only identical spellings are related.
 
     Towel copies without a checker and reasons only with one; there is no
     second, weaker implementation of subtyping here.
     """
-    return [True if ast.dump(narrow) == ast.dump(wide) else None for narrow, wide in pairs]
+    return [
+        Subtyping.YES if ast.dump(narrow) == ast.dump(wide) else Subtyping.UNKNOWN
+        for narrow, wide in pairs
+    ]
 
 
 def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> Subtypes:
@@ -246,7 +249,7 @@ def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> Subtypes
     "not known to be a subtype".
     """
 
-    def relation(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Optional[bool]]:
+    def relation(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Subtyping]:
         if not pairs:
             return []
         return list(
@@ -278,7 +281,7 @@ def _met(
     verdicts = list(subtypes(pairs))
     width = len(present)
     for index, candidate in enumerate(present):
-        if all(verdicts[index * width + j] for j in range(width)):
+        if all(verdicts[index * width + j] is Subtyping.YES for j in range(width)):
             return _spelled_for_host(copy.deepcopy(candidate), host, same_module)
     return None
 
@@ -355,9 +358,9 @@ def normalize_union(members: Sequence[ast.expr], subtypes: Subtypes) -> List[ast
         for index, member in enumerate(distinct):
             absorbed = False
             for other_index, other in enumerate(distinct):
-                if other is member or verdicts.get((id(member), id(other))) is not True:
+                if other is member or verdicts.get((id(member), id(other))) is not Subtyping.YES:
                     continue
-                mutual = verdicts.get((id(other), id(member))) is True
+                mutual = verdicts.get((id(other), id(member))) is Subtyping.YES
                 if not mutual or other_index < index:
                     absorbed = True
                     break
@@ -841,7 +844,7 @@ def _return_under_declarations(
     constraints = [d for d in declared if d is not None]
     if revealed is not None and len(constraints) == len(declared):
         verdicts = subtypes([(_unquoted(revealed), _unquoted(d)) for d in constraints])
-        if all(verdicts):
+        if all(verdict is Subtyping.YES for verdict in verdicts):
             return revealed
     return _met(declared, host, same_module, subtypes)
 

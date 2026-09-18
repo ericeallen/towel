@@ -18,6 +18,9 @@ import textwrap
 import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.type_inference import Subtyping
+
+YES, NO, UNKNOWN = Subtyping.YES, Subtyping.NO, Subtyping.UNKNOWN
 
 
 def _refactor(tmp_path: Path, code: str, **engine_options: object) -> str:
@@ -418,16 +421,16 @@ def test_inconsistent_subtype_verdicts_never_empty_a_union() -> None:
 
     parse = lambda text: ast.parse(text, mode="eval").body  # noqa: E731
     members = [parse("A"), parse("B"), parse("C")]
-    cyclic = {("A", "B"): True, ("B", "C"): True, ("C", "A"): True}
+    cyclic = {("A", "B"): YES, ("B", "C"): YES, ("C", "A"): YES}
 
     def relation(pairs):  # type: ignore[no-untyped-def]
-        return [cyclic.get((ast.unparse(n), ast.unparse(w))) for n, w in pairs]
+        return [cyclic.get((ast.unparse(n), ast.unparse(w)), UNKNOWN) for n, w in pairs]
 
     kept = normalize_union(members, relation)
     assert [ast.unparse(m) for m in kept] == ["A", "B", "C"]
-    consistent = {("bool", "int"): True, ("int", "bool"): False}
+    consistent = {("bool", "int"): YES, ("int", "bool"): NO}
     kept = normalize_union(
         [parse("bool"), parse("int")],
-        lambda pairs: [consistent.get((ast.unparse(n), ast.unparse(w))) for n, w in pairs],
+        lambda pairs: [consistent.get((ast.unparse(n), ast.unparse(w)), UNKNOWN) for n, w in pairs],
     )
     assert [ast.unparse(m) for m in kept] == ["int"]

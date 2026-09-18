@@ -11,12 +11,14 @@ import sys
 import argparse
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, cast
+from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, TypedDict, cast
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from towel.type_inference import TypeOracle
+    from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, recover
 from towel.diagnostics import Settings, configure_stderr_logging
+from towel.unification.models import ParameterKind
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -306,6 +308,73 @@ Examples:
 CHANGE_SIDECAR_NAME = ".towel-helpers.json"
 
 
+class ChangeRecord(TypedDict):
+    """One rewritten call site as the sidecar and the inventory record it."""
+
+    file: str
+    line: int
+    before: str
+    after: str
+
+
+class CallRecord(TypedDict):
+    """A call of a generated helper as found in the refactored tree."""
+
+    file: str
+    line: int
+    bound: bool
+    statement: str
+    arguments: List[str]
+
+
+class BindingRecord(TypedDict):
+    """The argument expression one call site passes for a parameter."""
+
+    file: str
+    line: int
+    expression: str
+
+
+class ParameterRecord(TypedDict):
+    """A helper parameter: its evaluation kind, rename key, and what each site passes."""
+
+    name: str
+    kind: ParameterKind
+    rename_key: str
+    bindings: List[BindingRecord]
+
+
+class HelperRecord(TypedDict):
+    """Everything a naming assistant is given about one generated helper."""
+
+    file: str
+    line: int
+    name: str
+    scope: str
+    rename_key: str
+    renameable: bool
+    parameters: List[ParameterRecord]
+    source: str
+    calls: List[CallRecord]
+    changes: List[ChangeRecord]
+
+
+class MappingFormat(TypedDict):
+    """How rename keys are spelled, for the assistant that writes the rename file."""
+
+    helper: str
+    parameter: str
+    notes: str
+
+
+class HelperInventory(TypedDict):
+    """The JSON document ``rename-helpers --list --json`` prints."""
+
+    target: str
+    mapping_format: MappingFormat
+    helpers: List[HelperRecord]
+
+
 def _change_sidecar_path(target: "Path") -> "Path":
     """Where the before/after record lives for a dry output target (file or dir)."""
     from pathlib import Path
@@ -316,7 +385,7 @@ def _change_sidecar_path(target: "Path") -> "Path":
     return target.with_name(target.name + CHANGE_SIDECAR_NAME)
 
 
-def _write_change_sidecar(engine: object, output: str) -> None:
+def _write_change_sidecar(engine: "UnificationRefactorEngine", output: str) -> None:
     """Persist each applied extraction's original block and generated call.
 
     Grouped by helper name so the rename-helpers inventory can show a
@@ -328,24 +397,19 @@ def _write_change_sidecar(engine: object, output: str) -> None:
     import os
     from pathlib import Path
 
-    records = list(getattr(engine, "_change_log", []) or [])
+    records = engine.change_log
     if not records:
         return
     out = Path(output)
     base = out if out.is_dir() else out.parent
-    helpers: Dict[str, List[Dict[str, object]]] = {}
+    helpers: Dict[str, List[ChangeRecord]] = {}
     for record in records:
         try:
-            rel = os.path.relpath(str(record["path"]), str(base))
+            rel = os.path.relpath(record.path, str(base))
         except ValueError:
-            rel = str(record["path"])
-        helpers.setdefault(str(record["helper"]), []).append(
-            {
-                "file": rel,
-                "line": record["line"],
-                "before": record["before"],
-                "after": record["after"],
-            }
+            rel = record.path
+        helpers.setdefault(record.helper, []).append(
+            {"file": rel, "line": record.line, "before": record.before, "after": record.after}
         )
     sidecar = _change_sidecar_path(out)
     sidecar.write_text(
@@ -365,40 +429,40 @@ def _type_inferrer(project_path: "Path") -> Optional["TypeOracle"]:
     """The checker the project configures (mypy, pyright, or both), or None with a note."""
     from towel.type_inference import type_oracle_for_project
 
-    oracle, note = type_oracle_for_project(project_path)
-    if oracle is None:
+    choice = type_oracle_for_project(project_path)
+    if choice.tool is None:
         print(
-            f"Note: {note}, so helper annotations are copied from the call sites but not "
+            f"Note: {choice.note}, so helper annotations are copied from the call sites but not "
             'inferred or verified. Install the types extra (pip install "code-towel[types]").'
         )
-    elif "not installed" in note:
-        print(f"Note: {note}.")
-    return oracle
+    elif "not installed" in choice.note:
+        print(f"Note: {choice.note}.")
+    return choice.tool
 
 
 def _generated_code_formatter(project_path: "Path") -> Optional[Callable[[str], str]]:
     """The formatter the project's configuration calls for, or None with a note."""
     from towel.formatting import formatter_for_project
 
-    formatter, note = formatter_for_project(project_path)
-    if formatter is None:
+    choice = formatter_for_project(project_path)
+    if choice.tool is None:
         print(
-            f"Note: {note}, so generated code is inserted unformatted. "
+            f"Note: {choice.note}, so generated code is inserted unformatted. "
             'Install the format extra (pip install "code-towel[format]") to format it.'
         )
-    elif "not installed" in note:
-        print(f"Note: {note}; formatting generated code with {note.split(';')[0]}.")
-    return formatter
+    elif "not installed" in choice.note:
+        print(f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}.")
+    return choice.tool
 
 
 def _import_sorter(project_path: "Path") -> Optional[Callable[[str, str], str]]:
     """Import sorting the project configures, or None (with a note if the tool is missing)."""
     from towel.formatting import import_sorter_for_project
 
-    finisher, note = import_sorter_for_project(project_path)
-    if finisher is None and note:
-        print(f"Note: {note}; inserted imports are left where Towel put them.")
-    return finisher
+    choice = import_sorter_for_project(project_path)
+    if choice.tool is None and choice.note:
+        print(f"Note: {choice.note}; inserted imports are left where Towel put them.")
+    return choice.tool
 
 
 def _run_dry(args: argparse.Namespace) -> None:
@@ -763,7 +827,7 @@ def _find_extracted_helpers(
     return sorted(helpers, key=lambda x: (str(x[0]), x[2]))
 
 
-def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) -> Dict[str, object]:
+def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) -> HelperInventory:
     """Describe every generated helper for a naming assistant.
 
     Each entry gives the helper's scope, source, parameters with their
@@ -776,13 +840,13 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
     import ast
     import json
 
-    changes_by_helper: Dict[str, object] = {}
+    changes_by_helper: Dict[str, List[ChangeRecord]] = {}
     sidecar = _change_sidecar_path(target)
     if sidecar.is_file():
         try:
             data = json.loads(sidecar.read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("helpers"), dict):
-                changes_by_helper = data["helpers"]
+                changes_by_helper = cast(Dict[str, List[ChangeRecord]], data["helpers"])
         except (OSError, ValueError):
             changes_by_helper = {}
 
@@ -796,7 +860,7 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
             modules[path] = (source, ast.parse(source))
         except (SyntaxError, UnicodeDecodeError):
             continue
-    calls: Dict[str, List[Dict[str, object]]] = {name: [] for name in wanted}
+    calls: Dict[str, List[CallRecord]] = {name: [] for name in wanted}
     for path, (source, tree) in modules.items():
         statements = {
             child: statement
@@ -825,7 +889,7 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                     "arguments": [ast.get_source_segment(source, arg) or "" for arg in node.args],
                 }
             )
-    entries: List[Dict[str, object]] = []
+    entries: List[HelperRecord] = []
     for path, name, lineno, _ in helpers:
         source, tree = modules[path]
         parents = {
@@ -846,22 +910,23 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                 for d in node.decorator_list
             }
             names = [arg.arg for arg in (*node.args.posonlyargs, *node.args.args)]
-            kinds: Dict[str, str] = {}
+            kinds: Dict[str, ParameterKind] = {}
             for child in ast.walk(node):
                 if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
                     if child.func.id in names:
                         kinds[child.func.id] = "thunk" if not child.args else "lifted"
             has_receiver = scope.startswith("class:") and "staticmethod" not in decorators
             relative = str(path.relative_to(target))
-            parameters = []
+            parameters: List[ParameterRecord] = []
             for index, parameter in enumerate(names):
+                kind: ParameterKind
                 if index == 0 and has_receiver:
                     kind = "receiver"
                 else:
                     kind = kinds.get(parameter, "value")
-                bindings = []
+                bindings: List[BindingRecord] = []
                 for call in calls[name]:
-                    arguments = cast(List[str], call["arguments"])
+                    arguments = call["arguments"]
                     offset = index - (1 if has_receiver and call["bound"] else 0)
                     if 0 <= offset < len(arguments):
                         expression = str(arguments[offset])

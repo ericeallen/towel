@@ -138,7 +138,7 @@ def test_inventory_includes_before_after_from_the_dry_sidecar(tmp_path: Path) ->
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(str(src), str(out), progress="none")
         # The engine recorded the true original block and generated call per site.
-        assert engine._change_log, "a refactoring should have been applied and logged"
+        assert engine.change_log, "a refactoring should have been applied and logged"
         _write_change_sidecar(engine, str(out))
 
     assert _change_sidecar_path(out).is_file()

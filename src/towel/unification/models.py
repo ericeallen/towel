@@ -24,6 +24,7 @@ This module defines the core data structures used throughout the refactoring eng
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, List, Literal, NamedTuple, Optional, Tuple, Union
 import ast
 
@@ -220,3 +221,54 @@ class FunctionArtifact(NamedTuple):
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from .scope_analyzer import ScopeAnalyzer, Scope
+
+
+ParameterKind = Literal["value", "thunk", "lifted", "receiver"]
+"""How a helper parameter receives its argument: a plain value, a zero-argument
+thunk called where the expression stood, a lambda over block-local names, or
+the bound receiver of a method helper."""
+
+
+class RejectReason(StrEnum):
+    """Why a candidate pair was declined; the vocabulary of the rejection trace."""
+
+    CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
+    CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
+    CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
+    FRAME_SENSITIVE_BLOCK = "frame_sensitive_block"
+    IMPORT_CYCLE = "import_cycle"
+    IMPURE_EAGER_PARAMETER = "impure_eager_parameter"
+    INCOMPLETE_LIFETIME_BLOCK1 = "incomplete_lifetime_block1"
+    INCOMPLETE_LIFETIME_BLOCK2 = "incomplete_lifetime_block2"
+    INCOMPLETE_RETURN_COVERAGE_BLOCK1 = "incomplete_return_coverage_block1"
+    INCOMPLETE_RETURN_COVERAGE_BLOCK2 = "incomplete_return_coverage_block2"
+    INSTANTIATION_MISMATCH = "instantiation_mismatch"
+    MIXED_RETURN_AND_VARIABLES = "mixed_return_and_variables"
+    MODULE_DATA_LOOKUP = "module_data_lookup"
+    MOVES_SCOPE_DECLARATION = "moves_scope_declaration"
+    NESTED_BINDING_ESCAPES = "nested_binding_escapes"
+    NONLOCAL_SAFETY_SKIP = "nonlocal_safety_skip"
+    NOT_STRUCTURALLY_SIMILAR = "not_structurally_similar"
+    ORPHANED_VARIABLES = "orphaned_variables"
+    PRIVATE_NAME_LEXICAL_CLASS = "private_name_lexical_class"
+    REBOUND_EXTERNAL_BINDING = "rebound_external_binding"
+    RETURN_VARIABLES_NOT_ALIGNED = "return_variables_not_aligned"
+    TRIVIAL_FORWARDING_HELPER = "trivial_forwarding_helper"
+    TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"
+    UNBINDS_EXTERNAL_NAME = "unbinds_external_name"
+    UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
+    UNIFICATION_FAILED = "unification_failed"
+    UNSAFE_REASSIGNMENT_BLOCK1 = "unsafe_reassignment_block1"
+    UNSAFE_REASSIGNMENT_BLOCK2 = "unsafe_reassignment_block2"
+    VALUE_PRODUCING_MISMATCH = "value_producing_mismatch"
+
+
+@dataclass(frozen=True)
+class AppliedChange:
+    """One call site rewritten by an applied refactoring: what stood there and what replaced it."""
+
+    helper: str
+    path: str
+    line: int
+    before: str
+    after: str

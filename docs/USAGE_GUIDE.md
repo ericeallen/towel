@@ -148,17 +148,18 @@ from towel.formatting import formatter_for_project, import_sorter_for_project
 from towel.type_inference import type_oracle_for_project
 
 root = Path("src/")
-formatter, note = formatter_for_project(root)   # ruff when configured, else Black; None if neither is installed
-sorter, note = import_sorter_for_project(root)  # ruff's I rules or isort, when the project uses them
-oracle, note = type_oracle_for_project(root)    # mypy, pyright, or both; None if neither is installed
+formatter = formatter_for_project(root)   # ruff when configured, else Black
+sorter = import_sorter_for_project(root)  # ruff's I rules or isort, when the project uses them
+oracle = type_oracle_for_project(root)    # mypy, pyright, or both
 
 engine = UnificationRefactorEngine(
-    snippet_formatter=formatter, file_finisher=sorter, type_inferrer=oracle
+    snippet_formatter=formatter.tool, file_finisher=sorter.tool, type_inferrer=oracle.tool
 )
 ```
 
-Each `note` says what was chosen and names a configured tool that is not
-installed. Without a formatter the rendering is `ast.unparse`'s: one
+Each result is a `ToolChoice`: its `tool` is None when nothing suitable is
+installed, and its `note` says what was chosen and names a configured tool
+that is not installed. Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
 
 ### Directory Scanning

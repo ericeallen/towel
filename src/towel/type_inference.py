@@ -47,9 +47,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
+from enum import Enum
+from typing import TYPE_CHECKING, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 from .diagnostics import LOG
+from .project_tools import ToolChoice
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mypy.options import Options
@@ -73,6 +75,15 @@ class RevealRequest:
     expressions: Tuple[str, ...]
 
 
+class Subtyping(Enum):
+    """A checker's answer to "is this narrow type assignable to that wide one?"."""
+
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+    """The checker could not resolve a name in the question, so it could not judge."""
+
+
 class TypeOracle(Protocol):
     """What the annotation writer asks a type checker.
 
@@ -89,7 +100,7 @@ class TypeOracle(Protocol):
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
-    ) -> Sequence[Optional[bool]]:
+    ) -> Sequence[Subtyping]:
         """Whether each narrow type is assignable to its wide type, in the module's context."""
         raise NotImplementedError
 
@@ -97,8 +108,6 @@ class TypeOracle(Protocol):
         """The checker's error messages for ``source`` as ``file_path``, without positions."""
         raise NotImplementedError
 
-
-"""Earlier name of the protocol, kept for callers that used it."""
 
 _ERROR = re.compile(r"^(?P<path>.*?):(?P<line>\d+):(?:\d+:)? error: ")
 _REVEALED = re.compile(
@@ -140,6 +149,47 @@ def _with_probes(request: RevealRequest) -> Tuple[str, List[int]]:
     return "".join(lines), [request.line + offset for offset in range(len(probes))]
 
 
+def _subtype_probes(
+    source: str, pairs: Sequence[Tuple[str, str]]
+) -> Tuple[str, Dict[int, int], Dict[int, int]]:
+    """The module with one probe function per pair appended, and which lines belong to which pair.
+
+    ``def __towel_probe_i(__towel_value: narrow) -> wide: return __towel_value``:
+    an error on the ``return`` line means not a subtype, an error on the
+    signature line means a name the checker could not resolve.
+    """
+    lines = source.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    base = len(lines)
+    probe_lines: List[str] = ["\n"]
+    signature_line: Dict[int, int] = {}
+    return_line: Dict[int, int] = {}
+    for index, (narrow, wide) in enumerate(pairs):
+        signature_line[base + len(probe_lines) + 1] = index
+        probe_lines.append(f"def __towel_probe_{index}(__towel_value: {narrow}) -> {wide}:\n")
+        return_line[base + len(probe_lines) + 1] = index
+        probe_lines.append("    return __towel_value\n")
+        probe_lines.append("\n")
+    return "".join(lines) + "".join(probe_lines), signature_line, return_line
+
+
+def _verdicts_from_error_lines(
+    count: int,
+    error_lines: Iterable[int],
+    signature_line: Mapping[int, int],
+    return_line: Mapping[int, int],
+) -> List[Subtyping]:
+    """Read each probe's verdict off the lines the checker reported errors on."""
+    verdicts = [Subtyping.YES] * count
+    for line in error_lines:
+        if line in signature_line:
+            verdicts[signature_line[line]] = Subtyping.UNKNOWN
+        elif line in return_line and verdicts[return_line[line]] is not Subtyping.UNKNOWN:
+            verdicts[return_line[line]] = Subtyping.NO
+    return verdicts
+
+
 class MypyInferrer:
     """A ``TypeOracle`` backed by mypy's in-process build.
 
@@ -175,13 +225,11 @@ class MypyInferrer:
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
-    ) -> Sequence[Optional[bool]]:
+    ) -> Sequence[Subtyping]:
         """Whether each ``narrow`` is assignable to its ``wide``, judged in the module's context.
 
         One probe function per pair is appended to an in-memory copy of the
-        module, ``def probe(v: narrow) -> wide: return v``. An error on the
-        ``return`` line means not a subtype; an error on the signature line
-        means a name the checker could not resolve, which is reported as None.
+        module (see :func:`_subtype_probes`); mypy's error lines give the verdicts.
         """
         from mypy import build
         from mypy.build import BuildSource
@@ -189,38 +237,20 @@ class MypyInferrer:
 
         if not pairs:
             return []
-        lines = source.splitlines(keepends=True)
-        if lines and not lines[-1].endswith("\n"):
-            lines[-1] += "\n"
-        base = len(lines)
-        probe_lines: List[str] = ["\n"]
-        signature_line: Dict[int, int] = {}
-        return_line: Dict[int, int] = {}
-        for index, (narrow, wide) in enumerate(pairs):
-            signature_line[base + len(probe_lines) + 1] = index
-            probe_lines.append(f"def __towel_probe_{index}(__towel_value: {narrow}) -> {wide}:\n")
-            return_line[base + len(probe_lines) + 1] = index
-            probe_lines.append("    return __towel_value\n")
-            probe_lines.append("\n")
-        text = "".join(lines) + "".join(probe_lines)
+        text, signature_line, return_line = _subtype_probes(source, pairs)
         module, root = _module_name_and_root(Path(file_path))
         try:
             result = build.build(
                 sources=[BuildSource(file_path, module, text)], options=self._options([str(root)])
             )
         except CompileError:
-            return [None] * len(pairs)
-        verdicts: List[Optional[bool]] = [True] * len(pairs)
-        for message in result.errors:
-            match = _ERROR.match(message)
-            if match is None or match.group("path") != file_path:
-                continue
-            line = int(match.group("line"))
-            if line in signature_line:
-                verdicts[signature_line[line]] = None
-            elif line in return_line and verdicts[return_line[line]] is not None:
-                verdicts[return_line[line]] = False
-        return verdicts
+            return [Subtyping.UNKNOWN] * len(pairs)
+        error_lines = [
+            int(match.group("line"))
+            for match in (_ERROR.match(message) for message in result.errors)
+            if match is not None and match.group("path") == file_path
+        ]
+        return _verdicts_from_error_lines(len(pairs), error_lines, signature_line, return_line)
 
     def check(self, file_path: str, source: str) -> Sequence[str]:
         """Error messages mypy reports for ``source`` in place of ``file_path``.
@@ -382,32 +412,16 @@ class PyrightOracle:
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
-    ) -> Sequence[Optional[bool]]:
+    ) -> Sequence[Subtyping]:
         if not pairs:
             return []
-        lines = source.splitlines(keepends=True)
-        if lines and not lines[-1].endswith("\n"):
-            lines[-1] += "\n"
-        base = len(lines)
-        probe_lines: List[str] = ["\n"]
-        signature_line: Dict[int, int] = {}
-        return_line: Dict[int, int] = {}
-        for index, (narrow, wide) in enumerate(pairs):
-            signature_line[base + len(probe_lines) + 1] = index
-            probe_lines.append(f"def __towel_probe_{index}(__towel_value: {narrow}) -> {wide}:\n")
-            return_line[base + len(probe_lines) + 1] = index
-            probe_lines.append("    return __towel_value\n")
-            probe_lines.append("\n")
-        verdicts: List[Optional[bool]] = [True] * len(pairs)
-        for diagnostic in self._diagnostics(file_path, "".join(lines) + "".join(probe_lines)):
-            if diagnostic.get("severity") != "error":
-                continue
-            line = self._line(diagnostic)
-            if line in signature_line:
-                verdicts[signature_line[line]] = None
-            elif line in return_line and verdicts[return_line[line]] is not None:
-                verdicts[return_line[line]] = False
-        return verdicts
+        text, signature_line, return_line = _subtype_probes(source, pairs)
+        error_lines = [
+            self._line(diagnostic)
+            for diagnostic in self._diagnostics(file_path, text)
+            if diagnostic.get("severity") == "error"
+        ]
+        return _verdicts_from_error_lines(len(pairs), error_lines, signature_line, return_line)
 
     def check(self, file_path: str, source: str) -> Sequence[str]:
         return [
@@ -443,7 +457,7 @@ class CombinedOracle:
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
-    ) -> Sequence[Optional[bool]]:
+    ) -> Sequence[Subtyping]:
         return self._primary.is_subtype(file_path, source, pairs)
 
     def check(self, file_path: str, source: str) -> Sequence[str]:
@@ -483,7 +497,7 @@ def _has_ini_section(path: Path, section: str) -> bool:
     return parser.has_section(section)
 
 
-def type_oracle_for_project(path: Path) -> Tuple[Optional[TypeOracle], str]:
+def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
     """The checker the project configures, and a note on what was chosen.
 
     A project that configures mypy gets mypy; one that configures pyright
@@ -513,11 +527,12 @@ def type_oracle_for_project(path: Path) -> Tuple[Optional[TypeOracle], str]:
             if wants_pyright:
                 notes.append("pyright is configured but not installed")
     if mypy is not None and pyright is not None:
-        return CombinedOracle(mypy, [pyright]), "; ".join(
-            ["mypy for inference, mypy and pyright for verification", *notes]
+        return ToolChoice(
+            CombinedOracle(mypy, [pyright]),
+            "; ".join(["mypy for inference, mypy and pyright for verification", *notes]),
         )
     if mypy is not None:
-        return mypy, "; ".join(["mypy", *notes])
+        return ToolChoice(mypy, "; ".join(["mypy", *notes]))
     if pyright is not None:
-        return pyright, "; ".join(["pyright", *notes])
-    return None, "; ".join(notes) if notes else "neither mypy nor pyright is installed"
+        return ToolChoice(pyright, "; ".join(["pyright", *notes]))
+    return ToolChoice(None, "; ".join(notes) if notes else "neither mypy nor pyright is installed")

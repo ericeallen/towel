@@ -172,7 +172,8 @@ def test_ruff_formats_when_the_project_configures_it(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 60\n")
     module = tmp_path / "m.py"
     module.write_text("x = 1\n")
-    formatter, note = formatter_for_project(module)
+    choice = formatter_for_project(module)
+    formatter, note = choice.tool, choice.note
     assert formatter is not None and note.startswith("ruff")
     formatted = formatter(
         "value = helper('a', 'bbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccc', 'dddddddddd')"
@@ -185,7 +186,8 @@ def test_black_is_the_formatter_without_ruff_configuration(tmp_path: Path) -> No
     from towel.formatting import formatter_for_project
 
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
-    formatter, note = formatter_for_project(tmp_path / "m.py")
+    choice = formatter_for_project(tmp_path / "m.py")
+    formatter, note = choice.tool, choice.note
     assert formatter is not None and note == "Black"
 
 
@@ -198,7 +200,8 @@ def test_isort_sorts_the_inserted_import_when_configured(tmp_path: Path) -> None
         "from typing import Any\nimport os\nimport sys\n\n\ndef f() -> Any:\n    return os, sys\n"
     )
     module.write_text(source)
-    finisher, note = import_sorter_for_project(module)
+    choice = import_sorter_for_project(module)
+    finisher, note = choice.tool, choice.note
     assert finisher is not None and note == "isort"
     finished = finisher(str(module), source)
     assert finished.startswith("import os\nimport sys\nfrom typing import Any\n")
@@ -213,7 +216,8 @@ def test_ruff_import_rules_sort_when_selected(tmp_path: Path) -> None:
         "from typing import Any\nimport os\nimport sys\n\n\ndef f() -> Any:\n    return os, sys\n"
     )
     module.write_text(source)
-    finisher, note = import_sorter_for_project(module)
+    choice = import_sorter_for_project(module)
+    finisher, note = choice.tool, choice.note
     assert finisher is not None and note == "ruff import sorting"
     finished = finisher(str(module), source)
     assert finished.index("import os") < finished.index("from typing import Any")
@@ -221,9 +225,10 @@ def test_ruff_import_rules_sort_when_selected(tmp_path: Path) -> None:
 
 def test_no_import_sorting_without_configuration(tmp_path: Path) -> None:
     from towel.formatting import import_sorter_for_project
+    from towel.project_tools import ToolChoice
 
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
-    assert import_sorter_for_project(tmp_path / "m.py") == (None, "")
+    assert import_sorter_for_project(tmp_path / "m.py") == ToolChoice(None, "")
 
 
 def test_an_import_sorter_may_only_permute_imports() -> None:
