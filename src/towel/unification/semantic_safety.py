@@ -411,6 +411,18 @@ def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[P
                 for alias in node.names:
                     if alias.name != "*":
                         dependencies.update(_module_files(base, [*components, alias.name]))
+                # ``from . import name`` (or ``from .. import name``) runs the
+                # package's ``__init__`` whether ``name`` is a submodule or an
+                # attribute defined there. With no module file to resolve to,
+                # the edge to the initializer was missed, and a helper hosted
+                # in a submodule got imported by that ``__init__``, which the
+                # submodule imports back (beautifulsoup4's tests package).
+                package = base
+                for component in components:
+                    package = package / component
+                initializer = package / "__init__.py"
+                if initializer.is_file():
+                    dependencies.add(initializer.resolve())
             else:
                 dependencies.update(_module_files_relocated(roots, components))
                 for alias in node.names:

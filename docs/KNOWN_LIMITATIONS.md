@@ -104,6 +104,18 @@ addresses:
   access; a concurrent editor writing in the check/replace interval is not
   prevented. Interrupted batches leave a recovery journal.
 
+### A cross-file helper adds an import of its host module
+
+A helper shared across modules lives in one of them and the others import it.
+The host is chosen so that no import cycle closes, preferring a module the
+borrowers already import; when none qualifies, one borrower gains a new
+import edge. Towel does not know whether importing that module has
+requirements of its own: gunicorn's `workers/gtornado.py` raises at import
+time unless tornado is installed, and a helper hosted there made
+`workers/sync.py` import it, so environments without tornado could no longer
+import the sync worker. Review new cross-module imports in the diff with that
+in mind, and host such helpers in a neutral module by hand when it matters.
+
 ## Method insertion
 
 A helper becomes a method only when both blocks belong to functions defined
