@@ -478,3 +478,34 @@ def test_same_named_definitions_in_different_modules_are_not_ambient(tmp_path: P
         )
     descriptions = _fixed_point_directory(package)
     assert not any(description.startswith("Reuse") for description in descriptions)
+
+
+def test_overloaded_function_is_reused_through_its_implementation(tmp_path: Path) -> None:
+    # ``@overload`` stubs precede the implementation; the last definition is
+    # the runtime binding, so calling it by name is what the redirect needs.
+    final = _fixed_point(
+        _write(
+            tmp_path,
+            """
+            from typing import overload
+
+            @overload
+            def normalize(value: str) -> str: ...
+            @overload
+            def normalize(value: None) -> None: ...
+            def normalize(value):
+                if value is None:
+                    return None
+                text = value.strip()
+                return text.lower()
+
+            def other(value):
+                if value is None:
+                    return None
+                text = value.strip()
+                return text.lower()
+            """,
+        )
+    )
+    assert _body(_functions(final)["other"]) == "return normalize(value)"
+    assert "__extracted_func" not in final

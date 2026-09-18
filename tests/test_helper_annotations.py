@@ -59,7 +59,9 @@ def test_parameters_and_none_return_come_from_agreeing_sites(tmp_path: Path) -> 
     exec(compile(result, "<annotated>", "exec"), {})
 
 
-def test_disagreeing_sites_leave_the_parameter_unannotated(tmp_path: Path) -> None:
+def test_disagreeing_sites_join_into_a_union(tmp_path: Path) -> None:
+    # The parameter must accept every site's argument, so its annotation is
+    # the least upper bound the sites spell: their union.
     result = _refactor(
         tmp_path,
         f"""
@@ -67,7 +69,44 @@ def test_disagreeing_sites_leave_the_parameter_unannotated(tmp_path: Path) -> No
         def second(value: float, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value) -> None:"
+    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int | float) -> None:"
+
+
+def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
+    result = _refactor(
+        tmp_path,
+        """
+        def first(items: list, limit: int) -> None:
+            print(items[:limit])
+            print(len(items), limit)
+
+        def second(items: list, limit: None) -> None:
+            print(items[:limit])
+            print(len(items), limit)
+        """,
+    )
+    assert _signature(result) == "def __extracted_func_0(items: list, limit: int | None) -> None:"
+
+
+def test_declared_return_types_must_agree(tmp_path: Path) -> None:
+    # The sites' declared return types bound the helper's value from above,
+    # so a union would not be a bound; only agreement is written.
+    result = _refactor(
+        tmp_path,
+        """
+        def first(value: int) -> int:
+            total = value * 2
+            text = str(total)
+            return len(text.strip())
+
+        def second(value: int) -> object:
+            total = value * 2
+            text = str(total)
+            return len(text.strip())
+        """,
+    )
+    assert _signature(result) == "def __extracted_func_0(value: int) -> Any:"
+    assert "from typing import Any" in result
 
 
 def test_rebound_parameter_is_not_trusted(tmp_path: Path) -> None:
@@ -79,7 +118,9 @@ def test_rebound_parameter_is_not_trusted(tmp_path: Path) -> None:
         def second(value: int, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value) -> None:"
+    # A rebound parameter is not trusted; once the helper is annotated at
+    # all, the bare parameter becomes ``Any`` so the signature is complete.
+    assert _signature(result) == "def __extracted_func_0(prefix: str, value: Any) -> None:"
 
 
 def test_literals_take_their_builtin_type_and_bool_is_not_int(tmp_path: Path) -> None:

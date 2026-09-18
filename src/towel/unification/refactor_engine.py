@@ -121,6 +121,7 @@ from .annotations import (
     CallSite,
     annotate_helper,
     call_in_statement,
+    complete_with_any,
     infer_missing_annotations,
     sites_use_annotations,
 )
@@ -3875,15 +3876,22 @@ class UnificationRefactorEngine:
         )
 
     def _infer_helper_annotations(self, proposal: RefactoringProposal) -> None:
-        """Fill the helper's bare annotations from the type inferrer, in place.
+        """Finish the helper's annotations in place when the proposal is applied.
 
-        Runs once per applied proposal, on the files as they stand, so the
-        cost is one incremental type-check per application rather than one
-        per candidate.
+        The type inferrer, when there is one, fills what the copied
+        annotations could not; then a helper that carries any annotation gets
+        ``Any`` on whatever is still bare, so its signature is complete. Runs
+        once per applied proposal, on the files as they stand, so the cost is
+        one incremental type-check per application rather than one per
+        candidate.
         """
-        if self.type_inferrer is None or not proposal.wants_type_inference:
+        if not proposal.wants_type_inference or proposal.reused_function is not None:
             return
-        if proposal.reused_function is not None:
+        if self.type_inferrer is None:
+            host = self._parsed_host(proposal.file_path)
+            completed = complete_with_any(proposal.extracted_function, host)
+            proposal.extracted_function = completed.helper
+            proposal.required_imports = completed.required_imports
             return
         sites: List[ApplySite] = []
         sources: Dict[str, str] = {}
@@ -3911,13 +3919,25 @@ class UnificationRefactorEngine:
                     call=call,
                 )
             )
-        proposal.extracted_function = infer_missing_annotations(
+        inferred = infer_missing_annotations(
             proposal.extracted_function,
             sites,
             proposal.file_path,
             proposal.return_variables,
             self.type_inferrer,
         )
+        completed = complete_with_any(inferred.helper, self._parsed_host(proposal.file_path))
+        proposal.extracted_function = completed.helper
+        proposal.required_imports = tuple(
+            dict.fromkeys(inferred.required_imports + completed.required_imports)
+        )
+
+    @staticmethod
+    def _parsed_host(file_path: str) -> Optional[ast.Module]:
+        try:
+            return ast.parse(Path(file_path).read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeError):
+            return None
 
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
         """
@@ -4117,6 +4137,11 @@ class UnificationRefactorEngine:
             if proposal.reused_function is not None and file_path == proposal.file_path:
                 pass  # the function the calls target is already defined here
             elif file_path == proposal.file_path:
+                # Names an inferred annotation needs that the module does not bind.
+                for module_name, name in proposal.required_imports:
+                    required_line = f"from {module_name} import {name}\n"
+                    if not any(required_line.strip() == ln.strip() for ln in lines):
+                        lines.insert(self._find_import_position(lines), required_line)
                 if proposal.insert_into_function:
                     fn_insert_info = self._find_function_insert_position_before_body_statements(
                         "".join(lines), proposal.insert_into_function
@@ -4262,12 +4287,14 @@ class UnificationRefactorEngine:
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef) and node.name == target.name
         ]
-        if len(definitions) != 1:
+        if not definitions:
             raise RefactoringError(
-                f"Reused function {target.name} is not defined once at module level: "
+                f"Reused function {target.name} is no longer defined at module level: "
                 f"{target.file_path}"
             )
-        parameters = self._positional_parameter_names(definitions[0])
+        # ``@overload`` stubs precede the real definition; the last one is the
+        # runtime binding the calls resolve to, as the redirect required.
+        parameters = self._positional_parameter_names(definitions[-1])
         for replacement in proposal.replacements:
             call = self._unwrap_helper_call(replacement.node, target.name)
             if parameters is None or call is None or len(call.args) != len(parameters):

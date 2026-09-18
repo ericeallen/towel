@@ -41,7 +41,8 @@ def _signature(source: str) -> str:
         ("Literal[3]? | None", "int | None"),
         ("tuple[int, str | None]", "tuple[int, str | None]"),
         ("Any", None),
-        ("dict[str, Any]", None),
+        ("dict[str, Any]", "dict[str, Any]"),
+        ("list[Any]", "list[Any]"),
         ("def () -> int", None),
         ("<nothing>", None),
     ],
@@ -148,3 +149,60 @@ def test_inferrer_names_a_non_identifier_package_with_a_placeholder(tmp_path: Pa
     module.write_text(source)
     revealed = MypyInferrer()([RevealRequest(str(module), source, 5, "    ", ("box",))])
     assert revealed[(str(module), 5, 0)] == "_towel_package.m.Box"
+
+
+def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> None:
+    path = tmp_path / "m.py"
+    path.write_text(textwrap.dedent("""
+            import json
+
+            def first(text: str) -> int:
+                payload = json.loads(text)
+                keys = sorted(payload)
+                print(keys)
+                return len(keys)
+
+            def second(text: str) -> int:
+                payload = json.loads(text)
+                keys = sorted(payload)
+                print(keys)
+                return len(keys) * 2
+            """))
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+    )
+    proposals = engine.analyze_file(str(path))
+    assert proposals
+    result = engine.apply_refactoring(str(path), proposals[0])
+    assert "from typing import Any" in result
+    assert _signature(result) == "def __extracted_func_0(json: Any, text: str) -> list[Any]:"
+    exec(compile(result, "<any>", "exec"), {})
+
+
+def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
+    path = tmp_path / "m.py"
+    path.write_text(textwrap.dedent("""
+            class Box:
+                def __init__(self) -> None:
+                    self.count = 1
+                    self.ratio = 2.5
+
+            def first(box: Box) -> str:
+                scaled = box.count * 2
+                label = str(scaled).upper()
+                return label.strip()
+
+            def second(box: Box) -> str:
+                scaled = box.ratio * 2
+                label = str(scaled).upper()
+                return label.strip()
+            """))
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+    )
+    proposals = engine.analyze_file(str(path))
+    assert proposals
+    result = engine.apply_refactoring(str(path), proposals[0])
+    assert (
+        _signature(result) == "def __extracted_func_0(__param_0: int | float, box: 'Box') -> str:"
+    )

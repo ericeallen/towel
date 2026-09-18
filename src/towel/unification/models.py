@@ -134,6 +134,9 @@ class RefactoringProposal:
     # The call sites declare types, so parameters the copied annotations left
     # bare may be filled by a type inferrer when the proposal is applied.
     wants_type_inference: bool = False
+    # ``(module, name)`` pairs an inferred annotation needs imported into the
+    # helper's module, such as ``typing.Any``; filled when the proposal is applied.
+    required_imports: Tuple[Tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         """Coerce legacy tuple replacements into :class:`Replacement` instances."""

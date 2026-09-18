@@ -45,7 +45,13 @@ ecosystem evidence behind each claim. The format follows
   refactoring with an incremental cache. A type is written only when every
   site agrees, it contains no `Any`, and every name in it resolves where the
   helper is defined. `--no-types` leaves helpers unannotated; library callers
-  pass a `type_inferrer` to the engine.
+  pass a `type_inferrer` to the engine. Sites that disagree on a parameter's
+  type, or on a revealed return type, join into a union (`int | None`,
+  `int | str`); declared return types must agree, since a union is not a
+  lower bound. Once a helper carries any annotation, whatever is still bare
+  becomes `Any`, so the signature is complete (a partial one is an error
+  under mypy's `disallow-incomplete-defs`); `from typing import Any` is
+  added to the host when it lacks it. Code with no annotations stays bare.
 - Analysis facts are computed once per function instead of once per candidate
   block (definite assignment, locally bound names, nested scopes), and the
   same-file clustering pass applies its constant-time filters before the
@@ -64,6 +70,13 @@ ecosystem evidence behind each claim. The format follows
   networkx in 1.618 did not know the generated call rebinds a returned
   variable, so it rejected every such block; only blocks that returned or
   bound nothing live could be extracted.
+- The import-cycle guard treats `from . import name` (and `from .. import
+  name`) as an edge to the package's `__init__`, which that import runs
+  whether or not `name` is a submodule. A helper hosted in a submodule that
+  reaches back into its package this way was imported by the package
+  initializer, which the submodule then imported half-initialized
+  (beautifulsoup4's tests package). The initializer, which the submodule
+  already imports, is now the host.
 - Definite-assignment analysis now knows that `except E as name` deletes
   `name` when the handler exits, and that a `del` nested in a branch unbinds
   its target on that path. The returned-variable check relies on this; without

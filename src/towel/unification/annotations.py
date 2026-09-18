@@ -100,7 +100,7 @@ def annotate_helper(
     parameters = annotated.args.posonlyargs + annotated.args.args
     for index, parameter in enumerate(parameters):
         candidates = [_argument_annotation(site, index) for site in sites]
-        parameter.annotation = _agreed(candidates, host, same_module)
+        parameter.annotation = _joined(candidates, host, same_module)
     annotated.returns = _agreed(
         [_return_annotation(site, annotated, return_variables) for site in sites],
         host,
@@ -221,7 +221,11 @@ def _agreed(
     host: Optional[ast.Module],
     same_module: bool,
 ) -> Optional[ast.expr]:
-    """One annotation when every site supplies the same one and it resolves in the host."""
+    """One annotation when every site supplies the same one and it resolves in the host.
+
+    Used where the sites' types bound the helper from above (their declared
+    return types), so a union would be wrong and only agreement is safe.
+    """
     present = [candidate for candidate in candidates if candidate is not None]
     if not present or len(present) != len(candidates):
         return None
@@ -231,10 +235,57 @@ def _agreed(
     return _spelled_for_host(copy.deepcopy(first), host, same_module)
 
 
-def _spelled_for_host(
-    annotation: ast.expr, host: Optional[ast.Module], same_module: bool
+def _joined(
+    candidates: Sequence[Optional[ast.expr]],
+    host: Optional[ast.Module],
+    same_module: bool,
+    extra_bound: Optional[Set[str]] = None,
 ) -> Optional[ast.expr]:
-    """The annotation as it can be written where the helper is defined, or None."""
+    """The least upper bound of the sites' types that can be written: their union.
+
+    A helper parameter must accept every site's argument, and a helper may
+    return any site's value, so the annotation must be a supertype of each.
+    A union is that bound exactly; ``int | None`` when one site passes
+    ``None``, ``int | str`` when they differ, duplicates removed and ``None``
+    last. Any site without a type leaves the annotation off.
+    """
+    present = [candidate for candidate in candidates if candidate is not None]
+    if not present or len(present) != len(candidates):
+        return None
+    members: List[ast.expr] = []
+    seen: Set[str] = set()
+    for candidate in present:
+        for member in _union_members(candidate):
+            key = ast.dump(member)
+            if key not in seen:
+                seen.add(key)
+                members.append(copy.deepcopy(member))
+    none_members = [m for m in members if isinstance(m, ast.Constant) and m.value is None]
+    others = [m for m in members if not (isinstance(m, ast.Constant) and m.value is None)]
+    ordered = others + none_members
+    union = ordered[0]
+    for member in ordered[1:]:
+        union = ast.BinOp(left=union, op=ast.BitOr(), right=member)
+    return _spelled_for_host(union, host, same_module, extra_bound)
+
+
+def _union_members(expression: ast.expr) -> List[ast.expr]:
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.BitOr):
+        return _union_members(expression.left) + _union_members(expression.right)
+    return [expression]
+
+
+def _spelled_for_host(
+    annotation: ast.expr,
+    host: Optional[ast.Module],
+    same_module: bool,
+    extra_bound: Optional[Set[str]] = None,
+) -> Optional[ast.expr]:
+    """The annotation as it can be written where the helper is defined, or None.
+
+    ``extra_bound`` names count as bound in the host because the caller will
+    import them there (``Any``).
+    """
     expression = annotation
     quoted = False
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
@@ -243,12 +294,13 @@ def _spelled_for_host(
         except SyntaxError:
             return None
         quoted = True
+    resolved = _BUILTIN_NAMES | (extra_bound or set())
     names = _referenced_names(expression)
-    if names <= _BUILTIN_NAMES:
+    if names <= resolved:
         return expression
     if not same_module or host is None:
         return None
-    if _defers_annotations(host) or names - _BUILTIN_NAMES <= _import_bound_names(host):
+    if _defers_annotations(host) or names - resolved <= _import_bound_names(host):
         return expression
     return annotation if quoted else ast.Constant(value=ast.unparse(expression))
 
@@ -296,8 +348,10 @@ def annotation_from_revealed(
     when that is bound there.
     """
     text = revealed.strip()
-    if not text or "Any" in text or "<" in text or text.startswith("def ") or "Never" in text:
+    if not text or "<" in text or text.startswith("def ") or "Never" in text:
         return None
+    if text == "Any":
+        return None  # what an unannotated parameter already means
 
     def literal_type(match: "re.Match[str]") -> str:
         try:
@@ -308,8 +362,6 @@ def annotation_from_revealed(
         return kind.id if isinstance(kind, ast.Name) else "Any"
 
     text = _LITERAL.sub(literal_type, text)
-    if "Any" in text:
-        return None
     text = text.replace("builtins.", "").replace("?", "").replace("*", "")
     try:
         expression = ast.parse(text, mode="eval").body
@@ -320,7 +372,7 @@ def annotation_from_revealed(
     reduced = _reduce_dotted_names(expression, host)
     if reduced is None:
         return None
-    return _spelled_for_host(reduced, host, same_module)
+    return _spelled_for_host(reduced, host, same_module, {"Any"})
 
 
 def _is_type_expression(expression: ast.expr) -> bool:
@@ -343,7 +395,9 @@ def _is_type_expression(expression: ast.expr) -> bool:
 
 def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> Optional[ast.expr]:
     """Rewrite ``pkg.mod.Name`` to what the host can spell, or None if it cannot."""
-    bound = _import_bound_names(host) | _defined_names(host) if host is not None else set()
+    bound = (_import_bound_names(host) | _defined_names(host) if host is not None else set()) | {
+        "Any"
+    }
 
     class Reducer(ast.NodeTransformer):
         failed = False
@@ -385,13 +439,45 @@ class ApplySite:
     call: ast.Call
 
 
+@dataclass(frozen=True)
+class InferredHelper:
+    """The helper with inferred annotations, and the imports its host must gain."""
+
+    helper: ast.FunctionDef
+    required_imports: Tuple[Tuple[str, str], ...]
+
+
+def complete_with_any(helper: ast.FunctionDef, host: Optional[ast.Module]) -> InferredHelper:
+    """Give every still-bare parameter, and a bare return, the annotation ``Any``.
+
+    Applied only to a helper that already carries some annotation: a partly
+    annotated signature reads as an omission and is an error under mypy's
+    ``disallow-incomplete-defs``, while ``Any`` states the type is unknown.
+    A helper with no annotation at all is left as it is, so unannotated code
+    stays unannotated.
+    """
+    annotated = copy.deepcopy(helper)
+    parameters = annotated.args.posonlyargs + annotated.args.args
+    if annotated.returns is None and all(p.annotation is None for p in parameters):
+        return InferredHelper(annotated, ())
+    for parameter in parameters:
+        if parameter.annotation is None:
+            parameter.annotation = ast.Name(id="Any", ctx=ast.Load())
+    if annotated.returns is None:
+        annotated.returns = ast.Name(id="Any", ctx=ast.Load())
+    required: Tuple[Tuple[str, str], ...] = ()
+    if host is None or "Any" not in _import_bound_names(host) | _defined_names(host):
+        required = (("typing", "Any"),)
+    return InferredHelper(annotated, required)
+
+
 def infer_missing_annotations(
     helper: ast.FunctionDef,
     sites: Sequence[ApplySite],
     host_file: str,
     return_variables: Sequence[str],
     inferrer: TypeInferrer,
-) -> ast.FunctionDef:
+) -> InferredHelper:
     """A copy of ``helper`` with bare parameters and return filled from a type inferrer.
 
     For each bare parameter, every site's argument expression is revealed at
@@ -413,7 +499,7 @@ def infer_missing_annotations(
     ]
     want_return = annotated.returns is None and bool(sites)
     if not bare and not want_return:
-        return annotated
+        return InferredHelper(annotated, ())
     requests: List[RevealRequest] = []
     return_probes: List[Tuple[str, int, int]] = []
     for site in sites:
@@ -444,7 +530,7 @@ def infer_missing_annotations(
     same_module = all(site.file_path == host_file for site in sites)
     for position, index in enumerate(bare):
         texts = [revealed.get((site.file_path, site.start_line, position)) for site in sites]
-        parameters[index].annotation = _agreed_revealed(texts, host, same_module)
+        parameters[index].annotation = _joined_revealed(texts, host, same_module)
     if want_return:
         texts = [
             revealed.get((path, line, offset))
@@ -452,10 +538,27 @@ def infer_missing_annotations(
             for offset in range(count)
         ]
         if return_variables and len(return_variables) > 1:
-            annotated.returns = _agreed_tuple(texts, len(return_variables), host, same_module)
+            annotated.returns = _joined_tuple(texts, len(return_variables), host, same_module)
         elif texts:
-            annotated.returns = _agreed_revealed(texts, host, same_module)
-    return annotated
+            annotated.returns = _joined_revealed(texts, host, same_module)
+    required: List[Tuple[str, str]] = []
+    written = [p.annotation for p in parameters if p.annotation is not None]
+    if annotated.returns is not None:
+        written.append(annotated.returns)
+    if any("Any" in _referenced_names(_unquoted(a)) for a in written) and (
+        host is None or "Any" not in _import_bound_names(host) | _defined_names(host)
+    ):
+        required.append(("typing", "Any"))
+    return InferredHelper(annotated, tuple(required))
+
+
+def _unquoted(annotation: ast.expr) -> ast.expr:
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            return ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return annotation
+    return annotation
 
 
 def _return_probes(
@@ -492,29 +595,26 @@ def textwrap_dedent(text: str) -> str:
     return textwrap.dedent(text)
 
 
-def _agreed_revealed(
+def _joined_revealed(
     texts: Sequence[Optional[str]], host: Optional[ast.Module], same_module: bool
 ) -> Optional[ast.expr]:
+    """The union of what mypy revealed at every site, when all of it can be written."""
     if not texts or any(text is None for text in texts):
         return None
     candidates = [annotation_from_revealed(cast_str(text), host, same_module) for text in texts]
     if any(candidate is None for candidate in candidates):
         return None
-    first = candidates[0]
-    assert first is not None
-    if any(ast.dump(candidate) != ast.dump(first) for candidate in candidates[1:]):  # type: ignore[arg-type]
-        return None
-    return first
+    return _joined([_unquoted(c) for c in candidates if c is not None], host, same_module, {"Any"})
 
 
-def _agreed_tuple(
+def _joined_tuple(
     texts: Sequence[Optional[str]], width: int, host: Optional[ast.Module], same_module: bool
 ) -> Optional[ast.expr]:
-    """``tuple[...]`` of the returned variables' types when every site agrees per position."""
+    """``tuple[...]`` of the returned variables' types, each joined across sites."""
     if len(texts) % width:
         return None
     columns = [texts[offset::width] for offset in range(width)]
-    elements = [_agreed_revealed(column, host, same_module) for column in columns]
+    elements = [_joined_revealed(column, host, same_module) for column in columns]
     if any(element is None for element in elements):
         return None
     return ast.Subscript(
