@@ -6,7 +6,8 @@ recursive-include test_examples_expected_output *.py
 recursive-include test_examples_crossfile *.py *.md
 recursive-include test_examples_crossfile_expected_output *.py
 recursive-include scripts *
-recursive-include .templates *.py *.md
+exclude scripts/_debug_global_case.py scripts/debug_pair.py
+prune .templates
 recursive-include docs *.md
 prune docs/docs_local
 prune .todo

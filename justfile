@@ -113,7 +113,7 @@ typecheck:
 
 # Security scan with bandit (CI form)
 security:
-    uv run --frozen bandit -r src/towel -ll
+    uv run --frozen bandit -r src/towel scripts -ll
 
 # All quality gates: formatting, lint, typing, security
 check: format-check lint typecheck security

@@ -374,7 +374,7 @@ types = [
 requires-dist = [
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.6" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.3.1" },
-    { name = "black", marker = "extra == 'format'", specifier = ">=24.1.0" },
+    { name = "black", marker = "extra == 'format'", specifier = ">=26.3.1" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0.0" },

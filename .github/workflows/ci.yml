@@ -21,7 +21,7 @@ jobs:
       - run: uv run --frozen black --check src/towel tests scripts
       - run: uv run --frozen flake8 src/towel scripts tests
       - run: uv run --frozen mypy
-      - run: uv run --frozen bandit -r src/towel -ll
+      - run: uv run --frozen bandit -r src/towel scripts -ll
       # Known-vulnerability scan of the locked dependency set; once, not per interpreter.
       - run: uv run --frozen pip-audit --strict
       - run: uv run --frozen python -m build

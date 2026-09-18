@@ -253,7 +253,7 @@ uv run --frozen flake8 src/towel scripts tests
 uv run --frozen mypy
 uv run --frozen coverage run -m pytest -q
 uv run --frozen coverage report --fail-under=85
-uv run --frozen bandit -r src/towel -ll
+uv run --frozen bandit -r src/towel scripts -ll
 uv run --frozen pip-audit --strict
 uv run --frozen python -m build
 ```
