@@ -697,3 +697,113 @@ def test_thunk_arguments_get_callable_annotations(tmp_path: Path) -> None:
     assert "Callable[[], int]" in _signature(result), _signature(result)
     assert "from typing import Callable" in result
     exec(compile(result, "<callable>", "exec"), {})
+
+
+pytest.importorskip("pyright")
+
+
+def _pyright_package(tmp_path: Path) -> tuple[Path, str]:
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    source = textwrap.dedent("""
+        from typing import Sequence
+
+        class Base: ...
+        class Box(Base): ...
+
+        def f(box: Box, xs: Sequence[int], n: int) -> None:
+            print(box, xs, n)
+        """)
+    module = package / "m.py"
+    module.write_text(source)
+    return module, source
+
+
+def test_pyright_oracle_reveals_types(tmp_path: Path) -> None:
+    from towel.type_inference import PyrightOracle
+
+    module, source = _pyright_package(tmp_path)
+    revealed = PyrightOracle().reveal(
+        [RevealRequest(str(module), source, 8, "    ", ("box", "Box", "n * 2.5", "lambda: n"))]
+    )
+    assert revealed[(str(module), 8, 0)] == "Box"
+    assert revealed[(str(module), 8, 1)] == "type[Box]"
+    assert revealed[(str(module), 8, 2)] == "float"
+    assert revealed[(str(module), 8, 3)] == "() -> int"
+    assert not list(module.parent.glob("_towel_probe_*")), "probe files are removed"
+
+
+def test_pyright_oracle_judges_subtypes_and_checks(tmp_path: Path) -> None:
+    from towel.type_inference import PyrightOracle
+
+    module, source = _pyright_package(tmp_path)
+    oracle = PyrightOracle()
+    assert oracle.is_subtype(
+        str(module), source, [("bool", "int"), ("int", "bool"), ("Box", "Base"), ("int", "Unknown")]
+    ) == [True, False, True, None]
+    assert oracle.check(str(module), source) == []
+    assert any(
+        "pyright" in message for message in oracle.check(str(module), source + "x: int = 'a'\n")
+    )
+
+
+def test_pyright_callable_spelling() -> None:
+    result = annotation_from_revealed("(x: int) -> str", ast.parse(""), True)
+    assert result is not None and ast.unparse(result) == "Callable[[int], str]"
+    result = annotation_from_revealed("() -> int", ast.parse(""), True)
+    assert result is not None and ast.unparse(result) == "Callable[[], int]"
+
+
+def test_checker_follows_the_projects_configuration(tmp_path: Path) -> None:
+    from towel.type_inference import (
+        CombinedOracle,
+        MypyInferrer,
+        PyrightOracle,
+        type_oracle_for_project,
+    )
+
+    (tmp_path / "pyproject.toml").write_text("[tool.pyright]\nstrict = []\n")
+    oracle, note = type_oracle_for_project(tmp_path / "m.py")
+    assert isinstance(oracle, PyrightOracle) and note == "pyright"
+    (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
+    oracle, note = type_oracle_for_project(tmp_path / "m.py")
+    assert isinstance(oracle, MypyInferrer) and note == "mypy"
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.mypy]\nstrict = true\n[tool.pyright]\nstrict = []\n"
+    )
+    oracle, note = type_oracle_for_project(tmp_path / "m.py")
+    assert isinstance(oracle, CombinedOracle) and note.startswith("mypy for inference")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    oracle, note = type_oracle_for_project(tmp_path / "m.py")
+    assert isinstance(oracle, MypyInferrer)
+
+
+def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
+    from towel.type_inference import PyrightOracle
+
+    (tmp_path / "pyproject.toml").write_text("[tool.pyright]\nstrict = []\n")
+    path = tmp_path / "m.py"
+    path.write_text(textwrap.dedent("""
+            class Box:
+                def __init__(self, value: int, name: str) -> None:
+                    self.value = value
+                    self.name = name
+
+            def first(box: Box) -> str:
+                scaled = box.value * 2
+                label = box.name.upper()
+                return label + str(scaled)
+
+            def second(box: Box) -> str:
+                scaled = box.value * 3
+                label = box.name.upper()
+                return label + str(scaled)
+            """))
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, type_inferrer=PyrightOracle()
+    )
+    proposals = engine.analyze_file(str(path))
+    assert proposals
+    result = engine.apply_refactoring(str(path), proposals[0])
+    assert _signature(result) == "def __extracted_func_0(__param_0: int, box: Box) -> str:"

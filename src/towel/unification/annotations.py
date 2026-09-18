@@ -438,7 +438,7 @@ def sites_use_annotations(sites: Sequence[CallSite]) -> bool:
 
 
 _LITERAL = re.compile(r"Literal\[(?P<value>[^\]]*)\]\??")
-_CALLABLE = re.compile(r"^def \((?P<params>.*)\) -> (?P<returns>.+)$")
+_CALLABLE = re.compile(r"^(?:def )?\((?P<params>.*)\) -> (?P<returns>.+)$")
 TYPING_NAMES = frozenset({"Any", "Callable"})
 """Names an inferred annotation may use that the host must import from ``typing``."""
 
@@ -505,7 +505,7 @@ def annotation_from_revealed(
         return None
     if text == "Any":
         return None  # what an unannotated parameter already means
-    if text.startswith("def "):
+    if text.startswith("def ") or text.startswith("("):
         spelled = _callable_spelling(text)
         if spelled is None:
             return None

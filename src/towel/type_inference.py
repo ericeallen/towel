@@ -29,9 +29,15 @@ when every name in them resolves where the helper is defined.
 
 from __future__ import annotations
 
+import configparser
 from dataclasses import dataclass
+import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
 from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
@@ -282,3 +288,223 @@ class MypyInferrer:
             if key is not None:
                 revealed[key] = match.group("type")
         return revealed
+
+
+class PyrightOracle:
+    """A ``TypeOracle`` backed by the pyright command.
+
+    Pyright reads files, so a probed copy of the module is written as a
+    temporary sibling (same package, so its imports resolve) and removed
+    afterwards. Raises ``ImportError`` at construction when pyright is not
+    installed; it is part of the ``types`` extra.
+    """
+
+    def __init__(self) -> None:
+        command = _pyright_command()
+        if command is None:
+            raise ImportError("pyright is not installed")
+        self._command: List[str] = command
+
+    def _diagnostics(self, file_path: str, text: str) -> List[Dict[str, object]]:
+        """Pyright's diagnostics for ``text`` standing in for ``file_path``."""
+        original = Path(file_path)
+        probe = original.with_name(f"_towel_probe_{os.getpid()}_{original.stem}.py")
+        probe.write_text(text, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                [*self._command, "--outputjson", str(probe)],
+                capture_output=True,
+                text=True,
+                cwd=str(original.parent),
+                check=False,
+            )
+        finally:
+            try:
+                probe.unlink()
+            except OSError:
+                pass
+        output = completed.stdout
+        start, end = output.find("{"), output.rfind("}")
+        if start < 0 or end < 0:
+            return []
+        try:
+            data = json.loads(output[start : end + 1])
+        except json.JSONDecodeError:
+            return []
+        diagnostics = data.get("generalDiagnostics", [])
+        return [d for d in diagnostics if isinstance(d, dict)]
+
+    @staticmethod
+    def _line(diagnostic: Dict[str, object]) -> int:
+        range_ = diagnostic.get("range", {})
+        start = range_.get("start", {}) if isinstance(range_, dict) else {}
+        return int(start.get("line", -1)) + 1 if isinstance(start, dict) else 0
+
+    def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        revealed: Dict[RevealKey, str] = {}
+        by_file: Dict[str, List[RevealRequest]] = {}
+        for request in requests:
+            by_file.setdefault(request.file_path, []).append(request)
+        for file_path, file_requests in by_file.items():
+            text = file_requests[0].source
+            ordered = sorted(file_requests, key=lambda request: request.line)
+            for request in reversed(ordered):
+                text, _ = _with_probes(
+                    RevealRequest(
+                        file_path, text, request.line, request.indent, request.expressions
+                    )
+                )
+            probe_lines: Dict[int, RevealKey] = {}
+            shift = 0
+            for request in ordered:
+                for index in range(len(request.expressions)):
+                    probe_lines[request.line + shift + index] = (file_path, request.line, index)
+                shift += len(request.expressions)
+            for diagnostic in self._diagnostics(file_path, text):
+                match = _PYRIGHT_REVEALED.match(str(diagnostic.get("message", "")))
+                key = probe_lines.get(self._line(diagnostic))
+                if match is not None and key is not None:
+                    revealed[key] = match.group("type")
+        return revealed
+
+    def is_subtype(
+        self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
+    ) -> Sequence[Optional[bool]]:
+        if not pairs:
+            return []
+        lines = source.splitlines(keepends=True)
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        base = len(lines)
+        probe_lines: List[str] = ["\n"]
+        signature_line: Dict[int, int] = {}
+        return_line: Dict[int, int] = {}
+        for index, (narrow, wide) in enumerate(pairs):
+            signature_line[base + len(probe_lines) + 1] = index
+            probe_lines.append(f"def __towel_probe_{index}(__towel_value: {narrow}) -> {wide}:\n")
+            return_line[base + len(probe_lines) + 1] = index
+            probe_lines.append("    return __towel_value\n")
+            probe_lines.append("\n")
+        verdicts: List[Optional[bool]] = [True] * len(pairs)
+        for diagnostic in self._diagnostics(file_path, "".join(lines) + "".join(probe_lines)):
+            if diagnostic.get("severity") != "error":
+                continue
+            line = self._line(diagnostic)
+            if line in signature_line:
+                verdicts[signature_line[line]] = None
+            elif line in return_line and verdicts[return_line[line]] is not None:
+                verdicts[return_line[line]] = False
+        return verdicts
+
+    def check(self, file_path: str, source: str) -> Sequence[str]:
+        return [
+            f"pyright: {diagnostic.get('rule') or ''}: {diagnostic.get('message', '')}"
+            for diagnostic in self._diagnostics(file_path, source)
+            if diagnostic.get("severity") == "error"
+        ]
+
+
+_PYRIGHT_REVEALED = re.compile(r'^Type of ".*" is "(?P<type>.*)"$', re.DOTALL)
+
+
+def _pyright_command() -> Optional[List[str]]:
+    executable = shutil.which("pyright")
+    if executable:
+        return [executable]
+    try:
+        import pyright  # noqa: F401
+    except ImportError:
+        return None
+    return [sys.executable, "-m", "pyright"]
+
+
+class CombinedOracle:
+    """Infers with one checker and verifies with every configured one."""
+
+    def __init__(self, primary: TypeOracle, others: Sequence[TypeOracle]) -> None:
+        self._primary = primary
+        self._all = [primary, *others]
+
+    def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        return self._primary.reveal(requests)
+
+    def is_subtype(
+        self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
+    ) -> Sequence[Optional[bool]]:
+        return self._primary.is_subtype(file_path, source, pairs)
+
+    def check(self, file_path: str, source: str) -> Sequence[str]:
+        messages: List[str] = []
+        for oracle in self._all:
+            messages.extend(oracle.check(file_path, source))
+        return messages
+
+
+def project_configures_mypy(root: Path) -> bool:
+    if any((root / name).is_file() for name in ("mypy.ini", ".mypy.ini")):
+        return True
+    if _has_ini_section(root / "setup.cfg", "mypy"):
+        return True
+    return _has_tool_section(root, "mypy")
+
+
+def project_configures_pyright(root: Path) -> bool:
+    return (root / "pyrightconfig.json").is_file() or _has_tool_section(root, "pyright")
+
+
+def _has_tool_section(root: Path, name: str) -> bool:
+    from .unification.project_layout import _load_pyproject
+
+    tool = _load_pyproject(root).get("tool", {})
+    return isinstance(tool, dict) and bool(tool.get(name))
+
+
+def _has_ini_section(path: Path, section: str) -> bool:
+    if not path.is_file():
+        return False
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(path, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeError):
+        return False
+    return parser.has_section(section)
+
+
+def type_oracle_for_project(path: Path) -> Tuple[Optional[TypeOracle], str]:
+    """The checker the project configures, and a note on what was chosen.
+
+    A project that configures mypy gets mypy; one that configures pyright
+    gets pyright; one that configures both infers with mypy and verifies
+    with both, so its own check stays green; one that configures neither
+    gets mypy when installed, else pyright. The note names any configured
+    checker that is not installed.
+    """
+    from .unification.project_layout import _find_project_root
+
+    root = _find_project_root(path)
+    wants_mypy = project_configures_mypy(root)
+    wants_pyright = project_configures_pyright(root)
+    mypy: Optional[TypeOracle] = None
+    pyright: Optional[TypeOracle] = None
+    notes: List[str] = []
+    if wants_mypy or not wants_pyright:
+        try:
+            mypy = MypyInferrer()
+        except ImportError:
+            if wants_mypy:
+                notes.append("mypy is configured but not installed")
+    if wants_pyright or mypy is None:
+        try:
+            pyright = PyrightOracle()
+        except ImportError:
+            if wants_pyright:
+                notes.append("pyright is configured but not installed")
+    if mypy is not None and pyright is not None:
+        return CombinedOracle(mypy, [pyright]), "; ".join(
+            ["mypy for inference, mypy and pyright for verification", *notes]
+        )
+    if mypy is not None:
+        return mypy, "; ".join(["mypy", *notes])
+    if pyright is not None:
+        return pyright, "; ".join(["pyright", *notes])
+    return None, "; ".join(notes) if notes else "neither mypy nor pyright is installed"

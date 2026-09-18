@@ -346,19 +346,19 @@ def _write_change_sidecar(engine: object, output: str) -> None:
     print(f"\nWrote call-site before/after to {sidecar} (for naming; safe to delete).")
 
 
-def _type_inferrer() -> Optional["TypeInferrer"]:
-    """mypy-backed inference, or None with a note when mypy is absent."""
-    from towel.type_inference import MypyInferrer
+def _type_inferrer(project_path: "Path") -> Optional["TypeInferrer"]:
+    """The checker the project configures (mypy, pyright, or both), or None with a note."""
+    from towel.type_inference import type_oracle_for_project
 
-    try:
-        return MypyInferrer()
-    except ImportError:
+    oracle, note = type_oracle_for_project(project_path)
+    if oracle is None:
         print(
-            "Note: mypy is not installed, so helper annotations are copied from the call "
-            'sites but not inferred. Install the types extra (pip install "code-towel[types]") '
-            "to infer them."
+            f"Note: {note}, so helper annotations are copied from the call sites but not "
+            'inferred or verified. Install the types extra (pip install "code-towel[types]").'
         )
-        return None
+    elif "not installed" in note:
+        print(f"Note: {note}.")
+    return oracle
 
 
 def _generated_code_formatter(project_path: "Path") -> Optional[Callable[[str], str]]:
@@ -444,7 +444,9 @@ def _run_dry(args: argparse.Namespace) -> None:
             None if getattr(args, "no_format", False) else _import_sorter(Path(input_path))
         ),
         annotate_helpers=not getattr(args, "no_types", False),
-        type_inferrer=None if getattr(args, "no_types", False) else _type_inferrer(),
+        type_inferrer=(
+            None if getattr(args, "no_types", False) else _type_inferrer(Path(input_path))
+        ),
     )
 
     # Use fixed-point iteration

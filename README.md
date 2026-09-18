@@ -41,9 +41,10 @@ configures ruff, else Black, at the line length the project declares) and any
 imports Towel adds are sorted with ruff's import rules or isort when the
 project uses them, all when installed (`pip install "code-towel[format]"`);
 `--no-format` turns that off. In annotated code the helper also carries the parameter and return
-annotations its call sites declare, and, when mypy is installed
-(`pip install "code-towel[types]"`), the types mypy infers for the rest;
-`--no-types` turns that off:
+annotations its call sites declare, and, when the project's type checker is
+installed (mypy or pyright; `pip install "code-towel[types]"`), the types it
+infers for the rest, verified against the checker; `--no-types` turns that
+off:
 
 ```python
 def __extracted_func_0(record):

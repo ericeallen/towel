@@ -62,6 +62,12 @@ ecosystem evidence behind each claim. The format follows
   and does not reason: unions are written unreduced and the meet needs
   identical declarations, since there is no second implementation of the
   subtype relation.
+- The type checker is the one the project configures: mypy for a project
+  with `[tool.mypy]` or `mypy.ini`, pyright for one with `[tool.pyright]` or
+  `pyrightconfig.json`, and for a project configuring both mypy infers while
+  both verify the generated code, so the project's own check stays green.
+  Pyright is run as a command on a temporary sibling copy of the module and
+  joins mypy in the `types` extra.
 - Thunk and callee arguments get `Callable` annotations from mypy's callable
   spelling (`Callable[[], int]`, `Callable[[int, str], bool]`,
   `Callable[..., T]`), with `from typing import Callable` added as needed.
