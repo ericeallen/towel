@@ -13,15 +13,33 @@ just test-smoke
 
 # Run a single test file
 uv run --frozen pytest tests/test_bindings.py
+
+# Coverage with the 85% gate (forked pair workers are traced; `combine` merges
+# their data files before the report)
+just coverage
+
+# Strict mypy over src/towel and tests/
+just typecheck
 ```
+
+The suite is type-checked with the same strict flags as the source; test
+functions and unittest methods need no signatures (the `tests.*` override in
+`pyproject.toml`), and every `# type: ignore` must be needed and name its
+error code.
 
 ## Test Structure
 
 ### Unit Tests (`tests/`)
 
-The suite is over a hundred `test_*.py` files. Rather than list them all (they
-change often), here is how they group by concern, with a representative file
-for each:
+The suite is 126 `test_*.py` files holding 1,978 tests and 34 subtests (about
+70 s; counts as of this writing). Rather than list them all (they change
+often), here is how they group by concern, with a representative file for
+each. Small helpers the tests share (parsing a dedented block, fixing
+synthesized positions, taking a module's functions by name, writing a module
+into `tmp_path`, running the engine to a fixed point with its output
+silenced, the `EngineOptions` a test may forward) live in `test_helpers.py`,
+which is strictly typed; `conftest.py` only keeps pytest from collecting the
+example corpora and scratch output directories.
 
 - **Binding & scope** — `test_bindings.py`, `test_binding_detector.py`,
   `test_definite_assignment.py`: alpha-renaming, comprehension and loop
@@ -63,7 +81,10 @@ for each:
   `test_incremental_global_passes.py` (byte-identical `dry` output with
   incremental global passes on and off).
 - **Command line** — `test_cli_integration.py`: real `towel` runs, the
-  `--x/--no-x` option pairs and their hidden aliases.
+  `--x/--no-x` option pairs and their hidden aliases;
+  `test_cli_dispatch_paths.py`: the `recover` subcommand and its error exit,
+  the JSON helper listing, a run that finds nothing, and the confirmation an
+  input without a `.py` suffix requires.
 - **Hostile batteries** — `test_hostile_battery.py` executes every fixture
   in `hostile_cases/` (numbered `h*` and `r*`) before and after fixed-point
   refactoring and asserts identical output; its `TRANSFORMED` set names the
@@ -87,18 +108,25 @@ for each:
   insertion points) driven through its public surface.
 - **Boundaries and seams** — `test_filesystem_guards.py`,
   `test_lazy_engine_import.py`, `test_function_index.py`,
-  `test_source_encoding.py`, `test_unsupported_layout.py`: the refusals of
-  the atomic project copy, the lazy engine import, the per-analysis
-  function index, byte-convention preservation, and a layout Towel cannot
-  model.
+  `test_source_encoding.py`, `test_unsupported_layout.py`,
+  `test_symlinked_input_directory.py`: the refusals of the atomic project
+  copy, the lazy engine import, the per-analysis function index,
+  byte-convention preservation, a layout Towel cannot model, and a symlinked
+  input directory (followed, while links inside it are copied as links and
+  never analyzed or rewritten). `test_analysis_edge_paths.py` holds the
+  smaller analysis branches driven one at a time: the `nonlocal` scan without
+  a scope analyzer, differing f-string format specs, `try` blocks of imports
+  ahead of a helper, attribute reflection, keyword-passed callables, the
+  validation trace, and mypy configuration in `setup.cfg`.
 - **Error paths and recovery** — `test_robustness_paths.py`,
   `test_error_paths.py`, `test_recovery_journal.py`,
   `test_stale_proposal_recovery.py`, `test_parallel_evaluation.py`,
-  `test_semantic_guard_traces.py`: tool failures and timeouts, the
-  command line's error exits and JSON contract, every guard of the
-  recovery journal with a Hypothesis round trip, a proposal that goes stale
-  mid-run, the forked pool against the serial path, and the rejection
-  reasons reached by name.
+  `test_parent_watchdog.py`, `test_semantic_guard_traces.py`: tool failures
+  and timeouts, the command line's error exits and JSON contract, every
+  guard of the recovery journal with a Hypothesis round trip, a proposal
+  that goes stale mid-run, the forked pool against the serial path, workers
+  ending when their parent is killed, and the rejection reasons reached by
+  name.
 
 ### Test Examples (`test_examples/`, at the repository root)
 
@@ -164,5 +192,8 @@ The test suite covers:
 
 ## Current Status
 
-The full suite passes; run `just coverage` to reproduce the enforced 85%
-coverage gate.
+The full suite passes; `just coverage` reproduces the enforced 85% gate
+(93% of `src/towel` as of this writing). Coverage traces the forked pair
+workers and their watchdog threads, so `src/towel/unification/parallel.py`
+is measured like any other module; each process writes its own data file and
+`coverage combine` runs before the report.
