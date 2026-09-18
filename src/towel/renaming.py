@@ -659,9 +659,6 @@ class _ModulePlanner:
         self.local_renames = {
             old: new for (name, old), new in selected.items() if name == module.name
         }
-        self.package = (
-            module.name if module.path.name == "__init__.py" else module.name.rpartition(".")[0]
-        )
 
     def plan(self) -> _Edits:
         for node in ast.walk(self.module.tree):
@@ -705,19 +702,9 @@ class _ModulePlanner:
                 scope, local, alias.name if alias.asname else alias.name.split(".")[0]
             )
 
-    def _import_origin(self, node: ast.ImportFrom) -> str:
-        if not node.level:
-            return node.module or ""
-        parts = self.package.split(".") if self.package else []
-        if node.level > len(parts):
-            raise ValueError(f"Unresolved relative import in {self.module.path}")
-        return ".".join(
-            parts[: len(parts) - node.level + 1] + ([node.module] if node.module else [])
-        )
-
     def _plan_import_from(self, node: ast.ImportFrom) -> None:
         scope = self.scopes.nodes[node]
-        origin = self._import_origin(node)
+        origin = _import_origin(self.module, node)
         if any(alias.name == "*" for alias in node.names) and any(
             name == origin for name, _ in self.selected
         ):

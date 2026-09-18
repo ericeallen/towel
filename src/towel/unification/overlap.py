@@ -24,7 +24,7 @@ a fixed-point run reproduces itself.
 
 from __future__ import annotations
 
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, NamedTuple
 
 from ..diagnostics import OVERLAP, debugging
 from .models import RefactoringProposal
@@ -64,6 +64,71 @@ def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
     return affected
 
 
+def _proposal_size(proposal: RefactoringProposal) -> int:
+    """Total lines a proposal covers, counting a reused definition as covered."""
+    return len(get_affected_lines(proposal))
+
+
+def _first_span(proposal: RefactoringProposal) -> Tuple[str, int]:
+    """Where a proposal starts, for deterministic ordering among equals."""
+    if not proposal.replacements:
+        return (proposal.file_path, 0)
+    return (proposal.file_path, min(r.line_range[0] for r in proposal.replacements))
+
+
+class _Interval(NamedTuple):
+    """One single-file proposal as an interval for weighted interval scheduling."""
+
+    start: int
+    end: int
+    weight: int
+    position: int
+    tiebreak: Tuple[str, int]
+
+
+def _weighted_interval_schedule(intervals: List[_Interval]) -> Tuple[List[int], int]:
+    """The maximum-weight set of non-overlapping intervals, as proposal indices, and its weight.
+
+    Classic weighted interval scheduling: intervals sorted by end, ``p[j]`` the
+    rightmost interval ending before ``j`` starts, a table over prefixes, and a
+    reconstruction; ties keep the earlier-ending set.
+    """
+    items = sorted(intervals, key=lambda t: (t.end, t.start, -t.weight, t.tiebreak))
+    n = len(items)
+    if n == 0:
+        return [], 0
+    ends = [it.end for it in items]
+    starts = [it.start for it in items]
+    p = [-1] * n
+    for j in range(n):
+        lo, hi, last = 0, j - 1, -1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if ends[mid] < starts[j]:
+                last = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        p[j] = last
+    dp = [0] * n
+    take = [False] * n
+    for j in range(n):
+        without = dp[j - 1] if j > 0 else 0
+        withj = items[j].weight + (dp[p[j]] if p[j] != -1 else 0)
+        take[j] = withj > without
+        dp[j] = withj if take[j] else without
+    chosen: List[int] = []
+    j = n - 1
+    while j >= 0:
+        if take[j]:
+            chosen.append(items[j].position)
+            j = p[j]
+        else:
+            j -= 1
+    chosen.reverse()
+    return chosen, dp[n - 1]
+
+
 def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[RefactoringProposal]:
     """
     Filter proposals to remove overlaps, keeping the best ones.
@@ -73,8 +138,10 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
     lines) are preferred over smaller ones.
 
     Strategy:
-    1. Sort proposals by size (total lines affected), largest first
-    2. Greedily select proposals that don't overlap with already-selected ones
+    1. Within each file, single-file proposals are chosen optimally by
+       weighted interval scheduling over their line hulls, weight = size.
+    2. The remaining proposals (multi-file or displaced) are added greedily,
+       largest first, when they touch no line already taken.
 
     Args:
         proposals: List of refactoring proposals
@@ -88,144 +155,60 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
     """
     if not proposals:
         return []
+    debug_overlap = debugging(OVERLAP)
 
-    def proposal_size(p: RefactoringProposal) -> int:
-        """Total lines a proposal covers, counting a reused definition as covered."""
-        return len(get_affected_lines(p))
-
-    # Optional debug diagnostics: env flag
-    _debug_overlap = debugging(OVERLAP)
-
-    # Helpers for deterministic ordering and interval extraction
-    def first_span(p: RefactoringProposal) -> Tuple[str, int]:
-        if not p.replacements:
-            return (p.file_path, 0)
-        starts = [r.line_range[0] for r in p.replacements]
-        return (p.file_path, min(starts))
-
-    # Map proposals to affected lines and per-file convex-hull intervals
+    # Affected lines, files, and per-file convex hulls, per proposal
     prop_affected: Dict[int, Set[Tuple[str, int]]] = {}
-    prop_files: Dict[int, Set[str]] = {}
     per_file_interval: Dict[int, Dict[str, Tuple[int, int]]] = {}
-
-    for idx, p in enumerate(proposals):
-        affected = get_affected_lines(p)
+    by_primary_file: Dict[str, List[int]] = {}
+    for idx, proposal in enumerate(proposals):
+        affected = get_affected_lines(proposal)
         prop_affected[idx] = affected
-        files: Set[str] = set(fp for (fp, _ln) in affected)
-        prop_files[idx] = files
-        per_file_interval[idx] = {}
-        # Build convex hull interval per file for MWIS approximation
         by_file: Dict[str, List[int]] = {}
         for fp, ln in affected:
             by_file.setdefault(fp, []).append(ln)
-        for fp, lines in by_file.items():
-            per_file_interval[idx][fp] = (min(lines), max(lines))
+        per_file_interval[idx] = {fp: (min(lines), max(lines)) for fp, lines in by_file.items()}
+        if len(by_file) == 1:
+            by_primary_file.setdefault(next(iter(by_file)), []).append(idx)
 
-    # Stage 1: Optimal non-overlapping selection within single-file proposals using MWIS
+    # Stage 1: optimal selection among single-file proposals, per file
     selected_indices: Set[int] = set()
     used_lines: Set[Tuple[str, int]] = set()
-
-    # Group single-file proposals by that file
-    by_primary_file: Dict[str, List[int]] = {}
-    for idx, files in prop_files.items():
-        if len(files) == 1:
-            fp = next(iter(files))
-            by_primary_file.setdefault(fp, []).append(idx)
-
-    def run_weighted_interval_scheduling(file_path: str, indices: List[int]) -> List[int]:
-        # Build items: (start, end, weight, idx)
-        items: List[Tuple[int, int, int, int, Tuple[str, int]]] = []
-        for idx in indices:
-            start, end = per_file_interval[idx][file_path]
-            weight = proposal_size(proposals[idx])
-            items.append((start, end, weight, idx, first_span(proposals[idx])))
-
-        # Sort by end then tie-breaker to stabilize
-        items.sort(key=lambda t: (t[1], t[0], -t[2], t[4]))
-
-        n = len(items)
-        if n == 0:
-            return []
-
-        # Precompute p[j]: rightmost non-overlapping interval index before j
-        ends = [it[1] for it in items]
-        starts = [it[0] for it in items]
-        p = [-1] * n
-        j = 0
-        for j in range(n):
-            # binary search for last i with ends[i] < starts[j]
-            lo, hi = 0, j - 1
-            last = -1
-            while lo <= hi:
-                mid = (lo + hi) // 2
-                if ends[mid] < starts[j]:
-                    last = mid
-                    lo = mid + 1
-                else:
-                    hi = mid - 1
-            p[j] = last
-
-        # DP arrays
-        dp = [0] * n
-        take = [False] * n
-        for j in range(n):
-            wj = items[j][2]
-            without = dp[j - 1] if j > 0 else 0
-            withj = wj + (dp[p[j]] if p[j] != -1 else 0)
-            if withj > without:
-                dp[j] = withj
-                take[j] = True
-            elif withj == without:
-                # Tie-breaker: prefer earlier ending interval set implicitly
-                dp[j] = without
-                take[j] = False
-            else:
-                dp[j] = without
-                take[j] = False
-
-        # Reconstruct
-        sel: List[int] = []
-        j = n - 1
-        while j >= 0:
-            if take[j]:
-                sel.append(items[j][3])
-                j = p[j]
-            else:
-                j -= 1
-        sel.reverse()
-        if _debug_overlap:
+    for fp, idxs in by_primary_file.items():
+        intervals = [
+            _Interval(
+                *per_file_interval[idx][fp],
+                _proposal_size(proposals[idx]),
+                idx,
+                _first_span(proposals[idx]),
+            )
+            for idx in idxs
+        ]
+        chosen, total_weight = _weighted_interval_schedule(intervals)
+        if debug_overlap:
             OVERLAP.debug(
                 "OVERLAP_OPTIMAL file=%s selected=%d total_weight=%s candidates=%d",
-                file_path,
-                len(sel),
-                dp[n - 1],
-                n,
+                fp,
+                len(chosen),
+                total_weight,
+                len(intervals),
             )
-        return sel
-
-    for fp, idxs in by_primary_file.items():
-        chosen = run_weighted_interval_scheduling(fp, idxs)
         for idx in chosen:
             if idx not in selected_indices:
                 selected_indices.add(idx)
                 used_lines.update(prop_affected[idx])
 
-    # Stage 2: Greedy add for remaining proposals (multi-file or leftover), respecting used_lines
-    def sort_key(p: RefactoringProposal) -> Tuple[int, Tuple[str, int]]:
-        return (-(proposal_size(p)), first_span(p))
-
+    # Stage 2: greedy add for the rest (multi-file or displaced), largest first
     remaining = [i for i in range(len(proposals)) if i not in selected_indices]
-    remaining_sorted = sorted(remaining, key=lambda i: sort_key(proposals[i]))
-
+    remaining.sort(key=lambda i: (-_proposal_size(proposals[i]), _first_span(proposals[i])))
     selected: List[RefactoringProposal] = [proposals[i] for i in selected_indices]
-
-    for idx in remaining_sorted:
+    for idx in remaining:
         affected = prop_affected[idx]
         intersection = affected & used_lines
         if not intersection:
             selected.append(proposals[idx])
             used_lines.update(affected)
-        elif _debug_overlap:
+        elif debug_overlap:
             by_file2: Dict[str, List[int]] = {}
             for fp, ln in intersection:
                 by_file2.setdefault(fp, []).append(ln)
@@ -235,10 +218,10 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
             ]
             OVERLAP.debug(
                 "OVERLAP_DROP: size=%s first=%s because intersects %s",
-                proposal_size(proposals[idx]),
-                first_span(proposals[idx]),
+                _proposal_size(proposals[idx]),
+                _first_span(proposals[idx]),
                 "; ".join(parts),
             )
 
     # Return selected sorted by size descending for external stability
-    return sorted(selected, key=lambda p: (-(proposal_size(p)), first_span(p)))
+    return sorted(selected, key=lambda p: (-_proposal_size(p), _first_span(p)))

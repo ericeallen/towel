@@ -37,6 +37,12 @@ else:
     import tomli as tomllib
 
 
+def _table(mapping: object, key: str) -> Dict[str, Any]:
+    """``mapping[key]`` when both are tables, else an empty table; TOML is checked, never trusted."""
+    value = mapping.get(key, {}) if isinstance(mapping, dict) else {}
+    return value if isinstance(value, dict) else {}
+
+
 def load_pyproject(project_root: Path) -> Dict[str, Any]:
     """Best-effort load of pyproject.toml using the available TOML parser.
 
@@ -123,10 +129,10 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
             "Hatch layout in hatch.toml is unsupported; cannot infer safe imports"
         )
     tool = data.get("tool", {})
-    hatch = tool.get("hatch", {}) if isinstance(tool, dict) else {}
-    build = hatch.get("build", {}) if isinstance(hatch, dict) else {}
-    targets = build.get("targets", {}) if isinstance(build, dict) else {}
-    wheel = targets.get("wheel", {}) if isinstance(targets, dict) else {}
+    hatch = _table(tool, "hatch")
+    build = _table(hatch, "build")
+    targets = _table(build, "targets")
+    wheel = _table(targets, "wheel")
     if not isinstance(build, dict) or not isinstance(wheel, dict):
         raise UnsupportedLayoutError("Invalid Hatch wheel configuration")
     for key in ("include", "force-include"):
@@ -213,8 +219,8 @@ def _flit_source_roots(project_root: Path, data: Dict[str, Any]) -> List[Path]:
     then under ``src``. The module's parent is therefore the import root.
     """
     tool = data.get("tool", {})
-    flit = tool.get("flit", {}) if isinstance(tool, dict) else {}
-    module = flit.get("module", {}) if isinstance(flit, dict) else {}
+    flit = _table(tool, "flit")
+    module = _table(flit, "module")
     name = module.get("name") if isinstance(module, dict) else None
     if name is None:
         project = data.get("project", {})
@@ -240,7 +246,7 @@ def _poetry_source_roots(project_root: Path, data: Mapping[str, object]) -> List
     ``src``.
     """
     tool = data.get("tool", {})
-    poetry = tool.get("poetry", {}) if isinstance(tool, dict) else {}
+    poetry = _table(tool, "poetry")
     if not isinstance(poetry, dict):
         raise UnsupportedLayoutError("Invalid Poetry configuration")
     packages = poetry.get("packages")
@@ -297,8 +303,8 @@ def _pdm_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Pa
     files without moving them, so they leave the import root alone.
     """
     tool = data.get("tool", {})
-    pdm = tool.get("pdm", {}) if isinstance(tool, dict) else {}
-    build = pdm.get("build", {}) if isinstance(pdm, dict) else {}
+    pdm = _table(tool, "pdm")
+    build = _table(pdm, "build")
     if not isinstance(build, dict):
         raise UnsupportedLayoutError("Invalid pdm build configuration")
     package_dir = build.get("package-dir")
@@ -322,7 +328,7 @@ def _project_names(data: Mapping[str, object]) -> List[str]:
     tool = data.get("tool", {})
     if isinstance(tool, dict):
         flit = tool.get("flit", {})
-        module = flit.get("module", {}) if isinstance(flit, dict) else {}
+        module = _table(flit, "module")
         if isinstance(module, dict) and isinstance(module.get("name"), str):
             names.append(module["name"])
         poetry = tool.get("poetry", {})
@@ -432,8 +438,8 @@ class ProjectLayout:
 
         package_prefixes: Dict[Path, str] = {}
         tool = data.get("tool", {})
-        setuptools = tool.get("setuptools", {}) if isinstance(tool, dict) else {}
-        mapping = setuptools.get("package-dir", {}) if isinstance(setuptools, dict) else {}
+        setuptools = _table(tool, "setuptools")
+        mapping = _table(setuptools, "package-dir")
         # ``[tool.setuptools]`` is meaningful only under setuptools (or an
         # undeclared backend, which defaults to setuptools); a foreign backend's
         # incidental setuptools table is not trusted.

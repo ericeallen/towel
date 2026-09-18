@@ -51,6 +51,7 @@ import sys
 import tempfile
 from enum import Enum
 from typing import (
+    Any,
     Dict,
     Iterable,
     Iterator,
@@ -68,6 +69,9 @@ from typing import (
 from .diagnostics import LOG
 from .project_tools import ToolChoice
 from .project_layout import find_project_root, load_pyproject
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from mypy.build import BuildSource
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mypy.options import Options
@@ -206,6 +210,15 @@ def _verdicts_from_error_lines(
     return verdicts
 
 
+def _mypy() -> Tuple[Any, Any, Any]:
+    """mypy's build module, its BuildSource and its CompileError, imported on first use."""
+    from mypy import build
+    from mypy.build import BuildSource
+    from mypy.errors import CompileError
+
+    return build, BuildSource, CompileError
+
+
 class MypyInferrer:
     """A ``TypeOracle`` backed by mypy's in-process build.
 
@@ -247,19 +260,16 @@ class MypyInferrer:
         One probe function per pair is appended to an in-memory copy of the
         module (see :func:`_subtype_probes`); mypy's error lines give the verdicts.
         """
-        from mypy import build
-        from mypy.build import BuildSource
-        from mypy.errors import CompileError
-
+        build, build_source, compile_error = _mypy()
         if not pairs:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
         module, root = _module_name_and_root(Path(file_path))
         try:
             result = build.build(
-                sources=[BuildSource(file_path, module, text)], options=self._options([str(root)])
+                sources=[build_source(file_path, module, text)], options=self._options([str(root)])
             )
-        except CompileError:
+        except compile_error:
             return [Subtyping.UNKNOWN] * len(pairs)
         error_lines = [
             int(match.group("line"))
@@ -274,16 +284,14 @@ class MypyInferrer:
         Positions are stripped so two versions of a file can be compared for
         new errors regardless of where lines moved.
         """
-        from mypy import build
-        from mypy.build import BuildSource
-        from mypy.errors import CompileError
-
+        build, build_source, compile_error = _mypy()
         module, root = _module_name_and_root(Path(file_path))
         try:
             result = build.build(
-                sources=[BuildSource(file_path, module, source)], options=self._options([str(root)])
+                sources=[build_source(file_path, module, source)],
+                options=self._options([str(root)]),
             )
-        except CompileError as error:
+        except compile_error as error:
             return [line for line in error.messages if "error:" in line]
         messages: List[str] = []
         for message in result.errors:
@@ -294,10 +302,7 @@ class MypyInferrer:
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         """Reveal each request through one mypy build per module, probes appended in memory."""
-        from mypy import build
-        from mypy.build import BuildSource
-        from mypy.errors import CompileError
-
+        build, build_source, compile_error = _mypy()
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
             by_file.setdefault(request.file_path, []).append(request)
@@ -327,14 +332,14 @@ class MypyInferrer:
                 for index, line in enumerate(lines):
                     probe_lines[(file_path, line)] = (file_path, request.line, index)
             module, root = _module_name_and_root(Path(file_path))
-            sources.append(BuildSource(file_path, module, text))
+            sources.append(build_source(file_path, module, text))
             if str(root) not in roots:
                 roots.append(str(root))
         if not sources:
             return {}
         try:
             result = build.build(sources=sources, options=self._options(roots))
-        except CompileError as error:
+        except compile_error as error:
             LOG.warning("mypy could not build %s; no types inferred there: %s", roots, error)
             return {}
         revealed: Dict[RevealKey, str] = {}
@@ -352,12 +357,17 @@ _PENDING_PROBES: "set[Path]" = set()
 """Probe files not yet removed; an interpreter exit removes them, a kill cannot."""
 
 
+def _unlink_quietly(path: Path) -> None:
+    """Remove ``path`` if it is still there; a probe that is already gone is fine."""
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def _remove_pending_probes() -> None:
     for probe in list(_PENDING_PROBES):
-        try:
-            probe.unlink()
-        except OSError:
-            pass
+        _unlink_quietly(probe)
         _PENDING_PROBES.discard(probe)
 
 
@@ -384,10 +394,7 @@ def _probe_file(original: Path, text: str) -> Iterator[Path]:
             handle.write(text)
         yield probe
     finally:
-        try:
-            probe.unlink()
-        except OSError:
-            pass
+        _unlink_quietly(probe)
         _PENDING_PROBES.discard(probe)
 
 

@@ -291,9 +291,7 @@ class Materialization(EngineState):
         """Insert the helper into the canonical file's ``lines`` where the proposal places it."""
         # Names an inferred annotation needs that the module does not bind.
         for module_name, name in proposal.required_imports:
-            required_line = f"from {module_name} import {name}\n"
-            if not any(required_line.strip() == ln.strip() for ln in lines):
-                lines.insert(self._find_import_position(lines), required_line)
+            self._ensure_import(lines, module_name, name)
         if proposal.insert_into_function:
             self._insert_helper_into_function(proposal, lines)
         elif proposal.insert_into_class:
@@ -390,7 +388,11 @@ class Materialization(EngineState):
             module_name = relative
         else:
             module_name = abs_mod or from_path.stem
-        import_line = f"from {module_name} import {proposal.extracted_function.name}\n"
+        self._ensure_import(lines, module_name, proposal.extracted_function.name)
+
+    def _ensure_import(self, lines: List[str], module_name: str, name: str) -> None:
+        """Add ``from module_name import name`` at the import position unless a line already says so."""
+        import_line = f"from {module_name} import {name}\n"
         if not any(import_line.strip() == ln.strip() for ln in lines):
             lines.insert(self._find_import_position(lines), import_line)
 
