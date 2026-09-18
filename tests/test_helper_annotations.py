@@ -378,3 +378,33 @@ def test_subscripted_annotations_are_quoted_unless_known_generic(tmp_path: Path)
         == "def __extracted_func_0(items: list[int], seq: Sequence[int], view: 'memoryview[int]') -> None:"
     )
     exec(compile(result, "<generic>", "exec"), {})
+
+
+def test_a_union_of_forward_references_is_one_quoted_string(tmp_path: Path) -> None:
+    # Two sites pass classes defined below the helper's position; the union
+    # must not be ``'Left' | 'Right'``, which is a TypeError at definition.
+    result = _refactor(
+        tmp_path,
+        """
+        def configure() -> None:
+            pass
+
+        configure()
+
+        def first(item: Left) -> None:
+            total = item.value * 2
+            print(total, item)
+
+        def second(item: Right) -> None:
+            total = item.value * 2
+            print(total, item)
+
+        class Left:
+            value = 1
+
+        class Right:
+            value = 2
+        """,
+    )
+    assert _signature(result) == "def __extracted_func_0(item: 'Left | Right') -> None:"
+    exec(compile(result, "<union>", "exec"), {})

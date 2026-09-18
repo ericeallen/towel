@@ -329,8 +329,12 @@ def _joined(
         as_written = _spelled_for_host(copy.deepcopy(first), host, same_module, extra_bound)
         if as_written is not None:
             return as_written
+    # A quoted member (a forward reference) cannot be joined with ``|`` at
+    # runtime: unquote every member and let the whole union be spelled, and
+    # quoted as one string if any of its names needs it.
     members = normalize_union(
-        [m for candidate in present for m in _union_or_optional_members(candidate)], subtypes
+        [m for candidate in present for m in _union_or_optional_members(_unquoted(candidate))],
+        subtypes,
     )
     union = members[0]
     for member in members[1:]:

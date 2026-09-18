@@ -391,6 +391,31 @@ def _module_files_relocated(roots: FrozenSet[Path], components: Sequence[str]) -
     return files
 
 
+def _package_tree_root(module: Path) -> Path:
+    """The topmost package directory containing ``module``."""
+    directory = module.parent
+    while (directory.parent / "__init__.py").is_file() and directory.parent != directory:
+        directory = directory.parent
+    return directory
+
+
+def _suffix_in_tree(tree_root: Path, components: Sequence[str]) -> Set[Path]:
+    """Files a dotted import resolves to inside the file's own package tree by suffix.
+
+    ``sphinx.transforms.x`` from a file under a relocated ``sphinx-cleaned``
+    resolves to ``transforms/x.py`` there; the dropped leading components
+    are the package itself, whose initializer runs with the import.
+    """
+    parts = list(components)
+    if not (tree_root / "__init__.py").is_file():
+        return set()
+    for start in range(1, len(parts)):
+        found = _module_files(tree_root, parts[start:])
+        if found:
+            return set(found) | {(tree_root / "__init__.py").resolve()}
+    return set()
+
+
 def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[Path]]:
     """Local modules ``current`` imports, or None when its imports cannot be inspected."""
     try:
@@ -406,10 +431,18 @@ def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[P
         _IMPORT_EDGES[key] = None
         return None
     dependencies: Set[Path] = set()
+    # The tree the file lives in, for resolving its own package's absolute
+    # imports by suffix even when a full-path match exists elsewhere: an
+    # out-of-place output sits beside the original clone (sphinx-cleaned next
+    # to sphinx), and ``from sphinx.transforms import X`` resolved to the
+    # original, where the helper import did not yet exist, so the cycle it
+    # closed in the copy went unseen.
+    tree_root = _package_tree_root(current)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 dependencies.update(_module_files_relocated(roots, alias.name.split(".")))
+                dependencies.update(_suffix_in_tree(tree_root, alias.name.split(".")))
         elif isinstance(node, ast.ImportFrom):
             components = node.module.split(".") if node.module else []
             if node.level:
@@ -436,11 +469,13 @@ def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[P
                     dependencies.add(initializer.resolve())
             else:
                 dependencies.update(_module_files_relocated(roots, components))
+                dependencies.update(_suffix_in_tree(tree_root, components))
                 for alias in node.names:
                     if alias.name != "*":
                         dependencies.update(
                             _module_files_relocated(roots, [*components, alias.name])
                         )
+                        dependencies.update(_suffix_in_tree(tree_root, [*components, alias.name]))
     frozen = frozenset(dependencies)
     _IMPORT_EDGES[key] = frozen
     return frozen

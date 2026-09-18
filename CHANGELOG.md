@@ -124,6 +124,15 @@ ecosystem evidence behind each claim. The format follows
   initializer, which the submodule then imported half-initialized
   (beautifulsoup4's tests package). The initializer, which the submodule
   already imports, is now the host.
+- The import-cycle guard resolves a file's own package's absolute imports
+  inside the tree being refactored, by suffix, even when a full-path match
+  exists elsewhere: an out-of-place output beside the original clone
+  (`sphinx-cleaned` next to `sphinx`) had `from sphinx.transforms import X`
+  resolved against the original, where the helper import that closed the
+  cycle did not exist, and sphinx's transforms package broke on import.
+- A union of forward references is written as one string (`'Left | Right'`),
+  not as `'Left' | 'Right'`, which is a TypeError at definition (Towel's own
+  suite, refactored by Towel).
 - Definite-assignment analysis now knows that `except E as name` deletes
   `name` when the handler exits, and that a `del` nested in a branch unbinds
   its target on that path. The returned-variable check relies on this; without
