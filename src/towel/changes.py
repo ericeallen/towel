@@ -160,7 +160,10 @@ def apply_changes(plan: ChangePlan) -> None:
     if any(change.path.stat().st_dev != root.stat().st_dev for change in plan.changes):
         raise ChangeConflict("A transaction cannot span filesystems")
     journal = root / ".towel-transaction-active"
-    journal.mkdir(mode=0o700)
+    try:
+        journal.mkdir(mode=0o700)
+    except FileExistsError as error:
+        raise RecoveryRequired(f"Another transaction is in progress: {journal}") from error
     ready = False
     try:
         records = []
@@ -225,7 +228,10 @@ def recover(journal: Path) -> None:
         _cleanup(journal)
         return
     _safe_target(manifest)
-    records: object = json.loads(manifest.read_text(encoding="utf-8"))
+    try:
+        records: object = json.loads(manifest.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeError) as error:
+        raise ChangeConflict(f"Invalid transaction manifest: {error}") from error
     if not isinstance(records, list):
         raise ChangeConflict("Invalid transaction manifest")
     originals: list[tuple[Path, bytes, int, str]] = []

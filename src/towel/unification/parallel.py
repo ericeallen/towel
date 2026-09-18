@@ -33,7 +33,7 @@ import sys
 import threading
 import time
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Iterable
 from .models import ClassInfo, CodeBlockPair, FunctionArtifact, RefactoringProposal
 from concurrent.futures import ProcessPoolExecutor
 from ..diagnostics import LOG
@@ -125,10 +125,10 @@ class ParallelEvaluation(EngineState):
 
     def _parallel_workers(self) -> int:
         """Worker processes to use, or 1 when pair evaluation must stay serial."""
-        if self._settings.workers is not None:
-            return self._settings.workers
         if "fork" not in multiprocessing.get_all_start_methods():
             return 1
+        if self._settings.workers is not None:
+            return self._settings.workers
         workers = max(1, os.cpu_count() or 1)
         return max(1, min(workers, self._workers_that_fit_in_memory()))
 
@@ -251,14 +251,18 @@ class ParallelEvaluation(EngineState):
         per_pair = (time.monotonic() - started) / max(1, len(probe))
         probed_indices = set(probe)
         cold = [index for index in cold if index not in probed_indices]
-        if per_pair * len(cold) < self.PARALLEL_MIN_PROJECTED_SECONDS:
-            for index in cold:
+
+        def finish_serially(indices: Iterable[int]) -> List[RefactoringProposal]:
+            for index in indices:
                 serial_proposal = self._try_refactor_pair_multi_file(
                     block_pairs[index], all_functions, class_infos
                 )
                 if serial_proposal is not None:
                     results[index] = serial_proposal
             return [results[index] for index in sorted(results)]
+
+        if per_pair * len(cold) < self.PARALLEL_MIN_PROJECTED_SECONDS:
+            return finish_serially(cold)
         chunk_count = workers * 4
         chunk_size = max(1, -(-len(cold) // chunk_count))
         chunks = [
@@ -282,11 +286,11 @@ class ParallelEvaluation(EngineState):
                 for _bounds, accepted in zip(chunks, executor.map(_evaluate_pair_chunk, chunks)):
                     for index, proposal in accepted:
                         results[index] = proposal
-        except (BrokenProcessPool, OSError, RuntimeError) as error:
-            LOG.warning("Parallel pair evaluation unavailable (%s); evaluating serially", error)
-            return self._evaluate_pairs_serial(
-                block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
-            )
+        except (BrokenProcessPool, OSError) as error:
+            # A pool that cannot be started or that lost a worker; anything a
+            # worker raised itself propagates, since it is a bug to fix.
+            LOG.warning("Parallel pair evaluation unavailable (%s); finishing serially", error)
+            return finish_serially([index for index in cold if index not in results])
         finally:
             _worker_engine = _worker_functions = _worker_class_infos = _worker_pairs = None
         return [results[index] for index in sorted(results)]

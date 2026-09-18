@@ -505,8 +505,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     # Check input file extension for single files
     if is_file and not input_path.endswith(".py"):
         print(f"Warning: '{input_path}' is not a Python file (.py)")
-        response = input("Analyze anyway? (y/N): ").strip().lower()
-        if response != "y":
+        if not _confirm("Analyze anyway? (y/N): "):
             return
 
     # Resolve aliases before checking containment or creating any output.
@@ -542,8 +541,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     print()
 
     if args.interactive:
-        response = input("Proceed? (y/N): ").strip().lower()
-        if response != "y":
+        if not _confirm("Proceed? (y/N): "):
             print("Aborted.")
             return
 
@@ -789,18 +787,12 @@ def _find_extracted_helpers(
     helper_pattern = re.compile(r"^_{1,2}extracted_func(?:_\d+)?$")
     helpers = []
 
-    for py_file in target.rglob("*.py"):
+    for py_file, (source, tree) in _load_modules(target).items():
         # Apply file filters
         if file_filters:
             rel_path = str(py_file.relative_to(target))
             if not any(f in rel_path for f in file_filters):
                 continue
-
-        try:
-            source = read_source(py_file)
-            tree = ast.parse(source)
-        except (OSError, SyntaxError, UnicodeError):
-            continue
 
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
@@ -821,6 +813,34 @@ def _find_extracted_helpers(
                     helpers.append((py_file, node.name, node.lineno, preview))
 
     return sorted(helpers, key=lambda x: (str(x[0]), x[2]))
+
+
+def _load_modules(target: Path) -> Dict[Path, Tuple[str, ast.Module]]:
+    """Every parseable module under ``target`` with its source, in path order.
+
+    Symlinks are left out, as directory refactoring leaves them out, and a
+    file that does not decode or parse is skipped: one policy for every
+    command that reads a refactored tree.
+    """
+    modules: Dict[Path, Tuple[str, ast.Module]] = {}
+    for path in sorted(target.rglob("*.py")):
+        if path.is_symlink():
+            continue
+        try:
+            source = read_source(path)
+            modules[path] = (source, ast.parse(source))
+        except (OSError, SyntaxError, UnicodeError):
+            continue
+    return modules
+
+
+def _confirm(prompt: str) -> bool:
+    """Ask a yes/no question; a closed stdin or an interrupt answers no."""
+    try:
+        return input(prompt).strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
 
 
 def _change_record(value: object) -> Optional[ChangeRecord]:
@@ -880,15 +900,7 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
     changes_by_helper = _read_change_sidecar(_change_sidecar_path(target))
 
     wanted = {name for _, name, _, _ in helpers}
-    modules: Dict[Path, Tuple[str, ast.Module]] = {}
-    for path in sorted(target.rglob("*.py")):
-        if path.is_symlink():
-            continue
-        try:
-            source = read_source(path)
-            modules[path] = (source, ast.parse(source))
-        except (OSError, SyntaxError, UnicodeError):
-            continue
+    modules = _load_modules(target)
     calls: Dict[str, List[CallRecord]] = {name: [] for name in wanted}
     for path, (source, tree) in modules.items():
         statements = {

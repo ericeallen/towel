@@ -113,7 +113,7 @@ class InsertionPoints(EngineState):
         """
         path = Path(file_path)
         stat = path.stat()
-        signature = (stat.st_mtime_ns, stat.st_size)
+        signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
         cached = self._source_lines_cache.get(file_path)
         if cached is not None and cached[0] == signature:
             return cached[1]

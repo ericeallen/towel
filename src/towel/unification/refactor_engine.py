@@ -28,7 +28,6 @@ import hashlib
 import os
 import re
 from collections import OrderedDict
-from concurrent.futures.process import BrokenProcessPool
 from typing import (
     Any,
     Callable,
@@ -190,7 +189,7 @@ class UnificationRefactorEngine(
         self.analysis_session = AnalysisSession()
         self._settings = settings if settings is not None else Settings.from_environ()
         self.import_graph = ImportGraphCache()
-        self._source_lines_cache: Dict[str, Tuple[Tuple[int, int], Tuple[str, ...]]] = {}
+        self._source_lines_cache: Dict[str, Tuple[Tuple[int, int, int], Tuple[str, ...]]] = {}
         self._settings.enable_debug_logging()
         self.max_parameters = max_parameters
         self.min_lines = min_lines
@@ -488,25 +487,9 @@ class UnificationRefactorEngine(
 
         self._record_function_paths(all_functions)
         if self._should_use_parallel(len(block_pairs)):
-            try:
-                return self._evaluate_pairs_parallel(
-                    block_pairs,
-                    all_functions,
-                    class_infos,
-                    verbose=verbose,
-                    progress=progress,
-                )
-            except BrokenProcessPool:
-                LOG.warning("Parallel worker pool failed; retrying serial evaluation")
-                # Fall back to serial evaluation if multiprocessing encounters an issue
-                return self._evaluate_pairs_serial(
-                    block_pairs,
-                    all_functions,
-                    class_infos,
-                    verbose=verbose,
-                    progress=progress,
-                )
-
+            return self._evaluate_pairs_parallel(
+                block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
+            )
         return self._evaluate_pairs_serial(
             block_pairs,
             all_functions,
@@ -703,7 +686,10 @@ class UnificationRefactorEngine(
         return tuple(self._change_log)
 
     def invalidate_paths(self, paths: List[str]) -> None:
+        """Forget every analysis and cached source line of ``paths``; they were rewritten."""
         self.analysis_session.invalidate(paths)
+        for path in paths:
+            self._source_lines_cache.pop(path, None)
 
 
 # Utility functions for overlap filtering

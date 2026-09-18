@@ -26,7 +26,6 @@ from .constant_consistency import ConstantConsistency
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .substitution import Substitution
-from ..diagnostics import UNIFIER
 
 
 class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
@@ -133,23 +132,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # higher-order factory calls (Option B policy): even if literals are
         # equal across blocks, expose them as parameters and thread through calls.
         if self.promote_equal_hof_literals:
-            # Promotion mutates ``subst`` incrementally, so snapshot the exact
-            # containers it can touch and restore them on failure. Otherwise a
-            # mid-loop error would return a partially promoted substitution into
-            # code generation. Narrow the catch to the structural errors AST
-            # walking can raise so a genuine bug surfaces instead of being hidden.
-            saved_mappings = dict(subst.mappings)
-            saved_param_expressions = {k: list(v) for k, v in subst.param_expressions.items()}
-            saved_function_params = {k: list(v) for k, v in subst.function_params.items()}
-            saved_promoted = {k: dict(v) for k, v in subst.promoted_literal_args.items()}
-            try:
-                self._promote_hof_literals(blocks, subst)
-            except (AttributeError, KeyError, TypeError, IndexError, ValueError) as error:
-                UNIFIER.warning("literal promotion failed and was rolled back: %r", error)
-                subst.mappings = saved_mappings
-                subst.param_expressions = saved_param_expressions
-                subst.function_params = saved_function_params
-                subst.promoted_literal_args = saved_promoted
+            self._promote_hof_literals(blocks, subst)
 
         return subst
 

@@ -436,25 +436,43 @@ class PyrightOracle:
             # the generated code must satisfy), but its interpreter is never
             # run: --pythonpath names this process's interpreter, so a venv
             # setting in that configuration cannot execute the project.
-            completed = subprocess.run(
-                [*self._command, "--outputjson", "--pythonpath", sys.executable, str(probe)],
-                capture_output=True,
-                text=True,
-                cwd=str(original.parent),
-                check=False,
-            )
+            try:
+                completed = subprocess.run(
+                    [*self._command, "--outputjson", "--pythonpath", sys.executable, str(probe)],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(original.parent),
+                    check=False,
+                    timeout=PYRIGHT_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as error:
+                LOG.warning(
+                    "pyright timed out after %s s on %s; no types inferred there",
+                    error.timeout,
+                    file_path,
+                )
+                return []
         output = completed.stdout
         start, end = output.find("{"), output.rfind("}")
         if start < 0 or end < 0:
-            LOG.warning("pyright produced no JSON for %s; no types inferred there", file_path)
+            LOG.warning(
+                "pyright produced no JSON for %s; no types inferred there: %s",
+                file_path,
+                completed.stderr.strip(),
+            )
             return []
         try:
             data = json.loads(output[start : end + 1])
         except json.JSONDecodeError as error:
             LOG.warning("pyright output for %s is not JSON: %s", file_path, error)
             return []
-        diagnostics = data.get("generalDiagnostics", [])
-        # pyright's JSON is trusted to have this shape; the reads below use .get.
+        diagnostics = data.get("generalDiagnostics") if isinstance(data, dict) else None
+        if not isinstance(diagnostics, list):
+            LOG.warning(
+                "pyright output for %s has an unexpected shape; no types inferred", file_path
+            )
+            return []
+        # Each diagnostic is read through .get, so a missing field is harmless.
         return [cast(_PyrightDiagnostic, d) for d in diagnostics if isinstance(d, dict)]
 
     @staticmethod
@@ -513,6 +531,9 @@ class PyrightOracle:
             if diagnostic.get("severity") == "error"
         ]
 
+
+PYRIGHT_TIMEOUT_SECONDS = 600.0
+"""How long one pyright run may take before Towel proceeds without its answer."""
 
 _PYRIGHT_REVEALED = re.compile(r'^Type of ".*" is "(?P<type>.*)"$', re.DOTALL)
 

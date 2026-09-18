@@ -42,12 +42,16 @@ from typing import Callable, List, Mapping, Optional, Tuple
 
 from .unification.project_layout import find_project_root, load_pyproject
 from .project_tools import ToolChoice
+from .diagnostics import LOG
 
 SnippetFormatter = Callable[[str], str]
 """Maps one generated snippet (a definition or a statement) to its formatted text."""
 
 FileFinisher = Callable[[str, str], str]
 """Maps ``(path, source)`` of a modified file to its finished text, e.g. with imports sorted."""
+
+TOOL_TIMEOUT_SECONDS = 120.0
+"""How long an external formatter or sorter may take on one file before Towel gives up on it."""
 
 DEFAULT_LINE_LENGTH = 88
 
@@ -130,7 +134,11 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
 
     def format_snippet(source: str) -> str:
         formatted = formatter(source)
-        if ast.dump(ast.parse(formatted)) != ast.dump(ast.parse(source)):
+        try:
+            formatted_tree = ast.parse(formatted)
+        except SyntaxError as error:
+            raise FormattingChangedCode(f"formatting produced unparsable code: {error}") from error
+        if ast.dump(formatted_tree) != ast.dump(ast.parse(source)):
             raise FormattingChangedCode(
                 "formatting changed the generated code's meaning:\n" + formatted
             )
@@ -238,14 +246,18 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
     target = str(path.resolve())
 
     def run_ruff(source: str) -> str:
-        completed = subprocess.run(
-            [*command, "format", "--stdin-filename", target, "-"],
-            input=source,
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                [*command, "format", "--stdin-filename", target, "-"],
+                input=source,
+                capture_output=True,
+                text=True,
+                cwd=str(root),
+                check=False,
+                timeout=TOOL_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise FormattingChangedCode(f"ruff format timed out after {error.timeout} s") from error
         if completed.returncode != 0:
             raise FormattingChangedCode(f"ruff format failed: {completed.stderr.strip()}")
         return completed.stdout
@@ -290,26 +302,38 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
         root = _root(path)
 
         def sort_with_ruff(file_path: str, source: str) -> str:
-            completed = subprocess.run(
-                [
-                    *command,
-                    "check",
-                    "--select",
-                    "I",
-                    "--fix",
-                    "--exit-zero",
-                    "--quiet",
-                    "--stdin-filename",
-                    str(Path(file_path).resolve()),
-                    "-",
-                ],
-                input=source,
-                capture_output=True,
-                text=True,
-                cwd=str(root),
-                check=False,
-            )
-            return completed.stdout if completed.returncode == 0 and completed.stdout else source
+            try:
+                completed = subprocess.run(
+                    [
+                        *command,
+                        "check",
+                        "--select",
+                        "I",
+                        "--fix",
+                        "--exit-zero",
+                        "--quiet",
+                        "--stdin-filename",
+                        str(Path(file_path).resolve()),
+                        "-",
+                    ],
+                    input=source,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(root),
+                    check=False,
+                    timeout=TOOL_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as error:
+                LOG.warning("ruff import sorting timed out for %s (%s s)", file_path, error.timeout)
+                return source
+            if completed.returncode != 0 or not completed.stdout:
+                LOG.warning(
+                    "ruff import sorting failed for %s; imports left as assembled: %s",
+                    file_path,
+                    completed.stderr.strip(),
+                )
+                return source
+            return completed.stdout
 
         return ToolChoice(imports_permuted_only(sort_with_ruff), "ruff import sorting")
     if project_configures_isort(path):
@@ -320,9 +344,17 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
         settings_path = str(_root(path))
 
         def sort_with_isort(file_path: str, source: str) -> str:
-            return isort.code(
-                source, config=isort.Config(settings_path=settings_path), file_path=Path(file_path)
-            )
+            try:
+                return isort.code(
+                    source,
+                    config=isort.Config(settings_path=settings_path),
+                    file_path=Path(file_path),
+                )
+            except isort.exceptions.ISortError as error:
+                # A file the project told isort to skip, or one it declines:
+                # a sorter never costs a refactoring.
+                LOG.warning("isort declined %s; imports left as assembled: %s", file_path, error)
+                return source
 
         return ToolChoice(imports_permuted_only(sort_with_isort), "isort")
     return ToolChoice(None, "")

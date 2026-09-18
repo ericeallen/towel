@@ -84,6 +84,9 @@ class Settings:
             try:
                 workers = max(1, int(raw_workers))
             except ValueError:
+                LOG.warning(
+                    "TOWEL_WORKERS=%r is not an integer; evaluating pairs serially", raw_workers
+                )
                 workers = 1
         return cls(
             workers=workers,
