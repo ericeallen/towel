@@ -582,6 +582,8 @@ class UnificationRefactorEngine(
 
         pairs: List[CodeBlockPair] = []
         signed_blocks: List[List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]] = []
+        # Each function's blocks' bucket keys, parallel to ``signed_blocks``.
+        block_keys: List[List[BlockBucketKey]] = []
         block_buckets: List[
             Dict[BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]]
         ] = []
@@ -591,11 +593,13 @@ class UnificationRefactorEngine(
         for entry in all_functions:
             blocks = self._signed_blocks(entry.node)
             signed_blocks.append(blocks)
+            keys = [signature_bucket_key(block[2]) for block in blocks]
+            block_keys.append(keys)
             buckets: Dict[
                 BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
             ] = {}
-            for block in blocks:
-                buckets.setdefault(signature_bucket_key(block[2]), []).append(block)
+            for key, block in zip(keys, blocks):
+                buckets.setdefault(key, []).append(block)
             block_buckets.append(buckets)
         # The bucket keys each function's blocks fall into; two functions with
         # no key in common cannot form a pair, so their blocks are never visited.
@@ -638,10 +642,8 @@ class UnificationRefactorEngine(
                 # Only compare structurally compatible buckets; tolerance
                 # checks still use the unchanged quick_filter below.
                 blocks1 = signed_blocks[i] if not bucket_keys[i].isdisjoint(bucket_keys[j]) else ()
-                for block1_range, block1_nodes, sig1 in blocks1:
-                    for block2_range, block2_nodes, sig2 in block_buckets[j].get(
-                        signature_bucket_key(sig1), []
-                    ):
+                for (block1_range, block1_nodes, sig1), key1 in zip(blocks1, block_keys[i]):
+                    for block2_range, block2_nodes, sig2 in block_buckets[j].get(key1, []):
                         if not quick_filter(sig1, sig2):
                             continue
 
