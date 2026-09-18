@@ -919,7 +919,8 @@ url = "https://github.com/dabeaz/ply.git"
 rev = "HEAD"
 package = "src/ply"
 pythonpath = "src"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/testlex.py", "tests/testyacc.py"]
+# The test modules call unittest.main() at import time, so run them as scripts.
+test = ["sh", "-c", "cd tests && {python} testlex.py && {python} testyacc.py"]
 
 [[project]]
 name = "inflect"
