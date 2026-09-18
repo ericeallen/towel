@@ -12,9 +12,10 @@ own tests.
 
 The engine is `UnificationRefactorEngine` in
 [`refactor_engine.py`](../src/towel/unification/refactor_engine.py). It is
-assembled from mixins, one module per responsibility (the pair decision,
-placement, reuse, insertion points, annotation wiring, materialization,
-clustering, parallel evaluation, the fixed-point drivers), over
+assembled from mixins, one module per responsibility (block analysis, the
+pair decision, placement, reuse, insertion points, annotation wiring,
+materialization, clustering, parallel evaluation, the fixed-point drivers),
+over
 [`engine_state.py`](../src/towel/unification/engine_state.py), which
 declares every attribute and operation a mixin may rely on, so each module
 states its dependencies and mypy checks the seams. The core module keeps
@@ -627,6 +628,7 @@ but the ideas and their names are from the literature.
 |---|---|
 | Engine core: caches, analysis entry points, block enumeration, pairing | `refactor_engine.py` |
 | State and operations the mixins rely on | `engine_state.py` |
+| Per-block facts (bindings, returns, used names) and the trivial-helper filters | `block_analysis.py` |
 | The pair decision, in eleven stages | `pair_evaluation.py` |
 | Method or module placement, base-class resolution | `placement.py` |
 | Reusing an existing function | `reuse.py` |

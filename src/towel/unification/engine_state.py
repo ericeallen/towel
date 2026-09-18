@@ -15,20 +15,35 @@
 """The state and cross-cutting operations the engine's mixins rely on.
 
 ``UnificationRefactorEngine`` is assembled from mixins, one per
-responsibility (placement, reuse, insertion, annotation wiring,
-materialization, clustering, parallel evaluation, the fixed-point drivers).
-Each mixin is a class in its own module and reaches the rest of the engine
-only through the attributes and methods declared here, so a reader of one
-module sees exactly what it depends on, and mypy checks that the engine
-provides it. The engine's constructor assigns every attribute; the method
-stubs are implemented by the engine or by another mixin.
+responsibility (block analysis, pair evaluation, placement, reuse,
+insertion, annotation wiring, materialization, clustering, parallel
+evaluation, the fixed-point drivers). Each mixin is a class in its own
+module and reaches the rest of the engine only through the attributes and
+methods declared here, so a reader of one module sees exactly what it
+depends on, and mypy checks that the engine provides it. The engine's
+constructor assigns every attribute; each method stub names the class that
+implements it.
 """
 
 from __future__ import annotations
 
 import ast
 from collections import OrderedDict
-from typing import Any, Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterable,
+    List,
+    Literal,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
+from weakref import WeakKeyDictionary
 
 from ..diagnostics import Settings
 from ..type_inference import TypeOracle
@@ -51,6 +66,8 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .substitution import Substitution
+from .structural_memo import StoredSubstitution
+from .unifier import Unifier
 from .progress import DEFAULT_PROGRESS, ProgressBarFactory, ProgressMode
 from .semantic_safety import ImportGraphCache
 
@@ -112,6 +129,25 @@ class EngineState:
         raise NotImplementedError
 
     type_oracle: Optional[TypeOracle]
+    # The unifier every pair is matched with; its options are fixed at
+    # construction.
+    unifier: Unifier
+    # Every function of the current analysis, keyed by its node, to the file
+    # it was parsed from.
+    _function_paths: Dict[FunctionNode, str]
+    # Memoization caches keyed by the identity of AST nodes parsed for this
+    # engine run; the weak ones vanish with their trees.
+    _assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]]
+    _used_names_cache: WeakKeyDictionary[ast.AST, FrozenSet[str]]
+    _value_producing_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]]
+    _signed_block_cache: WeakKeyDictionary[
+        FunctionNode, List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]
+    ]
+    # Bounded, path-registered caches: guards per (guard, function, block),
+    # unification results per block-structure pair, and the per-block analyses.
+    _block_guard_cache: "OrderedDict[Tuple[Any, ...], bool]"
+    _unify_cache: "OrderedDict[Tuple[str, str], Optional[StoredSubstitution]]"
+    _per_block_cache: "OrderedDict[Tuple[str, str, str], Any]"
     """The project's type checker, when one is installed and wanted."""
 
     def _get_indent(self, line: str) -> str:
@@ -139,7 +175,7 @@ class EngineState:
         class_context: bool = False,
         related_paths: Sequence[str] = (),
     ) -> str:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     @staticmethod
@@ -233,7 +269,7 @@ class EngineState:
         raise NotImplementedError
 
     def _find_python_files(self, directory: str, recursive: bool = True) -> List[str]:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def analyze_directory(
@@ -245,7 +281,7 @@ class EngineState:
         progress: ProgressMode = DEFAULT_PROGRESS,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def analyze_files(
@@ -257,7 +293,7 @@ class EngineState:
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def apply_refactoring_multi_file(self, proposal: RefactoringProposal) -> Dict[str, str]:
@@ -269,7 +305,7 @@ class EngineState:
         raise NotImplementedError
 
     def invalidate_paths(self, paths: List[str]) -> None:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     @staticmethod
@@ -294,7 +330,7 @@ class EngineState:
         all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
     ) -> Optional[RefactoringProposal]:
-        """Provided by the engine."""
+        """Provided by PairEvaluation."""
         raise NotImplementedError
 
     @classmethod
@@ -312,12 +348,12 @@ class EngineState:
         analyzer: Optional[ScopeAnalyzer] = None,
         path: Optional[str] = None,
     ) -> bool:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     @staticmethod
     def _bounded_put(cache: "OrderedDict[Any, Any]", key: Any, value: Any) -> None:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def _build_block_binding_snapshot(
@@ -327,11 +363,11 @@ class EngineState:
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
     ) -> BlockBindingSnapshot:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _get_assignment_reuse(self, func: FunctionNode) -> Dict[int, bool]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _get_block_indices(
@@ -347,7 +383,7 @@ class EngineState:
         raise NotImplementedError
 
     def _get_used_names(self, node: ast.AST) -> Set[str]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     @staticmethod
@@ -360,7 +396,7 @@ class EngineState:
         raise NotImplementedError
 
     def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def _per_block(
@@ -370,17 +406,17 @@ class EngineState:
         block_nodes: Sequence[ast.AST],
         compute: Callable[[], Any],
     ) -> Any:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _sid(self, nodes: Sequence[ast.AST]) -> str:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def _signed_blocks(
         self, function: FunctionNode
     ) -> List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _unify_memoized(
@@ -389,7 +425,7 @@ class EngineState:
         hygienic_renames: List[Dict[str, str]],
         paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _add_clustered_replacements(
@@ -425,7 +461,7 @@ class EngineState:
     def _debug_reject(
         self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
     ) -> None:
-        """Provided by the engine."""
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
     def _declares_nonlocal(
@@ -437,7 +473,7 @@ class EngineState:
     def _deepest_common_ancestry(
         self, anc1: Optional[List[str]], anc2: Optional[List[str]]
     ) -> Optional[str]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     @staticmethod
@@ -447,7 +483,7 @@ class EngineState:
         all_functions: Sequence[FunctionArtifact],
         inner: Sequence[FunctionNode],
     ) -> Optional[FunctionNode]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _find_return_variables(
@@ -458,7 +494,7 @@ class EngineState:
         *,
         debug_label: Optional[str] = None,
     ) -> Set[str]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _global_nonlocal_declarations(
@@ -467,16 +503,16 @@ class EngineState:
         scope_analyzer: ScopeAnalyzer,
         free_vars: Set[str],
     ) -> Tuple[Set[str], Set[str], Set[str]]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     @staticmethod
     def _helper_is_trivial_forwarding(func: ast.FunctionDef) -> bool:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _is_value_producing(self, block: Sequence[ast.AST]) -> bool:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _redirect_to_existing_function(
@@ -493,17 +529,17 @@ class EngineState:
         analyzer1: Optional[ScopeAnalyzer],
         analyzer2: Optional[ScopeAnalyzer],
     ) -> bool:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     @staticmethod
     def _reserve_augassign_params(pair: CodeBlockPair, substitution: Substitution) -> Set[str]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     @staticmethod
     def _strip_fstring_params(substitution: Substitution) -> None:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
         raise NotImplementedError
 
     def _with_helper_annotations(
@@ -516,5 +552,11 @@ class EngineState:
     def _working_free_vars(
         substitution: Substitution, aug_assign_vars: Set[str], free_vars1: Set[str]
     ) -> Set[str]:
-        """Provided by the engine."""
+        """Provided by BlockAnalysis."""
+        raise NotImplementedError
+
+    def _remember(
+        self, paths: Iterable[Optional[str]], cache: MutableMapping[Any, Any], key: Any
+    ) -> None:
+        """Provided by UnificationRefactorEngine."""
         raise NotImplementedError

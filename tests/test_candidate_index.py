@@ -145,7 +145,7 @@ def test_index_extracts_blocks_and_signatures_once_per_function(tmp_path):
     with (
         patch.object(engine, "_extract_code_blocks", wraps=engine._extract_code_blocks) as extract,
         patch(
-            "towel.unification.refactor_engine.extract_block_signature",
+            "towel.unification.block_analysis.extract_block_signature",
             wraps=extract_block_signature,
         ) as signature,
     ):
