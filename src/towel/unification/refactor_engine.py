@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Main refactoring engine using unification.
+"""The engine's core: construction, caches, analysis entry points, block enumeration, pairing.
 
-This orchestrates the entire refactoring process:
-1. Parse files into ASTs
-2. Find pairs of code blocks in top-level functions
-3. Attempt unification to find parameterizable differences
-4. Extract functions hygienically if unification succeeds
-5. Generate replacement calls
+``UnificationRefactorEngine`` is assembled from the mixins under
+``unification/`` (block analysis, the pair decision, placement, reuse,
+insertion, annotation wiring, materialization, clustering, parallel
+evaluation, the fixed-point drivers) over ``EngineState``. This module
+keeps what every mixin builds on: the constructor and its caches, the
+entry points that analyze a file, a set of files or a directory, the
+enumeration of candidate blocks in every function and method (nested ones
+included), and the pairing of blocks that share a signature bucket.
 """
 
 import ast
@@ -675,10 +676,8 @@ class UnificationRefactorEngine(
         return pairs
 
     # ------------------------------------------------------------------
-    # Reusing an existing function instead of extracting a redundant helper
     # ------------------------------------------------------------------
 
-    # Optional analysis cache invalidation hook used by directory fixed-point runner
     @property
     def change_log(self) -> Sequence[AppliedChange]:
         """Every call site the last directory run rewrote, in application order."""
@@ -689,6 +688,3 @@ class UnificationRefactorEngine(
         self.analysis_session.invalidate(paths)
         for path in paths:
             self._source_lines_cache.pop(path, None)
-
-
-# Utility functions for overlap filtering

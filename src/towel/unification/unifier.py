@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Unification algorithm for finding parameterizable differences in AST nodes.
+"""Anti-unification of code blocks into one helper template.
 
-This is based on Robinson's unification algorithm from automated theorem proving,
-adapted for AST comparison.
+Two (or more) blocks are compared node by node; where they agree the
+template keeps the node, and where they differ in an expression the
+template takes a fresh parameter that each block instantiates with its own
+expression. Bound names (loop targets, lambda parameters, comprehension
+targets, with-items, handler names, walrus targets) are alpha-equivalent,
+never parameterized. This is Plotkin and Reynolds's anti-unification (the
+least general generalization), not Robinson's unification, which solves
+for a substitution making two terms equal.
 """
 
 import ast

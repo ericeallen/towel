@@ -358,7 +358,6 @@ dev = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "tomli" },
     { name = "tqdm" },
 ]
 format = [
@@ -392,7 +391,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "ruff", marker = "extra == 'format'", specifier = ">=0.4" },
-    { name = "tomli", marker = "extra == 'dev'", specifier = ">=2.0.1" },
     { name = "tqdm", marker = "extra == 'dev'", specifier = ">=4.66.0" },
 ]
 provides-extras = ["format", "types", "dev"]

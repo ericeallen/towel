@@ -52,13 +52,14 @@ ecosystem evidence behind each claim. The format follows
   own check stays green; pyright runs as a command on a temporary sibling
   copy of the module. With mypy, `towel dry` reveals each one in an in-memory copy of the
   site's module, at the point where the call will stand, once per applied
-  refactoring with an incremental cache. A type is written only when every
-  site agrees, it contains no `Any`, and every name in it resolves where the
-  helper is defined. `--no-types` leaves helpers unannotated; library callers
+  refactoring with an incremental cache. A revealed type is written only
+  when it is not bare `Any` and every name in it resolves where the helper
+  is defined. `--no-types` leaves helpers unannotated; library callers
   pass a `type_oracle` to the engine. Sites that disagree on a parameter's
   type, or on a revealed return type, join into a union (`int | None`,
-  `int | str`); declared return types must agree, since a union is not a
-  lower bound. Once a helper carries any annotation, whatever is still bare
+  `int | str`); sites that declare different return types take the meet of
+  the declarations, found through the checker's subtype relation (below).
+  Once a helper carries any annotation, whatever is still bare
   becomes `Any`, so the signature is complete (a partial one is an error
   under mypy's `disallow-incomplete-defs`); `from typing import Any` is
   added to the host when it lacks it. Code with no annotations stays bare.

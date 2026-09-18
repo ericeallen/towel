@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Utilities for understanding project/package layout to generate robust import paths
-for cross-file refactorings.
+"""Packaging discovery: the project root, its source roots, and each file's importable name.
 
-Python 3.10 uses the TOML backport; newer versions use the standard library.
+Reads pyproject.toml (setuptools, flit, poetry, pdm and hatch tables) so a
+cross-file helper can be imported by a name that stays valid where the
+project is installed.
 """
 
 from __future__ import annotations
@@ -29,12 +29,8 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from .diagnostics import LOG
 from .unification.exceptions import UnsupportedLayoutError
 import re
-import sys
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
+import tomllib
 
 
 def _table(mapping: object, key: str) -> Dict[str, Any]:
@@ -52,7 +48,6 @@ def load_pyproject(project_root: Path) -> Dict[str, Any]:
     if not pyproject_path.exists():
         return {}
 
-    # Use the platform TOML parser (tomli on Python 3.10).
     try:
         with pyproject_path.open("rb") as f:
             return tomllib.load(f)

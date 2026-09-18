@@ -157,7 +157,7 @@ Examples:
         dest="interactive",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Ask for confirmation before writing; --no-interactive skips the prompt",
+        help="Ask for confirmation before writing (the default); --no-interactive skips the prompt",
     )
     parser.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS

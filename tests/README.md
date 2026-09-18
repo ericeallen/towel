@@ -8,7 +8,7 @@ Comprehensive unit tests for Towel, the DRY (Don't Repeat Yourself) code refacto
 # Run all unit tests
 just test
 
-# Run the fast smoke subset (signature gate, unifier, extractor, regressions)
+# Run the fast smoke subset (signature gate, pairing, unifier, extractor, regressions)
 just test-smoke
 
 # Run a single test file
@@ -100,18 +100,35 @@ cross-file examples in `test_examples_crossfile/`,
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
 
-#### Original Examples
-- `example1_simple.py` - Simple validation logic
-- `example2_classes.py` - Class-based code
-- `example3_file1.py`, `example3_file2.py` - Cross-file duplicates
-- `example4_complex.py` - Complex data processing loops
+The corpus has 26 files; each is a self-contained module whose name says
+what it exercises (see `test_examples/README.md`):
 
-#### Edge Case Examples
-- `bindings_for_loops.py` - For loop binding tests
-- `bindings_comprehensions.py` - Comprehension binding tests
-- `return_values.py` - Return value propagation tests
-- `fstrings_constants.py` - F-string and constant tests
-- `scoping_edge_cases.py` - Scoping and closure tests
+- `binding_constructs_comprehensive.py`
+- `bindings_comprehensions.py`
+- `bindings_for_loops.py`
+- `closure_adversarial.py`
+- `complex_expressions.py`
+- `control_flow_adversarial.py`
+- `edge_cases_stress_test.py`
+- `example1_simple.py`
+- `example2_classes.py`
+- `example3_file1.py`
+- `example3_file2.py`
+- `example4_complex.py`
+- `exception_adversarial.py`
+- `fstrings_constants.py`
+- `functional_patterns.py`
+- `global_nonlocal_examples.py`
+- `hygienic_naming.py`
+- `method_chains.py`
+- `nested_structures.py`
+- `real_world_patterns.py`
+- `referential_transparency.py`
+- `return_values.py`
+- `scoping_edge_cases.py`
+- `side_effects_adversarial.py`
+- `syntactic_coverage_comprehensive.py`
+- `tricky_edge_cases_adversarial.py`
 
 ## Test Coverage
 

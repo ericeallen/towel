@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Top-level AST visitors used by the refactoring engine.
+"""The visitor bases every AST analysis is built on, and the shared visitors.
 
-These classes were extracted from nested definitions in refactor_engine.py to improve
-readability and enable a clearer compiler-like pipeline structure.
+Three Template Method bases fix how a traversal treats scopes, so an
+analysis states only what it does with what it finds: ``OwnScopeVisitor``
+for collectors that read one scope's own code, ``DefinitionDepthVisitor``
+for those that track how deeply a definition sits, and ``ScopeVisitor``
+for analyses that follow Python's lexical scopes in one visiting order.
+The concrete visitors here (function collection, method-call rewriting,
+loop-return and name collection, assignment targets, class and function
+insertion points) are the ones more than one module needs.
 """
 
 from __future__ import annotations

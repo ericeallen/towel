@@ -60,7 +60,8 @@ coverage-unification:
 
 # Fast subset: signature gate, pairing, unifier, extractor, regression stability
 test-smoke:
-    uv run --frozen pytest -q tests/test_regression.py tests/test_observational_equivalence.py \
+    uv run --frozen pytest -q tests/test_signature_prefilter.py tests/test_candidate_index.py \
+        tests/test_regression.py tests/test_observational_equivalence.py \
         tests/test_refactor_engine_comprehensive.py tests/test_unifier_core.py \
         tests/test_extractor_comprehensive.py
 

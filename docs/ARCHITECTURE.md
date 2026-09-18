@@ -46,7 +46,7 @@ fixed-point loop (below).
 7. **Verify.** The proposed helper is instantiated with each call site's
    actual arguments and compared against the block it would replace, up to
    renamed binders (see *The soundness invariant*). This gates every proposal.
-8. **Cluster.** `refactor_engine.py` searches the rest of the file for further
+8. **Cluster.** `clustering.py` searches the rest of the file for further
    blocks that unify with the accepted template and can share the helper.
 9. **Reuse or extract.** When an accepted block is the whole body of a plain
    module-level function, no helper is generated: that function is kept and
@@ -70,8 +70,8 @@ fixed-point loop (below).
     plan and applies it transactionally (see *Application and recovery*).
 
 `models.py` defines the data that flows between stages: parsed modules,
-function artifacts, class info, code-block pairs, substitutions, replacements,
-and proposals.
+function artifacts, class info, code-block pairs, replacements, and
+proposals; `substitution.py` defines the substitution the unifier produces.
 
 ## The core algorithm: anti-unification into a helper
 
@@ -104,7 +104,7 @@ Each parameter is passed in the way that preserves the original evaluation:
 - **Receiver.** When the helper becomes a method, the instance or class is
   passed as the receiver (see *Helper placement*).
 
-The result is a `Substitution` (in `models.py`): the template, the ordered
+The result is a `Substitution` (in `substitution.py`): the template, the ordered
 parameters, and, per parameter, the argument expression at each call site and
 its kind. `unifier.py` refuses to parameterize a node that is not an
 `ast.expr` (a slice, a starred item, a whole f-string), because those are
@@ -187,7 +187,7 @@ reached through aliases is outside the model.
 
 ## Helper placement
 
-A helper is inserted where every call site can see it. `refactor_engine.py`
+A helper is inserted where every call site can see it. `placement.py`
 decides:
 
 - **Method.** When both blocks are methods of one unique module-level class,
@@ -342,8 +342,8 @@ a package or module named after the distribution, in the project root or under
 `src`. Only a layout that cannot be resolved either way raises rather than
 guessing; the ecosystem check reports those as `UNSUPPORTED`.
 
-For a helper shared between two files in the same package, `refactor_engine.py`
-generates a relative import (`from .module import helper`, or a deeper
+For a helper shared between two files in the same package, `materialize.py`
+generates a relative import (`relative_import_module` in `insertion.py`) (`from .module import helper`, or a deeper
 `..sub.module`). A relative import encodes only the intrinsic same-package
 relationship, so it stays valid wherever the code lands — in particular when an
 out-of-place output is adopted into its real location, the documented workflow —
@@ -360,7 +360,7 @@ helper placement that would close a cycle.
 
 ## The clustering pass
 
-Once a pair is accepted and its helper template fixed, `refactor_engine.py`
+Once a pair is accepted and its helper template fixed, `clustering.py`
 scans the rest of the file for additional blocks that unify with the template
 and can call the same helper. A clustered site joins only when it passes the
 same guards and, for a method helper, is a method of the same class with the

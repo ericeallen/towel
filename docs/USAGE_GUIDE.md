@@ -125,7 +125,7 @@ engine = UnificationRefactorEngine(
 )
 ```
 
-The keyword-only parameters, all defaulting to what the CLI does:
+The remaining parameters (keyword-only after `parameterize_constants`), all defaulting to what the CLI does:
 
 | Parameter | Default | Effect |
 |---|---|---|
@@ -201,7 +201,7 @@ proposal.required_imports     # Imports the host needs for the helper's annotati
 
 ```python
 # Check if it's cross-file
-is_cross_file = any(len(r) == 3 for r in proposal.replacements)
+is_cross_file = any(r.file_path not in (None, proposal.file_path) for r in proposal.replacements)
 
 if is_cross_file:
     # Multiple files affected - use multi-file method
@@ -366,7 +366,7 @@ simple_proposals = [p for p in proposals if p.parameters_count <= 2]
 
 - Check `min_lines` - code blocks might be too small
 - Check `max_parameters` - duplicates might differ in too many ways
-- Ensure constants match (tool doesn't parameterize different constants)
+- Differing constants become parameters by default; with `parameterize_constants=False` they must match
 
 ### "Too many proposals"
 
@@ -410,7 +410,7 @@ def is_good_proposal(proposal):
         return False
 
     # Must save significant code
-    lines_saved = sum(r[0][1] - r[0][0] for r in proposal.replacements)
+    lines_saved = sum(r.line_range[1] - r.line_range[0] for r in proposal.replacements)
     if lines_saved < 10:
         return False
 

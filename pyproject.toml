@@ -31,7 +31,6 @@ dependencies = []
 format = ["black>=24.1.0", "isort>=5.12", "ruff>=0.4"]
 types = ["mypy>=1.0.0", "pyright>=1.1"]
 dev = [
-    "tomli>=2.0.1",
     "pytest>=9.0.3",
     "build>=1.0.0",
     "bandit>=1.7.6",
