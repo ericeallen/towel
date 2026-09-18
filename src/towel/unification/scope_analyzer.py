@@ -192,7 +192,8 @@ class _ScopeRespectingWalker(ScopeVisitor):
         self.nonlocal_vars.update(node.names)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        # CRITICAL: Visit RHS before LHS to correctly track used-before-assigned
+        # The right-hand side is evaluated before the targets bind, so a name
+        # read there counts as used before assigned.
         # In "x = y + 1", we must see the use of 'y' before marking 'x' as assigned
         self.visit(node.value)  # Visit RHS first
         for target in node.targets:
@@ -207,9 +208,8 @@ class _ScopeRespectingWalker(ScopeVisitor):
         self.visit(node.target)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
-        # CRITICAL: Augmented assignments (x += 1) READ the variable
-        # They don't DEFINE it, so target should be in uses, NOT bindings
-        # (The variable must already exist for the augmented assignment to work)
+        # An augmented assignment reads its target, which must already be
+        # bound, so the target is a use, not a binding.
         if isinstance(node.target, ast.Name):
             self.uses.add(node.target.id)
         else:
@@ -308,8 +308,8 @@ class ScopeAnalyzer(ScopeVisitor):
         self._external_binding_hazards: Optional[ExternalBindingHazards] = None
         self.analyzed_tree: Optional[ast.AST] = None
         self.scope_counter = 0
-        self.current_scope: Optional[Scope] = None
-        self.root_scope: Optional[Scope] = None
+        self.root_scope: Scope = self._create_scope(None)
+        self.current_scope: Scope = self.root_scope
 
         # Map AST nodes to their scopes, and scopes back to the node that opened them
         self.node_scopes: Dict[ast.AST, Scope] = {}
@@ -334,20 +334,22 @@ class ScopeAnalyzer(ScopeVisitor):
         self.global_vars.clear()
         self.nonlocal_vars.clear()
         self._free_var_cache.clear()
+        if self.analyzed_tree is not None:
+            # A second analysis gets a root of its own; the first uses the
+            # one built at construction, so its scope ids start at zero.
+            self.root_scope = self._create_scope(None)
         self.analyzed_tree = tree
-        self.root_scope = self._create_scope(None)
         self.current_scope = self.root_scope
         self.visit(tree)
-        self._external_binding_hazards = self._summarize_external_binding_hazards()
+        self._external_binding_hazards = self._summarize_external_binding_hazards(tree)
         return self.root_scope
 
     @property
     def external_binding_hazards(self) -> Optional[ExternalBindingHazards]:
         return self._external_binding_hazards
 
-    def _summarize_external_binding_hazards(self) -> ExternalBindingHazards:
+    def _summarize_external_binding_hazards(self, tree: ast.AST) -> ExternalBindingHazards:
         root = self.root_scope
-        assert root is not None
         scopes = {root.scope_id: root}
         scopes.update((item.scope_id, item) for item in self.node_scopes.values())
         rebound: Set[Tuple[int, str]] = set()
@@ -365,8 +367,7 @@ class ScopeAnalyzer(ScopeVisitor):
 
         # Include top-level statements, not just declarations retained as bindings.
         reflective = False
-        assert self.analyzed_tree is not None
-        for node in ast.walk(self.analyzed_tree):
+        for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                 continue
             if node.func.id in {"globals", "locals", "exec", "eval"}:
@@ -419,14 +420,12 @@ class ScopeAnalyzer(ScopeVisitor):
     def _bind_definition_name(
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
     ) -> None:
-        assert self.current_scope is not None
         self.current_scope.add_binding(node.name, node)
 
     def _leave_scope(self, node: ast.AST) -> None:
         self._exit_scope()
 
     def _bind_parameters(self, args: ast.arguments) -> None:
-        assert self.current_scope is not None
         for arg in parameter_nodes(args):
             self.current_scope.add_binding(arg.arg, arg)
 
@@ -509,7 +508,6 @@ class ScopeAnalyzer(ScopeVisitor):
         self.visit(node.value)
         # Target creates binding (and it leaks to enclosing scope)
         if isinstance(node.target, ast.Name):
-            assert self.current_scope is not None
             self.current_scope.add_binding(node.target.id, node.target)
 
     def visit_Global(self, node: ast.Global) -> None:
@@ -528,12 +526,10 @@ class ScopeAnalyzer(ScopeVisitor):
             self.visit(condition)
 
     def visit_Import(self, node: ast.Import) -> None:
-        assert self.current_scope is not None
         for alias in node.names:
             self.current_scope.add_binding(alias.asname or alias.name.split(".")[0], node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        assert self.current_scope is not None
         for alias in node.names:
             if alias.name != "*":
                 self.current_scope.add_binding(alias.asname or alias.name, node)
@@ -542,7 +538,6 @@ class ScopeAnalyzer(ScopeVisitor):
         """Visit a match statement; capture patterns bind in the current scope."""
         self.visit(node.subject)
         for case in node.cases:
-            assert self.current_scope is not None
             for name in sorted(pattern_capture_names(case.pattern)):
                 self.current_scope.add_binding(name, case.pattern)
             for child in ast.walk(case.pattern):
@@ -557,7 +552,6 @@ class ScopeAnalyzer(ScopeVisitor):
         if node.type:
             self.visit(node.type)
         if node.name:
-            assert self.current_scope is not None
             self.current_scope.add_binding(node.name, node)
         for stmt in node.body:
             self.visit(stmt)
@@ -565,7 +559,6 @@ class ScopeAnalyzer(ScopeVisitor):
     def visit_Name(self, node: ast.Name) -> None:
         """Visit a name reference."""
         # Record which binding this identifier refers to
-        assert self.current_scope is not None
         binding = self.current_scope.lookup(node.id)
         self.identifier_bindings[node] = binding
 
@@ -581,7 +574,6 @@ class ScopeAnalyzer(ScopeVisitor):
 
             # Only add as local binding if not global/nonlocal
             if not is_global and not is_nonlocal:
-                assert self.current_scope is not None
                 self.current_scope.add_binding(target.id, target)
         elif isinstance(target, (ast.Tuple, ast.List)):
             for elt in target.elts:
@@ -595,8 +587,8 @@ class ScopeAnalyzer(ScopeVisitor):
         Free variables are identifiers that are referenced but not bound
         within the block.
 
-        CRITICAL: Does NOT descend into nested function/class definitions,
-        since those have separate scopes.
+        Nested function and class definitions are not descended into: they
+        are scopes of their own.
 
         Excludes Python builtins.
         """
@@ -632,7 +624,7 @@ class ScopeAnalyzer(ScopeVisitor):
         # with a known binding; over-approximating shadows is safe because an
         # unshadowed builtin can also be passed explicitly to the helper.
         bound_names: Set[str] = set()
-        scopes = [self.root_scope] if self.root_scope is not None else []
+        scopes: List[Scope] = [self.root_scope]
         while scopes:
             scope = scopes.pop()
             bound_names.update(scope.bindings)
