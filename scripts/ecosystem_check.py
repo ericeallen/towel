@@ -462,6 +462,24 @@ def main() -> int:
         ["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
     ).stdout.strip()
     print(f"ecosystem check: {len(projects)} projects, towel {towel_commit[:12]}", flush=True)
+    # Workers import Towel from ``--towel-src`` for the whole run, so an edit or a
+    # commit (pre-commit stashes the tree) in that checkout changes the subject
+    # mid-run and invalidates the results. Say so up front when the tree is dirty,
+    # and recommend a detached worktree for the source under test.
+    dirty = subprocess.run(
+        ["git", "-C", str(args.towel_src), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    if dirty:
+        print(
+            "WARNING: the Towel checkout under test has uncommitted changes; edits or "
+            "commits during the run will change what the workers import. Prefer a "
+            "detached worktree: git worktree add --detach <dir> <commit> and "
+            "--towel-src <dir>/src.",
+            flush=True,
+        )
     results: List[Result] = []
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=args.workers, initializer=_isolate_worker
