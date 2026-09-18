@@ -45,7 +45,7 @@ def bound_names_in_block(nodes: Sequence[ast.stmt]) -> Set[str]:
     return names
 
 
-def get_used_variables(nodes: Sequence[ast.AST]) -> Set[str]:
+def used_names(nodes: Sequence[ast.AST]) -> Set[str]:
     """Every name a block reads, nested scopes included."""
     names: Set[str] = set()
     for node in nodes:
@@ -100,6 +100,6 @@ def _orphaned_variables(
     for statement, definite in zip(remaining_code, definitely_bound_before_each(remaining_code)):
         if definite is None:
             break  # no path reaches this statement
-        used = get_used_variables([statement])
+        used = used_names([statement])
         orphaned |= (bound_in_extracted & used) - definite
     return orphaned

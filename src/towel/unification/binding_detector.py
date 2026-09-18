@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 
 from .parameters import parameter_nodes
+from .statement_facts import imported_binding_name
 from .visitors import ScopeVisitor
 from typing import List, Optional, Set, Union
 from dataclasses import dataclass
@@ -237,7 +238,7 @@ class BindingDetector(ScopeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Handle from-import statements: from x import y, from x import y as z"""
         for alias in node.names:
-            resolved = _resolve_import_alias(alias)
+            resolved = imported_binding_name(alias)
             if resolved:
                 self._add_binding(resolved, BindingKind.IMPORT, node)
         self.generic_visit(node)
@@ -354,10 +355,3 @@ def get_bindings_by_kind(tree: ast.AST, kind: BindingKind) -> List[Binding]:
     """
     bindings = detect_bindings(tree)
     return [b for b in bindings if b.kind == kind]
-
-
-def _resolve_import_alias(alias: ast.alias) -> Optional[str]:
-    """Return the binding name for an import alias, or None for ``*`` imports."""
-    if alias.name == "*":
-        return None
-    return alias.asname if alias.asname else alias.name

@@ -246,7 +246,6 @@ class EngineState:
         directory: str,
         recursive: bool = True,
         *,
-        verbose: bool = False,
         progress: ProgressMode = DEFAULT_PROGRESS,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
@@ -257,7 +256,6 @@ class EngineState:
         self,
         file_paths: List[str],
         *,
-        verbose: bool = False,
         progress: ProgressMode = DEFAULT_PROGRESS,
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,

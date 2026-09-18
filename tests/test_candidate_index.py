@@ -19,8 +19,7 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 def analyzed_functions(paths):
-    modules = parse_modules(paths)
-    analyze_scopes(modules)
+    modules = analyze_scopes(parse_modules(paths))
     return collect_functions(modules)
 
 

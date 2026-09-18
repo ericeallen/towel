@@ -416,7 +416,7 @@ class ScopeAnalyzer(ScopeVisitor):
         The analyzer's scopes are those of functions and classes, the ones
         helpers are placed in and methods dispatched from; a lambda's body is
         read as part of the scope it appears in, its parameters unbound, as
-        it always was. ``get_free_variables`` handles lambdas by their own
+        it always was. ``free_variables`` handles lambdas by their own
         scope through ``_ScopeRespectingWalker``.
         """
         self.generic_visit(node)
@@ -547,7 +547,7 @@ class ScopeAnalyzer(ScopeVisitor):
                 self._add_assignment_bindings(elt)
         # Other cases (subscript, attribute) don't create bindings
 
-    def get_free_variables(self, nodes: Sequence[ast.AST]) -> Set[str]:
+    def free_variables(self, nodes: Sequence[ast.AST]) -> Set[str]:
         """
         Get free variables in a block of code.
 

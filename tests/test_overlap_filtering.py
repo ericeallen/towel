@@ -7,12 +7,12 @@ which would break the code by modifying the same lines multiple times.
 
 import unittest
 import ast
-from towel.unification.overlap import get_affected_lines, filter_overlapping_proposals
+from towel.unification.overlap import affected_lines, filter_overlapping_proposals
 from towel.unification.models import RefactoringProposal, Replacement
 
 
 class TestGetAffectedLines(unittest.TestCase):
-    """Tests for get_affected_lines function."""
+    """Tests for affected_lines function."""
 
     def test_single_replacement_same_file(self):
         """Test affected lines for a single replacement in the same file."""
@@ -34,7 +34,7 @@ class TestGetAffectedLines(unittest.TestCase):
             parameters_count=0,
         )
 
-        affected = get_affected_lines(proposal)
+        affected = affected_lines(proposal)
 
         # Should include lines 10, 11, 12, 13, 14, 15
         expected = {("test.py", i) for i in range(10, 16)}
@@ -59,7 +59,7 @@ class TestGetAffectedLines(unittest.TestCase):
             parameters_count=0,
         )
 
-        affected = get_affected_lines(proposal)
+        affected = affected_lines(proposal)
 
         # Should include lines 10-15 in file2.py, not file1.py
         expected = {("file2.py", i) for i in range(10, 16)}
@@ -85,7 +85,7 @@ class TestGetAffectedLines(unittest.TestCase):
             parameters_count=0,
         )
 
-        affected = get_affected_lines(proposal)
+        affected = affected_lines(proposal)
 
         # Should include both ranges
         expected = {("test.py", i) for i in range(10, 13)} | {("test.py", i) for i in range(20, 23)}
@@ -113,7 +113,7 @@ class TestGetAffectedLines(unittest.TestCase):
             parameters_count=0,
         )
 
-        affected = get_affected_lines(proposal)
+        affected = affected_lines(proposal)
 
         # Should include both files
         expected = {("file1.py", i) for i in range(10, 13)} | {
@@ -138,7 +138,7 @@ class TestGetAffectedLines(unittest.TestCase):
             parameters_count=0,
         )
 
-        affected = get_affected_lines(proposal)
+        affected = affected_lines(proposal)
 
         # Should include only line 10
         expected = {("test.py", 10)}

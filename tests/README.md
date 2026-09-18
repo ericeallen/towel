@@ -77,9 +77,20 @@ example corpora and scratch output directories.
   and pyright oracles; skipped when the checker is not installed).
 - **Exactness of the performance work** — `test_function_facts_equivalence.py`
   (per-function facts against the uncached analysis),
-  `test_candidate_index.py` (bucket invariants), and
+  `test_candidate_index.py` (bucket invariants),
   `test_incremental_global_passes.py` (byte-identical `dry` output with
-  incremental global passes on and off).
+  incremental global passes on and off), `test_statement_facts.py`,
+  `test_structural_memo.py`, `test_cache_lifetimes.py`,
+  `test_binding_context_memo.py`, `test_substitution_keys.py`,
+  `test_thunk_inlining.py`, `test_perf_memos.py` (each memo against the
+  uncached computation and across a re-parse) and `test_analysis_sessions.py`
+  (the bounded session and its sizing).
+- **Repeated extraction and input errors** — `test_forwarder_chains.py`
+  (repeated extraction never stacks helpers into a chain) and
+  `test_cli_input_errors.py` (a single file that cannot be refactored is
+  named, a negative count is refused); `test_release_regressions.py` pins
+  the defects the ecosystem runs found and `test_progress_modes.py` the three
+  progress displays and the silence of `none`.
 - **Command line** — `test_cli_integration.py`: real `towel` runs, the
   `--x/--no-x` option pairs and their hidden aliases;
   `test_cli_dispatch_paths.py`: the `recover` subcommand and its error exit,
@@ -97,8 +108,8 @@ example corpora and scratch output directories.
   defect (`xf9_same_named_base_class`) is cited in
   `docs/ADVERSARIAL_REVIEW.md`; the others pin behaviour the engine must keep.
 - **Property-based tests** — `test_properties.py` generates programs from
-  small grammars with Hypothesis (fifty deterministic examples per property,
-  no deadline) and checks three invariants: consistently renamed binders
+  small grammars with Hypothesis (300 deterministic examples for the pure
+  properties, 60 for the engine property, no deadline) and checks three invariants: consistently renamed binders
   unify with no parameters, `definitely_bound_after` matches a
   path-enumerating reference, and every engine proposal for two blocks that
   differ in one leaf passes the public instantiation check.

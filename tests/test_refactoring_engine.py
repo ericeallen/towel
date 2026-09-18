@@ -194,9 +194,7 @@ class TestDirectoryAnalysis(unittest.TestCase):
             original_contents[py_file] = py_file.read_text()
 
         # Enable progress for long-running analysis
-        proposals = self.engine.analyze_directory(
-            "test_examples", recursive=True, verbose=True, progress="tqdm"
-        )
+        proposals = self.engine.analyze_directory("test_examples", recursive=True, progress="tqdm")
 
         # Should find duplicates across all example files
         self.assertGreater(len(proposals), 0, "Should find duplicates in test_examples directory")

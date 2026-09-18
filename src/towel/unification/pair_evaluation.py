@@ -674,12 +674,8 @@ class PairEvaluation(
         """The helper's free variables, checked for lifetime, declared, and thunked as needed."""
         debug_enabled = debugging(VALIDATION)
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
-        free_vars1 = (
-            scope_analyzer.get_free_variables(pair.block1_nodes) if scope_analyzer else set()
-        )
-        free_vars2 = (
-            scope_analyzer2.get_free_variables(pair.block2_nodes) if scope_analyzer2 else set()
-        )
+        free_vars1 = scope_analyzer.free_variables(pair.block1_nodes) if scope_analyzer else set()
+        free_vars2 = scope_analyzer2.free_variables(pair.block2_nodes) if scope_analyzer2 else set()
         # The helper ends with ``return (v, ...)``. A variable bound only on some
         # path through the block, such as inside a branch that raises, is unbound
         # there unless it entered as a parameter; the original block left the
@@ -908,7 +904,7 @@ class PairEvaluation(
         allowed_before = set(snapshot.bound_before_block) | set(free_here)
         invalid_names = {
             name
-            for name in self._get_used_names(call_node)
+            for name in self._used_names(call_node)
             if name != func_def.name
             and (
                 name.startswith("__param_")

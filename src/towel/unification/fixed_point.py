@@ -356,7 +356,6 @@ class FixedPointDrivers(Materialization):
         proposals = self.analyze_directory(
             str(output_path),
             recursive=True,
-            verbose=False,
             progress=reporter.analysis_mode,
             changed_files=restrict,
         )

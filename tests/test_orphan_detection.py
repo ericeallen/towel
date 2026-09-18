@@ -9,7 +9,7 @@ import unittest
 import ast
 from towel.unification.orphan_detector import (
     bound_names_in_block,
-    get_used_variables,
+    used_names,
     orphaned_variables,
 )
 
@@ -56,7 +56,7 @@ print(result)
 """
         tree = ast.parse(code)
         nodes: list[ast.AST] = list(tree.body)
-        used = get_used_variables(nodes)
+        used = used_names(nodes)
         self.assertIn("x", used)
         self.assertIn("y", used)
         self.assertIn("print", used)

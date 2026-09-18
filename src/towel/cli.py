@@ -798,9 +798,7 @@ def _run_preview(args: argparse.Namespace) -> None:
         all_proposals = engine.analyze_files([target], progress=options.progress)
     else:
         print(f"Analyzing directory: {target}")
-        all_proposals = engine.analyze_directory(
-            target, recursive=True, verbose=True, progress=options.progress
-        )
+        all_proposals = engine.analyze_directory(target, recursive=True, progress=options.progress)
 
     print(f"\nFound {len(all_proposals)} refactoring opportunities")
 

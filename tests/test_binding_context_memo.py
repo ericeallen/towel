@@ -8,7 +8,7 @@ from typing import Iterator, List, Tuple
 
 from towel.unification.binding_context import (
     bound_variables_in_block,
-    get_bound_variables_in_context,
+    bound_variables_in_context,
 )
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent / "src" / "towel"
@@ -34,7 +34,7 @@ def test_memoized_query_matches_the_walk_on_towels_source() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for block, expression in _blocks_with_expressions(tree):
             wrapped = ast.Module(body=list(block), type_ignores=[])
-            expected = get_bound_variables_in_context(wrapped, expression)
+            expected = bound_variables_in_context(wrapped, expression)
             assert bound_variables_in_block(block, expression) == expected
             # The second answer comes from the memo and must be the same object's worth.
             assert bound_variables_in_block(block, expression) == expected

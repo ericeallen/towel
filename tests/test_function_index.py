@@ -38,8 +38,7 @@ def _functions(tmp_path: Path) -> List[FunctionArtifact]:
     alpha, beta = tmp_path / "alpha.py", tmp_path / "beta.py"
     alpha.write_text(ALPHA)
     beta.write_text(BETA)
-    modules = parse_modules([str(alpha), str(beta)])
-    analyze_scopes(modules)
+    modules = analyze_scopes(parse_modules([str(alpha), str(beta)]))
     return collect_functions(modules)
 
 

@@ -134,7 +134,7 @@ def test_func(x):
 
         for stmt in func.body:
             if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
-                uses = engine._get_used_names(stmt)
+                uses = engine._used_names(stmt)
                 uses_after.update(uses)
 
         self.assertIn("result", uses_after, "Should detect that 'result' is used after the block")

@@ -24,7 +24,7 @@ from tests.test_helpers import (
     write_module,
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from towel.unification.overlap import get_affected_lines
+from towel.unification.overlap import affected_lines
 
 IDENTICAL_PAIR = """
 def alpha(value):
@@ -98,7 +98,7 @@ def test_proposal_records_the_reused_function_and_covers_its_lines(tmp_path: Pat
     assert [replacement.line_range for replacement in proposal.replacements] == [(8, 10)]
     # Overlap filtering treats the reused definition as covered so no other
     # proposal rewrites it underneath the new calls.
-    assert {line for _path, line in get_affected_lines(proposal)} == {2, 3, 4, 5, 8, 9, 10}
+    assert {line for _path, line in affected_lines(proposal)} == {2, 3, 4, 5, 8, 9, 10}
 
 
 def test_block_inside_a_larger_function_calls_the_existing_function(tmp_path: Path) -> None:

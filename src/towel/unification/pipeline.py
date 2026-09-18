@@ -48,6 +48,7 @@ from dataclasses import dataclass
 import os
 
 from .models import (
+    RawModule,
     ParsedModule,
     FunctionArtifact,
     ClassInfo,
@@ -94,30 +95,41 @@ class PairProcessor(Protocol):
         all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
         *,
-        verbose: bool,
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         """Verified proposals for the pairs that unify."""
         ...
 
 
-def parse_modules(paths: Sequence[str]) -> List[ParsedModule]:
-    modules: List[ParsedModule] = []
+def parse_modules(paths: Sequence[str]) -> List[RawModule]:
+    """Read and parse each path; a file that cannot be read or parsed is skipped with a warning."""
+    modules: List[RawModule] = []
     for p in paths:
         try:
             src, tree = _read_and_normalize_module(p)
         except (OSError, UnicodeError, SyntaxError) as error:
             LOG.warning("Skipping %s: %s", p, error)
             continue
-        modules.append(ParsedModule(file_path=p, source=src, tree=tree))
+        modules.append(RawModule(file_path=p, source=src, tree=tree))
     return modules
 
 
-def analyze_scopes(mods: Sequence[ParsedModule]) -> None:
+def analyze_scopes(mods: Sequence[RawModule]) -> List[ParsedModule]:
+    """Each module with its scopes analyzed."""
+    analyzed: List[ParsedModule] = []
     for m in mods:
         analyzer = ScopeAnalyzer()
-        m.root_scope = analyzer.analyze(m.tree)
-        m.scope_analyzer = analyzer
+        root_scope = analyzer.analyze(m.tree)
+        analyzed.append(
+            ParsedModule(
+                file_path=m.file_path,
+                source=m.source,
+                tree=m.tree,
+                scope_analyzer=analyzer,
+                root_scope=root_scope,
+            )
+        )
+    return analyzed
 
 
 def _resolve_base_name(expr: ast.expr) -> Optional[str]:
@@ -165,7 +177,7 @@ class _ClassCollector(DefinitionDepthVisitor):
             self.class_stack.pop()
 
 
-def collect_classes(mods: Sequence[ParsedModule]) -> List[ClassInfo]:
+def collect_classes(mods: Sequence[RawModule]) -> List[ClassInfo]:
     infos: List[ClassInfo] = []
     for m in mods:
         _ClassCollector(m.file_path, infos).visit(m.tree)
@@ -176,9 +188,6 @@ def collect_functions(mods: Sequence[ParsedModule]) -> List[FunctionArtifact]:
     funcs: List[FunctionArtifact] = []
 
     for mod in mods:
-        if mod.scope_analyzer is None or mod.root_scope is None:
-            raise RuntimeError("collect_functions requires analyze_scopes to run first")
-
         analyzer = mod.scope_analyzer
         root_scope = mod.root_scope
 
@@ -228,12 +237,9 @@ def unify_blocks(
     funcs: Sequence[FunctionArtifact],
     classes: Sequence[ClassInfo],
     *,
-    verbose: bool = False,
     progress: ProgressMode = DEFAULT_PROGRESS,
 ) -> List[RefactoringProposal]:
-    return engine.process_block_pairs(
-        list(pairs), list(funcs), list(classes), verbose=verbose, progress=progress
-    )
+    return engine.process_block_pairs(list(pairs), list(funcs), list(classes), progress=progress)
 
 
 def filter_overlaps(proposals: List[RefactoringProposal]) -> List[RefactoringProposal]:
@@ -360,8 +366,7 @@ class AnalysisSession:
             tree = ast.parse(source, filename=path)
         except SyntaxError as error:
             raise SourceFileError(str(error)) from error
-        module = ParsedModule(file_path=path, source=source, tree=tree)
-        analyze_scopes([module])
+        module = analyze_scopes([RawModule(file_path=path, source=source, tree=tree)])[0]
         module.class_infos = collect_classes([module])
         analysis = ModuleAnalysis(module, tuple(collect_functions([module])))
         source_bytes = len(source.encode("utf-8"))
@@ -410,7 +415,6 @@ def run_pipeline(
     *,
     engine: PairProcessor,
     session: Optional[AnalysisSession] = None,
-    verbose: bool = False,
     progress: ProgressMode = DEFAULT_PROGRESS,
     invalidate_paths: Optional[Sequence[str]] = None,
     changed_files: Optional[FrozenSet[str]] = None,
@@ -455,5 +459,5 @@ def run_pipeline(
     functions = [function for analysis in analyses for function in analysis.functions]
     classes = [info for analysis in analyses for info in analysis.module.class_infos]
     pairs = pair_blocks(engine, functions, progress=progress, changed_files=changed_files)
-    proposals = unify_blocks(engine, pairs, functions, classes, verbose=verbose, progress=progress)
+    proposals = unify_blocks(engine, pairs, functions, classes, progress=progress)
     return filter_overlaps(proposals)

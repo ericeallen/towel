@@ -23,7 +23,7 @@ from tests.test_cli_integration import HELPER, invoke
 from tests.test_thunk_inlining import _inline
 from towel import formatting, type_inference
 from towel.diagnostics import Settings
-from towel.unification.binding_context import get_bound_variables_in_context
+from towel.unification.binding_context import bound_variables_in_context
 from towel.unification.extractor import ParameterSubstituter
 from towel.unification.substitution import Substitution
 
@@ -235,7 +235,7 @@ NESTED = (
 
 def _bound(target: str) -> set[str]:
     outer = ast.parse(NESTED).body[0]
-    return get_bound_variables_in_context(outer, ast.parse(target, mode="eval").body)
+    return bound_variables_in_context(outer, ast.parse(target, mode="eval").body)
 
 
 def test_nested_def_containing_the_target_starts_its_own_scope() -> None:

@@ -228,6 +228,22 @@ ecosystem evidence behind each claim. The format follows
   are removed. The engine's mixins now inherit the mixins they call, so
   the forty-nine one-caller stubs on `EngineState` are gone and it declares
   only the shared attributes and the eleven operations the core provides.
+  The import-graph resolution is its own module (`import_graph.py`);
+  parsing yields a `RawModule` and scope analysis a `ParsedModule` whose
+  analyzer and root scope are required rather than Optional; the
+  `verbose` flag threaded through eleven signatures and read once is gone
+  (the logger's level decides); and the `get_` prefix on a handful of
+  functions is dropped (`free_variables`, `used_names`,
+  `enclosing_names`, `affected_lines`, `bound_variables_in_context`).
+- The test suite is type-checked with the same strict flags as the source
+  (fifteen `type: ignore` comments ignored nothing; the AST accesses behind
+  the rest are `isinstance` assertions now), coverage traces the forked
+  pair workers (`parallel.py` 85% to 95%), the helpers copied across test
+  modules live in `conftest.py`, thirty-odd non-emptiness assertions state
+  the value they are about, the goldens expected to equal their inputs are
+  named and checked exactly, the example3 tests run the cross-file path
+  they describe, a symlinked input directory is pinned, and the engine and
+  command-line branches the suite left untested have tests.
 - The clustering pass scans a file for the sites that can share a helper
   once per distinct helper template instead of once per pair, and the
   reuse redirect finds a function whose body starts at a site through an

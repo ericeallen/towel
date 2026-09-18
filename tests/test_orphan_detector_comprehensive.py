@@ -10,7 +10,7 @@ import unittest
 import ast
 from towel.unification.orphan_detector import (
     bound_names_in_block,
-    get_used_variables,
+    used_names,
     orphaned_variables,
 )
 
@@ -243,7 +243,7 @@ def outer():
 
 
 class TestGetUsedVariables(unittest.TestCase):
-    """Test get_used_variables function."""
+    """Test used_names function."""
 
     def test_simple_usage(self):
         """Test simple variable usage."""
@@ -251,7 +251,7 @@ class TestGetUsedVariables(unittest.TestCase):
         tree = ast.parse(code)
         block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(block)
+        result = used_names(block)
 
         self.assertIn("x", result, "Should find used variable x")
         self.assertNotIn("y", result, "Should not include assignment target")
@@ -262,7 +262,7 @@ class TestGetUsedVariables(unittest.TestCase):
         tree = ast.parse(code)
         block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(block)
+        result = used_names(block)
 
         self.assertEqual(result, {"x", "y", "z"}, "Should find all used variables")
 
@@ -272,7 +272,7 @@ class TestGetUsedVariables(unittest.TestCase):
         tree = ast.parse(code)
         block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(block)
+        result = used_names(block)
 
         self.assertEqual(result, {"a", "b", "c"}, "Should find all expression variables")
 
@@ -282,7 +282,7 @@ class TestGetUsedVariables(unittest.TestCase):
         tree = ast.parse(code)
         block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(block)
+        result = used_names(block)
 
         self.assertIn("foo", result, "Should find function name")
         self.assertIn("x", result, "Should find argument x")
@@ -294,13 +294,13 @@ class TestGetUsedVariables(unittest.TestCase):
         tree = ast.parse(code)
         block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(block)
+        result = used_names(block)
 
         self.assertNotIn("x", result, "Should not collect Store context name")
 
     def test_empty_code(self):
         """Test empty code block."""
-        result = get_used_variables([])
+        result = used_names([])
 
         self.assertEqual(len(result), 0, "Empty code should have no uses")
 

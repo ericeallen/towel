@@ -32,7 +32,8 @@ from .scope_analyzer import ScopeAnalyzer
 from ..diagnostics import UNIFIER
 
 from .substitution import Substitution
-from .binding_context import bound_variables_in_block, get_free_variables
+from .binding_context import bound_variables_in_block
+from .statement_facts import loaded_names
 from .statement_facts import memoized_per_node
 from .unifier_state import UnifierState
 
@@ -146,7 +147,7 @@ class Parameterization(UnifierState):
         for idx, expr in zip(block_indices, exprs):
             if self.current_blocks is not None and idx < len(self.current_blocks):
                 bound = bound_variables_in_block(self.current_blocks[idx], expr)
-                bound_per_expr.append(sorted(bound & get_free_variables(expr)))
+                bound_per_expr.append(sorted(bound & loaded_names(expr)))
             else:
                 bound_per_expr.append([])
         if bound_per_expr and len({tuple(bound) for bound in bound_per_expr}) == 1:
@@ -157,7 +158,7 @@ class Parameterization(UnifierState):
         """The free variables of block ``idx``: the names its call site can supply."""
         if self.current_blocks is None or idx >= len(self.current_blocks):
             return set()
-        return ScopeAnalyzer().get_free_variables(self.current_blocks[idx])
+        return ScopeAnalyzer().free_variables(self.current_blocks[idx])
 
     def _setup_bound_variable_alpha_renamings(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         """

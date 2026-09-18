@@ -182,8 +182,8 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
         colliding = extractor._ensure_unique_name("bar", enclosing_names={"bar"})
         self.assertTrue(colliding.startswith("__bar_"))
 
-        # get_enclosing_names should collect bindings from parent scopes
-        from towel.unification.extractor import get_enclosing_names
+        # enclosing_names should collect bindings from parent scopes
+        from towel.unification.extractor import enclosing_names
         from towel.unification.scope_analyzer import Scope, ScopeBinding
 
         def make_scope(scope_id: int, names: list[str], parent: Scope | None) -> Scope:
@@ -194,11 +194,11 @@ class TestExtractorSubstituterAndHelpers(unittest.TestCase):
         child = make_scope(1, ["b"], root)
         grandchild = make_scope(2, ["c"], child)
 
-        names = get_enclosing_names(root, root)
+        names = enclosing_names(root, root)
         self.assertEqual(names, set())
-        names_child = get_enclosing_names(root, child)
+        names_child = enclosing_names(root, child)
         self.assertEqual(names_child, {"a"})
-        names_grandchild = get_enclosing_names(root, grandchild)
+        names_grandchild = enclosing_names(root, grandchild)
         self.assertEqual(names_grandchild, {"a", "b"})
 
     def test_generate_call_wraps_function_and_callee_parameters(self) -> None:

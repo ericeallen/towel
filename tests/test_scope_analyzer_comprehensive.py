@@ -395,7 +395,7 @@ class TestFreeVariables(unittest.TestCase):
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         self.assertEqual(len(free_vars), 0, "Should have no free variables")
 
@@ -405,7 +405,7 @@ class TestFreeVariables(unittest.TestCase):
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         self.assertIn("x", free_vars, "x should be a free variable")
 
@@ -415,7 +415,7 @@ class TestFreeVariables(unittest.TestCase):
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         # x is used before assigned, so it should be a free variable
         self.assertIn("x", free_vars, "x should be free (used before assigned)")
@@ -426,7 +426,7 @@ class TestFreeVariables(unittest.TestCase):
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         self.assertIn("x", free_vars, "x should be free (augmented assignment is a use)")
 
@@ -442,7 +442,7 @@ def foo(x):
         assert isinstance(func_def, ast.FunctionDef)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(func_def.body)
+        free_vars = self.analyzer.free_variables(func_def.body)
 
         # z is free (not defined anywhere)
         # When calling get_free_variables on just the body statements without context,
@@ -460,7 +460,7 @@ result = helper(5)
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         # helper is defined locally, no free variables
         self.assertEqual(len(free_vars), 0, "Should have no free variables")
@@ -474,7 +474,7 @@ x = 1
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         # Global assignments are uses, not bindings
         self.assertIn("x", free_vars, "Global variable should be treated as free")
@@ -485,7 +485,7 @@ x = 1
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         self.assertNotIn("len", free_vars, "Builtins should be filtered out")
 
@@ -514,7 +514,7 @@ class TestComprehensions(unittest.TestCase):
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         # factor is used but not defined, so it's free
         self.assertIn("factor", free_vars, "factor should be a free variable")
@@ -533,7 +533,7 @@ class TestImports(unittest.TestCase):
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         # os should be bound, not free
         self.assertEqual(len(free_vars), 0, "Import should bind the module name")
@@ -544,7 +544,7 @@ class TestImports(unittest.TestCase):
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         # operating_system should be bound
         self.assertEqual(len(free_vars), 0, "Import alias should be bound")
@@ -555,7 +555,7 @@ class TestImports(unittest.TestCase):
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         # path should be bound
         self.assertEqual(len(free_vars), 0, "From import should bind the name")
@@ -646,7 +646,7 @@ except ValueError as e:
         tree = ast.parse(code)
 
         self.analyzer.analyze(tree)
-        free_vars = self.analyzer.get_free_variables(tree.body)
+        free_vars = self.analyzer.free_variables(tree.body)
 
         # e is bound, risky and handle are free
         self.assertIn("risky", free_vars)

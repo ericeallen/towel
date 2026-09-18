@@ -13,7 +13,7 @@ from towel.unification.extractor import (
     contains_return,
     is_value_producing,
     has_complete_return_coverage,
-    get_enclosing_names,
+    enclosing_names,
     HygienicExtractor,
 )
 from towel.unification.scope_analyzer import Scope
@@ -246,13 +246,13 @@ return result
 
 
 class TestGetEnclosingNames(unittest.TestCase):
-    """Test get_enclosing_names function."""
+    """Test enclosing_names function."""
 
     def test_root_scope_no_enclosing(self):
         """Test that root scope has no enclosing names."""
         scope = Scope(scope_id=0, parent=None)
 
-        names = get_enclosing_names(scope, scope)
+        names = enclosing_names(scope, scope)
 
         self.assertEqual(len(names), 0, "Root scope should have no enclosing names")
 
@@ -264,7 +264,7 @@ class TestGetEnclosingNames(unittest.TestCase):
 
         child_scope = Scope(scope_id=1, parent=parent_scope)
 
-        names = get_enclosing_names(parent_scope, child_scope)
+        names = enclosing_names(parent_scope, child_scope)
 
         self.assertIn("x", names, "Should see x from parent")
         self.assertIn("y", names, "Should see y from parent")
@@ -280,7 +280,7 @@ class TestGetEnclosingNames(unittest.TestCase):
         level2 = Scope(scope_id=2, parent=level1)
         level2.add_binding("c", ast.Name(id="c"))
 
-        names = get_enclosing_names(root, level2)
+        names = enclosing_names(root, level2)
 
         self.assertIn("a", names, "Should see a from root")
         self.assertIn("b", names, "Should see b from level1")

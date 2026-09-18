@@ -760,7 +760,7 @@ def has_complete_return_coverage(block: Sequence[ast.stmt]) -> bool:
     return shaped and definitely_bound_after(block) is None
 
 
-def get_enclosing_names(scope_tree: "Scope", current_scope: "Scope") -> Set[str]:
+def enclosing_names(scope_tree: "Scope", current_scope: "Scope") -> Set[str]:
     """
     Get all names defined in scopes enclosing the current scope.
 

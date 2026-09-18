@@ -35,7 +35,7 @@ def line_ranges_intersect(left: Tuple[int, int], right: Tuple[int, int]) -> bool
     return left[0] <= right[1] and right[0] <= left[1]
 
 
-def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
+def affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
     """
     Get all (file_path, line_number) tuples affected by a proposal.
 
@@ -66,7 +66,7 @@ def get_affected_lines(proposal: RefactoringProposal) -> Set[Tuple[str, int]]:
 
 def _proposal_size(proposal: RefactoringProposal) -> int:
     """Total lines a proposal covers, counting a reused definition as covered."""
-    return len(get_affected_lines(proposal))
+    return len(affected_lines(proposal))
 
 
 def _first_span(proposal: RefactoringProposal) -> Tuple[str, int]:
@@ -162,7 +162,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
     per_file_interval: Dict[int, Dict[str, Tuple[int, int]]] = {}
     by_primary_file: Dict[str, List[int]] = {}
     for idx, proposal in enumerate(proposals):
-        affected = get_affected_lines(proposal)
+        affected = affected_lines(proposal)
         prop_affected[idx] = affected
         by_file: Dict[str, List[int]] = {}
         for fp, ln in affected:

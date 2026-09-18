@@ -87,7 +87,9 @@ fixed-point loop (below).
 8. **Apply.** `changes.py` turns accepted proposals into an immutable byte
    plan and applies it transactionally (see *Application and recovery*).
 
-`models.py` defines the data that flows between stages: parsed modules,
+`models.py` defines the data that flows between stages: raw and parsed
+modules (a `RawModule` is a file read and parsed; a `ParsedModule` has its
+scopes analyzed and is what every later phase consumes),
 function artifacts, class info, code-block pairs, replacements, and
 proposals; `substitution.py` defines the substitution the unifier produces.
 

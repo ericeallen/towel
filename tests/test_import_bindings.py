@@ -72,8 +72,8 @@ def test_annotations_in_function_bodies_are_inert() -> None:
     analyzer.analyze(tree)
     function = tree.body[0]
     assert isinstance(function, ast.FunctionDef)
-    assert "Money" not in analyzer.get_free_variables(function.body[:2])
-    assert "Count" not in analyzer.get_free_variables(function.body[:2])
+    assert "Money" not in analyzer.free_variables(function.body[:2])
+    assert "Count" not in analyzer.free_variables(function.body[:2])
     first = ast.parse("total: Money = 0").body[0]
     second = ast.parse("total: Cents = 0").body[0]
     substitution = Unifier().unify_blocks([[first], [second]], [{}, {}])

@@ -48,7 +48,5 @@ def test_run_pipeline_matches_engine_counts_multi_file():
 def test_run_pipeline_handles_missing_or_invalid_files_gracefully():
     # Nonexistent or invalid files should be skipped without raising exceptions
     bogus = [str(PROJECT_ROOT / "this_file_does_not_exist.py")]
-    proposals = run_pipeline(
-        bogus, engine=UnificationRefactorEngine(), verbose=True, progress="auto"
-    )
+    proposals = run_pipeline(bogus, engine=UnificationRefactorEngine(), progress="auto")
     assert proposals == []

@@ -386,7 +386,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         directory: str,
         recursive: bool = True,
         *,
-        verbose: bool = False,
         progress: ProgressMode = DEFAULT_PROGRESS,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
@@ -396,7 +395,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         Args:
             directory: Path to directory
             recursive: Whether to search subdirectories (default: True)
-            verbose: Log the file count at INFO level.
             progress: How progress is shown (see ``ProgressMode``).
             changed_files: When given, only pairs with a function in one of
                 these files are considered (see ``incremental_global_passes``).
@@ -409,13 +407,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         if not python_files:
             return []
 
-        if verbose:
-            LOG.info("Found %d Python files in %s", len(python_files), directory)
+        LOG.debug("Found %d Python files in %s", len(python_files), directory)
 
         # Analyze all files together
-        return self.analyze_files(
-            python_files, verbose=verbose, progress=progress, changed_files=changed_files
-        )
+        return self.analyze_files(python_files, progress=progress, changed_files=changed_files)
 
     def _find_python_files(self, directory: str, recursive: bool = True) -> List[str]:
         """
@@ -458,7 +453,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self,
         file_paths: List[str],
         *,
-        verbose: bool = False,
         progress: ProgressMode = DEFAULT_PROGRESS,
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,
@@ -467,7 +461,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
         Args:
             file_paths: The files to analyze together.
-            verbose: Log the file count at INFO level.
             progress: How progress is shown (see ``ProgressMode``).
             invalidate_paths: Re-parse and re-analyze these paths even if cached.
             changed_files: When given, only pairs with a function in one of
@@ -485,7 +478,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         return run_pipeline(
             file_paths,
             engine=self,
-            verbose=verbose,
             progress=progress,
             invalidate_paths=invalidate_paths,
             session=self.analysis_session,
@@ -578,7 +570,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
         *,
-        verbose: bool,
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         if not block_pairs:
@@ -587,13 +578,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._record_function_paths(all_functions)
         if self._should_use_parallel(len(block_pairs)):
             return self._evaluate_pairs_parallel(
-                block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
+                block_pairs, all_functions, class_infos, progress=progress
             )
         return self._evaluate_pairs_serial(
             block_pairs,
             all_functions,
             class_infos,
-            verbose=verbose,
             progress=progress,
         )
 

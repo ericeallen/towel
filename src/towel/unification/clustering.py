@@ -171,7 +171,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         except UnsupportedExtraction:
             return None
         # Validate candidate call-site does not reference undefined names
-        used2 = self._get_used_names(call_node2)
+        used2 = self._used_names(call_node2)
         if any(n.startswith("__param_") for n in used2):
             # Skip brittle candidate that leaked placeholders
             return None
@@ -189,7 +189,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             return None
         allowed = set(candidate.snapshot.bound_before_block) | set(
-            candidate.analyzer.get_free_variables(candidate.nodes)
+            candidate.analyzer.free_variables(candidate.nodes)
         )
         if any(
             name != template.func_def.name

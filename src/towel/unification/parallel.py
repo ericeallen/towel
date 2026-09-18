@@ -166,14 +166,13 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
         *,
-        verbose: bool,
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         proposals: List[RefactoringProposal] = []
 
         progress_mode, tqdm_cls = self._resolve_progress_backend(progress)
         use_tqdm = tqdm_cls is not None
-        # Pair evaluation shows progress whenever progress is enabled, verbose or not.
+        # Pair evaluation shows progress whenever progress is enabled.
         if tqdm_cls is not None:
             bar = tqdm_cls(
                 total=len(block_pairs), desc="unify", unit="pair", dynamic_ncols=True, leave=False
@@ -212,7 +211,6 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
         *,
-        verbose: bool,
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         """Evaluate pairs in forked workers; results are ordered as the serial path orders them.
@@ -230,7 +228,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         workers = min(self._parallel_workers(), max(1, len(cold) // 64))
         if workers <= 1 or len(cold) < self.PARALLEL_PAIR_THRESHOLD:
             return self._evaluate_pairs_serial(
-                block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
+                block_pairs, all_functions, class_infos, progress=progress
             )
         # Probe: evaluate a strided sample of the pairs here and project the
         # rest. Pairs are ordered by function, and in a fixed-point iteration

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import ast
-from typing import List
 
-import pytest
 
 from tests.test_helpers import PROJECT_ROOT, example_paths
 from towel.unification.pipeline import (
@@ -18,7 +16,7 @@ from towel.unification.pipeline import (
     filter_overlaps,
     run_pipeline,
 )
-from towel.unification.models import ParsedModule
+from towel.unification.models import RawModule
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -31,7 +29,7 @@ class TestParseModules:
         mods = parse_modules(files)
 
         assert len(mods) == 1
-        assert isinstance(mods[0], ParsedModule)
+        assert isinstance(mods[0], RawModule)
         assert mods[0].file_path == files[0]
         assert isinstance(mods[0].tree, ast.Module)
         with open(files[0], encoding="utf-8") as handle:
@@ -43,7 +41,7 @@ class TestParseModules:
         mods = parse_modules(files)
 
         assert len(mods) == 2
-        assert all(isinstance(m, ParsedModule) for m in mods)
+        assert all(isinstance(m, RawModule) for m in mods)
         assert mods[0].file_path == files[0]
         assert mods[1].file_path == files[1]
 
@@ -69,8 +67,7 @@ class TestAnalyzeScopes:
     def test_analyze_scopes_attaches_analyzer(self):
         """analyze_scopes should attach scope_analyzer to each module."""
         files = example_paths(["example1_simple.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
 
         assert mods[0].scope_analyzer is not None
         assert mods[0].root_scope is not None
@@ -78,8 +75,7 @@ class TestAnalyzeScopes:
     def test_analyze_scopes_multiple_modules(self):
         """analyze_scopes should analyze all modules."""
         files = example_paths(["example1_simple.py", "example2_classes.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
 
         for mod in mods:
             assert mod.scope_analyzer is not None
@@ -87,9 +83,7 @@ class TestAnalyzeScopes:
 
     def test_analyze_scopes_empty_list(self):
         """analyze_scopes on no modules is a no-op."""
-        modules: List[ParsedModule] = []
-        analyze_scopes(modules)
-        assert modules == []
+        assert analyze_scopes([]) == []
 
 
 class TestCollectClasses:
@@ -208,20 +202,10 @@ class Outer:
 class TestCollectFunctions:
     """Test collect_functions phase in isolation."""
 
-    def test_collect_functions_requires_scope_analysis(self):
-        """collect_functions should raise if scope analysis wasn't run."""
-        files = example_paths(["example1_simple.py"])
-        mods = parse_modules(files)
-        # Skip analyze_scopes
-
-        with pytest.raises(RuntimeError, match="collect_functions requires analyze_scopes"):
-            collect_functions(mods)
-
     def test_collect_functions_finds_functions(self):
         """collect_functions should find function definitions."""
         files = example_paths(["example1_simple.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
 
         assert {f.node.name for f in funcs} == {
@@ -233,8 +217,7 @@ class TestCollectFunctions:
     def test_collect_functions_multiple_modules(self):
         """collect_functions should collect from all modules."""
         files = example_paths(["example1_simple.py", "example2_classes.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
 
         # Should have functions from both files
@@ -248,8 +231,7 @@ class TestPairBlocks:
     def test_pair_blocks_without_progress(self):
         """pair_blocks should work with progress disabled."""
         files = example_paths(["example1_simple.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
         eng = UnificationRefactorEngine()
 
@@ -262,8 +244,7 @@ class TestPairBlocks:
     def test_pair_blocks_with_auto_progress(self):
         """pair_blocks should work with progress='auto'."""
         files = example_paths(["example1_simple.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
         eng = UnificationRefactorEngine()
 
@@ -274,8 +255,7 @@ class TestPairBlocks:
     def test_pair_blocks_with_tqdm_progress(self):
         """pair_blocks should work with progress='tqdm'."""
         files = example_paths(["example1_simple.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
         eng = UnificationRefactorEngine()
 
@@ -290,14 +270,13 @@ class TestUnifyBlocks:
     def test_unify_blocks_produces_proposals(self):
         """unify_blocks should produce refactoring proposals."""
         files = example_paths(["example1_simple.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
         classes = collect_classes(mods)
         eng = UnificationRefactorEngine()
         pairs = pair_blocks(eng, funcs, progress="none")
 
-        proposals = unify_blocks(eng, pairs, funcs, classes, verbose=False, progress="none")
+        proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
         assert isinstance(proposals, list)
 
 
@@ -307,13 +286,12 @@ class TestFilterOverlaps:
     def test_filter_overlaps_maintains_list_type(self):
         """filter_overlaps should return a list."""
         files = example_paths(["example1_simple.py"])
-        mods = parse_modules(files)
-        analyze_scopes(mods)
+        mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
         classes = collect_classes(mods)
         eng = UnificationRefactorEngine()
         pairs = pair_blocks(eng, funcs, progress="none")
-        proposals = unify_blocks(eng, pairs, funcs, classes, verbose=False, progress="none")
+        proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
 
         filtered = filter_overlaps(proposals)
         assert isinstance(filtered, list)

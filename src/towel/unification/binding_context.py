@@ -14,9 +14,9 @@
 
 """Which names an expression reads, and which of them the enclosing block binds.
 
-``get_free_variables`` lists the names an expression reads; ``_BindingContextFinder``
+``statement_facts.loaded_names`` lists the names an expression reads; ``_BindingContextFinder``
 walks the block that contains it, tracking loop, comprehension, lambda, and
-function binders, so ``get_bound_variables_in_context`` can say which of those
+function binders, so ``bound_variables_in_context`` can say which of those
 names the block itself binds at the point of the expression.
 """
 
@@ -52,19 +52,6 @@ def _unparse_cached(node: ast.AST) -> str:
     except TypeError:  # a node type that cannot be weakly referenced
         pass
     return text
-
-
-def get_free_variables(expr: ast.AST) -> Set[str]:
-    """
-    Get all variables referenced in an expression (Load context only).
-
-    Args:
-        expr: Expression AST node
-
-    Returns:
-        Set of variable names referenced in the expression
-    """
-    return loaded_names(expr)
 
 
 class _BindingContextFinder(ast.NodeVisitor):
@@ -291,7 +278,7 @@ class _BindingContextFinder(ast.NodeVisitor):
             self.binding_stack.pop()
 
 
-def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[str]:
+def bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[str]:
     """
     Get variables that are bound in the context surrounding target_expr within node.
 
@@ -317,7 +304,7 @@ def get_bound_variables_in_context(node: ast.AST, target_expr: ast.AST) -> Set[s
     finder.visit(node)
 
     # Filter to only include variables that are actually referenced in the target expression
-    vars_in_expr = get_free_variables(target_expr)
+    vars_in_expr = loaded_names(target_expr)
     result = finder.bound_vars & vars_in_expr
 
     return result
@@ -330,7 +317,7 @@ _BOUND_IN_BLOCK: "WeakKeyDictionary[ast.AST, Dict[Tuple[int, str], FrozenSet[str
 
 
 def bound_variables_in_block(block: Sequence[ast.AST], target_expr: ast.AST) -> Set[str]:
-    """``get_bound_variables_in_context`` over a block, memoized per block and target text.
+    """``bound_variables_in_context`` over a block, memoized per block and target text.
 
     The finder's answer depends only on the block's statements and the
     target's text, and the unifier asks the same question of the same block
@@ -340,7 +327,7 @@ def bound_variables_in_block(block: Sequence[ast.AST], target_expr: ast.AST) -> 
     blocks that start at one statement and have one length are one block.
     """
     if not block:
-        return get_bound_variables_in_context(ast.Module(body=[], type_ignores=[]), target_expr)
+        return bound_variables_in_context(ast.Module(body=[], type_ignores=[]), target_expr)
     by_target = _BOUND_IN_BLOCK.get(block[0])
     if by_target is None:
         by_target = {}
@@ -357,4 +344,4 @@ def bound_variables_in_block(block: Sequence[ast.AST], target_expr: ast.AST) -> 
         )
         bound = frozenset(finder.bound_vars)
         by_target[key] = bound
-    return set(bound & get_free_variables(target_expr))
+    return set(bound & loaded_names(target_expr))

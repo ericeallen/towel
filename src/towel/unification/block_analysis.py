@@ -293,7 +293,7 @@ class BlockAnalysis(EngineState):
 
         return extract_from_body(body)
 
-    def _get_used_names(self, node: ast.AST) -> Set[str]:
+    def _used_names(self, node: ast.AST) -> Set[str]:
         """
         Get all variable names that are used (read from) in an AST node.
 
@@ -471,7 +471,7 @@ class BlockAnalysis(EngineState):
             if not hasattr(stmt, "lineno") or stmt.lineno <= block_end_line:
                 continue
 
-            uses = self._get_used_names(stmt)
+            uses = self._used_names(stmt)
             if debug_enabled and debug_label:
                 VALIDATION.debug(
                     f"  {debug_label}: stmt@{stmt.lineno} ({stmt.__class__.__name__}) uses {uses}"

@@ -196,14 +196,20 @@ class RefactoringProposal:
 
 
 @dataclass
-class ParsedModule:
-    """Container for parsed module data flowing through the pipeline."""
+class RawModule:
+    """A module read and parsed, before scope analysis."""
 
     file_path: str
     source: str
     tree: ast.AST
-    scope_analyzer: Optional["ScopeAnalyzer"] = None
-    root_scope: Optional["Scope"] = None
+
+
+@dataclass
+class ParsedModule(RawModule):
+    """A module with its scopes analyzed: what the pipeline's later phases consume."""
+
+    scope_analyzer: "ScopeAnalyzer"
+    root_scope: "Scope"
     class_infos: List[ClassInfo] = field(default_factory=list)
     source_digest: str = field(init=False, repr=False, compare=False)
     """SHA-256 of ``source``, computed once here for every consumer of the module."""
