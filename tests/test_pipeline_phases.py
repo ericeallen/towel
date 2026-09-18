@@ -16,8 +16,19 @@ from towel.unification.pipeline import (
     filter_overlaps,
     run_pipeline,
 )
-from towel.unification.models import RawModule
+from towel.unification.models import RawModule, RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# The one proposal single-file analysis of example1_simple leaves after
+# overlap filtering, and the one example2_classes adds to it.
+USER_ADMIN = "Extract common code from process_user_data and process_admin_data"
+USER_GUEST = "Extract common code from process_user_data and process_guest_data"
+ADMIN_GUEST = "Extract common code from process_admin_data and process_guest_data"
+PROCESS_PROCESS = "Extract common code from process and process"
+
+
+def descriptions(proposals: list[RefactoringProposal]) -> list[str]:
+    return [p.description for p in proposals]
 
 
 class TestParseModules:
@@ -250,7 +261,7 @@ class TestPairBlocks:
 
         # Should not raise even if tqdm is unavailable
         pairs = pair_blocks(eng, funcs, progress="auto")
-        assert isinstance(pairs, list)
+        assert len(pairs) == 48
 
     def test_pair_blocks_with_tqdm_progress(self):
         """pair_blocks should work with progress='tqdm'."""
@@ -261,7 +272,7 @@ class TestPairBlocks:
 
         # Should gracefully fall back if tqdm unavailable
         pairs = pair_blocks(eng, funcs, progress="tqdm")
-        assert isinstance(pairs, list)
+        assert len(pairs) == 48
 
 
 class TestUnifyBlocks:
@@ -277,7 +288,9 @@ class TestUnifyBlocks:
         pairs = pair_blocks(eng, funcs, progress="none")
 
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
-        assert isinstance(proposals, list)
+        # Before overlap filtering, each pair of the three functions unifies
+        # into six overlapping proposals, in pairing order.
+        assert descriptions(proposals) == [USER_ADMIN] * 6 + [USER_GUEST] * 6 + [ADMIN_GUEST] * 6
 
 
 class TestFilterOverlaps:
@@ -294,9 +307,9 @@ class TestFilterOverlaps:
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
 
         filtered = filter_overlaps(proposals)
-        assert isinstance(filtered, list)
-        # Filtering may reduce count or maintain it
-        assert len(filtered) <= len(proposals)
+        # The eighteen overlapping proposals collapse to the one the engine reports.
+        assert len(proposals) == 18
+        assert descriptions(filtered) == [USER_ADMIN]
 
 
 class TestCacheInvalidation:
@@ -315,7 +328,7 @@ class TestCacheInvalidation:
         )
 
         # Should produce same results (cache invalidation shouldn't affect correctness)
-        assert len(proposals1) == len(proposals2)
+        assert descriptions(proposals1) == descriptions(proposals2) == [USER_ADMIN]
 
     def test_run_pipeline_cache_reuse(self):
         """run_pipeline should reuse cached results for unchanged files."""
@@ -326,7 +339,7 @@ class TestCacheInvalidation:
 
         # Run again - should use cache
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
-        assert isinstance(proposals, list)
+        assert descriptions(proposals) == [USER_ADMIN, PROCESS_PROCESS]
 
 
 class TestProgressBars:
@@ -336,16 +349,16 @@ class TestProgressBars:
         """run_pipeline should handle progress='auto'."""
         files = example_paths(["example1_simple.py"])
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="auto")
-        assert isinstance(proposals, list)
+        assert descriptions(proposals) == [USER_ADMIN]
 
     def test_run_pipeline_with_tqdm_progress(self):
         """run_pipeline should handle progress='tqdm' (may fall back)."""
         files = example_paths(["example1_simple.py"])
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="tqdm")
-        assert isinstance(proposals, list)
+        assert descriptions(proposals) == [USER_ADMIN]
 
     def test_run_pipeline_with_none_progress(self):
         """run_pipeline should handle progress='none'."""
         files = example_paths(["example1_simple.py"])
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
-        assert isinstance(proposals, list)
+        assert descriptions(proposals) == [USER_ADMIN]

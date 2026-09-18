@@ -623,9 +623,12 @@ def calculate_b(y):
         temp_file = self._write_temp(original_code)
 
         proposals = self.engine.analyze_file(temp_file)
-
-        if not proposals:
-            self.skipTest("No refactoring proposals found")
+        # calculate_b duplicates the whole body of calculate_a, so the one
+        # proposal rewrites it to call calculate_a.
+        self.assertEqual(
+            [p.description for p in proposals],
+            ["Reuse calculate_a (m.py) for duplicated code in calculate_b"],
+        )
 
         refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
 

@@ -25,10 +25,15 @@ def test_run_pipeline_matches_engine_counts_multi_file():
     pipeline_props = run_pipeline(files, engine=eng)
     engine_props = eng.analyze_files(files)
 
-    # We don't compare object identity (AST nodes differ), but counts should match
-    assert len(pipeline_props) == len(engine_props)
+    # example1_simple contributes its validation block, example2_classes the
+    # duplicated body of its two `process` methods.
+    assert [p.description for p in pipeline_props] == [
+        "Extract common code from process_user_data and process_admin_data",
+        "Extract common code from process and process",
+    ]
 
-    # Additionally, compare a few stable attributes across proposals when available
+    # We don't compare object identity (AST nodes differ), but the stable
+    # attributes of every proposal must agree between the two entry points.
     def sigs(props):
         return sorted(
             (
