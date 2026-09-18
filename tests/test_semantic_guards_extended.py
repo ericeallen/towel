@@ -169,7 +169,7 @@ class TestMovesScopeDeclaration:
 
 class TestAlignReturnVariables:
     def test_union_is_ordered_by_template_names_and_mapped(self) -> None:
-        from towel.unification.refactor_engine import _align_return_variables
+        from towel.unification.pair_evaluation import _align_return_variables
 
         renames = [{"zeta": "__temp_0", "alpha": "__temp_1"}, {"lo": "__temp_0", "hi": "__temp_1"}]
         aligned = _align_return_variables(
@@ -182,6 +182,6 @@ class TestAlignReturnVariables:
         assert aligned == (["alpha", "total", "zeta"], ["hi", "total", "lo"])
 
     def test_variable_unbound_in_other_block_is_rejected(self) -> None:
-        from towel.unification.refactor_engine import _align_return_variables
+        from towel.unification.pair_evaluation import _align_return_variables
 
         assert _align_return_variables({"x"}, set(), {"x"}, {"y"}, [{}, {}]) is None

@@ -26,6 +26,9 @@ import ast
 from dataclasses import dataclass
 from typing import List, Tuple, Dict
 
+DEFAULT_SIMILARITY_THRESHOLD = 0.6
+"""Structural similarity a clustered occurrence must reach to join a helper."""
+
 IDENT_COUNT_TOLERANCE = 2
 
 

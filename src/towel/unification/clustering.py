@@ -31,7 +31,7 @@ import copy
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Set, Tuple, cast
 from .assignment_analyzer import has_reassignments_without_bindings
-from .block_signature import extract_block_signature, quick_filter
+from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .models import FunctionArtifact, FunctionNode, Replacement
@@ -64,10 +64,6 @@ class _ClusterCandidate:
     analyzer: Optional[ScopeAnalyzer]
     nodes: List[ast.AST]
     snapshot: BlockBindingSnapshot
-
-
-DEFAULT_SIMILARITY_THRESHOLD = 0.6
-"""Structural similarity a clustered occurrence must reach to join a helper."""
 
 
 class Clustering(EngineState):

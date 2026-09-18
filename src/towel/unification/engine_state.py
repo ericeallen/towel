@@ -32,17 +32,21 @@ from typing import Any, Callable, Dict, FrozenSet, List, Literal, Optional, Sequ
 
 from ..diagnostics import Settings
 from ..type_inference import TypeOracle
-from .block_signature import BlockSignature
+from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, BlockSignature
 from .extractor import HygienicExtractor
 from .models import (
     AppliedChange,
     BlockBindingSnapshot,
     ClassInfo,
+    ClassInsertionPlan,
     CodeBlockPair,
     FunctionArtifact,
     FunctionNode,
+    HelperTemplate,
     MethodInfo,
     RefactoringProposal,
+    RejectReason,
+    Replacement,
     ReusedFunction,
 )
 from .scope_analyzer import ScopeAnalyzer
@@ -77,6 +81,15 @@ class EngineState:
 
     _cluster_cache: "OrderedDict[Tuple[Any, ...], Optional[ast.AST]]"
     """Memo of the per-candidate clustering pipeline."""
+
+    skip_trivial_helpers: bool
+    """Whether a helper that only forwards, renames, or unpacks is declined."""
+
+    reuse_existing_functions: bool
+    """Whether a whole-body duplicate calls the function it already is."""
+
+    annotate_helpers: bool
+    """Whether helpers carry the annotations their call sites declare."""
 
     _change_log: List[AppliedChange]
     """Every call site rewritten so far in the current run."""
@@ -376,5 +389,132 @@ class EngineState:
         hygienic_renames: List[Dict[str, str]],
         paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _add_clustered_replacements(
+        self,
+        template: "HelperTemplate",
+        dce_node: Optional[FunctionNode],
+        all_functions: Sequence[FunctionArtifact],
+        replacements: List[Replacement],
+        cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]],
+    ) -> None:
+        """Provided by Clustering."""
+        raise NotImplementedError
+
+    def _are_structurally_similar(
+        self,
+        block1: List[ast.AST],
+        block2: List[ast.AST],
+        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    ) -> bool:
+        """Provided by Clustering."""
+        raise NotImplementedError
+
+    def _choose_class_insertion(
+        self,
+        pair: CodeBlockPair,
+        method_info1: MethodInfo,
+        method_info2: MethodInfo,
+        class_infos: List[ClassInfo],
+    ) -> Optional[ClassInsertionPlan]:
+        """Provided by HelperPlacement."""
+        raise NotImplementedError
+
+    def _debug_reject(
+        self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
+    ) -> None:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _declares_nonlocal(
+        self, func: Optional[FunctionNode], scope_analyzer: Optional[ScopeAnalyzer]
+    ) -> bool:
+        """Provided by HelperPlacement."""
+        raise NotImplementedError
+
+    def _deepest_common_ancestry(
+        self, anc1: Optional[List[str]], anc2: Optional[List[str]]
+    ) -> Optional[str]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _enclosing_function_named(
+        name: str,
+        file_path: str,
+        all_functions: Sequence[FunctionArtifact],
+        inner: Sequence[FunctionNode],
+    ) -> Optional[FunctionNode]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _find_return_variables(
+        self,
+        func: FunctionNode,
+        block_range: Tuple[int, int],
+        initially_bound: Set[str],
+        *,
+        debug_label: Optional[str] = None,
+    ) -> Set[str]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _global_nonlocal_declarations(
+        self,
+        pair: CodeBlockPair,
+        scope_analyzer: ScopeAnalyzer,
+        free_vars: Set[str],
+    ) -> Tuple[Set[str], Set[str], Set[str]]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _helper_is_trivial_forwarding(func: ast.FunctionDef) -> bool:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _is_value_producing(self, block: Sequence[ast.AST]) -> bool:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _redirect_to_existing_function(
+        self,
+        proposal: RefactoringProposal,
+        all_functions: Sequence[FunctionArtifact],
+    ) -> Optional[RefactoringProposal]:
+        """Provided by ExistingFunctionReuse."""
+        raise NotImplementedError
+
+    def _rejects_module_data_lookup(
+        self,
+        pair: CodeBlockPair,
+        analyzer1: Optional[ScopeAnalyzer],
+        analyzer2: Optional[ScopeAnalyzer],
+    ) -> bool:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _reserve_augassign_params(pair: CodeBlockPair, substitution: Substitution) -> Set[str]:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _strip_fstring_params(substitution: Substitution) -> None:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    def _with_helper_annotations(
+        self, proposal: RefactoringProposal, all_functions: Sequence[FunctionArtifact]
+    ) -> RefactoringProposal:
+        """Provided by HelperAnnotationWiring."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _working_free_vars(
+        substitution: Substitution, aug_assign_vars: Set[str], free_vars1: Set[str]
+    ) -> Set[str]:
         """Provided by the engine."""
         raise NotImplementedError
