@@ -54,20 +54,33 @@ class TestFStringHandling(unittest.TestCase):
         )
 
     def test_fstring_with_different_literals_no_unify(self):
-        """Test f-strings with different literal text should NOT unify."""
+        """F-strings whose literal text differs are never folded into one helper.
+
+        ``log_user`` and ``log_admin`` differ only in the literal text of an
+        f-string. The engine may still share the statements around it, but
+        the f-string line itself stays at each site and no helper contains it.
+        """
         proposals = self.engine.analyze_file(str(self.example_path))
 
-        # log_user and log_admin have different f-string literal text
-        # They should NOT be unified into one function
         log_props = [
             p
             for p in proposals
             if "log_user" in p.description.lower() and "log_admin" in p.description.lower()
         ]
+        self.assertGreater(len(log_props), 0, "the shared tail of log_user/log_admin")
 
-        # If they unify, it would be wrong (different literal text)
-        # This test documents current behavior - they may unify other parts
-        # but the f-string literal should prevent full unification
+        fstring_lines = {
+            node.lineno
+            for node in ast.walk(ast.parse(self.original_content))
+            if isinstance(node, ast.JoinedStr)
+        }
+        for prop in log_props:
+            joined = [n for n in ast.walk(prop.extracted_function) if isinstance(n, ast.JoinedStr)]
+            self.assertEqual(joined, [], ast.unparse(prop.extracted_function))
+            for replacement in prop.replacements:
+                start, end = replacement.line_range
+                covered = {line for line in fstring_lines if start <= line <= end}
+                self.assertEqual(covered, set(), "f-string line must stay at the site")
 
     def test_fstring_no_ast_errors(self):
         """Test that f-strings don't cause AST unparsing errors."""
@@ -130,11 +143,23 @@ class TestConstantParameterization(unittest.TestCase):
 
         proposals = engine_no_const.analyze_file(str(self.example_path))
 
-        # With constant parameterization disabled, functions with different constants
-        # should NOT be detected as duplicates
+        # With constant parameterization disabled, functions that differ only in
+        # their constants are not duplicates.
         const_props = [p for p in proposals if "const_parameterization" in p.description.lower()]
-        # Should find fewer or no duplicates
-        # (This tests the parameterize_constants flag works)
+        self.assertEqual(const_props, [], [p.description for p in const_props])
+
+        # The same limits with the flag on do find them, so the flag is what
+        # made the difference.
+        engine_const = UnificationRefactorEngine(
+            max_parameters=5, min_lines=4, parameterize_constants=True
+        )
+        with_flag = [
+            p
+            for p in engine_const.analyze_file(str(self.example_path))
+            if "const_parameterization" in p.description.lower()
+        ]
+        self.assertGreater(len(with_flag), 0)
+        self.assertGreater(with_flag[0].parameters_count, 0)
 
 
 if __name__ == "__main__":

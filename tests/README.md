@@ -69,8 +69,21 @@ for each:
   refactoring and asserts identical output; its `TRANSFORMED` set names the
   fixtures that must change, so a lost extraction fails as loudly as a wrong
   one. `test_hostile_crossfile_battery.py` does the same for the packages in
-  `hostile_crossfile/` (`xf*`). Each fixture is a repaired defect and has a
+  `hostile_crossfile/` (`xf*`), with its own `TRANSFORMED` set: every
+  package is in exactly one state, and today all of them are transformed.
+  When the engine gains or loses a cross-file extraction, move the package
+  and say why in the commit. Each fixture is a repaired defect and has a
   row in `docs/ADVERSARIAL_REVIEW.md`.
+- **Property-based tests** — `test_properties.py` generates programs from
+  small grammars with Hypothesis (fifty deterministic examples per property,
+  no deadline) and checks three invariants: consistently renamed binders
+  unify with no parameters, `definitely_bound_after` matches a
+  path-enumerating reference, and every engine proposal for two blocks that
+  differ in one leaf passes the public instantiation check.
+- **AST visitors** — `test_visitors.py`: each visitor in
+  `towel.unification.visitors` (function collection, method-call rewriting,
+  loop-return and name collection, assignment targets, class and function
+  insertion points) driven through its public surface.
 
 ### Test Examples (`test_examples/`, at the repository root)
 

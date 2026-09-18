@@ -13,6 +13,8 @@ All tests read from test_examples in read-only mode.
 
 import unittest
 import ast
+import tempfile
+from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import get_test_example_path, assert_file_not_modified
 
@@ -156,20 +158,100 @@ class TestScopingEdgeCases(unittest.TestCase):
         self.assertNotIn("str", param_names, "str should not be a parameter")
         self.assertNotIn("print", param_names, "print should not be a parameter")
 
-    def test_nested_functions(self):
-        """Test nested function definitions."""
-        proposals = self.engine.analyze_file(str(self.example_path))
+    def _analyze_source(self, source: str):
+        """Proposals for an inline module (the example fixture has no nested defs)."""
+        with tempfile.TemporaryDirectory(prefix="towel-bindings-") as directory:
+            path = Path(directory) / "module.py"
+            path.write_text(source)
+            return self.engine.analyze_file(str(path))
 
-        nested_func = [p for p in proposals if "nested_func" in p.description.lower()]
-        # May or may not find duplicates depending on extraction strategy
-        # This is more about ensuring it doesn't crash
+    def test_nested_functions(self):
+        """A block that calls a nested function is extracted; the def stays at the site.
+
+        The nested definition is a binding local to each site, so the helper
+        receives it as a parameter instead of carrying a copy of the def.
+        """
+        proposals = self._analyze_source(
+            "def first(items):\n"
+            "    def helper(value):\n"
+            "        return value * 2\n"
+            "    out = []\n"
+            "    for item in items:\n"
+            "        out.append(helper(item))\n"
+            "    return out\n"
+            "\n"
+            "def second(items):\n"
+            "    def helper(value):\n"
+            "        return value * 2\n"
+            "    out = []\n"
+            "    for item in items:\n"
+            "        out.append(helper(item))\n"
+            "    return out\n"
+        )
+        self.assertEqual(len(proposals), 1, [p.description for p in proposals])
+        helper = proposals[0].extracted_function
+        nested_defs = [node for node in ast.walk(helper) if isinstance(node, ast.FunctionDef)]
+        self.assertEqual(nested_defs, [helper], "nested def must stay at the site")
+        self.assertIn("helper", [arg.arg for arg in helper.args.args])
+        for replacement in proposals[0].replacements:
+            start, _ = replacement.line_range
+            self.assertGreater(start, 3, "replacement must begin after the nested def")
 
     def test_lambda_expressions(self):
-        """Test lambda expression handling."""
-        proposals = self.engine.analyze_file(str(self.example_path))
+        """Duplicates that bind the same lambda are unified with the lambda kept intact."""
+        proposals = self._analyze_source(
+            "def first(items):\n"
+            "    double = lambda value: value * 2\n"
+            "    out = []\n"
+            "    for item in items:\n"
+            "        out.append(double(item))\n"
+            "    return out\n"
+            "\n"
+            "def second(items):\n"
+            "    double = lambda value: value * 2\n"
+            "    out = []\n"
+            "    for item in items:\n"
+            "        out.append(double(item))\n"
+            "    return out\n"
+        )
+        self.assertEqual(len(proposals), 1, [p.description for p in proposals])
+        helper = proposals[0].extracted_function
+        lambdas = [node for node in ast.walk(helper) if isinstance(node, ast.Lambda)]
+        self.assertEqual(len(lambdas), 1)
+        self.assertEqual(ast.unparse(lambdas[0]), "lambda value: value * 2")
+        self.assertEqual(proposals[0].parameters_count, 0)
+        ast.parse(ast.unparse(helper))
 
-        lambda_props = [p for p in proposals if "lambda" in p.description.lower()]
-        # Lambdas should be handled without errors
+    def test_lambda_parameter_spelled_differently_stays_at_the_site(self):
+        """A lambda whose parameter is spelled differently is not unified.
+
+        The unifier alpha-renames lambda parameters, but the instantiation
+        check compares the reduced helper body against the site without
+        renaming lambda binders, so a pair differing only in ``value`` versus
+        ``other`` is rejected. The engine instead extracts the statements after
+        the lambda and passes the lambda in as a parameter. This pins the
+        conservative outcome; unifying the whole pair would be an improvement.
+        """
+        proposals = self._analyze_source(
+            "def first(items):\n"
+            "    double = lambda value: value * 2\n"
+            "    out = []\n"
+            "    for item in items:\n"
+            "        out.append(double(item))\n"
+            "    return out\n"
+            "\n"
+            "def second(items):\n"
+            "    double = lambda other: other * 2\n"
+            "    out = []\n"
+            "    for item in items:\n"
+            "        out.append(double(item))\n"
+            "    return out\n"
+        )
+        self.assertEqual(len(proposals), 1, [p.description for p in proposals])
+        helper = proposals[0].extracted_function
+        self.assertEqual([n for n in ast.walk(helper) if isinstance(n, ast.Lambda)], [])
+        self.assertIn("double", [arg.arg for arg in helper.args.args])
+        self.assertEqual([r.line_range for r in proposals[0].replacements], [(3, 6), (10, 13)])
 
 
 if __name__ == "__main__":
