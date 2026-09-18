@@ -525,10 +525,13 @@ The evidence that the engine holds up on real code is layered:
   assert identical program output; each fixed engine defect is a fixture and a
   row in [ADVERSARIAL_REVIEW.md](ADVERSARIAL_REVIEW.md).
 - **The standing ecosystem check** (`scripts/ecosystem_check.py`, `just
-  ecosystem`, weekly in CI) clones 141 public projects, among them Towel's own
-  releases and current `main`, runs each one's own suite, refactors a copy,
-  and runs the suite again, comparing test outcomes; it is the evidence in
-  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
+  ecosystem --run-untrusted-code`, weekly in CI) clones 141 public projects
+  at pinned commits, among them Towel's own releases and current `main`,
+  runs each one's own suite, refactors a copy, and runs the suite again,
+  comparing test outcomes; it is the evidence in
+  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). It executes those
+  projects' code with the caller's privileges, so it refuses to run without
+  an explicit opt-in and is meant for a disposable machine or CI runner.
 - **Exactness tests** for the performance work: the per-function facts
   against the uncached analysis, the bucket invariants, and byte-identical
   `dry` output with incremental global passes on and off.
