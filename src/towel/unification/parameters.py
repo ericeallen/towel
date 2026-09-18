@@ -13,15 +13,20 @@
 # limitations under the License.
 
 
-"""Enumerate the parameters of a Python ``ast.arguments`` block.
+"""Enumerate the parameters of a Python ``ast.arguments`` block, and mint new ones.
 
 Shared by the scope, binding, and assignment analyses, which each need the same
 complete parameter set: positional-only, positional, keyword-only, ``*args``,
-and ``**kwargs``.
+and ``**kwargs``. The minting rule for generated helper parameters lives here
+too, so the unifier and the engine cannot drift apart on what a fresh
+``__param_N`` is.
 """
 
 import ast
-from typing import Iterator
+from typing import Container, Iterator, Tuple
+
+GENERATED_PARAMETER_PREFIX = "__param_"
+"""The spelling of generated helper parameters; ``rename-helpers`` names them later."""
 
 
 def parameter_nodes(args: ast.arguments) -> Iterator[ast.arg]:
@@ -39,3 +44,16 @@ def parameter_names(args: ast.arguments) -> Iterator[str]:
     """Yield every parameter name of an arguments block, in declaration order."""
     for arg in parameter_nodes(args):
         yield arg.arg
+
+
+def fresh_parameter_name(taken: Container[str], start: int = 0) -> Tuple[str, int]:
+    """The first ``__param_N`` with ``N >= start`` not in ``taken``, and the next index.
+
+    The unifier mints in order across one unification and passes its counter
+    as ``start``; the engine mints against every name a block mentions and
+    starts at zero. Both must agree on the spelling and the collision rule.
+    """
+    index = start
+    while f"{GENERATED_PARAMETER_PREFIX}{index}" in taken:
+        index += 1
+    return f"{GENERATED_PARAMETER_PREFIX}{index}", index + 1

@@ -96,7 +96,6 @@ class TypeOracle(Protocol):
         raise NotImplementedError
 
 
-TypeInferrer = TypeOracle
 """Earlier name of the protocol, kept for callers that used it."""
 
 _ERROR = re.compile(r"^(?P<path>.*?):(?P<line>\d+):(?:\d+:)? error: ")
@@ -140,7 +139,7 @@ def _with_probes(request: RevealRequest) -> Tuple[str, List[int]]:
 
 
 class MypyInferrer:
-    """A ``TypeInferrer`` backed by mypy's in-process build.
+    """A ``TypeOracle`` backed by mypy's in-process build.
 
     Raises ``ImportError`` at construction when mypy is not installed; install
     the ``types`` extra (``pip install "code-towel[types]"``) to provide it.
@@ -461,9 +460,9 @@ def project_configures_pyright(root: Path) -> bool:
 
 
 def _has_tool_section(root: Path, name: str) -> bool:
-    from .unification.project_layout import _load_pyproject
+    from .unification.project_layout import load_pyproject
 
-    tool = _load_pyproject(root).get("tool", {})
+    tool = load_pyproject(root).get("tool", {})
     return isinstance(tool, dict) and bool(tool.get(name))
 
 
@@ -487,9 +486,9 @@ def type_oracle_for_project(path: Path) -> Tuple[Optional[TypeOracle], str]:
     gets mypy when installed, else pyright. The note names any configured
     checker that is not installed.
     """
-    from .unification.project_layout import _find_project_root
+    from .unification.project_layout import find_project_root
 
-    root = _find_project_root(path)
+    root = find_project_root(path)
     wants_mypy = project_configures_mypy(root)
     wants_pyright = project_configures_pyright(root)
     mypy: Optional[TypeOracle] = None

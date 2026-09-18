@@ -5,7 +5,7 @@ import tempfile
 import textwrap
 import unittest
 
-from towel.unification.project_layout import ProjectLayout, _is_package_dir
+from towel.unification.project_layout import ProjectLayout, is_package_dir
 
 
 class TestProjectLayoutBehavior(unittest.TestCase):
@@ -183,17 +183,17 @@ class TestProjectLayoutBehavior(unittest.TestCase):
                 outside.write_text("pass\n")
                 self.assertIsNone(layout.module_name_for(outside))
 
-    def test_is_package_dir_direct_and_fallback_non_py(self) -> None:
+    def testis_package_dir_direct_and_fallback_non_py(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            # Create a file (not directory) to test _is_package_dir False path
+            # Create a file (not directory) to test is_package_dir False path
             file_path = root / "not_a_dir.py"
             file_path.write_text("pass\n")
-            self.assertFalse(_is_package_dir(file_path, pep420=False))
+            self.assertFalse(is_package_dir(file_path, pep420=False))
             # pep420 True returns True for any directory; create directory to test True
             pkg_dir = root / "pkg"
             pkg_dir.mkdir()
-            self.assertTrue(_is_package_dir(pkg_dir, pep420=True))
+            self.assertTrue(is_package_dir(pkg_dir, pep420=True))
 
             # With mapping to 'src', ensure fallback handles non-.py under project root
             (root / "pyproject.toml").write_text(textwrap.dedent("""

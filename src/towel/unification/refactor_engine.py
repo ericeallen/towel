@@ -88,9 +88,9 @@ from .assignment_analyzer import (
     _collect_block_binding_stats,
     _collect_bindings_and_reassignments,
 )
-from .project_layout import ProjectLayout, _is_package_dir
+from .project_layout import ProjectLayout, is_package_dir
 from .progress import load_tqdm, render_inline_bar
-from .parameters import parameter_names
+from .parameters import parameter_names, fresh_parameter_name
 from .semantic_safety import (
     frame_sensitivity_markers,
     imported_definition_sites,
@@ -130,6 +130,7 @@ from .annotations import (
 from ..type_inference import TypeOracle
 from .pipeline import run_pipeline, AnalysisSession
 from .visitors import (
+    body_without_docstring,
     MethodCallRewriter,
     LoopReturnFinder,
     NameCollector,
@@ -667,7 +668,7 @@ class UnificationRefactorEngine:
         if indices is None:
             return None
         # Skip docstring in body
-        body = self._body_without_docstring(fn.body)
+        body = body_without_docstring(fn.body)
         has_orph, _orph = has_orphaned_variables(cast(List[ast.AST], body), indices)
         if has_orph:
             return None
@@ -1742,24 +1743,6 @@ class UnificationRefactorEngine:
 
         return int(start_line), int(end_line)
 
-    @staticmethod
-    def _body_without_docstring(body: Sequence[ast.stmt]) -> List[ast.stmt]:
-        """Return body statements with a leading docstring removed when present."""
-
-        body_list = list(body)
-        if not body_list:
-            return []
-
-        first_stmt = body_list[0]
-        if (
-            isinstance(first_stmt, ast.Expr)
-            and isinstance(first_stmt.value, ast.Constant)
-            and isinstance(first_stmt.value.value, str)
-        ):
-            return body_list[1:]
-
-        return body_list
-
     def _extract_code_blocks(
         self, function: FunctionNode
     ) -> List[Tuple[Tuple[int, int], List[ast.AST]]]:
@@ -1850,7 +1833,7 @@ class UnificationRefactorEngine:
             return results
 
         # Prepare top-level body (skip docstring)
-        body = self._body_without_docstring(function.body)
+        body = body_without_docstring(function.body)
 
         return extract_from_body(body)
 
@@ -1868,7 +1851,7 @@ class UnificationRefactorEngine:
         Returns:
             True if there's code after the block
         """
-        body = self._body_without_docstring(function.body)
+        body = body_without_docstring(function.body)
 
         # Check if any statement starts after block_end_line
         for stmt in body:
@@ -2797,7 +2780,7 @@ class UnificationRefactorEngine:
                 or artifact.enclosing_function is not None
                 or not isinstance(function, ast.FunctionDef)
                 or function.decorator_list
-                or self._block_line_span(self._body_without_docstring(function.body))
+                or self._block_line_span(body_without_docstring(function.body))
                 != tuple(replacement.line_range)
             ):
                 continue
@@ -4444,7 +4427,7 @@ class UnificationRefactorEngine:
                     relative = _relative_import_module(from_path, to_path)
                     # A relative import only resolves inside a classic package; flat
                     # modules on sys.path (no __init__.py) must use an absolute name.
-                    importer_in_package = _is_package_dir(to_path.parent, pep420=False)
+                    importer_in_package = is_package_dir(to_path.parent, pep420=False)
                     # Prefer an absolute import only when the layout is anchored by
                     # real packaging metadata, so the name stays valid after an
                     # out-of-place output is adopted into its real location. Otherwise
@@ -4722,7 +4705,7 @@ class UnificationRefactorEngine:
             return None
 
         # Get function body (skip docstring)
-        body = self._body_without_docstring(function.body)
+        body = body_without_docstring(function.body)
 
         # Match by line numbers
         first_node = cast(Union[ast.stmt, ast.expr], block_nodes[0])
@@ -5325,10 +5308,8 @@ def _fresh_parameter_name(
         for node in ast.walk(statement)
         if isinstance(node, ast.Name)
     }
-    index = 0
-    while f"__param_{index}" in taken:
-        index += 1
-    return f"__param_{index}"
+    name, _ = fresh_parameter_name(taken)
+    return name
 
 
 def _unique_module_level_class(class_infos: Sequence[ClassInfo], file_path: str, name: str) -> bool:

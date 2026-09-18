@@ -34,7 +34,7 @@ else:
     import tomli as tomllib
 
 
-def _load_pyproject(project_root: Path) -> Dict[str, Any]:
+def load_pyproject(project_root: Path) -> Dict[str, Any]:
     """Best-effort load of pyproject.toml using the available TOML parser.
 
     Returns an empty dict if parsing fails or file does not exist.
@@ -52,7 +52,7 @@ def _load_pyproject(project_root: Path) -> Dict[str, Any]:
         return {}
 
 
-def _is_package_dir(path: Path, pep420: bool) -> bool:
+def is_package_dir(path: Path, pep420: bool) -> bool:
     """Determine if a directory is a Python package root.
 
     - Traditional packages: must contain __init__.py
@@ -374,8 +374,8 @@ class ProjectLayout:
         - Source roots come from pyproject [tool.setuptools.package-dir] (e.g., {"": "src"})
           or default to [project_root] (flat layout). If mapping exists, add each mapped directory.
         """
-        project_root = _find_project_root(start_path)
-        data = _load_pyproject(project_root)
+        project_root = find_project_root(start_path)
+        data = load_pyproject(project_root)
         build = data.get("build-system", {})
         backend = build.get("build-backend") if isinstance(build, dict) else None
         recognized_backend = backend in (
@@ -544,7 +544,7 @@ class ProjectLayout:
                     cursor = src_root
                     for comp in parts[:-1]:
                         cursor = cursor / comp
-                        if not _is_package_dir(cursor, pep420=False):
+                        if not is_package_dir(cursor, pep420=False):
                             # Not a classic package path; fall back to absolute-from-project
                             break
                 return _valid_module_path(".".join(parts))
@@ -561,7 +561,7 @@ class ProjectLayout:
             return None
 
 
-def _find_project_root(start_path: Path) -> Path:
+def find_project_root(start_path: Path) -> Path:
     """Find nearest ancestor that looks like the project root."""
     start = start_path.resolve()
     base_dir = start.parent if start.is_file() else start

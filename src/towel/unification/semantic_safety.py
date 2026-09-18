@@ -894,7 +894,7 @@ def moves_scope_declaration(
     extracted = {child for statement in block for child in ast.walk(statement)}
     declared: Set[str] = set()
     for statement in block:
-        for node in _walk_own_scope(statement):
+        for node in walk_own_scope(statement):
             if isinstance(node, (ast.Global, ast.Nonlocal)):
                 declared.update(node.names)
     if not declared:
@@ -909,7 +909,7 @@ def moves_scope_declaration(
     return False
 
 
-def _walk_own_scope(node: ast.AST) -> Iterable[ast.AST]:
+def walk_own_scope(node: ast.AST) -> Iterable[ast.AST]:
     """Yield nodes of ``node`` without entering nested function or class scopes."""
     pending = [node]
     while pending:

@@ -38,7 +38,7 @@ import shutil
 import subprocess
 from typing import Callable, List, Mapping, Optional, Tuple
 
-from .unification.project_layout import _find_project_root, _load_pyproject
+from .unification.project_layout import find_project_root, load_pyproject
 
 SnippetFormatter = Callable[[str], str]
 """Maps one generated snippet (a definition or a statement) to its formatted text."""
@@ -71,8 +71,8 @@ class BlackSettings:
         own style (pycodestyle at 79) would otherwise fail its own check on
         code formatted to Black's default of 88.
         """
-        root = _find_project_root(path)
-        pyproject = _load_pyproject(root)
+        root = find_project_root(path)
+        pyproject = load_pyproject(root)
         tool = pyproject.get("tool", {}) if isinstance(pyproject, Mapping) else {}
         if not isinstance(tool, Mapping):
             tool = {}
@@ -160,11 +160,11 @@ class FormatterUnavailable(RuntimeError):
 
 
 def _root(path: Path) -> Path:
-    return _find_project_root(path)
+    return find_project_root(path)
 
 
 def _tool_section(root: Path, name: str) -> Mapping[str, object]:
-    tool = _load_pyproject(root).get("tool", {})
+    tool = load_pyproject(root).get("tool", {})
     section = tool.get(name, {}) if isinstance(tool, Mapping) else {}
     return section if isinstance(section, Mapping) else {}
 

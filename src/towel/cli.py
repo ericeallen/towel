@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, cast
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from towel.type_inference import TypeInferrer
+    from towel.type_inference import TypeOracle
 from towel.changes import apply_changes, recover
 
 
@@ -358,7 +358,7 @@ def _flag(args: argparse.Namespace, name: str) -> bool:
     return not getattr(args, f"no_{name}", False)
 
 
-def _type_inferrer(project_path: "Path") -> Optional["TypeInferrer"]:
+def _type_inferrer(project_path: "Path") -> Optional["TypeOracle"]:
     """The checker the project configures (mypy, pyright, or both), or None with a note."""
     from towel.type_inference import type_oracle_for_project
 
@@ -1008,7 +1008,7 @@ def _run_interactive_llm_mode(
     dry_run: bool,
 ) -> None:
     """Run interactive mode: generate LLM prompt and apply suggestions."""
-    print(f"\nFound {len(helpers)} extracted helper function(s) to rename.\n")  # noqa: F541
+    print(f"\nFound {len(helpers)} extracted helper function(s) to rename.\n")
     print("=" * 70)
     print("STEP 1: LLM PROMPT GENERATION")
     print("=" * 70)

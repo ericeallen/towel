@@ -24,7 +24,7 @@ from weakref import WeakKeyDictionary
 from typing import Callable, Dict, Optional, List, Tuple, Set, Any, cast, Sequence, Union, Iterator
 from dataclasses import dataclass, field
 
-from .parameters import parameter_names
+from .parameters import parameter_names, fresh_parameter_name
 
 
 @dataclass
@@ -2192,11 +2192,8 @@ class Unifier:
     def _fresh_parameter_name(self) -> str:
         """Return the next ``__param_N`` that no block identifier already uses."""
         reserved: Set[str] = getattr(self, "_reserved_parameter_names", set())
-        while True:
-            name = f"__param_{self.param_counter}"
-            self.param_counter += 1
-            if name not in reserved:
-                return name
+        name, self.param_counter = fresh_parameter_name(reserved, self.param_counter)
+        return name
 
     def _assign_alpha_mapping(
         self,

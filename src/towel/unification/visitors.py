@@ -28,34 +28,6 @@ MethodKind = Literal["instance", "classmethod", "staticmethod"]
 T = TypeVar("T")
 
 
-class ClassCollector(ast.NodeVisitor):
-    """Collect class metadata (qualname and base names) for a module tree.
-
-    Produces tuples of (qualname, bases) via the provided sink callback.
-    """
-
-    def __init__(
-        self,
-        file_path: str,
-        base_resolver: Callable[[ast.expr], Optional[str]],
-        sink: Callable[[str, List[str]], None],
-    ) -> None:
-        self.file_path = file_path
-        self.base_resolver = base_resolver
-        self.sink = sink
-        self.class_stack: List[str] = []
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802 (ast API)
-        qualname = ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
-        bases: List[str] = []
-        for base in node.bases:
-            resolved = self.base_resolver(base)
-            if resolved:
-                bases.append(resolved)
-        self.sink(qualname, bases)
-        _push_value_and_visit(self.class_stack, node.name, self, node)
-
-
 class FunctionCollector(ast.NodeVisitor):
     """Collect functions with enclosing class/function context for a module tree.
 
@@ -316,7 +288,7 @@ class FuncLocator(ast.NodeVisitor):
             self.generic_visit(node)
             return
         indent = _compute_indent(self.source, node.lineno)
-        body = _body_without_docstring(node.body)
+        body = body_without_docstring(node.body)
         insert_line: Optional[int] = None
         last_def_end: Optional[int] = None
         for stmt in body:
@@ -376,7 +348,7 @@ def _record_simple_assignment(
     visitor.generic_visit(node)
 
 
-def _body_without_docstring(body: Sequence[ast.stmt]) -> List[ast.stmt]:
+def body_without_docstring(body: Sequence[ast.stmt]) -> List[ast.stmt]:
     body_list = list(body)
     if not body_list:
         return []

@@ -15,7 +15,7 @@ import ast
 import copy
 from typing import Dict, List, Mapping, Optional, Sequence, Set, cast
 
-from .semantic_safety import bound_names
+from .semantic_safety import bound_names, walk_own_scope
 
 
 class InstantiationError(Exception):
@@ -156,7 +156,7 @@ def _statement_shape_mismatch(
     own_returns = [
         node
         for statement in body
-        for node in _walk_own_scope(statement)
+        for node in walk_own_scope(statement)
         if isinstance(node, ast.Return)
     ]
     if returns_variables:
@@ -187,19 +187,6 @@ def _statement_shape_mismatch(
     if own_returns and not isinstance(call_statement, ast.Return):
         return "early return without return call"
     return None
-
-
-def _walk_own_scope(node: ast.AST) -> List[ast.AST]:
-    """Nodes of ``node`` without entering nested function or class scopes."""
-    found: List[ast.AST] = []
-    pending = [node]
-    while pending:
-        current = pending.pop()
-        found.append(current)
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        pending.extend(ast.iter_child_nodes(current))
-    return found
 
 
 def _extract_call(statement: ast.stmt, helper_name: str) -> Optional[ast.Call]:

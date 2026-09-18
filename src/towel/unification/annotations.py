@@ -55,7 +55,7 @@ from dataclasses import dataclass
 import re
 from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
-from .semantic_safety import _walk_own_scope
+from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, TypeOracle
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
@@ -142,7 +142,7 @@ def _parameter_annotations(function: FunctionNode) -> Dict[str, ast.expr]:
 def _own_scope_nodes(function: FunctionNode) -> Iterator[ast.AST]:
     """Every node of the function's body that is not inside a nested scope."""
     for statement in function.body:
-        yield from _walk_own_scope(statement)
+        yield from walk_own_scope(statement)
 
 
 def _rebinds(function: FunctionNode, name: str) -> bool:
@@ -225,25 +225,6 @@ def _annotated_locals(helper: ast.FunctionDef) -> Dict[str, ast.expr]:
         ):
             found[node.target.id] = node.annotation
     return found
-
-
-def _agreed(
-    candidates: Sequence[Optional[ast.expr]],
-    host: Optional[ast.Module],
-    same_module: bool,
-) -> Optional[ast.expr]:
-    """One annotation when every site supplies the same one and it resolves in the host.
-
-    Used where the sites' types bound the helper from above (their declared
-    return types), so a union would be wrong and only agreement is safe.
-    """
-    present = [candidate for candidate in candidates if candidate is not None]
-    if not present or len(present) != len(candidates):
-        return None
-    first = present[0]
-    if any(ast.dump(candidate) != ast.dump(first) for candidate in present[1:]):
-        return None
-    return _spelled_for_host(copy.deepcopy(first), host, same_module)
 
 
 Subtypes = Callable[[Sequence[Tuple[ast.expr, ast.expr]]], Sequence[Optional[bool]]]
@@ -978,8 +959,3 @@ def _joined_tuple(
 def cast_str(text: Optional[str]) -> str:
     assert text is not None
     return text
-
-
-def annotated_names(annotated: ast.FunctionDef) -> List[str]:
-    """Parameters that received an annotation, for diagnostics."""
-    return [arg.arg for arg in annotated.args.posonlyargs + annotated.args.args if arg.annotation]
