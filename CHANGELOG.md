@@ -76,6 +76,12 @@ ecosystem evidence behind each claim. The format follows
   written bare instead of as quoted forward references; it stays at the top,
   with quotes, when any statement before that point could run code at
   import time.
+- A subscripted annotation is written bare only when it evaluates at
+  definition time: a PEP 585 builtin generic, a name from `typing` or
+  `collections.abc`, or a module that defers annotations. Anything else is a
+  string annotation: `memoryview[int]`, copied from tornado's own signatures,
+  raised `TypeError` at import on an interpreter where `memoryview` is not
+  generic.
 - With mypy installed the generated code is type-checked: each modified file
   is checked before and after, and if the change introduces an error the
   helper's annotations degrade to `Any`, and then to none, until it does not.

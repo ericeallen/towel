@@ -400,13 +400,60 @@ def _spelled_for_host(
         quoted = True
     resolved = _BUILTIN_NAMES | (extra_bound or set())
     names = _referenced_names(expression)
-    if names <= resolved:
+    if host is not None and _defers_annotations(host):
         return expression
+    if names <= resolved:
+        if _evaluates_at_runtime(expression, host):
+            return expression
+        return annotation if quoted else ast.Constant(value=ast.unparse(expression))
     if not same_module or host is None:
         return None
-    if _defers_annotations(host) or names - resolved <= _import_bound_names(host):
+    if names - resolved <= _import_bound_names(host) and _evaluates_at_runtime(expression, host):
         return expression
     return annotation if quoted else ast.Constant(value=ast.unparse(expression))
+
+
+_RUNTIME_GENERICS = frozenset({"list", "dict", "set", "frozenset", "tuple", "type"})
+_TYPING_MODULES = frozenset({"typing", "typing_extensions", "collections.abc"})
+
+
+def _evaluates_at_runtime(expression: ast.expr, host: Optional[ast.Module]) -> bool:
+    """Whether the annotation can be evaluated where the helper is defined.
+
+    Every name resolving is not enough: ``memoryview[int]`` resolves and
+    raises ``TypeError`` at definition time on interpreters where
+    ``memoryview`` is not generic (tornado). A subscript is trusted only on a
+    PEP 585 builtin generic, on a name imported from ``typing`` or
+    ``collections.abc``, or on ``typing.X`` with ``typing`` imported; every
+    other subscripted annotation is written as a string, which is never
+    evaluated and which checkers resolve the same way.
+    """
+    generic_names = set(_RUNTIME_GENERICS) | {"Any", "Callable"}
+    typing_modules: Set[str] = set()
+    if host is not None:
+        for node in host.body:
+            if isinstance(node, ast.ImportFrom) and node.module in _TYPING_MODULES:
+                generic_names.update(alias.asname or alias.name for alias in node.names)
+            elif isinstance(node, ast.Import):
+                typing_modules.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name in _TYPING_MODULES
+                )
+    for sub in ast.walk(expression):
+        if not isinstance(sub, ast.Subscript):
+            continue
+        head = sub.value
+        if isinstance(head, ast.Name) and head.id in generic_names:
+            continue
+        if (
+            isinstance(head, ast.Attribute)
+            and isinstance(head.value, ast.Name)
+            and head.value.id in typing_modules
+        ):
+            continue
+        return False
+    return True
 
 
 def _referenced_names(expression: ast.expr) -> Set[str]:
@@ -647,6 +694,8 @@ def respell_bare(
             return annotation
         expression = _unquoted(annotation)
         if expression is annotation or not _referenced_names(expression) <= resolved:
+            return annotation
+        if not _evaluates_at_runtime(expression, host):
             return annotation
         return expression
 

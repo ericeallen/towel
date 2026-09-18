@@ -354,3 +354,27 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     header = ast.unparse(proposals[0].extracted_function).split("\n", 1)[0]
     # ``Optional[str]`` needs typing; its members ``str | None`` are builtins.
     assert header == "def __extracted_func(label: str | None, value: int) -> None:"
+
+
+def test_subscripted_annotations_are_quoted_unless_known_generic(tmp_path: Path) -> None:
+    # ``memoryview`` is not subscriptable at runtime on every interpreter
+    # (tornado failed to import); ``list[int]`` and ``Sequence[int]`` are.
+    result = _refactor(
+        tmp_path,
+        """
+        from typing import Sequence
+
+        def first(view: memoryview[int], items: list[int], seq: Sequence[int]) -> None:
+            total = len(view) + len(items)
+            print(total, seq)
+
+        def second(view: memoryview[int], items: list[int], seq: Sequence[int]) -> None:
+            total = len(view) + len(items)
+            print(total, seq)
+        """,
+    )
+    assert (
+        _signature(result)
+        == "def __extracted_func_0(items: list[int], seq: Sequence[int], view: 'memoryview[int]') -> None:"
+    )
+    exec(compile(result, "<generic>", "exec"), {})
