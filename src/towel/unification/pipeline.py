@@ -282,6 +282,26 @@ class AnalysisSession:
         return len(self._entries)
 
     @property
+    def max_entries(self) -> int:
+        return self._max_entries
+
+    def hold_at_least(self, entries: int) -> None:
+        """Raise the entry limit so a project of ``entries`` files stays whole.
+
+        A directory run analyzes every file on every pass; a limit below the
+        file count evicted the oldest files each pass, re-parsing the whole
+        project and dropping every per-node memo with the trees (trio, 144
+        files against the default 128). Never lowers the limit, so the
+        localized re-analyses of a few files that follow each applied
+        proposal keep the whole project; a session that caches nothing
+        (limit 0) stays that way.
+        """
+        if entries < 0:
+            raise ValueError("Analysis cache limits must be nonnegative")
+        if self._max_entries:
+            self._max_entries = max(self._max_entries, entries)
+
+    @property
     def source_bytes(self) -> int:
         return self._source_bytes
 

@@ -28,6 +28,7 @@ from typing import List, Tuple
 
 from towel.unification.instantiation import instantiation_mismatch
 from towel.unification.orphan_detector import orphaned_variables
+from towel.unification.pipeline import AnalysisSession
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.semantic_safety import uses_class_private_names
 
@@ -176,3 +177,36 @@ def test_instantiation_verdict_agrees_on_a_reparsed_block() -> None:
         helper, call, other, {}, {}, preamble_length=0, returns_variables=False
     )
     assert mismatch is not None and mismatch.startswith("body: ")
+
+
+# --- analysis session sized to the project -----------------------------------
+
+
+def test_session_holds_every_file_of_a_large_package(tmp_path: Path) -> None:
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    for index in range(129):
+        (package / f"m{index:03d}.py").write_text(f"def f{index}(x):\n    return x + {index}\n")
+    engine = UnificationRefactorEngine()
+    with contextlib.redirect_stdout(io.StringIO()):
+        engine.analyze_directory(str(package), progress="none")
+    session = engine.analysis_session
+    assert session.max_entries == 130
+    assert session.entry_count == 130
+    paths = sorted(str(path) for path in package.glob("*.py"))
+    trees = [session.analyze_module(path).module.tree for path in paths]
+    with contextlib.redirect_stdout(io.StringIO()):
+        engine.analyze_directory(str(package), progress="none")
+    assert all(session.analyze_module(path).module.tree is tree for path, tree in zip(paths, trees))
+
+
+def test_hold_at_least_never_lowers_and_leaves_a_disabled_session_disabled() -> None:
+    session = AnalysisSession(max_entries=200)
+    session.hold_at_least(3)
+    assert session.max_entries == 200
+    session.hold_at_least(300)
+    assert session.max_entries == 300
+    disabled = AnalysisSession(max_entries=0)
+    disabled.hold_at_least(300)
+    assert disabled.max_entries == 0

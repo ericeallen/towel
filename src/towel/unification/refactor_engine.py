@@ -488,6 +488,8 @@ class UnificationRefactorEngine(
         changed_files: If provided, only pairs with a function in one of these
             files are considered (see ``incremental_global_passes``).
         """
+        # Every file of the analysis must fit, or each pass re-parses them all.
+        self.analysis_session.hold_at_least(len(file_paths))
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)
