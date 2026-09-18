@@ -25,6 +25,7 @@ included), and the pairing of blocks that share a signature bucket.
 """
 
 import ast
+import sys
 from dataclasses import dataclass
 import os
 import re
@@ -81,7 +82,7 @@ from .models import (
     AppliedChange,
     FunctionNode,
 )
-from ..type_inference import TypeOracle
+from ..type_inference import is_probe_file, TypeOracle
 from ..source_text import read_source
 from .pipeline import run_pipeline, AnalysisSession
 
@@ -130,7 +131,7 @@ class _PairingProgress:
                 )
         self._inline = wants and self._bar is None
         if self._inline:
-            print("Pairing blocks:", end=" ", flush=True)
+            print("Pairing blocks:", end=" ", flush=True, file=sys.stderr)
 
     def function_pair_done(self, pairs_so_far: int) -> None:
         """One more function pair has been examined; ``pairs_so_far`` block pairs exist."""
@@ -154,13 +155,21 @@ class _PairingProgress:
                     f" | pairs={pairs_so_far}",
                     end="",
                     flush=True,
+                    file=sys.stderr,
                 )
 
     def finish(self) -> None:
         if self._bar is not None:
             quietly(self._bar.close)
         elif self._inline:
-            print()
+            print(file=sys.stderr)
+
+
+def _size_or_zero(path: str) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
 
 
 class UnificationRefactorEngine(ParallelEvaluation):
@@ -251,8 +260,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
             settings: What Towel reads from the environment (worker cap,
                 debug switches). Read once from ``os.environ`` when omitted.
         """
-        self.analysis_session = AnalysisSession()
         self._settings = settings if settings is not None else Settings.from_environ()
+        self.analysis_session = AnalysisSession(
+            check_ast_immutable=self._settings.check_ast_immutable
+        )
         self.import_graph = ImportGraphCache()
         self._source_lines_cache: Dict[str, Tuple[Tuple[int, int, int], Tuple[str, ...]]] = {}
         self.max_parameters = max_parameters
@@ -430,7 +441,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
             return []
 
         if recursive:
-            # Recursively find all .py files
+            # A virtual environment is recognized by its marker file, whatever
+            # it is called; the fixed names below are the common spellings that
+            # may lack one.
+            environments = {marker.parent for marker in directory_path.rglob("pyvenv.cfg")}
             for py_file in directory_path.rglob("*.py"):
                 if any(
                     part.startswith(".")
@@ -439,12 +453,16 @@ class UnificationRefactorEngine(ParallelEvaluation):
                     for part in py_file.relative_to(directory_path).parts[:-1]
                 ):
                     continue
+                if any(parent in environments for parent in py_file.parents):
+                    continue
+                if is_probe_file(py_file):
+                    continue
                 if py_file.is_file() and not py_file.is_symlink():
                     python_files.append(str(py_file))
         else:
             # Only find .py files in this directory
             for py_file in directory_path.glob("*.py"):
-                if py_file.is_file() and not py_file.is_symlink():
+                if py_file.is_file() and not py_file.is_symlink() and not is_probe_file(py_file):
                     python_files.append(str(py_file))
 
         return sorted(python_files)
@@ -467,7 +485,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 these files are considered (see ``incremental_global_passes``).
         """
         # Every file of the analysis must fit, or each pass re-parses them all.
-        self.analysis_session.hold_at_least(len(file_paths))
+        self.analysis_session.hold_at_least(
+            len(file_paths), sum(_size_or_zero(path) for path in file_paths)
+        )
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)

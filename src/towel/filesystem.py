@@ -8,6 +8,31 @@ import shutil
 import tempfile
 
 
+def _refuse_case_collisions(source: Path, destination_parent: Path) -> None:
+    """Refuse to copy two paths that differ only by case onto a case-insensitive volume.
+
+    ``copytree`` would write the second over the first without a word.
+    """
+    seen: dict[str, Path] = {}
+    collisions = []
+    for path in source.rglob("*"):
+        key = str(path.relative_to(source)).casefold()
+        if key in seen and seen[key] != path:
+            collisions.append((seen[key], path))
+        seen.setdefault(key, path)
+    if not collisions:
+        return
+    with tempfile.NamedTemporaryFile(prefix=".towel-case-", dir=destination_parent) as probe:
+        swapped = Path(probe.name).with_name(Path(probe.name).name.swapcase())
+        insensitive = swapped.exists()
+    if insensitive:
+        first, second = collisions[0]
+        raise ValueError(
+            f"{first.relative_to(source)} and {second.relative_to(source)} differ only by case"
+            " and the output volume does not distinguish them"
+        )
+
+
 def copy_project(source: Path, destination: Path, *, allow_empty: bool = False) -> None:
     """Copy into a private sibling, so copy failure never leaves a partial output.
 
@@ -26,6 +51,8 @@ def copy_project(source: Path, destination: Path, *, allow_empty: bool = False) 
     ):
         raise ValueError("Output already exists")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir():
+        _refuse_case_collisions(source, destination.parent)
     with tempfile.TemporaryDirectory(prefix=".towel-copy-", dir=destination.parent) as temporary:
         staged = Path(temporary) / "payload"
         if source.is_dir():

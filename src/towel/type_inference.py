@@ -138,6 +138,18 @@ _REVEALED = re.compile(
 )
 
 
+def _same_file(reported: str, path: str) -> bool:
+    """Whether a path a checker printed names ``path``.
+
+    mypy prints a file under the working directory relative to it and any
+    other file absolute; Towel passes whatever spelling the caller used. A
+    plain string comparison therefore matched only when the working
+    directory was outside the project, and every reveal and error was
+    dropped otherwise, which switched inference off without a word.
+    """
+    return os.path.abspath(reported) == os.path.abspath(path)
+
+
 def _module_name_and_root(path: Path) -> Tuple[str, Path]:
     """The dotted module name of ``path`` and the directory that must be on the search path.
 
@@ -246,6 +258,15 @@ class MypyInferrer:
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
 
+    def close(self) -> None:
+        """Remove the cache directory this inferrer created, if it created one."""
+        if self._cache is not None:
+            self._cache.cleanup()
+            self._cache = None
+
+    def __del__(self) -> None:
+        self.close()
+
     def _options(self, roots: Sequence[str]) -> "Options":
         from mypy.options import Options
 
@@ -282,7 +303,7 @@ class MypyInferrer:
         error_lines = [
             int(match.group("line"))
             for match in (_ERROR.match(message) for message in result.errors)
-            if match is not None and match.group("path") == file_path
+            if match is not None and _same_file(match.group("path"), file_path)
         ]
         return _verdicts_from_error_lines(len(pairs), error_lines, signature_line, return_line)
 
@@ -304,7 +325,7 @@ class MypyInferrer:
         messages: List[str] = []
         for message in result.errors:
             match = _ERROR.match(message)
-            if match is not None and match.group("path") == file_path:
+            if match is not None and _same_file(match.group("path"), file_path):
                 messages.append(message[match.end() :].strip())
         return messages
 
@@ -338,7 +359,11 @@ class MypyInferrer:
                 shift += len(request.expressions)
             for request, lines in landed:
                 for index, line in enumerate(lines):
-                    probe_lines[(file_path, line)] = (file_path, request.line, index)
+                    probe_lines[(os.path.abspath(file_path), line)] = (
+                        file_path,
+                        request.line,
+                        index,
+                    )
             module, root = _module_name_and_root(Path(file_path))
             sources.append(build_source(file_path, module, text))
             if str(root) not in roots:
@@ -355,7 +380,7 @@ class MypyInferrer:
             match = _REVEALED.match(message)
             if match is None:
                 continue
-            key = probe_lines.get((match.group("path"), int(match.group("line"))))
+            key = probe_lines.get((os.path.abspath(match.group("path")), int(match.group("line"))))
             if key is not None:
                 revealed[key] = match.group("type")
         return revealed
@@ -363,6 +388,14 @@ class MypyInferrer:
 
 _PENDING_PROBES: "set[Path]" = set()
 """Probe files not yet removed; an interpreter exit removes them, a kill cannot."""
+
+
+PROBE_PREFIX = "_towel_probe_"
+
+
+def is_probe_file(path: Path) -> bool:
+    """Whether ``path`` is a pyright probe a killed run left behind; never source to analyze."""
+    return path.name.startswith(PROBE_PREFIX)
 
 
 def _unlink_quietly(path: Path) -> None:
@@ -393,7 +426,7 @@ def _probe_file(original: Path, text: str) -> Iterator[Path]:
     at interpreter exit, whichever comes first.
     """
     descriptor, name = tempfile.mkstemp(
-        prefix=f"_towel_probe_{original.stem}_", suffix=".py", dir=original.parent, text=True
+        prefix=f"{PROBE_PREFIX}{original.stem}_", suffix=".py", dir=original.parent, text=True
     )
     probe = Path(name)
     _PENDING_PROBES.add(probe)

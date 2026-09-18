@@ -82,7 +82,12 @@ class Settings:
         raw_workers = env.get("TOWEL_WORKERS")
         if raw_workers is not None:
             try:
-                workers = max(1, int(raw_workers))
+                workers = int(raw_workers)
+                if workers < 1:
+                    LOG.warning(
+                        "TOWEL_WORKERS=%r is not positive; evaluating pairs serially", raw_workers
+                    )
+                    workers = 1
             except ValueError:
                 LOG.warning(
                     "TOWEL_WORKERS=%r is not an integer; evaluating pairs serially", raw_workers

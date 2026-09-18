@@ -178,15 +178,19 @@ def test_auto_without_tqdm_draws_the_inline_bar_and_ends_its_line(
     _project(tmp_path)
     monkeypatch.setattr(fixed_point, "load_tqdm", lambda: None)
     out = io.StringIO()
-    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+    err = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         results, reason = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
             str(tmp_path), str(tmp_path), progress="auto"
         )
     assert reason == "fixed_point" and sum(count for count, _ in results.values()) == 2
-    text = out.getvalue()
+    # The bar redraws with carriage returns on stderr, like tqdm's, so stdout
+    # (a redirected report) stays clean.
+    text = err.getvalue()
     assert "\r[towel] discovered " in text and "\r[towel] applied " in text
     assert "applied=2 queued=0" in text
     assert text.endswith("\n"), "the inline bar's line is terminated at the fixed point"
+    assert "\r" not in out.getvalue()
 
 
 def test_a_bar_that_cannot_be_constructed_costs_only_its_display(

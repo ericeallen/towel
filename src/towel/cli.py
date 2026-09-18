@@ -13,7 +13,9 @@ from dataclasses import dataclass
 import json
 import os
 import re
+import signal
 import sys
+import tempfile
 import textwrap
 from importlib.metadata import version
 from pathlib import Path
@@ -83,34 +85,90 @@ For more help on a specific command:
 
 def main() -> None:
     """Main entry point with subcommands."""
+    _install_signal_handling()
     parser = _build_parser()
     args = parser.parse_args()
     configure_stderr_logging()
-    Settings.from_environ().enable_debug_logging()
+    _settings().enable_debug_logging()
+    try:
+        _dispatch(parser, args)
+    except KeyboardInterrupt:
+        parser.exit(130, "Interrupted.\n")
+    except BrokenPipeError:
+        # The reader went away (``towel preview ... | head``); nothing is wrong.
+        _close_stdout_quietly()
+        sys.exit(0)
+
+
+_SETTINGS: Optional[Settings] = None
+
+
+def _settings() -> Settings:
+    """The process's settings, read from the environment once."""
+    global _SETTINGS
+    if _SETTINGS is None:
+        _SETTINGS = Settings.from_environ()
+    return _SETTINGS
+
+
+def _install_signal_handling() -> None:
+    """Make SIGTERM an orderly exit, so temporary files and journals are cleaned up.
+
+    The default handler kills the process outright, leaving the mypy cache
+    directory, a partial copy, and any pyright probe behind; raising
+    SystemExit runs the context managers and the atexit hooks that remove
+    them. Standard output is reconfigured so a non-ASCII path or source
+    line cannot fail the run under an ASCII locale.
+    """
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        try:
+            reconfigure(errors="backslashreplace")
+        except (ValueError, OSError):
+            pass
+
+
+def _close_stdout_quietly() -> None:
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except OSError:
+        pass
+
+
+def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
 
     if not args.command:
         parser.print_help()
         sys.exit(0)
 
-    # Dispatch to appropriate handler
     if args.command == "dry":
         try:
             _run_dry(args)
+        except BrokenPipeError:
+            raise
         except (OSError, ValueError, TowelError) as error:
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "preview":
         try:
             _run_preview(args)
+        except BrokenPipeError:
+            raise
         except (OSError, ValueError, TowelError) as error:
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "rename-helpers":
         try:
             _run_rename_helpers(args)
+        except BrokenPipeError:
+            raise
         except (OSError, ValueError, SyntaxError, TowelError) as error:
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "recover":
         try:
             recover(args.journal)
+        except BrokenPipeError:
+            raise
         except (OSError, ValueError) as error:
             parser.exit(1, f"Error: {error}\n")
 
@@ -458,10 +516,25 @@ def _write_change_sidecar(engine: "UnificationRefactorEngine", output: str) -> N
     sidecar = _change_sidecar_path(out)
     if sidecar.is_symlink():
         raise ValueError(f"Refusing to write the change sidecar through a symlink: {sidecar}")
-    sidecar.write_text(
-        json.dumps({"version": 1, "helpers": helpers}, indent=2) + "\n", encoding="utf-8"
-    )
+    _write_atomically(sidecar, json.dumps({"version": 1, "helpers": helpers}, indent=2) + "\n")
     print(f"\nWrote call-site before/after to {sidecar} (for naming; safe to delete).")
+
+
+def _write_atomically(target: Path, text: str) -> None:
+    """Write ``text`` to ``target`` all at once: a failed write leaves the old file or none."""
+    descriptor, name = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _pending_journal(target: Path) -> Optional[Path]:
+    """A transaction journal an interrupted run left under ``target``, if any."""
+    return next(target.rglob(".towel-transaction-*"), None) if target.is_dir() else None
 
 
 def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
@@ -632,6 +705,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     engine = UnificationRefactorEngine(
         max_parameters=5,
         min_lines=3,
+        settings=_settings(),
         parameterize_constants=True,
         prefer_absolute_imports=options.prefer_absolute_imports,
         pep420_namespace_packages=options.pep420,
@@ -656,6 +730,10 @@ def _run_dry(args: argparse.Namespace) -> None:
 
     if source != destination:
         copy_project(source, destination)
+    else:
+        journal = _pending_journal(destination)
+        if journal is not None:
+            raise ValueError(f"Recover the interrupted transaction first: towel recover {journal}")
 
     print()
 
@@ -668,7 +746,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         )
 
         if num_applied > 0:
-            print(f"\n✓ Applied {num_applied} refactoring(s):")
+            print(f"\nApplied {num_applied} refactoring(s):")
             for i, desc in enumerate(descriptions, 1):
                 print(f"  {i}. {desc}")
         else:
@@ -684,7 +762,7 @@ def _run_dry(args: argparse.Namespace) -> None:
 
         if results:
             total_refactorings = sum(count for count, _ in results.values())
-            print(f"\n✓ Applied {total_refactorings} refactoring(s) across {len(results)} file(s)")
+            print(f"\nApplied {total_refactorings} refactoring(s) across {len(results)} file(s)")
             print(f"  Termination: {termination_reason}")
             for file_path, (count, descriptions) in sorted(results.items()):
                 print(f"\n  {file_path}: {count} refactoring(s)")
@@ -779,10 +857,14 @@ def _run_preview(args: argparse.Namespace) -> None:
     target = options.target
 
     is_file, is_dir = _existing_target(target)
+    journal = _pending_journal(Path(target))
+    if journal is not None:
+        LOG.warning("An interrupted transaction is pending; recover it first: %s", journal)
 
     engine = UnificationRefactorEngine(
         max_parameters=5,
         min_lines=3,
+        settings=_settings(),
         parameterize_constants=True,
         prefer_absolute_imports=options.prefer_absolute_imports,
         pep420_namespace_packages=options.pep420,
@@ -844,6 +926,9 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
     if not target.is_dir():
         print(f"Error: '{target}' must be a directory")
         sys.exit(1)
+    journal = _pending_journal(target)
+    if journal is not None:
+        LOG.warning("An interrupted transaction is pending; recover it first: %s", journal)
 
     helpers = _find_extracted_helpers(target, options.files, options.functions)
 
@@ -936,7 +1021,9 @@ def _confirm(prompt: str) -> bool:
     """Ask a yes/no question; a closed stdin or an interrupt answers no."""
     try:
         return input(prompt).strip().lower() == "y"
-    except (EOFError, KeyboardInterrupt):
+    except (EOFError, KeyboardInterrupt, OSError, RuntimeError):
+        # A closed or lost stdin answers no; ``input`` raises RuntimeError for
+        # a closed descriptor and OSError for one that cannot be read.
         print()
         return False
 

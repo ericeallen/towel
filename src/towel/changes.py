@@ -12,11 +12,12 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import secrets
 from pathlib import Path
 from .source_text import encode_like
 import stat
 import tempfile
-from typing import Mapping, TypedDict
+from typing import Mapping, Set, TypedDict
 
 from .diagnostics import LOG
 
@@ -163,6 +164,30 @@ def _cleanup(journal: Path) -> None:
     _sync_directory(journal.parent)
 
 
+def _journal_covers(journal: Path, targets: Set[Path]) -> bool:
+    """Whether a pending journal concerns any of ``targets``.
+
+    A journal sits at the common parent of the files its transaction
+    changed, so one at a shared ancestor (a file refactored directly in the
+    temporary directory, say) must not block every unrelated run beneath
+    it. Its manifest names the files; a journal whose manifest is not yet
+    durable, or not readable, is taken to cover everything.
+    """
+    try:
+        records: object = json.loads((journal / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return True
+    if not isinstance(records, list):
+        return True
+    covered: Set[Path] = set()
+    for record in records:
+        relative = record.get("path") if isinstance(record, dict) else None
+        if not isinstance(relative, str):
+            return True
+        covered.add(journal.parent / relative)
+    return bool(covered & targets)
+
+
 def apply_changes(plan: ChangePlan) -> None:
     """Apply a complete plan, rolling back caught failures including interruptions."""
     if os.name != "posix":
@@ -175,13 +200,19 @@ def apply_changes(plan: ChangePlan) -> None:
         compile(change.after, str(change.path), "exec")
         _check(change, change.before)
     root = Path(os.path.commonpath([str(change.path.parent) for change in plan.changes]))
+    targets = {change.path for change in plan.changes}
     parents = {parent for change in plan.changes for parent in change.path.parents}
-    pending = sorted(path for parent in parents for path in parent.glob(".towel-transaction-*"))
+    pending = sorted(
+        path
+        for parent in parents
+        for path in parent.glob(".towel-transaction-*")
+        if _journal_covers(path, targets)
+    )
     if pending:
         raise RecoveryRequired(f"Recover the existing transaction first: {pending[0]}")
     if any(change.path.stat().st_dev != root.stat().st_dev for change in plan.changes):
         raise ChangeConflict("A transaction cannot span filesystems")
-    journal = root / ".towel-transaction-active"
+    journal = root / f".towel-transaction-{secrets.token_hex(4)}"
     try:
         journal.mkdir(mode=0o700)
     except FileExistsError as error:

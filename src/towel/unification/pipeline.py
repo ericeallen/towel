@@ -42,6 +42,7 @@ from typing import (
     Union,
 )
 import ast
+import sys
 from collections import OrderedDict
 import hashlib
 from dataclasses import dataclass
@@ -273,14 +274,25 @@ class AnalysisSession:
     and are not shared between threads.
     """
 
-    def __init__(self, *, max_entries: int = 128, max_source_bytes: int = 8 * 1024 * 1024) -> None:
+    def __init__(
+        self,
+        *,
+        max_entries: int = 128,
+        max_source_bytes: int = 8 * 1024 * 1024,
+        check_ast_immutable: Optional[bool] = None,
+    ) -> None:
         if max_entries < 0 or max_source_bytes < 0:
             raise ValueError("Analysis cache limits must be nonnegative")
         self._max_entries = max_entries
         self._max_source_bytes = max_source_bytes
         self._entries: OrderedDict[Tuple[str, str], ModuleAnalysis] = OrderedDict()
         self._source_bytes = 0
-        self._check_immutable = Settings.from_environ().check_ast_immutable
+        # The engine passes its settings; a session built alone reads them once.
+        self._check_immutable = (
+            Settings.from_environ().check_ast_immutable
+            if check_ast_immutable is None
+            else check_ast_immutable
+        )
         self._digests: Dict[Tuple[str, str], str] = {}
 
     @property
@@ -291,8 +303,8 @@ class AnalysisSession:
     def max_entries(self) -> int:
         return self._max_entries
 
-    def hold_at_least(self, entries: int) -> None:
-        """Raise the entry limit so a project of ``entries`` files stays whole.
+    def hold_at_least(self, entries: int, source_bytes: int = 0) -> None:
+        """Raise the limits so a project of ``entries`` files and ``source_bytes`` stays whole.
 
         A directory run analyzes every file on every pass; a limit below the
         file count evicted the oldest files each pass, re-parsing the whole
@@ -302,10 +314,11 @@ class AnalysisSession:
         proposal keep the whole project; a session that caches nothing
         (limit 0) stays that way.
         """
-        if entries < 0:
+        if entries < 0 or source_bytes < 0:
             raise ValueError("Analysis cache limits must be nonnegative")
         if self._max_entries:
             self._max_entries = max(self._max_entries, entries)
+            self._max_source_bytes = max(self._max_source_bytes, source_bytes)
 
     @property
     def source_bytes(self) -> int:
@@ -434,7 +447,7 @@ def run_pipeline(
     bar = _create_progress_bar(use_progress, len(paths), "analyze", "file")
     inline_progress = use_progress and bar is None and len(paths) > 0
     if inline_progress:
-        print("Analyzing files:", end=" ", flush=True)
+        print("Analyzing files:", end=" ", flush=True, file=sys.stderr)
     analyses: List[ModuleAnalysis] = []
     try:
         for index, path in enumerate(paths, 1):
@@ -450,11 +463,12 @@ def run_pipeline(
                     f"\rAnalyzing files: [{render_inline_bar(percent)}] {percent:3d}%",
                     end="",
                     flush=True,
+                    file=sys.stderr,
                 )
     finally:
         _close_progress_bar(bar)
         if inline_progress:
-            print()
+            print(file=sys.stderr)
 
     functions = [function for analysis in analyses for function in analysis.functions]
     classes = [info for analysis in analyses for info in analysis.module.class_infos]

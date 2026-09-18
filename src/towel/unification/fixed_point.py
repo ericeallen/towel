@@ -32,6 +32,7 @@ import textwrap
 
 from pathlib import Path
 import ast
+import sys
 from typing import Literal, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import RefactoringError
@@ -56,6 +57,16 @@ from ..source_text import decode_source, encode_like, read_source
 
 from .materialize import Materialization
 
+_TQDM_NOTED = False
+
+
+def _note_missing_tqdm() -> None:
+    """Say once per process that the bar the mode asked for is not installed."""
+    global _TQDM_NOTED
+    if not _TQDM_NOTED:
+        _TQDM_NOTED = True
+        LOG.warning("tqdm is not installed; showing an inline progress bar on stderr")
+
 
 class FixedPointDrivers(Materialization):
     """FixedPointDrivers methods of the engine; see the module docstring."""
@@ -65,7 +76,7 @@ class FixedPointDrivers(Materialization):
         """Emit the leading inline progress label when progress is enabled."""
 
         if enabled:
-            print(label, end=" ", flush=True)
+            print(label, end=" ", flush=True, file=sys.stderr)
 
     @classmethod
     def _update_inline_status(
@@ -75,14 +86,14 @@ class FixedPointDrivers(Materialization):
 
         bar = render_inline_bar(pct, bar_len=bar_len)
         suffix_text = f" {suffix}" if suffix else ""
-        print(f"\r{label} [{bar}] {pct:3d}%{suffix_text}", end="", flush=True)
+        print(f"\r{label} [{bar}] {pct:3d}%{suffix_text}", end="", flush=True, file=sys.stderr)
 
     @staticmethod
     def _finish_inline_status(enabled: bool) -> None:
         """Terminate the inline status line so subsequent logs stay readable."""
 
         if enabled:
-            print()
+            print(file=sys.stderr)
 
     @staticmethod
     def _pop_next_proposal(queue: List[RefactoringProposal]) -> Optional[RefactoringProposal]:
@@ -98,6 +109,8 @@ class FixedPointDrivers(Materialization):
         """The normalized progress mode and, when the mode wants tqdm and it loads, its factory."""
         normalized = normalize_progress(progress)
         factory = load_tqdm() if normalized in {"auto", "tqdm"} else None
+        if normalized == "tqdm" and factory is None:
+            _note_missing_tqdm()
         return normalized, factory
 
     def refactor_to_fixed_point(
@@ -513,6 +526,7 @@ class _ApplyProgress:
                 f"| applied={applied} queued={queued} | {short}",
                 end="",
                 flush=True,
+                file=sys.stderr,
             )
         )
 
@@ -589,7 +603,7 @@ class _ApplyProgress:
 
             quietly(finish)
         elif wants_bar(self._mode) and not self._use_tqdm:
-            print()
+            print(file=sys.stderr)
 
     def finish_at_cap(self) -> None:
         """The iteration cap was reached: close the bar, or end the inline bar's line."""
@@ -597,4 +611,4 @@ class _ApplyProgress:
         if bar is not None:
             bar.close()
         elif wants_bar(self._mode) and not self._use_tqdm:
-            print()
+            print(file=sys.stderr)
