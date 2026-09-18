@@ -557,7 +557,7 @@ class ProjectLayout:
             if rel.suffix != ".py":
                 return None
             return _valid_module_path(".".join(rel.with_suffix("").parts))
-        except Exception:
+        except ValueError:
             return None
 
 

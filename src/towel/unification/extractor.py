@@ -310,29 +310,16 @@ class HygienicExtractor:
                 var_name = inverse_renames.get(param_name, param_name)
 
                 # Also check if the name varies across blocks (augmented assignments)
-                if (
-                    hasattr(substitution, "aug_assign_mappings")
-                    and param_name in substitution.aug_assign_mappings
-                ):
-                    mappings = substitution.aug_assign_mappings[param_name]
-                    if block_idx in mappings:
-                        var_name = mappings[block_idx]
+                var_name = substitution.aug_assign_mappings.get(param_name, {}).get(
+                    block_idx, var_name
+                )
                 args_list[param_idx] = ast.Name(id=var_name, ctx=ast.Load())
-                # If this parameter was introduced via higher-order literal promotion,
-                # prefer passing the original per-block expression rather than a free variable
-                # reference (which likely doesn't exist at the call site).
-                try:
-                    if (
-                        hasattr(substitution, "promoted_literal_args")
-                        and substitution.promoted_literal_args
-                    ):
-                        promoted = substitution.promoted_literal_args.get(param_name, {})
-                        if block_idx in promoted:
-                            args_list[param_idx] = cast(ast.expr, promoted[block_idx])
-                except (AttributeError, KeyError, TypeError, IndexError):
-                    # Malformed promotion map: fall back to the free-variable
-                    # name reference rather than masking an unrelated error.
-                    pass
+                # A parameter introduced by higher-order literal promotion passes
+                # the original per-block expression rather than a free-variable
+                # reference, which need not exist at the call site.
+                promoted = substitution.promoted_literal_args.get(param_name, {})
+                if block_idx in promoted:
+                    args_list[param_idx] = cast(ast.expr, promoted[block_idx])
 
         # Create function call
         call = ast.Call(

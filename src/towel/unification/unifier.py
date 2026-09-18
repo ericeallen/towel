@@ -62,6 +62,7 @@ class Substitution:
     # per block for such promoted parameters. By default, this dict is empty and
     # has no effect on behavior until a promotion pass populates it.
     promoted_literal_args: Dict[str, Dict[int, ast.AST]] = field(default_factory=dict)
+    aug_assign_mappings: Dict[str, Dict[int, str]] = field(default_factory=dict)
 
     def add_mapping(
         self, block_idx: int, expr: ast.AST, param_name: str, bound_vars: Optional[List[str]] = None
@@ -783,11 +784,9 @@ class Unifier:
                     subst.add_mapping(bidx, expr_b, param_name, bound_vars=None)
 
                 # Also store per-block expr under promoted_literal_args for clarity
-                if hasattr(subst, "promoted_literal_args"):
-                    if param_name not in subst.promoted_literal_args:
-                        subst.promoted_literal_args[param_name] = {}
-                    for bidx, expr_b in enumerate(valid_exprs):
-                        subst.promoted_literal_args[param_name][bidx] = expr_b
+                promoted = subst.promoted_literal_args.setdefault(param_name, {})
+                for bidx, expr_b in enumerate(valid_exprs):
+                    promoted[bidx] = expr_b
 
     def _unify_nodes(
         self, nodes: Sequence[ast.AST], subst: Substitution, block_indices: Sequence[int]

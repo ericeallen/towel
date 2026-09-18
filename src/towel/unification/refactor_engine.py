@@ -89,7 +89,7 @@ from .assignment_analyzer import (
     _collect_bindings_and_reassignments,
 )
 from .project_layout import ProjectLayout, is_package_dir
-from .progress import load_tqdm, render_inline_bar
+from .progress import ProgressBarFactory, load_tqdm, quietly, render_inline_bar
 from .parameters import parameter_names, fresh_parameter_name
 from .semantic_safety import (
     frame_sensitivity_markers,
@@ -1023,13 +1023,15 @@ class UnificationRefactorEngine:
             return None
         return queue.pop(0)
 
-    def _resolve_progress_backend(self, progress: str) -> Tuple[str, Optional[Any], bool]:
+    def _resolve_progress_backend(
+        self, progress: str
+    ) -> Tuple[str, Optional[ProgressBarFactory], bool]:
         """Resolve the progress mode and load tqdm if it is available."""
 
         allowed = {"auto", "tqdm", "none", "detail"}
         normalized = progress if progress in allowed else "tqdm"
         use_tqdm = normalized in {"auto", "tqdm"}
-        tqdm_cls: Optional[Any] = None
+        tqdm_cls: Optional[ProgressBarFactory] = None
         if use_tqdm:
             tqdm_cls = load_tqdm()
             use_tqdm = tqdm_cls is not None
@@ -1129,9 +1131,7 @@ class UnificationRefactorEngine:
                 self.old = old
                 self.new = new
 
-            def visit_Call(
-                self, call: ast.Call
-            ) -> ast.AST:  # pragma: no cover - simple AST rewrite
+            def visit_Call(self, call: ast.Call) -> ast.AST:
                 updated = cast(ast.Call, self.generic_visit(call))
                 if isinstance(updated.func, ast.Name) and updated.func.id == self.old:
                     updated.func.id = self.new
@@ -1303,7 +1303,7 @@ class UnificationRefactorEngine:
             implicit_name=implicit_param,
             class_name=class_name,
         )
-        return rewriter.visit(node)  # type: ignore[no-any-return]
+        return cast(ast.AST, rewriter.visit(node))
 
     @staticmethod
     def _drop_implicit_positional(args: List[ast.expr], implicit_name: str) -> List[ast.expr]:
@@ -2143,7 +2143,11 @@ class UnificationRefactorEngine:
 
             file1_changed = changed_files is None or file1 in changed_files
             for j, entry2 in enumerate(all_functions[i + 1 :], i + 1):
-                if not file1_changed and entry2[0] not in changed_files:  # type: ignore[operator]
+                if (
+                    changed_files is not None
+                    and not file1_changed
+                    and entry2[0] not in changed_files
+                ):
                     continue  # both files unchanged since the last global pass: verdict stands
                 if len(entry2) >= 8:
                     file2, func2, source2, analyzer2, scope2, class2, encl2, anc2 = entry2
@@ -2194,12 +2198,14 @@ class UnificationRefactorEngine:
                 # Update progress per function pair
                 func_pairs_done += 1
                 if tqdm_bar is not None:
-                    try:
-                        tqdm_bar.update(1)
-                        if func_pairs_done % 20 == 0 or func_pairs_done == total_func_pairs:
-                            tqdm_bar.set_postfix({"pairs": len(pairs)}, refresh=True)
-                    except Exception:
-                        pass
+                    bar, done = tqdm_bar, func_pairs_done
+
+                    def advance() -> None:
+                        bar.update(1)
+                        if done % 20 == 0 or done == total_func_pairs:
+                            bar.set_postfix({"pairs": len(pairs)}, refresh=True)
+
+                    quietly(advance)
                 elif use_inline:
                     pct = int(100 * func_pairs_done / max(total_func_pairs, 1))
                     if pct != last_pct:
@@ -2210,10 +2216,7 @@ class UnificationRefactorEngine:
                             suffix=f"| pairs={len(pairs)}",
                         )
         if tqdm_bar is not None:
-            try:
-                tqdm_bar.close()
-            except Exception:
-                pass
+            quietly(tqdm_bar.close)
         self._finish_inline_status(use_inline)
 
         return pairs
@@ -2523,9 +2526,7 @@ class UnificationRefactorEngine:
             if 0 in aug_assign_param_mappings.get(param_name, {}):
                 params_to_remove.append(param_name)
 
-        if not hasattr(substitution, "aug_assign_mappings"):
-            setattr(substitution, "aug_assign_mappings", {})
-        aug_mappings = cast(Dict[str, Dict[int, str]], getattr(substitution, "aug_assign_mappings"))
+        aug_mappings = substitution.aug_assign_mappings
         for param_name, block_mappings in aug_assign_param_mappings.items():
             if 0 in block_mappings:
                 aug_mappings[block_mappings[0]] = block_mappings
@@ -4974,27 +4975,25 @@ class UnificationRefactorEngine:
             # Suppress inline fallback bar when tqdm is selected or active, or in 'none'/'detail' modes
             if progress_mode in ("none", "detail", "tqdm") or use_tqdm:
                 return
-            try:
-                denom = max(applied + queued, 1)
-                pct = int((applied / denom) * 100)
-                bar = render_inline_bar(pct, bar_len=32)
-                short = desc if len(desc) <= 48 else desc[:45] + "..."
-                print(
-                    f"\r[towel] {phase:<10} [{bar}] {pct:3d}% | applied={applied} queued={queued} | {short}",
+            denom = max(applied + queued, 1)
+            pct = int((applied / denom) * 100)
+            bar = render_inline_bar(pct, bar_len=32)
+            short = desc if len(desc) <= 48 else desc[:45] + "..."
+            quietly(
+                lambda: print(
+                    f"\r[towel] {phase:<10} [{bar}] {pct:3d}% "
+                    f"| applied={applied} queued={queued} | {short}",
                     end="",
                     flush=True,
                 )
-            except Exception:
-                pass
+            )
 
         def _update_progress_postfix(applied: int, queued: int) -> None:
             """Keep tqdm postfix updates consistent."""
             if not (use_tqdm and progress_bar is not None):
                 return
-            try:
-                progress_bar.set_postfix({"A": applied, "Q": queued}, refresh=True)
-            except Exception:
-                pass
+            bar = progress_bar
+            quietly(lambda: bar.set_postfix({"A": applied, "Q": queued}, refresh=True))
 
         def _apply_proposal_and_refresh_queue(
             proposal: RefactoringProposal, queue: List[RefactoringProposal]
@@ -5093,11 +5092,13 @@ class UnificationRefactorEngine:
                     # Fixed point reached
                     if use_tqdm and progress_bar is not None:
                         # Ensure a clean newline so the last line doesn't meld with following prints
-                        try:
-                            progress_bar.refresh()
-                            progress_bar.close()
-                        except Exception:
-                            pass
+                        bar = progress_bar
+
+                        def finish() -> None:
+                            bar.refresh()
+                            bar.close()
+
+                        quietly(finish)
                     else:
                         if progress_mode not in ("none", "detail") and not use_tqdm:
                             print()  # finish inline bar line
@@ -5174,13 +5175,13 @@ class UnificationRefactorEngine:
             iterations += 1
             total_applied += 1
             if use_tqdm and progress_bar is not None:
-                try:
-                    progress_bar.update(1)
-                    queued_ct = len(proposal_queue)
-                except Exception:
-                    pass
-                else:
-                    _update_progress_postfix(total_applied, queued_ct)
+                bar = progress_bar
+
+                def advance() -> None:
+                    bar.update(1)
+                    _update_progress_postfix(total_applied, len(proposal_queue))
+
+                quietly(advance)
             else:
                 _fallback_bar(
                     total_applied, len(proposal_queue), "applied", f"#{iterations}: {last_desc}"
@@ -5198,7 +5199,7 @@ class UnificationRefactorEngine:
         return results, termination_reason
 
     # Optional analysis cache invalidation hook used by directory fixed-point runner
-    def invalidate_paths(self, paths: List[str]) -> None:  # pragma: no cover - simple cache hook
+    def invalidate_paths(self, paths: List[str]) -> None:
         self.analysis_session.invalidate(paths)
 
 

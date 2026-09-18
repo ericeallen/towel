@@ -148,10 +148,11 @@ class MypyInferrer:
     def __init__(self, cache_dir: Optional[Path] = None) -> None:
         from mypy import build  # noqa: F401  (import error surfaces here)
 
-        self._cache = (
-            None if cache_dir is not None else tempfile.TemporaryDirectory(prefix="towel-mypy-")
-        )
-        self._cache_dir = cache_dir if cache_dir is not None else Path(self._cache.name)  # type: ignore[union-attr]
+        self._cache: Optional[tempfile.TemporaryDirectory[str]] = None
+        if cache_dir is None:
+            self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
+            cache_dir = Path(self._cache.name)
+        self._cache_dir = cache_dir
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)

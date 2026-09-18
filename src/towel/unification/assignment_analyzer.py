@@ -448,9 +448,7 @@ def _add_augassign_target(target: ast.AST, reassigned_vars: Set[str]) -> None:
         reassigned_vars.add(target.id)
 
 
-def _visit_body_and_orelse(  # pragma: no cover - exercised via AssignmentAnalyzer
-    visitor: ast.NodeVisitor, node: ast.AST
-) -> None:
+def _visit_body_and_orelse(visitor: ast.NodeVisitor, node: ast.AST) -> None:
     for stmt in getattr(node, "body", []):
         visitor.visit(stmt)
     for stmt in getattr(node, "orelse", []):

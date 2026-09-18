@@ -35,14 +35,11 @@ from typing import (
     Dict,
     FrozenSet,
     List,
-    Mapping,
     Optional,
-    Protocol,
     Sequence,
     TYPE_CHECKING,
     Tuple,
     Union,
-    cast,
 )
 import ast
 from collections import OrderedDict
@@ -60,7 +57,7 @@ from .models import (
     RefactoringProposal,
 )
 from .scope_analyzer import ScopeAnalyzer
-from .progress import load_tqdm, render_inline_bar
+from .progress import ProgressBar, load_tqdm, quietly, render_inline_bar
 from .visitors import FunctionCollector
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -329,20 +326,6 @@ def _read_and_normalize_module(path: str) -> Tuple[str, ast.AST]:
     return src, tree
 
 
-class ProgressBar(Protocol):
-    def update(self, n: int = 1) -> object:
-        """Advance the displayed progress."""
-        ...
-
-    def close(self) -> object:
-        """Finish the progress display."""
-        ...
-
-    def set_postfix(self, ordered_dict: Mapping[str, object], refresh: bool = True) -> object:
-        """Display compact progress details."""
-        ...
-
-
 def _create_progress_bar(
     use_progress: bool, total: int, desc: str, unit: str
 ) -> Optional[ProgressBar]:
@@ -353,19 +336,14 @@ def _create_progress_bar(
     if tqdm_cls is None:
         return None
     try:
-        bar = tqdm_cls(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=False)
-        return cast(ProgressBar, bar)
+        return tqdm_cls(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=False)
     except Exception:
         return None
 
 
 def _close_progress_bar(bar: Optional[ProgressBar]) -> None:
-    if bar is None:
-        return
-    try:
-        bar.close()
-    except Exception:
-        pass
+    if bar is not None:
+        quietly(bar.close)
 
 
 def run_pipeline(
@@ -405,11 +383,7 @@ def run_pipeline(
             except SourceFileError as error:
                 print(f"Skipping {path}: {error}", file=sys.stderr)
             if bar is not None:
-                try:
-                    bar.update(1)
-                except Exception:
-                    # A display failure cannot change analysis outcomes.
-                    pass
+                quietly(lambda: bar.update(1))
             elif inline_progress:
                 percent = int(100 * index / len(paths))
                 print(

@@ -618,9 +618,9 @@ def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> Op
         failed = False
 
         def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
-            head = node
+            head: ast.expr = node
             while isinstance(head, ast.Attribute):
-                head = head.value  # type: ignore[assignment]
+                head = head.value
             if isinstance(head, ast.Name) and head.id in bound:
                 return node  # ``typing.Sequence`` with ``import typing`` in the host
             if node.attr in bound:
