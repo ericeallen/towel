@@ -31,7 +31,9 @@ import concurrent.futures
 import dataclasses
 import fcntl
 import json
+import functools
 import os
+import tempfile
 import signal
 import threading
 import re
@@ -154,10 +156,16 @@ def summarize(output: str) -> str:
     return lines[-1] if lines else ""
 
 
+@functools.lru_cache(maxsize=None)
+def _scratch_home() -> str:
+    """A HOME for the subjects' processes, so none reads or writes the caller's."""
+    return tempfile.mkdtemp(prefix="towel-ecosystem-home-")
+
+
 def base_env(pythonpath: str, python_bin: Path) -> Dict[str, str]:
     env = {
         "PATH": f"{python_bin}:{os.environ.get('PATH', '')}",
-        "HOME": os.environ.get("HOME", "/tmp"),
+        "HOME": _scratch_home(),
         "PYTHONPATH": pythonpath,
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONHASHSEED": "0",

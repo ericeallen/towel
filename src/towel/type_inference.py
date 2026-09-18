@@ -432,8 +432,12 @@ class PyrightOracle:
         """Pyright's diagnostics for ``text`` standing in for ``file_path``."""
         original = Path(file_path)
         with _probe_file(original, text) as probe:
+            # The project's pyright configuration applies (its rules are what
+            # the generated code must satisfy), but its interpreter is never
+            # run: --pythonpath names this process's interpreter, so a venv
+            # setting in that configuration cannot execute the project.
             completed = subprocess.run(
-                [*self._command, "--outputjson", str(probe)],
+                [*self._command, "--outputjson", "--pythonpath", sys.executable, str(probe)],
                 capture_output=True,
                 text=True,
                 cwd=str(original.parent),
@@ -514,13 +518,12 @@ _PYRIGHT_REVEALED = re.compile(r'^Type of ".*" is "(?P<type>.*)"$', re.DOTALL)
 
 
 def _pyright_command() -> Optional[List[str]]:
-    executable = shutil.which("pyright")
-    if executable:
-        return [executable]
+    """How to run pyright: this interpreter's copy first, then one on PATH."""
     try:
         import pyright  # noqa: F401
     except ImportError:
-        return None
+        executable = shutil.which("pyright")
+        return [executable] if executable else None
     return [sys.executable, "-m", "pyright"]
 
 

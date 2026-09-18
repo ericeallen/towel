@@ -217,13 +217,12 @@ def project_configures_isort(path: Path) -> bool:
 
 
 def _ruff_executable() -> Optional[List[str]]:
-    executable = shutil.which("ruff")
-    if executable:
-        return [executable]
+    """How to run ruff: this interpreter's copy first, then one on PATH."""
     try:
         import ruff  # noqa: F401
     except ImportError:
-        return None
+        executable = shutil.which("ruff")
+        return [executable] if executable else None
     return [sys.executable, "-m", "ruff"]
 
 

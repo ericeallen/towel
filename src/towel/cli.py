@@ -423,6 +423,8 @@ def _write_change_sidecar(engine: "UnificationRefactorEngine", output: str) -> N
             {"file": rel, "line": record.line, "before": record.before, "after": record.after}
         )
     sidecar = _change_sidecar_path(out)
+    if sidecar.is_symlink():
+        raise ValueError(f"Refusing to write the change sidecar through a symlink: {sidecar}")
     sidecar.write_text(
         json.dumps({"version": 1, "helpers": helpers}, indent=2) + "\n", encoding="utf-8"
     )
@@ -1015,9 +1017,9 @@ def _apply_rename_file(
 
     # Load rename mappings
     try:
-        with open(rename_file) as f:
+        with open(rename_file, encoding="utf-8") as f:
             renames = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError) as e:
+    except (OSError, ValueError) as e:
         print(f"Error reading rename file: {e}")
         sys.exit(1)
 
