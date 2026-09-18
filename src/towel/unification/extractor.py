@@ -38,7 +38,6 @@ class UnsupportedExtraction(ValueError):
     """A valid source construct cannot be represented by this extractor."""
 
 
-# Create a transformer that replaces expressions with parameter names
 class ParameterSubstituter(ast.NodeTransformer):
     """Replace the unified expressions of block 0 with the helper's parameter names.
 
@@ -53,23 +52,15 @@ class ParameterSubstituter(ast.NodeTransformer):
         self.subst = subst
         self.param_names = param_names
         self.rename_mapping = rename_mapping
-        # Use block 0 as the template
         self.block_idx = 0
-        # Track if we're inside a JoinedStr to avoid breaking f-string structure
         self.in_joinedstr = False
-        # Track variables that are equivalent to parameters
-        # Maps variable names to parameter names
         self.var_to_param: Dict[str, str] = {}
-        # Track canonical parameter assigned to a variable name (even if shadowed later)
         self.param_name_by_var: Dict[str, str] = {}
-        # Track parameterized variables that have been rebound to local values
         self.shadowed_vars: Set[str] = set()
 
-        # CRITICAL: Initialize var_to_param with variables that are parameterized
-        # For each parameter, if its expression in block 0 is a simple variable name,
-        # then that variable should be substituted with the parameter throughout
+        # A parameter whose block-0 expression is a bare name stands for that
+        # name wherever the template reads it.
         for param_name in param_names:
-            # Get the original parameter name (before renaming)
             original_param_name = rename_mapping.get(param_name, param_name)
             if original_param_name in subst.param_expressions:
                 # This is a unified parameter - check if it's a simple variable reference
@@ -113,7 +104,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         if not maybe_param_name or maybe_param_name not in self.param_names:
             return None
 
-        # CRITICAL: Never replace binding occurrences (Store/Del context)
+        # Binding occurrences (Store/Del context) are never substituted.
         if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
             return node
 
@@ -691,7 +682,6 @@ class HygienicExtractor:
             self.used_names.add(name)
             return name
 
-        # Add numeric suffix with __ prefix to avoid name collisions
         counter = 1
         while True:
             candidate = f"__{name}_{counter}"
@@ -735,7 +725,6 @@ def is_value_producing(block: Sequence[ast.stmt]) -> bool:
     if not block:
         return False
 
-    # Check if block contains any return statements
     if contains_return(block):
         return True
 

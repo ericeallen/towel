@@ -1,8 +1,11 @@
-"""Plan lexical module-helper renames without rewriting unrelated identifier tokens.
+"""Plan helper renames lexically, without rewriting unrelated identifier tokens.
 
-Only statically resolved module helpers/imports are supported. Renaming an API
-requires exclusive access and all consumers in the selected source tree; dynamic
-lookup and escaping module objects are rejected where visible in that tree.
+A module-level helper is renamed together with the importers that bind it;
+a class-level helper defined once is renamed with every attribute reference;
+a helper's parameter is renamed within the helper's own scope. Only
+statically resolved names are supported: renaming needs every consumer in
+the selected source tree, and dynamic lookup or an escaping module object
+is rejected where it is visible in that tree.
 """
 
 from __future__ import annotations

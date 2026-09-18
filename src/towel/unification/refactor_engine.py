@@ -186,10 +186,11 @@ class UnificationRefactorEngine(
     PairEvaluation,
     BlockAnalysis,
 ):
-    """
-    Main engine for unification-based refactoring.
+    """The engine: find duplicated blocks, verify an extraction for each, apply to a fixed point.
 
-    This finds and extracts duplicate code using unification.
+    Assembled from the mixins above, one per responsibility, over an
+    ``EngineState`` that declares what they share; docs/ARCHITECTURE.md maps
+    each stage to its module.
     """
 
     def __init__(
@@ -408,11 +409,14 @@ class UnificationRefactorEngine(
         Args:
             directory: Path to directory
             recursive: Whether to search subdirectories (default: True)
+            verbose: Log the file count at INFO level.
+            progress: How progress is shown (see ``ProgressMode``).
+            changed_files: When given, only pairs with a function in one of
+                these files are considered (see ``incremental_global_passes``).
 
         Returns:
             List of refactoring proposals
         """
-        # Find all Python files
         python_files = self._find_python_files(directory, recursive)
 
         if not python_files:
@@ -446,7 +450,6 @@ class UnificationRefactorEngine(
         if recursive:
             # Recursively find all .py files
             for py_file in directory_path.rglob("*.py"):
-                # Skip common directories to ignore
                 if any(
                     part.startswith(".")
                     or part in ["__pycache__", "venv", "env", "node_modules"]
@@ -475,9 +478,13 @@ class UnificationRefactorEngine(
     ) -> List[RefactoringProposal]:
         """Analyze multiple files using the compiler-style pipeline and return proposals.
 
-        invalidate_paths: If provided, forces reparse/reanalysis of these paths even if cached.
-        changed_files: If provided, only pairs with a function in one of these
-            files are considered (see ``incremental_global_passes``).
+        Args:
+            file_paths: The files to analyze together.
+            verbose: Log the file count at INFO level.
+            progress: How progress is shown (see ``ProgressMode``).
+            invalidate_paths: Re-parse and re-analyze these paths even if cached.
+            changed_files: When given, only pairs with a function in one of
+                these files are considered (see ``incremental_global_passes``).
         """
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
@@ -651,6 +658,9 @@ class UnificationRefactorEngine(
 
         Args:
             all_functions: The analyzed functions with their context
+            progress: How progress is shown (see ``ProgressMode``).
+            changed_files: When given, only pairs with a function in one of
+                these files are considered (see ``incremental_global_passes``).
 
         Returns:
             List of code block pairs
@@ -717,7 +727,11 @@ class UnificationRefactorEngine(
 
     @property
     def change_log(self) -> Sequence[AppliedChange]:
-        """Every call site the last directory run rewrote, in application order."""
+        """Every helper call site the last fixed-point run rewrote, in application order.
+
+        Both drivers reset it when they start. A site redirected to an existing
+        function is not recorded: no helper was inserted for it.
+        """
         return tuple(self._change_log)
 
     def invalidate_paths(self, paths: List[str]) -> None:

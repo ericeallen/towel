@@ -90,26 +90,21 @@ class _AssignmentAnalyzer(OwnScopeVisitor):
         # Visit the RHS first (in case it has side effects on bound vars)
         self.visit(node.value)
 
-        # Process each target
         for target in node.targets:
             if isinstance(target, ast.Name):
                 # Simple variable assignment
                 var_name = target.id
 
-                # Check if this variable is already bound
                 is_reassignment = var_name in self.bound_vars
 
-                # Record the classification
                 self.reassignments[id(node)] = is_reassignment
 
                 # Mark variable as bound for future assignments
                 self.bound_vars.add(var_name)
             else:
                 # Complex target (tuple unpacking, subscript, attribute)
-                # Collect any Name nodes being assigned to
                 names = self._collect_assignment_names(target)
 
-                # Check if ANY of the names are reassignments
                 is_any_reassignment = any(name in self.bound_vars for name in names)
                 self.reassignments[id(node)] = is_any_reassignment
 
@@ -267,7 +262,6 @@ def has_reassignments_without_bindings(
     """
     bound_in_block, reassigned_in_block = _collect_block_binding_stats(block_nodes, reassignments)
 
-    # Find variables that are reassigned but not initially bound in the block
     problematic_vars = reassigned_in_block - bound_in_block
 
     # Relaxation: allow reassignments to names declared global/nonlocal in the enclosing function

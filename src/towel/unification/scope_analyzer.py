@@ -174,7 +174,6 @@ class _ScopeRespectingWalker(ScopeVisitor):
             if node.id not in self.assigned_so_far:
                 self.used_before_assigned.add(node.id)
         elif isinstance(node.ctx, ast.Store):
-            # Check if this variable is global or nonlocal
             if node.id in self.global_vars or node.id in self.nonlocal_vars:
                 # Global/nonlocal assignments are uses, not local bindings
                 self.uses.add(node.id)
@@ -304,14 +303,11 @@ class ScopeAnalyzer(ScopeVisitor):
         self.root_scope: Scope = self._create_scope(None)
         self.current_scope: Scope = self.root_scope
 
-        # Map AST nodes to their scopes, and scopes back to the node that opened them
         self.node_scopes: Dict[ast.AST, Scope] = {}
         self.scope_nodes: Dict[int, ast.AST] = {}
 
-        # Map identifier uses to their bindings
         self.identifier_bindings: Dict[ast.Name, Optional[ScopeBinding]] = {}
 
-        # Track global and nonlocal declarations per scope
         # Maps scope_id -> set of variable names
         self.global_vars: Dict[int, Set[str]] = {}
         self.nonlocal_vars: Dict[int, Set[str]] = {}
@@ -463,7 +459,6 @@ class ScopeAnalyzer(ScopeVisitor):
         # Visit RHS first
         self.visit(node.value)
 
-        # Add bindings for LHS targets
         for target in node.targets:
             self._add_assignment_bindings(target)
 
@@ -543,14 +538,12 @@ class ScopeAnalyzer(ScopeVisitor):
 
     def visit_Name(self, node: ast.Name) -> None:
         """Visit a name reference."""
-        # Record which binding this identifier refers to
         binding = self.current_scope.lookup(node.id)
         self.identifier_bindings[node] = binding
 
     def _add_assignment_bindings(self, target: ast.AST) -> None:
         """Add bindings created by an assignment target."""
         if isinstance(target, ast.Name):
-            # Check if this variable is declared global or nonlocal
             scope_id = self.current_scope.scope_id if self.current_scope else -1
             is_global = scope_id in self.global_vars and target.id in self.global_vars[scope_id]
             is_nonlocal = (
@@ -586,7 +579,6 @@ class ScopeAnalyzer(ScopeVisitor):
             if cached is not None:
                 return set(cached)
 
-        # Collect uses and bindings
         walker = _ScopeRespectingWalker()
         for node in nodes:
             walker.visit(node)

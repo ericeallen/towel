@@ -225,8 +225,6 @@ class BindingDetector(ScopeVisitor):
         """
         self.generic_visit(node)
 
-    # Import statements
-
     def visit_Import(self, node: ast.Import) -> None:
         """Handle import statements: import x, import y as z"""
         for alias in node.names:
@@ -253,7 +251,6 @@ class BindingDetector(ScopeVisitor):
 
         # Visit each case
         for case in node.cases:
-            # Extract bindings from the pattern
             self._extract_pattern_bindings(case.pattern)
 
             # Visit guard and body

@@ -179,7 +179,6 @@ class Parameterization(UnifierState):
             -> Add mapping: result → temp, output → temp
             -> Existing Name node handling will use these mappings
         """
-        # Collect binding information for each block
         binding_info = []
         for block_idx, block in enumerate(blocks):
             bindings = {}  # var_name → (stmt_idx, target_idx)
@@ -194,7 +193,6 @@ class Parameterization(UnifierState):
                 for target_idx, target in enumerate(targets):
                     if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):
                         var_name = target.id
-                        # Track first binding position
                         if var_name not in seen_vars:
                             bindings[var_name] = (stmt_idx, target_idx)
                             seen_vars.add(var_name)
@@ -211,7 +209,6 @@ class Parameterization(UnifierState):
                     position_to_vars[position] = []
                 position_to_vars[position].append((block_idx, var_name))
 
-        # Generate alpha-renamings for variables at same position
         canonical_counter = 0
         used_canonical_names = set()
 
@@ -220,13 +217,11 @@ class Parameterization(UnifierState):
             if len(var_list) < 2:
                 continue
 
-            # Check if variables at this position have different names
             var_names = [var_name for _, var_name in var_list]
             if len(set(var_names)) <= 1:
                 # All same name - no renaming needed
                 continue
 
-            # Generate canonical name
             canonical_name = f"__temp_{canonical_counter}"
             while canonical_name in used_canonical_names:
                 canonical_counter += 1
@@ -234,7 +229,6 @@ class Parameterization(UnifierState):
             used_canonical_names.add(canonical_name)
             canonical_counter += 1
 
-            # Add alpha-renamings for all blocks
             for block_idx, var_name in var_list:
                 key = (block_idx, var_name)
                 self.alpha_renamings[key] = canonical_name

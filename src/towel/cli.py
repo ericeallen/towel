@@ -68,12 +68,15 @@ For more help on a specific command:
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Add subcommand parsers
     _add_dry_parser(subparsers)
     _add_preview_parser(subparsers)
     _add_rename_helpers_parser(subparsers)
     recovery = subparsers.add_parser("recover", help="Roll back an interrupted local transaction")
-    recovery.add_argument("journal", type=Path)
+    recovery.add_argument(
+        "journal",
+        type=Path,
+        help="the .towel-transaction-active directory an interrupted run left behind",
+    )
     return parser
 
 
@@ -109,6 +112,17 @@ def main() -> None:
             recover(args.journal)
         except (OSError, ValueError) as error:
             parser.exit(1, f"Error: {error}\n")
+
+
+def _count(text: str) -> int:
+    """An argparse type for a count: a whole number that is not negative."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"{value} is negative; 0 runs to a fixed point")
+    return value
 
 
 def _add_import_layout_flags(parser: argparse.ArgumentParser) -> None:
@@ -178,7 +192,7 @@ Examples:
         "--max-refactorings",
         "--max-iterations",  # earlier spelling, kept for scripts
         dest="max_refactorings",
-        type=int,
+        type=_count,
         default=DEFAULT_MAX_ITERATIONS,
         metavar="N",
         help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
@@ -520,7 +534,6 @@ def _run_dry(args: argparse.Namespace) -> None:
 
     is_file, is_dir = _existing_target(input_path)
 
-    # Check input file extension for single files
     if is_file and not input_path.endswith(".py"):
         print(f"Warning: '{input_path}' is not a Python file (.py)")
         if not _confirm("Analyze anyway? (y/N): "):
@@ -537,7 +550,6 @@ def _run_dry(args: argparse.Namespace) -> None:
                 "Output already exists; choose a new path or explicitly refactor in place"
             )
 
-    # Create engine
     engine = UnificationRefactorEngine(
         max_parameters=5,
         min_lines=3,
@@ -551,11 +563,11 @@ def _run_dry(args: argparse.Namespace) -> None:
         type_oracle=(_type_oracle(Path(input_path)) if args.types else None),
     )
 
-    # Use fixed-point iteration
     print("=" * 70)
     _banner("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
     print("This will apply refactorings one at a time until no more are found.")
-    print("Extracted functions will be placed at the end of files.")
+    print("Helpers go before the first definition of their module,")
+    print("or inside the class or function the duplicates share.")
     print()
 
     if args.interactive:
@@ -568,7 +580,6 @@ def _run_dry(args: argparse.Namespace) -> None:
 
     print()
 
-    # Apply refactorings to fixed point
     if is_file:
         print(f"Refactoring file: {output_path}")
         final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
@@ -689,7 +700,6 @@ def _run_preview(args: argparse.Namespace) -> None:
 
     is_file, is_dir = _existing_target(target)
 
-    # Create engine
     engine = UnificationRefactorEngine(
         max_parameters=5,
         min_lines=3,
@@ -705,7 +715,7 @@ def _run_preview(args: argparse.Namespace) -> None:
             print()
 
         print(f"Analyzing file: {target}")
-        all_proposals = engine.analyze_file(target)
+        all_proposals = engine.analyze_files([target], progress=normalize_progress(args.progress))
     else:
         print(f"Analyzing directory: {target}")
         all_proposals = engine.analyze_directory(
@@ -718,7 +728,6 @@ def _run_preview(args: argparse.Namespace) -> None:
         print("No duplicates found!")
         return
 
-    # Filter overlapping proposals
     proposals = filter_overlapping_proposals(all_proposals)
 
     if len(proposals) < len(all_proposals):
@@ -757,7 +766,6 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
         print(f"Error: '{target}' must be a directory")
         sys.exit(1)
 
-    # Find all extracted helper functions
     helpers = _find_extracted_helpers(target, args.files, args.functions)
 
     if not helpers and not args.rename_file:
@@ -785,7 +793,6 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
             print()
         return
 
-    # Apply renamings from file
     if args.rename_file:
         _apply_rename_file(target, helpers, args.rename_file, args.preview, args.json)
         return
@@ -803,7 +810,6 @@ def _find_extracted_helpers(
     helpers = []
 
     for py_file, (source, tree) in _load_modules(target).items():
-        # Apply file filters
         if file_filters:
             rel_path = str(py_file.relative_to(target))
             if not any(f in rel_path for f in file_filters):
@@ -812,11 +818,9 @@ def _find_extracted_helpers(
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
                 if GENERATED_HELPER_NAME.fullmatch(node.name):
-                    # Apply function filters
                     if function_filters and node.name not in function_filters:
                         continue
 
-                    # Get source preview
                     lines = source.split("\n")
                     if hasattr(node, "lineno") and node.lineno <= len(lines):
                         start = node.lineno - 1
@@ -1052,7 +1056,6 @@ def _apply_rename_file(
     another name and retry. Nothing is written unless every entry is valid.
     """
 
-    # Load rename mappings
     # An unreadable or malformed file is an OSError or ValueError the dispatcher reports.
     with open(rename_file, encoding="utf-8") as f:
         renames = json.load(f)
@@ -1141,7 +1144,6 @@ def _run_interactive_llm_mode(
     print("=" * 70)
     _banner("STEP 1: LLM PROMPT GENERATION")
 
-    # Generate LLM prompt
     prompt = _generate_llm_prompt(target, helpers, llm_type)
 
     print("Copy the following prompt and paste it into your LLM assistant:")
@@ -1164,7 +1166,6 @@ def _run_interactive_llm_mode(
     )
     print()
 
-    # Read LLM response from stdin
     try:
         llm_response = sys.stdin.read().strip()
     except KeyboardInterrupt:
@@ -1175,19 +1176,16 @@ def _run_interactive_llm_mode(
         print("No response provided. Aborted.")
         return
 
-    # Try to extract JSON from markdown code block
     json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", llm_response, re.DOTALL)
     if json_match:
         json_str = json_match.group(1)
     else:
-        # Try to find JSON object directly
         json_match = re.search(r"\{.*\}", llm_response, re.DOTALL)
         if json_match:
             json_str = json_match.group(0)
         else:
             json_str = llm_response
 
-    # Parse JSON
     try:
         renames = json.loads(json_str)
     except json.JSONDecodeError as e:

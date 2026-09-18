@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 import textwrap
 
 from pathlib import Path
+import ast
 from typing import Literal, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .models import RefactoringProposal, TerminationReason
@@ -104,28 +105,34 @@ class FixedPointDrivers(EngineState):
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         progress: ProgressMode = DEFAULT_PROGRESS,
     ) -> Tuple[str, int, List[str]]:
-        """
-            Apply refactorings iteratively until a fixed point is reached.
+        """Apply refactorings to one file, one at a time, until none remain.
 
-        This method applies refactorings one at a time, re-analyzing after each
-        application. This prevents the sequential corruption bug where applying
-        multiple refactorings at once causes line number misalignment.
+        Each application re-analyzes the file, so every proposal is computed
+        against the current text. A file that does not decode or parse is
+        reported as a ``ValueError`` naming it.
 
-        max_iterations semantics:
-        - If max_iterations > 0, stop after at most that many applied refactorings.
-        - If max_iterations <= 0, run until a natural fixed point (no proposals found).
+        Args:
+            file_path: The file to refactor in place.
+            max_iterations: Stop after this many applied refactorings; 0 or
+                less runs to a fixed point.
+            progress: How progress is shown: ``tqdm`` (a bar when tqdm is
+                installed), ``auto`` (that, or an inline bar), ``detail``
+                (a line per proposal), or ``none``.
 
-            Args:
-                file_path: Path to file to refactor
-                max_iterations: Maximum iterations to prevent infinite loops
-
-            Returns:
-                Tuple of (final_code, num_refactorings_applied, descriptions)
+        Returns:
+            The final source, the number of refactorings applied, and their
+            descriptions in application order.
         """
         self._change_log = []
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         current_bytes = Path(file_path).read_bytes()
-        current_code = decode_source(current_bytes)
+        try:
+            current_code = decode_source(current_bytes)
+            ast.parse(current_code, filename=file_path)
+        except UnicodeDecodeError as error:
+            raise ValueError(f"{file_path}: {error}") from error
+        except SyntaxError as error:
+            raise ValueError(f"{file_path}: line {error.lineno}: {error.msg}") from error
         num_applied = 0
         descriptions = []
 
@@ -141,7 +148,6 @@ class FixedPointDrivers(EngineState):
                 # Fixed point reached - no more refactorings found
                 break
 
-            # Apply only the first proposal
             proposal = proposals[0]
             new_code = self.apply_refactoring(file_path, proposal)
             # Idempotence guard: if no change, stop to avoid churn
@@ -218,17 +224,22 @@ class FixedPointDrivers(EngineState):
         """
         Apply refactorings across a directory (recursively) until a fixed point.
 
-        Unlike the per-file variant, this performs whole-project analysis on every
-        iteration so it can apply BOTH same-file and cross-file proposals. One proposal
-        is applied per iteration, then the directory is re-analyzed, up to max_iterations.
+        The first pass analyzes the whole project, so same-file and cross-file
+        proposals both apply. After each applied proposal the files it rewrote
+        are re-analyzed for localized follow-ups; when that queue drains the
+        project is re-paired, considering only the files rewritten since the
+        previous global pass (which is exact; see docs/ARCHITECTURE.md), until
+        no proposal remains or the iteration bound is reached.
 
         Args:
-            input_dir: Input directory path
-            output_dir: Output directory path (results are written here)
-            max_iterations: Maximum iterations to prevent infinite loops. If <= 0,
-                run until a natural fixed point (no proposals remain).
-            progress: Progress display mode: 'tqdm' for percentage bar if available,
-                'auto' fallback to simple inline bar, 'none' disables progress output.
+            input_dir: The directory to analyze.
+            output_dir: The directory to write into (the same as ``input_dir``
+                to refactor in place).
+            max_iterations: Stop after this many applied refactorings; 0 or
+                less runs to a fixed point.
+            progress: How progress is shown: ``tqdm`` (a bar when tqdm is
+                installed), ``auto`` (that, or an inline bar), ``detail``
+                (a line per proposal), or ``none``.
 
         Returns:
             (results_dict, termination_reason)

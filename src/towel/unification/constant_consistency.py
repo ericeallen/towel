@@ -34,7 +34,7 @@ class ConstantConsistency(UnifierState):
 
     def _check_constant_consistency(self, values: List[Any], block_indices: Sequence[int]) -> bool:
         """
-        Check if constants can be consistently parameterized per the user's rule.
+        Check if constants can be consistently parameterized.
 
         The rule: For constants to be parameterized, ALL occurrences across blocks
         must unify consistently. If a value appears at multiple positions, those
@@ -56,13 +56,14 @@ class ConstantConsistency(UnifierState):
             True if constants can be consistently parameterized
         """
         if len(values) != 2 or len(block_indices) != 2:
-            # Only handle 2-block case for now
+            # Positions are recorded for the two blocks of a pair; a clustered
+            # occurrence is re-unified against the template one at a time, so
+            # the pairwise check is the only one that runs.
             return True
 
         value0, value1 = values
         idx0, idx1 = block_indices
 
-        # Get all positions where each value appears
         positions0 = self.constant_positions.get((idx0, value0), [])
         positions1 = self.constant_positions.get((idx1, value1), [])
 
@@ -87,17 +88,14 @@ class ConstantConsistency(UnifierState):
             return False
 
         # Both values appear the same number of times
-        # Check if they appear at structurally matching positions
         # If the positions don't align, we can't parameterize
 
         # For now, use a simple heuristic: if a value appears multiple times (> 1),
         # we need the positions to match exactly
         if len(positions0) > 1:
-            # Sort positions for comparison
             sorted_pos0 = sorted(positions0)
             sorted_pos1 = sorted(positions1)
 
-            # Check if positions align
             if sorted_pos0 != sorted_pos1:
                 # Positions don't align - inconsistent
                 return False
@@ -134,7 +132,6 @@ class ConstantConsistency(UnifierState):
             block_idx: Which block this is from
         """
         if isinstance(node, ast.Constant):
-            # Record this constant's position
             key = (block_idx, node.value)
             if key not in self.constant_positions:
                 self.constant_positions[key] = []

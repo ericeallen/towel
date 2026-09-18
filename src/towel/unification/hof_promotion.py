@@ -168,7 +168,6 @@ class LiteralPromotion(UnifierState):
 
             # For each arg in the call in block 0, if Constant, attempt to promote
             call_paths = _calls_with_paths(stmt0, self._iter_child_fields)
-            # Find the specific call path corresponding to stmt0.value
             # Since stmt0.value is a Call, find its path (should exist)
             call_path = None
             for path, call_node in call_paths:

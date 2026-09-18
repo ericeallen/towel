@@ -136,7 +136,7 @@ class _BindingContextFinder(ast.NodeVisitor):
     visit_GeneratorExp = visit_ListComp
 
     def visit_DictComp(self, node: ast.DictComp) -> None:
-        # CRITICAL: Comprehension variables must be bound when visiting key and value
+        # Comprehension variables are bound while the key and value are visited.
         if self._contains_target(node):
 
             def visit_entries() -> None:
@@ -174,9 +174,8 @@ class _BindingContextFinder(ast.NodeVisitor):
                 self.binding_stack.pop()
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        # CRITICAL: Assignments create bindings that persist for the rest of the block
-        # We accumulate ALL assignments as we traverse (not just those containing target)
-        # Extract assigned variable(s)
+        # An assignment binds for the rest of the block, whether or not it
+        # contains the target, so every one is accumulated.
         for target in node.targets:
             self.assignments.update(self._get_binding_vars(target))
         self.generic_visit(node)
@@ -192,7 +191,6 @@ class _BindingContextFinder(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> None:
-        # Handle with statements: with open(f) as file: ...
         if self._contains_target(node):
             with_vars: Set[str] = set()
             for item in node.items:
@@ -206,7 +204,6 @@ class _BindingContextFinder(ast.NodeVisitor):
             self.generic_visit(node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        # Handle exception handlers: except Exception as e: ...
         if self._contains_target(node):
             if node.name:
                 # Exception variable is bound
@@ -219,7 +216,6 @@ class _BindingContextFinder(ast.NodeVisitor):
             self.generic_visit(node)
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-        # Handle walrus operator: if (x := foo()): ...
         if self._contains_target(node):
             # The target of := is a binding
             named_vars = self._get_binding_vars(node.target)
@@ -228,10 +224,8 @@ class _BindingContextFinder(ast.NodeVisitor):
             self.generic_visit(node)
 
     def generic_visit(self, node: ast.AST) -> None:
-        # Check if this node matches target
         if _unparse_cached(node) == self.target_str:
             self.found_target = True
-            # Collect all currently bound variables
             # (from both control structures and assignments)
             for bound_set in self.binding_stack:
                 self.bound_vars.update(bound_set)

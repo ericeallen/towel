@@ -217,7 +217,6 @@ class BlockAnalysis(EngineState):
         def extract_from_body(
             body: List[ast.stmt], parent: Optional[ast.stmt] = None
         ) -> List[Tuple[Tuple[int, int], List[ast.stmt]]]:
-            # Extract all contiguous subsequences of minimum length from a given body
             results: List[Tuple[Tuple[int, int], List[ast.stmt]]] = []
 
             # An ``elif`` is the sole statement of its parent's ``orelse`` and
@@ -232,7 +231,6 @@ class BlockAnalysis(EngineState):
                 and body[0].col_offset == parent.col_offset
             )
 
-            # Extract all contiguous subsequences
             for length in range(0 if is_elif else len(body), 0, -1):
                 for start in range(len(body) - length + 1):
                     block = body[start : start + length]

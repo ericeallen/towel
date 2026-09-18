@@ -45,8 +45,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
     Implements alpha-renaming for bound variables (loop vars, etc.).
     """
 
-    # Track constant occurrences: (block_idx, value) -> [position_paths]
-    # position_path is a tuple of (stmt_idx, field_name, ...) identifying location
     constant_positions: Dict[Tuple[int, Any], List[Tuple[Any, ...]]]
 
     def __init__(
@@ -62,19 +60,16 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         Args:
             max_parameters: Maximum number of parameters to extract
             parameterize_constants: Whether to parameterize differing constants
+            promote_equal_hof_literals: Thread equal literals in higher-order
+                factory calls as parameters too, instead of leaving them inline
         """
         self.max_parameters = max_parameters
         # Feature flag: when True, enable Option B promotion of equal literals in
         # higher-order factory calls (thread as parameters even when equal).
         self._set_feature_flags(parameterize_constants, promote_equal_hof_literals)
         self.param_counter = 0
-        # Track alpha-equivalence mappings for bound variables
-        # Maps (block_idx, original_name) -> canonical_name
         self.alpha_renamings: Dict[Tuple[int, str], str] = {}
-        # Store blocks being unified for context analysis
         self.current_blocks: Optional[Sequence[Sequence[ast.stmt]]] = None
-        # Track constant occurrences: (block_idx, value) -> [position_paths]
-        # position_path is a tuple of (stmt_idx, field_name, ...) identifying location
         self.constant_positions = {}
 
     def unify_blocks(
@@ -94,7 +89,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         if len(blocks) < 2:
             return None
 
-        # Check all blocks have the same number of statements
         if not all(len(b) == len(blocks[0]) for b in blocks):
             return None
 
@@ -103,14 +97,12 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.alpha_renamings = {}
         self._reset_unification_state(blocks)
 
-        # Collect all constant positions for consistency checking
         self._collect_constant_positions(blocks)
 
         # Detect and map block-level bound variables for hygienic renaming
         # This allows unification of blocks with structurally identical code but different variable names
         self._setup_bound_variable_alpha_renamings(blocks)
 
-        # Initialize substitution
         substitution = Substitution()
 
         # Unify statement by statement
@@ -121,7 +113,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             if not self._unify_nodes(stmts, substitution, list(range(len(blocks)))):
                 return None
 
-        # Check we haven't exceeded max parameters
         if len(substitution.param_expressions) > self.max_parameters:
             return None
 
@@ -161,7 +152,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         node_types = [type(n) for n in nodes]
         if len(set(node_types)) != 1:
             # Different types - cannot unify at the statement level
-            # Try to parameterize the entire expression
             return self._try_parameterize(nodes, substitution, block_indices)
 
         # Constants - check if they're identical, or parameterize if enabled
@@ -170,26 +160,13 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             if len(set(values)) == 1:
                 return True  # All same constant
 
-            # Different constants
             if self.parameterize_constants:
-                # CRITICAL: Check consistency across all occurrences
-                # Per the user's rule: if a constant value appears at multiple positions,
-                # it must unify consistently at ALL positions.
-                #
-                # Example: "x = item * 2" vs "x = item * 3" AND "z = y ** 2" vs "z = y ** 2"
-                # The constant 2 appears at 2 positions in block 0
-                # Position 1: differs (2 vs 3)
-                # Position 2: same (2 vs 2)
-                # This is INCONSISTENT - we cannot parameterize just the constant 2
-                #
-                # Solution: Check if all occurrences of these values would unify consistently
-
+                # Invariant: a constant value is parameterized at every position
+                # it occupies or at none. With ``x = item * 2`` against
+                # ``x = item * 3`` and ``z = y ** 2`` in both, the 2 differs at one
+                # position and agrees at the other, so it cannot become a parameter.
                 if not self._check_constant_consistency(values, block_indices):
-                    # Constants appear at multiple positions with inconsistent unification
-                    # Cannot parameterize the bare constant
                     return False
-
-                # Parameterize differing constants
                 return self._try_parameterize(nodes, substitution, block_indices)
             else:
                 # Cannot unify - constants must be identical
@@ -200,11 +177,9 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             canonical_names = []
             for node, block_idx in zip(nodes, block_indices):
                 name = node.id
-                # Check if this name has an alpha-renaming for this block
                 renamed = self.alpha_renamings.get((block_idx, name), name)
                 canonical_names.append(renamed)
 
-            # Check if all canonical names are the same
             if len(set(canonical_names)) == 1:
                 return True  # All same name (possibly after alpha-renaming)
 
@@ -254,16 +229,13 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         # For each field in the node
         for field_name in first_node._fields:
-            # Skip location fields
             if field_name in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
                 continue
 
-            # Get field values from all nodes
             field_values = [getattr(n, field_name, None) for n in nodes]
 
             first_value = field_values[0]
 
-            # Handle different value types
             if first_value is None:
                 # All None - OK
                 if not all(v is None for v in field_values):
@@ -280,7 +252,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
             elif isinstance(first_value, ast.AST):
                 # Single AST node(s)
-                # Check all are AST nodes
                 if not all(isinstance(v, ast.AST) for v in field_values):
                     # Mixed AST/non-AST - can't unify
                     return False
@@ -305,13 +276,11 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
             else:
                 # Primitive value (string, int, etc.)
-                # Check all are non-AST, non-list primitives
                 if any(isinstance(v, (ast.AST, list)) for v in field_values):
                     # Mixed primitive/AST or primitive/list - can't unify
                     return False
                 # Must all be equal
                 if not all(v == first_value for v in field_values):
-                    # Try to parameterize the entire node if primitives differ
                     return self._try_parameterize(nodes, substitution, block_indices)
 
         return True
@@ -389,7 +358,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         if not all(len(lst) == len(items_lists[0]) for lst in items_lists):
             return False
 
-        # Save mappings to restore after
         saved_alpha = dict(self.alpha_renamings)
         try:
             # Unify each item
@@ -402,7 +370,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                 ):
                     return False
 
-                # Handle optional_vars as bindings
                 optional_vars_raw = [it.optional_vars for it in items_i]
                 if all(ov is None for ov in optional_vars_raw):
                     pass  # nothing to do
@@ -412,7 +379,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                         return False
                     targets = optional_vars_raw
                     # Support simple Name or Tuple[List] of Names
-                    # Collect names positionally
 
                     def flatten_names(t: ast.AST) -> List[str]:
                         if isinstance(t, ast.Name):
@@ -429,7 +395,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     arities = [len(nl) for nl in names_per_block]
                     if len(set(arities)) != 1:
                         return False
-                    # Use first block's names as canonical, map positionally
                     for pos in range(arities[0]):
                         canonical = names_per_block[0][pos]
                         for idx, block_idx in enumerate(block_indices):
@@ -496,7 +461,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         Unify walrus (NamedExpr) treating the target as a binding.
         Only simple Name targets are recognized for alpha-renaming.
         """
-        # Save and set alpha mappings for targets
         saved_alpha = dict(self.alpha_renamings)
         try:
             targets = [n.target for n in nodes]
@@ -551,7 +515,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         if len(set(async_flags)) != 1:
             return False
 
-        # Handle targets as bindings
         targets = [c.target for c in comps]
 
         # Simple Name targets
@@ -636,7 +599,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # For loops have: target, iter, body, orelse
         # The 'target' is a bound variable - it can differ (i vs j) and that's OK
 
-        # Get the loop variable names
         targets = [n.target for n in nodes]
 
         if not all_instances(targets, ast.Name):
@@ -654,17 +616,14 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         loop_var_names = [t.id for t in targets]
 
-        # Check if all loop variables have the same name
         if len(set(loop_var_names)) == 1:
             # Same loop variable name - just unify normally
             return self._unify_loop_components(nodes, substitution, block_indices)
 
         # Different loop variable names (i vs j) - establish alpha-equivalence
-        # Use the first block's variable name as canonical
         canonical_var = loop_var_names[0]
 
         # Establish alpha-renaming mappings for all blocks
-        # Save old mappings to restore later
         old_mappings: Dict[Tuple[int, str], str] = {}
         for idx, block_idx in enumerate(block_indices):
             var_name = loop_var_names[idx]
@@ -716,7 +675,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # var_names[position_idx] = [name_in_block0, name_in_block1, ...]
         var_names = [[row[pos].id for row in name_rows] for pos in range(tuple_lengths[0])]
 
-        # Check if all corresponding names are identical
         # If so, no alpha-renaming needed
         all_same = all(len(set(names)) == 1 for names in var_names)
 
@@ -725,11 +683,9 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             return self._unify_loop_components(nodes, substitution, block_indices)
 
         # Different variable names - establish alpha-equivalence for each position
-        # Use the first block's variable names as canonical
         canonical_vars = [names[0] for names in var_names]
 
         # Establish alpha-renaming mappings for all positions and blocks
-        # Save old mappings to restore later
         old_mappings: Dict[Tuple[int, str], str] = {}
         for pos_idx, canonical_var in enumerate(canonical_vars):
             for idx, block_idx in enumerate(block_indices):
@@ -768,33 +724,27 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             True if unification succeeded
         """
         # For now, only handle simple case: same number of regular positional args
-        # Get parameter counts for each lambda
         param_counts = [len(n.args.args) for n in nodes]
         if len(set(param_counts)) > 1:
             # Different number of parameters - can't unify
             return False
 
-        # Check that all other parameter types are empty (no *args, **kwargs, etc.)
         for node in nodes:
             if node.args.posonlyargs or node.args.kwonlyargs or node.args.vararg or node.args.kwarg:
                 # Complex lambda parameters - not currently supported
                 # See docs/KNOWN_LIMITATIONS.md for details
                 return False
 
-        # Get parameter names from each lambda
         num_params = param_counts[0]
         if num_params == 0:
             # No parameters - just unify bodies directly
             return self._unify_nodes([n.body for n in nodes], substitution, block_indices)
 
-        # Create alpha-renaming mappings for lambda parameters
-        # Use first lambda's parameter names as canonical
         canonical_params = [nodes[0].args.args[i].arg for i in range(num_params)]
 
         # Save old alpha-renaming mappings (in case of nested lambdas)
         old_mappings: Dict[Tuple[int, str], str] = {}
         try:
-            # Set up alpha-renamings for each parameter position
             for param_idx in range(num_params):
                 canonical_param = canonical_params[param_idx]
                 for idx, node in enumerate(nodes):
@@ -834,7 +784,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         Returns:
             True if unification succeeded
         """
-        # Check all have the same number of values
         values_lists = [n.values for n in nodes]
         if not all(len(v) == len(values_lists[0]) for v in values_lists):
             # Different number of components - can't unify
@@ -844,7 +793,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         for i in range(len(values_lists[0])):
             components = [values[i] for values in values_lists]
 
-            # Check all components are the same type
             component_types = [type(c) for c in components]
             if len(set(component_types)) != 1:
                 # Different types at this position - can't unify
@@ -906,7 +854,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         for i in range(len(lists[0])):
             elements = [lst[i] for lst in lists]
 
-            # Check element types
             elem_types = set(type(e) for e in elements)
             if len(elem_types) > 1:
                 return False
