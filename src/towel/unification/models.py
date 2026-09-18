@@ -39,6 +39,7 @@ from typing import (
 )
 import ast
 import hashlib
+import re
 
 
 @dataclass
@@ -116,6 +117,15 @@ class Replacement:
     class_name: Optional[str] = None
     method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
     implicit_param: Optional[str] = None
+
+
+GENERATED_HELPER_NAME = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
+"""The names the materializer gives helpers, until ``rename-helpers`` gives them meaning."""
+
+
+def is_generated_helper_name(name: str) -> bool:
+    """Whether ``name`` is one this tool gave a helper it inserted."""
+    return GENERATED_HELPER_NAME.fullmatch(name) is not None
 
 
 @dataclass(frozen=True)
@@ -227,6 +237,7 @@ class RejectReason(StrEnum):
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
+    EXISTING_HELPER_BECOMES_FORWARDER = "existing_helper_becomes_forwarder"
     FRAME_SENSITIVE_BLOCK = "frame_sensitive_block"
     IMPORT_CYCLE = "import_cycle"
     UNKNOWN_LAYOUT = "unknown_layout"
@@ -298,6 +309,11 @@ class HelperTemplate:
     nonlocals_to_declare: Set[str]
     # Names the template block's call site can resolve (see ``available_argument_names``).
     available_names: FrozenSet[str]
+    # What the helper returns, in the template block's spelling, and every
+    # name that block binds: a clustered occurrence may read after its block
+    # only names that map into the former, and its own block must bind them.
+    return_variables: Tuple[str, ...]
+    bound_in_block: FrozenSet[str]
 
 
 def encloses(outer: FunctionNode, inner: FunctionNode) -> bool:

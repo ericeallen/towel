@@ -8,7 +8,6 @@ lookup and escaping module objects are rejected where visible in that tree.
 from __future__ import annotations
 
 import ast
-import re
 from dataclasses import dataclass
 import io
 import keyword
@@ -20,7 +19,7 @@ from typing import Iterable, Literal, Sequence, cast
 from .changes import ChangePlan
 from .project_layout import ProjectLayout
 from .unification.semantic_safety import is_namespace_access_call
-from .unification.models import FunctionNode
+from .unification.models import GENERATED_HELPER_NAME, FunctionNode
 from .unification.visitors import (
     OwnScopeVisitor,
     ScopeVisitor,
@@ -516,7 +515,7 @@ def _extend_to_generated_importers(
                     new = selected.get((origin, alias.name))
                     if new is None or alias.asname is not None:
                         continue
-                    if not _GENERATED_HELPER.fullmatch(alias.name):
+                    if not GENERATED_HELPER_NAME.fullmatch(alias.name):
                         continue
                     key = (module.name, alias.name)
                     if key in selected:
@@ -641,9 +640,6 @@ def _plan_parameter_renames(
                 ):
                     edits.node(node, new)
     return found
-
-
-_GENERATED_HELPER = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
 
 
 def _plan_module(

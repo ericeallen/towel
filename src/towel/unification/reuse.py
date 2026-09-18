@@ -31,9 +31,16 @@ import dataclasses
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 from .exceptions import RefactoringError
-from .models import FunctionArtifact, RefactoringProposal, Replacement, ReusedFunction
+from .models import (
+    FunctionArtifact,
+    FunctionNode,
+    RefactoringProposal,
+    Replacement,
+    ReusedFunction,
+    is_generated_helper_name,
+)
 from .scope_analyzer import ScopeBinding
 from .semantic_safety import would_create_import_cycle
 from .visitors import body_without_docstring
@@ -51,10 +58,22 @@ class _ReusePlan:
     function's j-th positional parameter. ``ambient`` maps the remaining
     argument indices to the module-level name (and its binding at the
     function's own site) that the function reads for itself.
+    ``return_positions`` reorders each site's assignment targets into the
+    order the function returns its values.
     """
 
     parameter_positions: List[int]
     ambient: Dict[int, Tuple[str, Optional["ScopeBinding"]]]
+    # For each name the function's final ``return`` yields, its index in the
+    # generated assignment; empty when the sites do not assign a result.
+    return_positions: Tuple[int, ...] = ()
+
+
+def _store_target(names: Sequence[str]) -> ast.expr:
+    """The assignment target binding ``names``: one name, or a tuple of them."""
+    if len(names) == 1:
+        return ast.Name(id=names[0], ctx=ast.Store())
+    return ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Store()) for name in names], ctx=ast.Store())
 
 
 class ExistingFunctionReuse(EngineState):
@@ -71,7 +90,7 @@ class ExistingFunctionReuse(EngineState):
     @staticmethod
     def _unwrap_helper_call(statement: ast.AST, helper_name: str) -> Optional[ast.Call]:
         """The plain positional helper call inside a generated statement, if that is its shape."""
-        if not isinstance(statement, (ast.Return, ast.Expr)):
+        if not isinstance(statement, (ast.Return, ast.Expr, ast.Assign)):
             return None
         call = statement.value
         if (
@@ -82,6 +101,83 @@ class ExistingFunctionReuse(EngineState):
             and not any(isinstance(arg, ast.Starred) for arg in call.args)
         ):
             return call
+        return None
+
+    @staticmethod
+    def _assigned_names(statement: ast.AST) -> Optional[List[str]]:
+        """The names a generated ``x = helper()`` or ``x, y = helper()`` binds; None for other shapes."""
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            return None
+        target = statement.targets[0]
+        if isinstance(target, ast.Name):
+            return [target.id]
+        if isinstance(target, ast.Tuple) and all(isinstance(elt, ast.Name) for elt in target.elts):
+            return [elt.id for elt in target.elts if isinstance(elt, ast.Name)]
+        return None
+
+    @staticmethod
+    def _returned_names(statement: ast.stmt) -> Optional[List[str]]:
+        """The names a plain ``return x`` or ``return x, y`` yields; None for other shapes."""
+        if not isinstance(statement, ast.Return):
+            return None
+        value = statement.value
+        if isinstance(value, ast.Name):
+            return [value.id]
+        if isinstance(value, ast.Tuple) and all(isinstance(elt, ast.Name) for elt in value.elts):
+            return [elt.id for elt in value.elts if isinstance(elt, ast.Name)]
+        return None
+
+    @classmethod
+    def _return_positions(
+        cls, assigned: Sequence[str], statement: ast.stmt
+    ) -> Optional[Tuple[int, ...]]:
+        """Where each name a plain ``return`` yields sits in the site's assignment, or None.
+
+        None when the statement is not a plain return of exactly the assigned
+        names; their order may differ, and the positions record how.
+        """
+        returned = cls._returned_names(statement)
+        if (
+            returned is None
+            or sorted(returned) != sorted(assigned)
+            or len(set(returned)) != len(returned)
+        ):
+            return None
+        return tuple(assigned.index(name) for name in returned)
+
+    def _site_is_whole_body(self, replacement: Replacement, function: FunctionNode) -> bool:
+        """Whether the site is everything ``function`` does.
+
+        A site that assigns the helper's returned variables is the whole body
+        when the function ends by returning exactly those names: the
+        function's result is then the tuple the call unpacks.
+        """
+        body = body_without_docstring(function.body)
+        assigned = self._assigned_names(replacement.node)
+        if assigned is None:
+            return self._block_line_span(body) == tuple(replacement.line_range)
+        if len(body) < 2 or self._return_positions(assigned, body[-1]) is None:
+            return False
+        return self._block_line_span(body[:-1]) == tuple(replacement.line_range)
+
+    def _helper_reduced_to_forwarder(
+        self, proposal: RefactoringProposal, functions: FunctionIndex
+    ) -> Optional[str]:
+        """The generated helper a site of ``proposal`` would reduce to a forwarder, if any.
+
+        A helper this tool inserted on an earlier pass whose whole body is a
+        site would keep only the new call: indirection with no logic of its
+        own, and on a long input a chain of it. Redirecting the proposal to
+        that helper (``_redirect_to_existing_function``) comes first; this is
+        for when its parameters differ from the new helper's.
+        """
+        for replacement in proposal.replacements:
+            file_path = replacement.file_path or proposal.file_path
+            site = functions.innermost_at(file_path, replacement.line_range)
+            if site is None or not is_generated_helper_name(site.node.name):
+                continue
+            if self._site_is_whole_body(replacement, site.node):
+                return site.node.name
         return None
 
     @staticmethod
@@ -174,7 +270,7 @@ class ExistingFunctionReuse(EngineState):
         default_file: str,
         functions: FunctionIndex,
     ) -> Optional[FunctionArtifact]:
-        """The plain module-level function whose whole body ``replacement`` covers, if any.
+        """The plain module-level function whose whole body ``replacement`` is, if any.
 
         Only a function that a call by name reproduces qualifies: defined once,
         unconditionally, at module level, without decorators, not async (the
@@ -189,8 +285,7 @@ class ExistingFunctionReuse(EngineState):
                 or artifact.enclosing_function is not None
                 or not isinstance(function, ast.FunctionDef)
                 or function.decorator_list
-                or self._block_line_span(body_without_docstring(function.body))
-                != tuple(replacement.line_range)
+                or not self._site_is_whole_body(replacement, function)
             ):
                 continue
             tree = artifact.scope_analyzer.analyzed_tree
@@ -290,6 +385,10 @@ class ExistingFunctionReuse(EngineState):
             return None
         call.args = parameter_arguments
         call.func = ast.Name(id=target.node.name, ctx=ast.Load())
+        assigned = self._assigned_names(node)
+        if isinstance(node, ast.Assign) and assigned is not None and plan.return_positions:
+            reordered = [assigned[position] for position in plan.return_positions]
+            node.targets = [_store_target(reordered)]
         return dataclasses.replace(replacement, node=node)
 
     def _redirect_to_existing_function(
@@ -306,9 +405,11 @@ class ExistingFunctionReuse(EngineState):
         function stays as it is and every other site calls it. Candidates are
         tried in source order; one the other sites cannot reach by name, or
         whose import would close a cycle, is skipped. None keeps the extraction.
+
+        A site that assigns what the helper returns qualifies when the
+        function ends by returning exactly those names, in any order; the
+        other sites then unpack the function's result in its order.
         """
-        if proposal.return_variables:
-            return None
         helper_name = proposal.extracted_function.name
         candidates: List[Tuple[int, FunctionArtifact]] = []
         for index, replacement in enumerate(proposal.replacements):
@@ -323,6 +424,12 @@ class ExistingFunctionReuse(EngineState):
             plan = self._reuse_plan(call, target)
             if plan is None:
                 continue
+            assigned = self._assigned_names(proposal.replacements[index].node)
+            if assigned is not None:
+                final = body_without_docstring(target.node.body)[-1]
+                plan = dataclasses.replace(
+                    plan, return_positions=self._return_positions(assigned, final) or ()
+                )
             others = [
                 replacement
                 for position, replacement in enumerate(proposal.replacements)

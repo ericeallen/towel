@@ -554,6 +554,12 @@ class EngineState:
         """Provided by ExistingFunctionReuse."""
         raise NotImplementedError
 
+    def _helper_reduced_to_forwarder(
+        self, proposal: RefactoringProposal, functions: FunctionIndex
+    ) -> Optional[str]:
+        """Provided by ExistingFunctionReuse."""
+        raise NotImplementedError
+
     def _rejects_module_data_lookup(
         self,
         pair: CodeBlockPair,

@@ -74,6 +74,8 @@ TRANSFORMED = {
     # The unbound name of each site is thunked, so the helper reads it only
     # in the branch the original took.
     "r107_unbound_global_argument",
+    # Four sites assign what the helper returns; two read a second name too.
+    "r108_clustered_sites_assign_the_returned_name",
     # Blocks that bind a variable read afterwards, returned by the helper and
     # rebound by the generated call.
     "h01_side_effect_order",

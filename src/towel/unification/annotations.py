@@ -880,16 +880,33 @@ def _unquoted(annotation: ast.expr) -> ast.expr:
     return annotation
 
 
+def _assigned_names(statement: ast.stmt) -> Optional[Tuple[str, ...]]:
+    """The names a generated ``x = helper()`` or ``x, y = helper()`` binds, in order."""
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    if isinstance(target, ast.Name):
+        return (target.id,)
+    if isinstance(target, ast.Tuple) and all(isinstance(elt, ast.Name) for elt in target.elts):
+        return tuple(elt.id for elt in target.elts if isinstance(elt, ast.Name))
+    return None
+
+
 def _return_probes(
     site: ApplySite, return_variables: Sequence[str]
 ) -> List[Tuple[int, str, Tuple[str, ...]]]:
-    """Where to reveal what the helper will return: (line, indent, expressions)."""
+    """Where to reveal what the helper will return: (line, indent, expressions).
+
+    The returned variables are probed under the site's own spelling, the
+    names its generated assignment binds, which alpha-renaming may spell
+    differently from the helper's.
+    """
     lines = site.source.splitlines(keepends=True)
     if return_variables:
         after = site.end_line + 1
         if after > len(lines):
             return []
-        return [(after, site.indent, tuple(return_variables))]
+        return [(after, site.indent, _assigned_names(site.statement) or tuple(return_variables))]
     if not isinstance(site.statement, ast.Return):
         return []
     block_source = "".join(lines[site.start_line - 1 : site.end_line])

@@ -20,7 +20,16 @@ ecosystem evidence behind each claim. The format follows
   helper and refused when it would close an import cycle; a decorated, async,
   variadic, shadowed, or rebound function falls back to ordinary extraction.
   Construct the engine with `reuse_existing_functions=False` to restore the
-  old behavior.
+  old behavior. A function whose body is the block followed by a plain
+  `return` of the block's live variables is reused too; the other sites
+  unpack its result in its order.
+- A helper that returns live variables now admits every further same-file
+  occurrence whose call assigns them, so twelve identical functions become
+  one helper with twelve calls on the first pass rather than a pair per
+  pass. Repeated passes used to stack such helpers into a chain of
+  forwarders, each returning the next one's result; a proposal that would
+  reduce a helper an earlier pass inserted to a one-line forwarder is now
+  declined instead (part of `skip_trivial_helpers`).
 - `towel dry` formats the code it inserts with the formatter the project
   configures (`pip install "code-towel[format]"`): `ruff format` when
   `[tool.ruff]` (or `ruff.toml`) is present and ruff is installed, otherwise
@@ -153,6 +162,11 @@ ecosystem evidence behind each claim. The format follows
   actions and the `uv`-managed Python dependencies.
 
 ### Fixed
+- With `--types`, the variables a helper returns are revealed under each
+  call site's own spelling; a site whose names alpha-renaming spelled
+  differently from the helper's used to probe names that did not exist
+  there, so the helper's return type stayed `Any` and parameter unions the
+  return type would have invalidated went unchecked.
 - A refactored file keeps its own encoding, byte-order mark and newline
   convention: a CRLF file used to come back with every line changed, a file
   with a UTF-8 BOM was skipped, and one latin-1 file with a coding cookie

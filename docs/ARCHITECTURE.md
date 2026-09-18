@@ -230,8 +230,10 @@ function's parameter order; names the body reads from its own module
 (functions, classes, absolute imports) are ambient there and are not passed.
 The existing function must be defined unconditionally at module level,
 without decorators, not `async` (the sites are synchronous), not variadic,
-and never rebound or deleted, and the block must not return live variables;
-otherwise the pair falls back to ordinary extraction. When both halves of
+and never rebound or deleted; otherwise the pair falls back to ordinary
+extraction. A block that binds variables read after it qualifies when the
+function ends by returning exactly those names, in any order: the other
+sites then unpack the function's result in its order. When both halves of
 the pair are whole bodies, the first-defined function is kept. Across files
 the call is imported like a helper and refused when it would close an
 import cycle, by the same guard. The redirect rests on the helper's own
@@ -364,9 +366,21 @@ Once a pair is accepted and its helper template fixed, `clustering.py`
 scans the rest of the file for additional blocks that unify with the template
 and can call the same helper. A clustered site joins only when it passes the
 same guards and, for a method helper, is a method of the same class with the
-same receiver kind; a site whose scope cannot see the helper is skipped. The
-per-candidate pipeline is memoized on the template, the candidate, and the
-helper.
+same receiver kind; a site whose scope cannot see the helper is skipped. A
+helper that returns the block's live variables admits a site whose own
+live variables map into that tuple (`align_return_variables`); the site's
+call assigns them under its own spelling. The per-candidate pipeline is
+memoized on the template, the candidate, and the helper.
+
+Together with reuse, this keeps repeated passes flat: identical blocks in
+many functions become one helper with many calls on the first pass, and a
+later pass that matches a helper's body calls it rather than restating
+it. When neither applies, because the new helper's parameters differ, a
+proposal whose site is the whole body of a helper an earlier pass inserted
+is declined (`_helper_reduced_to_forwarder`, under `skip_trivial_helpers`):
+that helper would keep only the new call, one more layer with no logic of
+its own. A user-named function may still become a one-line specialization
+of the new helper.
 
 ## Pre-run frame- and source-sensitivity scan
 

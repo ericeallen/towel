@@ -29,8 +29,9 @@ import ast
 import copy
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
 from .assignment_analyzer import has_reassignments_without_bindings
+from .block_analysis import align_return_variables
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
@@ -68,6 +69,8 @@ class _ClusterCandidate:
     analyzer: ScopeAnalyzer
     nodes: List[ast.stmt]
     snapshot: BlockBindingSnapshot
+    # Names the block binds for the first time that are read after it.
+    return_variables: FrozenSet[str]
 
 
 class Clustering(EngineState):
@@ -107,6 +110,7 @@ class Clustering(EngineState):
             free_variables=template.free_vars,
             enclosing_names=template.enclosing_names,
             is_value_producing=template.is_value_producing,
+            return_variables=list(template.return_variables),
             global_decls=template.globals_to_declare or None,
             nonlocal_decls=template.nonlocals_to_declare or None,
             function_name=template.func_def.name,
@@ -119,13 +123,24 @@ class Clustering(EngineState):
             return None
         if has_impure_eager_parameters(subst2, available):
             return None
-        # Orphan check for candidate within its function body
+        # The helper returns a fixed tuple; the candidate may read after its
+        # block only names that map into it, and its call assigns them all.
+        aligned = align_return_variables(
+            set(template.return_variables),
+            set(candidate.return_variables),
+            set(template.bound_in_block),
+            set(candidate.snapshot.bound_in_block),
+            cluster_renames,
+        )
+        if aligned is None or aligned[0] != list(template.return_variables):
+            return None
+        returned = aligned[1]
+        # A name the call rebinds is not orphaned by moving the block.
         indices = self._get_block_indices(candidate.function, candidate.nodes)
         if indices is None:
             return None
-        # Skip docstring in body
         body = body_without_docstring(candidate.function.body)
-        if orphaned_variables(body, indices):
+        if orphaned_variables(body, indices) - set(returned):
             return None
         # Generate a call node for the candidate
         try:
@@ -136,7 +151,7 @@ class Clustering(EngineState):
                 param_order=template.param_order,
                 free_variables=template.free_vars,
                 is_value_producing=template.is_value_producing,
-                return_variables=[],
+                return_variables=returned,
                 hygienic_renames=cluster_renames,
             )
         except UnsupportedExtraction:
@@ -154,7 +169,7 @@ class Clustering(EngineState):
                 cluster_renames[0],
                 cluster_renames[1],
                 preamble_length=template.preamble_length,
-                returns_variables=False,
+                returns_variables=bool(template.return_variables),
             )
             is not None
         ):
@@ -303,7 +318,14 @@ class Clustering(EngineState):
         ):
             return None
         return _ClusterCandidate(
-            file_path=fpath, function=fn, analyzer=analyzer, nodes=cand_nodes, snapshot=snapshot
+            file_path=fpath,
+            function=fn,
+            analyzer=analyzer,
+            nodes=cand_nodes,
+            snapshot=snapshot,
+            return_variables=frozenset(
+                self._find_return_variables(fn, cand_range, snapshot.initially_bound)
+            ),
         )
 
     def _cluster_key(

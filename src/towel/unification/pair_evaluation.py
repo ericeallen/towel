@@ -42,6 +42,7 @@ from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple, cast, Fr
 from ..diagnostics import VALIDATION, debugging
 from .definite_assignment import definitely_bound_after
 from .assignment_analyzer import has_reassignments_without_bindings
+from .block_analysis import align_return_variables
 from .builtins import CALL_ARGUMENT_BUILTINS
 from .definite_assignment import definitely_bound_before, locally_bound_names
 from .semantic_safety import (
@@ -209,41 +210,6 @@ class _PairContext:
     function2_id: str
     block1_id: str
     block2_id: str
-
-
-def _align_return_variables(
-    first: Set[str],
-    second: Set[str],
-    bound_first: Set[str],
-    bound_second: Set[str],
-    renames: Sequence[Dict[str, str]],
-) -> Optional[Tuple[List[str], List[str]]]:
-    """Order both blocks' live variables so one helper return serves every call.
-
-    Each block reads its own set of names after the block, possibly under
-    different spellings unified by alpha-renaming. The helper returns the
-    union, spelled in the template's names and sorted; each call assigns the
-    same positions under its own spelling. ``None`` means a live variable of
-    one block has no binding in the other, so no single helper can return it.
-    """
-    template_renames = renames[0] if renames else {}
-    block_renames = renames[1] if len(renames) > 1 else {}
-    canonical_to_template = {canonical: name for name, canonical in template_renames.items()}
-    canonical_to_block = {canonical: name for name, canonical in block_renames.items()}
-
-    def to_template(name: str) -> str:
-        canonical = block_renames.get(name, name)
-        return canonical_to_template.get(canonical, canonical)
-
-    def to_block(name: str) -> str:
-        canonical = template_renames.get(name, name)
-        return canonical_to_block.get(canonical, canonical)
-
-    template_names = sorted(set(first) | {to_template(name) for name in second})
-    block_names = [to_block(name) for name in template_names]
-    if not set(template_names) <= bound_first or not set(block_names) <= bound_second:
-        return None
-    return template_names, block_names
 
 
 def _thunk_uncertain_free_variables(
@@ -642,7 +608,7 @@ class PairEvaluation(EngineState):
         if debug_enabled:
             VALIDATION.debug("  ✓ Unification successful")
             VALIDATION.debug(f"  Substitution: {substitution}")
-        aligned = _align_return_variables(
+        aligned = align_return_variables(
             analysis.return_variables1,
             analysis.return_variables2,
             analysis.snapshot1.bound_in_block,
@@ -883,14 +849,9 @@ class PairEvaluation(EngineState):
             if replacement is None:
                 return None
             replacements.append(replacement)
-        # Same-file clustering: further identical blocks join this proposal, for
-        # non-returning helpers only.
+        # Same-file clustering: further identical blocks join this proposal.
         cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]] = {}
-        if (
-            not pair.is_cross_file
-            and not analysis.return_variables1
-            and not analysis.return_variables2
-        ):
+        if not pair.is_cross_file:
             self._add_clustered_replacements(
                 HelperTemplate(
                     pair=pair,
@@ -904,6 +865,8 @@ class PairEvaluation(EngineState):
                     globals_to_declare=free.globals_to_declare,
                     nonlocals_to_declare=free.nonlocals_to_declare,
                     available_names=free.available_names[0],
+                    return_variables=tuple(unified.ordered_return_variables[0]),
+                    bound_in_block=frozenset(analysis.snapshot1.bound_in_block),
                 ),
                 scope.dce_node,
                 functions,
@@ -1151,7 +1114,12 @@ class PairEvaluation(EngineState):
         placement: _Placement,
         functions: FunctionIndex,
     ) -> Optional[RefactoringProposal]:
-        """The proposal, redirected to an existing function or annotated as configured."""
+        """The proposal, redirected to an existing function or annotated as configured.
+
+        Declined when a site is the whole body of a helper an earlier pass
+        inserted and no redirect was possible: the helper would keep only the
+        new call, one more layer of indirection with no logic of its own.
+        """
         is_cross_file = pair.is_cross_file
         desc = f"Extract common code from {pair.function1_name}"
         if is_cross_file:
@@ -1185,6 +1153,13 @@ class PairEvaluation(EngineState):
             redirected = self._redirect_to_existing_function(proposal, functions)
             if redirected is not None:
                 return redirected
+        if self.skip_trivial_helpers:
+            forwarder = self._helper_reduced_to_forwarder(proposal, functions)
+            if forwarder is not None:
+                self._debug_reject(
+                    RejectReason.EXISTING_HELPER_BECOMES_FORWARDER, pair, detail=forwarder
+                )
+                return None
         if self.annotate_helpers:
             proposal = self._with_helper_annotations(proposal, functions)
         return proposal

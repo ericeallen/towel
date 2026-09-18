@@ -59,6 +59,41 @@ from .function_index import FunctionIndex
 T = TypeVar("T")
 
 
+def align_return_variables(
+    first: Set[str],
+    second: Set[str],
+    bound_first: Set[str],
+    bound_second: Set[str],
+    renames: Sequence[Dict[str, str]],
+) -> Optional[Tuple[List[str], List[str]]]:
+    """Order both blocks' live variables so one helper return serves every call.
+
+    Each block reads its own set of names after the block, possibly under
+    different spellings unified by alpha-renaming. The helper returns the
+    union, spelled in the template's names and sorted; each call assigns the
+    same positions under its own spelling. ``None`` means a live variable of
+    one block has no binding in the other, so no single helper can return it.
+    """
+    template_renames = renames[0] if renames else {}
+    block_renames = renames[1] if len(renames) > 1 else {}
+    canonical_to_template = {canonical: name for name, canonical in template_renames.items()}
+    canonical_to_block = {canonical: name for name, canonical in block_renames.items()}
+
+    def to_template(name: str) -> str:
+        canonical = block_renames.get(name, name)
+        return canonical_to_template.get(canonical, canonical)
+
+    def to_block(name: str) -> str:
+        canonical = template_renames.get(name, name)
+        return canonical_to_block.get(canonical, canonical)
+
+    template_names = sorted(set(first) | {to_template(name) for name in second})
+    block_names = [to_block(name) for name in template_names]
+    if not set(template_names) <= bound_first or not set(block_names) <= bound_second:
+        return None
+    return template_names, block_names
+
+
 class BlockAnalysis(EngineState):
     """See the module docstring."""
 
