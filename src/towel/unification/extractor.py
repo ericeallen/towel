@@ -27,7 +27,7 @@ import copy
 from typing import List, Dict, Sequence, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
 from .substitution import Substitution
 from .definite_assignment import definitely_bound_after
-from .visitors import OwnScopeVisitor
+from .statement_facts import block_contains_return
 
 if TYPE_CHECKING:
     from .scope_analyzer import Scope
@@ -771,25 +771,14 @@ class HygienicExtractor:
             counter += 1
 
 
-class _ReturnFinder(OwnScopeVisitor):
-    def __init__(self) -> None:
-        self.found_return: bool = False
-
-    def visit_Return(self, node: ast.Return) -> None:
-        self.found_return = True
-
-
 def contains_return(block: Sequence[ast.stmt]) -> bool:
-    """
-    Check if a block contains any return statements (including nested ones).
-    """
+    """Whether the block returns anywhere in its own scope, nested statements included.
 
-    finder = _ReturnFinder()
-    for stmt in block:
-        finder.visit(stmt)
-        if finder.found_return:
-            return True
-    return False
+    A ``return`` inside a nested function is that function's, not the block's.
+    Answered from facts memoized per statement, since block enumeration asks
+    this of every contiguous sub-block of a body.
+    """
+    return block_contains_return(block)
 
 
 def is_value_producing(block: Sequence[ast.stmt]) -> bool:

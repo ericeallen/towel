@@ -26,6 +26,8 @@ import ast
 from dataclasses import dataclass
 from typing import Sequence, Tuple
 
+from .statement_facts import statement_facts
+
 DEFAULT_SIMILARITY_THRESHOLD = 0.6
 """Structural similarity a clustered occurrence must reach to join a helper."""
 
@@ -53,42 +55,27 @@ def extract_block_signature(block: Sequence[ast.AST]) -> BlockSignature:
     """The structural summary two blocks must share before unification is attempted.
 
     Nested definitions and lambdas are not looked into: their bodies are
-    other scopes, and the unifier treats them by structure.
+    other scopes, and the unifier treats them by structure. Each statement's
+    share is memoized (``statement_facts``) and folded, so enumerating every
+    contiguous sub-block of a body costs one walk of the body, not one per
+    block.
     """
-    stmt_seq = tuple(type(s).__name__ for s in block)
     has_with = False
     has_try = False
     name_load_count = 0
     name_store_count = 0
     call_count = 0
-
-    skip_types = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-
     for stmt in block:
-        stack = [stmt]
-        while stack:
-            node = stack.pop()
-
-            if isinstance(node, skip_types):
-                continue
-
-            if not has_with and isinstance(node, ast.With):
-                has_with = True
-            if not has_try and isinstance(node, ast.Try):
-                has_try = True
-            if isinstance(node, ast.Name):
-                if isinstance(node.ctx, ast.Load):
-                    name_load_count += 1
-                elif isinstance(node.ctx, ast.Store):
-                    name_store_count += 1
-            elif isinstance(node, ast.Call):
-                call_count += 1
-
-            stack.extend(ast.iter_child_nodes(node))
+        facts = statement_facts(stmt)
+        has_with = has_with or facts.has_with
+        has_try = has_try or facts.has_try
+        name_load_count += facts.name_load_count
+        name_store_count += facts.name_store_count
+        call_count += facts.call_count
 
     return BlockSignature(
         stmt_count=len(block),
-        stmt_seq=stmt_seq,
+        stmt_seq=tuple(type(s).__name__ for s in block),
         has_with=has_with,
         has_try=has_try,
         name_load_count=name_load_count,
