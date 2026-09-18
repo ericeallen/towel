@@ -38,8 +38,10 @@ name in them resolves where the helper is defined.
 from __future__ import annotations
 
 import configparser
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
+import atexit
 import os
 from pathlib import Path
 import re
@@ -48,7 +50,18 @@ import subprocess
 import sys
 import tempfile
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+)
 
 from .diagnostics import LOG
 from .project_tools import ToolChoice
@@ -331,6 +344,49 @@ class MypyInferrer:
         return revealed
 
 
+_PENDING_PROBES: "set[Path]" = set()
+"""Probe files not yet removed; an interpreter exit removes them, a kill cannot."""
+
+
+def _remove_pending_probes() -> None:
+    for probe in list(_PENDING_PROBES):
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+        _PENDING_PROBES.discard(probe)
+
+
+atexit.register(_remove_pending_probes)
+
+
+@contextmanager
+def _probe_file(original: Path, text: str) -> Iterator[Path]:
+    """A sibling of ``original`` holding ``text`` for the duration of the block.
+
+    Pyright reads files, so the probed module must exist on disk in its own
+    package for imports to resolve. The file is created exclusively with a
+    unique name and owner-only permissions, so it never follows a symlink or
+    collides with a concurrent run, and it is removed when the block ends or
+    at interpreter exit, whichever comes first.
+    """
+    descriptor, name = tempfile.mkstemp(
+        prefix=f"_towel_probe_{original.stem}_", suffix=".py", dir=original.parent, text=True
+    )
+    probe = Path(name)
+    _PENDING_PROBES.add(probe)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        yield probe
+    finally:
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+        _PENDING_PROBES.discard(probe)
+
+
 class PyrightOracle:
     """A ``TypeOracle`` backed by the pyright command.
 
@@ -349,9 +405,7 @@ class PyrightOracle:
     def _diagnostics(self, file_path: str, text: str) -> List[Dict[str, object]]:
         """Pyright's diagnostics for ``text`` standing in for ``file_path``."""
         original = Path(file_path)
-        probe = original.with_name(f"_towel_probe_{os.getpid()}_{original.stem}.py")
-        probe.write_text(text, encoding="utf-8")
-        try:
+        with _probe_file(original, text) as probe:
             completed = subprocess.run(
                 [*self._command, "--outputjson", str(probe)],
                 capture_output=True,
@@ -359,11 +413,6 @@ class PyrightOracle:
                 cwd=str(original.parent),
                 check=False,
             )
-        finally:
-            try:
-                probe.unlink()
-            except OSError:
-                pass
         output = completed.stdout
         start, end = output.find("{"), output.rfind("}")
         if start < 0 or end < 0:

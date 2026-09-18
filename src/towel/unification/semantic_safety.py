@@ -5,16 +5,19 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+from collections import OrderedDict
 from typing import (
     TYPE_CHECKING,
     Dict,
     FrozenSet,
+    Generic,
     Iterable,
     List,
     Optional,
     Sequence,
     Set,
     Tuple,
+    TypeVar,
     Union,
 )
 from weakref import WeakKeyDictionary
@@ -324,19 +327,85 @@ def has_external_loop_control(nodes: Iterable[ast.AST]) -> bool:
     return visitor.external
 
 
-# Static import edges of a module, keyed by its path, modification time and
-# size, and the source roots used to resolve them. A cross-file pair asks
-# this question for every accepted candidate, and without the cache each
-# question re-read and re-parsed every reachable module of the project
-# (Sphinx: 243 modules per pair).
-_IMPORT_EDGES: Dict[Tuple[Path, int, int, FrozenSet[Path]], Optional[FrozenSet[Path]]] = {}
-_SOURCE_ROOTS: Dict[Path, Tuple[Path, ...]] = {}
-_MODULE_FILES: Dict[Tuple[Path, Tuple[str, ...]], FrozenSet[Path]] = {}
+K = TypeVar("K")
+V = TypeVar("V")
 
 
-def _module_files(base: Path, components: Iterable[str]) -> FrozenSet[Path]:
+class _Bounded(Generic[K, V]):
+    """A small least-recently-used table; the newest entries survive."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._table: "OrderedDict[K, V]" = OrderedDict()
+
+    def get(self, key: K) -> Optional[V]:
+        if key in self._table:
+            self._table.move_to_end(key)
+            return self._table[key]
+        return None
+
+    def __contains__(self, key: K) -> bool:
+        return key in self._table
+
+    def put(self, key: K, value: V) -> V:
+        self._table[key] = value
+        self._table.move_to_end(key)
+        while len(self._table) > self._limit:
+            self._table.popitem(last=False)
+        return value
+
+    def clear(self) -> None:
+        self._table.clear()
+
+
+class ImportGraphCache:
+    """What one run has learned about the project's import graph.
+
+    A cross-file pair asks whether hosting a helper would close an import
+    cycle, and answering re-reads every reachable module unless the edges are
+    remembered (Sphinx: 243 modules per pair). Edges and import bindings are
+    keyed by path, modification time, and size, so a rewritten file is
+    re-read; module lookups and source roots are keyed by path. Every table
+    is bounded, and the engine owns one instance per run; the module-level
+    default serves callers that have no engine.
+    """
+
+    def __init__(self, limit: int = 8192) -> None:
+        self.edges: _Bounded[Tuple[Path, int, int, FrozenSet[Path]], Optional[FrozenSet[Path]]] = (
+            _Bounded(limit)
+        )
+        self.bindings: _Bounded[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = (
+            _Bounded(limit)
+        )
+        self.module_files: _Bounded[Tuple[Path, Tuple[str, ...]], FrozenSet[Path]] = _Bounded(limit)
+        self.source_roots: _Bounded[Path, Tuple[Path, ...]] = _Bounded(limit)
+
+    def clear(self) -> None:
+        for table in (self.edges, self.bindings, self.module_files, self.source_roots):
+            table.clear()
+
+
+DEFAULT_IMPORT_GRAPH = ImportGraphCache()
+"""For callers without an engine of their own."""
+
+
+def _source_roots(path: Path, cache: ImportGraphCache) -> Optional[Tuple[Path, ...]]:
+    """The project's source roots as seen from ``path``, or None when the layout is unknown."""
+    roots = cache.source_roots.get(path)
+    if roots is None:
+        try:
+            roots = tuple(ProjectLayout.discover(path).source_roots)
+        except ValueError:
+            return None
+        cache.source_roots.put(path, roots)
+    return roots
+
+
+def _module_files(
+    base: Path, components: Iterable[str], cache: ImportGraphCache
+) -> FrozenSet[Path]:
     key = (base, tuple(components))
-    cached = _MODULE_FILES.get(key)
+    cached = cache.module_files.get(key)
     if cached is not None:
         return cached
     result: Set[Path] = set()
@@ -349,12 +418,12 @@ def _module_files(base: Path, components: Iterable[str]) -> FrozenSet[Path]:
     module = cursor.with_suffix(".py")
     if module.is_file():
         result.add(module.resolve())
-    frozen = frozenset(result)
-    _MODULE_FILES[key] = frozen
-    return frozen
+    return cache.module_files.put(key, frozenset(result))
 
 
-def _module_files_relocated(roots: FrozenSet[Path], components: Sequence[str]) -> Set[Path]:
+def _module_files_relocated(
+    roots: FrozenSet[Path], components: Sequence[str], cache: ImportGraphCache
+) -> Set[Path]:
     """Files an absolute import resolves to across ``roots``, tolerating relocation.
 
     Out-of-place refactoring writes a package's modules into a flat output
@@ -370,12 +439,12 @@ def _module_files_relocated(roots: FrozenSet[Path], components: Sequence[str]) -
     parts = list(components)
     files: Set[Path] = set()
     for root in roots:
-        files |= set(_module_files(root, parts))
+        files |= set(_module_files(root, parts, cache))
     if files or len(parts) <= 1:
         return files
     for start in range(1, len(parts)):
         for root in roots:
-            resolved = _module_files(root, parts[start:])
+            resolved = _module_files(root, parts[start:], cache)
             if resolved:
                 files |= set(resolved)
                 # The dropped leading components are the relocated package
@@ -400,7 +469,9 @@ def _package_tree_root(module: Path) -> Path:
     return directory
 
 
-def _suffix_in_tree(tree_root: Path, components: Sequence[str]) -> Set[Path]:
+def _suffix_in_tree(
+    tree_root: Path, components: Sequence[str], cache: ImportGraphCache
+) -> Set[Path]:
     """Files a dotted import resolves to inside the file's own package tree by suffix.
 
     ``sphinx.transforms.x`` from a file under a relocated ``sphinx-cleaned``
@@ -411,26 +482,27 @@ def _suffix_in_tree(tree_root: Path, components: Sequence[str]) -> Set[Path]:
     if not (tree_root / "__init__.py").is_file():
         return set()
     for start in range(1, len(parts)):
-        found = _module_files(tree_root, parts[start:])
+        found = _module_files(tree_root, parts[start:], cache)
         if found:
             return set(found) | {(tree_root / "__init__.py").resolve()}
     return set()
 
 
-def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[Path]]:
+def _import_edges(
+    current: Path, roots: FrozenSet[Path], cache: ImportGraphCache
+) -> Optional[FrozenSet[Path]]:
     """Local modules ``current`` imports, or None when its imports cannot be inspected."""
     try:
         stat = current.stat()
     except OSError:
         return None
     key = (current, stat.st_mtime_ns, stat.st_size, roots)
-    if key in _IMPORT_EDGES:
-        return _IMPORT_EDGES[key]
+    if key in cache.edges:
+        return cache.edges.get(key)
     try:
         tree = ast.parse(current.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, SyntaxError):
-        _IMPORT_EDGES[key] = None
-        return None
+        return cache.edges.put(key, None)
     dependencies: Set[Path] = set()
     # The tree the file lives in, for resolving its own package's absolute
     # imports by suffix even when a full-path match exists elsewhere: an
@@ -442,8 +514,8 @@ def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[P
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                dependencies.update(_module_files_relocated(roots, alias.name.split(".")))
-                dependencies.update(_suffix_in_tree(tree_root, alias.name.split(".")))
+                dependencies.update(_module_files_relocated(roots, alias.name.split("."), cache))
+                dependencies.update(_suffix_in_tree(tree_root, alias.name.split("."), cache))
         elif isinstance(node, ast.ImportFrom):
             components = node.module.split(".") if node.module else []
             if node.level:
@@ -452,10 +524,10 @@ def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[P
                 base = current.parent
                 for _ in range(node.level - 1):
                     base = base.parent
-                dependencies.update(_module_files(base, components))
+                dependencies.update(_module_files(base, components, cache))
                 for alias in node.names:
                     if alias.name != "*":
-                        dependencies.update(_module_files(base, [*components, alias.name]))
+                        dependencies.update(_module_files(base, [*components, alias.name], cache))
                 # ``from . import name`` (or ``from .. import name``) runs the
                 # package's ``__init__`` whether ``name`` is a submodule or an
                 # attribute defined there. With no module file to resolve to,
@@ -469,23 +541,22 @@ def _import_edges(current: Path, roots: FrozenSet[Path]) -> Optional[FrozenSet[P
                 if initializer.is_file():
                     dependencies.add(initializer.resolve())
             else:
-                dependencies.update(_module_files_relocated(roots, components))
-                dependencies.update(_suffix_in_tree(tree_root, components))
+                dependencies.update(_module_files_relocated(roots, components, cache))
+                dependencies.update(_suffix_in_tree(tree_root, components, cache))
                 for alias in node.names:
                     if alias.name != "*":
                         dependencies.update(
-                            _module_files_relocated(roots, [*components, alias.name])
+                            _module_files_relocated(roots, [*components, alias.name], cache)
                         )
-                        dependencies.update(_suffix_in_tree(tree_root, [*components, alias.name]))
-    frozen = frozenset(dependencies)
-    _IMPORT_EDGES[key] = frozen
-    return frozen
+                        dependencies.update(
+                            _suffix_in_tree(tree_root, [*components, alias.name], cache)
+                        )
+    return cache.edges.put(key, frozenset(dependencies))
 
 
-_IMPORT_BINDINGS: Dict[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = {}
-
-
-def _module_level_import_bindings(current: Path) -> Optional[Dict[str, Tuple[str, ...]]]:
+def _module_level_import_bindings(
+    current: Path, cache: ImportGraphCache
+) -> Optional[Dict[str, Tuple[str, ...]]]:
     """Names bound by unconditional module-level imports of ``current``.
 
     Each name maps to the dotted path it denotes, with relative modules
@@ -499,13 +570,12 @@ def _module_level_import_bindings(current: Path) -> Optional[Dict[str, Tuple[str
     except OSError:
         return None
     key = (current, stat.st_mtime_ns, stat.st_size)
-    if key in _IMPORT_BINDINGS:
-        return _IMPORT_BINDINGS[key]
+    if key in cache.bindings:
+        return cache.bindings.get(key)
     try:
         tree = ast.parse(current.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, SyntaxError):
-        _IMPORT_BINDINGS[key] = None
-        return None
+        return cache.bindings.put(key, None)
     bindings: Dict[str, Tuple[str, ...]] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
@@ -525,8 +595,7 @@ def _module_level_import_bindings(current: Path) -> Optional[Dict[str, Tuple[str
                 if alias.name == "*":
                     continue
                 bindings[alias.asname or alias.name] = (*prefix, *module, alias.name)
-    _IMPORT_BINDINGS[key] = bindings
-    return bindings
+    return cache.bindings.put(key, bindings)
 
 
 def _module_definition_file(base: Path, parts: Tuple[str, ...]) -> Optional[Path]:
@@ -556,7 +625,7 @@ def _dotted_path_files(current: Path, roots: Iterable[Path], parts: Tuple[str, .
 
 
 def imported_definition_sites(
-    current_file: str, dotted_name: str
+    current_file: str, dotted_name: str, cache: ImportGraphCache = DEFAULT_IMPORT_GRAPH
 ) -> Optional[FrozenSet[Tuple[Path, str]]]:
     """Where a name used in ``current_file`` may be defined, as (file, qualname) pairs.
 
@@ -570,7 +639,7 @@ def imported_definition_sites(
     be parsed, or the project layout gives no import roots.
     """
     current = Path(current_file).resolve()
-    bindings = _module_level_import_bindings(current)
+    bindings = _module_level_import_bindings(current, cache)
     if bindings is None:
         return None
     parts = dotted_name.split(".")
@@ -583,13 +652,9 @@ def imported_definition_sites(
     if bound is None:
         return None
     target, remainder = bound
-    roots = _SOURCE_ROOTS.get(current)
+    roots = _source_roots(current, cache)
     if roots is None:
-        try:
-            roots = tuple(ProjectLayout.discover(current).source_roots)
-        except ValueError:
-            return None
-        _SOURCE_ROOTS[current] = roots
+        return None
     full = (*target, *remainder)
     sites: Set[Tuple[Path, str]] = set()
     # ``target`` may end in an attribute rather than a module, so every
@@ -624,7 +689,9 @@ def _package_initializers(module: Path, roots: FrozenSet[Path]) -> List[Path]:
     return initializers
 
 
-def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) -> bool:
+def would_create_import_cycle(
+    canonical_file: str, replacement_files: Set[str], cache: ImportGraphCache = DEFAULT_IMPORT_GRAPH
+) -> bool:
     """Check whether adding imports of the helper closes a local import cycle.
 
     Follow static imports through local modules, including modules without any
@@ -636,10 +703,11 @@ def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) 
     if not targets:
         return False
     common_root = Path(os.path.commonpath([str(path.parent) for path in targets | {canonical}]))
-    source_roots = _SOURCE_ROOTS.get(canonical)
+    source_roots = cache.source_roots.get(canonical)
     if source_roots is None:
-        source_roots = tuple(ProjectLayout.discover(canonical).source_roots)
-        _SOURCE_ROOTS[canonical] = source_roots
+        source_roots = cache.source_roots.put(
+            canonical, tuple(ProjectLayout.discover(canonical).source_roots)
+        )
     roots = frozenset(source_roots) | {common_root}
 
     # Importing ``pkg.sub.helper`` runs ``pkg/__init__.py`` and
@@ -658,7 +726,7 @@ def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) 
         if current in visited:
             continue
         visited.add(current)
-        dependencies = _import_edges(current, roots)
+        dependencies = _import_edges(current, roots, cache)
         if dependencies is None:
             # If an import cannot be inspected, do not claim that it is safe.
             return True

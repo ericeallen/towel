@@ -100,6 +100,7 @@ from .semantic_safety import (
     snapshots_rebound_external_names,
     requires_original_frame,
     would_create_import_cycle,
+    ImportGraphCache,
     unbinds_external_name,
     nested_scopes_cross_block_boundary,
     has_impure_eager_parameters,
@@ -131,7 +132,7 @@ from .annotations import (
     typing_imports_needed,
 )
 from ..type_inference import TypeOracle
-from .pipeline import run_pipeline, AnalysisSession
+from .pipeline import run_pipeline, AnalysisSession, parse_cached
 from .visitors import (
     body_without_docstring,
     MethodCallRewriter,
@@ -414,6 +415,8 @@ class UnificationRefactorEngine:
         """
         self.analysis_session = AnalysisSession()
         self._settings = settings if settings is not None else Settings.from_environ()
+        self.import_graph = ImportGraphCache()
+        self._source_lines_cache: Dict[str, Tuple[Tuple[int, int], Tuple[str, ...]]] = {}
         self._settings.enable_debug_logging()
         self.max_parameters = max_parameters
         self.min_lines = min_lines
@@ -830,6 +833,8 @@ class UnificationRefactorEngine:
 
     #: Entries kept per structural cache; oldest are dropped beyond this.
     STRUCTURAL_CACHE_LIMIT = 250_000
+    #: When a file's eviction-index list grows past this, drop entries the caches no longer hold.
+    _EVICTION_INDEX_PRUNE_AT = 4096
 
     @staticmethod
     def _bounded_put(cache: "OrderedDict[Any, Any]", key: Any, value: Any) -> None:
@@ -858,9 +863,12 @@ class UnificationRefactorEngine:
         """Register a cache entry under the files it depends on."""
         for path in paths:
             if path is not None:
-                self._cache_entries_by_path.setdefault(os.path.abspath(path), []).append(
-                    (cache, key)
-                )
+                entries = self._cache_entries_by_path.setdefault(os.path.abspath(path), [])
+                entries.append((cache, key))
+                if len(entries) > self._EVICTION_INDEX_PRUNE_AT:
+                    # Entries whose keys the bounded caches already dropped are
+                    # dead weight; without this the index grew without bound.
+                    entries[:] = [(c, k) for c, k in entries if k in c]
 
     def _evict_cached_analysis(self, path: str) -> None:
         """Drop every cache entry that depends on ``path``."""
@@ -1457,7 +1465,7 @@ class UnificationRefactorEngine:
         ]
         if local:
             return local[0] if len(local) == 1 else None
-        sites = imported_definition_sites(referencing_file, base_name)
+        sites = imported_definition_sites(referencing_file, base_name, self.import_graph)
         if not sites:
             return None
         matches = [
@@ -2101,6 +2109,9 @@ class UnificationRefactorEngine:
             for block in blocks:
                 buckets.setdefault(signature_bucket_key(block[2]), []).append(block)
             block_buckets.append(buckets)
+        # The bucket keys each function's blocks fall into; two functions with
+        # no key in common cannot form a pair, so their blocks are never visited.
+        bucket_keys = [frozenset(buckets) for buckets in block_buckets]
 
         # Progress setup
         use_tqdm = progress in ("tqdm", "auto")
@@ -2160,7 +2171,8 @@ class UnificationRefactorEngine:
                     anc2 = []
                 # Only compare structurally compatible buckets; tolerance
                 # checks still use the unchanged quick_filter below.
-                for block1_range, block1_nodes, sig1 in signed_blocks[i]:
+                blocks1 = signed_blocks[i] if not bucket_keys[i].isdisjoint(bucket_keys[j]) else ()
+                for block1_range, block1_nodes, sig1 in blocks1:
                     for block2_range, block2_nodes, sig2 in block_buckets[j].get(
                         signature_bucket_key(sig1), []
                     ):
@@ -2966,7 +2978,7 @@ class UnificationRefactorEngine:
             participating = {target.file_path} | {
                 replacement.file_path or proposal.file_path for replacement in others
             }
-            if would_create_import_cycle(target.file_path, participating):
+            if would_create_import_cycle(target.file_path, participating, self.import_graph):
                 continue
             callers = sorted({cast(FunctionArtifact, site).node.name for site in sites})
             location = Path(target.file_path).name
@@ -3849,11 +3861,11 @@ class UnificationRefactorEngine:
             replacement.file_path or canonical_file for replacement in replacements
         }
         participating = {canonical_file} | replacement_files
-        if would_create_import_cycle(canonical_file, participating):
+        if would_create_import_cycle(canonical_file, participating, self.import_graph):
             safe_home = None
             if insert_into_class is None and insert_into_function is None:
                 for candidate in sorted(participating - {canonical_file}):
-                    if not would_create_import_cycle(candidate, participating):
+                    if not would_create_import_cycle(candidate, participating, self.import_graph):
                         safe_home = candidate
                         break
             if safe_home is None:
@@ -4154,9 +4166,13 @@ class UnificationRefactorEngine:
 
     @staticmethod
     def _with_every_annotation_any(proposal: RefactoringProposal) -> RefactoringProposal:
-        """The proposal with every helper annotation replaced by ``Any``."""
-        variant = copy.deepcopy(proposal)
-        helper = variant.extracted_function
+        """The proposal with every helper annotation replaced by ``Any``.
+
+        Only the helper is copied: the replacements are shared with the
+        proposal, and materialization copies each one before touching it.
+        """
+        helper = copy.deepcopy(proposal.extracted_function)
+        variant = dataclasses.replace(proposal, extracted_function=helper)
         for arg in helper.args.posonlyargs + helper.args.args:
             arg.annotation = ast.Name(id="Any", ctx=ast.Load())
         helper.returns = ast.Name(id="Any", ctx=ast.Load())
@@ -4167,9 +4183,9 @@ class UnificationRefactorEngine:
 
     @staticmethod
     def _without_annotations(proposal: RefactoringProposal) -> RefactoringProposal:
-        """The proposal with the helper unannotated."""
-        variant = copy.deepcopy(proposal)
-        helper = variant.extracted_function
+        """The proposal with the helper unannotated; see ``_with_every_annotation_any``."""
+        helper = copy.deepcopy(proposal.extracted_function)
+        variant = dataclasses.replace(proposal, extracted_function=helper)
         for arg in helper.args.posonlyargs + helper.args.args:
             arg.annotation = None
         helper.returns = None
@@ -4243,9 +4259,7 @@ class UnificationRefactorEngine:
         modified_files: Dict[str, str] = {}
 
         for file_path, replacements in replacements_by_file.items():
-            # Read original source
-            with open(file_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+            lines = list(self._source_lines(file_path))
 
             # Sort replacements by line number (reverse order)
             replacements = sorted(replacements, key=lambda r: r.line_range[0], reverse=True)
@@ -4484,7 +4498,7 @@ class UnificationRefactorEngine:
             source = Path(target.file_path).read_text(encoding="utf-8")
         definitions = [
             node
-            for node in ast.parse(source).body
+            for node in parse_cached(source).body
             if isinstance(node, ast.FunctionDef) and node.name == target.name
         ]
         if not definitions:
@@ -4517,7 +4531,7 @@ class UnificationRefactorEngine:
         """
         parameters: Optional[int] = None
         for source in modified_files.values():
-            for node in ast.walk(ast.parse(source)):
+            for node in ast.walk(parse_cached(source)):
                 if (
                     isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and node.name == helper_name
@@ -4526,7 +4540,7 @@ class UnificationRefactorEngine:
         if parameters is None:
             raise RefactoringError(f"Helper {helper_name} was not emitted")
         for path, source in modified_files.items():
-            for node in ast.walk(ast.parse(source)):
+            for node in ast.walk(parse_cached(source)):
                 if not isinstance(node, ast.Call):
                     continue
                 function = node.func
@@ -4544,6 +4558,26 @@ class UnificationRefactorEngine:
                         f"but the helper binds {expected}: {path}"
                     )
 
+    def _source_lines(self, file_path: str) -> Sequence[str]:
+        """The file's lines, re-read only when its size or modification time changed.
+
+        The fixed-point loop applies one proposal at a time, so a file touched by
+        several proposals was read once per proposal; the stat check keeps the
+        memo exact across the rewrites in between.
+        """
+        path = Path(file_path)
+        stat = path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+        cached = self._source_lines_cache.get(file_path)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        with open(file_path, "r", encoding="utf-8") as handle:
+            lines = tuple(handle.readlines())
+        self._source_lines_cache[file_path] = (signature, lines)
+        if len(self._source_lines_cache) > 64:
+            self._source_lines_cache.pop(next(iter(self._source_lines_cache)))
+        return lines
+
     def _find_import_position(self, lines: List[str]) -> int:
         """Return the 0-based line index at which to insert a new import.
 
@@ -4551,7 +4585,7 @@ class UnificationRefactorEngine:
         determined from the parsed module so that text inside comments or
         docstrings is never mistaken for an import.
         """
-        body = ast.parse("".join(lines)).body
+        body = parse_cached("".join(lines)).body
         position = 0
         if (
             body
@@ -4638,7 +4672,7 @@ class UnificationRefactorEngine:
         can be written bare; the caller guarantees through ``placeable_after``
         that nothing before that point runs code at import.
         """
-        tree = ast.parse("".join(lines))
+        tree = parse_cached("".join(lines))
         after = 0
         after_names = after_names or set()
         for statement in tree.body:

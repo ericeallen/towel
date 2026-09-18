@@ -102,7 +102,7 @@ class ScopeAnalyzer(ast.NodeVisitor):
         self.nonlocal_vars: Dict[int, Set[str]] = {}
 
         # Cache for free-variable analysis (keyed by node identity tuple)
-        self._free_var_cache: Dict[Tuple[int, ...], Set[str]] = {}
+        self._free_var_cache: Dict[Tuple[ast.AST, ...], Set[str]] = {}
 
     def analyze(self, tree: ast.AST) -> Scope:
         """Analyze an AST and return the root scope."""
@@ -681,7 +681,9 @@ class ScopeAnalyzer(ast.NodeVisitor):
                     imports.add(name)
                 self._add_current_scope_bindings(imports)
 
-        cache_key = tuple(id(node) for node in nodes)
+        # Keyed by the nodes themselves: they hash by identity, and holding them
+        # keeps an id from being reused by a later node within one analysis.
+        cache_key = tuple(nodes)
         if cache_key:
             cached = self._free_var_cache.get(cache_key)
             if cached is not None:
