@@ -42,6 +42,7 @@ from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple, cast
 from ..diagnostics import VALIDATION, debugging
 from .definite_assignment import definitely_bound_after
 from .assignment_analyzer import has_reassignments_without_bindings
+from .builtins import CALL_ARGUMENT_BUILTINS
 from .definite_assignment import definitely_bound_before, locally_bound_names
 from .semantic_safety import defer_impure_parameters, has_impure_eager_parameters
 from .engine_state import EngineState
@@ -79,29 +80,6 @@ from .thunk_inlining import inline_leading_thunks
 from .substitution import Substitution
 from .visitors import body_without_docstring
 
-_CALL_ARGUMENT_BUILTINS = frozenset(
-    {
-        "len",
-        "sum",
-        "min",
-        "max",
-        "any",
-        "all",
-        "map",
-        "filter",
-        "sorted",
-        "list",
-        "dict",
-        "set",
-        "range",
-        "int",
-        "float",
-        "str",
-        "bool",
-        "enumerate",
-        "zip",
-    }
-)
 """Builtins a generated call may name without them being bound at the site."""
 
 MethodKind = Literal["instance", "classmethod", "staticmethod"]
@@ -931,7 +909,7 @@ class PairEvaluation(EngineState):
                 if name != func_def.name
                 and (
                     name.startswith("__param_")
-                    or (name not in allowed_before and name not in _CALL_ARGUMENT_BUILTINS)
+                    or (name not in allowed_before and name not in CALL_ARGUMENT_BUILTINS)
                 )
             }
             if invalid_names:

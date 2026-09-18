@@ -207,3 +207,29 @@ def filter_builtins(names: Set[str]) -> Set[str]:
         Set with builtins removed
     """
     return {name for name in names if not is_builtin(name)}
+
+
+CALL_ARGUMENT_BUILTINS = frozenset(
+    {
+        "len",
+        "sum",
+        "min",
+        "max",
+        "any",
+        "all",
+        "map",
+        "filter",
+        "sorted",
+        "list",
+        "dict",
+        "set",
+        "range",
+        "int",
+        "float",
+        "str",
+        "bool",
+        "enumerate",
+        "zip",
+    }
+)
+"""Builtins a generated call may mention besides what the site binds and the free variables."""
