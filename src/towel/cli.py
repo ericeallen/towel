@@ -1058,16 +1058,12 @@ def _apply_rename_file(
     """
 
     # Load rename mappings
-    try:
-        with open(rename_file, encoding="utf-8") as f:
-            renames = json.load(f)
-    except (OSError, ValueError) as e:
-        print(f"Error reading rename file: {e}")
-        sys.exit(1)
+    # An unreadable or malformed file is an OSError or ValueError the dispatcher reports.
+    with open(rename_file, encoding="utf-8") as f:
+        renames = json.load(f)
 
     if not isinstance(renames, dict):
-        print("Error: Rename file must contain a JSON object (dict)")
-        sys.exit(1)
+        raise ValueError("Rename file must contain a JSON object (dict)")
 
     try:
         total_changes = _apply_rename_mappings(target, renames, dry_run, quiet=as_json)

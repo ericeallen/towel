@@ -234,7 +234,7 @@ def test_invalid_rename_file_has_failure_status(tmp_path: Path, contents: str) -
     mapping.write_text(contents)
     result = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping)])
     assert result.status == 1
-    assert "Error" in result.stdout
+    assert result.stderr.startswith("Error: ")
     assert source.read_text() == HELPER
 
 
