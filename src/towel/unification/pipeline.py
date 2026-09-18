@@ -119,52 +119,55 @@ def analyze_scopes(mods: Sequence[ParsedModule]) -> None:
         m.scope_analyzer = analyzer
 
 
+def _resolve_base_name(expr: ast.expr) -> Optional[str]:
+    """The dotted name a base-class expression spells, or None for anything else."""
+    if isinstance(expr, ast.Name):
+        return expr.id
+    if isinstance(expr, ast.Attribute):
+        parts: List[str] = []
+        cur: ast.expr = expr
+        while isinstance(cur, ast.Attribute):
+            parts.append(cur.attr)
+            cur = cur.value
+        if isinstance(cur, ast.Name):
+            parts.append(cur.id)
+            return ".".join(reversed(parts))
+    return None
+
+
+class _ClassCollector(DefinitionDepthVisitor):
+    """Appends a ClassInfo for every class of one module to ``infos``."""
+
+    def __init__(self, file_path: str, infos: List[ClassInfo]) -> None:
+        self.file_path = file_path
+        self.infos = infos
+        self.class_stack: List[str] = []
+
+    def _enter_definition(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        if not isinstance(node, ast.ClassDef):
+            return
+        qualname = ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
+        bases = [
+            resolved for resolved in map(_resolve_base_name, node.bases) if resolved is not None
+        ]
+        self.infos.append(
+            ClassInfo(name=node.name, qualname=qualname, file_path=self.file_path, bases=bases)
+        )
+        self.class_stack.append(node.name)
+
+    def _leave_definition(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        if isinstance(node, ast.ClassDef):
+            self.class_stack.pop()
+
+
 def collect_classes(mods: Sequence[ParsedModule]) -> List[ClassInfo]:
     infos: List[ClassInfo] = []
-
-    def resolve_base_name(expr: ast.expr) -> Optional[str]:
-        if isinstance(expr, ast.Name):
-            return expr.id
-        if isinstance(expr, ast.Attribute):
-            parts: List[str] = []
-            cur: ast.expr = expr
-            while isinstance(cur, ast.Attribute):
-                parts.append(cur.attr)
-                cur = cur.value
-            if isinstance(cur, ast.Name):
-                parts.append(cur.id)
-                return ".".join(reversed(parts))
-        return None
-
-    class Collector(DefinitionDepthVisitor):
-        def __init__(self, file_path: str) -> None:
-            self.file_path = file_path
-            self.class_stack: List[str] = []
-
-        def _enter_definition(
-            self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
-        ) -> None:
-            if not isinstance(node, ast.ClassDef):
-                return
-            qualname = ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
-            bases: List[str] = []
-            for b in node.bases:
-                resolved = resolve_base_name(b)
-                if resolved:
-                    bases.append(resolved)
-            infos.append(
-                ClassInfo(name=node.name, qualname=qualname, file_path=self.file_path, bases=bases)
-            )
-            self.class_stack.append(node.name)
-
-        def _leave_definition(
-            self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
-        ) -> None:
-            if isinstance(node, ast.ClassDef):
-                self.class_stack.pop()
-
     for m in mods:
-        Collector(m.file_path).visit(m.tree)
+        _ClassCollector(m.file_path, infos).visit(m.tree)
     return infos
 
 

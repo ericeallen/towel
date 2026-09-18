@@ -482,19 +482,6 @@ class HygienicExtractor:
         # Detect parameters used as callees (in Call.func position) in the extracted body
         # so we can safely defer their evaluation at call sites via zero-arg lambdas.
         if param_names_unified:
-
-            class _CalleeParamFinder(ast.NodeVisitor):
-                def __init__(self, params: Set[str]) -> None:
-                    self.params = params
-                    self.found: Set[str] = set()
-
-                def visit_Call(self, node: ast.Call) -> None:
-                    # If the callee is a Name matching a unified parameter, record it
-                    if isinstance(node.func, ast.Name) and node.func.id in self.params:
-                        self.found.add(node.func.id)
-                    # Continue traversal
-                    self.generic_visit(node)
-
             finder = _CalleeParamFinder(set(param_names_unified))
             for stmt in body:
                 finder.visit(stmt)
@@ -769,6 +756,19 @@ class HygienicExtractor:
                 self.used_names.add(candidate)
                 return candidate
             counter += 1
+
+
+class _CalleeParamFinder(ast.NodeVisitor):
+    """Which of the given parameters are called (appear as a callee)."""
+
+    def __init__(self, params: Set[str]) -> None:
+        self.params = params
+        self.found: Set[str] = set()
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if isinstance(node.func, ast.Name) and node.func.id in self.params:
+            self.found.add(node.func.id)
+        self.generic_visit(node)
 
 
 def contains_return(block: Sequence[ast.stmt]) -> bool:

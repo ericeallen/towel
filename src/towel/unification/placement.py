@@ -82,6 +82,20 @@ def _unique_module_level_class(class_infos: Sequence[ClassInfo], file_path: str,
     return len(matches) == 1 and matches[0].qualname == name
 
 
+class _CallRenamer(ast.NodeTransformer):
+    """Rename every call of one plain name to another, in place."""
+
+    def __init__(self, old: str, new: str) -> None:
+        self.old = old
+        self.new = new
+
+    def visit_Call(self, call: ast.Call) -> ast.AST:
+        updated = cast(ast.Call, self.generic_visit(call))
+        if isinstance(updated.func, ast.Name) and updated.func.id == self.old:
+            updated.func.id = self.new
+        return updated
+
+
 class HelperPlacement(EngineState):
     """Helper Placement methods of the engine; see the module docstring."""
 
@@ -169,18 +183,6 @@ class HelperPlacement(EngineState):
 
         if original_name == final_name:
             return node
-
-        class _CallRenamer(ast.NodeTransformer):
-            def __init__(self, old: str, new: str) -> None:
-                self.old = old
-                self.new = new
-
-            def visit_Call(self, call: ast.Call) -> ast.AST:
-                updated = cast(ast.Call, self.generic_visit(call))
-                if isinstance(updated.func, ast.Name) and updated.func.id == self.old:
-                    updated.func.id = self.new
-                return updated
-
         return cast(ast.AST, _CallRenamer(original_name, final_name).visit(node))
 
     def _prepare_extracted_method_signature(
