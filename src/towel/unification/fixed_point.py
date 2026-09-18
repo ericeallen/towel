@@ -33,7 +33,16 @@ from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 from .models import RefactoringProposal
 from .overlap import filter_overlapping_proposals
-from .progress import ProgressBarFactory, load_tqdm, quietly, render_inline_bar
+from .progress import (
+    DEFAULT_PROGRESS,
+    ProgressBarFactory,
+    ProgressMode,
+    load_tqdm,
+    normalize_progress,
+    quietly,
+    render_inline_bar,
+    wants_bar,
+)
 from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangeConflict, ChangePlan, apply_changes
 from ..diagnostics import LOG, REJECTIONS, debugging
@@ -78,12 +87,11 @@ class FixedPointDrivers(EngineState):
         return queue.pop(0)
 
     def _resolve_progress_backend(
-        self, progress: str
-    ) -> Tuple[str, Optional[ProgressBarFactory], bool]:
+        self, progress: ProgressMode
+    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory], bool]:
         """Resolve the progress mode and load tqdm if it is available."""
 
-        allowed = {"auto", "tqdm", "none", "detail"}
-        normalized = progress if progress in allowed else "tqdm"
+        normalized = normalize_progress(progress)
         use_tqdm = normalized in {"auto", "tqdm"}
         tqdm_cls: Optional[ProgressBarFactory] = None
         if use_tqdm:
@@ -199,7 +207,7 @@ class FixedPointDrivers(EngineState):
         input_dir: str,
         output_dir: str,
         max_iterations: int = 10,
-        progress: str = "tqdm",
+        progress: ProgressMode = DEFAULT_PROGRESS,
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], str]:
         """
         Apply refactorings across a directory (recursively) until a fixed point.
@@ -271,7 +279,7 @@ class FixedPointDrivers(EngineState):
         # Fallback inline bar (only when not using tqdm and not in detail/none)
         def _fallback_bar(applied: int, queued: int, phase: str, desc: str) -> None:
             # Suppress inline fallback bar when tqdm is selected or active, or in 'none'/'detail' modes
-            if progress_mode in ("none", "detail", "tqdm") or use_tqdm:
+            if progress_mode != "auto" or use_tqdm:
                 return
             denom = max(applied + queued, 1)
             pct = int((applied / denom) * 100)
@@ -369,9 +377,7 @@ class FixedPointDrivers(EngineState):
                         # I/O problem will resurface in the analysis that follows.
                         pass
                 # Show pairing progress during global analysis if user requested progress bars.
-                analysis_progress_flag = (
-                    progress_mode if progress_mode in ("tqdm", "auto") else "none"
-                )
+                analysis_progress_flag = progress_mode if wants_bar(progress_mode) else "none"
                 restrict = (
                     frozenset(changed_since_global)
                     if self.incremental_global_passes and global_passes > 0 and changed_since_global
@@ -398,7 +404,7 @@ class FixedPointDrivers(EngineState):
 
                         quietly(finish)
                     else:
-                        if progress_mode not in ("none", "detail") and not use_tqdm:
+                        if wants_bar(progress_mode) and not use_tqdm:
                             print()  # finish inline bar line
                     break
                 proposal_queue = filter_overlapping_proposals(proposals)
@@ -492,7 +498,7 @@ class FixedPointDrivers(EngineState):
                 if use_tqdm and progress_bar is not None:
                     progress_bar.close()
                 else:
-                    if progress_mode not in ("none", "detail") and not use_tqdm:
+                    if wants_bar(progress_mode) and not use_tqdm:
                         print()
                 break
 

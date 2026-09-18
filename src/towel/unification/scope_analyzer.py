@@ -34,7 +34,7 @@ class ExternalBindingHazards:
 
 
 @dataclass
-class Binding:
+class ScopeBinding:
     """Represents a binding of an identifier to a value."""
 
     name: str
@@ -48,10 +48,10 @@ class Scope:
 
     scope_id: int
     parent: Optional["Scope"]
-    bindings: Dict[str, Binding] = field(default_factory=dict)
+    bindings: Dict[str, ScopeBinding] = field(default_factory=dict)
     children: List["Scope"] = field(default_factory=list)
 
-    def lookup(self, name: str) -> Optional[Binding]:
+    def lookup(self, name: str) -> Optional[ScopeBinding]:
         """Lookup a binding in this scope or parent scopes."""
         if name in self.bindings:
             return self.bindings[name]
@@ -61,7 +61,7 @@ class Scope:
 
     def add_binding(self, name: str, node: ast.AST) -> None:
         """Add a binding to this scope."""
-        self.bindings[name] = Binding(name, self.scope_id, node)
+        self.bindings[name] = ScopeBinding(name, self.scope_id, node)
 
 
 def pattern_capture_names(pattern: ast.AST) -> Set[str]:
@@ -95,7 +95,7 @@ class ScopeAnalyzer(ScopeVisitor):
         self.scope_nodes: Dict[int, ast.AST] = {}
 
         # Map identifier uses to their bindings
-        self.identifier_bindings: Dict[ast.Name, Optional[Binding]] = {}
+        self.identifier_bindings: Dict[ast.Name, Optional[ScopeBinding]] = {}
 
         # Track global and nonlocal declarations per scope
         # Maps scope_id -> set of variable names
@@ -637,6 +637,6 @@ class ScopeAnalyzer(ScopeVisitor):
             self._free_var_cache[cache_key] = set(free_vars)
         return free_vars
 
-    def get_binding_for_name(self, name_node: ast.Name) -> Optional[Binding]:
+    def get_binding_for_name(self, name_node: ast.Name) -> Optional[ScopeBinding]:
         """Get the binding for a name node."""
         return self.identifier_bindings.get(name_node)

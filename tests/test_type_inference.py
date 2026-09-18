@@ -106,7 +106,7 @@ def test_engine_fills_expression_arguments_and_the_return_from_mypy(tmp_path: Pa
                 return label + str(scaled)
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -173,7 +173,7 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
                 return len(keys) * 2
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -202,7 +202,7 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
                 return label.strip()
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -268,7 +268,7 @@ def test_revealed_return_is_written_when_it_satisfies_every_declaration(tmp_path
                 return len(text.strip())
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -294,7 +294,7 @@ def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
                 return box
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -320,7 +320,7 @@ def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:
                 return len(text.strip())
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -400,7 +400,7 @@ def test_engine_fills_expression_arguments_and_the_return_from_mypy(tmp_path: Pa
                 return label + str(scaled)
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -467,7 +467,7 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
                 return len(keys) * 2
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -496,7 +496,7 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
                 return label.strip()
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -562,7 +562,7 @@ def test_revealed_return_is_written_when_it_satisfies_every_declaration(tmp_path
                 return len(text.strip())
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -588,7 +588,7 @@ def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
                 return box
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -614,7 +614,7 @@ def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:
                 return len(text.strip())
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -669,7 +669,7 @@ def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -
                 return len(text.strip())
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=_Oracle()
+        min_lines=2, reuse_existing_functions=False, type_oracle=_Oracle()
     )
     proposals = engine.analyze_file(str(path))
     result = engine.apply_refactoring(str(path), proposals[0])
@@ -693,7 +693,7 @@ def test_thunk_arguments_get_callable_annotations(tmp_path: Path) -> None:
                 return 0
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=MypyInferrer()
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -809,7 +809,7 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
                 return label + str(scaled)
             """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_inferrer=PyrightOracle()
+        min_lines=2, reuse_existing_functions=False, type_oracle=PyrightOracle()
     )
     proposals = engine.analyze_file(str(path))
     assert proposals

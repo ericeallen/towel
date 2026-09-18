@@ -134,7 +134,7 @@ The keyword-only parameters, all defaulting to what the CLI does:
 | `skip_trivial_helpers` | `True` | Do not propose a helper that only forwards, renames, or unpacks. |
 | `reuse_existing_functions` | `True` | A duplicate that is the whole body of a plain module-level function calls that function instead of a new helper. |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
-| `type_inferrer` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one nothing is inferred or verified (`--types/--no-types`). |
+| `type_oracle` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one nothing is inferred or verified (`--types/--no-types`). |
 | `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
 | `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports. |
 | `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). |
@@ -153,7 +153,7 @@ sorter = import_sorter_for_project(root)  # ruff's I rules or isort, when the pr
 oracle = type_oracle_for_project(root)    # mypy, pyright, or both
 
 engine = UnificationRefactorEngine(
-    snippet_formatter=formatter.tool, file_finisher=sorter.tool, type_inferrer=oracle.tool
+    snippet_formatter=formatter.tool, file_finisher=sorter.tool, type_oracle=oracle.tool
 )
 ```
 

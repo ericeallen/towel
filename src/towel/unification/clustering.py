@@ -29,13 +29,13 @@ import ast
 import copy
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .models import FunctionArtifact, FunctionNode, Replacement
-from .orphan_detector import has_orphaned_variables
+from .orphan_detector import orphaned_variables
 from .overlap import line_ranges_intersect
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import (
@@ -117,8 +117,7 @@ class Clustering(EngineState):
             return None
         # Skip docstring in body
         body = body_without_docstring(candidate.function.body)
-        has_orph, _orph = has_orphaned_variables(cast(List[ast.AST], body), indices)
-        if has_orph:
+        if orphaned_variables(body, indices):
             return None
         # Generate a call node for the candidate
         try:

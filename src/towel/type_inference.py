@@ -51,7 +51,6 @@ import sys
 import tempfile
 from enum import Enum
 from typing import (
-    TYPE_CHECKING,
     Dict,
     Iterable,
     Iterator,
@@ -60,7 +59,10 @@ from typing import (
     Optional,
     Protocol,
     Sequence,
+    TYPE_CHECKING,
     Tuple,
+    TypedDict,
+    cast,
 )
 
 from .diagnostics import LOG
@@ -387,6 +389,29 @@ def _probe_file(original: Path, text: str) -> Iterator[Path]:
         _PENDING_PROBES.discard(probe)
 
 
+class PyrightPosition(TypedDict, total=False):
+    """A zero-based position in pyright's JSON output."""
+
+    line: int
+    character: int
+
+
+class PyrightRange(TypedDict, total=False):
+    """The span of a pyright diagnostic."""
+
+    start: PyrightPosition
+    end: PyrightPosition
+
+
+class PyrightDiagnostic(TypedDict, total=False):
+    """One entry of ``generalDiagnostics`` in ``pyright --outputjson``."""
+
+    severity: str
+    message: str
+    rule: str
+    range: PyrightRange
+
+
 class PyrightOracle:
     """A ``TypeOracle`` backed by the pyright command.
 
@@ -402,7 +427,7 @@ class PyrightOracle:
             raise ImportError("pyright is not installed")
         self._command: List[str] = command
 
-    def _diagnostics(self, file_path: str, text: str) -> List[Dict[str, object]]:
+    def _diagnostics(self, file_path: str, text: str) -> List[PyrightDiagnostic]:
         """Pyright's diagnostics for ``text`` standing in for ``file_path``."""
         original = Path(file_path)
         with _probe_file(original, text) as probe:
@@ -424,13 +449,14 @@ class PyrightOracle:
             LOG.warning("pyright output for %s is not JSON: %s", file_path, error)
             return []
         diagnostics = data.get("generalDiagnostics", [])
-        return [d for d in diagnostics if isinstance(d, dict)]
+        # pyright's JSON is trusted to have this shape; the reads below use .get.
+        return [cast(PyrightDiagnostic, d) for d in diagnostics if isinstance(d, dict)]
 
     @staticmethod
-    def _line(diagnostic: Dict[str, object]) -> int:
-        range_ = diagnostic.get("range", {})
-        start = range_.get("start", {}) if isinstance(range_, dict) else {}
-        return int(start.get("line", -1)) + 1 if isinstance(start, dict) else 0
+    def _line(diagnostic: PyrightDiagnostic) -> int:
+        """The one-based line of a diagnostic, or 0 when it carries no position."""
+        start = diagnostic.get("range", {}).get("start")
+        return start.get("line", -1) + 1 if start is not None else 0
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         revealed: Dict[RevealKey, str] = {}

@@ -35,7 +35,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, cast
 from .exceptions import RefactoringError
 from .models import FunctionArtifact, RefactoringProposal, Replacement, ReusedFunction
 from .pipeline import parse_cached
-from .scope_analyzer import Binding
+from .scope_analyzer import ScopeBinding
 from .semantic_safety import would_create_import_cycle
 from .visitors import body_without_docstring
 
@@ -53,7 +53,7 @@ class _ReusePlan:
     """
 
     parameter_positions: List[int]
-    ambient: Dict[int, Tuple[str, Optional["Binding"]]]
+    ambient: Dict[int, Tuple[str, Optional["ScopeBinding"]]]
 
 
 class ExistingFunctionReuse(EngineState):
@@ -139,7 +139,7 @@ class ExistingFunctionReuse(EngineState):
         scope = target.scope_analyzer.node_scopes.get(target.node)
         if scope is None:
             return None
-        ambient: Dict[int, Tuple[str, Optional[Binding]]] = {}
+        ambient: Dict[int, Tuple[str, Optional[ScopeBinding]]] = {}
         for index, name in enumerate(names):
             if name in parameters:
                 continue

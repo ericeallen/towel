@@ -37,6 +37,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .models import ClassInfo, CodeBlockPair, FunctionArtifact, RefactoringProposal
 from concurrent.futures import ProcessPoolExecutor
 from ..diagnostics import LOG
+from .progress import ProgressMode, wants_bar
 from concurrent.futures.process import BrokenProcessPool
 
 from .engine_state import EngineState
@@ -165,7 +166,7 @@ class ParallelEvaluation(EngineState):
         class_infos: List[ClassInfo],
         *,
         verbose: bool,
-        progress: str,
+        progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         proposals: List[RefactoringProposal] = []
 
@@ -188,7 +189,7 @@ class ParallelEvaluation(EngineState):
                     proposals.append(proposal)
             return proposals
 
-        use_inline_bar = progress_mode in ("auto", "tqdm") and len(block_pairs) > 0 and not use_tqdm
+        use_inline_bar = wants_bar(progress_mode) and len(block_pairs) > 0 and not use_tqdm
         last_pct = -1
         self._start_inline_status("Analyzing pairs (unify):", use_inline_bar)
 
@@ -213,7 +214,7 @@ class ParallelEvaluation(EngineState):
         class_infos: List[ClassInfo],
         *,
         verbose: bool,
-        progress: str,
+        progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         """Evaluate pairs in forked workers; results are ordered as the serial path orders them.
 

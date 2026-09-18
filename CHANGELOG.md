@@ -45,7 +45,7 @@ ecosystem evidence behind each claim. The format follows
   refactoring with an incremental cache. A type is written only when every
   site agrees, it contains no `Any`, and every name in it resolves where the
   helper is defined. `--no-types` leaves helpers unannotated; library callers
-  pass a `type_inferrer` to the engine. Sites that disagree on a parameter's
+  pass a `type_oracle` to the engine. Sites that disagree on a parameter's
   type, or on a revealed return type, join into a union (`int | None`,
   `int | str`); declared return types must agree, since a union is not a
   lower bound. Once a helper carries any annotation, whatever is still bare

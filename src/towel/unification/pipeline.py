@@ -57,7 +57,15 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .overlap import filter_overlapping_proposals
-from .progress import ProgressBar, load_tqdm, quietly, render_inline_bar
+from .progress import (
+    DEFAULT_PROGRESS,
+    ProgressBar,
+    ProgressMode,
+    load_tqdm,
+    quietly,
+    render_inline_bar,
+    wants_bar,
+)
 from ..diagnostics import LOG, Settings
 from .visitors import DefinitionDepthVisitor, FunctionCollector
 
@@ -73,7 +81,7 @@ class PairProcessor(Protocol):
         self,
         all_functions: Sequence[FunctionArtifact],
         *,
-        progress: str = "none",
+        progress: ProgressMode = DEFAULT_PROGRESS,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[CodeBlockPair]:
         """Candidate block pairs across ``all_functions``."""
@@ -86,7 +94,7 @@ class PairProcessor(Protocol):
         class_infos: List[ClassInfo],
         *,
         verbose: bool,
-        progress: str,
+        progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         """Verified proposals for the pairs that unify."""
         ...
@@ -197,7 +205,7 @@ def pair_blocks(
     engine: PairProcessor,
     funcs: Sequence[FunctionArtifact],
     *,
-    progress: str = "none",
+    progress: ProgressMode = DEFAULT_PROGRESS,
     changed_files: Optional[FrozenSet[str]] = None,
 ) -> List[CodeBlockPair]:
     """Enumerate candidate block pairs with optional progress display.
@@ -216,7 +224,7 @@ def unify_blocks(
     classes: Sequence[ClassInfo],
     *,
     verbose: bool = False,
-    progress: str = "auto",
+    progress: ProgressMode = DEFAULT_PROGRESS,
 ) -> List[RefactoringProposal]:
     return engine.process_block_pairs(
         list(pairs), list(funcs), list(classes), verbose=verbose, progress=progress
@@ -400,7 +408,7 @@ def run_pipeline(
     engine: PairProcessor,
     session: Optional[AnalysisSession] = None,
     verbose: bool = False,
-    progress: str = "auto",
+    progress: ProgressMode = DEFAULT_PROGRESS,
     invalidate_paths: Optional[Sequence[str]] = None,
     changed_files: Optional[FrozenSet[str]] = None,
 ) -> List[RefactoringProposal]:
@@ -415,7 +423,7 @@ def run_pipeline(
     if invalidate_paths:
         analysis_session.invalidate(invalidate_paths)
 
-    use_progress = progress in {"tqdm", "auto"}
+    use_progress = wants_bar(progress)
     bar = _create_progress_bar(use_progress, len(paths), "analyze", "file")
     inline_progress = use_progress and bar is None and len(paths) > 0
     if inline_progress:

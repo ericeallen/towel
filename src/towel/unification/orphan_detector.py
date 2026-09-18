@@ -20,14 +20,14 @@ but referenced in code that remains after the extraction point.
 """
 
 import ast
-from typing import List, Set, Tuple, Union, cast
+from typing import List, Sequence, Set, Tuple, Union, cast
 
 from .definite_assignment import definitely_bound_before_each
 from .visitors import OwnScopeVisitor, visit_each
 
 
 def _apply_visitor_to_nodes(
-    result_set: Set[str], visitor: ast.NodeVisitor, nodes: List[ast.AST]
+    result_set: Set[str], visitor: ast.NodeVisitor, nodes: Sequence[ast.AST]
 ) -> Set[str]:
     """
     Apply an AST visitor to a sequence of nodes and return the collected results.
@@ -46,7 +46,7 @@ def _apply_visitor_to_nodes(
     Note:
         This function was identified as a refactoring opportunity by Towel itself
         during dog-fooding testing (October 2025). The common visitor pattern in
-        get_bound_variables() and get_used_variables() was successfully extracted,
+        bound_names_in_block() and get_used_variables() was successfully extracted,
         validated with 100% test passage, and incorporated into the codebase.
     """
     visit_each(visitor, nodes)
@@ -100,7 +100,7 @@ class _BindingCollector(OwnScopeVisitor):
         # Ignore subscripts and attributes (they don't create bindings)
 
 
-def get_bound_variables(nodes: List[ast.AST]) -> Set[str]:
+def bound_names_in_block(nodes: Sequence[ast.AST]) -> Set[str]:
     """
     Get all variables bound (assigned) in a block of code.
 
@@ -134,11 +134,10 @@ def get_used_variables(nodes: List[ast.AST]) -> Set[str]:
     return _apply_visitor_to_nodes(collector.uses, collector, nodes)
 
 
-def has_orphaned_variables(
-    function_body: List[ast.AST], extracted_block_range: Tuple[int, int]
-) -> Tuple[bool, Set[str]]:
-    """
-    Check if extracting a block would create orphaned variable references.
+def orphaned_variables(
+    function_body: Sequence[ast.AST], extracted_block_range: Tuple[int, int]
+) -> Set[str]:
+    """The names later code would read that extracting the block leaves unbound.
 
     Args:
         function_body: All statements in the function
@@ -146,9 +145,7 @@ def has_orphaned_variables(
             These are 0-based indices into function_body
 
     Returns:
-        (has_orphans, orphaned_vars) where:
-        - has_orphans: True if there are orphaned variables
-        - orphaned_vars: Set of variable names that would be orphaned
+        The orphaned names; empty when the extraction leaves every read bound.
     """
     start_idx, end_idx = extracted_block_range
 
@@ -158,10 +155,10 @@ def has_orphaned_variables(
 
     if not remaining_code:
         # Nothing after the extracted block, so no orphans possible
-        return False, set()
+        return set()
 
     # Get variables bound in the extracted block
-    bound_in_extracted = get_bound_variables(extracted_block)
+    bound_in_extracted = bound_names_in_block(extracted_block)
 
     # A later read is safe only when every path from the block's end to that
     # read rebinds the name first. Subtracting every name rebound anywhere
@@ -175,4 +172,4 @@ def has_orphaned_variables(
             break  # no path reaches this statement
         used = get_used_variables([statement])
         orphaned |= (bound_in_extracted & used) - definite
-    return len(orphaned) > 0, orphaned
+    return orphaned

@@ -61,7 +61,7 @@ from .models import (
     RejectReason,
     Replacement,
 )
-from .orphan_detector import has_orphaned_variables
+from .orphan_detector import orphaned_variables
 from .parameters import fresh_parameter_name
 from .scope_analyzer import Scope, ScopeAnalyzer
 from .semantic_safety import (
@@ -846,8 +846,8 @@ class PairEvaluation(EngineState):
             return False
         body1 = body_without_docstring(func1.body)
         body2 = body_without_docstring(func2.body)
-        _, orphans1 = has_orphaned_variables(cast(List[ast.AST], body1), indices1)
-        _, orphans2 = has_orphaned_variables(cast(List[ast.AST], body2), indices2)
+        orphans1 = orphaned_variables(body1, indices1)
+        orphans2 = orphaned_variables(body2, indices2)
         orphans1 -= set(unified.ordered_return_variables[0])
         orphans2 -= set(unified.ordered_return_variables[1])
         if orphans1 or orphans2:

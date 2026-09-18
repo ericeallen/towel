@@ -63,7 +63,7 @@ from .assignment_analyzer import (
     _collect_block_binding_stats,
     _collect_bindings_and_reassignments,
 )
-from .progress import load_tqdm, quietly
+from .progress import DEFAULT_PROGRESS, ProgressMode, load_tqdm, quietly, wants_bar
 from .fixed_point import FixedPointDrivers
 from .materialize import Materialization
 from .annotation_wiring import HelperAnnotationWiring
@@ -142,7 +142,7 @@ class UnificationRefactorEngine(
         skip_trivial_helpers: bool = True,
         reuse_existing_functions: bool = True,
         annotate_helpers: bool = True,
-        type_inferrer: Optional[TypeOracle] = None,
+        type_oracle: Optional[TypeOracle] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
         file_finisher: Optional[Callable[[str, str], str]] = None,
         incremental_global_passes: bool = True,
@@ -182,9 +182,9 @@ class UnificationRefactorEngine(
                 its call sites agree on -- an annotated, never-rebound parameter
                 of the enclosing function, a literal's builtin type, the sites'
                 declared return type -- in code that already uses annotations
-                (default: True). Nothing is inferred unless ``type_inferrer``
+                (default: True). Nothing is inferred unless ``type_oracle``
                 is given.
-            type_inferrer: Asked, when a proposal is applied, for the types of
+            type_oracle: Asked, when a proposal is applied, for the types of
                 the argument expressions and returned values the copied
                 annotations could not name, for example ``MypyInferrer`` (see
                 ``towel.type_inference``). Used only where the sites declare
@@ -219,7 +219,7 @@ class UnificationRefactorEngine(
         self.skip_trivial_helpers = skip_trivial_helpers
         self.reuse_existing_functions = reuse_existing_functions
         self.annotate_helpers = annotate_helpers
-        self.type_inferrer = type_inferrer
+        self.type_oracle = type_oracle
         self.snippet_formatter = snippet_formatter
         self.file_finisher = file_finisher
         self.incremental_global_passes = incremental_global_passes
@@ -322,7 +322,7 @@ class UnificationRefactorEngine(
         recursive: bool = True,
         *,
         verbose: bool = False,
-        progress: str = "tqdm",
+        progress: ProgressMode = DEFAULT_PROGRESS,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
         """
@@ -472,7 +472,7 @@ class UnificationRefactorEngine(
         file_paths: List[str],
         *,
         verbose: bool = False,
-        progress: str = "tqdm",
+        progress: ProgressMode = DEFAULT_PROGRESS,
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
@@ -582,7 +582,7 @@ class UnificationRefactorEngine(
         class_infos: List[ClassInfo],
         *,
         verbose: bool,
-        progress: str,
+        progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         if not block_pairs:
             return []
@@ -982,7 +982,7 @@ class UnificationRefactorEngine(
         self,
         all_functions: Sequence[FunctionArtifact],
         *,
-        progress: str = "none",
+        progress: ProgressMode = DEFAULT_PROGRESS,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[CodeBlockPair]:
         """
@@ -1019,7 +1019,7 @@ class UnificationRefactorEngine(
         bucket_keys = [frozenset(buckets) for buckets in block_buckets]
 
         # Progress setup
-        use_tqdm = progress in ("tqdm", "auto")
+        use_tqdm = wants_bar(progress)
         tqdm_bar = None
         total_funcs = len(all_functions)
         total_func_pairs = (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
@@ -1036,7 +1036,7 @@ class UnificationRefactorEngine(
             else:
                 use_tqdm = False
 
-        use_inline = (not use_tqdm) and progress in ("tqdm", "auto") and total_func_pairs > 0
+        use_inline = (not use_tqdm) and wants_bar(progress) and total_func_pairs > 0
         last_pct = -1
         self._start_inline_status("Pairing blocks:", use_inline)
 

@@ -51,7 +51,7 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .unifier import Substitution
-from .progress import ProgressBarFactory
+from .progress import DEFAULT_PROGRESS, ProgressBarFactory, ProgressMode
 from .semantic_safety import ImportGraphCache
 
 
@@ -111,7 +111,7 @@ class EngineState:
         """The (start_line, end_line) of a contiguous block; provided by InsertionPoints."""
         raise NotImplementedError
 
-    type_inferrer: Optional[TypeOracle]
+    type_oracle: Optional[TypeOracle]
     """The project's type checker, when one is installed and wanted."""
 
     def _get_indent(self, line: str) -> str:
@@ -242,7 +242,7 @@ class EngineState:
         recursive: bool = True,
         *,
         verbose: bool = False,
-        progress: str = "tqdm",
+        progress: ProgressMode = DEFAULT_PROGRESS,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
         """Provided by the engine."""
@@ -253,7 +253,7 @@ class EngineState:
         file_paths: List[str],
         *,
         verbose: bool = False,
-        progress: str = "tqdm",
+        progress: ProgressMode = DEFAULT_PROGRESS,
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[RefactoringProposal]:
@@ -278,8 +278,8 @@ class EngineState:
         raise NotImplementedError
 
     def _resolve_progress_backend(
-        self, progress: str
-    ) -> Tuple[str, Optional[ProgressBarFactory], bool]:
+        self, progress: ProgressMode
+    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory], bool]:
         """Provided by FixedPointDrivers."""
         raise NotImplementedError
 

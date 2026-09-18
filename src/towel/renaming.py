@@ -15,7 +15,7 @@ import keyword
 from pathlib import Path
 import tokenize
 import unicodedata
-from typing import Iterable, Sequence, cast
+from typing import Iterable, Literal, Sequence, cast
 
 from .changes import ChangePlan
 from .unification.project_layout import ProjectLayout
@@ -115,10 +115,14 @@ class _Bindings(OwnScopeVisitor):
         visit_comprehension_result(self, node)
 
 
+ScopeKind = Literal["module", "function", "class", "comprehension"]
+"""The kinds of lexical scope the rename planner distinguishes."""
+
+
 @dataclass(frozen=True, eq=False)
 class _Scope:
     parent: _Scope | None
-    kind: str
+    kind: ScopeKind
     bindings: frozenset[str]
     globals: frozenset[str]
     nonlocals: frozenset[str]
@@ -126,7 +130,10 @@ class _Scope:
 
 
 def _scope(
-    parent: _Scope | None, kind: str, nodes: Iterable[ast.AST], args: ast.arguments | None = None
+    parent: _Scope | None,
+    kind: ScopeKind,
+    nodes: Iterable[ast.AST],
+    args: ast.arguments | None = None,
 ) -> _Scope:
     collector = _Bindings()
     for node in nodes:

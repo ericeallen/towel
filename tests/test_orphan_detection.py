@@ -8,9 +8,9 @@ are properly rejected.
 import unittest
 import ast
 from towel.unification.orphan_detector import (
-    get_bound_variables,
+    bound_names_in_block,
     get_used_variables,
-    has_orphaned_variables,
+    orphaned_variables,
 )
 
 
@@ -24,7 +24,7 @@ x = 10
 y = 20
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertEqual(bound, {"x", "y"})
 
     def test_get_bound_variables_for_loop(self):
@@ -34,7 +34,7 @@ for i in range(10):
     pass
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertIn("i", bound)
 
     def test_get_bound_variables_comprehension_excluded(self):
@@ -43,7 +43,7 @@ for i in range(10):
 result = [x for x in range(10)]
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         # 'result' is bound, but 'x' is local to the comprehension
         self.assertIn("result", bound)
         self.assertNotIn("x", bound)
@@ -75,8 +75,8 @@ def foo():
         body = func.body
 
         # Extract entire function body - no remaining code
-        has_orphans, orphans = has_orphaned_variables(body, (0, len(body) - 1))
-        self.assertFalse(has_orphans)
+        orphans = orphaned_variables(body, (0, len(body) - 1))
+        self.assertFalse(bool(orphans))
         self.assertEqual(orphans, set())
 
     def test_orphans_detected(self):
@@ -96,8 +96,8 @@ def foo():
 
         # Extract first 3 statements (lines that bind x, y, total)
         # But remaining code uses 'total'
-        has_orphans, orphans = has_orphaned_variables(body, (0, 2))
-        self.assertTrue(has_orphans)
+        orphans = orphaned_variables(body, (0, 2))
+        self.assertTrue(bool(orphans))
         self.assertIn("total", orphans)
 
     def test_no_orphans_variable_rebound(self):
@@ -116,8 +116,8 @@ def foo():
 
         # Extract first 3 statements
         # 'total' is used in remaining code BUT also rebound
-        has_orphans, orphans = has_orphaned_variables(body, (0, 2))
-        self.assertFalse(has_orphans)
+        orphans = orphaned_variables(body, (0, 2))
+        self.assertFalse(bool(orphans))
         # 'total' is rebound in remaining code, so it's not orphaned
 
     def test_orphans_multiple_variables(self):
@@ -138,8 +138,8 @@ def process():
 
         # Extract first 3 statements
         # Remaining code uses 'x' and 'result'
-        has_orphans, orphans = has_orphaned_variables(body, (0, 2))
-        self.assertTrue(has_orphans)
+        orphans = orphaned_variables(body, (0, 2))
+        self.assertTrue(bool(orphans))
         # Both 'x' and 'result' should be orphaned (bound in extracted, used in remaining)
         # But wait, 'result' is also BOUND in the remaining code (line 4)
         # So only 'x' should be orphaned
@@ -162,8 +162,8 @@ def process(data):
 
         # Extract first 3 statements
         # Remaining code uses 'data' (parameter) and 'total' (bound in extracted)
-        has_orphans, orphans = has_orphaned_variables(body, (0, 2))
-        self.assertTrue(has_orphans)
+        orphans = orphaned_variables(body, (0, 2))
+        self.assertTrue(bool(orphans))
         self.assertIn("total", orphans)
         # 'data' is a parameter, not bound in extracted block
 
@@ -174,7 +174,7 @@ x: int = 10
 y: str = "hello"
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertIn("x", bound)
         self.assertIn("y", bound)
 
@@ -186,7 +186,7 @@ async def fetch_data():
 x = 1
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertIn("fetch_data", bound)
         self.assertIn("x", bound)
 
@@ -198,7 +198,7 @@ class MyClass:
 x = 1
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertIn("MyClass", bound)
         self.assertIn("x", bound)
 
@@ -208,7 +208,7 @@ x = 1
 result = {x * 2 for x in range(10)}
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertIn("result", bound)
         self.assertNotIn("x", bound)
 
@@ -218,7 +218,7 @@ result = {x * 2 for x in range(10)}
 result = (x * 2 for x in range(10))
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertIn("result", bound)
         self.assertNotIn("x", bound)
 
@@ -228,7 +228,7 @@ result = (x * 2 for x in range(10))
 a, *rest, b = [1, 2, 3, 4, 5]
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertIn("a", bound)
         self.assertIn("rest", bound)
         self.assertIn("b", bound)
@@ -240,7 +240,7 @@ x = 10
 x += 5
 """
         tree = ast.parse(code)
-        bound = get_bound_variables(tree.body)
+        bound = bound_names_in_block(tree.body)
         self.assertIn("x", bound)
 
 

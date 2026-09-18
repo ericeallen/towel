@@ -101,7 +101,7 @@ class HelperAnnotationWiring(EngineState):
         host_source = self._read_source(proposal.file_path)
         bare_ok = self.placeable_after(host_source) if module_level and host_source else set()
         host = self._parsed_host(proposal.file_path)
-        if self.type_inferrer is None:
+        if self.type_oracle is None:
             respelled = respell_bare(proposal.extracted_function, host, bare_ok)
             completed = complete_with_any(respelled, host)
             proposal.extracted_function = completed.helper
@@ -139,7 +139,7 @@ class HelperAnnotationWiring(EngineState):
             sites,
             proposal.file_path,
             proposal.return_variables,
-            self.type_inferrer,
+            self.type_oracle,
             bare_ok,
         )
         completed = complete_with_any(respell_bare(inferred.helper, host, bare_ok), host)
@@ -193,7 +193,7 @@ class HelperAnnotationWiring(EngineState):
 
     def _checks_generated_types(self, proposal: RefactoringProposal) -> bool:
         """Whether the generated code is to be type-checked: a checker exists and the helper is annotated."""
-        if self.type_inferrer is None or proposal.reused_function is not None:
+        if self.type_oracle is None or proposal.reused_function is not None:
             return False
         helper = proposal.extracted_function
         return helper.returns is not None or any(
@@ -234,13 +234,13 @@ class HelperAnnotationWiring(EngineState):
         Messages are compared without positions, as multisets, so errors the
         project already has do not count and moved lines do not confuse it.
         """
-        assert self.type_inferrer is not None
+        assert self.type_oracle is not None
         for path, after_source in modified_files.items():
             before_source = self._read_source(path)
             if before_source is None or before_source == after_source:
                 continue
-            before = Counter(self.type_inferrer.check(path, before_source))
-            after = Counter(self.type_inferrer.check(path, after_source))
+            before = Counter(self.type_oracle.check(path, before_source))
+            after = Counter(self.type_oracle.check(path, after_source))
             new = after - before
             if new:
                 for message, count in new.items():

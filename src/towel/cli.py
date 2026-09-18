@@ -22,6 +22,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 from towel.changes import apply_changes, recover
 from towel.diagnostics import Settings, configure_stderr_logging
 from towel.unification.models import ParameterKind
+from towel.unification.progress import DEFAULT_PROGRESS, normalize_progress
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -187,7 +188,7 @@ Examples:
     parser.add_argument(
         "--progress",
         choices=["auto", "tqdm", "none", "detail"],
-        default="tqdm",
+        default=DEFAULT_PROGRESS,
         help="Progress display mode: 'tqdm' shows bars, 'auto' falls back if tqdm unavailable, "
         "'none' disables output, 'detail' prints per-phase summaries.",
     )
@@ -423,7 +424,7 @@ def _flag(args: argparse.Namespace, name: str) -> bool:
     return not getattr(args, f"no_{name}", False)
 
 
-def _type_inferrer(project_path: "Path") -> Optional["TypeOracle"]:
+def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
     """The checker the project configures (mypy, pyright, or both), or None with a note."""
     from towel.type_inference import type_oracle_for_project
 
@@ -525,7 +526,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         ),
         file_finisher=(_import_sorter(Path(input_path)) if _flag(args, "format") else None),
         annotate_helpers=_flag(args, "types"),
-        type_inferrer=(_type_inferrer(Path(input_path)) if _flag(args, "types") else None),
+        type_oracle=(_type_oracle(Path(input_path)) if _flag(args, "types") else None),
     )
 
     # Use fixed-point iteration
@@ -566,7 +567,7 @@ def _run_dry(args: argparse.Namespace) -> None:
             output_path,
             output_path,
             max_iterations=getattr(args, "max_refactorings", getattr(args, "max_iterations", 0)),
-            progress=args.progress,
+            progress=normalize_progress(args.progress),
         )
 
         if results:

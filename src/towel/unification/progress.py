@@ -22,7 +22,31 @@ never change an analysis outcome, so every call into a bar goes through
 """
 
 import importlib
-from typing import Any, Callable, Iterator, Mapping, Optional, Protocol, cast
+from typing import Any, Callable, Iterator, Literal, Mapping, Optional, Protocol, cast
+
+ProgressMode = Literal["auto", "tqdm", "none", "detail"]
+"""How a run reports progress: tqdm bars, tqdm with an inline fallback, nothing, or per-phase detail."""
+
+DEFAULT_PROGRESS: ProgressMode = "tqdm"
+"""The one default every entry point shares; the command line's ``--progress`` uses it too."""
+
+
+_MODES: Mapping[str, ProgressMode] = {
+    "auto": "auto",
+    "tqdm": "tqdm",
+    "none": "none",
+    "detail": "detail",
+}
+
+
+def normalize_progress(value: str) -> ProgressMode:
+    """The progress mode ``value`` names, or the default for anything else."""
+    return _MODES.get(value, DEFAULT_PROGRESS)
+
+
+def wants_bar(mode: ProgressMode) -> bool:
+    """Whether a mode shows a progress bar (tqdm, or the inline fallback under ``auto``)."""
+    return mode in ("auto", "tqdm")
 
 
 class ProgressBar(Protocol):  # pragma: no cover - protocol bodies are never run

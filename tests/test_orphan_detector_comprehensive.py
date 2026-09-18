@@ -10,9 +10,9 @@ import unittest
 import ast
 from towel.unification.orphan_detector import (
     _apply_visitor_to_nodes,
-    get_bound_variables,
+    bound_names_in_block,
     get_used_variables,
-    has_orphaned_variables,
+    orphaned_variables,
 )
 
 
@@ -77,14 +77,14 @@ z = 3
 
 
 class TestGetBoundVariablesBasic(unittest.TestCase):
-    """Test get_bound_variables with basic binding types."""
+    """Test bound_names_in_block with basic binding types."""
 
     def test_simple_assignment(self):
         """Test simple assignment binding."""
         code = "x = 1"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("x", result, "Should find x as bound variable")
         self.assertEqual(len(result), 1, "Should have exactly one binding")
@@ -98,7 +98,7 @@ z = 3
 """
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertEqual(result, {"x", "y", "z"}, "Should find all bound variables")
 
@@ -107,7 +107,7 @@ z = 3
         code = "x = y = 1"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("x", result, "Should find x")
         self.assertIn("y", result, "Should find y")
@@ -117,7 +117,7 @@ z = 3
         code = "x, y = (1, 2)"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertEqual(result, {"x", "y"}, "Should find all unpacked variables")
 
@@ -126,7 +126,7 @@ z = 3
         code = "x, (y, z) = (1, (2, 3))"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertEqual(result, {"x", "y", "z"}, "Should find all nested variables")
 
@@ -135,13 +135,13 @@ z = 3
         code = "x, *y, z = [1, 2, 3, 4, 5]"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertEqual(result, {"x", "y", "z"}, "Should find all variables including starred")
 
 
 class TestGetBoundVariablesAdvanced(unittest.TestCase):
-    """Test get_bound_variables with advanced binding types."""
+    """Test bound_names_in_block with advanced binding types."""
 
     def test_for_loop_binding(self):
         """Test for loop target binding."""
@@ -151,7 +151,7 @@ for i in range(10):
 """
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("i", result, "Should find loop variable")
 
@@ -163,7 +163,7 @@ for x, y in pairs:
 """
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertEqual(result, {"x", "y"}, "Should find all loop variables")
 
@@ -175,7 +175,7 @@ def foo():
 """
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("foo", result, "Should find function name")
 
@@ -187,7 +187,7 @@ async def foo():
 """
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("foo", result, "Should find async function name")
 
@@ -199,7 +199,7 @@ class MyClass:
 """
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("MyClass", result, "Should find class name")
 
@@ -208,7 +208,7 @@ class MyClass:
         code = "x: int = 1"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("x", result, "Should find annotated variable")
 
@@ -217,7 +217,7 @@ class MyClass:
         code = "x += 1"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("x", result, "Should find augmented assignment target")
 
@@ -230,7 +230,7 @@ class TestGetBoundVariablesComprehensions(unittest.TestCase):
         code = "result = [x * 2 for x in range(10)]"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("result", result, "Should find result variable")
         self.assertNotIn("x", result, "Should NOT find comprehension variable")
@@ -240,7 +240,7 @@ class TestGetBoundVariablesComprehensions(unittest.TestCase):
         code = "result = {x * 2 for x in range(10)}"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("result", result)
         self.assertNotIn("x", result, "Should NOT find set comp variable")
@@ -250,7 +250,7 @@ class TestGetBoundVariablesComprehensions(unittest.TestCase):
         code = "result = {x: x*2 for x in range(10)}"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("result", result)
         self.assertNotIn("x", result, "Should NOT find dict comp variable")
@@ -260,7 +260,7 @@ class TestGetBoundVariablesComprehensions(unittest.TestCase):
         code = "result = (x * 2 for x in range(10))"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("result", result)
         self.assertNotIn("x", result, "Should NOT find generator variable")
@@ -274,7 +274,7 @@ class TestGetBoundVariablesIgnoresNonBindings(unittest.TestCase):
         code = "arr[0] = 1"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertNotIn("arr", result, "Subscript target should not create binding")
         self.assertEqual(len(result), 0, "Should have no bindings")
@@ -284,7 +284,7 @@ class TestGetBoundVariablesIgnoresNonBindings(unittest.TestCase):
         code = "obj.attr = 1"
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertNotIn("obj", result, "Attribute target should not create binding")
         self.assertEqual(len(result), 0, "Should have no bindings")
@@ -297,7 +297,7 @@ def outer():
 """
         tree = ast.parse(code)
 
-        result = get_bound_variables(tree.body)
+        result = bound_names_in_block(tree.body)
 
         self.assertIn("outer", result, "Should find outer function name")
         self.assertNotIn("x", result, "Should NOT traverse into nested function")
@@ -362,7 +362,7 @@ class TestGetUsedVariables(unittest.TestCase):
 
 
 class TestHasOrphanedVariablesBasic(unittest.TestCase):
-    """Test has_orphaned_variables basic functionality."""
+    """Test orphaned_variables basic functionality."""
 
     def test_no_orphans_when_no_remaining_code(self):
         """Test no orphans when extracting to end of function."""
@@ -374,7 +374,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 1))
+        orphaned = orphaned_variables(func.body, (0, 1))
+        has_orphans = bool(orphaned)
 
         self.assertFalse(has_orphans, "Should have no orphans when no remaining code")
         self.assertEqual(len(orphaned), 0, "Orphaned set should be empty")
@@ -389,7 +390,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans, "Should detect orphan")
         self.assertIn("x", orphaned, "x should be orphaned")
@@ -405,7 +407,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         self.assertFalse(has_orphans, "Should not have orphans when rebound")
         self.assertNotIn("x", orphaned, "x should not be orphaned")
@@ -420,13 +423,14 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         self.assertFalse(has_orphans, "Should not have orphans when not used")
 
 
 class TestHasOrphanedVariablesAdvanced(unittest.TestCase):
-    """Test has_orphaned_variables with advanced scenarios."""
+    """Test orphaned_variables with advanced scenarios."""
 
     def test_multiple_orphans(self):
         """Test detection of multiple orphaned variables."""
@@ -439,7 +443,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 1))
+        orphaned = orphaned_variables(func.body, (0, 1))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans)
         self.assertIn("x", orphaned, "x should be orphaned")
@@ -457,7 +462,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 1))
+        orphaned = orphaned_variables(func.body, (0, 1))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans, "Should detect orphan")
         self.assertNotIn("x", orphaned, "x is rebound, not orphaned")
@@ -474,7 +480,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans, "Loop variable should be orphaned")
         self.assertIn("i", orphaned)
@@ -490,7 +497,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans, "Function should be orphaned")
         self.assertIn("helper", orphaned)
@@ -508,14 +516,15 @@ def foo():
         func = tree.body[0]
 
         # Extract first 3 lines (indices 0, 1, 2)
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 2))
+        orphaned = orphaned_variables(func.body, (0, 2))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans)
         self.assertEqual(orphaned, {"x", "y", "z"}, "All three should be orphaned")
 
 
 class TestHasOrphanedVariablesEdgeCases(unittest.TestCase):
-    """Test edge cases for has_orphaned_variables."""
+    """Test edge cases for orphaned_variables."""
 
     def test_empty_extracted_block(self):
         """Test with empty extracted block (single statement)."""
@@ -526,7 +535,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         self.assertFalse(has_orphans, "Single statement with no remaining should have no orphans")
 
@@ -540,7 +550,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans)
         self.assertIn("x", orphaned, "x used multiple times should be orphaned")
@@ -555,7 +566,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         # Augmented assignment both uses and rebinds
         # The current implementation treats it as a rebinding
@@ -571,7 +583,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 0))
+        orphaned = orphaned_variables(func.body, (0, 0))
+        has_orphans = bool(orphaned)
 
         self.assertFalse(has_orphans, "No bindings means no orphans")
 
@@ -593,7 +606,8 @@ def process_data():
         func = tree.body[0]
 
         # Extract middle operations (lines 1-2: cleaned and transformed)
-        has_orphans, orphaned = has_orphaned_variables(func.body, (1, 2))
+        orphaned = orphaned_variables(func.body, (1, 2))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans, "Should detect orphans")
         self.assertIn("transformed", orphaned, "transformed should be orphaned")
@@ -611,7 +625,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (1, 1))
+        orphaned = orphaned_variables(func.body, (1, 1))
+        has_orphans = bool(orphaned)
 
         self.assertFalse(has_orphans, "Independent code should have no orphans")
 
@@ -627,7 +642,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 2))
+        orphaned = orphaned_variables(func.body, (0, 2))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans)
         self.assertEqual(orphaned, {"a", "b", "c"}, "All should be orphaned")
@@ -646,7 +662,8 @@ def foo():
         tree = ast.parse(code)
         func = tree.body[0]
 
-        has_orphans, orphaned = has_orphaned_variables(func.body, (0, 2))
+        orphaned = orphaned_variables(func.body, (0, 2))
+        has_orphans = bool(orphaned)
 
         self.assertTrue(has_orphans)
         self.assertIn("x", orphaned, "Variable should be orphaned")
