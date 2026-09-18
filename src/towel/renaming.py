@@ -621,208 +621,289 @@ _GENERATED_HELPER = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
 def _plan_module(
     module: _Module, selected: dict[tuple[str, str], str], modules: dict[str, _Module]
 ) -> _Edits:
-    edits = _Edits(module)
-    scopes = module.scopes
-    parents = {
-        child: parent for parent in ast.walk(module.tree) for child in ast.iter_child_nodes(parent)
-    }
-    imports: dict[tuple[_Scope, str], str] = {}
-    local_renames = {old: new for (name, old), new in selected.items() if name == module.name}
-    package = module.name if module.path.name == "__init__.py" else module.name.rpartition(".")[0]
+    return _ModulePlanner(module, selected, modules).plan()
 
-    def record_import(scope: _Scope, local: str, origin: str) -> None:
+
+_DYNAMIC_NAMESPACE_NAMES = frozenset({"globals", "locals", "vars", "eval", "exec"})
+_DYNAMIC_ATTRIBUTE_CALLS = frozenset({"getattr", "setattr", "hasattr", "delattr"})
+
+
+class _ModulePlanner:
+    """The rename edits one module needs, and every reason it cannot be renamed safely.
+
+    Planning runs in three passes over the module: the imports, which decide
+    what each local alias refers to; the alias bindings, which must be plain
+    module-level names; and every other node, where references to renamed
+    helpers are edited and each construct a static rename cannot follow is
+    rejected. A rejection raises ValueError naming the module.
+    """
+
+    def __init__(
+        self, module: _Module, selected: dict[tuple[str, str], str], modules: dict[str, _Module]
+    ) -> None:
+        self.module = module
+        self.selected = selected
+        self.modules = modules
+        self.edits = _Edits(module)
+        self.scopes = module.scopes
+        self.parents = {
+            child: parent
+            for parent in ast.walk(module.tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        # What each module alias, per binding scope, refers to.
+        self.imports: dict[tuple[_Scope, str], str] = {}
+        # Helpers defined in this module that are being renamed.
+        self.local_renames = {
+            old: new for (name, old), new in selected.items() if name == module.name
+        }
+        self.package = (
+            module.name if module.path.name == "__init__.py" else module.name.rpartition(".")[0]
+        )
+
+    def plan(self) -> _Edits:
+        for node in ast.walk(self.module.tree):
+            if isinstance(node, ast.Import):
+                self._plan_import(node)
+            elif isinstance(node, ast.ImportFrom):
+                self._plan_import_from(node)
+        self._check_alias_bindings()
+        for node in ast.walk(self.module.tree):
+            self._plan_node(node)
+        return self.edits
+
+    # -- imports -------------------------------------------------------------
+
+    def _record_import(self, scope: _Scope, local: str, origin: str) -> None:
         key = (_resolve(scope, local), local)
-        previous = imports.get(key)
+        previous = self.imports.get(key)
         if (
             previous is not None
             and previous != origin
             and any(
                 name == candidate or name.startswith(candidate + ".")
-                for name, _ in selected
+                for name, _ in self.selected
                 for candidate in (previous, origin)
             )
         ):
             raise ValueError(
-                f"Conflicting module aliases prevent safe rename: {module.path}:{local}"
+                f"Conflicting module aliases prevent safe rename: {self.module.path}:{local}"
             )
-        imports[key] = origin
+        self.imports[key] = origin
 
-    for node in ast.walk(module.tree):
-        if not isinstance(node, (ast.Import, ast.ImportFrom)):
-            continue
-        scope = scopes.nodes[node]
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                local = alias.asname or alias.name.split(".")[0]
-                if scope is scopes.root and local in local_renames:
-                    raise ValueError(
-                        f"Imported binding redefines selected helper: {module.path}:{local}"
-                    )
-                record_import(
-                    scope, local, alias.name if alias.asname else alias.name.split(".")[0]
+    def _plan_import(self, node: ast.Import) -> None:
+        scope = self.scopes.nodes[node]
+        for alias in node.names:
+            local = alias.asname or alias.name.split(".")[0]
+            if scope is self.scopes.root and local in self.local_renames:
+                raise ValueError(
+                    f"Imported binding redefines selected helper: {self.module.path}:{local}"
                 )
-            continue
-        if node.level:
-            parts = package.split(".") if package else []
-            if node.level > len(parts):
-                raise ValueError(f"Unresolved relative import in {module.path}")
-            origin = ".".join(
-                parts[: len(parts) - node.level + 1] + ([node.module] if node.module else [])
+            self._record_import(
+                scope, local, alias.name if alias.asname else alias.name.split(".")[0]
             )
-        else:
-            origin = node.module or ""
+
+    def _import_origin(self, node: ast.ImportFrom) -> str:
+        if not node.level:
+            return node.module or ""
+        parts = self.package.split(".") if self.package else []
+        if node.level > len(parts):
+            raise ValueError(f"Unresolved relative import in {self.module.path}")
+        return ".".join(
+            parts[: len(parts) - node.level + 1] + ([node.module] if node.module else [])
+        )
+
+    def _plan_import_from(self, node: ast.ImportFrom) -> None:
+        scope = self.scopes.nodes[node]
+        origin = self._import_origin(node)
         if any(alias.name == "*" for alias in node.names) and any(
-            name == origin for name, _ in selected
+            name == origin for name, _ in self.selected
         ):
-            raise ValueError(f"Star import prevents safe helper rename: {module.path}")
+            raise ValueError(f"Star import prevents safe helper rename: {self.module.path}")
         for alias in node.names:
             local = alias.asname or alias.name
             if (
-                scope is scopes.root
-                and local in local_renames
-                and selected.get((origin, alias.name)) != local_renames[local]
+                scope is self.scopes.root
+                and local in self.local_renames
+                and self.selected.get((origin, alias.name)) != self.local_renames[local]
             ):
                 raise ValueError(
-                    f"Imported binding redefines selected helper: {module.path}:{local}"
+                    f"Imported binding redefines selected helper: {self.module.path}:{local}"
                 )
-            renamed = selected.get((origin, alias.name))
+            renamed = self.selected.get((origin, alias.name))
             if renamed is not None:
-                if selected.get((module.name, local)) == renamed and alias.asname is None:
+                if self.selected.get((self.module.name, local)) == renamed and alias.asname is None:
                     # A generated binding selected by the closure: rename the
                     # import and, through local_renames, every reference here.
-                    if renamed in module.scopes.root.bindings:
+                    if renamed in self.module.scopes.root.bindings:
                         raise ValueError(
-                            f"Rename would collide with existing identifier {renamed} in {module.path}"
+                            f"Rename would collide with existing identifier {renamed} "
+                            f"in {self.module.path}"
                         )
-                    edits.node(alias, renamed)
+                    self.edits.node(alias, renamed)
                 else:
                     # Preserve an importing module's own binding and re-export API.
-                    edits.node(alias, f"{renamed} as {local}")
+                    self.edits.node(alias, f"{renamed} as {local}")
             imported_module = f"{origin}.{alias.name}" if origin else alias.name
-            if imported_module in modules:
-                record_import(scope, local, imported_module)
+            if imported_module in self.modules:
+                self._record_import(scope, local, imported_module)
 
-    def referenced_module(node: ast.AST) -> str | None:
+    def _referenced_module(self, node: ast.AST) -> str | None:
+        """The module a name or dotted attribute chain refers to, through the imports."""
         if isinstance(node, ast.Name):
-            return imports.get((_resolve(scopes.nodes[node], node.id), node.id))
+            return self.imports.get((_resolve(self.scopes.nodes[node], node.id), node.id))
         if isinstance(node, ast.Attribute):
-            parent_module = referenced_module(node.value)
+            parent_module = self._referenced_module(node.value)
             return f"{parent_module}.{node.attr}" if parent_module else None
         return None
 
-    def has_renamed_members(name: str) -> bool:
+    def _has_renamed_members(self, name: str) -> bool:
+        """Whether module ``name``, or a module inside it, has a helper being renamed."""
         return any(
-            candidate == name or candidate.startswith(name + ".") for candidate, _ in selected
+            candidate == name or candidate.startswith(name + ".") for candidate, _ in self.selected
         )
 
-    for (binding_scope, local), imported_module in imports.items():
-        if has_renamed_members(imported_module) and (
-            binding_scope.kind == "class" or local in binding_scope.parameters
-        ):
-            raise ValueError(f"Ambiguous module alias binding: {module.path}:{local}")
+    def _check_alias_bindings(self) -> None:
+        for (binding_scope, local), imported_module in self.imports.items():
+            if self._has_renamed_members(imported_module) and (
+                binding_scope.kind == "class" or local in binding_scope.parameters
+            ):
+                raise ValueError(f"Ambiguous module alias binding: {self.module.path}:{local}")
 
-    for node in ast.walk(module.tree):
+    # -- every other node ----------------------------------------------------
+
+    def _plan_node(self, node: ast.AST) -> None:
+        """Edit or reject one node; the checks run in a fixed order, first rejection wins."""
         if getattr(node, "type_params", ()):
             raise ValueError(
-                f"Generic parameter scopes are not supported by helper renaming: {module.path}"
+                f"Generic parameter scopes are not supported by helper renaming: "
+                f"{self.module.path}"
             )
         if isinstance(node, (ast.Import, ast.ImportFrom, ast.alias)):
-            continue
+            return
+        self._plan_definition(node)
+        if isinstance(node, ast.Name):
+            self._plan_name(node)
+        if isinstance(node, ast.Global):
+            self._plan_global(node)
+        if isinstance(node, ast.Attribute):
+            self._plan_attribute(node)
+        self._check_module_escape(node)
+        if isinstance(node, ast.Name):
+            self._check_dynamic_namespace(node)
+            self._check_alias_rebinding(node)
+        self._check_string_annotations(node)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            self._check_dynamic_lookup(node)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            self._check_string_exports(node)
+
+    def _plan_definition(self, node: ast.AST) -> None:
+        """Rename a module-level helper definition; reject any other binding of its name."""
         if (
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and scopes.nodes[node] is scopes.root
-            and node.name in local_renames
+            and self.scopes.nodes[node] is self.scopes.root
+            and node.name in self.local_renames
         ):
-            edits.identifier(node, node.name, local_renames[node.name])
+            self.edits.identifier(node, node.name, self.local_renames[node.name])
         binding_name = None
         if isinstance(node, (ast.ClassDef, ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
             binding_name = node.name
         elif isinstance(node, ast.MatchMapping):
             binding_name = node.rest
         if (
-            binding_name in local_renames
-            and _resolve(scopes.nodes[node], binding_name) is scopes.root
+            binding_name in self.local_renames
+            and _resolve(self.scopes.nodes[node], binding_name) is self.scopes.root
         ):
             raise ValueError(
-                f"Non-function binding redefines selected helper: {module.path}:{binding_name}"
+                f"Non-function binding redefines selected helper: "
+                f"{self.module.path}:{binding_name}"
             )
-        if isinstance(node, ast.Name):
-            scope = scopes.nodes[node]
-            if node.id in local_renames:
-                if (
-                    scope.kind == "class"
-                    and node.id in scope.bindings
-                    and isinstance(node.ctx, ast.Load)
-                ):
-                    raise ValueError(f"Ambiguous class namespace lookup: {module.path}:{node.id}")
-                if _resolve(scope, node.id) is scopes.root:
-                    new = local_renames[node.id]
-                    if _private_in_class(scope, node.id) or _private_in_class(scope, new):
-                        raise ValueError(
-                            f"Class-private name mangling prevents safe rename: {module.path}"
-                        )
-                    if _resolve(scope, new) is not scopes.root:
-                        raise ValueError(
-                            f"Rename would capture local identifier {new} in {module.path}"
-                        )
-                    edits.node(node, new)
-        if isinstance(node, ast.Global):
-            for old, new in local_renames.items():
-                if old in node.names:
-                    if new in scopes.nodes[node].bindings:
-                        raise ValueError(
-                            f"Rename conflicts with global declaration: {module.path}:{new}"
-                        )
-                    edits.identifier(node, old, new)
-        if isinstance(node, ast.Attribute):
-            attribute_origin = referenced_module(node.value)
-            if attribute_origin is not None and (attribute_origin, node.attr) in selected:
-                if not isinstance(node.ctx, ast.Load):
+
+    def _plan_name(self, node: ast.Name) -> None:
+        scope = self.scopes.nodes[node]
+        if node.id not in self.local_renames:
+            return
+        if scope.kind == "class" and node.id in scope.bindings and isinstance(node.ctx, ast.Load):
+            raise ValueError(f"Ambiguous class namespace lookup: {self.module.path}:{node.id}")
+        if _resolve(scope, node.id) is not self.scopes.root:
+            return
+        new = self.local_renames[node.id]
+        if _private_in_class(scope, node.id) or _private_in_class(scope, new):
+            raise ValueError(
+                f"Class-private name mangling prevents safe rename: {self.module.path}"
+            )
+        if _resolve(scope, new) is not self.scopes.root:
+            raise ValueError(f"Rename would capture local identifier {new} in {self.module.path}")
+        self.edits.node(node, new)
+
+    def _plan_global(self, node: ast.Global) -> None:
+        for old, new in self.local_renames.items():
+            if old in node.names:
+                if new in self.scopes.nodes[node].bindings:
                     raise ValueError(
-                        f"Mutation of imported helper requires manual rename: {module.path}"
+                        f"Rename conflicts with global declaration: {self.module.path}:{new}"
                     )
-                assert node.end_lineno is not None and node.end_col_offset is not None
-                new = selected[(attribute_origin, node.attr)]
-                if _private_in_class(scopes.nodes[node], node.attr) or _private_in_class(
-                    scopes.nodes[node], new
-                ):
-                    raise ValueError(
-                        f"Class-private attribute mangling prevents safe rename: {module.path}"
-                    )
-                edits.add(
-                    node.end_lineno,
-                    node.end_col_offset - len(node.attr.encode("utf-8")),
-                    node.end_lineno,
-                    node.end_col_offset,
-                    new,
-                )
-        expression_origin = referenced_module(node)
-        if expression_origin is not None and has_renamed_members(expression_origin):
-            parent = parents.get(node)
-            if not isinstance(parent, ast.Attribute) or parent.value is not node:
-                raise ValueError(
-                    f"Module object escapes static rename analysis: {module.path}:{expression_origin}"
-                )
-        if (
-            isinstance(node, ast.Name)
-            and local_renames
-            and node.id in {"globals", "locals", "vars", "eval", "exec"}
-        ):
-            # A bare reference to one of these names can alias the builtin
-            # (``lookup = globals``) and later read the module namespace by
-            # string, which a rename would silently break. Only flag it when the
-            # name actually resolves to the builtin: a local variable or
-            # parameter that merely shadows the spelling (``vars = set()``) does
-            # no dynamic namespace access.
-            resolved = _resolve(scopes.nodes[node], node.id)
-            if resolved is scopes.root and node.id not in resolved.bindings:
-                raise ValueError(f"Dynamic namespace access prevents safe rename: {module.path}")
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            imported = imports.get((_resolve(scopes.nodes[node], node.id), node.id))
-            if imported is not None and has_renamed_members(imported):
-                raise ValueError(
-                    f"Rebound module alias prevents safe rename: {module.path}:{node.id}"
-                )
+                self.edits.identifier(node, old, new)
+
+    def _plan_attribute(self, node: ast.Attribute) -> None:
+        attribute_origin = self._referenced_module(node.value)
+        if attribute_origin is None or (attribute_origin, node.attr) not in self.selected:
+            return
+        if not isinstance(node.ctx, ast.Load):
+            raise ValueError(
+                f"Mutation of imported helper requires manual rename: {self.module.path}"
+            )
+        assert node.end_lineno is not None and node.end_col_offset is not None
+        new = self.selected[(attribute_origin, node.attr)]
+        scope = self.scopes.nodes[node]
+        if _private_in_class(scope, node.attr) or _private_in_class(scope, new):
+            raise ValueError(
+                f"Class-private attribute mangling prevents safe rename: {self.module.path}"
+            )
+        self.edits.add(
+            node.end_lineno,
+            node.end_col_offset - len(node.attr.encode("utf-8")),
+            node.end_lineno,
+            node.end_col_offset,
+            new,
+        )
+
+    def _check_module_escape(self, node: ast.AST) -> None:
+        """A renamed module used other than as the object of an attribute access escapes."""
+        expression_origin = self._referenced_module(node)
+        if expression_origin is None or not self._has_renamed_members(expression_origin):
+            return
+        parent = self.parents.get(node)
+        if not isinstance(parent, ast.Attribute) or parent.value is not node:
+            raise ValueError(
+                f"Module object escapes static rename analysis: "
+                f"{self.module.path}:{expression_origin}"
+            )
+
+    def _check_dynamic_namespace(self, node: ast.Name) -> None:
+        if not self.local_renames or node.id not in _DYNAMIC_NAMESPACE_NAMES:
+            return
+        # A bare reference to one of these names can alias the builtin
+        # (``lookup = globals``) and later read the module namespace by
+        # string, which a rename would silently break. Only flag it when the
+        # name actually resolves to the builtin: a local variable or
+        # parameter that merely shadows the spelling (``vars = set()``) does
+        # no dynamic namespace access.
+        resolved = _resolve(self.scopes.nodes[node], node.id)
+        if resolved is self.scopes.root and node.id not in resolved.bindings:
+            raise ValueError(f"Dynamic namespace access prevents safe rename: {self.module.path}")
+
+    def _check_alias_rebinding(self, node: ast.Name) -> None:
+        if not isinstance(node.ctx, (ast.Store, ast.Del)):
+            return
+        imported = self.imports.get((_resolve(self.scopes.nodes[node], node.id), node.id))
+        if imported is not None and self._has_renamed_members(imported):
+            raise ValueError(
+                f"Rebound module alias prevents safe rename: {self.module.path}:{node.id}"
+            )
+
+    def _check_string_annotations(self, node: ast.AST) -> None:
         annotations: list[ast.AST] = []
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             annotations.extend(
@@ -842,29 +923,31 @@ def _plan_module(
         if any(
             isinstance(part, ast.Constant)
             and isinstance(part.value, str)
-            and any(old in part.value for old in local_renames)
+            and any(old in part.value for old in self.local_renames)
             for annotation in annotations
             for part in ast.walk(annotation)
         ):
-            raise ValueError(f"String annotation requires manual rename: {module.path}")
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if local_renames and is_namespace_access_call(node):
-                raise ValueError(f"Dynamic namespace access prevents safe rename: {module.path}")
-            if node.func.id in {"getattr", "setattr", "hasattr", "delattr"} and any(
-                isinstance(argument, ast.Constant) and argument.value in local_renames
-                for argument in node.args
-                if isinstance(argument, ast.Constant) and isinstance(argument.value, str)
-            ):
-                raise ValueError(f"Dynamic name lookup prevents safe rename: {module.path}")
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(
-                isinstance(target, ast.Name) and target.id == "__all__" for target in targets
-            ) and any(
-                isinstance(value, ast.Constant)
-                and isinstance(value.value, str)
-                and value.value in local_renames
-                for value in ast.walk(node)
-            ):
-                raise ValueError(f"Explicit string exports require manual rename: {module.path}")
-    return edits
+            raise ValueError(f"String annotation requires manual rename: {self.module.path}")
+
+    def _check_dynamic_lookup(self, node: ast.Call) -> None:
+        assert isinstance(node.func, ast.Name)
+        if self.local_renames and is_namespace_access_call(node):
+            raise ValueError(f"Dynamic namespace access prevents safe rename: {self.module.path}")
+        if node.func.id in _DYNAMIC_ATTRIBUTE_CALLS and any(
+            isinstance(argument, ast.Constant) and argument.value in self.local_renames
+            for argument in node.args
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str)
+        ):
+            raise ValueError(f"Dynamic name lookup prevents safe rename: {self.module.path}")
+
+    def _check_string_exports(self, node: ast.Assign | ast.AnnAssign) -> None:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if any(
+            isinstance(target, ast.Name) and target.id == "__all__" for target in targets
+        ) and any(
+            isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and value.value in self.local_renames
+            for value in ast.walk(node)
+        ):
+            raise ValueError(f"Explicit string exports require manual rename: {self.module.path}")
