@@ -484,7 +484,7 @@ Measured on Towel's own source (16,000 annotated lines, fixed point, one
 core, September 2026): 47.8 s under 1.618, 33.9 s now with `--no-types
 --no-format`, 41.8 s with the defaults, the difference being the type check
 of each applied refactoring; Sphinx in the ecosystem check went from 2513 s
-to 1938 s. Function calls on Towel's source fell from 464 million to 246
+to 2058 s. Function calls on Towel's source fell from 464 million to 246
 million. The tables in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance)
 give the per-project figures.
 

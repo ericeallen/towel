@@ -1,12 +1,247 @@
-# Production readiness — 1.414
+# Production readiness
 
 **Disposition: ready for production use as a reviewed refactoring tool.**
 Every accepted proposal is checked by a syntactic instantiation invariant,
 arguments with possible effects are evaluated inside the helper at their
-original position, and a standing 91-project ecosystem check passes every
-project's own test suite before and after transformation, apart from three
-documented frame-sensitive or source-observing cases. This supersedes
-the alpha disposition in [OPEN_SOURCE_AUDIT.md](OPEN_SOURCE_AUDIT.md).
+original position, and a standing 141-project ecosystem check passes every
+project's own test suite before and after transformation, apart from 4
+documented frame-, line-, or source-sensitive cases. This supersedes
+the alpha disposition in [OPEN_SOURCE_AUDIT.md](OPEN_SOURCE_AUDIT.md). The
+first section below records the current corpus and run; the sections after
+it are the 1.414 report, kept as the record of how the corpus was built and
+what it found.
+
+## The 141-project corpus (September 17–18, 2026)
+
+On September 17, 2026 the corpus grew from 91 to 141 projects: 47 more
+libraries (mistune, blinker, pycparser, invoke, python-fire, bottle,
+waitress, gunicorn, wsproto, hpack, hyperframe, h2, pyupgrade,
+python-dotenv, backoff, schedule, traitlets, soupsieve, beautifulsoup4,
+mkdocs, chardet, pyasn1, ecdsa, rsa, ply, inflect, unidecode, texttable,
+docopt-ng, yapf, mccabe, flake8, jsonpointer, rfc3986, uritemplate,
+tomli-w, wheel, installer, pyproject-hooks, simpy, termcolor,
+typing_extensions, cheroot, sly, environs, apispec, webargs) and Towel
+itself at `v1.414`, `v1.618`, and current `main`, refactored by the
+candidate engine and then run through Towel's own test suite. The run was
+made with the current defaults, which since 1.618 include the reuse
+redirect, Black or ruff formatting of inserted code, and type annotations
+on helpers inferred and verified through mypy (the harness environments
+have Black and mypy installed, so both were exercised on every project).
+
+The first full run of the 141 found six projects broken and the
+follow-up runs found four more defects, every one now fixed with a
+regression test:
+
+- pycodestyle's own dog-food test failed on an 86-character generated call:
+  Black's default line length was used although the project declares 79
+  in `setup.cfg`. The formatter now follows the line length the project
+  declares in any tool section (`49af7c5`).
+- tornado: `memoryview[int]`, copied from tornado's own signatures, was
+  written bare and raised `TypeError` at import on an interpreter where
+  `memoryview` is not generic. A subscripted annotation is now written
+  bare only when it evaluates at definition time (`33ea6d2`).
+- Towel on itself (`v1.618` and `main`): a union of two forward references
+  was written `'A' | 'B'`, a `TypeError` at definition. The union is now
+  quoted as one string (`9b4062f`).
+- sphinx: with the output directory beside the original clone
+  (`sphinx-cleaned` next to `sphinx`), the cycle guard resolved the
+  package's own absolute imports against the original, where the helper
+  import that closed the cycle did not exist, and `sphinx.transforms`
+  broke on import. A package's own absolute imports are now resolved
+  inside the tree being refactored (`9b4062f`, fixture `252c3db`).
+- sphinx again: inconsistent subtype verdicts from mypy (some
+  unanswerable) let every member of a union absorb every other, emptying
+  it, and `_joined` raised `IndexError`. A member now absorbs another only
+  on a definite `True` (`c3ddf01`).
+- trio's `test_deprecate` asserts the exact line a warning is issued from
+  inside the test module, which a helper inserted above it shifts. This is
+  the fourth silent kind in KNOWN_LIMITATIONS and is marked
+  `BROKEN_KNOWN` (`13d7eb2`). trio then crashed on the import sorter, which
+  had reordered imports under `if TYPE_CHECKING:`: the guard now allows
+  nested reordering and keeps the file as assembled when a sorter does
+  anything else (`4a58da2`).
+- beautifulsoup4 and invoke: a helper hosted in a submodule that reaches
+  back into its package with `from . import name` was imported by the
+  package initializer, which the submodule then imported half-initialized.
+  The cycle guard now treats that import as an edge to `__init__` and
+  searches from the host's package initializers (`7fadbbc`).
+- h2: with Black on, a forwarding helper wrapped over the three-line
+  minimum paired with another of its shape and extracted a third, without
+  end. The trivial-helper filter now recognizes assign-then-return and
+  unpack-then-return forwarders (`98aa37b`); mypy's module names for a
+  non-identifier directory (`h2 - H2Stream`) are kept out of annotations
+  by the same commit.
+- rfc3986: a reuse target preceded by `@overload` stubs was verified
+  against the first stub; the last definition is the runtime binding
+  (`bc55b75`).
+- gunicorn: a helper hosted in `workers/gtornado.py`, which raises at
+  import unless tornado is installed, made `workers/sync.py` import it.
+  That is a limitation, not a defect (Towel does not know a module's
+  import-time requirements): it is recorded in KNOWN_LIMITATIONS and the
+  harness installs tornado for gunicorn.
+
+The release-gate run is on commit `938d351c7ac2613237686248c3c1b420b220a688`, macOS, Python 3.13, from a
+detached worktree snapshot of that commit (the harness imports Towel's
+source live, so a commit made mid-run would have changed what later
+projects were tested with), three projects at a time. Sphinx's
+refactoring took 2058 s against 2513 s under 1.618 on the same
+revision, with more files changed (1938 s in a re-run on an otherwise
+idle machine; during this run the machine was also running a code audit);
+networkx took 309 s against 352 s, with 105 files changed against 67.
+
+| Project | Commit | Verdict | Changed files | Refactor s | Before | After |
+|---|---|---|---|---|---|---|
+| anyio | `9e2b5924e5` | PASS | 10 | 42 | 8 failed, 3926 passed, 337 skipped, 5 xfailed | 8 failed, 3926 passed, 337 skipped, 5 xfailed |
+| apispec | `bfac55c9bf` | PASS | 3 | 2 | 618 passed, 6 skipped | 618 passed, 6 skipped |
+| arrow | `2224255c4a` | PASS | 2 | 5 | 1902 passed | 1902 passed |
+| astroid | `6011e6c31e` | PASS | 11 | 61 | 3 failed, 2135 passed, 90 skipped, 15 xfailed, 35 subtests passed | 3 failed, 2135 passed, 90 skipped, 15 xfailed, 35 subtests passed |
+| attrs | `8f76777632` | PASS | 2 | 2 | 5 failed, 1402 passed, 4 skipped, 1 xfailed | 5 failed, 1402 passed, 4 skipped, 1 xfailed |
+| backoff | `d82b23c42d` | PASS | 3 | 0 | 2 failed, 120 passed, 1 error | 2 failed, 120 passed, 1 error |
+| beautifulsoup4 | `c772c5e6b3` | PASS | 21 | 78 | 900 passed, 7 skipped | 900 passed, 7 skipped |
+| bidict | `61e98274c4` | NO_CHANGE | 0 | 0 | 1 failed, 7 passed, 2 errors |  |
+| black | `acd6198877` | PASS | 7 | 12 | 2 failed, 479 passed, 3 skipped, 8 subtests passed | 2 failed, 479 passed, 3 skipped, 8 subtests passed |
+| bleach | `f0355a7af0` | PASS | 9 | 169 | 436 passed, 1 skipped, 3 xfailed | 436 passed, 1 skipped, 3 xfailed |
+| blinker | `c336405966` | NO_CHANGE | 0 | 0 | 25 passed |  |
+| boltons | `961dcff3f4` | PASS | 13 | 9 | 519 passed | 519 passed |
+| bottle | `90bd4aa743` | PASS | 1 | 4 | 363 passed | 363 passed |
+| cachetools | `4500e3d042` | PASS | 3 | 1 | 333 passed | 333 passed |
+| cattrs | `5bf7c97293` | PASS | 18 | 12 | 2 failed, 1042 passed, 15 xfailed | 2 failed, 1042 passed, 15 xfailed |
+| cerberus | `65e977de08` | PASS | 8 | 20 | 248 passed, 1 skipped | 248 passed, 1 skipped |
+| chardet | `e9603fad69` | PASS | 5 | 6 | 11936 passed, 6 deselected, 12 xfailed | 11936 passed, 6 deselected, 12 xfailed |
+| cheroot | `edef8ff862` | PASS | 1 | 2 | ImportError: Error importing plugin "pytest_cov": No module named 'pytest_cov' | ImportError: Error importing plugin "pytest_cov": No module named 'pytest_cov' |
+| click | `6aabf099bf` | PASS | 5 | 29 | 2058 passed, 25 skipped, 31000 deselected, 1 xfailed | 2058 passed, 25 skipped, 31000 deselected, 1 xfailed |
+| colorama | `841634ed2a` | PASS | 5 | 3 | 38 passed, 14 skipped | 38 passed, 14 skipped |
+| croniter | `3dd4d14e97` | PASS | 3 | 295 | 248 passed, 92 subtests passed | 248 passed, 92 subtests passed |
+| decorator | `2322c7bfdb` | NO_CHANGE | 0 | 0 | 26 passed |  |
+| deepdiff | `79e4379278` | PASS | 5 | 6 | 7 failed, 1256 passed, 44 skipped, 1 error | 7 failed, 1256 passed, 44 skipped, 1 error |
+| django-forms | `8cbdd4a814` | PASS | 3 | 3 | OK (skipped=2) | OK (skipped=2) |
+| django-utils | `8cbdd4a814` | PASS | 6 | 2 | OK (skipped=21) | OK (skipped=21) |
+| docopt-ng | `587f41a614` | NO_CHANGE | 0 | 0 | 615 passed |  |
+| dpath | `26b77325f5` | NO_CHANGE | 0 | 0 | 79 passed |  |
+| ecdsa | `bff40c6cf2` | PASS | 20 | 77 | 2039 passed, 5 skipped | 2039 passed, 5 skipped |
+| environs | `4e57a32ffe` | PASS | 1 | 1 | 135 passed | 135 passed |
+| feedparser | `a22c5521cb` | PASS | 9 | 2 | 4297 passed, 8 skipped | 4297 passed, 8 skipped |
+| filelock | `4efd93e048` | PASS | 3 | 3 | 1456 passed, 54 skipped | 1456 passed, 54 skipped |
+| flake8 | `efe6750405` | PASS | 2 | 2 | 466 passed, 1 xfailed | 466 passed, 1 xfailed |
+| flask | `d73fa1cdcb` | PASS | 2 | 5 | 494 passed | 494 passed |
+| funcy | `5419a8f879` | PASS | 1 | 0 | 219 passed | 219 passed |
+| glom | `fd70d3051a` | BROKEN_KNOWN | 8 | 4 | 1 failed, 201 passed | 11 failed, 191 passed |
+| gunicorn | `afc7d2fd5d` | PASS | 32 | 33 | 2072 passed, 534 skipped | 2072 passed, 534 skipped |
+| h11 | `62c5068c97` | PASS | 6 | 17 | 78 passed | 78 passed |
+| h2 | `bc239af1d1` | PASS | 4 | 10 | 1662 passed | 1662 passed |
+| hpack | `d05cff4cd4` | PASS | 1 | 1 | 502 passed | 502 passed |
+| html5lib | `fd4f032bc0` | PASS | 20 | 140 | 972 passed, 28 skipped | 972 passed, 28 skipped |
+| httpx | `b5addb64f0` | PASS | 7 | 14 | 10 failed, 1407 passed, 1 skipped | 10 failed, 1407 passed, 1 skipped |
+| humanize | `3201e702ed` | NO_CHANGE | 0 | 0 | 724 passed, 74 skipped |  |
+| hyperframe | `632e309bf6` | PASS | 1 | 1 | 114 passed, 1 skipped | 114 passed, 1 skipped |
+| idna | `cd1739200f` | PASS | 1 | 1 | 6445 passed, 1 skipped, 56 subtests passed | 6445 passed, 1 skipped, 56 subtests passed |
+| inflect | `262a247d2d` | PASS | 1 | 2 | 214 passed, 16 xfailed | 214 passed, 16 xfailed |
+| inflection | `88eefaacf7` | NO_CHANGE | 0 | 0 | 467 passed |  |
+| installer | `59f0a65af9` | NO_CHANGE | 0 | 0 | 150 passed |  |
+| invoke | `6a71e680c5` | PASS | 20 | 36 | 114 failed, 859 passed, 11 skipped | 114 failed, 859 passed, 11 skipped |
+| isort | `131f4adcd5` | PASS | 7 | 15 | 2 failed, 623 passed, 1 skipped | 2 failed, 623 passed, 1 skipped |
+| itsdangerous | `672971d66a` | PASS | 2 | 3 | 297 passed | 297 passed |
+| jinja2 | `5ef70112a1` | PASS | 3 | 59 | 911 passed | 911 passed |
+| jmespath | `2812594e69` | PASS | 5 | 1 | 998 passed, 1 skipped | 998 passed, 1 skipped |
+| jsonpatch | `d8e1a6e244` | PASS | 1 | 1 | 110 passed | 110 passed |
+| jsonpointer | `5998f951dc` | NO_CHANGE | 0 | 0 | 23 passed |  |
+| jsonschema | `15f8613be5` | PASS | 9 | 77 | 7826 passed, 703 skipped | 7826 passed, 703 skipped |
+| lark | `9a4fb9c745` | BROKEN_KNOWN | 9 | 11 | SKIPPED [1] tests/test_parser.py:1033: start/end values work differently for the basic lexer | FAILED tests/__main__.py::TestStandalone::test_transformer - NameError: name ... |
+| loguru | `48acf77ac2` | PASS | 4 | 2 | 1615 passed, 53 skipped | 1615 passed, 53 skipped |
+| mako | `411b4ac6cf` | PASS | 9 | 9 | 517 passed, 53 skipped | 517 passed, 53 skipped |
+| markdown | `819fff96b0` | PASS | 13 | 8 | FAILED (errors=364, skipped=110) | FAILED (errors=362, skipped=110) |
+| markdown-it-py | `a5950caef3` | PASS | 14 | 5 | 1000 passed, 1 skipped | 1000 passed, 1 skipped |
+| markupsafe | `b2e4d9c768` | NO_CHANGE | 0 | 0 | 39 passed, 41 skipped |  |
+| marshmallow | `c54aa7292a` | PASS | 2 | 3 | 1190 passed | 1190 passed |
+| mccabe | `292b5c71c3` | NO_CHANGE | 0 | 0 | 1 failed, 15 passed |  |
+| mistune | `a1b50bc12e` | PASS | 19 | 8 | 1158 passed, 6 subtests passed | 1158 passed, 6 subtests passed |
+| mkdocs | `2862536793` | PASS | 2 | 3 | FAILED (failures=2, skipped=4) | FAILED (failures=2, skipped=4) |
+| more-itertools | `9ed3dbb0ae` | PASS | 2 | 6 | OK (skipped=5) | OK (skipped=5) |
+| natsort | `e2328c20b6` | PASS | 1 | 1 | 355 passed | 355 passed |
+| networkx | `8977f1cfba` | PASS | 105 | 309 | 9282 passed, 58 skipped, 741 xfailed | 9282 passed, 58 skipped, 741 xfailed |
+| nox | `fe279740b7` | PASS | 2 | 6 | 906 passed, 47 skipped, 1 xpassed | 906 passed, 47 skipped, 1 xpassed |
+| oauthlib | `40b0ab56da` | PASS | 19 | 7 | 703 passed, 2 skipped, 21 subtests passed | 703 passed, 2 skipped, 21 subtests passed |
+| outcome | `03ed6218b0` | NO_CHANGE | 0 | 0 | 3 failed, 7 passed |  |
+| packaging | `10590c194e` | PASS | 9 | 17 | 62434 passed, 1 skipped, 427 deselected | 62434 passed, 1 skipped, 427 deselected |
+| parsimonious | `eb79639859` | PASS | 3 | 3 | 84 passed, 2 skipped | 84 passed, 2 skipped |
+| parso | `7f5b142b54` | PASS | 5 | 4 | 1985 passed | 1985 passed |
+| pathspec | `f0fb3f4aaa` | PASS | 3 | 3 | 215 passed, 372 skipped, 280 subtests passed | 215 passed, 372 skipped, 280 subtests passed |
+| peewee | `2866df242d` | PASS | 1 | 68 | OK (skipped=176) | OK (skipped=176) |
+| platformdirs | `c5ef1edbb4` | PASS | 2 | 1 | 1229 passed, 106 skipped | 1229 passed, 106 skipped |
+| pluggy | `0744fd993b` | BROKEN_KNOWN | 3 | 1 | 169 passed | 1 failed, 168 passed |
+| ply | `9d7c40099e` | PASS | 2 | 10 | ModuleNotFoundError: No module named 'ply' | ModuleNotFoundError: No module named 'ply' |
+| prettytable | `2a6cd4fb41` | PASS | 1 | 22 | 338 passed | 338 passed |
+| pyasn1 | `8003397013` | PASS | 7 | 7 | 1261 passed, 65 subtests passed | 1261 passed, 65 subtests passed |
+| pycodestyle | `d6c38543a9` | PASS | 1 | 1 | 770 passed, 5 skipped | 770 passed, 5 skipped |
+| pycparser | `f93324c195` | PASS | 3 | 54 | 132 passed, 6 skipped | 132 passed, 6 skipped |
+| pyflakes | `52cb7296b4` | PASS | 9 | 29 | 748 passed, 25 skipped | 748 passed, 25 skipped |
+| pygments | `38f426a6b1` | PASS | 60 | 26 | 5330 passed, 16 skipped | 5330 passed, 16 skipped |
+| pyjwt | `b9f6a9d79c` | PASS | 2 | 4 | 456 passed, 4 skipped | 456 passed, 4 skipped |
+| pyparsing | `efd56db4e5` | PASS | 4 | 12 | 2140 passed, 27 skipped, 2041 subtests passed | 2140 passed, 27 skipped, 2041 subtests passed |
+| pyproject-hooks | `184c9f56a8` | PASS | 1 | 1 | 42 passed | 42 passed |
+| pyrsistent | `0c0b7aec8c` | PASS | 5 | 1 | 536 passed, 102 skipped | 536 passed, 102 skipped |
+| pytest | `99ab2acccf` | PASS | 23 | 93 | 4535 passed, 126 skipped, 12 xfailed, 1 xpassed, 1 error | 2 failed, 4533 passed, 126 skipped, 12 xfailed, 1 xpassed, 1 error |
+| python-dateutil | `48bd1af97e` | PASS | 8 | 7 | 41 failed, 1991 passed, 47 skipped, 17 xfailed | 41 failed, 1991 passed, 47 skipped, 17 xfailed |
+| python-dotenv | `a00cb2eed0` | PASS | 1 | 1 | 1 failed, 251 passed, 1 skipped | 1 failed, 251 passed, 1 skipped |
+| python-fire | `716bbc23d7` | PASS | 15 | 49 | 273 passed | 273 passed |
+| python-prompt-toolkit | `583b3412c7` | PASS | 28 | 65 | 156 passed | 156 passed |
+| python-slugify | `fee5aa338d` | NO_CHANGE | 0 | 0 | 104 passed, 30 subtests passed |  |
+| pyupgrade | `fbad673bb8` | PASS | 9 | 2 | 1100 passed, 1 skipped, 4 xfailed | 1100 passed, 1 skipped, 4 xfailed |
+| rfc3986 | `2248a185cb` | PASS | 5 | 8 | -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html | -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html |
+| rich | `9d8f9a372c` | PASS | 17 | 24 | 8 failed, 948 passed, 25 skipped | 8 failed, 948 passed, 25 skipped |
+| rsa | `42b0e14ffb` | PASS | 4 | 2 | 1 failed, 99 passed | 1 failed, 99 passed |
+| schedule | `82a43db1b9` | PASS | 1 | 3 | 40 passed, 41 skipped | 40 passed, 41 skipped |
+| schema | `310a1239b6` | PASS | 1 | 1 | 124 passed | 124 passed |
+| simpy | `f43816490c` | PASS | 2 | 1 | 141 passed, 10 errors | 141 passed, 10 errors |
+| six | `c8e394065c` | NO_CHANGE | 0 | 0 | 184 passed, 16 skipped |  |
+| sly | `09c2ba30df` | PASS | 1 | 3 | 15 passed | 15 passed |
+| sniffio | `6996e05d9b` | PASS | 1 | 0 | 3 passed, 1 skipped | 3 passed, 1 skipped |
+| sortedcontainers | `3ac358631f` | PASS | 3 | 18 | 366 passed | 366 passed |
+| soupsieve | `4caaf89344` | PASS | 3 | 3 | 398 passed, 1 skipped | 398 passed, 1 skipped |
+| sphinx | `e44a40eb2f` | PASS | 101 | 2058 | 7 failed, 2383 passed, 35 skipped | 7 failed, 2383 passed, 35 skipped |
+| sqlparse | `60cdc64972` | PASS | 2 | 1 | 506 passed, 2 xfailed, 1 xpassed | 506 passed, 2 xfailed, 1 xpassed |
+| starlette | `03f12b7fcf` | PASS | 6 | 5 | 1249 passed, 2 xfailed | 1249 passed, 2 xfailed |
+| structlog | `73393f34b4` | PASS | 3 | 18 | 4 failed, 880 passed, 37 skipped | 4 failed, 880 passed, 37 skipped |
+| tabulate | `268615a5c2` | PASS | 1 | 1 | 323 passed, 60 skipped | 323 passed, 60 skipped |
+| tenacity | `3e58094d3b` | PASS | 2 | 2 | 183 passed, 1 skipped, 15 subtests passed | 183 passed, 1 skipped, 15 subtests passed |
+| termcolor | `4ce05dda98` | NO_CHANGE | 0 | 0 | 43 failed, 46 passed |  |
+| texttable | `b4c00a6862` | NO_CHANGE | 0 | 0 | 15 passed |  |
+| tomli | `5a77b12a7a` | PASS | 1 | 1 | 17 passed, 1 skipped, 744 subtests passed | 17 passed, 1 skipped, 744 subtests passed |
+| tomli-w | `1210bb6f57` | NO_CHANGE | 0 | 0 | 269 passed, 2 xfailed |  |
+| tomlkit | `4b38becd75` | PASS | 6 | 25 | 1058 passed | 1058 passed |
+| toolz | `568c2b8393` | PASS | 6 | 13 | 1 failed, 185 passed | 1 failed, 185 passed |
+| tornado | `85b6917d05` | PASS | 40 | 297 | 473 failed, 746 passed, 189 skipped, 86 subtests passed | 473 failed, 746 passed, 189 skipped, 86 subtests passed |
+| towel-main | `6c08ff2942` | PASS | 13 | 24 | 1181 passed, 34 subtests passed | 1181 passed, 34 subtests passed |
+| towel-v1.414 | `4bb390b8a4` | PASS | 14 | 25 | 1257 passed, 34 subtests passed | 1257 passed, 34 subtests passed |
+| towel-v1.618 | `21500b5bf6` | PASS | 13 | 24 | 1181 passed, 34 subtests passed | 1181 passed, 34 subtests passed |
+| tqdm | `9cf5a12b1f` | PASS | 8 | 3 | 168 passed, 11 skipped | 168 passed, 11 skipped |
+| traitlets | `c4f1247774` | PASS | 2 | 5 | 710 passed, 1 skipped | 710 passed, 1 skipped |
+| trio | `59d94d7ae0` | BROKEN_KNOWN | 37 | 239 | 9 failed, 536 passed, 62 skipped, 1 xfailed | 10 failed, 535 passed, 62 skipped, 1 xfailed |
+| typer | `a80f6e5ecd` | PASS | 7 | 18 | 409 failed, 956 passed, 35 skipped, 2 xfailed | 409 failed, 956 passed, 35 skipped, 2 xfailed |
+| typing_extensions | `3ae9b7553a` | PASS | 1 | 1 | FAILED (failures=1, skipped=11) | FAILED (failures=1, skipped=11) |
+| unidecode | `158ec2c7e7` | NO_CHANGE | 0 | 0 | 66 passed |  |
+| uritemplate | `e7a947e738` | NO_CHANGE | 0 | 0 | 58 passed, 66 subtests passed |  |
+| virtualenv | `e13bb213aa` | PASS | 6 | 4 | 385 passed, 69 skipped | 385 passed, 69 skipped |
+| voluptuous | `44593ce7c3` | PASS | 4 | 40 | 182 passed | 182 passed |
+| waitress | `016eea527d` | PASS | 4 | 2 | 819 passed, 10 skipped, 45 subtests passed | 819 passed, 10 skipped, 45 subtests passed |
+| wcwidth | `17986f51dd` | PASS | 3 | 3 | 1 failed, 1363 passed, 10 skipped | 1 failed, 1363 passed, 10 skipped |
+| webargs | `abe0d763ae` | PASS | 2 | 1 | 503 passed, 4 skipped | 503 passed, 4 skipped |
+| werkzeug | `6a604e005d` | PASS | 15 | 52 | 1024 passed | 1024 passed |
+| wheel | `b25c3c2ef5` | PASS | 2 | 2 | 74 passed | 74 passed |
+| wrapt | `f1586a5e48` | PASS | 3 | 2 | 1 failed, 1222 passed, 8 skipped | 1 failed, 1222 passed, 8 skipped |
+| wsproto | `5e0685d074` | PASS | 2 | 2 | 230 passed | 230 passed |
+| xmltodict | `6e29fba282` | NO_CHANGE | 0 | 0 | 134 passed |  |
+| yapf | `1200509529` | PASS | 7 | 4 | 611 passed | 611 passed |
+
+Totals: BROKEN_KNOWN 4, NO_CHANGE 20, PASS 117; no project unsupported, broken, crashed, or timed out.
+The `BROKEN_KNOWN` verdicts are pluggy and glom (frame-relative), lark
+(source-observing), and trio (line-relative), each requiring every newly
+failing test to match a failure the manifest names. Towel's own three
+revisions pass their suites after being refactored by the candidate, with
+annotated helpers inserted into an annotated, strictly type-checked
+codebase.
+
+## The 1.414 report (September 12–15, 2026)
 Publication remains a separate maintainer decision; see
 [RELEASING.md](RELEASING.md). Unattended use is not claimed: the first three
 batches of new projects each found new defect classes (see below), but the
@@ -285,11 +520,14 @@ projects found no defect and the stopping rule is met.
   eagerly when the helper evaluates it first, once, and unconditionally,
   which covers the common `x = E` opening; thunks used repeatedly or after
   an effect stay deferred. The `rename-helpers` workflow can name the rest.
-- The ecosystem corpus is 91 projects; the largest, networkx and Sphinx,
-  are refactored within hours-long budgets. No measurement yet says how
-  much of each transformed block its suite exercises. The stopping rule for
-  calling the pass rate stable was two consecutive batches of ten previously
-  unseen projects with no new engine defect; the fourth and fifth batches
-  (September 14–15) each met it, after the first three batches found defects.
-  That is stability on the sampled corpus, not a guarantee for an arbitrary
-  project, which is why unattended use is still not claimed.
+- The ecosystem corpus was 91 projects at 1.414 and is 141 now; the
+  largest, networkx and Sphinx, are refactored within hours-long budgets.
+  No measurement yet says how much of each transformed block its suite
+  exercises. The stopping rule for calling the pass rate stable was two
+  consecutive batches of ten previously unseen projects with no new engine
+  defect; the fourth and fifth batches (September 14–15) each met it, after
+  the first three batches found defects. The September 17 batch of fifty
+  found defects again, all in the features added since 1.618 (formatting,
+  annotations, reuse) and in the cycle guard, rather than in the extraction
+  core. That is stability on the sampled corpus, not a guarantee for an
+  arbitrary project, which is why unattended use is still not claimed.

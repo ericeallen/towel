@@ -298,7 +298,7 @@ core, identical output between the on and off settings of each:
 |---|---|---|---|
 | Towel's own source (16,000 lines), fixed point | 47.8 s | 33.9 s | 41.8 s |
 | h2 (hyper-h2), fixed point | 5.2 s | 7.0 s | 11.9 s |
-| Sphinx, fixed point, in the ecosystem check | 2513 s | not measured | 1938 s |
+| Sphinx, fixed point, in the ecosystem check | 2513 s | not measured | 2058 s |
 
 The bare-engine speedup is what the caches and buckets buy; the defaults
 then spend part of it type-checking each applied refactoring, a cost
