@@ -266,28 +266,12 @@ class FixedPointDrivers(EngineState):
         # Main loop -------------------------------------------------------
         while True:
             if not proposal_queue:
-                # Global analysis pass
-                reporter.announce_analysis(output_path)
-                restrict = (
-                    frozenset(run.changed_since_global)
-                    if self.incremental_global_passes
-                    and global_passes > 0
-                    and run.changed_since_global
-                    else None
-                )
-                proposals = self.analyze_directory(
-                    str(output_path),
-                    recursive=True,
-                    verbose=False,
-                    progress=reporter.analysis_mode,
-                    changed_files=restrict,
-                )
+                found = self._global_pass(output_path, run, global_passes, reporter)
                 global_passes += 1
-                run.changed_since_global.clear()
-                if not proposals:
+                if found is None:
                     reporter.finish_at_fixed_point()
                     break
-                proposal_queue = filter_overlapping_proposals(proposals)
+                proposal_queue = found
                 reporter.discovered(proposal_queue, run.applied, max_iterations)
 
             if not proposal_queue:
@@ -339,6 +323,36 @@ class FixedPointDrivers(EngineState):
                 break
 
         return run.results, termination_reason
+
+    def _global_pass(
+        self,
+        output_path: Path,
+        run: "_DirectoryRun",
+        passes_so_far: int,
+        reporter: "_ApplyProgress",
+    ) -> Optional[List[RefactoringProposal]]:
+        """Analyze the whole directory and queue its non-overlapping proposals; None at the fixed point.
+
+        After the first pass, only functions in files rewritten since the
+        previous pass are re-paired (see ``incremental_global_passes``).
+        """
+        reporter.announce_analysis(output_path)
+        restrict = (
+            frozenset(run.changed_since_global)
+            if self.incremental_global_passes and passes_so_far > 0 and run.changed_since_global
+            else None
+        )
+        proposals = self.analyze_directory(
+            str(output_path),
+            recursive=True,
+            verbose=False,
+            progress=reporter.analysis_mode,
+            changed_files=restrict,
+        )
+        run.changed_since_global.clear()
+        if not proposals:
+            return None
+        return filter_overlapping_proposals(proposals)
 
     def _apply_and_refresh(
         self,

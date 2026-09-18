@@ -25,6 +25,7 @@ included), and the pairing of blocks that share a signature bucket.
 """
 
 import ast
+from dataclasses import dataclass
 import os
 import re
 from typing import (
@@ -49,7 +50,15 @@ from .structural_memo import (
     StoredSubstitution,
     structural_id,
 )
-from .progress import DEFAULT_PROGRESS, ProgressMode, load_tqdm, quietly, wants_bar
+from .progress import (
+    ProgressBar,
+    DEFAULT_PROGRESS,
+    ProgressMode,
+    load_tqdm,
+    quietly,
+    wants_bar,
+    render_inline_bar,
+)
 from .fixed_point import FixedPointDrivers
 from .materialize import Materialization
 from .annotation_wiring import HelperAnnotationWiring
@@ -86,6 +95,83 @@ from .models import (
 from ..type_inference import TypeOracle
 from ..source_text import read_source
 from .pipeline import run_pipeline, AnalysisSession
+
+_SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
+
+
+@dataclass(frozen=True)
+class _FunctionBuckets:
+    """One function's blocks grouped by bucket key, in their original order."""
+
+    block_keys: List[BlockBucketKey]
+    by_key: Dict[BlockBucketKey, List[_SignedBlock]]
+
+    @property
+    def keys(self) -> FrozenSet[BlockBucketKey]:
+        return frozenset(self.by_key)
+
+
+def _bucketed(blocks: Sequence[_SignedBlock]) -> _FunctionBuckets:
+    """Group a function's signed blocks by bucket key; each bucket keeps block order."""
+    block_keys = [signature_bucket_key(signature) for _, _, signature in blocks]
+    by_key: Dict[BlockBucketKey, List[_SignedBlock]] = {}
+    for key, block in zip(block_keys, blocks):
+        by_key.setdefault(key, []).append(block)
+    return _FunctionBuckets(block_keys, by_key)
+
+
+class _PairingProgress:
+    """Progress of the pairing loop: a tqdm bar when wanted and available, else an inline bar."""
+
+    def __init__(self, progress: ProgressMode, total_function_pairs: int) -> None:
+        self._total = total_function_pairs
+        self._done = 0
+        self._last_pct = -1
+        self._bar: Optional[ProgressBar] = None
+        wants = wants_bar(progress) and total_function_pairs > 0
+        if wants:
+            factory = load_tqdm()
+            if factory is not None:
+                self._bar = factory(
+                    total=total_function_pairs,
+                    desc="pairs",
+                    unit="fp",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+        self._inline = wants and self._bar is None
+        if self._inline:
+            print("Pairing blocks:", end=" ", flush=True)
+
+    def function_pair_done(self, pairs_so_far: int) -> None:
+        """One more function pair has been examined; ``pairs_so_far`` block pairs exist."""
+        self._done += 1
+        bar = self._bar
+        if bar is not None:
+            done = self._done
+
+            def advance() -> None:
+                bar.update(1)
+                if done % 20 == 0 or done == self._total:
+                    bar.set_postfix({"pairs": pairs_so_far}, refresh=True)
+
+            quietly(advance)
+        elif self._inline:
+            pct = int(100 * self._done / max(self._total, 1))
+            if pct != self._last_pct:
+                self._last_pct = pct
+                print(
+                    f"\rPairing blocks: [{render_inline_bar(pct, bar_len=24)}] {pct:3d}%"
+                    f" | pairs={pairs_so_far}",
+                    end="",
+                    flush=True,
+                )
+
+    def finish(self) -> None:
+        if self._bar is not None:
+            quietly(self._bar.close)
+        elif self._inline:
+            print()
 
 
 class UnificationRefactorEngine(
@@ -174,8 +260,6 @@ class UnificationRefactorEngine(
                 final text, for example with imports sorted the way the project
                 sorts them (see ``towel.formatting.import_sorter_for_project``).
                 None (default) leaves files as assembled.
-            settings: What Towel reads from the environment (worker cap,
-                debug switches). Read once from ``os.environ`` when omitted.
             incremental_global_passes: In directory mode, after the first
                 analysis, re-pair only functions in files that changed since
                 the previous global pass (default: True). This is exact: an
@@ -185,6 +269,8 @@ class UnificationRefactorEngine(
                 declined for a cycle stays declined), and any proposal it
                 produced was applied, which changed its files. False re-pairs
                 everything on every global pass.
+            settings: What Towel reads from the environment (worker cap,
+                debug switches). Read once from ``os.environ`` when omitted.
         """
         self.analysis_session = AnalysisSession()
         self._settings = settings if settings is not None else Settings.from_environ()
@@ -571,57 +657,13 @@ class UnificationRefactorEngine(
         """
 
         self._record_function_paths(all_functions)
-
-        pairs: List[CodeBlockPair] = []
-        signed_blocks: List[List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]] = []
-        # Each function's blocks' bucket keys, parallel to ``signed_blocks``.
-        block_keys: List[List[BlockBucketKey]] = []
-        block_buckets: List[
-            Dict[BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]]
-        ] = []
-        # Precompute once per function. Each bucket retains the original block
-        # order, so traversing i, j, block1, matching block2 preserves proposal
-        # priority as well as the exact set of candidates.
-        for entry in all_functions:
-            blocks = self._signed_blocks(entry.node)
-            signed_blocks.append(blocks)
-            keys = [signature_bucket_key(block[2]) for block in blocks]
-            block_keys.append(keys)
-            buckets: Dict[
-                BlockBucketKey, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
-            ] = {}
-            for key, block in zip(keys, blocks):
-                buckets.setdefault(key, []).append(block)
-            block_buckets.append(buckets)
-        # The bucket keys each function's blocks fall into; two functions with
-        # no key in common cannot form a pair, so their blocks are never visited.
-        bucket_keys = [frozenset(buckets) for buckets in block_buckets]
-
-        # Progress setup
-        use_tqdm = wants_bar(progress)
-        tqdm_bar = None
+        blocks = [self._signed_blocks(entry.node) for entry in all_functions]
+        buckets = [_bucketed(function_blocks) for function_blocks in blocks]
         total_funcs = len(all_functions)
-        total_func_pairs = (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
-        if use_tqdm and total_func_pairs > 0:
-            tqdm_cls = load_tqdm()
-            if tqdm_cls is not None:
-                tqdm_bar = tqdm_cls(
-                    total=total_func_pairs,
-                    desc="pairs",
-                    unit="fp",
-                    dynamic_ncols=True,
-                    leave=False,
-                )
-            else:
-                use_tqdm = False
-
-        use_inline = (not use_tqdm) and wants_bar(progress) and total_func_pairs > 0
-        last_pct = -1
-        self._start_inline_status("Pairing blocks:", use_inline)
-
-        func_pairs_done = 0
-
-        # For each pair of functions (including across files)
+        reporter = _PairingProgress(
+            progress, (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
+        )
+        pairs: List[CodeBlockPair] = []
         for i, first in enumerate(all_functions):
             file1_changed = changed_files is None or first.file_path in changed_files
             for j, second in enumerate(all_functions[i + 1 :], i + 1):
@@ -631,65 +673,43 @@ class UnificationRefactorEngine(
                     and second.file_path not in changed_files
                 ):
                     continue  # both files unchanged since the last global pass: verdict stands
-                # Only compare structurally compatible buckets; tolerance
-                # checks still use the unchanged quick_filter below.
-                blocks1 = signed_blocks[i] if not bucket_keys[i].isdisjoint(bucket_keys[j]) else ()
-                for (block1_range, block1_nodes, sig1), key1 in zip(blocks1, block_keys[i]):
-                    for block2_range, block2_nodes, sig2 in block_buckets[j].get(key1, []):
-                        if not quick_filter(sig1, sig2):
-                            continue
-
-                        # Create pair with all necessary context
-                        pair = CodeBlockPair(
-                            file_path=first.file_path,
-                            function1_name=first.node.name,
-                            function2_name=second.node.name,
-                            block1_range=block1_range,
-                            block2_range=block2_range,
-                            block1_nodes=block1_nodes,
-                            block2_nodes=block2_nodes,
-                            file_path2=second.file_path,
-                            class1_name=first.class_name,
-                            class2_name=second.class_name,
-                            enclosing_function1_name=first.enclosing_function,
-                            enclosing_function2_name=second.enclosing_function,
-                            function1_ancestry=first.ancestry,
-                            function2_ancestry=second.ancestry,
-                            scope_analyzer1=first.scope_analyzer,
-                            scope_analyzer2=second.scope_analyzer,
-                            root_scope1=first.root_scope,
-                            root_scope2=second.root_scope,
-                            source1=first.source,
-                            source2=second.source,
-                            function1_node=first.node,
-                            function2_node=second.node,
-                        )
-                        pairs.append(pair)
-
-                # Update progress per function pair
-                func_pairs_done += 1
-                if tqdm_bar is not None:
-                    bar, done = tqdm_bar, func_pairs_done
-
-                    def advance() -> None:
-                        bar.update(1)
-                        if done % 20 == 0 or done == total_func_pairs:
-                            bar.set_postfix({"pairs": len(pairs)}, refresh=True)
-
-                    quietly(advance)
-                elif use_inline:
-                    pct = int(100 * func_pairs_done / max(total_func_pairs, 1))
-                    if pct != last_pct:
-                        last_pct = pct
-                        self._update_inline_status(
-                            "Pairing blocks:",
-                            pct,
-                            suffix=f"| pairs={len(pairs)}",
-                        )
-        if tqdm_bar is not None:
-            quietly(tqdm_bar.close)
-        self._finish_inline_status(use_inline)
-
+                # Only blocks in a bucket the other function also has can pair;
+                # the tolerance check is still the unchanged quick_filter.
+                if not buckets[i].keys.isdisjoint(buckets[j].keys):
+                    for (block1_range, block1_nodes, sig1), key1 in zip(
+                        blocks[i], buckets[i].block_keys
+                    ):
+                        for block2_range, block2_nodes, sig2 in buckets[j].by_key.get(key1, []):
+                            if not quick_filter(sig1, sig2):
+                                continue
+                            pairs.append(
+                                CodeBlockPair(
+                                    file_path=first.file_path,
+                                    function1_name=first.node.name,
+                                    function2_name=second.node.name,
+                                    block1_range=block1_range,
+                                    block2_range=block2_range,
+                                    block1_nodes=block1_nodes,
+                                    block2_nodes=block2_nodes,
+                                    file_path2=second.file_path,
+                                    class1_name=first.class_name,
+                                    class2_name=second.class_name,
+                                    enclosing_function1_name=first.enclosing_function,
+                                    enclosing_function2_name=second.enclosing_function,
+                                    function1_ancestry=first.ancestry,
+                                    function2_ancestry=second.ancestry,
+                                    scope_analyzer1=first.scope_analyzer,
+                                    scope_analyzer2=second.scope_analyzer,
+                                    root_scope1=first.root_scope,
+                                    root_scope2=second.root_scope,
+                                    source1=first.source,
+                                    source2=second.source,
+                                    function1_node=first.node,
+                                    function2_node=second.node,
+                                )
+                            )
+                reporter.function_pair_done(len(pairs))
+        reporter.finish()
         return pairs
 
     # ------------------------------------------------------------------

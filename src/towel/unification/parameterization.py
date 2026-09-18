@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import ast
 
-from typing import Dict, List, Sequence, Set, Tuple
+from typing import Dict, List, Sequence, Set, Tuple, Optional
 from weakref import WeakKeyDictionary
 from .parameters import fresh_parameter_name
 from .scope_analyzer import ScopeAnalyzer
@@ -66,6 +66,22 @@ def _compute_named_expr_targets(statement: ast.AST) -> Tuple[ast.AST, ...]:
     return tuple(found)
 
 
+def _parameterizable(exprs: Sequence[ast.AST]) -> bool:
+    """Whether the differing nodes are values a parameter can stand for.
+
+    Only expressions qualify, and not a whole f-string (its literal parts
+    must stay), a slice or starred item (fragments of their container), or
+    anything holding an assignment expression (which would bind inside a
+    thunk instead of the caller). A statement, import alias, argument,
+    keyword or with-item that differs is a different binding or signature.
+    """
+    if any(isinstance(expr, (ast.JoinedStr, ast.stmt, ast.Slice, ast.Starred)) for expr in exprs):
+        return False
+    if any(not isinstance(expr, ast.expr) for expr in exprs):
+        return False
+    return not any(isinstance(node, ast.NamedExpr) for expr in exprs for node in ast.walk(expr))
+
+
 class Parameterization(UnifierState):
     """See the module docstring."""
 
@@ -83,128 +99,65 @@ class Parameterization(UnifierState):
         Returns:
             True if parameterization succeeded
         """
-        # F-strings (JoinedStr) must not be parameterized as a whole; only their
-        # internal expressions (FormattedValue.value) are eligible. Prevent turning
-        # entire f-strings into a single parameter to preserve structure.
-        if any(isinstance(expr, ast.JoinedStr) for expr in exprs):
+        if not _parameterizable(exprs):
             return False
-
-        # CRITICAL: Cannot parameterize statement nodes (only expression nodes)
-        # Statements (If, For, FunctionDef, etc.) must have the same type to unify
-        # Only expressions (Name, Constant, Call, etc.) can be parameterized
-        if any(isinstance(expr, ast.stmt) for expr in exprs):
-            return False
-        # Only an expression can be replaced by a parameter. An import alias,
-        # an argument, a keyword or a with-item that differs is a different
-        # binding or a different signature, not a value (jsonschema: two
-        # ``from jsonschema import X`` with different X).
-        if any(not isinstance(expr, ast.expr) for expr in exprs):
-            return False
-
-        # Slices and starred items are syntax fragments of their container, not
-        # values: ``seq[start:stop]`` versus ``seq[i]`` cannot share a parameter.
-        if any(isinstance(expr, (ast.Slice, ast.Starred)) for expr in exprs):
-            return False
-
-        # An assignment expression binds in the scope that evaluates it. A
-        # thunk would bind it in the lambda instead of the caller.
-        if any(isinstance(node, ast.NamedExpr) for expr in exprs for node in ast.walk(expr)):
-            return False
-
-        # Check if all expressions are already mapped to the same parameter
+        # Expressions already mapped must all map to one parameter.
         existing_params = [
             subst.get_param_for_expr(idx, expr) for idx, expr in zip(block_indices, exprs)
         ]
-
         if all(p is not None for p in existing_params):
-            # All mapped - check they map to the same parameter
-            if len(set(existing_params)) == 1:
-                return True
-            else:
-                # Mapped to different parameters - can't unify
-                return False
-
-        # Check we haven't exceeded max parameters
+            return len(set(existing_params)) == 1
         if len(subst.param_expressions) >= self.max_parameters:
             return False
-
-        # Analyze bound variables in each expression
-        # For each expression, find which variables it references that are bound in context
-        bound_vars_per_expr = []
-        for idx, expr in zip(block_indices, exprs):
-            if self.current_blocks and idx < len(self.current_blocks):
-                # Find which variables in the expression are bound in the block context
-                bound_in_context = bound_variables_in_block(self.current_blocks[idx], expr)
-                # Get variables referenced in the expression
-                vars_in_expr = get_free_variables(expr)
-                # Intersection: bound variables that are actually used in expression
-                bound_vars = bound_in_context & vars_in_expr
-
-                bound_vars_per_expr.append(bound_vars)
-            else:
-                bound_vars_per_expr.append(set())
-
-        # Check if all expressions reference the same bound variables
-        # If they do, this should be a function parameter
-        all_bound_vars = [sorted(bv) for bv in bound_vars_per_expr]
-
-        # Determine common bound variables (should be same across all expressions)
-        if all_bound_vars and len(set(tuple(bv) for bv in all_bound_vars)) == 1:
-            # All expressions reference the same set of bound variables
-            common_bound_vars = all_bound_vars[0] if all_bound_vars[0] else None
-        else:
-            # Different bound variables - use None (not a function parameter)
-            common_bound_vars = None
-
-        # CRITICAL: Check if bound variables are accessible at call site
-        # Comprehension variables (for r in results) are NOT accessible at call site
-        # Only function-level free variables can be lambda-lifted
+        common_bound_vars = self._common_bound_variables(exprs, block_indices)
         if common_bound_vars:
-            # Check if these bound variables are accessible at the function call site
-            # (i.e., they're free variables of the block, not just comprehension variables)
+            # A thunk can only close over names the call site can pass: the
+            # block's free variables, not a comprehension's own targets.
+            if not all(
+                set(common_bound_vars) <= self._block_free_variables(idx) for idx in block_indices
+            ):
+                return False
+        else:
+            # A bare name passed as an argument must exist at the call site.
             for idx, expr in zip(block_indices, exprs):
-                if self.current_blocks is not None and idx < len(self.current_blocks):
-                    block_free_vars = ScopeAnalyzer().get_free_variables(self.current_blocks[idx])
-
-                    # Check if all bound variables used in the expression are free variables
-                    for var in common_bound_vars:
-                        if var not in block_free_vars:
-                            # Bound variable (like comprehension var) not accessible at call site
-                            # Cannot lambda-lift - refuse to parameterize
-                            return False
-
-        # CRITICAL: If expressions are simple names without bound variables,
-        # they must be validated - they need to exist at the call site
-        # (Unless they're being lambda-lifted, in which case common_bound_vars is not None)
-        if common_bound_vars is None:
-            # Not using lambda lifting - check if expressions reference undefined variables
-            for idx, expr in zip(block_indices, exprs):
-                if isinstance(expr, ast.Name):
-                    # Simple variable reference - needs to exist at call site
-                    # Get free variables of the entire block to see what's available
-                    if self.current_blocks is not None and idx < len(self.current_blocks):
-                        block_free_vars = ScopeAnalyzer().get_free_variables(
-                            self.current_blocks[idx]
-                        )
-
-                        # Check if this variable is available at call site
-                        if expr.id not in block_free_vars:
-                            # Variable not available at call site - can't parameterize
-                            UNIFIER.debug(
-                                f"Skipping refactoring: Variable '{expr.id}' is not accessible at function scope. "
-                                f"It may be defined inside a nested function or be an unbound variable reference."
-                            )
-                            return False
-
-        # Create a new parameter
-        # Use __ prefix to avoid name collisions (Python convention)
+                if isinstance(expr, ast.Name) and expr.id not in self._block_free_variables(idx):
+                    UNIFIER.debug(
+                        "Skipping refactoring: variable %r is not accessible at function scope; "
+                        "it may be defined inside a nested function or be unbound.",
+                        expr.id,
+                    )
+                    return False
         param_name = self._fresh_parameter_name()
-
-        # Add mappings for each block
         for idx, expr in zip(block_indices, exprs):
             subst.add_mapping(idx, expr, param_name, bound_vars=common_bound_vars)
-
         return True
+
+    def _common_bound_variables(
+        self, exprs: Sequence[ast.AST], block_indices: Sequence[int]
+    ) -> Optional[List[str]]:
+        """The block-bound names every expression reads, when they all read the same ones.
+
+        An expression that reads a name its block binds (a loop or
+        comprehension target, say) becomes a function parameter that takes
+        those names; the expressions must agree on them. None when they do
+        not, or when none of them reads a bound name.
+        """
+        bound_per_expr: List[List[str]] = []
+        for idx, expr in zip(block_indices, exprs):
+            if self.current_blocks is not None and idx < len(self.current_blocks):
+                bound = bound_variables_in_block(self.current_blocks[idx], expr)
+                bound_per_expr.append(sorted(bound & get_free_variables(expr)))
+            else:
+                bound_per_expr.append([])
+        if bound_per_expr and len({tuple(bound) for bound in bound_per_expr}) == 1:
+            return bound_per_expr[0] or None
+        return None
+
+    def _block_free_variables(self, idx: int) -> Set[str]:
+        """The free variables of block ``idx``: the names its call site can supply."""
+        if self.current_blocks is None or idx >= len(self.current_blocks):
+            return set()
+        return ScopeAnalyzer().get_free_variables(self.current_blocks[idx])
 
     def _setup_bound_variable_alpha_renamings(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         """

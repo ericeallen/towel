@@ -336,6 +336,46 @@ def plan_renames(
     with every attribute reference to it, which is sound only because
     generated helper names are unique across the project.
     """
+    function_specifications, parameter_specifications = _split_specifications(specifications)
+    modules = _load_modules(target)
+    by_name = {module.name: module for module in modules}
+    selected, method_specifications = _select_definitions(modules, function_specifications)
+    _extend_to_generated_importers(modules, selected)
+    method_renames = _validate_method_renames(modules, method_specifications)
+    if not selected and not method_renames and not parameter_specifications:
+        return ChangePlan(()), 0
+    destinations: set[tuple[str, str]] = set()
+    for (module_name, _), new in selected.items():
+        if (module_name, new) in destinations:
+            raise ValueError(f"Several helpers would share the same new name: {module_name}:{new}")
+        destinations.add((module_name, new))
+    before: dict[str, bytes] = {}
+    after: dict[str, str] = {}
+    count = 0
+    parameters_found: set[tuple[str, str]] = set()
+    for module in modules:
+        edits = _plan_module(module, selected, by_name)
+        _plan_method_renames(module, method_renames, edits)
+        parameters_found |= _plan_parameter_renames(module, parameter_specifications, edits)
+        content = edits.render()
+        if content != module.raw:
+            before[str(module.path)] = module.raw
+            after[str(module.path)] = content.decode("utf-8")
+            count += len(edits.changes)
+    missing = {
+        (helper, parameter)
+        for helper, parameter, _, _ in parameter_specifications
+        if (helper, parameter) not in parameters_found
+    }
+    if missing:
+        raise ValueError(f"No helper defines these parameters: {sorted(missing)}")
+    return ChangePlan.from_sources(before, after), count
+
+
+def _split_specifications(
+    specifications: Sequence[tuple[str, str, Path | None]],
+) -> tuple[list[tuple[str, str, Path | None]], list[tuple[str, str, str, Path | None]]]:
+    """Validate every name and separate helper renames from ``helper.parameter`` renames."""
     parameter_specifications: list[tuple[str, str, str, Path | None]] = []
     function_specifications: list[tuple[str, str, Path | None]] = []
     for old, new, file_filter in specifications:
@@ -352,7 +392,11 @@ def plan_renames(
             parameter_specifications.append((helper, parameter, new, file_filter))
         else:
             function_specifications.append((old, new, file_filter))
-    specifications = function_specifications
+    return function_specifications, parameter_specifications
+
+
+def _load_modules(target: Path) -> list[_Module]:
+    """Every module under ``target`` (symlinks excluded), parsed, compiled and scope-analyzed."""
     layout = _rename_layout(target)
     modules: list[_Module] = []
     for path in sorted(target.rglob("*.py")):
@@ -362,9 +406,19 @@ def plan_renames(
         tree = ast.parse(raw.decode("utf-8"), filename=str(path))
         compile(tree, str(path), "exec")
         modules.append(_Module(path, _module_name(layout, path), raw, tree, _Scopes(tree)))
-    by_name = {module.name: module for module in modules}
-    if len(by_name) != len(modules):
+    if len({module.name for module in modules}) != len(modules):
         raise ValueError("Ambiguous module paths in rename target")
+    return modules
+
+
+def _select_definitions(
+    modules: Sequence[_Module], specifications: Sequence[tuple[str, str, Path | None]]
+) -> tuple[dict[tuple[str, str], str], list[tuple[str, str]]]:
+    """The module-level definitions each specification names, and the method renames among them.
+
+    A helper defined only inside classes is a method rename; one defined only
+    inside functions is refused, since nested scopes are not supported.
+    """
     selected: dict[tuple[str, str], str] = {}
     method_specifications: list[tuple[str, str]] = []
     for old, new, file_filter in specifications:
@@ -398,36 +452,7 @@ def plan_renames(
             if key in selected and selected[key] != new:
                 raise ValueError(f"Conflicting renames for {module.path}:{old}")
             selected[key] = new
-    _extend_to_generated_importers(modules, selected)
-    method_renames = _validate_method_renames(modules, method_specifications)
-    if not selected and not method_renames and not parameter_specifications:
-        return ChangePlan(()), 0
-    destinations: set[tuple[str, str]] = set()
-    for (module_name, _), new in selected.items():
-        if (module_name, new) in destinations:
-            raise ValueError(f"Several helpers would share the same new name: {module_name}:{new}")
-        destinations.add((module_name, new))
-    before: dict[str, bytes] = {}
-    after: dict[str, str] = {}
-    count = 0
-    parameters_found: set[tuple[str, str]] = set()
-    for module in modules:
-        edits = _plan_module(module, selected, by_name)
-        _plan_method_renames(module, method_renames, edits)
-        parameters_found |= _plan_parameter_renames(module, parameter_specifications, edits)
-        content = edits.render()
-        if content != module.raw:
-            before[str(module.path)] = module.raw
-            after[str(module.path)] = content.decode("utf-8")
-            count += len(edits.changes)
-    missing = {
-        (helper, parameter)
-        for helper, parameter, _, _ in parameter_specifications
-        if (helper, parameter) not in parameters_found
-    }
-    if missing:
-        raise ValueError(f"No helper defines these parameters: {sorted(missing)}")
-    return ChangePlan.from_sources(before, after), count
+    return selected, method_specifications
 
 
 def _identifiers_in(node: ast.AST) -> set[str]:

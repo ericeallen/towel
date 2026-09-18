@@ -52,7 +52,6 @@ from .instantiation import instantiation_mismatch
 from .models import (
     BlockBindingSnapshot,
     ClassInfo,
-    ClassInsertionPlan,
     CodeBlockPair,
     FunctionArtifact,
     FunctionNode,
@@ -148,6 +147,17 @@ class _CallSites:
 
     replacements: List[Replacement]
     cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]]
+
+
+@dataclass(frozen=True)
+class _HelperHome:
+    """Where a helper is placed before the cross-module checks: file, and class or function within it."""
+
+    file_path: str
+    insert_into_class: Optional[str]
+    insert_into_function: Optional[str]
+    method_kind: Optional[MethodKind]
+    method_param_name: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -460,102 +470,80 @@ class PairEvaluation(EngineState):
 
         A block that reassigns a name it did not bind (``result = result + 10``
         with ``result`` bound outside) cannot move; nor can one that unbinds a
-        name bound before it. Without both functions there is nothing to
-        analyze and the snapshots stay empty.
+        name bound before it.
         """
-        func1, func2 = ctx.func1, ctx.func2
-        debug_enabled = debugging(VALIDATION)
-        reassignments1 = self._get_assignment_reuse(func1)
-        reassignments2 = self._get_assignment_reuse(func2)
-
-        has_unsafe1, problematic_vars1 = self._per_block(
-            "reassignments",
-            func1,
-            pair.block1_nodes,
-            lambda: has_reassignments_without_bindings(func1, pair.block1_nodes, reassignments1),
-            function_id=ctx.function1_id,
-            block_id=ctx.block1_id,
-        )
-        if has_unsafe1:
-            self._debug_reject(
-                RejectReason.UNSAFE_REASSIGNMENT_BLOCK1, pair, str(problematic_vars1)
-            )
+        first = self._block_bindings(pair, ctx, 0)
+        if first is None:
             return None
-        has_unsafe2, problematic_vars2 = self._per_block(
-            "reassignments",
-            func2,
-            pair.block2_nodes,
-            lambda: has_reassignments_without_bindings(func2, pair.block2_nodes, reassignments2),
-            function_id=ctx.function2_id,
-            block_id=ctx.block2_id,
-        )
-        if has_unsafe2:
-            self._debug_reject(
-                RejectReason.UNSAFE_REASSIGNMENT_BLOCK2, pair, str(problematic_vars2)
-            )
+        second = self._block_bindings(pair, ctx, 1)
+        if second is None:
             return None
-
-        snapshot1 = self._build_block_binding_snapshot(
-            func1,
-            pair.block1_nodes,
-            pair.block1_range,
-            reassignments1,
-            function_id=ctx.function1_id,
-            block_id=ctx.block1_id,
-        )
-        snapshot2 = self._build_block_binding_snapshot(
-            func2,
-            pair.block2_nodes,
-            pair.block2_range,
-            reassignments2,
-            function_id=ctx.function2_id,
-            block_id=ctx.block2_id,
-        )
         if self._per_block(
             "unbinds",
-            func1,
+            ctx.func1,
             pair.block1_nodes,
-            lambda: unbinds_external_name(func1, pair.block1_nodes, snapshot1.bound_before_block),
+            lambda: unbinds_external_name(
+                ctx.func1, pair.block1_nodes, first[0].bound_before_block
+            ),
             function_id=ctx.function1_id,
             block_id=ctx.block1_id,
         ) or self._per_block(
             "unbinds",
-            func2,
+            ctx.func2,
             pair.block2_nodes,
-            lambda: unbinds_external_name(func2, pair.block2_nodes, snapshot2.bound_before_block),
+            lambda: unbinds_external_name(
+                ctx.func2, pair.block2_nodes, second[0].bound_before_block
+            ),
             function_id=ctx.function2_id,
             block_id=ctx.block2_id,
         ):
             self._debug_reject(RejectReason.UNBINDS_EXTERNAL_NAME, pair)
             return None
+        return _BindingAnalysis(first[0], second[0], first[1], second[1])
 
-        if debug_enabled:
-            VALIDATION.debug("\n=== Block1 Validation Debug ===")
-            VALIDATION.debug(f"Function: {pair.function1_name}")
-            VALIDATION.debug(f"Block lines: {pair.block1_range}")
-            VALIDATION.debug(f"Bound in block: {snapshot1.bound_in_block}")
-            VALIDATION.debug(f"Bound before block: {snapshot1.bound_before_block}")
-            VALIDATION.debug(f"Newly bound in block: {snapshot1.initially_bound}")
-        return_variables1 = self._find_return_variables(
-            func1,
-            pair.block1_range,
-            snapshot1.initially_bound,
-            debug_label="Block1 Validation Debug" if debug_enabled else None,
+    def _block_bindings(
+        self, pair: CodeBlockPair, ctx: "_PairContext", block_idx: int
+    ) -> Optional[Tuple[BlockBindingSnapshot, Set[str]]]:
+        """Block ``block_idx``'s binding snapshot and the variables it must return; None if it reassigns unsafely."""
+        if block_idx == 0:
+            func, nodes, block_range = ctx.func1, pair.block1_nodes, pair.block1_range
+            ids = (ctx.function1_id, ctx.block1_id)
+            name, reason = pair.function1_name, RejectReason.UNSAFE_REASSIGNMENT_BLOCK1
+        else:
+            func, nodes, block_range = ctx.func2, pair.block2_nodes, pair.block2_range
+            ids = (ctx.function2_id, ctx.block2_id)
+            name, reason = pair.function2_name, RejectReason.UNSAFE_REASSIGNMENT_BLOCK2
+        reassignments = self._get_assignment_reuse(func)
+        has_unsafe, problematic_vars = self._per_block(
+            "reassignments",
+            func,
+            nodes,
+            lambda: has_reassignments_without_bindings(func, nodes, reassignments),
+            function_id=ids[0],
+            block_id=ids[1],
         )
-        if debug_enabled:
-            VALIDATION.debug("\n=== Block2 Validation Debug ===")
-            VALIDATION.debug(f"Function: {pair.function2_name}")
-            VALIDATION.debug(f"Block lines: {pair.block2_range}")
-            VALIDATION.debug(f"Bound in block: {snapshot2.bound_in_block}")
-            VALIDATION.debug(f"Bound before block: {snapshot2.bound_before_block}")
-            VALIDATION.debug(f"Newly bound in block: {snapshot2.initially_bound}")
-        return_variables2 = self._find_return_variables(
-            func2,
-            pair.block2_range,
-            snapshot2.initially_bound,
-            debug_label="Block2 Validation Debug" if debug_enabled else None,
+        if has_unsafe:
+            self._debug_reject(reason, pair, str(problematic_vars))
+            return None
+        snapshot = self._build_block_binding_snapshot(
+            func, nodes, block_range, reassignments, function_id=ids[0], block_id=ids[1]
         )
-        return _BindingAnalysis(snapshot1, snapshot2, return_variables1, return_variables2)
+        debug_label = f"Block{block_idx + 1} Validation Debug"
+        debug_enabled = debugging(VALIDATION)
+        if debug_enabled:
+            VALIDATION.debug(f"\n=== {debug_label} ===")
+            VALIDATION.debug(f"Function: {name}")
+            VALIDATION.debug(f"Block lines: {block_range}")
+            VALIDATION.debug(f"Bound in block: {snapshot.bound_in_block}")
+            VALIDATION.debug(f"Bound before block: {snapshot.bound_before_block}")
+            VALIDATION.debug(f"Newly bound in block: {snapshot.initially_bound}")
+        return_variables = self._find_return_variables(
+            func,
+            block_range,
+            snapshot.initially_bound,
+            debug_label=debug_label if debug_enabled else None,
+        )
+        return snapshot, return_variables
 
     # -- 3 ---------------------------------------------------------------------
 
@@ -870,93 +858,26 @@ class PairEvaluation(EngineState):
     ) -> Optional[_CallSites]:
         """The generated call for each block, verified by instantiation, plus clustered sites."""
         replacements: List[Replacement] = []
-        # Method context of each clustered call site, by index in ``replacements``
-        cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]] = {}
-        return_vars_by_block = {
-            0: list(unified.ordered_return_variables[0]),
-            1: list(unified.ordered_return_variables[1]),
-        }
-        func_def = rendered.func_def
-        for block_idx, (block_range, file_path) in enumerate(
-            [
-                (pair.block1_range, pair.file_path),
-                (pair.block2_range, pair.file_path2),
-            ]
-        ):
-            try:
-                call_node = self.extractor.generate_call(
-                    function_name=func_def.name,
-                    block_idx=block_idx,
-                    substitution=unified.substitution,
-                    param_order=rendered.param_order,
-                    free_variables=free.free_vars,
-                    is_value_producing=value_producing,
-                    return_variables=return_vars_by_block[block_idx],
-                    hygienic_renames=unified.hygienic_renames,
-                )
-            except UnsupportedExtraction:
-                return None
-            # The call may name only what is bound before the block, the free
-            # variables, and a few builtins; a leaked placeholder or an invented
-            # local would be an undefined name at the site.
-            if block_idx == 0:
-                allowed_before = set(analysis.snapshot1.bound_before_block) | set(free.free_vars1)
-            else:
-                allowed_before = set(analysis.snapshot2.bound_before_block) | set(free.free_vars2)
-            invalid_names = {
-                name
-                for name in self._get_used_names(call_node)
-                if name != func_def.name
-                and (
-                    name.startswith("__param_")
-                    or (name not in allowed_before and name not in CALL_ARGUMENT_BUILTINS)
-                )
-            }
-            if invalid_names:
-                self._debug_reject(
-                    RejectReason.UNDEFINED_NAMES_IN_CALL,
-                    pair,
-                    detail=f"block{block_idx+1}: {sorted(invalid_names)}",
-                )
-                return None
-            mismatch = instantiation_mismatch(
-                func_def,
-                call_node,
-                pair.block1_nodes if block_idx == 0 else pair.block2_nodes,
-                unified.hygienic_renames[0],
-                unified.hygienic_renames[block_idx],
-                preamble_length=rendered.preamble_length,
-                returns_variables=bool(unified.ordered_return_variables[0]),
+        for block_idx in (0, 1):
+            replacement = self._call_for_block(
+                pair, setup, analysis, unified, free, rendered, value_producing, block_idx
             )
-            if mismatch is not None:
-                self._debug_reject(
-                    RejectReason.INSTANTIATION_MISMATCH,
-                    pair,
-                    detail=f"block{block_idx+1}: {mismatch}",
-                )
+            if replacement is None:
                 return None
-            class_name = pair.class1_name if block_idx == 0 else pair.class2_name
-            method_info = setup.method_info1 if block_idx == 0 else setup.method_info2
-            replacements.append(
-                Replacement(
-                    line_range=block_range,
-                    node=call_node,
-                    file_path=file_path,
-                    class_name=class_name,
-                    method_kind=method_info.kind,
-                    implicit_param=method_info.implicit_param,
-                )
-            )
-
+            replacements.append(replacement)
         # Same-file clustering: further identical blocks join this proposal, for
         # non-returning helpers only.
-        same_file = not pair.is_cross_file
-        if same_file and not analysis.return_variables1 and not analysis.return_variables2:
+        cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]] = {}
+        if (
+            not pair.is_cross_file
+            and not analysis.return_variables1
+            and not analysis.return_variables2
+        ):
             self._add_clustered_replacements(
                 HelperTemplate(
                     pair=pair,
-                    func_def=func_def,
-                    func_def_dump=ast.dump(func_def),
+                    func_def=rendered.func_def,
+                    func_def_dump=ast.dump(rendered.func_def),
                     param_order=rendered.param_order,
                     preamble_length=rendered.preamble_length,
                     free_vars=free.free_vars,
@@ -972,6 +893,86 @@ class PairEvaluation(EngineState):
             )
         return _CallSites(replacements, cluster_contexts)
 
+    def _call_for_block(
+        self,
+        pair: CodeBlockPair,
+        setup: _PairSetup,
+        analysis: _BindingAnalysis,
+        unified: _Unified,
+        free: _FreeVariables,
+        rendered: _RenderedHelper,
+        value_producing: bool,
+        block_idx: int,
+    ) -> Optional[Replacement]:
+        """The call that replaces block ``block_idx``, or None when it cannot be generated soundly.
+
+        The call may name only what is bound before the block, the free
+        variables, and a few builtins (a leaked placeholder or an invented
+        local would be an undefined name at the site), and instantiating the
+        helper with it must give back the block.
+        """
+        func_def = rendered.func_def
+        if block_idx == 0:
+            block_range, file_path, nodes = pair.block1_range, pair.file_path, pair.block1_nodes
+            snapshot, free_here = analysis.snapshot1, free.free_vars1
+            class_name, method_info = pair.class1_name, setup.method_info1
+        else:
+            block_range, file_path, nodes = pair.block2_range, pair.file_path2, pair.block2_nodes
+            snapshot, free_here = analysis.snapshot2, free.free_vars2
+            class_name, method_info = pair.class2_name, setup.method_info2
+        try:
+            call_node = self.extractor.generate_call(
+                function_name=func_def.name,
+                block_idx=block_idx,
+                substitution=unified.substitution,
+                param_order=rendered.param_order,
+                free_variables=free.free_vars,
+                is_value_producing=value_producing,
+                return_variables=list(unified.ordered_return_variables[block_idx]),
+                hygienic_renames=unified.hygienic_renames,
+            )
+        except UnsupportedExtraction:
+            return None
+        allowed_before = set(snapshot.bound_before_block) | set(free_here)
+        invalid_names = {
+            name
+            for name in self._get_used_names(call_node)
+            if name != func_def.name
+            and (
+                name.startswith("__param_")
+                or (name not in allowed_before and name not in CALL_ARGUMENT_BUILTINS)
+            )
+        }
+        if invalid_names:
+            self._debug_reject(
+                RejectReason.UNDEFINED_NAMES_IN_CALL,
+                pair,
+                detail=f"block{block_idx+1}: {sorted(invalid_names)}",
+            )
+            return None
+        mismatch = instantiation_mismatch(
+            func_def,
+            call_node,
+            nodes,
+            unified.hygienic_renames[0],
+            unified.hygienic_renames[block_idx],
+            preamble_length=rendered.preamble_length,
+            returns_variables=bool(unified.ordered_return_variables[0]),
+        )
+        if mismatch is not None:
+            self._debug_reject(
+                RejectReason.INSTANTIATION_MISMATCH, pair, detail=f"block{block_idx+1}: {mismatch}"
+            )
+            return None
+        return Replacement(
+            line_range=block_range,
+            node=call_node,
+            file_path=file_path,
+            class_name=class_name,
+            method_kind=method_info.kind,
+            implicit_param=method_info.implicit_param,
+        )
+
     # -- 10 --------------------------------------------------------------------
 
     def _place_helper(
@@ -985,47 +986,9 @@ class PairEvaluation(EngineState):
     ) -> Optional[_Placement]:
         """Where the helper lives: a unique enclosing function, a class, or a module that closes no cycle."""
         ctx = setup.ctx
-        replacements, cluster_contexts = sites.replacements, sites.cluster_contexts
-        canonical_file = pair.file_path
-        insert_into_class: Optional[str] = None
-        insert_into_function: Optional[str] = None
-        method_kind_metadata: Optional[MethodKind] = None
-        method_param_name: Optional[str] = None
-        same_file = not pair.is_cross_file
-
-        if same_file and scope.dce_insert_func:
-            # The helper is placed textually by function name (FuncLocator),
-            # so the name must identify one function in the file. When two
-            # classes have a same-named method (tornado: several
-            # ``get_handlers``), the deepest common enclosing function is a
-            # real, unique node, but the name alone would resolve to the
-            # wrong one and the call sites would not see the helper. Every
-            # free variable is already a parameter, so a module-level helper
-            # is equally correct; fall back to it when the name is ambiguous.
-            if len(functions.named(canonical_file, scope.dce_insert_func)) == 1:
-                insert_into_function = scope.dce_insert_func
-
-        class_plan: Optional[ClassInsertionPlan] = None
-        if insert_into_function is None:
-            class_plan = self._choose_class_insertion(
-                pair, setup.method_info1, setup.method_info2, class_infos
-            )
-        if class_plan is not None:
-            # Both blocks in one class: insert there. Different classes with a
-            # common ancestor that is neither: insert into the ancestor. A plan
-            # naming one concrete sibling would hide the helper from the other,
-            # so that falls back to module level.
-            same_class = pair.class1_name is not None and pair.class1_name == pair.class2_name
-            target_is_concrete_sibling = (
-                class_plan.class_name in {pair.class1_name, pair.class2_name} and not same_class
-            )
-            if not target_is_concrete_sibling:
-                insert_into_class = class_plan.class_name
-                canonical_file = class_plan.file_path
-                method_kind_metadata = class_plan.method_kind
-                method_param_name = class_plan.implicit_param
-
-        if insert_into_class is not None and cluster_contexts:
+        home = self._helper_home(pair, setup, scope, functions, class_infos)
+        replacements = sites.replacements
+        if home.insert_into_class is not None and sites.cluster_contexts:
             # The helper is a method called through the receiver. A clustered
             # block in another class, in a module-level function, or in a
             # function merely nested in a method has no such receiver, so it
@@ -1035,55 +998,25 @@ class PairEvaluation(EngineState):
             replacements = [
                 replacement
                 for index, replacement in enumerate(replacements)
-                if index not in cluster_contexts
+                if index not in sites.cluster_contexts
                 or (
-                    cluster_contexts[index][0] in {pair.class1_name, pair.class2_name}
-                    and cluster_contexts[index][1:] == expected
+                    sites.cluster_contexts[index][0] in {pair.class1_name, pair.class2_name}
+                    and sites.cluster_contexts[index][1:] == expected
                 )
             ]
-
         # Closures with nonlocal variables are left alone.
         if self._declares_nonlocal(ctx.func1, ctx.scope_analyzer) or self._declares_nonlocal(
             ctx.func2, ctx.scope_analyzer2
         ):
             self._debug_reject(RejectReason.NONLOCAL_SAFETY_SKIP, pair)
             return None
-
-        participating_paths = {canonical_file} | {
-            replacement.file_path or canonical_file for replacement in replacements
-        }
-        if len(participating_paths) > 1 and any(
-            functions.declares_global(path) for path in participating_paths
-        ):
-            self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
+        canonical_file = self._safe_home_across_modules(pair, home, replacements, functions)
+        if canonical_file is None:
             return None
-
-        # The helper lives in ``canonical_file`` and every other participating
-        # module imports it. When that closes an import cycle, a plain
-        # module-level helper may move to another participating module that
-        # the others already import; only a genuine cycle declines the pair.
-        participating = {canonical_file} | {
-            replacement.file_path or canonical_file for replacement in replacements
-        }
-        if len(participating) > 1 and not layout_is_known(canonical_file, self.import_graph):
-            self._debug_reject(RejectReason.UNKNOWN_LAYOUT, pair)
-            return None
-        if would_create_import_cycle(canonical_file, participating, self.import_graph):
-            safe_home = None
-            if insert_into_class is None and insert_into_function is None:
-                for candidate in sorted(participating - {canonical_file}):
-                    if not would_create_import_cycle(candidate, participating, self.import_graph):
-                        safe_home = candidate
-                        break
-            if safe_home is None:
-                self._debug_reject(RejectReason.IMPORT_CYCLE, pair)
-                return None
-            canonical_file = safe_home
-
-        destination_class = insert_into_class
-        if insert_into_function:
+        destination_class = home.insert_into_class
+        if home.insert_into_function:
             destinations = {
-                a.class_name for a in functions.named(canonical_file, insert_into_function)
+                a.class_name for a in functions.named(canonical_file, home.insert_into_function)
             }
             destination_class = next(iter(destinations)) if len(destinations) == 1 else None
         for replacement in replacements:
@@ -1100,12 +1033,94 @@ class PairEvaluation(EngineState):
                         return None
         return _Placement(
             canonical_file,
-            insert_into_class,
-            insert_into_function,
-            method_kind_metadata,
-            method_param_name,
+            home.insert_into_class,
+            home.insert_into_function,
+            home.method_kind,
+            home.method_param_name,
             replacements,
         )
+
+    def _helper_home(
+        self,
+        pair: CodeBlockPair,
+        setup: _PairSetup,
+        scope: _HelperScope,
+        functions: FunctionIndex,
+        class_infos: List[ClassInfo],
+    ) -> "_HelperHome":
+        """The function or class the helper goes into, if any; otherwise the pair's own module."""
+        canonical_file = pair.file_path
+        if not pair.is_cross_file and scope.dce_insert_func:
+            # The helper is placed textually by function name (FuncLocator),
+            # so the name must identify one function in the file. When two
+            # classes have a same-named method (tornado: several
+            # ``get_handlers``), the deepest common enclosing function is a
+            # real, unique node, but the name alone would resolve to the
+            # wrong one and the call sites would not see the helper. Every
+            # free variable is already a parameter, so a module-level helper
+            # is equally correct; fall back to it when the name is ambiguous.
+            if len(functions.named(canonical_file, scope.dce_insert_func)) == 1:
+                return _HelperHome(canonical_file, None, scope.dce_insert_func, None, None)
+        class_plan = self._choose_class_insertion(
+            pair, setup.method_info1, setup.method_info2, class_infos
+        )
+        if class_plan is not None:
+            # Both blocks in one class: insert there. Different classes with a
+            # common ancestor that is neither: insert into the ancestor. A plan
+            # naming one concrete sibling would hide the helper from the other,
+            # so that falls back to module level.
+            same_class = pair.class1_name is not None and pair.class1_name == pair.class2_name
+            target_is_concrete_sibling = (
+                class_plan.class_name in {pair.class1_name, pair.class2_name} and not same_class
+            )
+            if not target_is_concrete_sibling:
+                return _HelperHome(
+                    class_plan.file_path,
+                    class_plan.class_name,
+                    None,
+                    class_plan.method_kind,
+                    class_plan.implicit_param,
+                )
+        return _HelperHome(canonical_file, None, None, None, None)
+
+    def _safe_home_across_modules(
+        self,
+        pair: CodeBlockPair,
+        home: "_HelperHome",
+        replacements: Sequence[Replacement],
+        functions: FunctionIndex,
+    ) -> Optional[str]:
+        """The module the helper is defined in once every participating module can import it.
+
+        A helper shared across modules is refused when a participating module
+        declares a global, when the project's layout is unknown, or when the
+        import would close a cycle that no other participating module can
+        host instead.
+        """
+        canonical_file = home.file_path
+        participating = {canonical_file} | {
+            replacement.file_path or canonical_file for replacement in replacements
+        }
+        if len(participating) == 1:
+            return canonical_file
+        if any(functions.declares_global(path) for path in participating):
+            self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
+            return None
+        if not layout_is_known(canonical_file, self.import_graph):
+            self._debug_reject(RejectReason.UNKNOWN_LAYOUT, pair)
+            return None
+        # The helper lives in ``canonical_file`` and every other participating
+        # module imports it. When that closes an import cycle, a plain
+        # module-level helper may move to another participating module that
+        # the others already import; only a genuine cycle declines the pair.
+        if not would_create_import_cycle(canonical_file, participating, self.import_graph):
+            return canonical_file
+        if home.insert_into_class is None and home.insert_into_function is None:
+            for candidate in sorted(participating - {canonical_file}):
+                if not would_create_import_cycle(candidate, participating, self.import_graph):
+                    return candidate
+        self._debug_reject(RejectReason.IMPORT_CYCLE, pair)
+        return None
 
     # -- 11 --------------------------------------------------------------------
 

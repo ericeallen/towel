@@ -489,6 +489,25 @@ def _call_statement(call: ast.Call, return_vars: List[str], is_value_producing: 
     return ast.Expr(value=call)
 
 
+def _declarations(
+    global_decls: Optional[Set[str]], nonlocal_decls: Optional[Set[str]]
+) -> List[ast.stmt]:
+    """The ``global`` and ``nonlocal`` statements a helper body opens with, when it needs them."""
+    preamble: List[ast.stmt] = []
+    if global_decls:
+        preamble.append(ast.Global(names=sorted(global_decls)))
+    if nonlocal_decls:
+        preamble.append(ast.Nonlocal(names=sorted(nonlocal_decls)))
+    return preamble
+
+
+def _names_tuple(names: List[str]) -> ast.expr:
+    """``name`` for one name, ``(name1, name2, ...)`` for several, as a loaded expression."""
+    if len(names) == 1:
+        return ast.Name(id=names[0], ctx=ast.Load())
+    return ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Load()) for name in names], ctx=ast.Load())
+
+
 class HygienicExtractor:
     """
     Extract code into a function while maintaining hygiene and
@@ -536,101 +555,48 @@ class HygienicExtractor:
         # Reset name usage per extraction to keep function names stable across proposals
         # and avoid cross-proposal suffix inflation.
         self.used_names.clear()
-
-        if return_variables is None:
-            return_variables = []
         # Make the helper name unique against the enclosing scope so it never
         # shadows an existing binding.
         function_name = self._ensure_unique_name(function_name, enclosing_names)
-
-        # Determine parameters
-        # 1. Parameters from unification (substituted expressions)
-        # 2. Free variables (referenced but not bound in block)
-        # IMPORTANT: Keep unified parameter names EXACT (e.g., '__param_0') to remain
-        # consistent with Substitution lookups and replacements. Renaming these would
-        # desynchronize the body substitutions from the function signature.
+        # Unified parameters keep their exact names (``__param_N``): the body
+        # substitution and the substitution's lookups depend on them. They come
+        # first, to preserve evaluation order, then the free variables.
         param_names_unified = list(substitution.param_expressions.keys())
-
-        # Mapping from renamed to original names (identity since we don't rename)
-        rename_mapping = {name: name for name in param_names_unified}
-
-        # Add free variables as parameters (they're already unique)
-        param_names_free = sorted(free_variables)
-
-        # Combine: unified parameters first (to preserve evaluation order),
-        # then free variables
-        all_param_names = param_names_unified + param_names_free
+        all_param_names = param_names_unified + sorted(free_variables)
         if len(set(all_param_names)) != len(all_param_names):
             raise UnsupportedExtraction("Generated parameter name collides with a free variable")
-
-        # Create parameter order mapping
         param_order = {name: idx for idx, name in enumerate(all_param_names)}
 
-        # Create function body by substituting unified parameters
         body_nodes = self._substitute_parameters(
-            copy.deepcopy(list(template_block)), substitution, param_names_unified, rename_mapping
+            copy.deepcopy(list(template_block)),
+            substitution,
+            param_names_unified,
+            {name: name for name in param_names_unified},
         )
-        # Substitute parameters returns generic AST nodes; for function body we expect statements
         body: List[ast.stmt] = [cast(ast.stmt, n) for n in body_nodes]
-
-        # Detect parameters used as callees (in Call.func position) in the extracted body
-        # so we can safely defer their evaluation at call sites via zero-arg lambdas.
         if param_names_unified:
+            # Parameters the body calls are passed as thunks; record them.
             finder = _CalleeParamFinder(set(param_names_unified))
             for stmt in body:
                 finder.visit(stmt)
-            # Record on substitution for use during call generation
-            if hasattr(substitution, "params_used_as_callee"):
-                substitution.params_used_as_callee.update(finder.found)
-
-        # Optionally inject global/nonlocal declarations at the top of the extracted function
-        injected_preamble: List[ast.stmt] = []
-        if global_decls:
-            injected_preamble.append(ast.Global(names=sorted(global_decls)))
-        if nonlocal_decls:
-            injected_preamble.append(ast.Nonlocal(names=sorted(nonlocal_decls)))
-
-        # Add return statement for value-producing extraction
+            substitution.params_used_as_callee.update(finder.found)
+        final_body = _declarations(global_decls, nonlocal_decls) + body
         if return_variables:
-            # Prepare the return expression (expr type)
-            return_value: ast.expr
-            if len(return_variables) == 1:
-                # Single return variable: return var
-                return_value = ast.Name(id=return_variables[0], ctx=ast.Load())
-            else:
-                # Multiple return variables: return (var1, var2, ...)
-                return_value = ast.Tuple(
-                    elts=[ast.Name(id=var, ctx=ast.Load()) for var in return_variables],
-                    ctx=ast.Load(),
-                )
-
-            return_stmt = ast.Return(value=return_value)
-            body.append(return_stmt)
-
-        # Create function arguments
-        args = ast.arguments(
-            posonlyargs=[],
-            args=[ast.arg(arg=name) for name in all_param_names],
-            kwonlyargs=[],
-            kw_defaults=[],
-            defaults=[],
-        )
-
-        # Create function definition
-        # Prepend any injected declarations before the transformed body
-        final_body: List[ast.stmt] = (injected_preamble + body) if injected_preamble else body
-
+            final_body.append(ast.Return(value=_names_tuple(return_variables)))
         func_def = ast.FunctionDef(
             name=function_name,
-            args=args,
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[ast.arg(arg=name) for name in all_param_names],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
+            ),
             body=final_body if final_body else [ast.Pass()],
             decorator_list=[],
             returns=None,
         )
-
-        # Fix missing locations
         ast.fix_missing_locations(func_def)
-
         return func_def, param_order
 
     def generate_call(
