@@ -36,13 +36,28 @@ def _participating_files(proposal) -> set:
 
 
 def get_crossfile_project_files(project_name: str) -> List[str]:
-    """Get all Python files for a cross-file test project."""
+    """All Python files of a cross-file fixture project, which must exist.
+
+    A missing or empty fixture is a broken test tree, not a reason to skip:
+    renaming a fixture directory must fail every test that depends on it.
+    """
     project_dir = CROSSFILE_DIR / project_name
-    if not project_dir.exists():
-        return []
+    assert project_dir.is_dir(), f"cross-file fixture missing: {project_dir}"
     # Include files in nested directories to support complex project layouts
-    files = [str(f) for f in project_dir.rglob("*.py") if f.is_file()]
-    return sorted(files)
+    files = sorted(str(f) for f in project_dir.rglob("*.py") if f.is_file())
+    assert files, f"cross-file fixture has no Python files: {project_dir}"
+    return files
+
+
+def get_example3_files() -> List[str]:
+    """The two example3 modules under ``test_examples``, which must exist."""
+    files = [
+        str(PROJECT_ROOT / "test_examples" / "example3_file1.py"),
+        str(PROJECT_ROOT / "test_examples" / "example3_file2.py"),
+    ]
+    missing = [path for path in files if not Path(path).is_file()]
+    assert not missing, f"example3 fixtures missing: {missing}"
+    return files
 
 
 class TestCrossFileProposalStructure:
@@ -157,15 +172,12 @@ class TestNestedStructureCrossFile:
     def test_nested_structure_project_exists(self):
         """Nested structure test project should exist and have files."""
         files = get_crossfile_project_files("nested_structure")
-        # May have nested directories, so check for any .py files
-        if files:
-            assert len(files) > 0
+        # The fixture nests packages, so files live below the project root.
+        assert any(Path(f).parent != CROSSFILE_DIR / "nested_structure" for f in files)
 
     def test_nested_structure_analysis(self):
         """Nested package structure should be analyzable."""
         files = get_crossfile_project_files("nested_structure")
-        if not files:
-            pytest.skip("nested_structure project not found or empty")
 
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
@@ -180,14 +192,11 @@ class TestMultiLevelCrossFile:
     def test_multi_level_project_exists(self):
         """Multi-level test project should exist."""
         files = get_crossfile_project_files("multi_level")
-        if files:
-            assert len(files) > 0
+        assert len(files) >= 2, "multi_level must hold several modules to duplicate across"
 
     def test_multi_level_analysis(self):
         """Multi-level duplication scenarios should be analyzable."""
         files = get_crossfile_project_files("multi_level")
-        if not files:
-            pytest.skip("multi_level project not found or empty")
 
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
@@ -208,8 +217,6 @@ class TestCrossFileErrorHandling:
     def test_single_file_crossfile(self):
         """Single file should work (no cross-file opportunities)."""
         files = get_crossfile_project_files("simple_crossfile")
-        if not files:
-            pytest.skip("simple_crossfile not found")
 
         # Just analyze first file
         engine = UnificationRefactorEngine()
@@ -231,8 +238,6 @@ class TestCrossFileErrorHandling:
     def test_mixed_valid_invalid_files(self):
         """Mix of valid and invalid files should process valid ones."""
         valid_files = get_crossfile_project_files("simple_crossfile")
-        if not valid_files:
-            pytest.skip("simple_crossfile not found")
 
         invalid = str(PROJECT_ROOT / "nonexistent.py")
         mixed = valid_files + [invalid]
@@ -250,8 +255,6 @@ class TestCrossFileProposalApplication:
     def test_crossfile_replacement_has_valid_ranges(self):
         """Replacement ranges should be within file bounds."""
         files = get_crossfile_project_files("simple_crossfile")
-        if not files:
-            pytest.skip("simple_crossfile not found")
 
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
@@ -278,8 +281,6 @@ class TestCrossFileProposalApplication:
         import ast as python_ast
 
         files = get_crossfile_project_files("simple_crossfile")
-        if not files:
-            pytest.skip("simple_crossfile not found")
 
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
@@ -309,8 +310,6 @@ class TestCrossFilePerformance:
         import time
 
         files = get_crossfile_project_files("simple_crossfile")
-        if not files:
-            pytest.skip("simple_crossfile not found")
 
         engine = UnificationRefactorEngine()
 
@@ -325,8 +324,6 @@ class TestCrossFilePerformance:
     def test_crossfile_with_progress_disabled(self):
         """Cross-file analysis with progress='none' should work."""
         files = get_crossfile_project_files("simple_crossfile")
-        if not files:
-            pytest.skip("simple_crossfile not found")
 
         proposals = run_pipeline(files, progress="none")
         assert isinstance(proposals, list)
@@ -337,11 +334,7 @@ class TestExampleThreeCrossFile:
 
     def test_example3_finds_cross_file_duplication(self):
         """Example 3 files should have duplicate discount calculation logic."""
-        file1 = str(PROJECT_ROOT / "test_examples" / "example3_file1.py")
-        file2 = str(PROJECT_ROOT / "test_examples" / "example3_file2.py")
-
-        if not Path(file1).exists() or not Path(file2).exists():
-            pytest.skip("example3 files not found")
+        file1, file2 = get_example3_files()
 
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files([file1, file2])
@@ -351,11 +344,7 @@ class TestExampleThreeCrossFile:
 
     def test_example3_proposals_span_both_files(self):
         """Example 3 proposals should reference both files."""
-        file1 = str(PROJECT_ROOT / "test_examples" / "example3_file1.py")
-        file2 = str(PROJECT_ROOT / "test_examples" / "example3_file2.py")
-
-        if not Path(file1).exists() or not Path(file2).exists():
-            pytest.skip("example3 files not found")
+        file1, file2 = get_example3_files()
 
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files([file1, file2])
