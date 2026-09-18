@@ -353,6 +353,6 @@ class CrossFileEquivalenceTester:
                 if total > 0:
                     print(f"  Result: {passed}/{total} passed\n")
                 else:
-                    print(f"  Result: No proposals\n")
+                    print("  Result: No proposals\n")
 
         return results

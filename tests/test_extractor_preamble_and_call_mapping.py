@@ -1,6 +1,5 @@
 import ast
 import unittest
-import towel.unification.extractor  # explicit import for coverage collection
 
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution

@@ -16,7 +16,7 @@ repos:
         entry: python -m flake8 --config=.flake8
         language: system
         types: [python]
-        files: ^(src/towel/|scripts/)
+        files: ^(src/towel/|scripts/|tests/)
       - id: mypy
         name: Mypy
         entry: python -m mypy

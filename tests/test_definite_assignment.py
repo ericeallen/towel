@@ -140,6 +140,8 @@ def test_except_handler_name_is_unbound_after_the_handler(
     result = _bound_at_marker(source)
     assert bound <= result
     assert not (unbound & result)
+    assert bound <= result
+    assert not (unbound & result)
 
 
 def test_locally_bound_names_excludes_nested_scopes_and_free_names() -> None:

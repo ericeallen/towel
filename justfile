@@ -104,7 +104,7 @@ format-check:
 
 # Lint with flake8 (CI form)
 lint:
-    uv run --frozen flake8 src/towel scripts
+    uv run --frozen flake8 src/towel scripts tests
 
 # Type-check with mypy (CI form)
 typecheck:

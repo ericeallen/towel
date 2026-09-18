@@ -12,7 +12,7 @@ This module provides edge case values to stress test observational equivalence:
 
 import sys
 import math
-from typing import List, Dict, Any, Set, Tuple, Optional
+from typing import List, Dict, Any, Set, Tuple
 
 
 class EdgeCaseValues:

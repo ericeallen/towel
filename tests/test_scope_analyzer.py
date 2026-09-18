@@ -23,7 +23,7 @@ def foo(a, b, /, c):
     return a + b + c
 """
         tree = ast.parse(code)
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
@@ -41,7 +41,7 @@ def foo(a, *, b, c=10):
     return a + b + c
 """
         tree = ast.parse(code)
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
@@ -59,7 +59,7 @@ def foo(a, *args, **kwargs):
     return a + len(args) + len(kwargs)
 """
         tree = ast.parse(code)
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
@@ -100,7 +100,7 @@ def foo():
     return x, y
 """
         tree = ast.parse(code)
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
@@ -121,7 +121,7 @@ def foo(x):
     return y if x > 10 else z
 """
         tree = ast.parse(code)
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
@@ -165,7 +165,7 @@ def foo(items):
     return result
 """
         tree = ast.parse(code)
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
@@ -182,7 +182,7 @@ def complex_func(a, b, /, c, d=10, *args, e, f=20, **kwargs):
     return a + b + c + d + e + f + len(args) + len(kwargs)
 """
         tree = ast.parse(code)
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
@@ -205,7 +205,7 @@ def search(items, target):
     return found
 """
         tree = ast.parse(code)
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)

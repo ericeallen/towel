@@ -161,9 +161,6 @@ def bar():
             if proposals:
                 # Manually corrupt line numbers to test error handling
                 prop = proposals[0]
-                # Store file path for later retrieval
-                original_replacements = prop.replacements[:]
-
                 # Try to apply anyway (should handle gracefully)
                 try:
                     result = self.engine.apply_refactoring(temp_path, prop)

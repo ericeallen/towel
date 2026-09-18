@@ -43,7 +43,7 @@ class TestFreeVariableCorrespondence(unittest.TestCase):
         self.assertIsNotNone(substitution, "Blocks should unify")
 
         # Check hygienic_renames tracks the correspondence
-        print(f"\nTest 1 - Hygienic renames:")
+        print("\nTest 1 - Hygienic renames:")
         print(f"  Block 0: {hygienic_renames[0]}")
         print(f"  Block 1: {hygienic_renames[1]}")
 
@@ -78,7 +78,7 @@ if not admin.get("id"):
 
         self.assertIsNotNone(substitution, "Blocks should unify")
 
-        print(f"\nTest 2 - Hygienic renames:")
+        print("\nTest 2 - Hygienic renames:")
         print(f"  Block 0: {hygienic_renames[0]}")
         print(f"  Block 1: {hygienic_renames[1]}")
 
@@ -104,7 +104,7 @@ if not admin.get("id"):
 
         self.assertIsNotNone(substitution, "Blocks should unify")
 
-        print(f"\nTest 3 - Hygienic renames:")
+        print("\nTest 3 - Hygienic renames:")
         print(f"  Block 0: {hygienic_renames[0]}")
         print(f"  Block 1: {hygienic_renames[1]}")
 
@@ -132,7 +132,7 @@ if not admin.get("id"):
 
         self.assertIsNotNone(substitution, "Blocks should unify")
 
-        print(f"\nTest 4 - Hygienic renames:")
+        print("\nTest 4 - Hygienic renames:")
         print(f"  Block 0: {hygienic_renames[0]}")
         print(f"  Block 1: {hygienic_renames[1]}")
 
@@ -163,7 +163,7 @@ if not admin.get("id"):
 
         self.assertIsNotNone(substitution, "All blocks should unify")
 
-        print(f"\nTest 5 - Hygienic renames:")
+        print("\nTest 5 - Hygienic renames:")
         print(f"  Block 0: {hygienic_renames[0]}")
         print(f"  Block 1: {hygienic_renames[1]}")
         print(f"  Block 2: {hygienic_renames[2]}")
@@ -248,7 +248,7 @@ if not admin.get("name"):
         call0_str = ast.unparse(call0)
         call1_str = ast.unparse(call1)
 
-        print(f"\nTest 6 - Generated calls:")
+        print("\nTest 6 - Generated calls:")
         print(f"  Call 0: {call0_str}")
         print(f"  Call 1: {call1_str}")
 

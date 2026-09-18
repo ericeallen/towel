@@ -68,7 +68,6 @@ def compare_callable_returns(func1: Callable, func2: Callable, max_test_cases: i
 
     # Test with a few combinations of parameter values
     num_params = len(params1)
-    test_count = 0
 
     # Generate test cases (use simple combinations)
     if num_params == 0:
@@ -497,7 +496,7 @@ class TestObservationalEquivalence(unittest.TestCase):
 
         if not all_passed:
             self.fail(
-                f"Semantic equivalence failed for process_user_data:\n" + "\n".join(differences)
+                "Semantic equivalence failed for process_user_data:\n" + "\n".join(differences)
             )
 
         # Test process_admin_data function
@@ -507,7 +506,7 @@ class TestObservationalEquivalence(unittest.TestCase):
 
         if not all_passed:
             self.fail(
-                f"Semantic equivalence failed for process_admin_data:\n" + "\n".join(differences)
+                "Semantic equivalence failed for process_admin_data:\n" + "\n".join(differences)
             )
 
         # Verify original file wasn't modified
@@ -820,7 +819,7 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
             print("See KNOWN_ISSUES.md for details.")
 
             # Show summary of failures
-            print(f"\nFiles with failures:")
+            print("\nFiles with failures:")
             for filename, file_result in sorted(results["file_results"].items()):
                 if file_result["failed"] > 0:
                     print(f"  {filename}: {file_result['failed']} failed")

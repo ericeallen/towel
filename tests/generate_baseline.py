@@ -57,7 +57,7 @@ def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: P
                 for i, d in enumerate(descriptions[:3], 1):
                     print(f"      {i}. {d}")
             else:
-                print(f"    No proposals found (fixed point)")
+                print("    No proposals found (fixed point)")
         except Exception as e:
             print(f"    Fixed-point refactoring failed: {e}")
             raise

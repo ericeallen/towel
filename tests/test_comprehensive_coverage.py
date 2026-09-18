@@ -25,11 +25,6 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
     def setUp(self):
         self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
 
-    def test_analyze_directory_nonexistent(self):
-        """Test analyzing a non-existent directory."""
-        proposals = self.engine.analyze_directory("/nonexistent/path")
-        self.assertEqual(len(proposals), 0)
-
     def test_analyze_directory_non_recursive(self):
         """Test non-recursive directory analysis.
 

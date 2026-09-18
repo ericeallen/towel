@@ -162,7 +162,7 @@ class TestRefactoringEngine(unittest.TestCase):
         for prop in proposals:
             line_count = len(prop.extracted_function.body)
             self.assertGreaterEqual(
-                line_count, 1, f"Extracted function is too short"  # At least some statements
+                line_count, 1, "Extracted function is too short"  # At least some statements
             )
 
         # Verify original file was never modified

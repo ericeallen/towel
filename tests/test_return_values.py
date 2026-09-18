@@ -83,11 +83,11 @@ class TestReturnValuePropagation(unittest.TestCase):
         no_ret = [p for p in proposals if "no_return" in p.description.lower()]
         self.assertGreater(len(no_ret), 0, "Should find no-return duplicates")
 
-        # These should NOT have 'return' in the replacement call
-        # (since they don't produce a value)
-        prop = no_ret[0]
-        # The extracted function itself won't have a return
-        # and the replacement shouldn't either
+        # Neither the helper nor the call returns a value.
+        for prop in no_ret:
+            self.assertEqual(prop.return_variables, [])
+            for replacement in prop.replacements:
+                self.assertNotIsInstance(replacement.node, ast.Return)
 
 
 if __name__ == "__main__":

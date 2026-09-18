@@ -19,7 +19,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen --extra dev
       - run: uv run --frozen black --check src/towel tests scripts
-      - run: uv run --frozen flake8 src/towel scripts
+      - run: uv run --frozen flake8 src/towel scripts tests
       - run: uv run --frozen mypy
       - run: uv run --frozen bandit -r src/towel -ll
       # Known-vulnerability scan of the locked dependency set; once, not per interpreter.

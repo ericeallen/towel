@@ -53,7 +53,6 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         proposals = engine.analyze_file(str(m.path))
         # There may be other trivial proposals; ensure the if-block pair isn't accepted by checking
         # that no proposal replaces inside the second function's if with a return call.
-        modified_any = False
         for p in proposals:
             modified_files = engine.apply_refactoring_multi_file(p)
             new_src = modified_files.get(str(m.path))
@@ -61,9 +60,6 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 # ensure no injected return call under f2
                 f2_block = new_src.split("def f2")[1]
                 self.assertNotIn("return __extracted_func", f2_block)
-                modified_any = True
-        # proposals may be empty or unrelated; test is chiefly that mismatch paths don't sneak a return
-        self.assertTrue(True if proposals is not None else True)
 
     def test_incomplete_return_coverage_rejected(self):
         code = """
@@ -846,7 +842,6 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         )
 
         found_method_insertion = False
-        picked_src = None
         for p in proposals:
             new_src = engine.apply_refactoring(str(m.path), p)
             mod = ast.parse(new_src)
@@ -887,7 +882,6 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 new_val = ns2["C"]().m(2, 5)
                 self.assertEqual(orig, new_val)
                 found_method_insertion = True
-                picked_src = new_src
                 break
 
         self.assertTrue(

@@ -169,7 +169,7 @@ class TestFunctionScopes(unittest.TestCase):
         tree = ast.parse(code)
         func_def = tree.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         # Get the function's scope
         func_scope = self.analyzer.node_scopes[func_def]
@@ -182,7 +182,7 @@ class TestFunctionScopes(unittest.TestCase):
         tree = ast.parse(code)
         func_def = tree.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
         self.assertIn("x", func_scope.bindings)
@@ -194,7 +194,7 @@ class TestFunctionScopes(unittest.TestCase):
         tree = ast.parse(code)
         func_def = tree.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
         self.assertIn("x", func_scope.bindings)
@@ -206,7 +206,7 @@ class TestFunctionScopes(unittest.TestCase):
         tree = ast.parse(code)
         func_def = tree.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
         self.assertIn("x", func_scope.bindings)
@@ -224,7 +224,7 @@ def outer(x):
         outer_def = tree.body[0]
         inner_def = outer_def.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         # Check outer function scope
         outer_scope = self.analyzer.node_scopes[outer_def]
@@ -262,7 +262,7 @@ class Foo:
         tree = ast.parse(code)
         class_def = tree.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         # Check class scope
         class_scope = self.analyzer.node_scopes[class_def]
@@ -278,7 +278,7 @@ class Foo:
         tree = ast.parse(code)
         class_def = tree.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         class_scope = self.analyzer.node_scopes[class_def]
         self.assertIn("x", class_scope.bindings)
@@ -349,7 +349,7 @@ def foo():
         tree = ast.parse(code)
         func_def = tree.body[1]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
         # Global variables should be tracked
@@ -369,7 +369,7 @@ def outer():
         outer_def = tree.body[0]
         inner_def = outer_def.body[1]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         inner_scope = self.analyzer.node_scopes[inner_def]
         # Nonlocal variables should be tracked
@@ -609,7 +609,7 @@ async def foo():
         tree = ast.parse(code)
         func_def = tree.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
         self.assertIn("item", func_scope.bindings, "Async for variable should be bound")
@@ -624,7 +624,7 @@ async def foo():
         tree = ast.parse(code)
         func_def = tree.body[0]
 
-        scope = self.analyzer.analyze(tree)
+        self.analyzer.analyze(tree)
 
         func_scope = self.analyzer.node_scopes[func_def]
         self.assertIn("ctx", func_scope.bindings, "Async with variable should be bound")

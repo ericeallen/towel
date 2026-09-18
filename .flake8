@@ -1,6 +1,9 @@
 [flake8]
 max-line-length = 100
-exclude = venv,env,__pycache__,tests
+exclude = venv,env,__pycache__,tests/hostile_cases,tests/hostile_crossfile
+# Tests are checked for pyflakes errors (unused names, duplicates, undefined names) only.
+per-file-ignores =
+    tests/*:E,W,C90
 # E501: Line too long (we use Black's 100 char limit, not PEP8's 79)
 # W503: Line break before binary operator (Black style)
 # E203: Whitespace before ':' (Black vs flake8 conflict in slices)

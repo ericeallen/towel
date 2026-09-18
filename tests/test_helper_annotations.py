@@ -15,7 +15,6 @@ import ast
 from pathlib import Path
 import textwrap
 
-import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.type_inference import Subtyping
