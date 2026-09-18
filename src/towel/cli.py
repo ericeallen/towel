@@ -465,6 +465,13 @@ def _import_sorter(project_path: "Path") -> Optional[Callable[[str, str], str]]:
     return choice.tool
 
 
+def _banner(title: str) -> None:
+    """Print a step heading the way every command does."""
+    print(title)
+    print("=" * 70)
+    print()
+
+
 def _existing_target(path: str) -> Tuple[bool, bool]:
     """``(is_file, is_dir)`` for a path the command may work on; exits with a message otherwise."""
     import os
@@ -526,9 +533,7 @@ def _run_dry(args: argparse.Namespace) -> None:
 
     # Use fixed-point iteration
     print("=" * 70)
-    print("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
-    print("=" * 70)
-    print()
+    _banner("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
     print("This will apply refactorings one at a time until no more are found.")
     print("Extracted functions will be placed at the end of files.")
     print()
@@ -1068,9 +1073,7 @@ def _run_interactive_llm_mode(
     """Run interactive mode: generate LLM prompt and apply suggestions."""
     print(f"\nFound {len(helpers)} extracted helper function(s) to rename.\n")
     print("=" * 70)
-    print("STEP 1: LLM PROMPT GENERATION")
-    print("=" * 70)
-    print()
+    _banner("STEP 1: LLM PROMPT GENERATION")
 
     # Generate LLM prompt
     prompt = _generate_llm_prompt(target, helpers, llm_type)
@@ -1135,9 +1138,7 @@ def _run_interactive_llm_mode(
         sys.exit(1)
 
     print("\n" + "=" * 70)
-    print("STEP 2: APPLYING RENAMINGS")
-    print("=" * 70)
-    print()
+    _banner("STEP 2: APPLYING RENAMINGS")
 
     total_changes = _apply_rename_mappings(target, renames, dry_run)
     print(f"\n{'[DRY RUN] Would make' if dry_run else 'Applied'} {total_changes} change(s)")

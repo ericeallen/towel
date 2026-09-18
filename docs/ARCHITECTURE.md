@@ -142,6 +142,26 @@ treated as orphaned and the block is rejected. `extractor.py`'s
 return on every path before it may be called as `return helper(...)`, using
 both the rendered shape and the all-paths-exit property.
 
+### The visitors
+
+Every AST visitor in the package is built on one of three bases in
+`visitors.py`, each a Template Method: the base fixes the traversal, the
+subclass supplies the hooks. `OwnScopeVisitor` reads one scope's own code
+and hands a nested function, class, lambda, or comprehension to a hook,
+whose default is not to enter a function and to enter the rest, since they
+run where they stand. `DefinitionDepthVisitor` enters every definition and
+announces it to hooks with the enclosing depth. `ScopeVisitor` is for the
+analyses that follow lexical scopes (`ScopeAnalyzer`, its free-variable
+walker, `BindingDetector`, the rename tool's scope map): it visits a
+definition's head in the enclosing scope, binds its name there, enters the
+scope, binds parameters, visits the body, leaves, and visits the tail; a
+comprehension evaluates its first iterable outside and binds every target
+inside before the remaining iterables, conditions, and result. An analysis
+that must deviate (the scope analyzer keeps a lambda's body in its enclosing
+scope, the walker does not enter a class body, the binding detector records
+comprehension targets against the enclosing scope node) overrides the hook
+and says why.
+
 ## Guards
 
 `semantic_safety.py` rejects a block, before verification, when moving it into
@@ -622,7 +642,8 @@ but the ideas and their names are from the literature.
 | Anti-unification | `unifier.py`, `nominal_unifier.py` |
 | Pair pre-filter | `block_signature.py` |
 | Verification | `instantiation.py` |
-| Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py`, `visitors.py` |
+| Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py` |
+| Visitor bases (Template Method) and shared visitors | `visitors.py` |
 | Liveness and orphans | `definite_assignment.py`, `orphan_detector.py` |
 | Safety guards, import cycles, pre-scan | `semantic_safety.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |

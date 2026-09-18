@@ -142,6 +142,13 @@ ecosystem evidence behind each claim. The format follows
   actions and the `uv`-managed Python dependencies.
 
 ### Fixed
+- Two blocks that differed only in the spelling of a lambda's parameter
+  (`lambda value: value * 2` against `lambda other: other * 2`), or of an
+  assignment expression's target (`(t := f())` against `(temp := f())`),
+  were declined. Lambda parameters are now renamed within their own lambda
+  by the instantiation check, which leaves a free name spelled the same
+  outside the lambda alone, and walrus targets are block-level binders for
+  the unifier, since an assignment expression binds in the enclosing scope.
 - A block that binds a variable read after it is extracted again, with the
   helper returning the variable and the call rebinding it (`total =
   helper(order)`), as the README has always shown. The orphan guard added for
@@ -180,6 +187,12 @@ ecosystem evidence behind each claim. The format follows
   spellings still parse and are left out of the help.
 
 ### Changed (library)
+- The AST visitors are built on three Template Method bases in
+  `visitors.py`: `OwnScopeVisitor` for collectors that read one scope's own
+  code, `DefinitionDepthVisitor` for those that track how deeply a
+  definition sits, and `ScopeVisitor` for the analyses that follow lexical
+  scopes, which now share one visiting order for definitions and
+  comprehensions and override hooks where they deviate on purpose.
 - The engine is assembled from mixins, one module per responsibility
   (`pair_evaluation`, `placement`, `reuse`, `insertion`,
   `annotation_wiring`, `materialize`, `clustering`, `parallel`,
