@@ -223,6 +223,9 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from .scope_analyzer import ScopeAnalyzer, Scope
 
 
+FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
+"""A function definition of either kind."""
+
 ParameterKind = Literal["value", "thunk", "lifted", "receiver"]
 """How a helper parameter receives its argument: a plain value, a zero-argument
 thunk called where the expression stood, a lambda over block-local names, or

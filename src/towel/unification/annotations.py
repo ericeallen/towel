@@ -51,13 +51,12 @@ import builtins
 import copy
 from dataclasses import dataclass
 import re
-from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
+from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, Subtyping, TypeOracle
+from .models import FunctionNode
 from ..diagnostics import TYPES, debugging
-
-FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 _BUILTIN_NAMES: Set[str] = set(dir(builtins))
 
