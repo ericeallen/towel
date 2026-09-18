@@ -28,7 +28,7 @@ from __future__ import annotations
 import ast
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable, Sequence, TypeVar
+from typing import Callable, FrozenSet, Sequence, TypeVar
 from weakref import WeakKeyDictionary
 
 _SIGNATURE_SKIPS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -147,11 +147,24 @@ def statement_shape(statement: ast.AST) -> StatementShape:
     return memoized_per_node(_SHAPES, statement, _compute_shape)
 
 
+_MENTIONED_NAMES: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def _compute_mentioned_names(statement: ast.AST) -> FrozenSet[str]:
+    return frozenset(node.id for node in ast.walk(statement) if isinstance(node, ast.Name))
+
+
+def mentioned_names(statement: ast.AST) -> FrozenSet[str]:
+    """Every identifier ``statement`` names anywhere, nested scopes included."""
+    return memoized_per_node(_MENTIONED_NAMES, statement, _compute_mentioned_names)
+
+
 __all__ = [
     "StatementFacts",
     "StatementShape",
     "block_contains_return",
     "memoized_per_node",
+    "mentioned_names",
     "statement_facts",
     "statement_shape",
 ]

@@ -19,6 +19,34 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
+from weakref import WeakKeyDictionary
+
+
+def _dump_without_positions(node: ast.AST) -> str:
+    return ast.dump(node, include_attributes=False)
+
+
+_STRUCTURAL_TEXT: "WeakKeyDictionary[ast.AST, str]" = WeakKeyDictionary()
+
+
+def structural_text(node: ast.AST) -> str:
+    """``ast.dump`` of ``node`` without positions, once per node.
+
+    Rendered Python is not an AST identity: on Python 3.9 a bare
+    FormattedValue and its enclosing JoinedStr unparse identically, so the
+    dump is the key that preserves node kinds and structure. The memo is
+    weak and assumes a node's structure is fixed once it has been keyed: the
+    blocks being unified are read-only, and the extractor queries each of
+    its copied template nodes once, before substituting its children.
+    """
+    cached = _STRUCTURAL_TEXT.get(node)
+    if cached is None:
+        cached = _dump_without_positions(node)
+        try:
+            _STRUCTURAL_TEXT[node] = cached
+        except TypeError:  # a node type that cannot be weakly referenced
+            pass
+    return cached
 
 
 @dataclass
@@ -70,11 +98,7 @@ class Substitution:
             param_name: Name of the parameter
             bound_vars: List of bound variables the expression references (for function parameters)
         """
-        # Rendered Python is not an AST identity: on Python 3.9 a bare
-        # FormattedValue and its enclosing JoinedStr unparse identically.
-        # Preserve node kinds and structure, ignoring source locations.
-        expr_str = ast.dump(expr, include_attributes=False)
-        key = (block_idx, expr_str)
+        key = (block_idx, structural_text(expr))
         self.mappings[key] = param_name
 
         if param_name not in self.param_expressions:
@@ -93,8 +117,7 @@ class Substitution:
 
     def get_param_for_expr(self, block_idx: int, expr: ast.AST) -> Optional[str]:
         """Get the parameter name for an expression."""
-        expr_str = ast.dump(expr, include_attributes=False)
-        return self.mappings.get((block_idx, expr_str))
+        return self.mappings.get((block_idx, structural_text(expr)))
 
     def is_function_param(self, param_name: str) -> bool:
         """Check if a parameter should be a function parameter."""
