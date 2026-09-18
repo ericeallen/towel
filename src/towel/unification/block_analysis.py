@@ -37,7 +37,6 @@ from .extractor import has_complete_return_coverage, is_value_producing
 from .models import (
     BlockBindingSnapshot,
     CodeBlockPair,
-    FunctionArtifact,
     FunctionNode,
     RejectReason,
     encloses,
@@ -56,6 +55,7 @@ from .visitors import (
 from ..diagnostics import VALIDATION, debugging
 
 from .engine_state import EngineState
+from .function_index import FunctionIndex
 
 
 class BlockAnalysis(EngineState):
@@ -329,16 +329,14 @@ class BlockAnalysis(EngineState):
     def _enclosing_function_named(
         name: str,
         file_path: str,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
         inner: Sequence[FunctionNode],
     ) -> Optional[FunctionNode]:
         """The one function called ``name`` in ``file_path`` enclosing every ``inner`` function."""
         matches = [
             entry.node
-            for entry in all_functions
-            if entry.file_path == file_path
-            and entry.node.name == name
-            and all(encloses(entry.node, function) for function in inner)
+            for entry in functions.named(file_path, name)
+            if all(encloses(entry.node, function) for function in inner)
         ]
         return matches[0] if len(matches) == 1 else None
 

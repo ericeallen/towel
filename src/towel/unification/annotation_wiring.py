@@ -29,7 +29,7 @@ import copy
 import dataclasses
 
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, cast
+from typing import Dict, List, Optional, Set, cast
 from .annotations import (
     ApplySite,
     CallSite,
@@ -41,17 +41,18 @@ from .annotations import (
     sites_use_annotations,
     typing_imports_needed,
 )
-from .models import FunctionArtifact, FunctionNode, RefactoringProposal
+from .models import FunctionNode, RefactoringProposal
 from ..diagnostics import TYPES
 
 from .engine_state import EngineState
+from .function_index import FunctionIndex
 
 
 class HelperAnnotationWiring(EngineState):
     """Helper AnnotationWiring methods of the engine; see the module docstring."""
 
     def _with_helper_annotations(
-        self, proposal: RefactoringProposal, all_functions: Sequence[FunctionArtifact]
+        self, proposal: RefactoringProposal, functions: FunctionIndex
     ) -> RefactoringProposal:
         """The proposal with its helper annotated from what the call sites declare.
 
@@ -63,7 +64,7 @@ class HelperAnnotationWiring(EngineState):
         for replacement in proposal.replacements:
             file_path = replacement.file_path or proposal.file_path
             call = call_in_statement(replacement.node, proposal.extracted_function.name)
-            function = self._innermost_function_at(file_path, replacement.line_range, all_functions)
+            function = functions.innermost_at(file_path, replacement.line_range)
             module = function.scope_analyzer.analyzed_tree if function is not None else None
             if call is None or function is None or not isinstance(module, ast.Module):
                 return proposal

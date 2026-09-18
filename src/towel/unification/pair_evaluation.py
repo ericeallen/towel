@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple, cast
 
@@ -47,6 +46,7 @@ from .definite_assignment import definitely_bound_before, locally_bound_names
 from .semantic_safety import defer_impure_parameters, has_impure_eager_parameters
 from .engine_state import EngineState
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
+from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .models import (
     BlockBindingSnapshot,
@@ -350,7 +350,8 @@ class PairEvaluation(EngineState):
         class_infos: List[ClassInfo],
     ) -> Optional[RefactoringProposal]:
         """The proposal for ``pair``, or None with the reason traced (cross-file aware)."""
-        setup = self._guard_pair(pair, all_functions)
+        functions = self._function_index(all_functions)
+        setup = self._guard_pair(pair, functions)
         if setup is None:
             return None
         ctx = setup.ctx
@@ -370,30 +371,28 @@ class PairEvaluation(EngineState):
         unified = self._unify_pair(pair, analysis)
         if unified is None:
             return None
-        scope = self._helper_scope(pair, ctx, all_functions)
-        free = self._free_variables(pair, ctx, analysis, unified, all_functions)
+        scope = self._helper_scope(pair, ctx, functions)
+        free = self._free_variables(pair, ctx, analysis, unified)
         if free is None:
             return None
         rendered = self._render_helper(pair, ctx, unified, scope, free, value_producing)
         if rendered is None:
             return None
-        if self._leaves_orphans(pair, all_functions, unified):
+        if self._leaves_orphans(pair, functions, unified):
             return None
         sites = self._call_sites(
-            pair, setup, analysis, unified, scope, free, rendered, value_producing, all_functions
+            pair, setup, analysis, unified, scope, free, rendered, value_producing, functions
         )
         if sites is None:
             return None
-        placement = self._place_helper(pair, setup, scope, sites, all_functions, class_infos)
+        placement = self._place_helper(pair, setup, scope, sites, functions, class_infos)
         if placement is None:
             return None
-        return self._finish_proposal(pair, unified, rendered, placement, all_functions)
+        return self._finish_proposal(pair, unified, rendered, placement, functions)
 
     # -- 1 ---------------------------------------------------------------------
 
-    def _guard_pair(
-        self, pair: CodeBlockPair, all_functions: Sequence[FunctionArtifact]
-    ) -> Optional[_PairSetup]:
+    def _guard_pair(self, pair: CodeBlockPair, functions: FunctionIndex) -> Optional[_PairSetup]:
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
         if self._block_rejected(
             requires_original_frame, pair.block1_nodes, path=pair.file_path
@@ -409,7 +408,7 @@ class PairEvaluation(EngineState):
             VALIDATION.debug(f"Block1 range: {pair.block1_range}")
             VALIDATION.debug(f"Block2 range: {pair.block2_range}")
 
-        ctx = self._resolve_pair_context(pair, all_functions)
+        ctx = self._resolve_pair_context(pair, functions)
         func1, func2 = ctx.func1, ctx.func2
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
 
@@ -653,7 +652,7 @@ class PairEvaluation(EngineState):
     # -- 5 ---------------------------------------------------------------------
 
     def _helper_scope(
-        self, pair: CodeBlockPair, ctx: "_PairContext", all_functions: Sequence[FunctionArtifact]
+        self, pair: CodeBlockPair, ctx: "_PairContext", functions: FunctionIndex
     ) -> _HelperScope:
         """The function the helper may go into, and the names it must not shadow there."""
         dce_insert_func: Optional[str] = None
@@ -669,22 +668,17 @@ class PairEvaluation(EngineState):
             # name encloses both blocks' functions.
             if dce_insert_func and ctx.func1 is not None and ctx.func2 is not None:
                 dce_node = self._enclosing_function_named(
-                    dce_insert_func, pair.file_path, all_functions, (ctx.func1, ctx.func2)
+                    dce_insert_func, pair.file_path, functions, (ctx.func1, ctx.func2)
                 )
                 if dce_node is None:
                     dce_insert_func = None
 
         enclosing_names = set(ctx.root_scope.bindings.keys()) if ctx.root_scope else set()
         if dce_insert_func:
-            for artifact in all_functions:
-                if (
-                    artifact.file_path == (pair.file_path2 or pair.file_path)
-                    and artifact.node.name == dce_insert_func
-                ):
-                    func_scope = artifact.scope_analyzer.node_scopes.get(artifact.node)
-                    if func_scope is not None:
-                        enclosing_names.update(func_scope.bindings.keys())
-                    break
+            for artifact in functions.named(pair.file_path2 or pair.file_path, dce_insert_func)[:1]:
+                func_scope = artifact.scope_analyzer.node_scopes.get(artifact.node)
+                if func_scope is not None:
+                    enclosing_names.update(func_scope.bindings.keys())
         # The same enrichment, keyed on the first file: kept as it always was, so
         # the hygiene set is identical to the original computation.
         target_insert_fn = (
@@ -693,12 +687,10 @@ class PairEvaluation(EngineState):
             else None
         )
         if target_insert_fn:
-            for artifact in all_functions:
-                if artifact.file_path == pair.file_path and artifact.node.name == target_insert_fn:
-                    func_scope = artifact.scope_analyzer.node_scopes.get(artifact.node)
-                    if func_scope is not None:
-                        enclosing_names.update(func_scope.bindings.keys())
-                    break
+            for artifact in functions.named(pair.file_path, target_insert_fn)[:1]:
+                func_scope = artifact.scope_analyzer.node_scopes.get(artifact.node)
+                if func_scope is not None:
+                    enclosing_names.update(func_scope.bindings.keys())
         return _HelperScope(dce_insert_func, dce_node, enclosing_names)
 
     # -- 6 ---------------------------------------------------------------------
@@ -709,7 +701,6 @@ class PairEvaluation(EngineState):
         ctx: "_PairContext",
         analysis: _BindingAnalysis,
         unified: _Unified,
-        all_functions: Sequence[FunctionArtifact],
     ) -> Optional[_FreeVariables]:
         """The helper's free variables, checked for lifetime, declared, and thunked as needed."""
         debug_enabled = debugging(VALIDATION)
@@ -821,25 +812,19 @@ class PairEvaluation(EngineState):
     # -- 8 ---------------------------------------------------------------------
 
     def _leaves_orphans(
-        self, pair: CodeBlockPair, all_functions: Sequence[FunctionArtifact], unified: _Unified
+        self, pair: CodeBlockPair, functions: FunctionIndex, unified: _Unified
     ) -> bool:
         """Whether moving the blocks would leave a later read without its binding.
 
         A name the helper returns is rebound by the generated call on every
         path out of the block, so a later read of it is not orphaned.
         """
-        func1: Optional[FunctionNode] = None
-        func2: Optional[FunctionNode] = None
-        for entry in all_functions:
-            if entry.file_path == pair.file_path and entry.node.name == pair.function1_name:
-                func1 = entry.node
-            if (
-                entry.file_path == (pair.file_path2 or pair.file_path)
-                and entry.node.name == pair.function2_name
-            ):
-                func2 = entry.node
-        if not (func1 and func2):
+        # The last function of each name, as the original list scan resolved it.
+        found1 = functions.named(pair.file_path, pair.function1_name)
+        found2 = functions.named(pair.file_path2 or pair.file_path, pair.function2_name)
+        if not (found1 and found2):
             return False
+        func1, func2 = found1[-1].node, found2[-1].node
         indices1 = self._get_block_indices(func1, pair.block1_nodes)
         indices2 = self._get_block_indices(func2, pair.block2_nodes)
         if not (indices1 and indices2):
@@ -869,7 +854,7 @@ class PairEvaluation(EngineState):
         free: _FreeVariables,
         rendered: _RenderedHelper,
         value_producing: bool,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
     ) -> Optional[_CallSites]:
         """The generated call for each block, verified by instantiation, plus clustered sites."""
         replacements: List[Replacement] = []
@@ -969,7 +954,7 @@ class PairEvaluation(EngineState):
                     nonlocals_to_declare=free.nonlocals_to_declare,
                 ),
                 scope.dce_node,
-                all_functions,
+                functions,
                 replacements,
                 cluster_contexts,
             )
@@ -983,7 +968,7 @@ class PairEvaluation(EngineState):
         setup: _PairSetup,
         scope: _HelperScope,
         sites: _CallSites,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
         class_infos: List[ClassInfo],
     ) -> Optional[_Placement]:
         """Where the helper lives: a unique enclosing function, a class, or a module that closes no cycle."""
@@ -1005,12 +990,7 @@ class PairEvaluation(EngineState):
             # wrong one and the call sites would not see the helper. Every
             # free variable is already a parameter, so a module-level helper
             # is equally correct; fall back to it when the name is ambiguous.
-            same_name_functions = {
-                id(a.node)
-                for a in all_functions
-                if a.file_path == canonical_file and a.node.name == scope.dce_insert_func
-            }
-            if len(same_name_functions) == 1:
+            if len(functions.named(canonical_file, scope.dce_insert_func)) == 1:
                 insert_into_function = scope.dce_insert_func
 
         class_plan: Optional[ClassInsertionPlan] = None
@@ -1061,10 +1041,7 @@ class PairEvaluation(EngineState):
             replacement.file_path or canonical_file for replacement in replacements
         }
         if len(participating_paths) > 1 and any(
-            isinstance(node, ast.Global)
-            for a in all_functions
-            if a.file_path in participating_paths
-            for node in ast.walk(a.node)
+            functions.declares_global(path) for path in participating_paths
         ):
             self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
             return None
@@ -1091,18 +1068,15 @@ class PairEvaluation(EngineState):
         destination_class = insert_into_class
         if insert_into_function:
             destinations = {
-                a.class_name
-                for a in all_functions
-                if a.file_path == canonical_file and a.node.name == insert_into_function
+                a.class_name for a in functions.named(canonical_file, insert_into_function)
             }
             destination_class = next(iter(destinations)) if len(destinations) == 1 else None
         for replacement in replacements:
             if replacement.class_name and replacement.class_name != destination_class:
                 source_path = replacement.file_path or canonical_file
-                for a in all_functions:
+                for a in functions.in_file(source_path):
                     if (
-                        a.file_path == source_path
-                        and a.class_name == replacement.class_name
+                        a.class_name == replacement.class_name
                         and a.node.lineno <= replacement.line_range[0]
                         and (a.node.end_lineno or a.node.lineno) >= replacement.line_range[1]
                         and uses_class_private_names([a.node])
@@ -1126,7 +1100,7 @@ class PairEvaluation(EngineState):
         unified: _Unified,
         rendered: _RenderedHelper,
         placement: _Placement,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
     ) -> Optional[RefactoringProposal]:
         """The proposal, unless the helper only forwards; redirected to an existing function or annotated."""
         is_cross_file = pair.file_path2 is not None and pair.file_path != pair.file_path2
@@ -1153,11 +1127,9 @@ class PairEvaluation(EngineState):
             method_param_name=placement.method_param_name,
             source_digests=tuple(
                 sorted(
-                    {
-                        (a.file_path, hashlib.sha256(a.source.encode("utf-8")).hexdigest())
-                        for a in all_functions
-                        if a.file_path in participating_paths
-                    }
+                    (path, digest)
+                    for path in participating_paths
+                    if (digest := functions.source_digest(path)) is not None
                 )
             ),
         )
@@ -1167,56 +1139,48 @@ class PairEvaluation(EngineState):
             self._debug_reject(RejectReason.TRIVIAL_FORWARDING_HELPER, pair)
             return None
         if self.reuse_existing_functions:
-            redirected = self._redirect_to_existing_function(proposal, all_functions)
+            redirected = self._redirect_to_existing_function(proposal, functions)
             if redirected is not None:
                 return redirected
         if self.annotate_helpers:
-            proposal = self._with_helper_annotations(proposal, all_functions)
+            proposal = self._with_helper_annotations(proposal, functions)
         return proposal
 
     def _resolve_pair_context(
         self,
         pair: CodeBlockPair,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
     ) -> "_PairContext":
         """Resolve each block's function, scope analyzer, and root scope.
 
         Prefers the analyzer/scope discovered for the block's own function in the
         aggregated function list, falling back to the values carried on the pair.
         """
-        # Resolve contextual analyzers and scopes from the aggregated function list
+        # A pair that carries its function nodes keeps them, and its own
+        # analyzers below; one that names its functions resolves each name to
+        # the first function of that name in its file.
         func1: Optional[FunctionNode] = pair.function1_node
         func2: Optional[FunctionNode] = pair.function2_node
         scope_analyzer1: Optional[ScopeAnalyzer] = None
         scope_analyzer2: Optional[ScopeAnalyzer] = None
         root_scope1: Optional[Scope] = None
         root_scope2: Optional[Scope] = None
-
-        for entry in all_functions:
-            file_path = entry.file_path
-            func = entry.node
-            analyzer = entry.scope_analyzer
-            root_scope_entry = entry.root_scope
-            same1 = (
-                func is pair.function1_node
-                if pair.function1_node is not None
-                else func.name == pair.function1_name
-            )
-            if func1 is None and file_path == pair.file_path and same1:
-                func1 = func
-                scope_analyzer1 = analyzer
-                root_scope1 = root_scope_entry
-            same2 = (
-                func is pair.function2_node
-                if pair.function2_node is not None
-                else func.name == pair.function2_name
-            )
-            if func2 is None and file_path == (pair.file_path2 or pair.file_path) and same2:
-                func2 = func
-                scope_analyzer2 = analyzer
-                root_scope2 = root_scope_entry
-            if func1 is not None and func2 is not None:
-                break
+        if func1 is None:
+            for entry in functions.named(pair.file_path, pair.function1_name)[:1]:
+                func1, scope_analyzer1, root_scope1 = (
+                    entry.node,
+                    entry.scope_analyzer,
+                    entry.root_scope,
+                )
+        if func2 is None:
+            for entry in functions.named(pair.file_path2 or pair.file_path, pair.function2_name)[
+                :1
+            ]:
+                func2, scope_analyzer2, root_scope2 = (
+                    entry.node,
+                    entry.scope_analyzer,
+                    entry.root_scope,
+                )
 
         # Fallback to the pair-provided analyzers/scopes when discovery fails
         scope_analyzer = scope_analyzer1 or pair.scope_analyzer1

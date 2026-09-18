@@ -31,7 +31,7 @@ import dataclasses
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Tuple, cast
 from .exceptions import RefactoringError
 from .models import FunctionArtifact, RefactoringProposal, Replacement, ReusedFunction
 from .pipeline import parse_cached
@@ -40,6 +40,7 @@ from .semantic_safety import would_create_import_cycle
 from .visitors import body_without_docstring
 
 from .engine_state import EngineState
+from .function_index import FunctionIndex
 
 
 @dataclass(frozen=True)
@@ -169,7 +170,7 @@ class ExistingFunctionReuse(EngineState):
         self,
         replacement: Replacement,
         default_file: str,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
     ) -> Optional[FunctionArtifact]:
         """The plain module-level function whose whole body ``replacement`` covers, if any.
 
@@ -179,11 +180,10 @@ class ExistingFunctionReuse(EngineState):
         ``global`` declaration or a module-level ``del``.
         """
         file_path = replacement.file_path or default_file
-        for artifact in all_functions:
+        for artifact in functions.in_file(file_path):
             function = artifact.node
             if (
-                artifact.file_path != file_path
-                or artifact.class_name is not None
+                artifact.class_name is not None
                 or artifact.enclosing_function is not None
                 or not isinstance(function, ast.FunctionDef)
                 or function.decorator_list
@@ -207,31 +207,12 @@ class ExistingFunctionReuse(EngineState):
             return artifact
         return None
 
-    @staticmethod
-    def _innermost_function_at(
-        file_path: str,
-        line_range: Tuple[int, int],
-        all_functions: Sequence[FunctionArtifact],
-    ) -> Optional[FunctionArtifact]:
-        """The most deeply nested analyzed function whose span contains ``line_range``."""
-        start, end = line_range
-        enclosing = [
-            artifact
-            for artifact in all_functions
-            if artifact.file_path == file_path
-            and artifact.node.lineno <= start
-            and end <= (artifact.node.end_lineno or artifact.node.lineno)
-        ]
-        if not enclosing:
-            return None
-        return max(enclosing, key=lambda artifact: artifact.node.lineno)
-
     def _existing_function_reachable(
         self,
         target: FunctionArtifact,
         replacement: Replacement,
         default_file: str,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
     ) -> bool:
         """Whether a call by name at the replacement site resolves to ``target``.
 
@@ -244,7 +225,7 @@ class ExistingFunctionReuse(EngineState):
         name = target.node.name
         if replacement.class_name is not None and name.startswith("__") and not name.endswith("__"):
             return False
-        site = self._innermost_function_at(file_path, replacement.line_range, all_functions)
+        site = functions.innermost_at(file_path, replacement.line_range)
         if site is None:
             return False
         scope = site.scope_analyzer.node_scopes.get(site.node)
@@ -312,7 +293,7 @@ class ExistingFunctionReuse(EngineState):
     def _redirect_to_existing_function(
         self,
         proposal: RefactoringProposal,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
     ) -> Optional[RefactoringProposal]:
         """The proposal rewritten to call a function that one duplicate already is.
 
@@ -329,7 +310,7 @@ class ExistingFunctionReuse(EngineState):
         helper_name = proposal.extracted_function.name
         candidates: List[Tuple[int, FunctionArtifact]] = []
         for index, replacement in enumerate(proposal.replacements):
-            target = self._reusable_function_at(replacement, proposal.file_path, all_functions)
+            target = self._reusable_function_at(replacement, proposal.file_path, functions)
             if target is not None:
                 candidates.append((index, target))
         candidates.sort(key=lambda item: (item[1].file_path, item[1].node.lineno))
@@ -346,10 +327,8 @@ class ExistingFunctionReuse(EngineState):
                 if position != index
             ]
             sites = [
-                self._innermost_function_at(
-                    replacement.file_path or proposal.file_path,
-                    replacement.line_range,
-                    all_functions,
+                functions.innermost_at(
+                    replacement.file_path or proposal.file_path, replacement.line_range
                 )
                 for replacement in others
             ]
@@ -365,7 +344,7 @@ class ExistingFunctionReuse(EngineState):
                 continue
             if not all(
                 self._existing_function_reachable(
-                    target, replacement, proposal.file_path, all_functions
+                    target, replacement, proposal.file_path, functions
                 )
                 for replacement in others
             ):

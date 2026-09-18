@@ -62,6 +62,7 @@ from .parallel import ParallelEvaluation
 from .clustering import Clustering
 from .pair_evaluation import PairEvaluation
 from .block_analysis import BlockAnalysis
+from .function_index import FunctionIndex
 from .insertion import InsertionPoints
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
 from .semantic_safety import (
@@ -254,6 +255,9 @@ class UnificationRefactorEngine(
         # theirs across iterations.
         self._cache_entries_by_path: Dict[str, List[Tuple[MutableMapping[Any, Any], Any]]] = {}
         self._function_paths: Dict[FunctionNode, str] = {}
+        self._function_index_cache: Optional[Tuple[Sequence[FunctionArtifact], FunctionIndex]] = (
+            None
+        )
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
         # Per-run record of what each applied extraction replaced: the original
@@ -447,6 +451,18 @@ class UnificationRefactorEngine(
             if os.path.abspath(function_path) == absolute:
                 del self._function_paths[function]
                 self._function_sources.pop(function, None)
+
+    def _function_index(self, all_functions: Sequence[FunctionArtifact]) -> FunctionIndex:
+        """The index of ``all_functions``, built once and shared by every pair of the analysis.
+
+        Keyed by the list's identity; the list is held alongside the index, so
+        its identity cannot be recycled while the entry is live.
+        """
+        cached = self._function_index_cache
+        if cached is None or cached[0] is not all_functions:
+            cached = (all_functions, FunctionIndex.build(all_functions))
+            self._function_index_cache = cached
+        return cached[1]
 
     def _record_function_paths(self, all_functions: Sequence[FunctionArtifact]) -> None:
         for entry in all_functions:

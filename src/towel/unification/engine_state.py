@@ -49,6 +49,7 @@ from ..diagnostics import Settings
 from ..type_inference import TypeOracle
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, BlockSignature
 from .extractor import HygienicExtractor
+from .function_index import FunctionIndex
 from .models import (
     AppliedChange,
     BlockBindingSnapshot,
@@ -143,6 +144,9 @@ class EngineState:
     _signed_block_cache: WeakKeyDictionary[
         FunctionNode, List[Tuple[Tuple[int, int], List[ast.AST], BlockSignature]]
     ]
+    # The index of the current analysis's functions, keyed by the list it
+    # was built from; see ``_function_index``.
+    _function_index_cache: Optional[Tuple[Sequence[FunctionArtifact], FunctionIndex]]
     # Bounded, path-registered caches: guards per (guard, function, block),
     # unification results per block-structure pair, and the per-block analyses.
     _block_guard_cache: "OrderedDict[Tuple[Any, ...], bool]"
@@ -157,15 +161,6 @@ class EngineState:
     @classmethod
     def placeable_after(cls, source: str) -> Set[str]:
         """Module-level definitions a helper may follow; provided by InsertionPoints."""
-        raise NotImplementedError
-
-    @staticmethod
-    def _innermost_function_at(
-        file_path: str,
-        line_range: Tuple[int, int],
-        all_functions: Sequence[FunctionArtifact],
-    ) -> Optional[FunctionArtifact]:
-        """The innermost function containing a line range; provided by ExistingFunctionReuse."""
         raise NotImplementedError
 
     def _allocate_helper_name(
@@ -432,7 +427,7 @@ class EngineState:
         self,
         template: "HelperTemplate",
         dce_node: Optional[FunctionNode],
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
         replacements: List[Replacement],
         cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]],
     ) -> None:
@@ -480,7 +475,7 @@ class EngineState:
     def _enclosing_function_named(
         name: str,
         file_path: str,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
         inner: Sequence[FunctionNode],
     ) -> Optional[FunctionNode]:
         """Provided by BlockAnalysis."""
@@ -518,7 +513,7 @@ class EngineState:
     def _redirect_to_existing_function(
         self,
         proposal: RefactoringProposal,
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
     ) -> Optional[RefactoringProposal]:
         """Provided by ExistingFunctionReuse."""
         raise NotImplementedError
@@ -543,7 +538,7 @@ class EngineState:
         raise NotImplementedError
 
     def _with_helper_annotations(
-        self, proposal: RefactoringProposal, all_functions: Sequence[FunctionArtifact]
+        self, proposal: RefactoringProposal, functions: FunctionIndex
     ) -> RefactoringProposal:
         """Provided by HelperAnnotationWiring."""
         raise NotImplementedError
@@ -558,5 +553,9 @@ class EngineState:
     def _remember(
         self, paths: Iterable[Optional[str]], cache: MutableMapping[Any, Any], key: Any
     ) -> None:
+        """Provided by UnificationRefactorEngine."""
+        raise NotImplementedError
+
+    def _function_index(self, all_functions: Sequence[FunctionArtifact]) -> FunctionIndex:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError

@@ -29,12 +29,12 @@ import ast
 import copy
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
-from .models import FunctionArtifact, FunctionNode, Replacement
+from .models import FunctionNode, Replacement
 from .orphan_detector import orphaned_variables
 from .overlap import line_ranges_intersect
 from .scope_analyzer import ScopeAnalyzer
@@ -52,6 +52,7 @@ from .thunk_inlining import inline_leading_thunks
 from .visitors import body_without_docstring
 
 from .engine_state import EngineState
+from .function_index import FunctionIndex
 from .models import BlockBindingSnapshot, HelperTemplate, encloses
 
 
@@ -193,7 +194,7 @@ class Clustering(EngineState):
         self,
         template: "HelperTemplate",
         dce_node: Optional[FunctionNode],
-        all_functions: Sequence[FunctionArtifact],
+        functions: FunctionIndex,
         replacements: List[Replacement],
         cluster_contexts: Dict[int, Tuple[Optional[str], Optional[str], Optional[str], bool]],
     ) -> None:
@@ -217,13 +218,11 @@ class Clustering(EngineState):
         func_def_dump = ast.dump(template.func_def)
 
         # Gather candidates from same file functions
-        for entry in all_functions:
+        for entry in functions.in_file(pair.file_path):
             fpath = entry.file_path
             fn = entry.node
             analyzerX = entry.scope_analyzer
             clsX = entry.class_name
-            if fpath != pair.file_path:
-                continue
             # A helper inserted into the pair's deepest common enclosing
             # function is visible only there and in its nested functions;
             # a block elsewhere in the file cannot call it (prompt_toolkit).

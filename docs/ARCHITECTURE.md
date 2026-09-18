@@ -629,6 +629,7 @@ but the ideas and their names are from the literature.
 | Engine core: caches, analysis entry points, block enumeration, pairing | `refactor_engine.py` |
 | State and operations the mixins rely on | `engine_state.py` |
 | Per-block facts (bindings, returns, used names) and the trivial-helper filters | `block_analysis.py` |
+| Per-analysis function lookups (by file, by name, enclosing a range) | `function_index.py` |
 | The pair decision, in eleven stages | `pair_evaluation.py` |
 | Method or module placement, base-class resolution | `placement.py` |
 | Reusing an existing function | `reuse.py` |
