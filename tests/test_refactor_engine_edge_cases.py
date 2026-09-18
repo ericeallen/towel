@@ -12,13 +12,14 @@ import textwrap
 import ast
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_helpers import assert_file_not_modified
+from tests.test_helpers import TemporaryModuleTestCase, assert_file_not_modified
 
 
-class TestRefactorEngineEdgeCases(unittest.TestCase):
+class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
     """Exercise UnificationRefactorEngine edge cases for coverage."""
 
     def setUp(self):
+        super().setUp()
         self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
 
     def test_analyze_directory_nonexistent(self):
@@ -43,32 +44,20 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
 
     def test_analyze_file_with_syntax_error(self):
         """A file that does not parse is skipped with a warning naming it, not analyzed."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as handle:
-            handle.write("def broken(\n")
-            handle.flush()
-            temp_path = handle.name
+        temp_path = self._write_temp("def broken(\n")
 
-        try:
-            with self.assertLogs("towel", level="WARNING") as logs:
-                proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(proposals, [])
-            (message,) = logs.output
-            self.assertIn(f"Skipping {temp_path}: '(' was never closed", message)
-        finally:
-            os.unlink(temp_path)
+        with self.assertLogs("towel", level="WARNING") as logs:
+            proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(proposals, [])
+        (message,) = logs.output
+        self.assertIn(f"Skipping {temp_path}: '(' was never closed", message)
 
     def test_analyze_files_with_no_functions(self):
         """Files that lack candidate functions yield no proposals."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as handle:
-            handle.write("# Just a comment\nx = 10\n")
-            handle.flush()
-            temp_path = handle.name
+        temp_path = self._write_temp("# Just a comment\nx = 10\n")
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(len(proposals), 0)
 
     def test_apply_refactoring_cross_file_with_imports(self):
         """Cross-file refactoring writes changes into temporary copies only."""
@@ -119,44 +108,26 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
 
     def test_empty_file_analysis(self):
         """Empty files do not produce proposals."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as handle:
-            handle.write("")
-            handle.flush()
-            temp_path = handle.name
+        temp_path = self._write_temp("")
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(len(proposals), 0)
 
     def test_file_with_only_docstring(self):
         """Files containing only a docstring yield no proposals."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as handle:
-            handle.write('"""Module docstring."""\n')
-            handle.flush()
-            temp_path = handle.name
+        temp_path = self._write_temp('"""Module docstring."""\n')
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(len(proposals), 0)
 
     def _analyze_and_apply(self, source: str) -> str:
         """Analyze temporary module source, apply first proposal, and return code."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as handle:
-            handle.write(textwrap.dedent(source))
-            handle.flush()
-            temp_path = handle.name
+        temp_path = self._write_temp(textwrap.dedent(source))
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertTrue(proposals, "Expected at least one proposal")
-            proposal = proposals[0]
-            return self.engine.apply_refactoring(str(temp_path), proposal)
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertTrue(proposals, "Expected at least one proposal")
+        proposal = proposals[0]
+        return self.engine.apply_refactoring(str(temp_path), proposal)
 
     def test_instance_methods_extracted_into_class(self):
         """Duplicate instance methods should extract helper into the same class."""

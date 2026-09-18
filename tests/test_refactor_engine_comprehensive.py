@@ -8,10 +8,9 @@ of block extraction, pair finding, and proposal generation.
 
 import unittest
 import ast
-import tempfile
-import os
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.models import FunctionArtifact
+from tests.test_helpers import TemporaryModuleTestCase
 
 
 class TestBlockExtraction(unittest.TestCase):
@@ -186,49 +185,37 @@ class TestStructuralSimilarity(unittest.TestCase):
         self.assertTrue(result, "Blocks with same structure should be similar")
 
 
-class TestAnalyzeFile(unittest.TestCase):
+class TestAnalyzeFile(TemporaryModuleTestCase):
     """Test analyze_file method."""
 
     def setUp(self):
         """Set up test fixtures."""
+        super().setUp()
         self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
     def test_analyze_file_with_no_functions(self):
         """Test analyzing a file with no functions."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("x = 1\ny = 2\n")
-            temp_path = f.name
+        temp_path = self._write_temp("x = 1\ny = 2\n")
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(
-                len(proposals), 0, "Should return empty list for file with no functions"
-            )
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(len(proposals), 0, "Should return empty list for file with no functions")
 
     def test_analyze_file_with_single_function(self):
         """Test analyzing a file with only one function."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("""
+        temp_path = self._write_temp("""
 def function1():
     x = 1
     y = 2
     z = 3
     return x + y + z
 """)
-            temp_path = f.name
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0, "Should return empty list with only one function")
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(len(proposals), 0, "Should return empty list with only one function")
 
     def test_analyze_file_with_identical_functions(self):
         """Test analyzing a file with two identical functions."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("""
+        temp_path = self._write_temp("""
 def function1():
     x = 1
     y = 2
@@ -241,21 +228,17 @@ def function2():
     z = 3
     return x + y + z
 """)
-            temp_path = f.name
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertGreater(len(proposals), 0, "Should find proposals for identical functions")
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertGreater(len(proposals), 0, "Should find proposals for identical functions")
 
-            # Check that at least one proposal involves both functions
-            found = False
-            for prop in proposals:
-                if "function1" in prop.description and "function2" in prop.description:
-                    found = True
-                    break
-            self.assertTrue(found, "Should have proposal involving both functions")
-        finally:
-            os.unlink(temp_path)
+        # Check that at least one proposal involves both functions
+        found = False
+        for prop in proposals:
+            if "function1" in prop.description and "function2" in prop.description:
+                found = True
+                break
+        self.assertTrue(found, "Should have proposal involving both functions")
 
 
 class TestBlockPairFinding(unittest.TestCase):
@@ -357,17 +340,17 @@ def func2():
             )
 
 
-class TestFullBodyWithNestedFunctions(unittest.TestCase):
+class TestFullBodyWithNestedFunctions(TemporaryModuleTestCase):
     """Test that full body blocks with nested functions are handled correctly."""
 
     def setUp(self):
         """Set up test fixtures."""
+        super().setUp()
         self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
     def test_identical_functions_with_two_nested_functions(self):
         """Test that identical functions with two nested functions produce correct proposal."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("""
+        temp_path = self._write_temp("""
 def outer1(data, threshold):
     def make_validator(limit):
         return lambda x: x > limit
@@ -394,46 +377,42 @@ def outer2(data, threshold):
     transformed = list(map(transformer, filtered))
     return transformed
 """)
-            temp_path = f.name
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
 
-            # Should have at least one proposal
-            self.assertGreater(len(proposals), 0, "Should generate at least one proposal")
+        # Should have at least one proposal
+        self.assertGreater(len(proposals), 0, "Should generate at least one proposal")
 
-            # Find proposals involving both outer functions
-            relevant_proposals = [
-                p for p in proposals if "outer1" in p.description and "outer2" in p.description
-            ]
+        # Find proposals involving both outer functions
+        relevant_proposals = [
+            p for p in proposals if "outer1" in p.description and "outer2" in p.description
+        ]
 
-            self.assertGreater(
-                len(relevant_proposals), 0, "Should have proposals involving both outer functions"
-            )
+        self.assertGreater(
+            len(relevant_proposals), 0, "Should have proposals involving both outer functions"
+        )
 
-            # Extracted helpers should now omit nested function definitions entirely
-            for prop in relevant_proposals:
-                if isinstance(prop.extracted_function, ast.FunctionDef):
-                    nested_defs = [
-                        stmt
-                        for stmt in prop.extracted_function.body
-                        if isinstance(stmt, ast.FunctionDef)
-                    ]
-                    self.assertEqual(
-                        nested_defs,
-                        [],
-                        "Extracted helper should not contain nested function definitions",
-                    )
-
-        finally:
-            os.unlink(temp_path)
+        # Extracted helpers should now omit nested function definitions entirely
+        for prop in relevant_proposals:
+            if isinstance(prop.extracted_function, ast.FunctionDef):
+                nested_defs = [
+                    stmt
+                    for stmt in prop.extracted_function.body
+                    if isinstance(stmt, ast.FunctionDef)
+                ]
+                self.assertEqual(
+                    nested_defs,
+                    [],
+                    "Extracted helper should not contain nested function definitions",
+                )
 
 
-class TestEdgeCases(unittest.TestCase):
+class TestEdgeCases(TemporaryModuleTestCase):
     """Test edge cases and boundary conditions."""
 
     def setUp(self):
         """Set up test fixtures."""
+        super().setUp()
         self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
     def test_empty_function_bodies(self):
@@ -480,8 +459,7 @@ def func2():
 
     def test_overlapping_block_prevention(self):
         """Test that overlapping blocks are not included in final proposals."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("""
+        temp_path = self._write_temp("""
 def func1():
     x = 1
     y = 2
@@ -498,33 +476,28 @@ def func2():
     v = 5
     return x + y + z + w + v
 """)
-            temp_path = f.name
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
 
-            # Proposals should not have overlapping ranges
-            for i, prop1 in enumerate(proposals):
-                for prop2 in proposals[i + 1 :]:
-                    # Check that proposals don't overlap
-                    ranges1 = set()
-                    ranges2 = set()
+        # Proposals should not have overlapping ranges
+        for i, prop1 in enumerate(proposals):
+            for prop2 in proposals[i + 1 :]:
+                # Check that proposals don't overlap
+                ranges1 = set()
+                ranges2 = set()
 
-                    for replacement in prop1.replacements:
-                        start, end = replacement.line_range
-                        ranges1.add((start, end))
+                for replacement in prop1.replacements:
+                    start, end = replacement.line_range
+                    ranges1.add((start, end))
 
-                    for replacement in prop2.replacements:
-                        start, end = replacement.line_range
-                        ranges2.add((start, end))
+                for replacement in prop2.replacements:
+                    start, end = replacement.line_range
+                    ranges2.add((start, end))
 
-                    # Ranges should not overlap
-                    self.assertEqual(
-                        ranges1 & ranges2, set(), "Proposals should not have overlapping ranges"
-                    )
-
-        finally:
-            os.unlink(temp_path)
+                # Ranges should not overlap
+                self.assertEqual(
+                    ranges1 & ranges2, set(), "Proposals should not have overlapping ranges"
+                )
 
 
 def main():

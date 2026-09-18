@@ -11,6 +11,7 @@ import io
 import shutil
 import tempfile
 import textwrap
+import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator, List, Sequence, TypedDict, Unpack
@@ -220,6 +221,27 @@ def write_file(path: Path, content: str) -> None:
     """Write ``content`` at ``path``, creating parent directories."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+class TemporaryModuleTestCase(unittest.TestCase):
+    """A ``unittest`` case whose modules live in a directory of their own.
+
+    Towel places its transaction journal at the common parent of the files a
+    run changes, so a module refactored directly at the temp root would leave
+    the journal at ``$TMPDIR`` itself and block every other run under it.
+    ``_write_temp`` therefore writes into a per-test directory (removed with
+    the test), never at the root; pytest-style tests use ``tmp_path`` for the
+    same reason.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._module_directory = tempfile.TemporaryDirectory(prefix="towel_test_")
+        self.addCleanup(self._module_directory.cleanup)
+
+    def _write_temp(self, code: str, name: str = "m.py") -> str:
+        """Write ``code`` as ``name`` in this test's directory and return its path."""
+        return write_module(Path(self._module_directory.name), code, name)
 
 
 class EngineOptions(TypedDict, total=False):

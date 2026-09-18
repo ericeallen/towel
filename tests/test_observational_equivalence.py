@@ -14,7 +14,11 @@ import re
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from contextlib import redirect_stdout, redirect_stderr
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_helpers import get_test_example_path, assert_file_not_modified
+from tests.test_helpers import (
+    TemporaryModuleTestCase,
+    get_test_example_path,
+    assert_file_not_modified,
+)
 
 CallCase = Tuple[Tuple[object, ...], Dict[str, object]]
 """The positional and keyword arguments of one call to a function under test."""
@@ -466,10 +470,11 @@ class TestAutomaticObservationalEquivalenceWithConstants(unittest.TestCase):
             self.fail(f"{failed} proposals failed:\n" + "\n".join(errors))
 
 
-class TestObservationalEquivalence(unittest.TestCase):
+class TestObservationalEquivalence(TemporaryModuleTestCase):
     """Test that refactorings preserve observational equivalence."""
 
     def setUp(self):
+        super().setUp()
         self.engine = UnificationRefactorEngine(
             max_parameters=5, min_lines=4, parameterize_constants=True
         )
@@ -615,40 +620,32 @@ def calculate_b(y):
 '''
 
         # Apply refactoring
-        import tempfile
-        import os
+        temp_file = self._write_temp(original_code)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(original_code)
-            temp_file = f.name
+        proposals = self.engine.analyze_file(temp_file)
 
-        try:
-            proposals = self.engine.analyze_file(temp_file)
+        if not proposals:
+            self.skipTest("No refactoring proposals found")
 
-            if not proposals:
-                self.skipTest("No refactoring proposals found")
+        refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
 
-            refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
+        # Test both functions with same inputs
+        test_cases: List[CallCase] = [
+            ((5,), {}),
+            ((0,), {}),
+            ((-3,), {}),
+            ((100,), {}),
+        ]
 
-            # Test both functions with same inputs
-            test_cases: List[CallCase] = [
-                ((5,), {}),
-                ((0,), {}),
-                ((-3,), {}),
-                ((100,), {}),
-            ]
+        for func_name in ["calculate_a", "calculate_b"]:
+            all_passed, differences = compare_function_behavior(
+                original_code, refactored_code, func_name, test_cases
+            )
 
-            for func_name in ["calculate_a", "calculate_b"]:
-                all_passed, differences = compare_function_behavior(
-                    original_code, refactored_code, func_name, test_cases
+            if not all_passed:
+                self.fail(
+                    f"Semantic equivalence failed for {func_name}:\n" + "\n".join(differences)
                 )
-
-                if not all_passed:
-                    self.fail(
-                        f"Semantic equivalence failed for {func_name}:\n" + "\n".join(differences)
-                    )
-        finally:
-            os.unlink(temp_file)
 
     def test_referential_transparency_observational_equivalence(self):
         """
@@ -664,46 +661,37 @@ def calculate_b(y):
         original_content = example_path.read_text()
 
         # Use fixed-point iteration (the fixed approach)
-        import tempfile
-        import os
+        temp_file = self._write_temp(original_content)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(original_content)
-            temp_file = f.name
+        # Apply refactorings using fixed-point iteration
+        refactored_content, num_applied, descriptions = self.engine.refactor_to_fixed_point(
+            temp_file, max_iterations=10
+        )
 
-        try:
-            # Apply refactorings using fixed-point iteration
-            refactored_content, num_applied, descriptions = self.engine.refactor_to_fixed_point(
-                temp_file, max_iterations=10
+        if num_applied == 0:
+            self.skipTest("No refactorings applied")
+
+        # Test update_mutable_state functions
+        test_cases: List[CallCase] = [
+            (([10, 20, 30], {}), {}),
+            (([5], {}), {}),
+        ]
+
+        for func_name in ["update_mutable_state_v1", "update_mutable_state_v2"]:
+            all_passed, differences = compare_function_behavior(
+                original_content, refactored_content, func_name, test_cases
             )
 
-            if num_applied == 0:
-                self.skipTest("No refactorings applied")
+            if not all_passed:
+                # Print the refactored code for debugging
+                print("\n=== REFACTORED CODE (first 100 lines) ===")
+                for i, line in enumerate(refactored_content.split("\n")[:100], 1):
+                    print(f"{i:3}: {line}")
+                print("=" * 50)
 
-            # Test update_mutable_state functions
-            test_cases: List[CallCase] = [
-                (([10, 20, 30], {}), {}),
-                (([5], {}), {}),
-            ]
-
-            for func_name in ["update_mutable_state_v1", "update_mutable_state_v2"]:
-                all_passed, differences = compare_function_behavior(
-                    original_content, refactored_content, func_name, test_cases
+                self.fail(
+                    f"Observational equivalence failed for {func_name}:\n" + "\n".join(differences)
                 )
-
-                if not all_passed:
-                    # Print the refactored code for debugging
-                    print("\n=== REFACTORED CODE (first 100 lines) ===")
-                    for i, line in enumerate(refactored_content.split("\n")[:100], 1):
-                        print(f"{i:3}: {line}")
-                    print("=" * 50)
-
-                    self.fail(
-                        f"Observational equivalence failed for {func_name}:\n"
-                        + "\n".join(differences)
-                    )
-        finally:
-            os.unlink(temp_file)
 
         # Verify original file wasn't modified
         assert_file_not_modified(example_path, original_content)

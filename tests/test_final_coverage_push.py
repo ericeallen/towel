@@ -11,6 +11,7 @@ import os
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
 from towel.unification.extractor import HygienicExtractor
+from tests.test_helpers import TemporaryModuleTestCase
 
 
 class TestExtractorErrorPaths(unittest.TestCase):
@@ -135,10 +136,11 @@ def gen():
         self.assertIsNotNone(result)
 
 
-class TestRefactorEngineApplyEdgeCases(unittest.TestCase):
+class TestRefactorEngineApplyEdgeCases(TemporaryModuleTestCase):
     """Test refactor_engine apply methods edge cases."""
 
     def setUp(self):
+        super().setUp()
         self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
 
     def test_apply_with_invalid_line_numbers(self):
@@ -153,27 +155,21 @@ def bar():
     x = 2
     return x
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(code)
-            f.flush()
-            temp_path = f.name
+        temp_path = self._write_temp(code)
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
 
-            if proposals:
-                # Manually corrupt line numbers to test error handling
-                prop = proposals[0]
-                # Try to apply anyway (should handle gracefully)
-                try:
-                    result = self.engine.apply_refactoring(temp_path, prop)
-                    # Should return something even with edge cases
-                    self.assertIsNotNone(result)
-                except Exception:
-                    # Error handling paths covered
-                    pass
-        finally:
-            os.unlink(temp_path)
+        if proposals:
+            # Manually corrupt line numbers to test error handling
+            prop = proposals[0]
+            # Try to apply anyway (should handle gracefully)
+            try:
+                result = self.engine.apply_refactoring(temp_path, prop)
+                # Should return something even with edge cases
+                self.assertIsNotNone(result)
+            except Exception:
+                # Error handling paths covered
+                pass
 
     def test_analyze_with_very_short_functions(self):
         """Test analyzing functions shorter than min_lines."""
@@ -184,17 +180,11 @@ def a():
 def b():
     return 2
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(code)
-            f.flush()
-            temp_path = f.name
+        temp_path = self._write_temp(code)
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            # Should not find duplicates (too short)
-            self.assertEqual(len(proposals), 0)
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        # Should not find duplicates (too short)
+        self.assertEqual(len(proposals), 0)
 
     def test_analyze_with_docstrings(self):
         """Test analyzing functions with docstrings."""
@@ -211,24 +201,18 @@ def process_data_b(x):
     z = y + 10
     return z
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(code)
-            f.flush()
-            temp_path = f.name
+        temp_path = self._write_temp(code)
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            # The docstrings are skipped, so the two bodies are whole-function
-            # duplicates and the second is rewritten to call the first.
-            self.assertEqual(
-                [p.description for p in proposals],
-                [
-                    f"Reuse process_data_a ({os.path.basename(temp_path)}) for duplicated "
-                    "code in process_data_b"
-                ],
-            )
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        # The docstrings are skipped, so the two bodies are whole-function
+        # duplicates and the second is rewritten to call the first.
+        self.assertEqual(
+            [p.description for p in proposals],
+            [
+                f"Reuse process_data_a ({os.path.basename(temp_path)}) for duplicated "
+                "code in process_data_b"
+            ],
+        )
 
     def test_find_python_files_excludes_hidden(self):
         """Test that hidden directories are excluded."""

@@ -16,13 +16,14 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.scope_analyzer import ScopeAnalyzer
-from tests.test_helpers import assert_file_not_modified
+from tests.test_helpers import TemporaryModuleTestCase, assert_file_not_modified
 
 
-class TestRefactorEngineEdgeCases(unittest.TestCase):
+class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
     """Test refactor_engine edge cases for coverage."""
 
     def setUp(self):
+        super().setUp()
         self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
 
     def test_analyze_directory_non_recursive(self):
@@ -47,16 +48,10 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
 
     def test_analyze_files_with_no_functions(self):
         """Test analyzing files with no functions."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("# Just a comment\nx = 10\n")
-            f.flush()
-            temp_path = f.name
+        temp_path = self._write_temp("# Just a comment\nx = 10\n")
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(len(proposals), 0)
 
     def test_apply_refactoring_cross_file_with_imports(self):
         """Test applying cross-file refactoring with import generation."""
@@ -127,29 +122,17 @@ def bar():
 
     def test_empty_file_analysis(self):
         """Test analyzing an empty file."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("")
-            f.flush()
-            temp_path = f.name
+        temp_path = self._write_temp("")
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(len(proposals), 0)
 
     def test_file_with_only_docstring(self):
         """Test analyzing a file with only a module docstring."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write('"""Module docstring."""\n')
-            f.flush()
-            temp_path = f.name
+        temp_path = self._write_temp('"""Module docstring."""\n')
 
-        try:
-            proposals = self.engine.analyze_file(temp_path)
-            self.assertEqual(len(proposals), 0)
-        finally:
-            os.unlink(temp_path)
+        proposals = self.engine.analyze_file(temp_path)
+        self.assertEqual(len(proposals), 0)
 
 
 class TestExtractorEdgeCases(unittest.TestCase):

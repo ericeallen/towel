@@ -12,7 +12,6 @@ files behave identically to their original versions by:
 import ast
 import re
 import tempfile
-import os
 from typing import List, Tuple, Dict, Any, Optional, TypedDict
 from pathlib import Path
 
@@ -22,8 +21,16 @@ from tests.test_observational_equivalence import (
 from tests.edge_case_values import EdgeCaseValues
 from tests.equivalence_targets import affected_functions, invocation_definitions
 
-# Global test file paths created once and reused
+# The directory of text fixtures for filename parameters, created once and
+# reused; it lives under a directory of its own, never at the temp root.
+_TEST_FILE_DIRECTORY: Optional[tempfile.TemporaryDirectory[str]] = None
 _TEST_FILES: Optional[List[str]] = None
+
+_TEST_FILE_CONTENTS = {
+    "empty.txt": "",
+    "single_line.txt": "test line\n",
+    "multi_line.txt": "line 1\nline 2\nline 3\n",
+}
 
 
 def get_test_files() -> List[str]:
@@ -32,42 +39,28 @@ def get_test_files() -> List[str]:
 
     Returns a list of file paths that can be safely opened and read.
     """
-    global _TEST_FILES
+    global _TEST_FILE_DIRECTORY, _TEST_FILES
 
     if _TEST_FILES is None:
+        _TEST_FILE_DIRECTORY = tempfile.TemporaryDirectory(prefix="towel_equivalence_")
+        directory = Path(_TEST_FILE_DIRECTORY.name)
         _TEST_FILES = []
-
-        # Create an empty file
-        f1 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
-        f1.close()
-        _TEST_FILES.append(f1.name)
-
-        # Create a file with a single line
-        f2 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
-        f2.write("test line\n")
-        f2.close()
-        _TEST_FILES.append(f2.name)
-
-        # Create a file with multiple lines
-        f3 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
-        f3.write("line 1\nline 2\nline 3\n")
-        f3.close()
-        _TEST_FILES.append(f3.name)
+        for name, contents in _TEST_FILE_CONTENTS.items():
+            path = directory / name
+            path.write_text(contents)
+            _TEST_FILES.append(str(path))
 
     return _TEST_FILES
 
 
 def cleanup_test_files():
     """Clean up temporary test files."""
-    global _TEST_FILES
+    global _TEST_FILE_DIRECTORY, _TEST_FILES
 
-    if _TEST_FILES is not None:
-        for filepath in _TEST_FILES:
-            try:
-                os.unlink(filepath)
-            except:
-                pass
-        _TEST_FILES = None
+    if _TEST_FILE_DIRECTORY is not None:
+        _TEST_FILE_DIRECTORY.cleanup()
+    _TEST_FILE_DIRECTORY = None
+    _TEST_FILES = None
 
 
 def extract_function_names_from_proposal(description: str) -> List[str]:
