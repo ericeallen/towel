@@ -20,11 +20,22 @@ but referenced in code that remains after the extraction point.
 """
 
 import ast
-from typing import List, Sequence, Set, Tuple, Union
+from typing import FrozenSet, List, Sequence, Set, Tuple, Union
 
+from .bounded_cache import BoundedCache
 from .definite_assignment import definitely_bound_before_each
 from .models import FunctionNode
+from .structural_memo import structural_id
 from .visitors import OwnScopeVisitor, visit_each
+
+_ORPHANS: BoundedCache[Tuple[str, int, int], FrozenSet[str]] = BoundedCache(65_536)
+"""Orphaned names by (structural id of the body, block start, block end).
+
+A block takes part in every pair it forms and each asks this of the same
+body and indices; the answer is a function of the body's structure alone,
+so the same function re-parsed after a rewrite hits too. Per process; the
+workers fork after parsing and each keeps its own copy.
+"""
 
 
 def _apply_visitor_to_nodes(
@@ -147,9 +158,22 @@ def orphaned_variables(
 
     Returns:
         The orphaned names; empty when the extraction leaves every read bound.
+        A fresh set: callers subtract from it.
     """
     start_idx, end_idx = extracted_block_range
+    key = (structural_id(function_body), start_idx, end_idx)
+    cached = _ORPHANS.get(key)
+    if cached is None:
+        cached = _ORPHANS.put(
+            key, frozenset(_orphaned_variables(function_body, start_idx, end_idx))
+        )
+    return set(cached)
 
+
+def _orphaned_variables(
+    function_body: Sequence[ast.stmt], start_idx: int, end_idx: int
+) -> Set[str]:
+    """See ``orphaned_variables``; this computes it."""
     # Get the extracted block and remaining code
     extracted_block = function_body[start_idx : end_idx + 1]
     remaining_code = function_body[end_idx + 1 :]

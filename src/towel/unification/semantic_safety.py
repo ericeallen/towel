@@ -29,6 +29,7 @@ from .exceptions import UnsupportedLayoutError
 from ..project_layout import ProjectLayout
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
 from .statement_facts import memoized_per_node
+from .structural_memo import structural_id
 from .visitors import OwnScopeVisitor
 from ..source_text import read_source
 
@@ -36,8 +37,27 @@ if TYPE_CHECKING:
     from .substitution import Substitution
 
 
+_PRIVATE_NAME_USE: BoundedCache[str, bool] = BoundedCache(65_536)
+"""Whether nodes use a class-private name, by structural id.
+
+Asked of every function that hosts a clustered site, once per proposal
+that clusters into it; the answer depends only on the names the nodes
+spell. Per process; the workers fork after parsing and each keeps its own
+copy.
+"""
+
+
 def uses_class_private_names(nodes: Iterable[ast.AST]) -> bool:
     """Whether moving these nodes to a different class changes name mangling."""
+    block = tuple(nodes)
+    key = structural_id(block)
+    cached = _PRIVATE_NAME_USE.get(key)
+    if cached is None:
+        cached = _PRIVATE_NAME_USE.put(key, _uses_class_private_names(block))
+    return cached
+
+
+def _uses_class_private_names(nodes: Sequence[ast.AST]) -> bool:
     for statement in nodes:
         for node in ast.walk(statement):
             name = (

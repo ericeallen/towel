@@ -26,7 +26,10 @@ import io
 from pathlib import Path
 from typing import List, Tuple
 
+from towel.unification.instantiation import instantiation_mismatch
+from towel.unification.orphan_detector import orphaned_variables
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.semantic_safety import uses_class_private_names
 
 SIMILAR_FUNCTION = """
 def f{index}(order):
@@ -111,3 +114,65 @@ def test_shared_call_nodes_survive_being_applied(tmp_path: Path) -> None:
     before = _sites(proposals)
     engine.apply_refactoring_multi_file(proposals[0])
     assert _sites(proposals) == before
+
+
+# --- structural memos of pure functions --------------------------------------
+
+BODY = """
+def f(items):
+    total = 0
+    for item in items:
+        total += item
+    print(total)
+    return total
+"""
+
+
+def _function_body(source: str) -> List[ast.stmt]:
+    function = ast.parse(source).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    return function.body
+
+
+def test_orphaned_variables_gives_a_fresh_set_per_call() -> None:
+    body = _function_body(BODY)
+    first = orphaned_variables(body, (0, 1))
+    assert first == {"total"}
+    first.clear()
+    assert orphaned_variables(body, (0, 1)) == {"total"}
+    assert orphaned_variables(_function_body(BODY), (0, 1)) == {"total"}, "a re-parse agrees"
+
+
+def test_uses_class_private_names_accepts_any_iterable_and_agrees_on_a_reparse() -> None:
+    source = "def f(self):\n    return self.__secret\n"
+    assert uses_class_private_names(iter(ast.parse(source).body))
+    assert uses_class_private_names(ast.parse(source).body)
+    assert not uses_class_private_names(
+        ast.parse("def f(self):\n    return self.__dunder__\n").body
+    )
+
+
+def test_instantiation_verdict_agrees_on_a_reparsed_block() -> None:
+    helper = ast.parse("def __extracted_func(x):\n    y = x + 1\n    print(y)\n").body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    call = ast.parse("__extracted_func(a)").body[0]
+    block = ast.parse("y = a + 1\nprint(y)\n").body
+    verdict = instantiation_mismatch(
+        helper, call, block, {}, {}, preamble_length=0, returns_variables=False
+    )
+    assert verdict is None
+    again = instantiation_mismatch(
+        helper,
+        call,
+        ast.parse("y = a + 1\nprint(y)\n").body,
+        {},
+        {},
+        preamble_length=0,
+        returns_variables=False,
+    )
+    assert again is None
+    other = ast.parse("y = a + 2\nprint(y)\n").body
+    mismatch = instantiation_mismatch(
+        helper, call, other, {}, {}, preamble_length=0, returns_variables=False
+    )
+    assert mismatch is not None and mismatch.startswith("body: ")
