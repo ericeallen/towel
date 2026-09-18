@@ -40,7 +40,7 @@ from .models import (
     MethodKind,
 )
 from .scope_analyzer import ScopeAnalyzer
-from .semantic_safety import imported_definition_sites
+from .import_graph import imported_definition_sites
 from .visitors import MethodCallRewriter, visit_as
 
 from .engine_state import EngineState

@@ -43,7 +43,7 @@ from .models import (
 )
 from .scope_analyzer import ScopeBinding
 from .statement_facts import imported_binding_name
-from .semantic_safety import would_create_import_cycle
+from .import_graph import would_create_import_cycle
 from .visitors import body_without_docstring
 
 from .engine_state import EngineState

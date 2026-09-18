@@ -729,7 +729,8 @@ but the ideas and their names are from the literature.
 | Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py` |
 | Visitor bases (Template Method) and shared visitors | `visitors.py` |
 | Liveness and orphans | `definite_assignment.py`, `orphan_detector.py` |
-| Safety guards, import cycles, pre-scan | `semantic_safety.py` |
+| Safety guards and the pre-scan | `semantic_safety.py` |
+| Import-graph resolution and the cycle guard | `import_graph.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
 | Helper annotations | `annotations.py` |
 | Type oracle (mypy, pyright) | `type_inference.py` (at `src/towel/`) |

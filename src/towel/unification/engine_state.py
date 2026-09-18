@@ -64,7 +64,7 @@ from .models import (
 from .structural_memo import StoredSubstitution
 from .unifier import Unifier
 from .progress import DEFAULT_PROGRESS, ProgressMode
-from .semantic_safety import ImportGraphCache
+from .import_graph import ImportGraphCache
 
 
 class GuardKey(NamedTuple):

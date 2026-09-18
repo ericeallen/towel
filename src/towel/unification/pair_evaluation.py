@@ -85,9 +85,8 @@ from .semantic_safety import (
     snapshots_rebound_external_names,
     unbinds_external_name,
     uses_class_private_names,
-    layout_is_known,
-    would_create_import_cycle,
 )
+from .import_graph import layout_is_known, would_create_import_cycle
 from .thunk_inlining import inline_leading_thunks
 from .substitution import Substitution
 from .visitors import body_without_docstring

@@ -65,9 +65,7 @@ from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, GuardKey
 from .defaults import DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
-from .semantic_safety import (
-    ImportGraphCache,
-)
+from .import_graph import ImportGraphCache
 from .block_signature import (
     BlockBucketKey,
     BlockSignature,
