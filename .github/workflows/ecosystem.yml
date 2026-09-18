@@ -21,7 +21,12 @@ jobs:
           python-version: '3.13'
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen --extra dev
+      # The check clones and executes third-party code (see the script's
+      # docstring); a hosted runner is discarded after the job, which is the
+      # only setting where that opt-in is appropriate.
       - run: uv run --frozen python scripts/ecosystem_check.py --work "$RUNNER_TEMP/ecosystem" --workers 2
+        env:
+          TOWEL_ECOSYSTEM_RUN_UNTRUSTED: "1"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

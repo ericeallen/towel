@@ -2,11 +2,22 @@
 # once as a baseline, refactored in a copy with the CLI defaults, and its
 # suite run again. A project qualifies only when the two runs are identical.
 #
-# Fields: name, url, rev (commit or branch), package (path refactored, relative
-# to the project root), pythonpath (for the test run), deps (test-only
-# requirements installed into a private environment), test (command run from
-# the project root; {python} is the environment interpreter), prepare
-# (optional shell command run once after cloning), expect_broken (why the
+# Every `rev` is pinned to the full commit SHA the last release-gate run
+# tested, because the harness executes each project's code (see the trust
+# boundary in scripts/ecosystem_check.py): a pin means a hijacked upstream
+# cannot put unreviewed code into the run. The one exception is towel-main,
+# which must track current `main` and stays at "HEAD" on purpose. To refresh
+# the pins: run the check, review the new commits, then print the commits the
+# run tested with `python scripts/ecosystem_check.py --work <work> --print-pins`
+# (it executes nothing) and replace the `rev` lines below with those SHAs,
+# leaving towel-main alone. Run the check again before relying on the result.
+#
+# Fields: name, url, rev (full commit SHA; "HEAD" only for towel-main),
+# package (path refactored, relative to the project root), pythonpath (for
+# the test run), deps (test-only requirements installed into a private
+# environment), test (command run from the project root; {python} is the
+# environment interpreter), prepare (optional command run once after cloning,
+# split into arguments and run without a shell), expect_broken (why the
 # suite is expected to differ after transformation) with known_failures (test
 # id substrings; the verdict is BROKEN_KNOWN only when every new failure
 # matches one, otherwise BROKEN), timeout (seconds per phase for this project,
@@ -16,46 +27,46 @@
 [[project]]
 name = "tabulate"
 url = "https://github.com/astanin/python-tabulate.git"
-rev = "HEAD"
+rev = "268615a5c27dc40e5c22454c07b44d5c50410da0"
 package = "tabulate"
 
 [[project]]
 name = "toolz"
 url = "https://github.com/pytoolz/toolz.git"
-rev = "HEAD"
+rev = "568c2b8393973cd172a466546c9d95779c452438"
 package = "toolz"
 
 [[project]]
 name = "boltons"
 url = "https://github.com/mahmoud/boltons.git"
-rev = "HEAD"
+rev = "961dcff3f42e73b245aef65e377fe82763b257bb"
 package = "boltons"
 
 [[project]]
 name = "pyparsing"
 url = "https://github.com/pyparsing/pyparsing.git"
-rev = "HEAD"
+rev = "efd56db4e59f36b1673ce0eb0823e3afaa9d1201"
 package = "pyparsing"
 deps = ["railroad-diagrams", "jinja2"]
 
 [[project]]
 name = "markdown-it-py"
 url = "https://github.com/executablebooks/markdown-it-py.git"
-rev = "HEAD"
+rev = "a5950caef3434ed83045b43311aefcf7e0578aa3"
 package = "markdown_it"
 deps = ["pytest-regressions", "mdurl", "linkify-it-py", "psutil", "pytest-benchmark"]
 
 [[project]]
 name = "more-itertools"
 url = "https://github.com/more-itertools/more-itertools.git"
-rev = "HEAD"
+rev = "9ed3dbb0ae527230cd156d91d0af305478558fba"
 package = "more_itertools"
 test = ["{python}", "-m", "unittest"]
 
 [[project]]
 name = "humanize"
 url = "https://github.com/python-humanize/humanize.git"
-rev = "HEAD"
+rev = "3201e702ed7eae506f793fad0aec204f387aeb4c"
 package = "src/humanize"
 pythonpath = "src"
 deps = ["freezegun", "pytest-benchmark"]
@@ -65,7 +76,7 @@ install = true
 [[project]]
 name = "attrs"
 url = "https://github.com/python-attrs/attrs.git"
-rev = "HEAD"
+rev = "8f767776326faaed11e6c2974798787f6e19b343"
 package = "src/attr"
 pythonpath = "src"
 deps = ["hypothesis", "pytest-xdist"]
@@ -73,7 +84,7 @@ deps = ["hypothesis", "pytest-xdist"]
 [[project]]
 name = "jinja2"
 url = "https://github.com/pallets/jinja.git"
-rev = "HEAD"
+rev = "5ef70112a1ff19c05324ff889dd30405b1002044"
 package = "src/jinja2"
 pythonpath = "src"
 deps = ["markupsafe", "trio"]
@@ -81,7 +92,7 @@ deps = ["markupsafe", "trio"]
 [[project]]
 name = "click"
 url = "https://github.com/pallets/click.git"
-rev = "HEAD"
+rev = "6aabf099bfdd4c1e75fe8d0e0d4241372b988ab1"
 package = "src/click"
 pythonpath = "src"
 install = true
@@ -89,7 +100,7 @@ install = true
 [[project]]
 name = "marshmallow"
 url = "https://github.com/marshmallow-code/marshmallow.git"
-rev = "HEAD"
+rev = "c54aa7292a09259e186fa8c20559c5df8aeb27f3"
 package = "src/marshmallow"
 pythonpath = "src"
 deps = ["pytz", "simplejson"]
@@ -97,20 +108,20 @@ deps = ["pytz", "simplejson"]
 [[project]]
 name = "sqlparse"
 url = "https://github.com/andialbrecht/sqlparse.git"
-rev = "HEAD"
+rev = "60cdc649726bf1bc4f1b336050560b336da715ec"
 package = "sqlparse"
 
 [[project]]
 name = "tomli"
 url = "https://github.com/hukkin/tomli.git"
-rev = "HEAD"
+rev = "5a77b12a7a9f052ce5a20c335d2825658f6aea52"
 package = "src/tomli"
 pythonpath = "src"
 
 [[project]]
 name = "packaging"
 url = "https://github.com/pypa/packaging.git"
-rev = "HEAD"
+rev = "10590c194edb33c82f84a127883d6097c56b7840"
 package = "src/packaging"
 pythonpath = "src"
 deps = ["pretend", "hypothesis", "tomli_w", "pip"]
@@ -118,7 +129,7 @@ deps = ["pretend", "hypothesis", "tomli_w", "pip"]
 [[project]]
 name = "pluggy"
 url = "https://github.com/pytest-dev/pluggy.git"
-rev = "HEAD"
+rev = "0744fd993b0392a609375dbbbc8346bbd8a1b198"
 package = "src/pluggy"
 pythonpath = "src"
 expect_broken = "frame-relative: _verify_all_args_are_provided warns with stacklevel through the extracted helper"
@@ -127,68 +138,68 @@ known_failures = ["testing/test_details.py::test_not_all_arguments_warning_point
 [[project]]
 name = "cachetools"
 url = "https://github.com/tkem/cachetools.git"
-rev = "HEAD"
+rev = "4500e3d04288738d25acbb4973eb3c3e1bf41db9"
 package = "src/cachetools"
 pythonpath = "src"
 
 [[project]]
 name = "sortedcontainers"
 url = "https://github.com/grantjenks/python-sortedcontainers.git"
-rev = "HEAD"
+rev = "3ac358631f58c1347f1d6d2d92784117db0f38ed"
 package = "src/sortedcontainers"
 pythonpath = "src"
 
 [[project]]
 name = "bidict"
 url = "https://github.com/jab/bidict.git"
-rev = "HEAD"
+rev = "61e98274c4b3f041344a2a818315ab2b57c0c358"
 package = "bidict"
 deps = ["hypothesis", "pytest-xdist"]
 
 [[project]]
 name = "pyflakes"
 url = "https://github.com/PyCQA/pyflakes.git"
-rev = "HEAD"
+rev = "52cb7296b4bb52c0a0e8b51c7729a55fa0d0a808"
 package = "pyflakes"
 
 [[project]]
 name = "pycodestyle"
 url = "https://github.com/PyCQA/pycodestyle.git"
-rev = "HEAD"
+rev = "d6c38543a95c3adec7958fc659f4081972a3f1d1"
 package = "pycodestyle.py"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 
 [[project]]
 name = "pathspec"
 url = "https://github.com/cpburnz/python-pathspec.git"
-rev = "HEAD"
+rev = "f0fb3f4aaaca490d7667e4dc1d565d52a25158b0"
 package = "pathspec"
 
 [[project]]
 name = "wcwidth"
 url = "https://github.com/jquast/wcwidth.git"
-rev = "HEAD"
+rev = "17986f51ddea489b1c83bff85169e4521a8fb080"
 package = "wcwidth"
 deps = ["pytest-cov"]
 
 [[project]]
 name = "idna"
 url = "https://github.com/kjd/idna.git"
-rev = "HEAD"
+rev = "cd1739200f3bf07871372bcb31c271de136eaccf"
 package = "idna"
 deps = ["hypothesis"]
 
 [[project]]
 name = "funcy"
 url = "https://github.com/Suor/funcy.git"
-rev = "HEAD"
+rev = "5419a8f8790c03ef713ab6cc23e679ad1c5ab3e4"
 package = "funcy"
 deps = ["whatever"]
 
 [[project]]
 name = "glom"
 url = "https://github.com/mahmoud/glom.git"
-rev = "HEAD"
+rev = "fd70d3051a6a1bcb5152ec2d8e2cdc8e852f95e6"
 package = "glom"
 deps = ["attrs", "face", "boltons", "pyyaml"]
 expect_broken = "frame-relative: test_error.py asserts literal traceback frames, and the helper adds one"
@@ -197,34 +208,34 @@ known_failures = ["glom/test/test_error.py::"]
 [[project]]
 name = "natsort"
 url = "https://github.com/SethMMorton/natsort.git"
-rev = "HEAD"
+rev = "e2328c20b62253bea75227b62763ea83874171dc"
 package = "natsort"
 deps = ["hypothesis", "pytest-mock"]
 
 [[project]]
 name = "tenacity"
 url = "https://github.com/jd/tenacity.git"
-rev = "HEAD"
+rev = "3e58094d3bc414975aad9eadf343a32bdb3b89b3"
 package = "tenacity"
 deps = ["typeguard", "tornado"]
 
 [[project]]
 name = "python-slugify"
 url = "https://github.com/un33k/python-slugify.git"
-rev = "HEAD"
+rev = "fee5aa338d3bd7a9e36c269e33b496a7848edc44"
 package = "slugify"
 deps = ["text-unidecode"]
 
 [[project]]
 name = "colorama"
 url = "https://github.com/tartley/colorama.git"
-rev = "HEAD"
+rev = "841634ed2a0da5d5ac2d867db533da8131266cb2"
 package = "colorama"
 
 [[project]]
 name = "itsdangerous"
 url = "https://github.com/pallets/itsdangerous.git"
-rev = "HEAD"
+rev = "672971d66a2ef9f85151e53283113f33d642dabd"
 package = "src/itsdangerous"
 pythonpath = "src"
 deps = ["freezegun"]
@@ -232,20 +243,20 @@ deps = ["freezegun"]
 [[project]]
 name = "pygments"
 url = "https://github.com/pygments/pygments.git"
-rev = "HEAD"
+rev = "38f426a6b1cd4ffc6429f5808031b7c62ea57b1f"
 package = "pygments"
 deps = ["wcag-contrast-ratio"]
 
 [[project]]
 name = "voluptuous"
 url = "https://github.com/alecthomas/voluptuous.git"
-rev = "HEAD"
+rev = "44593ce7c330faf9418252c4b5448f4736144a7f"
 package = "voluptuous"
 
 [[project]]
 name = "tomlkit"
 url = "https://github.com/python-poetry/tomlkit.git"
-rev = "HEAD"
+rev = "4b38becd75405e0f38ef3e47e9839eb407591c8a"
 package = "tomlkit"
 deps = ["pyyaml"]
 prepare = "git submodule update --init --quiet"
@@ -253,7 +264,7 @@ prepare = "git submodule update --init --quiet"
 [[project]]
 name = "oauthlib"
 url = "https://github.com/oauthlib/oauthlib.git"
-rev = "HEAD"
+rev = "40b0ab56da3682c2484a4b78bbff309f8025d950"
 package = "oauthlib"
 deps = ["pytest-cov", "pytest-subtests", "pyjwt", "cryptography", "blinker"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
@@ -261,7 +272,7 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 [[project]]
 name = "parso"
 url = "https://github.com/davidhalter/parso.git"
-rev = "HEAD"
+rev = "7f5b142b54b2a04bcb4df358175d079e046c5bf7"
 package = "parso"
 deps = ["docopt"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
@@ -269,7 +280,7 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
 [[project]]
 name = "platformdirs"
 url = "https://github.com/tox-dev/platformdirs.git"
-rev = "HEAD"
+rev = "c5ef1edbb41eb7ad8aea2e75627ae474e796484c"
 package = "src/platformdirs"
 pythonpath = "src"
 deps = ["appdirs", "pytest-mock"]
@@ -278,7 +289,7 @@ install = true
 [[project]]
 name = "filelock"
 url = "https://github.com/tox-dev/filelock.git"
-rev = "HEAD"
+rev = "4efd93e0482e8095a0b6949fb337206e7f67495d"
 package = "src/filelock"
 pythonpath = "src"
 deps = ["pytest-timeout", "pytest-mock", "virtualenv", "pytest-asyncio"]
@@ -287,7 +298,7 @@ install = true
 [[project]]
 name = "python-dateutil"
 url = "https://github.com/dateutil/dateutil.git"
-rev = "HEAD"
+rev = "48bd1af97e71baf8e96fce5b663d589caac8f147"
 package = "src/dateutil"
 pythonpath = "src"
 deps = ["freezegun", "hypothesis", "six", "pytest-cov", "pytest<9"]
@@ -295,7 +306,7 @@ deps = ["freezegun", "hypothesis", "six", "pytest-cov", "pytest<9"]
 [[project]]
 name = "decorator"
 url = "https://github.com/micheles/decorator.git"
-rev = "HEAD"
+rev = "2322c7bfdbbafc4fd3f7f37b9860001ff82bf66f"
 pythonpath = "src"
 package = "src/decorator"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test.py"]
@@ -303,13 +314,13 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test.
 [[project]]
 name = "schema"
 url = "https://github.com/keleshev/schema.git"
-rev = "HEAD"
+rev = "310a1239b62f500284ce3bd91b7dabf70467f23e"
 package = "schema"
 
 [[project]]
 name = "wrapt"
 url = "https://github.com/GrahamDumpleton/wrapt.git"
-rev = "HEAD"
+rev = "f1586a5e48e79024e45bf9139b6a4293798aee1b"
 package = "src/wrapt"
 pythonpath = "src"
 
@@ -318,7 +329,7 @@ pythonpath = "src"
 [[project]]
 name = "flask"
 url = "https://github.com/pallets/flask.git"
-rev = "HEAD"
+rev = "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35"
 package = "src/flask"
 pythonpath = "src"
 deps = ["asgiref", "python-dotenv"]
@@ -327,7 +338,7 @@ install = true
 [[project]]
 name = "werkzeug"
 url = "https://github.com/pallets/werkzeug.git"
-rev = "HEAD"
+rev = "6a604e005d95af8129ee314863be8ad6b240dead"
 package = "src/werkzeug"
 pythonpath = "src"
 deps = ["cryptography", "ephemeral-port-reserve", "pytest-timeout", "watchdog"]
@@ -336,7 +347,7 @@ install = true
 [[project]]
 name = "httpx"
 url = "https://github.com/encode/httpx.git"
-rev = "HEAD"
+rev = "b5addb64f0161ff6bfe94c124ef76f6a1fba5254"
 package = "httpx"
 deps = ["chardet", "trio", "trustme", "uvicorn", "cryptography", "h2", "socksio", "zstandard", "brotli", "click", "pygments", "rich"]
 install = true
@@ -344,7 +355,7 @@ install = true
 [[project]]
 name = "starlette"
 url = "https://github.com/encode/starlette.git"
-rev = "HEAD"
+rev = "03f12b7fcf0a3e21a8da648ca0900c79472e9efe"
 package = "starlette"
 deps = ["httpx", "httpx2[zstd]", "trio", "blockbuster", "itsdangerous", "jinja2", "python-multipart", "pyyaml", "opentelemetry-api", "opentelemetry-sdk", "importlib-metadata"]
 install = true
@@ -352,7 +363,7 @@ install = true
 [[project]]
 name = "anyio"
 url = "https://github.com/agronholm/anyio.git"
-rev = "HEAD"
+rev = "9e2b5924e54ce5fa6aacc0640846c1a360a45178"
 package = "src/anyio"
 pythonpath = "src"
 deps = ["blockbuster", "hypothesis", "psutil", "pytest-mock", "pytest-timeout", "trustme", "truststore", "uvloop", "trio", "coverage"]
@@ -361,7 +372,7 @@ install = true
 [[project]]
 name = "jsonschema"
 url = "https://github.com/python-jsonschema/jsonschema.git"
-rev = "HEAD"
+rev = "15f8613be518d9e5f563efa643213d1962d3c5b7"
 package = "jsonschema"
 deps = ["virtue", "jsonpath-ng"]
 install = true
@@ -369,7 +380,7 @@ install = true
 [[project]]
 name = "virtualenv"
 url = "https://github.com/pypa/virtualenv.git"
-rev = "HEAD"
+rev = "e13bb213aa649baab1c0bf70374421bac0083853"
 package = "src/virtualenv"
 pythonpath = "src"
 deps = ["covdefaults", "coverage", "coverage-enable-subprocess", "flaky", "packaging", "pytest-env", "pytest-mock", "pytest-timeout", "pytest-xdist", "setuptools", "time-machine"]
@@ -378,7 +389,7 @@ install = true
 [[project]]
 name = "nox"
 url = "https://github.com/wntrblm/nox.git"
-rev = "HEAD"
+rev = "fe279740b775a632f1b567b45c7d131c00a4f174"
 package = "nox"
 deps = ["pytest-xdist", "coverage"]
 install = true
@@ -386,7 +397,7 @@ install = true
 [[project]]
 name = "markdown"
 url = "https://github.com/Python-Markdown/markdown.git"
-rev = "HEAD"
+rev = "819fff96b0f146a75cfe39628c9502cc9a007047"
 package = "markdown"
 deps = ["pyyaml"]
 test = ["{python}", "-m", "unittest", "discover", "tests"]
@@ -394,7 +405,7 @@ test = ["{python}", "-m", "unittest", "discover", "tests"]
 [[project]]
 name = "tqdm"
 url = "https://github.com/tqdm/tqdm.git"
-rev = "HEAD"
+rev = "9cf5a12b1f955468a17f0ba3c59092b23e4258ac"
 package = "tqdm"
 deps = ["pytest-timeout", "pytest-asyncio", "nbval", "ipywidgets"]
 install = true
@@ -402,7 +413,7 @@ install = true
 [[project]]
 name = "lark"
 url = "https://github.com/lark-parser/lark.git"
-rev = "HEAD"
+rev = "9a4fb9c7458e8155636773a3cded0016d52516da"
 package = "lark"
 deps = ["regex", "interegular", "atomicwrites"]
 install = true
@@ -413,14 +424,14 @@ known_failures = ["tests/__main__.py::TestStandalone::"]
 [[project]]
 name = "peewee"
 url = "https://github.com/coleifer/peewee.git"
-rev = "HEAD"
+rev = "2866df242d07ee78f715130ad6b9d4c0287e0a71"
 package = "peewee.py"
 test = ["{python}", "runtests.py"]
 
 [[project]]
 name = "python-prompt-toolkit"
 url = "https://github.com/prompt-toolkit/python-prompt-toolkit.git"
-rev = "HEAD"
+rev = "583b3412c792a5cc9f01adde603679f3824a88f3"
 package = "src/prompt_toolkit"
 pythonpath = "src"
 deps = ["pytest-mock", "asyncssh"]
@@ -429,7 +440,7 @@ install = true
 [[project]]
 name = "astroid"
 url = "https://github.com/pylint-dev/astroid.git"
-rev = "HEAD"
+rev = "6011e6c31e5ccf486303c51a1423e7b37081debd"
 package = "astroid"
 deps = ["typing-extensions"]
 install = true
@@ -437,7 +448,7 @@ install = true
 [[project]]
 name = "networkx"
 url = "https://github.com/networkx/networkx.git"
-rev = "HEAD"
+rev = "8977f1cfbae61ed7f33a33d19a40fd2c3f16c05c"
 package = "networkx"
 deps = ["numpy", "scipy", "pandas", "matplotlib"]
 install = true
@@ -447,7 +458,7 @@ exclude = ["tests"]
 [[project]]
 name = "pytest"
 url = "https://github.com/pytest-dev/pytest.git"
-rev = "HEAD"
+rev = "99ab2acccff15f757260a1e1fbb0d2a47fc01041"
 package = "src/_pytest"
 pythonpath = "src"
 deps = ["attrs", "hypothesis", "mock", "pygments", "requests", "setuptools", "xmlschema", "argcomplete"]
@@ -457,7 +468,7 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "testing"]
 [[project]]
 name = "sphinx"
 url = "https://github.com/sphinx-doc/sphinx.git"
-rev = "HEAD"
+rev = "e44a40eb2f810558ccd9da1425421270ccb81351"
 package = "sphinx"
 deps = ["pytest-xdist", "defusedxml", "typing_extensions", "cython", "setuptools"]
 install = true
@@ -466,7 +477,7 @@ timeout = 5400
 [[project]]
 name = "black"
 url = "https://github.com/psf/black.git"
-rev = "HEAD"
+rev = "acd6198877ced2d8126b9b3958bb17f4a65ef0d1"
 package = "src/black"
 pythonpath = "src"
 deps = ["pytest-xdist", "aiohttp", "tokenize-rt"]
@@ -475,7 +486,7 @@ install = true
 [[project]]
 name = "django-utils"
 url = "https://github.com/django/django.git"
-rev = "HEAD"
+rev = "8cbdd4a814397f81adf0129288f32b615bd1f94f"
 package = "django/utils"
 deps = ["asgiref", "sqlparse", "tzdata", "Pillow", "PyYAML", "jinja2", "tblib"]
 test = ["{python}", "tests/runtests.py", "--parallel", "1", "utils_tests"]
@@ -483,7 +494,7 @@ test = ["{python}", "tests/runtests.py", "--parallel", "1", "utils_tests"]
 [[project]]
 name = "django-forms"
 url = "https://github.com/django/django.git"
-rev = "HEAD"
+rev = "8cbdd4a814397f81adf0129288f32b615bd1f94f"
 package = "django/forms"
 deps = ["asgiref", "sqlparse", "tzdata", "Pillow", "PyYAML", "jinja2", "tblib"]
 test = ["{python}", "tests/runtests.py", "--parallel", "1", "forms_tests"]
@@ -491,7 +502,7 @@ test = ["{python}", "tests/runtests.py", "--parallel", "1", "forms_tests"]
 [[project]]
 name = "rich"
 url = "https://github.com/Textualize/rich.git"
-rev = "HEAD"
+rev = "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
 package = "rich"
 deps = ["pygments", "markdown-it-py", "attrs"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
@@ -501,7 +512,7 @@ known_failures = ["tests/test_traceback.py::test_handler"]
 [[project]]
 name = "typer"
 url = "https://github.com/fastapi/typer.git"
-rev = "HEAD"
+rev = "a80f6e5ecd74f32b983cca336a2f3cba98d9853a"
 package = "typer"
 deps = ["shellingham", "rich", "annotated-doc", "pytest-xdist"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
@@ -509,7 +520,7 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 [[project]]
 name = "structlog"
 url = "https://github.com/hynek/structlog.git"
-rev = "HEAD"
+rev = "73393f34b40c15688b3fdd0982889b225f11b59b"
 package = "src/structlog"
 pythonpath = "src"
 deps = ["pytest-asyncio", "simplejson", "time-machine", "typing-extensions"]
@@ -517,7 +528,7 @@ deps = ["pytest-asyncio", "simplejson", "time-machine", "typing-extensions"]
 [[project]]
 name = "cattrs"
 url = "https://github.com/python-attrs/cattrs.git"
-rev = "HEAD"
+rev = "5bf7c972939248b8e48c9f750fbfd982e5c5b1f9"
 package = "src/cattrs"
 pythonpath = "src"
 deps = ["attrs", "typing-extensions", "hypothesis", "pytest-benchmark", "immutables", "ujson", "orjson", "msgpack", "pyyaml", "tomlkit", "cbor2", "msgspec", "pymongo"]
@@ -525,7 +536,7 @@ deps = ["attrs", "typing-extensions", "hypothesis", "pytest-benchmark", "immutab
 [[project]]
 name = "isort"
 url = "https://github.com/PyCQA/isort.git"
-rev = "HEAD"
+rev = "131f4adcd5582bfc53928ab0d740eceb8b506b6c"
 package = "isort"
 deps = ["colorama", "hypothesis", "hypothesmith", "mypy-extensions", "black"]
 install = true
@@ -534,20 +545,20 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/unit"
 [[project]]
 name = "pyjwt"
 url = "https://github.com/jpadilla/pyjwt.git"
-rev = "HEAD"
+rev = "b9f6a9d79c4368f294c2e01e873ba339c034d497"
 package = "jwt"
 deps = ["cryptography"]
 
 [[project]]
 name = "xmltodict"
 url = "https://github.com/martinblech/xmltodict.git"
-rev = "HEAD"
+rev = "6e29fba282e68631034dd2722a413b4e35276584"
 package = "xmltodict.py"
 
 [[project]]
 name = "arrow"
 url = "https://github.com/arrow-py/arrow.git"
-rev = "HEAD"
+rev = "2224255c4acc594d734cef0bbc83360452a67983"
 package = "arrow"
 deps = ["python-dateutil", "tzdata", "dateparser", "pytest-mock", "pytz", "simplejson", "pytest-cov"]
 # tox.ini adds coverage options with a 99% floor; the floor is not a test result.
@@ -556,21 +567,21 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addop
 [[project]]
 name = "six"
 url = "https://github.com/benjaminp/six.git"
-rev = "HEAD"
+rev = "c8e394065cd541a16c040515dc0afb85cf22a7c3"
 package = "six.py"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test_six.py"]
 
 [[project]]
 name = "tornado"
 url = "https://github.com/tornadoweb/tornado.git"
-rev = "HEAD"
+rev = "85b6917d05a84a6d26b7488b2b56d0b52c107a0f"
 package = "tornado"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tornado/test"]
 
 [[project]]
 name = "trio"
 url = "https://github.com/python-trio/trio.git"
-rev = "HEAD"
+rev = "59d94d7ae0dc8af4c9736425c278b04ecd8b1a47"
 package = "src/trio"
 pythonpath = "src"
 deps = ["attrs", "sortedcontainers", "idna", "outcome", "sniffio", "trustme", "pytest-trio", "exceptiongroup", "astor", "pyopenssl", "pyyaml", "jedi", "isort"]
@@ -582,56 +593,56 @@ known_failures = ["test_module_with_deprecations"]
 [[project]]
 name = "h11"
 url = "https://github.com/python-hyper/h11.git"
-rev = "HEAD"
+rev = "62c5068c971579d61fa1b55373390e12f25fd856"
 package = "h11"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "h11/tests"]
 
 [[project]]
 name = "jmespath"
 url = "https://github.com/jmespath/jmespath.py.git"
-rev = "HEAD"
+rev = "2812594e69d43098ef60f81f4efc404c071b0418"
 package = "jmespath"
 deps = ["hypothesis"]
 
 [[project]]
 name = "dpath"
 url = "https://github.com/dpath-maintainers/dpath-python.git"
-rev = "HEAD"
+rev = "26b77325f5222be8c578261065af38587f98fd76"
 package = "dpath"
 deps = ["hypothesis", "nose2"]
 
 [[project]]
 name = "loguru"
 url = "https://github.com/Delgan/loguru.git"
-rev = "HEAD"
+rev = "48acf77ac2b3296acc67069511b99cc3ca3d0c41"
 package = "loguru"
 deps = ["freezegun", "pytest-mock", "colorama"]
 
 [[project]]
 name = "deepdiff"
 url = "https://github.com/seperman/deepdiff.git"
-rev = "HEAD"
+rev = "79e4379278b1cfdd8e9e3dccac364956908e8989"
 package = "deepdiff"
 deps = ["cachebox", "orderly-set", "numpy", "python-dateutil", "pyyaml", "tomli-w", "click", "pydantic", "pytz", "orjson", "uuid6"]
 
 [[project]]
 name = "markupsafe"
 url = "https://github.com/pallets/markupsafe.git"
-rev = "HEAD"
+rev = "b2e4d9c7687be25695fffbe93a37622302b24fb1"
 package = "src/markupsafe"
 pythonpath = "src"
 
 [[project]]
 name = "sniffio"
 url = "https://github.com/python-trio/sniffio.git"
-rev = "HEAD"
+rev = "6996e05d9b9debe32f42f709c8041e744f850478"
 package = "sniffio"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "sniffio/_tests"]
 
 [[project]]
 name = "outcome"
 url = "https://github.com/python-trio/outcome.git"
-rev = "HEAD"
+rev = "03ed6218b08001877745bb1a9e180c8c5cf7c903"
 package = "src/outcome"
 pythonpath = "src"
 deps = ["attrs"]
@@ -639,7 +650,7 @@ deps = ["attrs"]
 [[project]]
 name = "mako"
 url = "https://github.com/sqlalchemy/mako.git"
-rev = "HEAD"
+rev = "411b4ac6cf054e61a8fb44c236990fda1e41ade4"
 package = "mako"
 deps = ["markupsafe"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
@@ -647,14 +658,14 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
 [[project]]
 name = "html5lib"
 url = "https://github.com/html5lib/html5lib-python.git"
-rev = "HEAD"
+rev = "fd4f032bc090d44fb11a84b352dad7cbee0a4745"
 package = "html5lib"
 deps = ["six", "webencodings", "mock", "setuptools<81", "pytest-expect", "pytest<8"]
 
 [[project]]
 name = "bleach"
 url = "https://github.com/mozilla/bleach.git"
-rev = "HEAD"
+rev = "f0355a7af00500482c5292c6c83290c6a178068d"
 package = "bleach"
 deps = ["six", "webencodings", "html5lib"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
@@ -662,7 +673,7 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 [[project]]
 name = "feedparser"
 url = "https://github.com/kurtmckee/feedparser.git"
-rev = "HEAD"
+rev = "a22c5521cbb109871f1a2318948581901bd47e26"
 package = "feedparser"
 deps = ["feedparser-sgmllib", "responses"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
@@ -670,14 +681,14 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 [[project]]
 name = "cerberus"
 url = "https://github.com/pyeve/cerberus.git"
-rev = "HEAD"
+rev = "65e977de08ab76d4b40ca981972f9ff68926ed63"
 package = "cerberus"
 deps = ["pytest-benchmark"]
 
 [[project]]
 name = "croniter"
 url = "https://github.com/kiorky/croniter.git"
-rev = "HEAD"
+rev = "3dd4d14e971294c03d3fb9be3f5ca03ae1c25310"
 package = "src/croniter"
 pythonpath = "src"
 deps = ["python-dateutil", "pytz", "natsort", "tzlocal"]
@@ -685,7 +696,7 @@ deps = ["python-dateutil", "pytz", "natsort", "tzlocal"]
 [[project]]
 name = "prettytable"
 url = "https://github.com/prettytable/prettytable.git"
-rev = "HEAD"
+rev = "2a6cd4fb41bc6754eac57b43fc6dbd43b08ae368"
 package = "src/prettytable"
 install = true
 pythonpath = "src"
@@ -695,20 +706,20 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 [[project]]
 name = "parsimonious"
 url = "https://github.com/erikrose/parsimonious.git"
-rev = "HEAD"
+rev = "eb79639859a9697a86c0992a045174a8856b5fb0"
 package = "parsimonious"
 deps = ["regex"]
 
 [[project]]
 name = "inflection"
 url = "https://github.com/jpvanhal/inflection.git"
-rev = "HEAD"
+rev = "88eefaacf7d0caaa701af7c8ab2d0ab3f17086f1"
 package = "inflection"
 
 [[project]]
 name = "pyrsistent"
 url = "https://github.com/tobgu/pyrsistent.git"
-rev = "HEAD"
+rev = "0c0b7aec8cd25b1d2d8ba07b10acdefd0f38f2c7"
 package = "pyrsistent"
 deps = ["hypothesis", "typing-extensions"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
@@ -716,7 +727,7 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 [[project]]
 name = "jsonpatch"
 url = "https://github.com/stefankoegl/python-json-patch.git"
-rev = "HEAD"
+rev = "d8e1a6e244728c04229d601bc9a384d9b034c603"
 package = "jsonpatch.py"
 deps = ["jsonpointer"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
@@ -726,7 +737,7 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
 [[project]]
 name = "mistune"
 url = "https://github.com/lepture/mistune.git"
-rev = "HEAD"
+rev = "a1b50bc12e066e5707ff797f821829bfcdab03b5"
 package = "src/mistune"
 pythonpath = "src"
 install = true
@@ -734,7 +745,7 @@ install = true
 [[project]]
 name = "blinker"
 url = "https://github.com/pallets-eco/blinker.git"
-rev = "HEAD"
+rev = "c3364059663df1ddce32799d6b1922af89a345f6"
 package = "src/blinker"
 pythonpath = "src"
 deps = ["pytest-asyncio"]
@@ -743,14 +754,14 @@ install = true
 [[project]]
 name = "pycparser"
 url = "https://github.com/eliben/pycparser.git"
-rev = "HEAD"
+rev = "f93324c195dd1c0d73cfe93cdf8e8a5aede377df"
 package = "pycparser"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 
 [[project]]
 name = "invoke"
 url = "https://github.com/pyinvoke/invoke.git"
-rev = "HEAD"
+rev = "6a71e680c535ba6520e935c497099fbca011d03c"
 package = "invoke"
 deps = ["pytest-relaxed", "pytest-cov", "icecream", "lexicon"]
 install = true
@@ -758,21 +769,21 @@ install = true
 [[project]]
 name = "python-fire"
 url = "https://github.com/google/python-fire.git"
-rev = "HEAD"
+rev = "716bbc23d7eca949fdb682172283c8d18f742cb6"
 package = "fire"
 deps = ["termcolor", "hypothesis", "mock", "levenshtein"]
 
 [[project]]
 name = "bottle"
 url = "https://github.com/bottlepy/bottle.git"
-rev = "HEAD"
+rev = "90bd4aa7439419186a85446f2aa05c23e3ba7103"
 package = "bottle.py"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
 
 [[project]]
 name = "waitress"
 url = "https://github.com/Pylons/waitress.git"
-rev = "HEAD"
+rev = "016eea527dd4a3eb4a18d6dca4d0bfe32039e470"
 package = "src/waitress"
 pythonpath = "src"
 deps = ["pytest-cov"]
@@ -781,7 +792,7 @@ install = true
 [[project]]
 name = "gunicorn"
 url = "https://github.com/benoitc/gunicorn.git"
-rev = "HEAD"
+rev = "afc7d2fd5dd9f1de455b1be6c10044030c0adf8e"
 package = "gunicorn"
 deps = ["packaging", "coverage", "pytest-cov", "tornado", "pytest-asyncio"]
 install = true
@@ -789,7 +800,7 @@ install = true
 [[project]]
 name = "wsproto"
 url = "https://github.com/python-hyper/wsproto.git"
-rev = "HEAD"
+rev = "5e0685d0740ec30716897442f336de1118f5f40a"
 package = "src/wsproto"
 pythonpath = "src"
 deps = ["h11"]
@@ -798,7 +809,7 @@ install = true
 [[project]]
 name = "hpack"
 url = "https://github.com/python-hyper/hpack.git"
-rev = "HEAD"
+rev = "d05cff4cd462658847f67c48700aab40b2ba8cf1"
 package = "src/hpack"
 pythonpath = "src"
 deps = ["hypothesis"]
@@ -807,7 +818,7 @@ install = true
 [[project]]
 name = "hyperframe"
 url = "https://github.com/python-hyper/hyperframe.git"
-rev = "HEAD"
+rev = "632e309bf6d76d6a3cd04e3cbc0b006eddbf7056"
 package = "src/hyperframe"
 pythonpath = "src"
 install = true
@@ -815,7 +826,7 @@ install = true
 [[project]]
 name = "h2"
 url = "https://github.com/python-hyper/h2.git"
-rev = "HEAD"
+rev = "bc239af1d1b85bc70482804f30a0e0e587d90a08"
 package = "src/h2"
 pythonpath = "src"
 deps = ["hypothesis", "hpack", "hyperframe"]
@@ -824,7 +835,7 @@ install = true
 [[project]]
 name = "pyupgrade"
 url = "https://github.com/asottile/pyupgrade.git"
-rev = "HEAD"
+rev = "fbad673bb8f149f3c6022a7dd9c616d39ad8a5e2"
 package = "pyupgrade"
 deps = ["tokenize-rt"]
 install = true
@@ -832,7 +843,7 @@ install = true
 [[project]]
 name = "python-dotenv"
 url = "https://github.com/theskumar/python-dotenv.git"
-rev = "HEAD"
+rev = "a00cb2eed0704cd6d2071b2004c37e95ccc86ee5"
 package = "src/dotenv"
 pythonpath = "src"
 deps = ["click", "sh"]
@@ -841,20 +852,20 @@ install = true
 [[project]]
 name = "backoff"
 url = "https://github.com/litl/backoff.git"
-rev = "HEAD"
+rev = "d82b23c42d7a7e2402903e71e7a7f03014a00076"
 package = "backoff"
 deps = ["pytest-asyncio", "responses", "requests"]
 
 [[project]]
 name = "schedule"
 url = "https://github.com/dbader/schedule.git"
-rev = "HEAD"
+rev = "82a43db1b938d8fdf60103bd41f329e06c8d3651"
 package = "schedule"
 
 [[project]]
 name = "traitlets"
 url = "https://github.com/ipython/traitlets.git"
-rev = "HEAD"
+rev = "c4f12477747b9592d01dae5ff8fcdd2a7cdffd0b"
 package = "traitlets"
 deps = ["argcomplete", "pytest-mock", "mypy", "pytest-mypy-testing"]
 install = true
@@ -862,21 +873,21 @@ install = true
 [[project]]
 name = "soupsieve"
 url = "https://github.com/facelessuser/soupsieve.git"
-rev = "HEAD"
+rev = "4caaf89344dc9a9baaedb7f0ab04d45526e61293"
 package = "soupsieve"
 deps = ["beautifulsoup4", "lxml", "html5lib"]
 
 [[project]]
 name = "beautifulsoup4"
 url = "https://git.launchpad.net/beautifulsoup"
-rev = "HEAD"
+rev = "c772c5e6b335c1dbd8ee59a01ea6b75b272cd737"
 package = "bs4"
 deps = ["soupsieve", "lxml", "html5lib", "typing_extensions"]
 
 [[project]]
 name = "mkdocs"
 url = "https://github.com/mkdocs/mkdocs.git"
-rev = "HEAD"
+rev = "2862536793b3c67d9d83c33e0dd6d50a791928f8"
 package = "mkdocs"
 deps = ["click", "jinja2", "markdown", "pyyaml", "watchdog", "ghp-import", "pyyaml-env-tag", "mergedeep", "pathspec", "packaging", "babel", "mkdocs-get-deps", "importlib-metadata"]
 install = true
@@ -886,7 +897,7 @@ test = ["{python}", "-m", "unittest", "discover", "-q", "-p", "*tests.py", "mkdo
 [[project]]
 name = "chardet"
 url = "https://github.com/chardet/chardet.git"
-rev = "HEAD"
+rev = "e9603fad69cdc5d34d03616682650acd4891eb5d"
 package = "src/chardet"
 pythonpath = "src"
 deps = ["hypothesis"]
@@ -895,14 +906,14 @@ install = true
 [[project]]
 name = "pyasn1"
 url = "https://github.com/pyasn1/pyasn1.git"
-rev = "HEAD"
+rev = "8003397013f6c0e0eabbd2605770477acbc2dc44"
 package = "pyasn1"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 
 [[project]]
 name = "ecdsa"
 url = "https://github.com/tlsfuzzer/python-ecdsa.git"
-rev = "HEAD"
+rev = "bff40c6cf2340148d410d5b3def0e949c547caf1"
 package = "src/ecdsa"
 pythonpath = "src"
 deps = ["hypothesis", "six"]
@@ -911,14 +922,14 @@ install = true
 [[project]]
 name = "rsa"
 url = "https://github.com/sybrenstuvel/python-rsa.git"
-rev = "HEAD"
+rev = "42b0e14ffbeeb9d99d1037e6440a2cc61780e4ea"
 package = "rsa"
 deps = ["pyasn1", "mypy", "pytest-cov"]
 
 [[project]]
 name = "ply"
 url = "https://github.com/dabeaz/ply.git"
-rev = "HEAD"
+rev = "9d7c40099e23ff78f9d86ef69a26c1e8a83e706a"
 package = "src/ply"
 pythonpath = "src"
 # The test modules call unittest.main() at import time, so run them as scripts.
@@ -927,7 +938,7 @@ test = ["sh", "-c", "cd tests && {python} testlex.py && {python} testyacc.py"]
 [[project]]
 name = "inflect"
 url = "https://github.com/jaraco/inflect.git"
-rev = "HEAD"
+rev = "262a247d2d99a47a520cdb2d46adb90df88b4326"
 package = "inflect"
 deps = ["typeguard", "more-itertools", "pytest-enabler"]
 install = true
@@ -935,27 +946,27 @@ install = true
 [[project]]
 name = "unidecode"
 url = "https://github.com/avian2/unidecode.git"
-rev = "HEAD"
+rev = "158ec2c7e7b5d4bc7894cb2a99e050cdf3229c48"
 package = "unidecode"
 
 [[project]]
 name = "texttable"
 url = "https://github.com/foutaise/texttable.git"
-rev = "HEAD"
+rev = "b4c00a68626a58944e9bf4d48b1e8d758efa6edb"
 package = "texttable.py"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
 
 [[project]]
 name = "docopt-ng"
 url = "https://github.com/jazzband/docopt-ng.git"
-rev = "HEAD"
+rev = "587f41a61437b680b4215de1874fb6975d8a49d6"
 package = "docopt"
 install = true
 
 [[project]]
 name = "yapf"
 url = "https://github.com/google/yapf.git"
-rev = "HEAD"
+rev = "12005095296072751e3e4c1f33a047d41b0ce18d"
 package = "yapf"
 deps = ["platformdirs", "tomli"]
 install = true
@@ -963,14 +974,14 @@ install = true
 [[project]]
 name = "mccabe"
 url = "https://github.com/PyCQA/mccabe.git"
-rev = "HEAD"
+rev = "292b5c71c3fe5496771b46ac9d86361c9b760d17"
 package = "mccabe.py"
 deps = ["hypothesis", "hypothesmith"]
 
 [[project]]
 name = "flake8"
 url = "https://github.com/PyCQA/flake8.git"
-rev = "HEAD"
+rev = "efe6750405be77b661f64e60002c4ef8e922daf5"
 package = "src/flake8"
 pythonpath = "src"
 deps = ["mccabe", "pycodestyle", "pyflakes"]
@@ -979,14 +990,14 @@ install = true
 [[project]]
 name = "jsonpointer"
 url = "https://github.com/stefankoegl/python-json-pointer.git"
-rev = "HEAD"
+rev = "5998f951dcc5ace60f67f35afe6778c445401a07"
 package = "jsonpointer.py"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
 
 [[project]]
 name = "rfc3986"
 url = "https://github.com/python-hyper/rfc3986.git"
-rev = "HEAD"
+rev = "2248a185cb3961ce5df418c733e79f350f588f66"
 package = "src/rfc3986"
 pythonpath = "src"
 install = true
@@ -994,13 +1005,13 @@ install = true
 [[project]]
 name = "uritemplate"
 url = "https://github.com/python-hyper/uritemplate.git"
-rev = "HEAD"
+rev = "e7a947e7385de3e04bb05d73d4acbc4c4409f059"
 package = "uritemplate"
 
 [[project]]
 name = "tomli-w"
 url = "https://github.com/hukkin/tomli-w.git"
-rev = "HEAD"
+rev = "1210bb6f5708a4dc084cc3deb4a3a3e3939f4d6d"
 package = "src/tomli_w"
 pythonpath = "src"
 deps = ["tomli"]
@@ -1009,7 +1020,7 @@ install = true
 [[project]]
 name = "wheel"
 url = "https://github.com/pypa/wheel.git"
-rev = "HEAD"
+rev = "b25c3c2ef5c789116b0545889aea68f5f65185a7"
 package = "src/wheel"
 pythonpath = "src"
 deps = ["setuptools", "pytest-timeout"]
@@ -1018,7 +1029,7 @@ install = true
 [[project]]
 name = "installer"
 url = "https://github.com/pypa/installer.git"
-rev = "HEAD"
+rev = "59f0a65af99246566f7462429dbd5964363a2e35"
 package = "src/installer"
 pythonpath = "src"
 deps = ["pytest-mock"]
@@ -1027,7 +1038,7 @@ install = true
 [[project]]
 name = "pyproject-hooks"
 url = "https://github.com/pypa/pyproject-hooks.git"
-rev = "HEAD"
+rev = "184c9f56a87ede1276a5b33f5024204adb792cd2"
 package = "src/pyproject_hooks"
 pythonpath = "src"
 deps = ["testpath", "setuptools"]
@@ -1036,7 +1047,7 @@ install = true
 [[project]]
 name = "simpy"
 url = "https://gitlab.com/team-simpy/simpy.git"
-rev = "HEAD"
+rev = "f43816490c6f76f336ad6e457d3cab9f386894af"
 package = "src/simpy"
 pythonpath = "src"
 install = true
@@ -1045,7 +1056,7 @@ test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addop
 [[project]]
 name = "termcolor"
 url = "https://github.com/termcolor/termcolor.git"
-rev = "HEAD"
+rev = "4ce05dda98e006cdcacb7c855857c5cf8ff0e1e5"
 package = "src/termcolor"
 pythonpath = "src"
 install = true
@@ -1053,7 +1064,7 @@ install = true
 [[project]]
 name = "typing_extensions"
 url = "https://github.com/python/typing_extensions.git"
-rev = "HEAD"
+rev = "3ae9b7553a5c560dc09b484078d98ece2985eecd"
 package = "src/typing_extensions.py"
 pythonpath = "src"
 test = ["{python}", "-m", "unittest", "-q", "src/test_typing_extensions.py"]
@@ -1061,7 +1072,7 @@ test = ["{python}", "-m", "unittest", "-q", "src/test_typing_extensions.py"]
 [[project]]
 name = "cheroot"
 url = "https://github.com/cherrypy/cheroot.git"
-rev = "HEAD"
+rev = "edef8ff8629022408a9dc7a77484c3c4ea295829"
 package = "cheroot"
 deps = ["jaraco.functools", "more-itertools", "jaraco.text", "jaraco.context", "pytest-mock", "requests", "requests-toolbelt", "requests-unixsocket", "portend", "pypytools", "jaraco.functools", "pyopenssl", "trustme"]
 exclude = ["test"]
@@ -1070,14 +1081,14 @@ timeout = 3600
 [[project]]
 name = "sly"
 url = "https://github.com/dabeaz/sly.git"
-rev = "HEAD"
+rev = "09c2ba30df9143298ae5eef79d0baf23755d4cd9"
 package = "src/sly"
 pythonpath = "src"
 
 [[project]]
 name = "environs"
 url = "https://github.com/sloria/environs.git"
-rev = "HEAD"
+rev = "4e57a32ffecb64b7c6df06748086987d3bc8c86e"
 package = "src/environs"
 pythonpath = "src"
 deps = ["marshmallow", "python-dotenv", "dj-database-url", "dj-email-url", "django-cache-url"]
@@ -1086,7 +1097,7 @@ install = true
 [[project]]
 name = "apispec"
 url = "https://github.com/marshmallow-code/apispec.git"
-rev = "HEAD"
+rev = "bfac55c9bfbc4edbdde505d29d8c20c62133fc10"
 package = "src/apispec"
 pythonpath = "src"
 deps = ["marshmallow", "pyyaml", "packaging", "openapi-spec-validator"]
@@ -1095,7 +1106,7 @@ install = true
 [[project]]
 name = "webargs"
 url = "https://github.com/marshmallow-code/webargs.git"
-rev = "HEAD"
+rev = "abe0d763aeb4158764b8be3e19e36ce49c95ec8c"
 package = "src/webargs"
 pythonpath = "src"
 deps = ["marshmallow", "packaging", "webtest", "webtest-aiohttp", "flask", "django", "bottle", "tornado", "pytest-aiohttp", "aiohttp", "falcon", "pyramid"]
@@ -1112,7 +1123,7 @@ timeout = 3600
 [[project]]
 name = "towel-v1.414"
 url = "https://github.com/ericeallen/towel.git"
-rev = "v1.414"
+rev = "4bb390b8a4e2a867b09e880290e8af777b62b37a"  # tag v1.414
 package = "src/towel"
 pythonpath = "src"
 deps = ["tqdm", "black", "tomli", "hypothesis"]
@@ -1122,7 +1133,7 @@ timeout = 3600
 [[project]]
 name = "towel-v1.618"
 url = "https://github.com/ericeallen/towel.git"
-rev = "v1.618"
+rev = "21500b5bf6d7107e2e8f9d3f21303090190736b4"  # tag v1.618
 package = "src/towel"
 pythonpath = "src"
 deps = ["tqdm", "black", "tomli", "hypothesis"]
@@ -1132,7 +1143,7 @@ timeout = 3600
 [[project]]
 name = "towel-main"
 url = "https://github.com/ericeallen/towel.git"
-rev = "HEAD"
+rev = "HEAD"  # on purpose: this entry tracks current main, never a fixed commit
 package = "src/towel"
 pythonpath = "src"
 deps = ["tqdm", "black", "tomli", "hypothesis"]

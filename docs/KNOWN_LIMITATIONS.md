@@ -312,7 +312,9 @@ candidates, which no cache can share; large test modules with hundreds of
 similar methods remain the worst case. Progress is reported per phase.
 There is no time budget; interrupt with Ctrl-C, which leaves files
 unchanged. The ecosystem check applies a 30-minute limit per phase by
-default, longer for named projects, and reports `TIMEOUT`.
+default, longer for named projects, and reports `TIMEOUT`. It executes
+the manifest's projects with the caller's privileges and refuses to run
+without `--run-untrusted-code`; use a disposable machine or container.
 
 ## Resources and platform
 

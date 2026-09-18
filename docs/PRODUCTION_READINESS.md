@@ -336,8 +336,11 @@ Flit projects were refused. Those are the consumer-found defects above.
 
 ## Ecosystem check
 
-`scripts/ecosystem_check.py` (run as `just ecosystem`, and weekly in CI)
-clones each project in `scripts/ecosystem/manifest.toml`, runs its suite,
+`scripts/ecosystem_check.py` (run as `just ecosystem --run-untrusted-code`,
+and weekly in CI; it executes the projects' own code with the caller's
+privileges, refuses without that opt-in, and belongs on a disposable
+machine) clones each project in `scripts/ecosystem/manifest.toml` at the
+commit pinned there, runs its suite,
 refactors a copy with the CLI defaults, runs the suite again, and compares
 exit status and the normalized test outcomes, ignoring the warning tally,
 and reruns any test whose result differs to tell a flaky difference from a

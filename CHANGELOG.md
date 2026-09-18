@@ -130,6 +130,9 @@ ecosystem evidence behind each claim. The format follows
   `return (a, b)`. Without it, once Black wrapped such a body over the
   three-line minimum, two generated helpers of that shape paired with each
   other and extracted a third, without end (h2).
+- CI runs `pip-audit --strict` against the locked dependency set, and
+  Dependabot proposes weekly, grouped minor/patch updates for the workflow
+  actions and the `uv`-managed Python dependencies.
 
 ### Fixed
 - A block that binds a variable read after it is extracted again, with the
@@ -168,6 +171,19 @@ ecosystem evidence behind each claim. The format follows
   names what `--max-iterations` always did, and `rename-helpers --preview`
   replaces `--dry-run`, since "dry" already means DRY here. The earlier
   spellings still parse and are left out of the help.
+
+### Security
+- The ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`)
+  clones public repositories and runs their setup, dependency installation
+  and test suites with the caller's privileges. It now refuses to run
+  unless the caller passes `--run-untrusted-code` or sets
+  `TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1`, the refusal says what would execute
+  and recommends a disposable machine or container, and each manifest
+  entry's `prepare` command runs without a shell. Every project in the
+  manifest is pinned to the full commit the release-gate run tested rather
+  than `HEAD`, so a hijacked upstream cannot put unreviewed code into the
+  run; `--print-pins` lists the commits a run tested for refreshing the pins.
+  `towel-main` alone still tracks `main`.
 
 ## [1.618] — 2026-09-17
 
