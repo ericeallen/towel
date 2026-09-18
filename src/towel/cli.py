@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from towel.type_inference import TypeOracle
 from towel.changes import apply_changes, recover
+from towel.diagnostics import Settings, configure_stderr_logging
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -57,6 +58,8 @@ def main() -> None:
     """Main entry point with subcommands."""
     parser = _build_parser()
     args = parser.parse_args()
+    configure_stderr_logging()
+    Settings.from_environ().enable_debug_logging()
 
     if not args.command:
         parser.print_help()

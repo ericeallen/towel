@@ -90,6 +90,7 @@ from .assignment_analyzer import (
 )
 from .project_layout import ProjectLayout, is_package_dir
 from .progress import ProgressBarFactory, load_tqdm, quietly, render_inline_bar
+from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, VALIDATION, Settings, debugging
 from .parameters import parameter_names, fresh_parameter_name
 from .semantic_safety import (
     frame_sensitivity_markers,
@@ -346,6 +347,7 @@ class UnificationRefactorEngine:
         snippet_formatter: Optional[Callable[[str], str]] = None,
         file_finisher: Optional[Callable[[str, str], str]] = None,
         incremental_global_passes: bool = True,
+        settings: Optional[Settings] = None,
     ):
         """
         Initialize the refactoring engine.
@@ -396,6 +398,8 @@ class UnificationRefactorEngine:
                 final text, for example with imports sorted the way the project
                 sorts them (see ``towel.formatting.import_sorter_for_project``).
                 None (default) leaves files as assembled.
+            settings: What Towel reads from the environment (worker cap,
+                debug switches). Read once from ``os.environ`` when omitted.
             incremental_global_passes: In directory mode, after the first
                 analysis, re-pair only functions in files that changed since
                 the previous global pass (default: True). This is exact: an
@@ -407,6 +411,8 @@ class UnificationRefactorEngine:
                 everything on every global pass.
         """
         self.analysis_session = AnalysisSession()
+        self._settings = settings if settings is not None else Settings.from_environ()
+        self._settings.enable_debug_logging()
         self.max_parameters = max_parameters
         self.min_lines = min_lines
         self.skip_trivial_helpers = skip_trivial_helpers
@@ -487,19 +493,15 @@ class UnificationRefactorEngine:
 
         Includes function names and basic block ranges to help triage pruning gates.
         """
-        try:
-            if not os.getenv("DEBUG_PROPOSAL_REJECTIONS"):
-                return
-            msg = (
-                f"REJECT[{reason}]: {pair.function1_name}{'@'+str(pair.block1_range) if pair.block1_range else ''} "
-                f"<-> {pair.function2_name}{'@'+str(pair.block2_range) if pair.block2_range else ''}"
-            )
-            if detail:
-                msg += f" :: {detail}"
-            print(msg)
-        except Exception:
-            # Never let debug logging interfere with refactoring
-            pass
+        if not debugging(REJECTIONS):
+            return
+        msg = (
+            f"REJECT[{reason}]: {pair.function1_name}{'@'+str(pair.block1_range) if pair.block1_range else ''} "
+            f"<-> {pair.function2_name}{'@'+str(pair.block2_range) if pair.block2_range else ''}"
+        )
+        if detail:
+            msg += f" :: {detail}"
+        REJECTIONS.debug(msg)
 
     def analyze_file(self, file_path: str) -> List[RefactoringProposal]:
         """
@@ -539,7 +541,7 @@ class UnificationRefactorEngine:
             return []
 
         if verbose:
-            print(f"Found {len(python_files)} Python files in {directory}")
+            LOG.info("Found %d Python files in %s", len(python_files), directory)
 
         # Analyze all files together
         return self.analyze_files(
@@ -918,7 +920,7 @@ class UnificationRefactorEngine:
                     progress=progress,
                 )
             except BrokenProcessPool:
-                print("Parallel worker pool failed; retrying serial evaluation", flush=True)
+                LOG.warning("Parallel worker pool failed; retrying serial evaluation")
                 # Fall back to serial evaluation if multiprocessing encounters an issue
                 return self._evaluate_pairs_serial(
                     block_pairs,
@@ -955,12 +957,8 @@ class UnificationRefactorEngine:
 
     def _parallel_workers(self) -> int:
         """Worker processes to use, or 1 when pair evaluation must stay serial."""
-        override = os.environ.get("TOWEL_WORKERS")
-        if override is not None:
-            try:
-                return max(1, int(override))
-            except ValueError:
-                return 1
+        if self._settings.workers is not None:
+            return self._settings.workers
         if "fork" not in multiprocessing.get_all_start_methods():
             return 1
         workers = max(1, os.cpu_count() or 1)
@@ -1717,8 +1715,7 @@ class UnificationRefactorEngine:
                     for index, proposal in accepted:
                         results[index] = proposal
         except (BrokenProcessPool, OSError, RuntimeError) as error:
-            if verbose:
-                print(f"Parallel pair evaluation unavailable ({error}); evaluating serially")
+            LOG.warning("Parallel pair evaluation unavailable (%s); evaluating serially", error)
             return self._evaluate_pairs_serial(
                 block_pairs, all_functions, class_infos, verbose=verbose, progress=progress
             )
@@ -2040,7 +2037,7 @@ class UnificationRefactorEngine:
 
         block_end_line = block_range[1]
         result: Set[str] = set()
-        debug_enabled = bool(os.getenv("DEBUG_VALIDATION"))
+        debug_enabled = debugging(VALIDATION)
 
         for stmt in func.body:
             if not hasattr(stmt, "lineno") or stmt.lineno <= block_end_line:
@@ -2048,7 +2045,7 @@ class UnificationRefactorEngine:
 
             uses = self._get_used_names(stmt)
             if debug_enabled and debug_label:
-                print(
+                VALIDATION.debug(
                     f"  {debug_label}: stmt@{stmt.lineno} ({stmt.__class__.__name__}) uses {uses}"
                 )
 
@@ -2056,12 +2053,12 @@ class UnificationRefactorEngine:
             if overlap:
                 result.update(overlap)
                 if debug_enabled and debug_label:
-                    print(
+                    VALIDATION.debug(
                         f"    RETURN NEEDED ({debug_label}): Variable(s) {overlap} will be returned from extracted function"
                     )
 
         if debug_enabled and debug_label and result:
-            print(f"{debug_label} requires returning: {result}")
+            VALIDATION.debug(f"{debug_label} requires returning: {result}")
 
         return result
 
@@ -3072,13 +3069,13 @@ class UnificationRefactorEngine:
             self._debug_reject("frame_sensitive_block", pair)
             return None
 
-        debug_enabled = bool(os.getenv("DEBUG_VALIDATION"))
+        debug_enabled = debugging(VALIDATION)
 
         if debug_enabled:
-            print("\n=== _try_refactor_pair_multi_file called ===")
-            print(f"Functions: {pair.function1_name} and {pair.function2_name}")
-            print(f"Block1 range: {pair.block1_range}")
-            print(f"Block2 range: {pair.block2_range}")
+            VALIDATION.debug("\n=== _try_refactor_pair_multi_file called ===")
+            VALIDATION.debug(f"Functions: {pair.function1_name} and {pair.function2_name}")
+            VALIDATION.debug(f"Block1 range: {pair.block1_range}")
+            VALIDATION.debug(f"Block2 range: {pair.block2_range}")
 
         ctx = self._resolve_pair_context(pair, all_functions)
         func1 = ctx.func1
@@ -3128,10 +3125,10 @@ class UnificationRefactorEngine:
         # (Removed specialized full-body extraction fast-path; reverting to generic pairing logic.)
 
         if debug_enabled:
-            print("\n=== Finding Functions ===")
-            print(f"Looking for: {pair.function1_name} and {pair.function2_name}")
-            print(f"Found func1: {func1 is not None}")
-            print(f"Found func2: {func2 is not None}")
+            VALIDATION.debug("\n=== Finding Functions ===")
+            VALIDATION.debug(f"Looking for: {pair.function1_name} and {pair.function2_name}")
+            VALIDATION.debug(f"Found func1: {func1 is not None}")
+            VALIDATION.debug(f"Found func2: {func2 is not None}")
 
         # CRITICAL: Validate that blocks don't contain reassignments without initial bindings
         # Initialize return_variables tracking
@@ -3214,12 +3211,12 @@ class UnificationRefactorEngine:
                 return None
 
             if debug_enabled:
-                print("\n=== Block1 Validation Debug ===")
-                print(f"Function: {pair.function1_name}")
-                print(f"Block lines: {pair.block1_range}")
-                print(f"Bound in block: {bound_in_block1}")
-                print(f"Bound before block: {bound_before_block1}")
-                print(f"Newly bound in block: {initially_bound1}")
+                VALIDATION.debug("\n=== Block1 Validation Debug ===")
+                VALIDATION.debug(f"Function: {pair.function1_name}")
+                VALIDATION.debug(f"Block lines: {pair.block1_range}")
+                VALIDATION.debug(f"Bound in block: {bound_in_block1}")
+                VALIDATION.debug(f"Bound before block: {bound_before_block1}")
+                VALIDATION.debug(f"Newly bound in block: {initially_bound1}")
 
             return_variables_block1 = self._find_return_variables(
                 func1,
@@ -3229,12 +3226,12 @@ class UnificationRefactorEngine:
             )
 
             if debug_enabled:
-                print("\n=== Block2 Validation Debug ===")
-                print(f"Function: {pair.function2_name}")
-                print(f"Block lines: {pair.block2_range}")
-                print(f"Bound in block: {bound_in_block2}")
-                print(f"Bound before block: {bound_before_block2}")
-                print(f"Newly bound in block: {initially_bound2}")
+                VALIDATION.debug("\n=== Block2 Validation Debug ===")
+                VALIDATION.debug(f"Function: {pair.function2_name}")
+                VALIDATION.debug(f"Block lines: {pair.block2_range}")
+                VALIDATION.debug(f"Bound in block: {bound_in_block2}")
+                VALIDATION.debug(f"Bound before block: {bound_before_block2}")
+                VALIDATION.debug(f"Newly bound in block: {initially_bound2}")
 
             return_variables_block2 = self._find_return_variables(
                 func2,
@@ -3250,15 +3247,15 @@ class UnificationRefactorEngine:
         value_prod2 = self._is_value_producing(pair.block2_nodes) or bool(return_variables_block2)
 
         if debug_enabled:
-            print(f"  Value-producing check: block1={value_prod1}, block2={value_prod2}")
+            VALIDATION.debug(f"  Value-producing check: block1={value_prod1}, block2={value_prod2}")
             if return_variables_block1:
-                print(f"  Block1 has return_variables: {return_variables_block1}")
+                VALIDATION.debug(f"  Block1 has return_variables: {return_variables_block1}")
             if return_variables_block2:
-                print(f"  Block2 has return_variables: {return_variables_block2}")
+                VALIDATION.debug(f"  Block2 has return_variables: {return_variables_block2}")
 
         if value_prod1 != value_prod2:
             if debug_enabled:
-                print("  REJECTED: Value-producing mismatch")
+                VALIDATION.debug("  REJECTED: Value-producing mismatch")
             self._debug_reject("value_producing_mismatch", pair)
             return None
 
@@ -3270,12 +3267,12 @@ class UnificationRefactorEngine:
 
             if not has_complete_return_coverage(cast(List[ast.stmt], pair.block1_nodes)):
                 if debug_enabled:
-                    print("  REJECTED: Block1 missing complete return coverage")
+                    VALIDATION.debug("  REJECTED: Block1 missing complete return coverage")
                 self._debug_reject("incomplete_return_coverage_block1", pair)
                 return None
             if not has_complete_return_coverage(cast(List[ast.stmt], pair.block2_nodes)):
                 if debug_enabled:
-                    print("  REJECTED: Block2 missing complete return coverage")
+                    VALIDATION.debug("  REJECTED: Block2 missing complete return coverage")
                 self._debug_reject("incomplete_return_coverage_block2", pair)
                 return None
 
@@ -3301,7 +3298,7 @@ class UnificationRefactorEngine:
             pair.block2_nodes, bound_before_block2, bound_in_block2
         ):
             if debug_enabled:
-                print(
+                VALIDATION.debug(
                     "  REJECTED: Trivial single-line return blocks (prefer extracting computation)"
                 )
             self._debug_reject("trivial_return_blocks", pair)
@@ -3310,7 +3307,7 @@ class UnificationRefactorEngine:
         # Check structural similarity
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
             if debug_enabled:
-                print("  REJECTED: Not structurally similar")
+                VALIDATION.debug("  REJECTED: Not structurally similar")
             self._debug_reject("not_structurally_similar", pair)
             return None
 
@@ -3319,7 +3316,7 @@ class UnificationRefactorEngine:
         hygienic_renames: List[Dict[str, str]] = [{}, {}]
 
         if debug_enabled:
-            print("  Attempting unification...")
+            VALIDATION.debug("  Attempting unification...")
 
         substitution = self._unify_memoized(
             blocks, hygienic_renames, (pair.file_path, pair.file_path2 or pair.file_path)
@@ -3327,13 +3324,13 @@ class UnificationRefactorEngine:
 
         if not substitution:
             if debug_enabled:
-                print("  REJECTED: Unification failed (no substitution)")
+                VALIDATION.debug("  REJECTED: Unification failed (no substitution)")
             self._debug_reject("unification_failed", pair)
             return None
 
         if debug_enabled:
-            print("  ✓ Unification successful")
-            print(f"  Substitution: {substitution}")
+            VALIDATION.debug("  ✓ Unification successful")
+            VALIDATION.debug(f"  Substitution: {substitution}")
 
         aligned = _align_return_variables(
             return_variables_block1,
@@ -3444,17 +3441,17 @@ class UnificationRefactorEngine:
         if free_vars1 & bound_after_block1:
             incomplete_vars = free_vars1 & bound_after_block1
             if debug_enabled:
-                print(
+                VALIDATION.debug(
                     f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}"
                 )
-                print("    These variables would be used before they're defined")
+                VALIDATION.debug("    These variables would be used before they're defined")
             self._debug_reject("incomplete_lifetime_block1", pair, str(incomplete_vars))
             return None
 
         if free_vars2 & bound_after_block2:
             incomplete_vars = free_vars2 & bound_after_block2
             if debug_enabled:
-                print(
+                VALIDATION.debug(
                     f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}"
                 )
             self._debug_reject("incomplete_lifetime_block2", pair, str(incomplete_vars))
@@ -4186,9 +4183,8 @@ class UnificationRefactorEngine:
             after = Counter(self.type_inferrer.check(path, after_source))
             new = after - before
             if new:
-                if os.getenv("TOWEL_DEBUG_TYPES"):
-                    for message, count in new.items():
-                        print(f"[types] new error x{count} in {path}: {message}", file=sys.stderr)
+                for message, count in new.items():
+                    TYPES.debug("new error x%d in %s: %s", count, path, message)
                 return True
         return False
 
@@ -4879,19 +4875,19 @@ class UnificationRefactorEngine:
         kinds = sorted({m for _path, markers in flagged for m in markers})
         described = ", ".join(self._FRAME_SENSITIVE_DESCRIPTION.get(k, k) for k in kinds)
         directory_root = Path(directory)
-        print(
+        lines = [
             f"warning: {len(flagged)} module(s) in this project {described}; a "
             "transformation that adds a helper frame or shifts line numbers may "
             "change their observable behavior even when it preserves the "
-            "program's result. Review these files' diffs or pass --exclude:",
-            file=sys.stderr,
-        )
+            "program's result. Review these files' diffs or pass --exclude:"
+        ]
         for path, markers in sorted(flagged):
             try:
                 shown = str(Path(path).relative_to(directory_root))
             except ValueError:
                 shown = path
-            print(f"    {shown} ({', '.join(sorted(markers))})", file=sys.stderr)
+            lines.append(f"    {shown} ({', '.join(sorted(markers))})")
+        LOG.warning("\n".join(lines))
 
     def refactor_directory_to_fixed_point(
         self,
@@ -5154,10 +5150,12 @@ class UnificationRefactorEngine:
                 _detail(
                     f"Dropped stale proposal ({conflict}); re-analyzing {len(stale_paths)} file(s)"
                 )
-                if os.getenv("DEBUG_PROPOSAL_REJECTIONS"):
-                    print(
-                        f"STALE: {proposal.description} :: paths={stale_paths} :: "
-                        f"replacements={[rep.file_path or proposal.file_path for rep in proposal.replacements]}"
+                if debugging(REJECTIONS):
+                    REJECTIONS.debug(
+                        "STALE: %s :: paths=%s :: replacements=%s",
+                        proposal.description,
+                        stale_paths,
+                        [rep.file_path or proposal.file_path for rep in proposal.replacements],
                     )
                 self.invalidate_paths(stale_paths)
                 proposal_queue = [
@@ -5419,7 +5417,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
         return len(get_affected_lines(p))
 
     # Optional debug diagnostics: env flag
-    _debug_overlap = bool(os.getenv("DEBUG_OVERLAP_FILTER"))
+    _debug_overlap = debugging(OVERLAP)
 
     # Helpers for deterministic ordering and interval extraction
     def first_span(p: RefactoringProposal) -> Tuple[str, int]:
@@ -5519,12 +5517,13 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
                 j -= 1
         sel.reverse()
         if _debug_overlap:
-            try:
-                print(
-                    f"OVERLAP_OPTIMAL file={file_path} selected={len(sel)} total_weight={dp[n-1]} candidates={n}"
-                )
-            except Exception:
-                pass
+            OVERLAP.debug(
+                "OVERLAP_OPTIMAL file=%s selected=%d total_weight=%s candidates=%d",
+                file_path,
+                len(sel),
+                dp[n - 1],
+                n,
+            )
         return sel
 
     for fp, idxs in by_primary_file.items():
@@ -5557,17 +5556,12 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
                 f"{fp}:{min(lines)}-{max(lines)} ({len(lines)} lines)"
                 for fp, lines in by_file2.items()
             ]
-            try:
-                print(
-                    "OVERLAP_DROP: size=",
-                    proposal_size(proposals[idx]),
-                    " first=",
-                    first_span(proposals[idx]),
-                    " because intersects ",
-                    "; ".join(parts),
-                )
-            except Exception:
-                pass
+            OVERLAP.debug(
+                "OVERLAP_DROP: size=%s first=%s because intersects %s",
+                proposal_size(proposals[idx]),
+                first_span(proposals[idx]),
+                "; ".join(parts),
+            )
 
     # Return selected sorted by size descending for external stability
     return sorted(selected, key=lambda p: (-(proposal_size(p)), first_span(p)))

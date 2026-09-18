@@ -25,6 +25,7 @@ from typing import Callable, Dict, Optional, List, Tuple, Set, Any, cast, Sequen
 from dataclasses import dataclass, field
 
 from .parameters import parameter_names, fresh_parameter_name
+from ..diagnostics import UNIFIER
 
 
 @dataclass
@@ -562,7 +563,8 @@ class Unifier:
             saved_promoted = {k: dict(v) for k, v in subst.promoted_literal_args.items()}
             try:
                 self._promote_hof_literals(blocks, subst)
-            except (AttributeError, KeyError, TypeError, IndexError, ValueError):
+            except (AttributeError, KeyError, TypeError, IndexError, ValueError) as error:
+                UNIFIER.debug("literal promotion rolled back: %r", error)
                 subst.mappings = saved_mappings
                 subst.param_expressions = saved_param_expressions
                 subst.function_params = saved_function_params

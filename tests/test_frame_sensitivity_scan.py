@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import io
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -29,7 +30,7 @@ def test_syntax_error_is_silent() -> None:
     assert frame_sensitivity_markers("def (:\n") == frozenset()
 
 
-def test_directory_refactor_warns_about_a_stacklevel_module(tmp_path, capsys) -> None:
+def test_directory_refactor_warns_about_a_stacklevel_module(tmp_path, caplog) -> None:
     project = tmp_path / "pkg"
     project.mkdir()
     (project / "__init__.py").write_text("")
@@ -39,15 +40,18 @@ def test_directory_refactor_warns_about_a_stacklevel_module(tmp_path, capsys) ->
     )
     (project / "plain.py").write_text("def add(a, b):\n    return a + b\n")
     engine = UnificationRefactorEngine(min_lines=3)
-    with contextlib.redirect_stdout(io.StringIO()):
+    with (
+        caplog.at_level(logging.WARNING, logger="towel"),
+        contextlib.redirect_stdout(io.StringIO()),
+    ):
         engine.refactor_directory_to_fixed_point(str(project), str(project), progress="tqdm")
-    err = capsys.readouterr().err
+    err = "\n".join(record.getMessage() for record in caplog.records)
     assert "attribute warnings to a caller's frame" in err
     assert "warns.py" in err
     assert "plain.py" not in err
 
 
-def test_warning_is_a_diagnostic_shown_even_under_progress_none(tmp_path, capsys) -> None:
+def test_warning_is_a_diagnostic_shown_even_under_progress_none(tmp_path, caplog) -> None:
     project = tmp_path / "pkg"
     project.mkdir()
     (project / "__init__.py").write_text("")
@@ -56,6 +60,10 @@ def test_warning_is_a_diagnostic_shown_even_under_progress_none(tmp_path, capsys
         "    if flag:\n        warnings.warn('deprecated', stacklevel=2)\n"
     )
     engine = UnificationRefactorEngine(min_lines=3)
-    with contextlib.redirect_stdout(io.StringIO()):
+    with (
+        caplog.at_level(logging.WARNING, logger="towel"),
+        contextlib.redirect_stdout(io.StringIO()),
+    ):
         engine.refactor_directory_to_fixed_point(str(project), str(project), progress="none")
-    assert "caller's frame" in capsys.readouterr().err
+    warnings_logged = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("caller's frame" in r.getMessage() for r in warnings_logged)

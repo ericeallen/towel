@@ -1,5 +1,6 @@
 """Analysis reuse must not share mutable syntax or leak across analysis owners."""
 
+import logging
 import ast
 from pathlib import Path
 from unittest.mock import patch
@@ -127,13 +128,14 @@ def test_invalid_changed_source_never_reuses_old_analysis(tmp_path, bad_source):
     assert session.entry_count == session.source_bytes == 0
 
 
-def test_missing_file_is_reported_and_cached_snapshot_is_discarded(tmp_path, capsys):
+def test_missing_file_is_reported_and_cached_snapshot_is_discarded(tmp_path, caplog):
     path = write_module(tmp_path)
     session = AnalysisSession()
     session.analyze_module(path)
     Path(path).rename(tmp_path / "moved.py")
-    assert run_pipeline([path], session=session, progress="none") == []
-    assert "Skipping" in capsys.readouterr().err
+    with caplog.at_level(logging.WARNING, logger="towel"):
+        assert run_pipeline([path], session=session, progress="none") == []
+    assert any("Skipping" in record.getMessage() for record in caplog.records)
     assert session.entry_count == 0
 
 

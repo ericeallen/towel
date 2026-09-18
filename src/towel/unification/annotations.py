@@ -49,14 +49,13 @@ from __future__ import annotations
 import ast
 import builtins
 import copy
-import os
-import sys
 from dataclasses import dataclass
 import re
 from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, TypeOracle
+from ..diagnostics import TYPES, debugging
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
@@ -790,12 +789,9 @@ def infer_missing_annotations(
                 )
                 return_probes.append((site.file_path, line, len(expressions)))
     revealed = inferrer.reveal(requests)
-    if os.getenv("TOWEL_DEBUG_TYPES"):
+    if debugging(TYPES):
         for key, text in sorted(revealed.items()):
-            print(
-                f"[types] {key[0].rsplit('/', 1)[-1]}:{key[1]}#{key[2]} -> {text!r}",
-                file=sys.stderr,
-            )
+            TYPES.debug("%s:%d#%d -> %r", key[0].rsplit("/", 1)[-1], key[1], key[2], text)
     host = next((ast.parse(site.source) for site in sites if site.file_path == host_file), None)
     same_module = all(site.file_path == host_file for site in sites)
     for position, index in enumerate(bare):

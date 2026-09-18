@@ -45,7 +45,6 @@ import ast
 from collections import OrderedDict
 import hashlib
 from dataclasses import dataclass
-import sys
 import os
 from pathlib import Path
 
@@ -58,6 +57,7 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .progress import ProgressBar, load_tqdm, quietly, render_inline_bar
+from ..diagnostics import LOG, Settings
 from .visitors import FunctionCollector
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -76,7 +76,7 @@ def parse_modules(paths: Sequence[str]) -> List[ParsedModule]:
         try:
             src, tree = _read_and_normalize_module(p)
         except (OSError, UnicodeError, SyntaxError) as error:
-            print(f"Skipping {p}: {error}", file=sys.stderr)
+            LOG.warning("Skipping %s: %s", p, error)
             continue
         modules.append(ParsedModule(file_path=p, source=src, tree=tree))
     return modules
@@ -235,7 +235,7 @@ class AnalysisSession:
         self._max_source_bytes = max_source_bytes
         self._entries: OrderedDict[Tuple[str, str], ModuleAnalysis] = OrderedDict()
         self._source_bytes = 0
-        self._check_immutable = bool(os.environ.get("TOWEL_CHECK_AST_IMMUTABLE"))
+        self._check_immutable = Settings.from_environ().check_ast_immutable
         self._digests: Dict[Tuple[str, str], str] = {}
 
     @property
@@ -381,7 +381,7 @@ def run_pipeline(
             try:
                 analyses.append(analysis_session.analyze_module(path))
             except SourceFileError as error:
-                print(f"Skipping {path}: {error}", file=sys.stderr)
+                LOG.warning("Skipping %s: %s", path, error)
             if bar is not None:
                 quietly(lambda: bar.update(1))
             elif inline_progress:

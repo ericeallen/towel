@@ -14,9 +14,10 @@ import json
 import os
 from pathlib import Path
 import stat
-import sys
 import tempfile
 from typing import Mapping
+
+from .diagnostics import LOG
 
 
 class ChangeConflict(ValueError):
@@ -190,10 +191,7 @@ def apply_changes(plan: ChangePlan) -> None:
     try:
         _cleanup(journal)
     except OSError as error:
-        print(
-            f"Changes committed; journal cleanup requires attention: {journal}: {error}",
-            file=sys.stderr,
-        )
+        LOG.warning("Changes committed; journal cleanup requires attention: %s: %s", journal, error)
 
 
 def recover(journal: Path) -> None:

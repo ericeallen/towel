@@ -49,6 +49,8 @@ import sys
 import tempfile
 from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
+from .diagnostics import LOG
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mypy.options import Options
 
@@ -285,7 +287,8 @@ class MypyInferrer:
             return {}
         try:
             result = build.build(sources=sources, options=self._options(roots))
-        except CompileError:
+        except CompileError as error:
+            LOG.warning("mypy could not build %s; no types inferred there: %s", roots, error)
             return {}
         revealed: Dict[RevealKey, str] = {}
         for message in result.errors:
@@ -334,10 +337,12 @@ class PyrightOracle:
         output = completed.stdout
         start, end = output.find("{"), output.rfind("}")
         if start < 0 or end < 0:
+            LOG.warning("pyright produced no JSON for %s; no types inferred there", file_path)
             return []
         try:
             data = json.loads(output[start : end + 1])
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
+            LOG.warning("pyright output for %s is not JSON: %s", file_path, error)
             return []
         diagnostics = data.get("generalDiagnostics", [])
         return [d for d in diagnostics if isinstance(d, dict)]
