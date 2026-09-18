@@ -44,6 +44,8 @@ dev = [
     "pyright>=1.1",
     "pre-commit>=3.0.0",
     "pydocstyle>=6.0.0",
+    "hypothesis>=6.100",
+    "pip-audit>=2.7",
     "tqdm>=4.66.0",
 ]
 
