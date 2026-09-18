@@ -388,9 +388,25 @@ class ImportGraphCache:
         )
         self.module_files: _Bounded[Tuple[Path, Tuple[str, ...]], FrozenSet[Path]] = _Bounded(limit)
         self.source_roots: _Bounded[Path, Tuple[Path, ...]] = _Bounded(limit)
+        # Resolving a path walks the filesystem; the class-hierarchy lookup
+        # resolves every class's file per base-class reference.
+        self.resolved_paths: _Bounded[str, Path] = _Bounded(limit)
+
+    def resolve(self, path: str) -> Path:
+        """``Path(path).resolve()``, once per spelling for the life of the cache."""
+        resolved = self.resolved_paths.get(path)
+        if resolved is None:
+            resolved = self.resolved_paths.put(path, Path(path).resolve())
+        return resolved
 
     def clear(self) -> None:
-        for table in (self.edges, self.bindings, self.module_files, self.source_roots):
+        for table in (
+            self.edges,
+            self.bindings,
+            self.module_files,
+            self.source_roots,
+            self.resolved_paths,
+        ):
             table.clear()
 
 

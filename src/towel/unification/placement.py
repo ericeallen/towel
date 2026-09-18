@@ -30,7 +30,6 @@ from __future__ import annotations
 import ast
 
 from collections import deque
-from pathlib import Path
 from typing import List, Literal, Optional, Sequence, Set, Tuple, cast
 from .models import ClassInfo, ClassInsertionPlan, CodeBlockPair, FunctionNode, MethodInfo
 from .scope_analyzer import ScopeAnalyzer
@@ -388,7 +387,9 @@ class HelperPlacement(EngineState):
         if not sites:
             return None
         matches = [
-            info for info in class_infos if (Path(info.file_path).resolve(), info.qualname) in sites
+            info
+            for info in class_infos
+            if (self.import_graph.resolve(info.file_path), info.qualname) in sites
         ]
         return matches[0] if len(matches) == 1 else None
 
