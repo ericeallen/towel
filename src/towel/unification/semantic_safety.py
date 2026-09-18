@@ -5,7 +5,18 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, FrozenSet, Iterable, Optional, Sequence, Set, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    FrozenSet,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
@@ -556,6 +567,27 @@ def imported_definition_sites(
     return frozenset(sites)
 
 
+def _package_initializers(module: Path, roots: FrozenSet[Path]) -> List[Path]:
+    """``__init__.py`` of every package enclosing ``module``, innermost first.
+
+    Ascends while the directory is a package (has ``__init__.py``) and stops
+    at a source root, whose own initializer is not executed by an absolute
+    import of a module inside it.
+    """
+    initializers: List[Path] = []
+    directory = module.parent
+    while directory not in roots:
+        initializer = directory / "__init__.py"
+        if not initializer.is_file():
+            break
+        initializers.append(initializer.resolve())
+        parent = directory.parent
+        if parent == directory:
+            break
+        directory = parent
+    return initializers
+
+
 def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) -> bool:
     """Check whether adding imports of the helper closes a local import cycle.
 
@@ -574,7 +606,14 @@ def would_create_import_cycle(canonical_file: str, replacement_files: Set[str]) 
         _SOURCE_ROOTS[canonical] = source_roots
     roots = frozenset(source_roots) | {common_root}
 
-    pending = [canonical]
+    # Importing ``pkg.sub.helper`` runs ``pkg/__init__.py`` and
+    # ``pkg/sub/__init__.py`` before the helper's module, so a cycle that
+    # closes through one of those initializers is just as real as one through
+    # the module itself (invoke: a vendored module importing a helper from
+    # ``invoke.parser`` ran ``invoke/parser/__init__``, which reaches back
+    # into the vendored package through ``invoke.util``). Search from every
+    # package initializer above the host as well as from the host.
+    pending = [canonical, *_package_initializers(canonical, roots)]
     visited: Set[Path] = set()
     while pending:
         current = pending.pop()

@@ -28,3 +28,23 @@ def test_relative_import_of_a_package_attribute_is_an_edge_to_the_initializer(
     # The initializer itself is a safe host: ``sub`` already imports it.
     assert not would_create_import_cycle(str(package / "__init__.py"), {str(package / "sub.py")})
     assert not would_create_import_cycle(str(package / "other.py"), {str(package / "sub.py")})
+
+
+def test_a_cycle_through_the_hosts_package_initializer_is_seen(tmp_path: Path) -> None:
+    # Importing ``pkg.sub.leaf`` runs ``pkg/sub/__init__``, which reaches
+    # ``pkg/vendor/tool`` through ``pkg/core``; hosting a helper in ``leaf``
+    # for a site in ``tool`` therefore closes a cycle, while hosting it in
+    # ``tool`` does not (``pkg/vendor/__init__`` is empty).
+    package = tmp_path / "pkg"
+    (package / "vendor").mkdir(parents=True)
+    (package / "sub").mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "core.py").write_text("from .vendor.tool import work\n")
+    (package / "vendor" / "__init__.py").write_text("")
+    (package / "vendor" / "tool.py").write_text("def work():\n    return 1\n")
+    (package / "sub" / "__init__.py").write_text("from ..core import work\nfrom .leaf import x\n")
+    (package / "sub" / "leaf.py").write_text("x = 1\n")
+    leaf = str(package / "sub" / "leaf.py")
+    tool = str(package / "vendor" / "tool.py")
+    assert would_create_import_cycle(leaf, {tool})
+    assert not would_create_import_cycle(tool, {leaf})
