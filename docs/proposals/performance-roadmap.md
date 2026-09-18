@@ -59,6 +59,25 @@ arrow has the same shape: guards 48%, clustering 27%, unification 4%.
 Items 2 to 4 are pure-Python and change no output, so the goldens and the
 hostile batteries verify them exactly.
 
+## End-to-end measurement after items 1 and 2 (2026-09-18)
+
+Serial `towel dry`, out of place, idle machine, two runs each agreeing
+within 0.3 s:
+
+| Target | 1.618 release | main, `--no-types --no-format` | main, defaults |
+|---|---|---|---|
+| h2 (5k lines) | 5.2 s, 14 applied | 7.0 s, 20 applied | 11.9 s, 20 applied |
+| Towel (16k lines) | 47.8 s, 41 applied | 33.9 s, 45 applied | 41.8 s, 45 applied |
+
+On Towel's source the engine is 29% faster while applying 10% more
+refactorings (the assignment-form extractions the orphan fix unblocked):
+1.17 s per applied refactoring became 0.75 s. h2 is too small for the
+search-phase savings to show; its per-refactoring time is unchanged (0.37 s
+against 0.35 s) and it simply has more to apply. Type inference,
+verification and formatting cost about 0.2 to 0.25 s per applied
+refactoring on top (one mypy reveal, the subtype probes, and a before-and-
+after check of each modified file, incremental after the first build).
+
 ## Beyond pairwise matching
 
 The unifier already takes N blocks; the pipeline around it (snapshots, return
