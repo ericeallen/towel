@@ -459,13 +459,21 @@ proposal.
 
 - **Enumeration filter.** A block that returns on some path but not all, or a
   lone expression statement, can never be accepted and is never enumerated.
-- **Structural identity.** `_sid` is the SHA-256 of `ast.dump(block)`. All the
-  engine's caches — guard verdicts, unification results, the clustering
-  pipeline, per-block analyses — are keyed by structural id, so a fixed-point
-  iteration that re-parses a file still reuses results for the blocks it did not
-  change. Caches are bounded LRU `OrderedDict`s (`STRUCTURAL_CACHE_LIMIT`,
-  250,000 entries). `structural_memo.py` stores a unification result as
-  positions and rehydrates it onto the matching re-parsed block.
+- **Structural identity.** `_sid` is the SHA-256 over each statement's
+  digest of `ast.dump(statement)` without positions; the per-statement
+  digests are memoized per node. All the engine's id-keyed caches — guard
+  verdicts, unification results, the clustering pipeline, per-block
+  analyses — are keyed by structural id, so a fixed-point iteration that
+  re-parses a file still reuses results for the blocks it did not change.
+  Those id-keyed caches are bounded LRU `OrderedDict`s
+  (`STRUCTURAL_CACHE_LIMIT`, 250,000 entries); every cache keyed by a node
+  (structural ids, signed blocks, value-producing verdicts, used names,
+  assignment analyses, and the per-statement memos below) is a
+  `WeakKeyDictionary` whose entries vanish with their tree, so a file the
+  analysis session has dropped is not pinned. A pair's four ids are
+  resolved once, in its `_PairContext`, and passed to every guard.
+  `structural_memo.py` stores a unification result as positions and
+  rehydrates it onto the matching re-parsed block.
 - **Shared analysis graphs.** Each engine owns an `AnalysisSession`
   ([`pipeline.py`](../src/towel/unification/pipeline.py)) that parses and
   analyzes each module once and returns the *same* graph on every access,
@@ -484,15 +492,28 @@ proposal.
   locally bound names and nested scopes (`_ScopeFacts` in
   `semantic_safety.py`). `tests/test_function_facts_equivalence.py` checks
   the cached answers against the uncached analysis.
+- **Per-statement facts.** Block enumeration forms every contiguous
+  sub-block of a body, and each block used to be walked in full for its
+  signature and its guards: O(n²) blocks times O(n) statements. Every fact
+  that is a count, a truth value, a name set or a digest over one
+  statement's subtree is computed once per statement in a weak memo
+  (`statement_facts.py`: `memoized_per_node`, the signature counts,
+  `contains_return`, the node-type histogram, mentioned names; the
+  frame-sensitivity, bound-name and deleted-name guards in
+  `semantic_safety.py`; walrus targets in `parameterization.py`; the
+  substitution's structural key) and folded over the block: counts add,
+  booleans disjoin, sets union, digests concatenate. The bound-variable
+  query the unifier makes per differing expression is memoized per (block,
+  target text), since the same block is unified against every candidate it
+  pairs with. `tests/test_statement_facts.py`,
+  `tests/test_binding_context_memo.py` and `tests/test_substitution_keys.py`
+  compare each fold with the whole-block walk on Towel's own source.
 - **Statement-sequence buckets.** `block_signature.py` buckets candidate
   blocks on their whole statement-type sequence, which the unifier requires
-  equal, so pairs with different shapes are never formed. The unifier's
-  bound-variable search caches each node's source text instead of
-  re-rendering it per query, the value-producing check is memoized per
+  equal, so pairs with different shapes are never formed; each block's
+  bucket key is computed once. The value-producing check is memoized per
   block, and the visitor classes the hot paths use are defined once at
-  module level. Together with the per-function facts these remove about
-  half of all function calls on Towel's own source, with an identical
-  proposal list.
+  module level, receiving the caller's state through their constructors.
 - **Incremental global passes.** See the section above; only the files
   rewritten since the previous global pass are re-paired, exactly.
 - **The apply path parses once.** The files a proposal touches are parsed
@@ -501,11 +522,16 @@ proposal.
   their size or modification time changed; the annotation fallback variants
   copy the helper alone, not the whole proposal.
 - **Owned, bounded caches.** The import-graph tables (edges, import
-  bindings, module lookups, source roots) are an `ImportGraphCache` the
-  engine owns per run, keyed by path, modification time, and size where the
-  answer depends on a file's contents, and bounded; the eviction index that
-  maps files to structural-cache entries prunes entries the bounded caches
-  already dropped.
+  bindings, module lookups, source roots, resolved paths) are an
+  `ImportGraphCache` the engine owns per run, keyed by path, modification
+  time, and size where the answer depends on a file's contents, and bounded;
+  the eviction index that maps files to structural-cache entries prunes
+  entries the bounded caches already dropped. Each module's source digest
+  is computed once at parse time and carried on `ParsedModule` and
+  `FunctionArtifact`. A weak-keyed memo never holds its key strongly in its
+  value (`_FunctionFacts` holds its function through a weak reference);
+  `tests/test_cache_lifetimes.py` checks that a re-parsed file's old
+  functions are collected.
 - **Fork-based parallelism.** A large cold analysis forks worker processes
   after parsing; each worker inherits the ASTs and caches copy-on-write and
   returns only accepted proposals, so nothing is pickled in and only results
@@ -520,11 +546,17 @@ proposal.
   measured memory and time.
 
 Measured on Towel's own source (16,000 annotated lines, fixed point, one
-core, September 2026): 47.8 s under 1.618, 33.9 s now with `--no-types
---no-format`, 41.8 s with the defaults, the difference being the type check
-of each applied refactoring; Sphinx in the ecosystem check went from 2513 s
-to 2058 s. Function calls on Towel's source fell from 464 million to 246
-million. The tables in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance)
+core, September 2026): 47.8 s under 1.618, 33.9 s after the per-function
+facts with `--no-types --no-format`, 41.8 s with the defaults, the
+difference being the type check of each applied refactoring; Sphinx in the
+ecosystem check went from 2513 s to 2058 s. Function calls on Towel's
+source fell from 464 million to 246 million. The per-statement facts then
+took the same run (`towel dry src/towel`, `TOWEL_WORKERS=1`) from 10.9 s to
+6.4 s of wall time with `--no-types --no-format` and from 15.0 s to 10.4 s
+with the defaults, peak resident memory from 186 MB to 179 MB and from
+1.11 GB to 1.06 GB, and the profiled run from 32.7 s and 293 million calls
+to 20.3 s and 154 million, with byte-identical output on every exactness
+baseline. The tables in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance)
 give the per-project figures.
 
 ## Diagnostics and settings
@@ -592,9 +624,9 @@ The evidence that the engine holds up on real code is layered:
   [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). It executes those
   projects' code with the caller's privileges, so it refuses to run without
   an explicit opt-in and is meant for a disposable machine or CI runner.
-- **Exactness tests** for the performance work: the per-function facts
-  against the uncached analysis, the bucket invariants, and byte-identical
-  `dry` output with incremental global passes on and off.
+- **Exactness tests** for the performance work: the per-function and
+  per-statement facts against the uncached analysis, the bucket invariants,
+  and byte-identical `dry` output with incremental global passes on and off.
 
 Behavioral comparison samples finite inputs and does not prove equivalence;
 unsupported callable shapes are reported as unverified. CI enforces an 85%
@@ -647,6 +679,7 @@ but the ideas and their names are from the literature.
 | Loggers and settings | `diagnostics.py` (at `src/towel/`) |
 | Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py` |
 | Pair pre-filter | `block_signature.py` |
+| Per-statement facts and the weak per-node memo | `statement_facts.py` |
 | Verification | `instantiation.py` |
 | Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py` |
 | Visitor bases (Template Method) and shared visitors | `visitors.py` |
