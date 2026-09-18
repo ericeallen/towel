@@ -6,18 +6,13 @@ from unittest.mock import patch
 
 import pytest
 
-from towel.cli import _run_dry
+from towel.cli import _build_parser, _run_dry
 
 
 def arguments(source: Path, destination: Path) -> argparse.Namespace:
-    return argparse.Namespace(
-        input=str(source),
-        output=str(destination),
-        interactive=True,
-        prefer_absolute_imports=None,
-        pep420=None,
-        max_refactorings=1,
-        progress="none",
+    """The parsed arguments of ``towel dry``, so the test cannot drift from the parser."""
+    return _build_parser().parse_args(
+        ["dry", str(source), str(destination), "--max-refactorings", "1", "--progress", "none"]
     )
 
 

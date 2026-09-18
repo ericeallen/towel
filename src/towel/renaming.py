@@ -219,17 +219,19 @@ def _private_in_class(scope: _Scope, name: str) -> bool:
     return False
 
 
+def _module_scope(scope: _Scope) -> _Scope:
+    while scope.parent is not None:
+        scope = scope.parent
+    return scope
+
+
 def _resolve(scope: _Scope, name: str) -> _Scope:
     current = scope
-    while current.parent is not None:
+    while (parent := current.parent) is not None:
         if name in current.globals:
-            while current.parent is not None:
-                current = current.parent
-            return current
+            return _module_scope(current)
         if name in current.bindings and name not in current.nonlocals:
             return current
-        parent = current.parent
-        assert parent is not None
         # Class namespaces do not provide lexical bindings to their methods,
         # comprehensions or nested classes.
         while parent.kind == "class" and parent.parent is not None:

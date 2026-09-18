@@ -78,13 +78,7 @@ class Materialization(EngineState):
         Returns:
             Modified source code
         """
-        # All proposals now use multi-file format
-        modified_files = self.apply_refactoring_multi_file(proposal)
-        # Backward-compat: handle tuple return (modified_files, changed_paths)
-        if isinstance(modified_files, tuple):
-            modified_files = modified_files[0]
-        # Return the content for the requested file
-        return modified_files.get(file_path, "")
+        return self.apply_refactoring_multi_file(proposal).get(file_path, "")
 
     def plan_refactoring(self, proposal: RefactoringProposal) -> ChangePlan:
         """Materialize a proposal into an immutable, stale-checked byte plan."""

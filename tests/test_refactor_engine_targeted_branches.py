@@ -10,6 +10,7 @@ from towel.unification.refactor_engine import (
     UnificationRefactorEngine,
 )
 from towel.unification.overlap import filter_overlapping_proposals
+from towel.unification.models import Replacement
 
 
 class TestRefactorEngineTargetedBranches(unittest.TestCase):
@@ -218,7 +219,16 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             proposal = RefactoringProposal(
                 file_path=path,
                 extracted_function=helper_func,
-                replacements=[((4, 5), call_node, path, "Example")],
+                replacements=[
+                    Replacement(
+                        line_range=(4, 5),
+                        node=call_node,
+                        file_path=path,
+                        class_name="Example",
+                        method_kind="instance",
+                        implicit_param="self",
+                    )
+                ],
                 description="Insert helper method",
                 parameters_count=1,
             )
@@ -271,8 +281,8 @@ def consumer(data):
                 file_path=str(source_a),
                 extracted_function=helper_func,
                 replacements=[
-                    ((2, 3), repl_a),
-                    ((2, 2), repl_b, str(source_b)),
+                    Replacement(line_range=(2, 3), node=repl_a),
+                    Replacement(line_range=(2, 2), node=repl_b, file_path=str(source_b)),
                 ],
                 description="Cross-file helper",
                 parameters_count=1,
@@ -347,14 +357,14 @@ def consumer(data):
         big = RefactoringProposal(
             file_path="a.py",
             extracted_function=func,
-            replacements=[((1, 4), stmt)],
+            replacements=[Replacement(line_range=(1, 4), node=stmt)],
             description="big",
             parameters_count=0,
         )
         small = RefactoringProposal(
             file_path="a.py",
             extracted_function=func,
-            replacements=[((2, 3), stmt)],
+            replacements=[Replacement(line_range=(2, 3), node=stmt)],
             description="small",
             parameters_count=0,
         )

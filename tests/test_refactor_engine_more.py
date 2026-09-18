@@ -8,6 +8,7 @@ from towel.unification.refactor_engine import (
     RefactoringProposal,
 )
 from towel.unification.overlap import filter_overlapping_proposals
+from towel.unification.models import Replacement
 
 
 def write_file(path: str, content: str) -> None:
@@ -98,14 +99,14 @@ def outer():
         small = RefactoringProposal(
             file_path=file_path,
             extracted_function=dummy_func,
-            replacements=[((10, 12), ast.Pass(), file_path)],
+            replacements=[Replacement(line_range=(10, 12), node=ast.Pass(), file_path=file_path)],
             description="small",
             parameters_count=0,
         )
         large = RefactoringProposal(
             file_path=file_path,
             extracted_function=dummy_func,
-            replacements=[((10, 15), ast.Pass(), file_path)],
+            replacements=[Replacement(line_range=(10, 15), node=ast.Pass(), file_path=file_path)],
             description="large",
             parameters_count=0,
         )

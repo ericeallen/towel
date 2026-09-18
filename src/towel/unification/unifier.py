@@ -1026,10 +1026,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                 continue
             yield field_name, getattr(node, field_name, None)
 
-    def reset(self) -> None:
-        """Reset the parameter counter."""
-        self.param_counter = 0
-
     def _set_feature_flags(
         self, parameterize_constants: bool, promote_equal_hof_literals: bool
     ) -> None:

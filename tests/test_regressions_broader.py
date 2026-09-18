@@ -16,6 +16,7 @@ from towel.unification.refactor_engine import (
     RefactoringProposal,
 )
 from towel.unification.overlap import filter_overlapping_proposals
+from towel.unification.models import Replacement
 from tests.test_helpers import temporary_test_directory
 
 
@@ -33,21 +34,21 @@ class TestOverlapFiltering(unittest.TestCase):
         p1 = RefactoringProposal(
             file_path="/tmp/file.py",
             extracted_function=f,
-            replacements=[((1, 7), node)],
+            replacements=[Replacement(line_range=(1, 7), node=node)],
             description="p1",
             parameters_count=0,
         )
         p2 = RefactoringProposal(
             file_path="/tmp/file.py",
             extracted_function=f,
-            replacements=[((1, 6), node)],
+            replacements=[Replacement(line_range=(1, 6), node=node)],
             description="p2",
             parameters_count=0,
         )
         p3 = RefactoringProposal(
             file_path="/tmp/file.py",
             extracted_function=f,
-            replacements=[((2, 7), node)],
+            replacements=[Replacement(line_range=(2, 7), node=node)],
             description="p3",
             parameters_count=0,
         )
@@ -61,14 +62,14 @@ class TestOverlapFiltering(unittest.TestCase):
         a = RefactoringProposal(
             file_path="/tmp/a.py",
             extracted_function=f,
-            replacements=[((10, 12), node)],
+            replacements=[Replacement(line_range=(10, 12), node=node)],
             description="A",
             parameters_count=0,
         )
         b = RefactoringProposal(
             file_path="/tmp/b.py",
             extracted_function=f,
-            replacements=[((10, 12), node)],
+            replacements=[Replacement(line_range=(10, 12), node=node)],
             description="B",
             parameters_count=0,
         )

@@ -121,22 +121,6 @@ class LiteralPromotion(UnifierState):
             return result
 
         # Utility: follow a path within a statement to retrieve the corresponding node
-        def get_node_by_path(stmt: ast.AST, path: Tuple[Any, ...]) -> Optional[ast.AST]:
-            node: ast.AST = stmt
-            # path starts with ("$root",), skip first marker
-            for p in path[1:]:
-                if isinstance(p, str):
-                    if not hasattr(node, p):
-                        return None
-                    node = getattr(node, p)
-                elif isinstance(p, int):
-                    # indexing into a list; prior element must have been a list field
-                    # find the previous step to access the list; handled by caller structure
-                    return None  # we only use (field, index) pairs, so int alone shouldn't appear
-                else:
-                    # we expect (field_name, index) pairs encoded sequentially
-                    return None
-            return node
 
         # Utility: get child by (field, index) sequence from current node
         def get_node_by_field_index_path(stmt: ast.AST, path: Tuple[Any, ...]) -> Optional[ast.AST]:
@@ -199,8 +183,6 @@ class LiteralPromotion(UnifierState):
 
             call0 = stmt0.value
             for arg_pos, arg0 in enumerate(call0.args):
-                if not isinstance(arg0, ast.AST):
-                    continue
                 # Only consider literal constants for now
                 if not isinstance(arg0, ast.Constant):
                     continue
@@ -214,10 +196,6 @@ class LiteralPromotion(UnifierState):
                 for bidx in range(num_blocks):
                     stmt_b = blocks[bidx][stmt_idx] if stmt_idx < len(blocks[bidx]) else None
                     if not isinstance(stmt_b, ast.Assign):
-                        missing = True
-                        break
-                    val_b = stmt_b.value
-                    if not isinstance(val_b, ast.AST):
                         missing = True
                         break
                     # Retrieve the node at arg_path within this statement

@@ -38,7 +38,7 @@ fixed-point loop (below).
    never enumerated (see *Enumeration filter*).
 4. **Filter pairs.** `block_signature.py` computes a cheap structural signature
    per block and rejects incompatible pairs before the expensive step.
-5. **Unify.** `unifier.py` (with `nominal_unifier.py`) attempts to anti-unify
+5. **Unify.** `unifier.py` attempts to anti-unify
    each surviving pair into a template plus a substitution (below).
 6. **Guard.** `semantic_safety.py`, `orphan_detector.py`, and
    `definite_assignment.py` reject a candidate whose extraction could change
@@ -645,7 +645,7 @@ but the ideas and their names are from the literature.
 | Overlap filtering | `overlap.py` |
 | Parse/analyze cache, pair-processor protocol | `pipeline.py` |
 | Loggers and settings | `diagnostics.py` (at `src/towel/`) |
-| Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py`; `nominal_unifier.py` |
+| Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py` |
 | Pair pre-filter | `block_signature.py` |
 | Verification | `instantiation.py` |
 | Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py` |

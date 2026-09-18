@@ -429,13 +429,6 @@ def _write_change_sidecar(engine: "UnificationRefactorEngine", output: str) -> N
     print(f"\nWrote call-site before/after to {sidecar} (for naming; safe to delete).")
 
 
-def _flag(args: argparse.Namespace, name: str) -> bool:
-    """A boolean option's value; hand-built namespaces may carry the earlier ``no_<name>``."""
-    if hasattr(args, name):
-        return bool(getattr(args, name))
-    return not getattr(args, f"no_{name}", False)
-
-
 def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
     """The checker the project configures (mypy, pyright, or both), or None with a note."""
     from towel.type_inference import type_oracle_for_project
@@ -533,12 +526,10 @@ def _run_dry(args: argparse.Namespace) -> None:
         prefer_absolute_imports=args.prefer_absolute_imports,
         pep420_namespace_packages=args.pep420,
         excluded_directories=tuple(getattr(args, "exclude", None) or ()),
-        snippet_formatter=(
-            _generated_code_formatter(Path(input_path)) if _flag(args, "format") else None
-        ),
-        file_finisher=(_import_sorter(Path(input_path)) if _flag(args, "format") else None),
-        annotate_helpers=_flag(args, "types"),
-        type_oracle=(_type_oracle(Path(input_path)) if _flag(args, "types") else None),
+        snippet_formatter=(_generated_code_formatter(Path(input_path)) if args.format else None),
+        file_finisher=(_import_sorter(Path(input_path)) if args.format else None),
+        annotate_helpers=args.types,
+        type_oracle=(_type_oracle(Path(input_path)) if args.types else None),
     )
 
     # Use fixed-point iteration
@@ -548,7 +539,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     print("Extracted functions will be placed at the end of files.")
     print()
 
-    if getattr(args, "interactive", not getattr(args, "non_interactive", False)):
+    if args.interactive:
         response = input("Proceed? (y/N): ").strip().lower()
         if response != "y":
             print("Aborted.")
@@ -564,7 +555,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         print(f"Refactoring file: {output_path}")
         final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
             output_path,
-            max_iterations=getattr(args, "max_refactorings", getattr(args, "max_iterations", 0)),
+            max_iterations=args.max_refactorings,
             progress=normalize_progress(args.progress),
         )
 
@@ -579,7 +570,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         results, termination_reason = engine.refactor_directory_to_fixed_point(
             output_path,
             output_path,
-            max_iterations=getattr(args, "max_refactorings", getattr(args, "max_iterations", 0)),
+            max_iterations=args.max_refactorings,
             progress=normalize_progress(args.progress),
         )
 

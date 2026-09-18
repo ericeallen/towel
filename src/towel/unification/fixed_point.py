@@ -289,12 +289,8 @@ class FixedPointDrivers(EngineState):
                     *(rep.file_path or proposal.file_path for rep in proposal.replacements),
                 }
             }
-            result = self.apply_refactoring_multi_file(proposal)
-            if isinstance(result, tuple):
-                modified_files, changed_paths = result
-            else:
-                modified_files = result
-                changed_paths = list(modified_files.keys())
+            modified_files = self.apply_refactoring_multi_file(proposal)
+            changed_paths = list(modified_files.keys())
 
             apply_changes(ChangePlan.from_sources(before, modified_files))
             for fpath in modified_files:

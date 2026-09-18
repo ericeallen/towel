@@ -263,19 +263,6 @@ class HelperPlacement(EngineState):
         return cast(ast.AST, rewriter.visit(node))
 
     @staticmethod
-    def _drop_implicit_positional(args: List[ast.expr], implicit_name: str) -> List[ast.expr]:
-        """Drop the first positional argument matching ``implicit_name`` if present."""
-
-        result: List[ast.expr] = []
-        dropped = False
-        for arg in args:
-            if not dropped and isinstance(arg, ast.Name) and arg.id == implicit_name:
-                dropped = True
-                continue
-            result.append(arg)
-        return result
-
-    @staticmethod
     def _drop_implicit_keyword(
         keywords: List[ast.keyword], implicit_name: str
     ) -> List[ast.keyword]:
@@ -349,23 +336,6 @@ class HelperPlacement(EngineState):
                 receiver_known = False
 
         return MethodInfo(kind=kind, implicit_param=implicit_param, receiver_known=receiver_known)
-
-    @staticmethod
-    def _resolve_base_name(expr: ast.expr) -> Optional[str]:
-        """Resolve a base-class expression into its dotted name when feasible."""
-
-        if isinstance(expr, ast.Name):
-            return expr.id
-        if isinstance(expr, ast.Attribute):
-            parts: List[str] = []
-            current: ast.expr = expr
-            while isinstance(current, ast.Attribute):
-                parts.append(current.attr)
-                current = current.value
-            if isinstance(current, ast.Name):
-                parts.append(current.id)
-                return ".".join(reversed(parts))
-        return None
 
     @staticmethod
     def _class_info_key(info: ClassInfo) -> Tuple[str, str]:

@@ -48,7 +48,6 @@ from .substitution import Substitution
 from .visitors import (
     AssignTargetVisitor,
     AugAssignFinder,
-    LoopReturnFinder,
     NameCollector,
     body_without_docstring,
 )
@@ -252,47 +251,6 @@ class BlockAnalysis(EngineState):
 
         return extract_from_body(body)
 
-    def _has_code_after_block(self, function: ast.FunctionDef, block_end_line: int) -> bool:
-        """
-        Check if there's any executable code after block_end_line in the function.
-
-        This is used to detect when extracting a block with returns would make
-        subsequent code unreachable.
-
-        Args:
-            function: Function definition
-            block_end_line: End line of the block
-
-        Returns:
-            True if there's code after the block
-        """
-        body = body_without_docstring(function.body)
-
-        # Check if any statement starts after block_end_line
-        for stmt in body:
-            if stmt.lineno > block_end_line:
-                return True
-        return False
-
-    def _has_returns_in_loops(self, block: List[ast.AST]) -> bool:
-        """
-        Check if a block contains return statements inside loops.
-
-        Returns in loops are conditional on the loop executing, so if the loop
-        doesn't execute (e.g., empty iteration), control continues after the loop.
-
-        Args:
-            block: List of AST statements
-
-        Returns:
-            True if there are returns inside loop statements
-        """
-
-        finder = LoopReturnFinder()
-        for stmt in block:
-            finder.visit(stmt)
-        return finder.has_loop_return
-
     def _get_used_names(self, node: ast.AST) -> Set[str]:
         """
         Get all variable names that are used (read from) in an AST node.
@@ -319,8 +277,6 @@ class BlockAnalysis(EngineState):
     def _collect_parameter_names(self, func: FunctionNode) -> Set[str]:
         """Return all argument names for a function (including pos-only and varargs)."""
 
-        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return set()
         params = set(parameter_names(func.args))
 
         return params

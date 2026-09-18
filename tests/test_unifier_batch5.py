@@ -92,7 +92,7 @@ class TestUnifierBatch5(unittest.TestCase):
         names1 = list(subst1.param_expressions.keys())
         self.assertIn("__param_0", names1)
         # Reset and ensure next param starts again at __param_0
-        uni.reset()
+        uni.param_counter = 0
         subst2 = uni.unify_blocks([b0, b1], [{}, {}])
         self.assertIsNotNone(subst2)
         assert subst2 is not None

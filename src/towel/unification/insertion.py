@@ -88,54 +88,6 @@ class InsertionPoints(EngineState):
     )
 
     @staticmethod
-    def _scan_module_docstring_and_imports(lines: List[str]) -> Tuple[int, int]:
-        """Return the line after the last import and the module docstring boundary."""
-
-        in_docstring = False
-        docstring_char: Optional[str] = None
-        last_import_line = 0
-        after_docstring = 0
-        in_multiline_import = False
-
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-
-            if i == 0 and (stripped.startswith('"""') or stripped.startswith("'''")):
-                docstring_char = stripped[:3]
-                if stripped.count(docstring_char) < 2:
-                    in_docstring = True
-                else:
-                    after_docstring = i + 1
-                continue
-
-            if in_docstring:
-                assert docstring_char is not None
-                if docstring_char in stripped:
-                    in_docstring = False
-                    after_docstring = i + 1
-                continue
-
-            # Check for start of multi-line import (has opening paren but no closing paren)
-            if stripped.startswith("import ") or stripped.startswith("from "):
-                last_import_line = i + 1
-                # Check if this is a multi-line import
-                if "(" in line and ")" not in line:
-                    in_multiline_import = True
-                continue
-
-            # Inside a multi-line import - continue until we see closing paren
-            if in_multiline_import:
-                last_import_line = i + 1
-                if ")" in line:
-                    in_multiline_import = False
-                continue
-
-            if last_import_line > 0 and stripped and not stripped.startswith("#"):
-                break
-
-        return last_import_line, after_docstring
-
-    @staticmethod
     def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:
         """Return the (start_line, end_line) span for a contiguous block of statements."""
 

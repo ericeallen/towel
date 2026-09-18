@@ -11,6 +11,7 @@ from towel.unification.refactor_engine import (
     RefactoringProposal,
 )
 from towel.unification.overlap import get_affected_lines, filter_overlapping_proposals
+from towel.unification.models import Replacement
 
 
 class TestGetAffectedLines(unittest.TestCase):
@@ -29,7 +30,9 @@ class TestGetAffectedLines(unittest.TestCase):
         proposal = RefactoringProposal(
             file_path="test.py",
             extracted_function=func,
-            replacements=[((10, 15), ast.Pass())],  # Lines 10-15 in test.py
+            replacements=[
+                Replacement(line_range=(10, 15), node=ast.Pass())
+            ],  # Lines 10-15 in test.py
             description="Test proposal",
             parameters_count=0,
         )
@@ -52,7 +55,9 @@ class TestGetAffectedLines(unittest.TestCase):
         proposal = RefactoringProposal(
             file_path="file1.py",
             extracted_function=func,
-            replacements=[((10, 15), ast.Pass(), "file2.py")],  # Lines 10-15 in file2.py
+            replacements=[
+                Replacement(line_range=(10, 15), node=ast.Pass(), file_path="file2.py")
+            ],  # Lines 10-15 in file2.py
             description="Test proposal",
             parameters_count=0,
         )
@@ -76,8 +81,8 @@ class TestGetAffectedLines(unittest.TestCase):
             file_path="test.py",
             extracted_function=func,
             replacements=[
-                ((10, 12), ast.Pass()),  # Lines 10-12
-                ((20, 22), ast.Pass()),  # Lines 20-22
+                Replacement(line_range=(10, 12), node=ast.Pass()),  # Lines 10-12
+                Replacement(line_range=(20, 22), node=ast.Pass()),  # Lines 20-22
             ],
             description="Test proposal",
             parameters_count=0,
@@ -102,8 +107,10 @@ class TestGetAffectedLines(unittest.TestCase):
             file_path="file1.py",
             extracted_function=func,
             replacements=[
-                ((10, 12), ast.Pass()),  # Lines 10-12 in file1.py
-                ((20, 22), ast.Pass(), "file2.py"),  # Lines 20-22 in file2.py
+                Replacement(line_range=(10, 12), node=ast.Pass()),  # Lines 10-12 in file1.py
+                Replacement(
+                    line_range=(20, 22), node=ast.Pass(), file_path="file2.py"
+                ),  # Lines 20-22 in file2.py
             ],
             description="Test proposal",
             parameters_count=0,
@@ -129,7 +136,7 @@ class TestGetAffectedLines(unittest.TestCase):
         proposal = RefactoringProposal(
             file_path="test.py",
             extracted_function=func,
-            replacements=[((10, 10), ast.Pass())],  # Single line 10
+            replacements=[Replacement(line_range=(10, 10), node=ast.Pass())],  # Single line 10
             description="Test proposal",
             parameters_count=0,
         )
@@ -153,7 +160,9 @@ class TestFilterOverlappingProposals(unittest.TestCase):
             decorator_list=[],
         )
 
-        replacements = [((start, end), ast.Pass()) for start, end in line_ranges]
+        replacements = [
+            Replacement(line_range=(start, end), node=ast.Pass()) for start, end in line_ranges
+        ]
 
         return RefactoringProposal(
             file_path=file_path,
@@ -317,7 +326,10 @@ class TestFilterOverlappingProposals(unittest.TestCase):
         proposal1 = RefactoringProposal(
             file_path="test.py",
             extracted_function=func,
-            replacements=[((10, 15), ast.Pass()), ((20, 25), ast.Pass())],
+            replacements=[
+                Replacement(line_range=(10, 15), node=ast.Pass()),
+                Replacement(line_range=(20, 25), node=ast.Pass()),
+            ],
             description="Two blocks (12 lines total)",
             parameters_count=0,
         )
@@ -326,7 +338,7 @@ class TestFilterOverlappingProposals(unittest.TestCase):
         proposal2 = RefactoringProposal(
             file_path="test.py",
             extracted_function=func,
-            replacements=[((10, 12), ast.Pass())],
+            replacements=[Replacement(line_range=(10, 12), node=ast.Pass())],
             description="Overlaps first (3 lines)",
             parameters_count=0,
         )
@@ -335,7 +347,7 @@ class TestFilterOverlappingProposals(unittest.TestCase):
         proposal3 = RefactoringProposal(
             file_path="test.py",
             extracted_function=func,
-            replacements=[((20, 22), ast.Pass())],
+            replacements=[Replacement(line_range=(20, 22), node=ast.Pass())],
             description="Overlaps second (3 lines)",
             parameters_count=0,
         )

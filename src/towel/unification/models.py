@@ -139,55 +139,6 @@ class RefactoringProposal:
     # helper's module, such as ``typing.Any``; filled when the proposal is applied.
     required_imports: Tuple[Tuple[str, str], ...] = ()
 
-    def __post_init__(self) -> None:
-        """Coerce legacy tuple replacements into :class:`Replacement` instances."""
-
-        coerced: List[Replacement] = []
-        for item in self.replacements:
-            if isinstance(item, Replacement):
-                coerced.append(item)
-                continue
-
-            if not isinstance(item, tuple):
-                raise TypeError(
-                    "Replacement entries must be Replacement instances or tuples, "
-                    f"got {type(item)!r}"
-                )
-
-            if len(item) == 4:
-                line_range, node, file_path, class_name = item
-            elif len(item) == 3:
-                line_range, node, file_path = item
-                class_name = None
-            elif len(item) == 2:
-                line_range, node = item
-                file_path = None
-                class_name = None
-            else:
-                raise ValueError(
-                    "Replacement tuple must have length 2, 3, or 4 ("
-                    "line_range, node[, file_path[, class_name]])"
-                )
-
-            method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
-            implicit_param: Optional[str] = None
-            if class_name is not None:
-                method_kind = "instance"
-                implicit_param = "self"
-
-            coerced.append(
-                Replacement(
-                    line_range=line_range,
-                    node=node,
-                    file_path=file_path,
-                    class_name=class_name,
-                    method_kind=method_kind,
-                    implicit_param=implicit_param,
-                )
-            )
-
-        self.replacements = coerced
-
 
 @dataclass
 class ParsedModule:
