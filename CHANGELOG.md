@@ -66,6 +66,14 @@ ecosystem evidence behind each claim. The format follows
   same-file clustering pass applies its constant-time filters before the
   semantic guards. Together these remove about half of the AST traversal on
   a 16k-line project with an identical proposal list.
+- Black's line length for generated code is the limit the project declares
+  anywhere: `[tool.black]`, `[tool.ruff]`, `[tool.pycodestyle]`, or a
+  `[flake8]`/`[pycodestyle]` section in `setup.cfg`, `tox.ini` or `.flake8`
+  (pycodestyle's own dog-food test failed on an 86-character generated call
+  under Black's default of 88 against its declared 79).
+- A helper whose body only binds parameters and literals to names and returns
+  them is not proposed: the call that unpacks the tuple is longer than the
+  assignments it replaces and shares no logic.
 - The trivial-forwarding filter also recognizes `name = call(...)` followed
   by `return name`, and the tuple form `a, b = call(...)` then
   `return (a, b)`. Without it, once Black wrapped such a body over the

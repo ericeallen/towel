@@ -25,9 +25,10 @@ Formatting must never change meaning, so every formatter is wrapped by
 from __future__ import annotations
 
 import ast
+import configparser
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Optional
 
 from .unification.project_layout import _find_project_root, _load_pyproject
 
@@ -50,16 +51,59 @@ class BlackSettings:
 
     @classmethod
     def for_project(cls, path: Path) -> "BlackSettings":
-        """Settings from the nearest ``pyproject.toml`` above ``path``, else defaults."""
-        section = _load_pyproject(_find_project_root(path)).get("tool", {}).get("black", {})
-        if not isinstance(section, Mapping):
-            return cls()
-        line_length = section.get("line-length", DEFAULT_LINE_LENGTH)
-        skip_normalization = section.get("skip-string-normalization", False)
+        """Settings from the project's own configuration above ``path``, else defaults.
+
+        The line length is the limit the project declares for its code, in
+        the first of: ``[tool.black]``, ``[tool.ruff]``, ``[tool.pycodestyle]``
+        in ``pyproject.toml``; ``[flake8]`` or ``[pycodestyle]`` in
+        ``setup.cfg``, ``tox.ini`` or ``.flake8``. A project that checks its
+        own style (pycodestyle at 79) would otherwise fail its own check on
+        code formatted to Black's default of 88.
+        """
+        root = _find_project_root(path)
+        pyproject = _load_pyproject(root)
+        tool = pyproject.get("tool", {}) if isinstance(pyproject, Mapping) else {}
+        if not isinstance(tool, Mapping):
+            tool = {}
+        black = tool.get("black", {})
+        skip_normalization = (
+            black.get("skip-string-normalization", False) if isinstance(black, Mapping) else False
+        )
+        line_length = _declared_line_length(root, tool)
         return cls(
-            line_length=(int(line_length) if isinstance(line_length, int) else DEFAULT_LINE_LENGTH),
+            line_length=line_length if line_length is not None else DEFAULT_LINE_LENGTH,
             string_normalization=not bool(skip_normalization),
         )
+
+
+def _declared_line_length(root: Path, tool: Mapping[str, object]) -> Optional[int]:
+    """The line limit the project declares, from its formatter or linter configuration."""
+    for section_name, key in (
+        ("black", "line-length"),
+        ("ruff", "line-length"),
+        ("pycodestyle", "max-line-length"),
+    ):
+        section = tool.get(section_name)
+        if isinstance(section, Mapping):
+            value = section.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+    for filename in ("setup.cfg", "tox.ini", ".flake8"):
+        candidate = root / filename
+        if not candidate.is_file():
+            continue
+        parser = configparser.ConfigParser()
+        try:
+            parser.read(candidate, encoding="utf-8")
+        except (configparser.Error, OSError, UnicodeError):
+            continue
+        for section_name in ("flake8", "pycodestyle", "pep8"):
+            if parser.has_section(section_name):
+                for key in ("max-line-length", "max_line_length"):
+                    text = parser.get(section_name, key, fallback=None)
+                    if text is not None and text.strip().isdigit():
+                        return int(text.strip())
+    return None
 
 
 def checked(formatter: SnippetFormatter) -> SnippetFormatter:

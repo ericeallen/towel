@@ -2588,6 +2588,8 @@ class UnificationRefactorEngine:
             for statement in func.body
             if not isinstance(statement, (ast.Global, ast.Nonlocal))
         ]
+        if UnificationRefactorEngine._helper_only_renames(body):
+            return True
         if len(body) == 2:
             # ``name = call(...)`` then ``return name``, or ``a, b = call(...)``
             # then ``return (a, b)``, forwards just as a lone ``return call(...)``
@@ -2957,6 +2959,47 @@ class UnificationRefactorEngine:
                 ),
             )
         return None
+
+    @staticmethod
+    def _helper_only_renames(body: Sequence[ast.stmt]) -> bool:
+        """Whether the body computes nothing: it binds names to parameters or
+        literals and returns some of them.
+
+        Such a helper turns ``a = 0; b = x`` into a call that unpacks a tuple,
+        which is longer and says less (pycodestyle's initialization blocks
+        once returned variables became extractable). A body with any call,
+        operator, attribute, subscript, or compound statement is not this.
+        """
+        if not body:
+            return False
+
+        def is_plain(value: ast.expr) -> bool:
+            if isinstance(value, (ast.Name, ast.Constant)):
+                return True
+            if isinstance(value, ast.Tuple):
+                return all(is_plain(element) for element in value.elts)
+            return False
+
+        statements = list(body)
+        if isinstance(statements[-1], ast.Return):
+            returned = statements[-1].value
+            if returned is not None and not is_plain(returned):
+                return False
+            statements = statements[:-1]
+        if not statements:
+            return False
+        for statement in statements:
+            if isinstance(statement, ast.Assign):
+                if not is_plain(statement.value) or not all(
+                    isinstance(target, (ast.Name, ast.Tuple)) for target in statement.targets
+                ):
+                    return False
+            elif isinstance(statement, ast.AnnAssign):
+                if statement.value is None or not is_plain(statement.value):
+                    return False
+            else:
+                return False
+        return True
 
     @staticmethod
     def _same_names(target: ast.expr, returned: ast.expr) -> bool:

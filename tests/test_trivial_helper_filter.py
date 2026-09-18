@@ -96,3 +96,28 @@ def test_unpacked_call_result_returned_as_a_tuple_is_forwarding(tmp_path):
         UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False).analyze_file(path)
         == []
     )
+
+
+def test_a_body_that_only_binds_literals_and_parameters_is_not_extracted(tmp_path):
+    # ``a = 0; b = x; c = False`` followed by their use has no logic to share:
+    # the helper would be a tuple of the same values with a longer call.
+    path = _write(
+        tmp_path,
+        "def first(x):\n"
+        "    depth = 0\n"
+        "    seen = False\n"
+        "    limit = x\n"
+        "    return depth + limit if seen else limit\n\n"
+        "def second(y):\n"
+        "    depth = 0\n"
+        "    seen = False\n"
+        "    limit = y\n"
+        "    return depth * limit if seen else limit\n",
+    )
+    assert (
+        UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False).analyze_file(path)
+        == []
+    )
+    assert UnificationRefactorEngine(
+        min_lines=3, reuse_existing_functions=False, skip_trivial_helpers=False
+    ).analyze_file(path)

@@ -77,7 +77,8 @@ TRANSFORMED = {
     "r50_helper_name_collision",
     "r69_annassign",
     "r76_return_order",
-    "r86_annotated_assignment_live",
+    # r86_annotated_assignment_live: its shared block only binds a literal and
+    # a parameter, which the trivial-helper filter now declines.
     "r94_import_binds_live_name",
     "r96_unpacked_targets_live",
 }

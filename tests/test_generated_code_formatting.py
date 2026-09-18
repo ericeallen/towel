@@ -145,3 +145,22 @@ def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
     assert '"Mr. "' in (formatted / "m.py").read_text()
     assert "'Mr. '" in (plain / "m.py").read_text()
     assert _evaluate((formatted / "m.py").read_text()) == _evaluate((plain / "m.py").read_text())
+
+
+@pytest.mark.parametrize(
+    "filename, contents, expected",
+    [
+        ("pyproject.toml", "[tool.ruff]\nline-length = 100\n", 100),
+        ("pyproject.toml", "[tool.pycodestyle]\nmax-line-length = 79\n", 79),
+        ("setup.cfg", "[flake8]\nmax-line-length = 79\n", 79),
+        ("tox.ini", "[pycodestyle]\nmax_line_length = 120\n", 120),
+        (".flake8", "[flake8]\nmax-line-length = 99\n", 99),
+    ],
+)
+def test_line_length_follows_the_projects_own_declaration(
+    tmp_path: Path, filename: str, contents: str, expected: int
+) -> None:
+    (tmp_path / filename).write_text(contents)
+    if filename != "pyproject.toml":
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    assert BlackSettings.for_project(tmp_path / "m.py").line_length == expected
