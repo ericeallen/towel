@@ -37,11 +37,11 @@ repos:
     hooks:
       # Remove trailing whitespace
       - id: trailing-whitespace
-        exclude: ^test_examples.*_expected_output/
+        exclude: ^(test_examples.*_expected_output/|tests/(hostile_cases|hostile_crossfile)/)
 
       # Ensure files end with newline
       - id: end-of-file-fixer
-        exclude: ^test_examples.*_expected_output/
+        exclude: ^(test_examples.*_expected_output/|tests/(hostile_cases|hostile_crossfile)/)
 
       # Check YAML syntax
       - id: check-yaml

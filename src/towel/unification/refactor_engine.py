@@ -655,13 +655,18 @@ class UnificationRefactorEngine(ParallelEvaluation):
             progress, (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
         )
         pairs: List[CodeBlockPair] = []
+        # The changed set holds absolute paths; the analysis spells paths as
+        # the caller gave them (a relative output directory stays relative).
+        changed = (
+            None if changed_files is None else {os.path.abspath(path) for path in changed_files}
+        )
         for i, first in enumerate(all_functions):
-            file1_changed = changed_files is None or first.file_path in changed_files
+            file1_changed = changed is None or os.path.abspath(first.file_path) in changed
             for j, second in enumerate(all_functions[i + 1 :], i + 1):
                 if (
-                    changed_files is not None
+                    changed is not None
                     and not file1_changed
-                    and second.file_path not in changed_files
+                    and os.path.abspath(second.file_path) not in changed
                 ):
                     continue  # both files unchanged since the last global pass: verdict stands
                 # Only blocks in a bucket the other function also has can pair;

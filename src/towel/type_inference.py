@@ -69,6 +69,7 @@ from typing import (
 
 from .diagnostics import LOG
 from .project_tools import ToolChoice
+from .source_text import source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
 
 if TYPE_CHECKING:
@@ -161,7 +162,7 @@ def _with_probes(request: RevealRequest) -> Tuple[str, List[int]]:
 
     Returns the text and the line number each probe landed on.
     """
-    lines = request.source.splitlines(keepends=True)
+    lines = source_lines(request.source)
     probes = [f"{request.indent}reveal_type({expression})\n" for expression in request.expressions]
     index = request.line - 1
     lines[index:index] = probes
@@ -177,7 +178,7 @@ def _subtype_probes(
     an error on the ``return`` line means not a subtype, an error on the
     signature line means a name the checker could not resolve.
     """
-    lines = source.splitlines(keepends=True)
+    lines = source_lines(source)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
     base = len(lines)

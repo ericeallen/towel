@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 from towel.changes import apply_changes, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.unification.exceptions import TowelError
-from towel.source_text import read_source
+from towel.source_text import read_source, source_lines
 from towel.unification.models import GENERATED_HELPER_NAME, ParameterKind
 from towel.unification.defaults import DEFAULT_MAX_ITERATIONS
 from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
@@ -750,7 +750,7 @@ def _print_call_sites(
         start, end = repl.line_range
         if fpath not in source_cache:
             try:
-                source_cache[fpath] = read_source(fpath).splitlines(keepends=True)
+                source_cache[fpath] = source_lines(read_source(fpath))
             except (OSError, UnicodeError, SyntaxError):
                 source_cache[fpath] = []
         file_lines = source_cache[fpath]

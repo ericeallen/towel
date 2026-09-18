@@ -161,8 +161,10 @@ def test_memoized_similarity_matches_the_per_call_walk() -> None:
 def _reference_requires_original_frame(block: Sequence[ast.AST]) -> bool:
     """The frame-sensitivity guard as one walk of the whole block computed it."""
     from towel.unification.semantic_safety import (
+        NO_ALIASES,
         _has_comprehension_assignment,
         _is_frame_relative_call,
+        _is_warning_call,
         has_external_loop_control,
         is_namespace_access_call,
     )
@@ -172,6 +174,10 @@ def _reference_requires_original_frame(block: Sequence[ast.AST]) -> bool:
     for statement in block:
         for node in ast.walk(statement):
             if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.AsyncFor, ast.AsyncWith)):
+                return True
+            if isinstance(node, ast.comprehension) and node.is_async:
+                return True
+            if isinstance(node, ast.Call) and _is_warning_call(node, NO_ALIASES):
                 return True
             if isinstance(node, ast.Call):
                 if is_namespace_access_call(node):

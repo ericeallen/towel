@@ -44,7 +44,7 @@ from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
 
 from .engine_state import EngineState
-from ..source_text import read_source
+from ..source_text import read_source, source_lines
 from .function_index import FunctionIndex
 
 
@@ -119,7 +119,7 @@ class HelperAnnotationWiring(EngineState):
             if source is None:
                 source = read_source(file_path)
                 sources[file_path] = source
-            lines = source.splitlines(keepends=True)
+            lines = source_lines(source)
             start_line, end_line = replacement.line_range
             if not 1 <= start_line <= len(lines):
                 return

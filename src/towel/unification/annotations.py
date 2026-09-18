@@ -59,6 +59,7 @@ from ..type_inference import RevealRequest, Subtyping, TypeOracle
 from .models import FunctionNode
 from .statement_facts import import_binding_names, imported_binding_name
 from ..diagnostics import TYPES, debugging
+from ..source_text import source_lines
 
 _BUILTIN_NAMES: Set[str] = set(dir(builtins))
 
@@ -899,7 +900,7 @@ def _return_probes(
     names its generated assignment binds, which alpha-renaming may spell
     differently from the helper's.
     """
-    lines = site.source.splitlines(keepends=True)
+    lines = source_lines(site.source)
     if return_variables:
         after = site.end_line + 1
         if after > len(lines):

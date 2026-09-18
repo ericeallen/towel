@@ -7,9 +7,9 @@ that name from its caller rather than resolve it in the helper's own module.
 
 As in ``test_hostile_battery``, ``TRANSFORMED`` pins which packages the
 current engine rewrites, so a lost cross-file extraction fails as loudly as
-a wrong one. Every package is in exactly one state: all ten (``xf3`` to
-``xf12``) are transformed and none is rejected. A fixture that the engine
-must refuse belongs in the docstring's rejected list, not in ``TRANSFORMED``.
+a wrong one. Every package is in exactly one state. Rejected today:
+``xf13_import_time_effects``, whose helper import would run a module that
+prints at import time, which the borrower's own import never ran.
 """
 
 from __future__ import annotations
@@ -38,7 +38,11 @@ TRANSFORMED = {
     "xf10_reuse_existing_function",
     "xf11_package_init_reaches_back",
     "xf12_cycle_through_package_init",
+    "xf14_script_with_leading_statement",
 }
+
+# Packages the engine must leave alone, with the reason a comment in the fixture.
+REJECTED = {"xf13_import_time_effects"}
 
 
 def _python_files(root: Path) -> dict[str, bytes]:
@@ -61,7 +65,9 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
             results, _ = engine.refactor_directory_to_fixed_point(
                 str(after / "pkg"), str(after / "pkg"), progress="none"
             )
-        assert results, "Each fixture must exercise a real cross-file extraction"
+        assert (
+            results or case in REJECTED
+        ), "Each fixture must exercise a real cross-file extraction"
         transformed = _python_files(after) != _python_files(before)
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
         assert _run(after) == _run(before)

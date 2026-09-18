@@ -87,6 +87,31 @@ TRANSFORMED = {
     # a parameter, which the trivial-helper filter now declines.
     "r94_import_binds_live_name",
     "r96_unpacked_targets_live",
+    # Fifth audit: the eager-argument rule on flow, the comprehension scope, object
+    # lifetimes, and the line table; each transformed soundly.
+    "r109_eager_optional_import_failed",
+    "r110_eager_type_checking_import",
+    "r111_eager_module_except_as_name",
+    "r112_eager_module_match_capture_unmatched",
+    "r113_eager_class_attr_in_method",
+    "r114_eager_nested_class_attr",
+    "r115_eager_class_in_function_attr",
+    "r116_eager_enclosing_bound_after_inner_call",
+    "r117_eager_enclosing_deleted_before_inner_call",
+    "r118_eager_enclosing_conditionally_bound",
+    "r119_eager_module_def_and_class_after_call",
+    "r120_eager_module_import_after_call",
+    "r121_eager_comprehension_variable",
+    "r122_eager_lambda_parameter",
+    "r130_resource_observed_after_block_differs",
+    "r131_weakref_and_id_identity",
+    "r133_formfeed",
+    "r134_u2028_in_comment_shifts_splice",
+    "r135_formfeed_line_shifts_splice",
+    "r136_u2028_in_string_literal",
+    "r137_x1c_x85_in_comment",
+    "r138_u2028_comment_same_indent_neighbours",
+    "r139_literal_roundtrip",
 }
 
 

@@ -53,7 +53,8 @@ from .semantic_safety import (
     moves_scope_declaration,
     nested_bindings_escape,
     nested_scopes_cross_block_boundary,
-    requires_original_frame,
+    block_requires_original_frame,
+    frame_read_outside_block,
     snapshots_rebound_external_names,
     unbinds_external_name,
 )
@@ -336,8 +337,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         name the block did not bind, and unbinding of a name bound before it.
         """
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
-        if self._block_rejected(requires_original_frame, cand_nodes, path=fpath, block_id=cand_id):
-            return None
+        for frame_guard in (block_requires_original_frame, frame_read_outside_block):
+            if self._block_rejected(
+                frame_guard, cand_nodes, fn, analyzer, function_id=fn_id, block_id=cand_id
+            ):
+                return None
         for guard in (
             nested_bindings_escape,
             nested_scopes_cross_block_boundary,
@@ -385,7 +389,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             nodes=cand_nodes,
             snapshot=snapshot,
             return_variables=frozenset(
-                self._find_return_variables(fn, cand_range, snapshot.initially_bound)
+                self._find_return_variables(fn, cand_range, snapshot.initially_bound, cand_nodes)
             ),
         )
 

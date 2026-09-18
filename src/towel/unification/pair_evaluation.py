@@ -81,12 +81,13 @@ from .semantic_safety import (
     moves_scope_declaration,
     nested_bindings_escape,
     nested_scopes_cross_block_boundary,
-    requires_original_frame,
+    block_requires_original_frame,
+    frame_read_outside_block,
     snapshots_rebound_external_names,
     unbinds_external_name,
     uses_class_private_names,
 )
-from .import_graph import layout_is_known, would_create_import_cycle
+from .import_graph import import_runs_new_code, layout_is_known, would_create_import_cycle
 from .thunk_inlining import inline_leading_thunks
 from .substitution import Substitution
 from .visitors import body_without_docstring
@@ -340,16 +341,31 @@ class PairEvaluation(
     def _guard_pair(self, pair: CodeBlockPair, functions: FunctionIndex) -> Optional[_PairSetup]:
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
         ctx = self._resolve_pair_context(pair, functions)
-        if self._block_rejected(
-            requires_original_frame, pair.block1_nodes, path=pair.file_path, block_id=ctx.block1_id
-        ) or self._block_rejected(
-            requires_original_frame,
-            pair.block2_nodes,
-            path=pair.file_path2,
-            block_id=ctx.block2_id,
-        ):
-            self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
-            return None
+        blocks = (
+            (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, ctx.function1_id, ctx.block1_id),
+            (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.function2_id, ctx.block2_id),
+        )
+        for nodes, function, analyzer, function_id, block_id in blocks:
+            if self._block_rejected(
+                block_requires_original_frame,
+                nodes,
+                function,
+                analyzer,
+                function_id=function_id,
+                block_id=block_id,
+            ):
+                self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
+                return None
+            if self._block_rejected(
+                frame_read_outside_block,
+                nodes,
+                function,
+                analyzer,
+                function_id=function_id,
+                block_id=block_id,
+            ):
+                self._debug_reject(RejectReason.FRAME_READ_IN_FUNCTION, pair)
+                return None
 
         if debugging(VALIDATION):
             VALIDATION.debug("\n=== _try_refactor_pair_multi_file called ===")
@@ -504,6 +520,7 @@ class PairEvaluation(
             func,
             block_range,
             snapshot.initially_bound,
+            nodes,
             debug_label=debug_label if debug_enabled else None,
         )
         return snapshot, return_variables
@@ -1072,13 +1089,26 @@ class PairEvaluation(
         # module imports it. When that closes an import cycle, a plain
         # module-level helper may move to another participating module that
         # the others already import; only a genuine cycle declines the pair.
-        if not would_create_import_cycle(canonical_file, participating, self.import_graph):
-            return canonical_file
+        candidates = [canonical_file]
         if home.insert_into_class is None and home.insert_into_function is None:
-            for candidate in sorted(participating - {canonical_file}):
-                if not would_create_import_cycle(candidate, participating, self.import_graph):
-                    return candidate
-        self._debug_reject(RejectReason.IMPORT_CYCLE, pair)
+            candidates += sorted(participating - {canonical_file})
+        effects = False
+        for candidate in candidates:
+            if would_create_import_cycle(candidate, participating, self.import_graph):
+                continue
+            # The new import must not run module code the borrower's import does
+            # not already run: a host that prints or registers at import time
+            # would do so wherever the borrower is imported.
+            if any(
+                import_runs_new_code(candidate, borrower, self.import_graph)
+                for borrower in participating - {candidate}
+            ):
+                effects = True
+                continue
+            return candidate
+        self._debug_reject(
+            RejectReason.IMPORT_TIME_EFFECTS if effects else RejectReason.IMPORT_CYCLE, pair
+        )
         return None
 
     # -- 11 --------------------------------------------------------------------

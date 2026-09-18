@@ -53,6 +53,8 @@ class ImportGraphCache:
             BoundedCache(limit)
         )
         self.source_roots: BoundedCache[Path, Tuple[Path, ...]] = BoundedCache(limit)
+        # Whether a module runs code at import, keyed like the edges.
+        self.effects: BoundedCache[Tuple[Path, int, int], bool] = BoundedCache(limit)
         # Resolving a path walks the filesystem; the class-hierarchy lookup
         # resolves every class's file per base-class reference.
         self.resolved_paths: BoundedCache[str, Path] = BoundedCache(limit)
@@ -369,6 +371,130 @@ def _package_initializers(module: Path, roots: FrozenSet[Path]) -> List[Path]:
             break
         initializers.append((directory / "__init__.py").resolve())
     return initializers
+
+
+def _reachable_modules(
+    start: Path, roots: FrozenSet[Path], cache: ImportGraphCache
+) -> Optional[Set[Path]]:
+    """Every local module importing ``start`` runs, ``start`` and its package initializers included.
+
+    None when some import cannot be inspected.
+    """
+    pending = [start, *_package_initializers(start, roots)]
+    visited: Set[Path] = set()
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        dependencies = _import_edges(current, roots, cache)
+        if dependencies is None:
+            return None
+        pending.extend(dependencies - visited)
+    return visited
+
+
+def _is_definition_only(statement: ast.stmt) -> bool:
+    """A module-level statement that does nothing at import beyond binding a name."""
+    if isinstance(
+        statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom)
+    ):
+        return True
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+        return True  # a docstring or a bare literal
+    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        value = statement.value
+        return value is None or _is_literal(value)
+    if isinstance(statement, ast.If):
+        return _is_guarded_block(statement)
+    if isinstance(statement, ast.Try):
+        return (
+            all(_is_definition_only(item) for item in statement.body)
+            and all(
+                _is_definition_only(item) for handler in statement.handlers for item in handler.body
+            )
+            and all(_is_definition_only(item) for item in statement.orelse + statement.finalbody)
+        )
+    return False
+
+
+def _is_literal(expression: ast.expr) -> bool:
+    if isinstance(expression, ast.Constant):
+        return True
+    if isinstance(expression, ast.Name):
+        return True  # binding an existing name allocates nothing
+    if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
+        return all(_is_literal(item) for item in expression.elts)
+    if isinstance(expression, ast.Dict):
+        return all(key is not None and _is_literal(key) for key in expression.keys) and all(
+            _is_literal(value) for value in expression.values
+        )
+    if isinstance(expression, ast.UnaryOp):
+        return _is_literal(expression.operand)
+    return False
+
+
+def _is_guarded_block(statement: ast.If) -> bool:
+    """``if TYPE_CHECKING:`` and ``if __name__ == "__main__":`` run nothing at import."""
+    test = statement.test
+    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+        return all(_is_definition_only(item) for item in statement.body + statement.orelse)
+    if (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id == "__name__"
+        and len(test.comparators) == 1
+        and isinstance(test.comparators[0], ast.Constant)
+        and test.comparators[0].value == "__main__"
+        and not statement.orelse
+    ):
+        return True
+    return False
+
+
+def _has_import_time_effects(module: Path, cache: ImportGraphCache) -> bool:
+    """Whether importing ``module`` runs code beyond definitions and literal bindings."""
+    try:
+        stat = module.stat()
+    except OSError:
+        return True
+    key = (module, stat.st_mtime_ns, stat.st_size)
+    known = cache.effects.get(key)
+    if known is not None:
+        return known
+    try:
+        tree = ast.parse(read_source(module))
+    except (OSError, UnicodeError, SyntaxError):
+        return cache.effects.put(key, True)
+    return cache.effects.put(key, not all(_is_definition_only(item) for item in tree.body))
+
+
+def import_runs_new_code(host_file: str, borrower_file: str, cache: ImportGraphCache) -> bool:
+    """Whether ``borrower`` importing ``host`` would run module code its import does not run today.
+
+    A cross-file helper adds ``from host import helper`` to the borrower. If
+    the borrower already reaches the host through its imports, nothing new
+    runs. Otherwise every module the new import loads that the borrower did
+    not load before must be definition-only, or the import changes what
+    importing the borrower does (a module that prints, registers, or
+    connects at import time now runs when it did not).
+    """
+    host = Path(host_file).resolve()
+    borrower = Path(borrower_file).resolve()
+    common_root = Path(os.path.commonpath([str(host.parent), str(borrower.parent)]))
+    source_roots = _source_roots(host, cache)
+    if source_roots is None:
+        return True
+    roots = frozenset(source_roots) | {common_root}
+    already = _reachable_modules(borrower, roots, cache)
+    if already is None:
+        return True
+    if host in already:
+        return False
+    loaded = _reachable_modules(host, roots, cache)
+    if loaded is None:
+        return True
+    return any(_has_import_time_effects(module, cache) for module in loaded - already)
 
 
 def would_create_import_cycle(

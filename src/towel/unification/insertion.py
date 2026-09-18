@@ -34,7 +34,7 @@ from .visitors import ClassLocator, FuncLocator, body_without_docstring
 
 from .engine_state import EngineState
 from .models import FunctionNode
-from ..source_text import read_source
+from ..source_text import read_source, source_lines
 
 
 def reindent(line: str, prefix: str) -> str:
@@ -116,7 +116,7 @@ class InsertionPoints(EngineState):
         cached = self._source_lines_cache.get(file_path)
         if cached is not None and cached[0] == signature:
             return cached[1]
-        lines = tuple(read_source(file_path).splitlines(keepends=True))
+        lines = tuple(source_lines(read_source(file_path)))
         self._source_lines_cache[file_path] = (signature, lines)
         if len(self._source_lines_cache) > 64:
             self._source_lines_cache.pop(next(iter(self._source_lines_cache)))
@@ -125,9 +125,14 @@ class InsertionPoints(EngineState):
     def _find_import_position(self, lines: List[str]) -> int:
         """Return the 0-based line index at which to insert a new import.
 
-        The position follows the module docstring and any leading imports,
-        determined from the parsed module so that text inside comments or
-        docstrings is never mistaken for an import.
+        The import goes after the last import statement that precedes the
+        module's first definition, so it joins the leading import block (and
+        the project's import sorter merges it there) while any statement
+        that ran before that block still runs first: a script's
+        ``print("loading")`` above its imports keeps its place. A module with
+        no import before its first definition gets the import right after its
+        docstring. Positions come from the parsed module, so text inside
+        comments or docstrings is never mistaken for an import.
         """
         body = self._parse_source("".join(lines)).body
         position = 0
@@ -138,11 +143,11 @@ class InsertionPoints(EngineState):
             and isinstance(body[0].value.value, str)
         ):
             position = body[0].end_lineno or body[0].lineno
-            body = body[1:]
         for statement in body:
-            if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 break
-            position = statement.end_lineno or statement.lineno
+            if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                position = statement.end_lineno or statement.lineno
         return position
 
     def _get_indent(self, line: str) -> str:

@@ -28,6 +28,7 @@ import ast
 
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, cast
 from .assignment_analyzer import (
+    stored_names,
     _collect_bindings_and_reassignments,
     _collect_block_binding_stats,
     analyze_assignments,
@@ -43,6 +44,7 @@ from .models import (
 )
 from .parameters import parameter_names
 from .scope_analyzer import ScopeAnalyzer
+from .semantic_safety import walk_own_scope
 from .structural_memo import load_substitution, store_substitution
 from .substitution import Substitution
 from .visitors import (
@@ -92,6 +94,59 @@ def align_return_variables(
     if not set(template_names) <= bound_first or not set(block_names) <= bound_second:
         return None
     return template_names, block_names
+
+
+# Callees whose result plausibly owns a resource or a finalizer: a class
+# instantiation (a capitalized name, by convention) or one of the standard
+# factories that return such objects under lowercase names. A weak reference
+# can only target a class instance, and ``__del__`` only lives on a class, so
+# the result of a lowercase function is kept alive only when the function is
+# a known resource factory; a factory outside this list is not detected.
+_RESOURCE_FACTORIES = frozenset(
+    {"open", "connect", "socket", "mkdtemp", "Popen", "popen", "urlopen", "create_connection"}
+)
+
+
+def _allocates(expression: ast.AST) -> bool:
+    """Whether evaluating ``expression`` may construct an object whose lifetime is observable."""
+    for node in ast.walk(expression):
+        if isinstance(node, ast.Call):
+            callee = node.func
+            name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+            if name in _RESOURCE_FACTORIES or (name[:1].isupper() and name not in _VALUE_TYPES):
+                return True
+    return False
+
+
+_VALUE_TYPES = frozenset({"True", "False", "None"})
+
+
+def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -> Set[str]:
+    """Block-bound names whose object must outlive the helper.
+
+    In the original function a local lives until the function returns or
+    rebinds it; a helper drops what it does not return when it returns. For
+    a plain value that is invisible; for the result of a call it may not be
+    (a ``NamedTemporaryFile`` is deleted, a weak reference dies). Every name
+    the block binds from an expression that instantiates a class or calls a
+    known resource factory (``_allocates``) is therefore returned and rebound
+    at the site. Nested functions and classes are their own scopes and are
+    not entered.
+    """
+    names: Set[str] = set()
+    for statement in block:
+        for node in walk_own_scope(statement):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                value = node.value
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if value is not None and _allocates(value):
+                    for target in targets:
+                        names |= stored_names(target)
+            elif isinstance(node, ast.NamedExpr) and _allocates(node.value):
+                names.add(node.target.id)
+            elif isinstance(node, (ast.For, ast.AsyncFor)) and _allocates(node.iter):
+                names |= stored_names(node.target)
+    return names & initially_bound
 
 
 class BlockAnalysis(EngineState):
@@ -453,11 +508,16 @@ class BlockAnalysis(EngineState):
         func: FunctionNode,
         block_range: Tuple[int, int],
         initially_bound: Set[str],
+        block: Sequence[ast.stmt] = (),
         *,
         debug_label: Optional[str] = None,
     ) -> Set[str]:
-        """
-        Determine which newly-bound variables are read after the block.
+        """The newly bound variables the helper must return.
+
+        A name later code reads, and, when the function goes on after the
+        block, a name bound to an object whose lifetime that later code could
+        observe (see ``lifetime_bound_names``): the original kept it until the
+        function returned, and a helper would drop it on its own return.
         """
 
         if not initially_bound:
@@ -466,6 +526,9 @@ class BlockAnalysis(EngineState):
         block_end_line = block_range[1]
         result: Set[str] = set()
         debug_enabled = debugging(VALIDATION)
+        continues = any(getattr(stmt, "lineno", 0) > block_end_line for stmt in func.body)
+        if block and continues and not self._is_value_producing(block):
+            result |= lifetime_bound_names(block, initially_bound)
 
         for stmt in func.body:
             if not hasattr(stmt, "lineno") or stmt.lineno <= block_end_line:

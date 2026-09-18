@@ -183,6 +183,40 @@ class ParameterSubstituter(ast.NodeTransformer):
         new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
         return new_iter, new_body, new_orelse
 
+    def _visit_comprehension_scope(
+        self, node: Union[ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp]
+    ) -> ast.expr:
+        """A comprehension binds its targets for its own expressions only.
+
+        The generators come first so their targets shadow a parameter's name
+        inside the element, and the shadowing ends with the comprehension: a
+        read of the same spelling after it is the block's own free name again.
+        """
+        saved_shadowed = set(self.shadowed_vars)
+        saved_mapping = dict(self.var_to_param)
+        try:
+            generators = [self.visit_comprehension(gen) for gen in node.generators]
+            if isinstance(node, ast.DictComp):
+                return ast.copy_location(
+                    ast.DictComp(
+                        key=visit_as(self, node.key),
+                        value=visit_as(self, node.value),
+                        generators=generators,
+                    ),
+                    node,
+                )
+            return ast.copy_location(
+                type(node)(elt=visit_as(self, node.elt), generators=generators), node
+            )
+        finally:
+            self.shadowed_vars = saved_shadowed
+            self.var_to_param = saved_mapping
+
+    visit_ListComp = _visit_comprehension_scope
+    visit_SetComp = _visit_comprehension_scope
+    visit_GeneratorExp = _visit_comprehension_scope
+    visit_DictComp = _visit_comprehension_scope
+
     def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
         """
         Special handling for comprehensions to avoid replacing binding occurrences.

@@ -34,6 +34,7 @@ from pathlib import Path
 import ast
 from typing import Literal, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 from .defaults import DEFAULT_MAX_ITERATIONS
+from .exceptions import RefactoringError
 from .models import RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
@@ -124,6 +125,7 @@ class FixedPointDrivers(Materialization):
             descriptions in application order.
         """
         self._change_log = []
+        self._warn_about_frame_sensitive_files(file_path)
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         current_bytes = Path(file_path).read_bytes()
         try:
@@ -148,15 +150,20 @@ class FixedPointDrivers(Materialization):
                 # Fixed point reached - no more refactorings found
                 break
 
-            proposal = proposals[0]
-            new_code = self.apply_refactoring(file_path, proposal)
-            # Idempotence guard: if no change, stop to avoid churn
-            if new_code == current_code:
+            applied_one = False
+            for proposal in proposals:
+                rendered = self._rendered_or_none(file_path, proposal)
+                if rendered is None or rendered == current_code:
+                    continue
+                new_code = rendered
+                apply_changes(
+                    ChangePlan.from_sources({file_path: current_bytes}, {file_path: new_code})
+                )
+                applied_one = True
                 break
-            compile(new_code, file_path, "exec")
-            apply_changes(
-                ChangePlan.from_sources({file_path: current_bytes}, {file_path: new_code})
-            )
+            if not applied_one:
+                # Every proposal failed to render or changed nothing: a fixed point.
+                break
             current_code = new_code
             current_bytes = encode_like(current_bytes, new_code)
             num_applied += 1
@@ -167,6 +174,30 @@ class FixedPointDrivers(Materialization):
                 break
 
         return current_code, num_applied, descriptions
+
+    def _rendered_or_none(self, file_path: str, proposal: RefactoringProposal) -> Optional[str]:
+        """The file with ``proposal`` applied, or None when rendering it fails.
+
+        A proposal the materializer or the compiler rejects is a defect in
+        the rendering of that one extraction; it is dropped with a warning
+        and the run goes on, rather than aborting after whatever was applied
+        before it.
+        """
+        try:
+            new_code = self.apply_refactoring(file_path, proposal)
+            compile(new_code, file_path, "exec")
+        except (RefactoringError, SyntaxError, ValueError) as error:
+            self._report_dropped(proposal, error)
+            return None
+        return new_code
+
+    @staticmethod
+    def _report_dropped(proposal: RefactoringProposal, error: BaseException) -> None:
+        LOG.warning(
+            "Dropped a proposal that could not be rendered (%s): %s", proposal.description, error
+        )
+        if debugging(REJECTIONS):
+            REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
 
     _FRAME_SENSITIVE_DESCRIPTION = {
         "frame": "inspect call frames",
@@ -299,6 +330,9 @@ class FixedPointDrivers(Materialization):
             # files so a fresh proposal can take its place.
             try:
                 proposal_queue = self._apply_and_refresh(proposal, proposal_queue, run, reporter)
+            except (RefactoringError, SyntaxError) as error:
+                self._report_dropped(proposal, error)
+                continue
             except ChangeConflict as conflict:
                 stale_paths = sorted({path for path, _ in proposal.source_digests})
                 reporter.detail(
