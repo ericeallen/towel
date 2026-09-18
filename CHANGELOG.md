@@ -198,6 +198,21 @@ ecosystem evidence behind each claim. The format follows
   spellings still parse and are left out of the help.
 
 ### Changed (library)
+- The engine computes what it can once per statement instead of once per
+  block: block signatures, return checks, the frame-sensitivity and
+  name-binding guards, structural digests, the unifier's per-statement
+  facts and the substitution's keys are memoized per AST node and folded
+  over each block, the bound-variable query is memoized per block and
+  target text, a pair's structural ids are resolved once and passed to its
+  guards, and each class's file path is resolved once per run. On Towel's
+  own source (`towel dry src/towel`, one worker) a run takes 6.4 s instead
+  of 10.9 s with `--no-types --no-format` and 10.4 s instead of 15.0 s with
+  the defaults; the profiled run went from 32.7 s and 293 million calls to
+  20.3 s and 154 million. Every proposal and rendering is byte-identical on
+  the exactness baselines. The structural-id and source-digest caches, and
+  the definite-assignment facts, no longer keep a re-parsed file's old tree
+  alive; peak memory fell from 186 MB to 179 MB (1.11 GB to 1.06 GB with
+  type checking).
 - The AST visitors are built on three Template Method bases in
   `visitors.py`: `OwnScopeVisitor` for collectors that read one scope's own
   code, `DefinitionDepthVisitor` for those that track how deeply a

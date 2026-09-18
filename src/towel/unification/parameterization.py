@@ -25,23 +25,33 @@ from __future__ import annotations
 
 import ast
 
-from typing import Dict, List, Sequence, Set, Tuple, cast
+from typing import Dict, List, Sequence, Set, Tuple
+from weakref import WeakKeyDictionary
 from .parameters import fresh_parameter_name
 from .scope_analyzer import ScopeAnalyzer
 from ..diagnostics import UNIFIER
 
 from .substitution import Substitution
-from .binding_context import get_bound_variables_in_context, get_free_variables
+from .binding_context import bound_variables_in_block, get_free_variables
+from .statement_facts import memoized_per_node
 from .unifier_state import UnifierState
 
 
-def _named_expr_targets(statement: ast.AST) -> List[ast.AST]:
+def _named_expr_targets(statement: ast.AST) -> Tuple[ast.AST, ...]:
     """Walrus targets in ``statement`` that bind in its own scope, in source order.
 
     An assignment expression inside a lambda, function, or class body binds
     there instead, so those scopes are not entered; one inside a
-    comprehension binds in the enclosing scope and is included.
+    comprehension binds in the enclosing scope and is included. Memoized per
+    statement: every unification of a block asks this of each statement.
     """
+    return memoized_per_node(_NAMED_EXPR_TARGETS, statement, _compute_named_expr_targets)
+
+
+_NAMED_EXPR_TARGETS: "WeakKeyDictionary[ast.AST, Tuple[ast.AST, ...]]" = WeakKeyDictionary()
+
+
+def _compute_named_expr_targets(statement: ast.AST) -> Tuple[ast.AST, ...]:
     found: List[ast.AST] = []
     pending: List[ast.AST] = [statement]
     while pending:
@@ -53,7 +63,7 @@ def _named_expr_targets(statement: ast.AST) -> List[ast.AST]:
         if isinstance(node, ast.NamedExpr):
             found.append(node.target)
         pending.extend(reversed(list(ast.iter_child_nodes(node))))
-    return found
+    return tuple(found)
 
 
 class Parameterization(UnifierState):
@@ -123,14 +133,8 @@ class Parameterization(UnifierState):
         bound_vars_per_expr = []
         for idx, expr in zip(block_indices, exprs):
             if self.current_blocks and idx < len(self.current_blocks):
-                # Get the full block as context
-                block = self.current_blocks[idx]
                 # Find which variables in the expression are bound in the block context
-                # mypy: ast.Module expects list[ast.stmt]
-                typed_block = cast(List[ast.stmt], block)
-                bound_in_context = get_bound_variables_in_context(
-                    ast.Module(body=typed_block, type_ignores=[]), expr
-                )
+                bound_in_context = bound_variables_in_block(self.current_blocks[idx], expr)
                 # Get variables referenced in the expression
                 vars_in_expr = get_free_variables(expr)
                 # Intersection: bound variables that are actually used in expression
@@ -232,7 +236,7 @@ class Parameterization(UnifierState):
                 # Assignment targets first, then walrus targets in source order:
                 # an assignment expression binds in the enclosing scope, so its
                 # name is a block-level binding like any assignment's.
-                targets = self._get_assignment_targets(stmt) + _named_expr_targets(stmt)
+                targets = [*self._get_assignment_targets(stmt), *_named_expr_targets(stmt)]
 
                 for target_idx, target in enumerate(targets):
                     if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):

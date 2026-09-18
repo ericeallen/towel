@@ -30,7 +30,6 @@ from __future__ import annotations
 import ast
 
 from collections import deque
-from pathlib import Path
 from typing import List, Literal, Optional, Sequence, Set, Tuple, cast
 from .models import ClassInfo, ClassInsertionPlan, CodeBlockPair, FunctionNode, MethodInfo
 from .scope_analyzer import ScopeAnalyzer
@@ -81,6 +80,20 @@ def _unique_module_level_class(class_infos: Sequence[ClassInfo], file_path: str,
     """Whether ``name`` names exactly one class in ``file_path`` and it is module-level."""
     matches = [info for info in class_infos if info.file_path == file_path and info.name == name]
     return len(matches) == 1 and matches[0].qualname == name
+
+
+class _CallRenamer(ast.NodeTransformer):
+    """Rename every call of one plain name to another, in place."""
+
+    def __init__(self, old: str, new: str) -> None:
+        self.old = old
+        self.new = new
+
+    def visit_Call(self, call: ast.Call) -> ast.AST:
+        updated = cast(ast.Call, self.generic_visit(call))
+        if isinstance(updated.func, ast.Name) and updated.func.id == self.old:
+            updated.func.id = self.new
+        return updated
 
 
 class HelperPlacement(EngineState):
@@ -170,18 +183,6 @@ class HelperPlacement(EngineState):
 
         if original_name == final_name:
             return node
-
-        class _CallRenamer(ast.NodeTransformer):
-            def __init__(self, old: str, new: str) -> None:
-                self.old = old
-                self.new = new
-
-            def visit_Call(self, call: ast.Call) -> ast.AST:
-                updated = cast(ast.Call, self.generic_visit(call))
-                if isinstance(updated.func, ast.Name) and updated.func.id == self.old:
-                    updated.func.id = self.new
-                return updated
-
         return cast(ast.AST, _CallRenamer(original_name, final_name).visit(node))
 
     def _prepare_extracted_method_signature(
@@ -388,7 +389,9 @@ class HelperPlacement(EngineState):
         if not sites:
             return None
         matches = [
-            info for info in class_infos if (Path(info.file_path).resolve(), info.qualname) in sites
+            info
+            for info in class_infos
+            if (self.import_graph.resolve(info.file_path), info.qualname) in sites
         ]
         return matches[0] if len(matches) == 1 else None
 

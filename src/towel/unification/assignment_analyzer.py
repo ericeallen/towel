@@ -298,73 +298,75 @@ def _collect_bindings_and_reassignments(
         bound_vars: Set to add initially-bound variables to
         reassigned_vars: Set to add reassigned variables to
     """
+    _BindingCollector(reassignments, bound_vars, reassigned_vars).visit(node)
 
-    class BindingCollector(OwnScopeVisitor):
-        def visit_Assign(self, node: ast.Assign) -> None:
-            # A tuple or list target binds every name inside it (astroid:
-            # ``frame, stmts = self.lookup(name)`` read after the block).
-            destination = reassigned_vars if reassignments.get(id(node), False) else bound_vars
-            for target in node.targets:
-                destination.update(stored_names(target))
-            self.generic_visit(node)
 
-        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-            # An annotated assignment with a value binds its target; without a
-            # value it only declares the annotation and binds nothing.
-            if node.value is not None and isinstance(node.target, ast.Name):
-                if reassignments.get(id(node), False):
-                    reassigned_vars.add(node.target.id)
-                else:
-                    bound_vars.add(node.target.id)
-            self.generic_visit(node)
+class _BindingCollector(OwnScopeVisitor):
+    """Adds the names a node binds, and the ones it reassigns, to the caller's sets."""
 
-        def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-            if reassignments.get(id(node), False):
-                reassigned_vars.add(node.target.id)
-            else:
-                bound_vars.add(node.target.id)
-            self.generic_visit(node)
+    def __init__(
+        self, reassignments: Dict[int, bool], bound_vars: Set[str], reassigned_vars: Set[str]
+    ) -> None:
+        self.reassignments = reassignments
+        self.bound_vars = bound_vars
+        self.reassigned_vars = reassigned_vars
 
-        def visit_Import(self, node: ast.Import) -> None:
-            self._bind_import_aliases(node)
+    def _destination(self, node: ast.AST) -> Set[str]:
+        return self.reassigned_vars if self.reassignments.get(id(node), False) else self.bound_vars
 
-        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-            self._bind_import_aliases(node)
+    def visit_Assign(self, node: ast.Assign) -> None:
+        # A tuple or list target binds every name inside it (astroid:
+        # ``frame, stmts = self.lookup(name)`` read after the block).
+        destination = self._destination(node)
+        for target in node.targets:
+            destination.update(stored_names(target))
+        self.generic_visit(node)
 
-        def _bind_import_aliases(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
-            names = [
-                alias.asname or alias.name.split(".")[0]
-                for alias in node.names
-                if alias.name != "*"
-            ]
-            target = reassigned_vars if reassignments.get(id(node), False) else bound_vars
-            target.update(names)
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # An annotated assignment with a value binds its target; without a
+        # value it only declares the annotation and binds nothing.
+        if node.value is not None and isinstance(node.target, ast.Name):
+            self._destination(node).add(node.target.id)
+        self.generic_visit(node)
 
-        def visit_AugAssign(self, node: ast.AugAssign) -> None:
-            # Augmented assignments are always reassignments
-            _add_augassign_target(node.target, reassigned_vars)
-            self.generic_visit(node)
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self._destination(node).add(node.target.id)
+        self.generic_visit(node)
 
-        def visit_For(self, node: ast.For) -> None:
-            # For loop variables are initial bindings
-            bound_vars.update(stored_names(node.target))
-            self.generic_visit(node)
+    def visit_Import(self, node: ast.Import) -> None:
+        self._bind_import_aliases(node)
 
-        def visit_With(self, node: ast.With) -> None:
-            # With statement 'as' clauses create bindings, including unpacked ones
-            for item in node.items:
-                if item.optional_vars:
-                    bound_vars.update(stored_names(item.optional_vars))
-            self.generic_visit(node)
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self._bind_import_aliases(node)
 
-        def visit_Match(self, node: ast.Match) -> None:
-            # Capture patterns are initial bindings of the enclosing function
-            for case in node.cases:
-                bound_vars.update(pattern_capture_names(case.pattern))
-            self.generic_visit(node)
+    def _bind_import_aliases(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
+        names = [
+            alias.asname or alias.name.split(".")[0] for alias in node.names if alias.name != "*"
+        ]
+        self._destination(node).update(names)
 
-    collector = BindingCollector()
-    collector.visit(node)
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        # Augmented assignments are always reassignments
+        _add_augassign_target(node.target, self.reassigned_vars)
+        self.generic_visit(node)
+
+    def visit_For(self, node: ast.For) -> None:
+        # For loop variables are initial bindings
+        self.bound_vars.update(stored_names(node.target))
+        self.generic_visit(node)
+
+    def visit_With(self, node: ast.With) -> None:
+        # With statement 'as' clauses create bindings, including unpacked ones
+        for item in node.items:
+            if item.optional_vars:
+                self.bound_vars.update(stored_names(item.optional_vars))
+        self.generic_visit(node)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        # Capture patterns are initial bindings of the enclosing function
+        for case in node.cases:
+            self.bound_vars.update(pattern_capture_names(case.pattern))
+        self.generic_visit(node)
 
 
 def stored_names(target: ast.AST) -> Set[str]:

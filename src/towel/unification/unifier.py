@@ -30,6 +30,7 @@ from typing import Callable, Dict, Optional, List, Tuple, Any, cast, Sequence, U
 from .constant_consistency import ConstantConsistency
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
+from .statement_facts import mentioned_names
 from .substitution import Substitution
 
 
@@ -988,10 +989,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # A helper extracted on an earlier pass already binds names such as
         # ``__param_0``; a fresh parameter must not alias any identifier the
         # blocks mention, or the substituted body becomes ambiguous.
-        self._reserved_parameter_names = {
-            node.id
-            for block in blocks
-            for statement in block
-            for node in ast.walk(statement)
-            if isinstance(node, ast.Name)
-        }
+        self._reserved_parameter_names = set()
+        for block in blocks:
+            for statement in block:
+                self._reserved_parameter_names |= mentioned_names(statement)

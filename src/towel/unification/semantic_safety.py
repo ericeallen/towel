@@ -26,6 +26,7 @@ from .binding_detector import BindingDetector
 from .exceptions import UnsupportedLayoutError
 from ..project_layout import ProjectLayout
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
+from .statement_facts import memoized_per_node
 from .visitors import OwnScopeVisitor
 from ..source_text import read_source
 
@@ -242,26 +243,37 @@ def requires_original_frame(nodes: Iterable[ast.AST]) -> bool:
     Generator delegation needs a separate transformation preserving send/throw
     and return values. Moving frame inspection into a helper is not equivalent.
     Unknown shadowing of these call names is deliberately treated conservatively.
+    Each statement's verdict is memoized: it is a property of that statement
+    alone, and a statement belongs to every block that spans it.
     """
-    block = tuple(nodes)
+    return any(
+        memoized_per_node(_FRAME_SENSITIVE, statement, _statement_requires_original_frame)
+        for statement in nodes
+    )
+
+
+_FRAME_SENSITIVE: "WeakKeyDictionary[ast.AST, bool]" = WeakKeyDictionary()
+
+
+def _statement_requires_original_frame(statement: ast.AST) -> bool:
+    block = (statement,)
     if has_external_loop_control(block) or _has_comprehension_assignment(block):
         return True
-    for statement in block:
-        for node in ast.walk(statement):
-            if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.AsyncFor, ast.AsyncWith)):
+    for node in ast.walk(statement):
+        if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.AsyncFor, ast.AsyncWith)):
+            return True
+        if isinstance(node, ast.Call):
+            if is_namespace_access_call(node):
                 return True
-            if isinstance(node, ast.Call):
-                if is_namespace_access_call(node):
-                    return True
-                if (
-                    isinstance(node.func, ast.Name)
-                    and node.func.id == "super"
-                    and not node.args
-                    and not node.keywords
-                ):
-                    return True
-                if _is_frame_relative_call(node):
-                    return True
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "super"
+                and not node.args
+                and not node.keywords
+            ):
+                return True
+            if _is_frame_relative_call(node):
+                return True
     return False
 
 
@@ -376,9 +388,25 @@ class ImportGraphCache:
         )
         self.module_files: _Bounded[Tuple[Path, Tuple[str, ...]], FrozenSet[Path]] = _Bounded(limit)
         self.source_roots: _Bounded[Path, Tuple[Path, ...]] = _Bounded(limit)
+        # Resolving a path walks the filesystem; the class-hierarchy lookup
+        # resolves every class's file per base-class reference.
+        self.resolved_paths: _Bounded[str, Path] = _Bounded(limit)
+
+    def resolve(self, path: str) -> Path:
+        """``Path(path).resolve()``, once per spelling for the life of the cache."""
+        resolved = self.resolved_paths.get(path)
+        if resolved is None:
+            resolved = self.resolved_paths.put(path, Path(path).resolve())
+        return resolved
 
     def clear(self) -> None:
-        for table in (self.edges, self.bindings, self.module_files, self.source_roots):
+        for table in (
+            self.edges,
+            self.bindings,
+            self.module_files,
+            self.source_roots,
+            self.resolved_paths,
+        ):
             table.clear()
 
 
@@ -746,37 +774,59 @@ def bound_names(nodes: Iterable[ast.AST]) -> Set[str]:
     """
     names: Set[str] = set()
     for statement in nodes:
-        for node in ast.walk(statement):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-                names.add(node.id)
-            elif isinstance(node, ast.ExceptHandler) and node.name:
-                names.add(node.name)
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                names.add(node.name)
-            elif isinstance(node, ast.match_case):
-                names.update(pattern_capture_names(node.pattern))
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                for alias in node.names:
-                    if alias.name != "*":
-                        names.add(alias.asname or alias.name.split(".")[0])
+        bound: FrozenSet[str] = memoized_per_node(_BOUND_NAMES, statement, _statement_bound_names)
+        names.update(bound)
     return names
+
+
+_BOUND_NAMES: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def _statement_bound_names(statement: ast.AST) -> FrozenSet[str]:
+    names: Set[str] = set()
+    for node in ast.walk(statement):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.match_case):
+            names.update(pattern_capture_names(node.pattern))
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name != "*":
+                    names.add(alias.asname or alias.name.split(".")[0])
+    return frozenset(names)
 
 
 def _deleted_names(nodes: Iterable[ast.AST]) -> Set[str]:
     """Names a block unbinds: explicit ``del`` and implicit except-clause cleanup."""
     names: Set[str] = set()
     for statement in nodes:
-        for node in ast.walk(statement):
-            if isinstance(node, ast.Delete):
-                for target in node.targets:
-                    names.update(
-                        child.id
-                        for child in ast.walk(target)
-                        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Del)
-                    )
-            elif isinstance(node, ast.ExceptHandler) and node.name:
-                names.add(node.name)
+        deleted: FrozenSet[str] = memoized_per_node(
+            _DELETED_NAMES, statement, _statement_deleted_names
+        )
+        names.update(deleted)
     return names
+
+
+_DELETED_NAMES: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def _statement_deleted_names(statement: ast.AST) -> FrozenSet[str]:
+    names: Set[str] = set()
+    for node in ast.walk(statement):
+        if isinstance(node, ast.Delete):
+            for target in node.targets:
+                names.update(
+                    child.id
+                    for child in ast.walk(target)
+                    if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Del)
+                )
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+    return frozenset(names)
 
 
 def unbinds_external_name(

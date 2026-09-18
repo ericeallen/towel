@@ -615,24 +615,28 @@ def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> Op
     bound = (
         _import_bound_names(host) | _defined_names(host) if host is not None else set()
     ) | _TYPING_NAMES
-
-    class Reducer(ast.NodeTransformer):
-        failed = False
-
-        def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
-            head: ast.expr = node
-            while isinstance(head, ast.Attribute):
-                head = head.value
-            if isinstance(head, ast.Name) and head.id in bound:
-                return node  # ``typing.Sequence`` with ``import typing`` in the host
-            if node.attr in bound:
-                return ast.Name(id=node.attr, ctx=ast.Load())
-            self.failed = True
-            return node
-
-    reducer = Reducer()
+    reducer = _DottedNameReducer(bound)
     result = reducer.visit(copy.deepcopy(expression))
     return None if reducer.failed else result
+
+
+class _DottedNameReducer(ast.NodeTransformer):
+    """Rewrite each ``pkg.mod.Name`` to a name in ``bound``; ``failed`` when one cannot be."""
+
+    def __init__(self, bound: Set[str]) -> None:
+        self.bound = bound
+        self.failed = False
+
+    def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+        head: ast.expr = node
+        while isinstance(head, ast.Attribute):
+            head = head.value
+        if isinstance(head, ast.Name) and head.id in self.bound:
+            return node  # ``typing.Sequence`` with ``import typing`` in the host
+        if node.attr in self.bound:
+            return ast.Name(id=node.attr, ctx=ast.Load())
+        self.failed = True
+        return node
 
 
 def _defined_names(module: ast.Module) -> Set[str]:

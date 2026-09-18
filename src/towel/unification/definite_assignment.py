@@ -15,7 +15,7 @@ from .parameters import parameter_names
 from .scope_analyzer import pattern_capture_names
 from functools import cached_property
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Union
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, ref
 
 Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
@@ -30,11 +30,21 @@ class _FunctionFacts:
     A function with n statements has O(n^2) candidate blocks, and each guard
     runs per block, so anything that walks the whole function per block is
     cubic in n. These facts are built on first use and cached on the function
-    node for as long as the analyzed tree lives.
+    node for as long as the analyzed tree lives. The function is held weakly:
+    the facts are the value of a weak-keyed table whose key is that function,
+    and a strong reference here would keep the key, and its tree, alive for
+    the life of the process.
     """
 
     def __init__(self, function: Function) -> None:
-        self.function = function
+        self._function = ref(function)
+
+    @property
+    def function(self) -> Function:
+        function = self._function()
+        if function is None:
+            raise RuntimeError("the analyzed function these facts describe is gone")
+        return function
 
     @cached_property
     def locally_bound(self) -> FrozenSet[str]:

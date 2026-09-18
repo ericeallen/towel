@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Dict, List, Literal, NamedTuple, Optional, Set, Tuple, Union
 import ast
+import hashlib
 
 
 @dataclass
@@ -150,6 +151,16 @@ class ParsedModule:
     scope_analyzer: Optional["ScopeAnalyzer"] = None
     root_scope: Optional["Scope"] = None
     class_infos: List[ClassInfo] = field(default_factory=list)
+    source_digest: str = field(init=False, repr=False, compare=False)
+    """SHA-256 of ``source``, computed once here for every consumer of the module."""
+
+    def __post_init__(self) -> None:
+        self.source_digest = source_digest_of(self.source)
+
+
+def source_digest_of(source: str) -> str:
+    """The SHA-256 hex digest of a module's source text."""
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
 class FunctionArtifact(NamedTuple):
@@ -168,6 +179,13 @@ class FunctionArtifact(NamedTuple):
     class_name: Optional[str]
     enclosing_function: Optional[str]
     ancestry: List[str]
+    source_digest: str = ""
+    """SHA-256 of ``source`` when known; empty when the artifact was built by hand."""
+
+    @property
+    def module_digest(self) -> str:
+        """The digest of the module source, computed here only when the pipeline did not."""
+        return self.source_digest or source_digest_of(self.source)
 
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
