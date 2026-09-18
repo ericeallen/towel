@@ -27,10 +27,10 @@ stubs are implemented by the engine or by another mixin.
 from __future__ import annotations
 
 import ast
-from typing import Dict, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple
 
 from ..type_inference import TypeOracle
-from .models import FunctionArtifact
+from .models import AppliedChange, FunctionArtifact, RefactoringProposal, ReusedFunction
 from .semantic_safety import ImportGraphCache
 
 
@@ -42,6 +42,24 @@ class EngineState:
 
     import_graph: ImportGraphCache
     """What this run has learned about the project's import graph."""
+
+    _helper_name_counters: Dict[str, int]
+    """Next helper number per file, so generated names are unique across a run."""
+
+    _change_log: List[AppliedChange]
+    """Every call site rewritten so far in the current run."""
+
+    snippet_formatter: Optional[Callable[[str], str]]
+    """Formats each inserted snippet, or None to insert the rendering as is."""
+
+    file_finisher: Optional[Callable[[str, str], str]]
+    """Finishes each modified file (imports sorted), or None."""
+
+    prefer_absolute_imports: Optional[bool]
+    """Cross-file helper import style; None lets the discovered layout decide."""
+
+    pep420_namespace_packages: Optional[bool]
+    """Whether directories without __init__.py are packages; None infers it."""
 
     @staticmethod
     def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:
@@ -67,4 +85,104 @@ class EngineState:
         all_functions: Sequence[FunctionArtifact],
     ) -> Optional[FunctionArtifact]:
         """The innermost function containing a line range; provided by ExistingFunctionReuse."""
+        raise NotImplementedError
+
+    def _allocate_helper_name(
+        self,
+        file_path: str,
+        *,
+        class_context: bool = False,
+        related_paths: Sequence[str] = (),
+    ) -> str:
+        """Provided by the engine."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _annotation_names(helper: ast.FunctionDef) -> Set[str]:
+        """Provided by HelperAnnotationWiring."""
+        raise NotImplementedError
+
+    def _checks_generated_types(self, proposal: RefactoringProposal) -> bool:
+        """Provided by HelperAnnotationWiring."""
+        raise NotImplementedError
+
+    def _find_class_insert_position(
+        self, source: str, class_name: str
+    ) -> Optional[Tuple[int, str]]:
+        """Provided by InsertionPoints."""
+        raise NotImplementedError
+
+    def _find_function_insert_position_before_body_statements(
+        self, source: str, function_name: str
+    ) -> Optional[Tuple[int, str]]:
+        """Provided by InsertionPoints."""
+        raise NotImplementedError
+
+    def _find_import_position(self, lines: List[str]) -> int:
+        """Provided by InsertionPoints."""
+        raise NotImplementedError
+
+    def _find_insert_position(
+        self, lines: List[str], after_names: Optional[Set[str]] = None
+    ) -> int:
+        """Provided by InsertionPoints."""
+        raise NotImplementedError
+
+    def _infer_helper_annotations(self, proposal: RefactoringProposal) -> None:
+        """Provided by HelperAnnotationWiring."""
+        raise NotImplementedError
+
+    def _introduces_type_errors(self, modified_files: Dict[str, str]) -> bool:
+        """Provided by HelperAnnotationWiring."""
+        raise NotImplementedError
+
+    def _prepare_extracted_method_signature(
+        self,
+        fn: ast.FunctionDef,
+        method_kind: Literal["instance", "classmethod", "staticmethod"],
+        implicit_param: Optional[str],
+    ) -> None:
+        """Provided by HelperPlacement."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _retarget_helper_calls(node: ast.AST, original_name: str, final_name: str) -> ast.AST:
+        """Provided by HelperPlacement."""
+        raise NotImplementedError
+
+    def _rewrite_call_for_method(
+        self,
+        node: ast.AST,
+        original_name: str,
+        new_name: str,
+        method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]],
+        implicit_param: Optional[str],
+        class_name: Optional[str],
+        receiver_parameter_index: Optional[int] = None,
+        helper_parameter_count: Optional[int] = None,
+    ) -> ast.AST:
+        """Provided by HelperPlacement."""
+        raise NotImplementedError
+
+    def _source_lines(self, file_path: str) -> Sequence[str]:
+        """Provided by InsertionPoints."""
+        raise NotImplementedError
+
+    def _verify_reused_function_calls(
+        self,
+        modified_files: Dict[str, str],
+        target: ReusedFunction,
+        proposal: RefactoringProposal,
+    ) -> None:
+        """Provided by ExistingFunctionReuse."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _with_every_annotation_any(proposal: RefactoringProposal) -> RefactoringProposal:
+        """Provided by HelperAnnotationWiring."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _without_annotations(proposal: RefactoringProposal) -> RefactoringProposal:
+        """Provided by HelperAnnotationWiring."""
         raise NotImplementedError
