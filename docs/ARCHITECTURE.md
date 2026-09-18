@@ -40,13 +40,25 @@ fixed-point loop (below).
    renamed binders (see *The soundness invariant*). This gates every proposal.
 8. **Cluster.** `refactor_engine.py` searches the rest of the file for further
    blocks that unify with the accepted template and can share the helper.
-9. **Materialize.** `extractor.py` renders the helper and the call sites,
-   compiles the generated Python to confirm it parses, and detects overlapping
-   replacements. A proposal whose rendered helper body is a single forwarding
-   statement — a lone `raise`, a `return` of one call, or a bare call — is
-   dropped here: it would only add indirection. Construct the engine with
+9. **Reuse or extract.** When an accepted block is the whole body of a plain
+   module-level function, no helper is generated: that function is kept and
+   the other sites call it (see *Reusing an existing function*). Otherwise
+   `extractor.py` renders the helper and the call sites, and a proposal whose
+   rendered helper body only forwards — a lone `raise`, a `return` of one
+   call, a bare call, a call whose result is bound and returned, or a body
+   that only binds parameters and literals to names and returns them — is
+   dropped: it would only add indirection. Construct the engine with
    `skip_trivial_helpers=False` to keep such helpers.
-10. **Apply.** `changes.py` turns accepted proposals into an immutable byte
+10. **Annotate, format, verify.** `annotations.py` gives the helper the
+    annotations its call sites declare and, through the project's type
+    checker, the types of the rest (see *Helper annotations*); the project's
+    formatter formats each inserted snippet and its import sorter finishes
+    each modified file (see *Generated code formatting*); the generated
+    Python is compiled to confirm it parses, overlapping replacements are
+    detected, and with a type checker installed each modified file is
+    type-checked before and after, the helper's annotations falling back to
+    `Any` and then to none if the change introduced an error.
+11. **Apply.** `changes.py` turns accepted proposals into an immutable byte
     plan and applies it transactionally (see *Application and recovery*).
 
 `models.py` defines the data that flows between stages: parsed modules,
@@ -167,6 +179,128 @@ decides:
   parameters. Every free variable is already a parameter, so a module-level
   helper is always a correct fallback, and it avoids placing a helper in a
   scope that a same-named sibling function cannot see.
+- **After the definitions its annotations name.** A module-level helper goes
+  before the module's first definition, after its imports and docstring.
+  When its annotations name classes or functions of the module, it goes
+  after the last of them instead, so the names are written bare rather than
+  as quoted forward references; this is done only when every statement
+  before that point is a definition, import, assignment, or docstring, or
+  an `if` or `try` made only of those (a `TYPE_CHECKING` guard, an optional
+  import), so no statement that could call into the module at import time
+  is reordered relative to the helper (`placeable_after`). Otherwise the
+  helper stays at the top and the names are quoted.
+
+## Reusing an existing function
+
+A pair whose block is the entire body of a plain module-level function is
+not a case for a new helper: the helper would restate that function. The
+engine (`_redirect_to_existing_function`) instead keeps the function and
+rewrites the other sites to call it, so two identical functions become one
+function and a one-line forwarder, and a matching block inside a larger
+function calls the existing function directly. Arguments follow the
+function's parameter order; names the body reads from its own module
+(functions, classes, absolute imports) are ambient there and are not passed.
+The existing function must be defined unconditionally at module level,
+without decorators, not `async` (the sites are synchronous), not variadic,
+and never rebound or deleted, and the block must not return live variables;
+otherwise the pair falls back to ordinary extraction. When both halves of
+the pair are whole bodies, the first-defined function is kept. Across files
+the call is imported like a helper and refused when it would close an
+import cycle, by the same guard. The redirect rests on the helper's own
+verification rather than repeating it: the helper has already been shown,
+by instantiation, to reproduce every site; at the function's own site the
+generated call passes each of the function's positional parameters exactly
+once by name, so the helper applied to those arguments is the function's
+body, and the function applied to any site's parameter arguments is the
+helper applied to them, provided the remaining arguments are the same
+module-level objects at every site (`_reuse_plan` checks both). After
+rendering, every generated call is checked to bind exactly the function's
+positional parameters, against its last definition when `@overload` stubs
+precede it. `reuse_existing_functions=False` restores extraction.
+
+## Helper annotations
+
+`annotations.py` annotates a helper only in code that already uses
+annotations among its call sites, and only from evidence, in two layers.
+
+*Copying.* A parameter is annotated when every site passes an annotated,
+never-rebound parameter of its enclosing function, or a literal of one
+builtin type; the return when every site's function declares a return type
+the helper's `return` becomes, when the helper returns locals the block
+annotated, or as `None` when it returns nothing. Copying does not reason.
+
+*Inference through the project's checker.* A `TypeOracle`
+([`type_inference.py`](../src/towel/type_inference.py)) answers three
+questions: what type an expression has at a point in a module
+(`reveal`), whether one type is a subtype of another (`is_subtype`), and
+whether a file type-checks (`check`). `MypyInferrer` builds a copy of the
+site's module in memory with `reveal_type(...)` probes inserted where the
+call will stand, so names resolve as they do at the call, and asks
+subtyping through probe functions `def _probe(v: narrow) -> wide: return v`
+appended to the module, so the relation is mypy's own. `PyrightOracle`
+does the same through the pyright command on a temporary sibling file.
+`type_oracle_for_project` picks the checker the project configures: mypy
+for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
+`pyrightconfig.json`, and for a project configuring both, mypy infers
+while both verify, so the project's own check stays green.
+
+With an oracle, `infer_missing_annotations` types each parameter the copy
+left bare from the revealed types of its arguments. The rules are the
+lattice ones:
+
+- A **parameter** takes the least upper bound of its sites' types: their
+  union, normalized by the oracle's subtype relation (`normalize_union`), so
+  `int | bool` is `int`, `float | int` is `float`, and a subclass under its
+  base disappears. A member absorbs another only on a definite `True` from
+  the oracle, so an unanswerable question leaves the union as written and
+  never empties it.
+- A **return** must satisfy every site. When sites declare return types, the
+  helper returns their meet: Python has no intersection type, so the meet is
+  the declaration that is a subtype of all the others, or, when the oracle
+  confirms the helper's revealed return type is a subtype of every
+  declaration, that revealed type. Declarations with no such member leave
+  the return bare.
+- Thunk and lifted parameters take `Callable[[], T]` and
+  `Callable[[A, B], T]` from the oracle's callable spelling.
+- A revealed type is written only when every name in it resolves where the
+  helper is defined; `Any` inside a composite is written as revealed.
+- Once a helper carries any annotation, `complete_with_any` gives every
+  remaining parameter and the return `Any`, so the signature is complete
+  and mypy's `disallow-incomplete-defs` is never tripped; `from typing
+  import Any` (and `Callable`) is added to the host when missing.
+- Names of classes and functions defined in the host module are written
+  bare when the helper can be placed after them (see *Helper placement*),
+  else quoted. Elsewhere, a subscripted annotation is written bare only when
+  it evaluates at definition time (a PEP 585 builtin generic, a `typing` or
+  `collections.abc` name, or a module that defers annotations) and quoted
+  otherwise. A union of forward references is quoted as one string.
+
+Then the change is verified: with an oracle, each modified file is checked
+before and after, and a proposal that introduces a type error is retried
+with every annotation `Any`, and then with none. A helper with annotations
+that the checker rejects therefore never reaches the file. Without an
+oracle Towel copies and does not reason: unions are written unreduced and
+the meet requires identical declarations, because there is no second
+implementation of the subtype relation to fall back on.
+
+## Generated code formatting
+
+`ast.unparse` renders a helper on one line per statement with single-quoted
+strings. [`formatting.py`](../src/towel/formatting.py) supplies a
+`SnippetFormatter` from the project's own configuration: `ruff format` when
+the project has `[tool.ruff]` or `ruff.toml` and ruff is installed, else
+Black, at the line length the project declares anywhere (`[tool.black]`,
+`[tool.ruff]`, `[tool.pycodestyle]`, or a `[flake8]`/`[pycodestyle]`
+section of `setup.cfg`, `tox.ini`, or `.flake8`). Only the generated helper
+and the rewritten call statements are formatted, never the surrounding
+file, and every formatter is wrapped by `checked`, which compares each
+snippet's syntax tree before and after and raises if formatting changed
+it. A `FileFinisher` sorts the imports of each modified file the way the
+project does, with ruff's `I` rules when selected or isort when configured;
+`imports_permuted_only` accepts the sorter's result only if it permutes or
+merges import statements, at any nesting depth, and otherwise keeps the
+file as Towel assembled it. The tools are optional (`code-towel[format]`);
+without them code is inserted as rendered, and the CLI says so.
 
 ## Cross-file behavior
 
@@ -314,6 +448,25 @@ proposal.
   by one caller and is not thread-safe.
 - **Import-edge cache.** The import-cycle check parses each reachable module
   once per analysis and caches its edges, instead of re-parsing per pair.
+- **Per-function facts.** Facts that depend only on the enclosing function,
+  not on the block under test, are computed once per function and shared by
+  every candidate block in it: definite assignment before each statement
+  (`_FunctionFacts` in `definite_assignment.py`, with
+  `definitely_bound_before_each` answering all statements in one pass),
+  locally bound names and nested scopes (`_ScopeFacts` in
+  `semantic_safety.py`). `tests/test_function_facts_equivalence.py` checks
+  the cached answers against the uncached analysis.
+- **Statement-sequence buckets.** `block_signature.py` buckets candidate
+  blocks on their whole statement-type sequence, which the unifier requires
+  equal, so pairs with different shapes are never formed. The unifier's
+  bound-variable search caches each node's source text instead of
+  re-rendering it per query, the value-producing check is memoized per
+  block, and the visitor classes the hot paths use are defined once at
+  module level. Together with the per-function facts these remove about
+  half of all function calls on Towel's own source, with an identical
+  proposal list.
+- **Incremental global passes.** See the section above; only the files
+  rewritten since the previous global pass are re-paired, exactly.
 - **Fork-based parallelism.** A large cold analysis forks worker processes
   after parsing; each worker inherits the ASTs and caches copy-on-write and
   returns only accepted proposals, so nothing is pickled in and only results
@@ -326,6 +479,14 @@ proposal.
   forking; any other value caps the count. See
   [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#resources-and-platform) for
   measured memory and time.
+
+Measured on Towel's own source (16,000 annotated lines, fixed point, one
+core, September 2026): 47.8 s under 1.618, 33.9 s now with `--no-types
+--no-format`, 41.8 s with the defaults, the difference being the type check
+of each applied refactoring; Sphinx in the ecosystem check went from 2513 s
+to 1938 s. Function calls on Towel's source fell from 464 million to 246
+million. The tables in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance)
+give the per-project figures.
 
 ## Application and recovery
 
@@ -364,9 +525,13 @@ The evidence that the engine holds up on real code is layered:
   assert identical program output; each fixed engine defect is a fixture and a
   row in [ADVERSARIAL_REVIEW.md](ADVERSARIAL_REVIEW.md).
 - **The standing ecosystem check** (`scripts/ecosystem_check.py`, `just
-  ecosystem`, weekly in CI) clones public projects, runs each one's own suite,
-  refactors a copy, and runs the suite again, comparing test outcomes; it is
-  the evidence in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
+  ecosystem`, weekly in CI) clones 141 public projects, among them Towel's own
+  releases and current `main`, runs each one's own suite, refactors a copy,
+  and runs the suite again, comparing test outcomes; it is the evidence in
+  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
+- **Exactness tests** for the performance work: the per-function facts
+  against the uncached analysis, the bucket invariants, and byte-identical
+  `dry` output with incremental global passes on and off.
 
 Behavioral comparison samples finite inputs and does not prove equivalence;
 unsupported callable shapes are reported as unverified. CI enforces an 85%
@@ -410,6 +575,9 @@ but the ideas and their names are from the literature.
 | Liveness and orphans | `definite_assignment.py`, `orphan_detector.py` |
 | Safety guards, import cycles, pre-scan | `semantic_safety.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
+| Helper annotations | `annotations.py` |
+| Type oracle (mypy, pyright) | `type_inference.py` (at `src/towel/`) |
+| Formatter and import-sorter selection | `formatting.py` (at `src/towel/`) |
 | Parameter enumeration | `parameters.py` |
 | Progress reporting | `progress.py` |
 | Structural memoization | `structural_memo.py` |

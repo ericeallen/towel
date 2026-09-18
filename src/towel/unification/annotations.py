@@ -12,22 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Type annotations for an extracted helper, taken from what its call sites declare.
+"""Type annotations for an extracted helper, from its call sites and the project's checker.
 
-Towel does not infer types. A helper parameter is annotated only when every
-call site passes something whose type the site already states: a parameter of
-the enclosing function that carries an annotation and is never rebound, or a
-literal of a builtin type. The return is annotated when every site returns the
-helper's value from a function with a declared return type, when the helper
-returns locals the block annotated, or when the helper returns nothing.
+Two layers. :func:`annotate_helper` copies: a parameter is annotated when
+every call site passes something whose type the site already states (a
+parameter of the enclosing function that carries an annotation and is never
+rebound, or a literal of a builtin type), and the return when every site
+returns the helper's value from a function with a declared return type, when
+the helper returns locals the block annotated, or when the helper returns
+nothing. :func:`infer_missing_annotations` then asks a ``TypeOracle`` (the
+project's mypy or pyright) for the rest: a parameter takes the union of its
+sites' revealed types, normalized by the oracle's subtype relation
+(:func:`normalize_union`); the return takes the meet of the sites' declared
+return types, or the revealed return type when the oracle confirms it is a
+subtype of every declaration; thunks take ``Callable`` spellings. Once a
+helper carries any annotation, :func:`complete_with_any` fills what is still
+bare, so the signature is complete. Without an oracle nothing is inferred
+and unions are written unreduced.
 
-An annotation is copied as the site spelled it. It is inserted unquoted only
-when it cannot fail to resolve where the helper is defined: every name is a
-builtin, the module defers annotations with ``from __future__ import
-annotations``, or every name is bound by a module-level import, which precedes
-the helper. Otherwise it is inserted as a string, which never evaluates and
-which type checkers resolve in the module. Across modules only builtin names
-are used, since a site's imports are not the host's.
+An annotation is written unquoted only when it evaluates where the helper is
+defined: every name is a builtin, a ``typing`` name the caller imports, a
+definition the helper is placed after (:func:`respell_bare`), or, in the
+same module, a name bound by a module-level import; and a subscripted
+annotation only when the subscript evaluates at definition time
+(:func:`_evaluates_at_runtime`). Otherwise it is a string, which never
+evaluates and which type checkers resolve in the module. Across modules only
+builtin names and the caller's ``typing`` names are used, since a site's
+imports are not the host's.
 
 Helpers are annotated only in code that already uses annotations somewhere
 among the sites, so an unannotated project stays that way.

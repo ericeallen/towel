@@ -72,7 +72,7 @@ test-crossfile:
 test-file FILENAME:
     uv run --frozen python -c "from tests.automatic_equivalence_tester import AutomaticEquivalenceTester; from towel.unification.refactor_engine import UnificationRefactorEngine; t = AutomaticEquivalenceTester(UnificationRefactorEngine(max_parameters=5, min_lines=4)); p, f, e = t.test_file('{{FILENAME}}'); print(f'{p}/{p+f} passed'); [print(' ', x) for x in e[:5]]; raise SystemExit(1 if f or not p else 0)"
 
-# Clone public projects and run each suite before and after refactoring (91 projects;
+# Clone public projects and run each suite before and after refactoring (141 projects;
 # large, memory-bound — keep --workers low and set TOWEL_WORKERS to cap forks)
 ecosystem *ARGS:
     uv run --frozen python scripts/ecosystem_check.py --work /tmp/towel-ecosystem --workers 3 {{ARGS}}

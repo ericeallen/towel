@@ -69,28 +69,39 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
    cd towel
    ```
 
-2. Use Python 3.13 for formatting/type checks and create a virtual environment:
+2. Create the pinned development environment with uv (Python 3.13 for the
+   formatting and typing gates):
    ```bash
-   python3.13 -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   uv sync --frozen --extra dev
    ```
 
-3. Install development dependencies:
+   Or, without uv, create and activate a virtual environment and install the
+   `dev` extra:
    ```bash
+   python3.13 -m venv .venv
+   source .venv/bin/activate
    pip install -e ".[dev]"
    ```
 
-4. Install pre-commit hooks (enforces code quality):
+   The `dev` extra includes Black, ruff, isort, mypy, and pyright, which the
+   formatting and typing tests exercise; the mypy and pyright tests skip when
+   those are absent.
+
+3. Install pre-commit hooks (enforces code quality):
    ```bash
-   pre-commit install
+   uv run --frozen pre-commit install
    ```
 
-   Pre-commit hooks will automatically run Black formatting, flake8 linting,
-   mypy type checking, and other quality checks before each commit.
+   The hooks run Black formatting, flake8 linting, strict mypy over the whole
+   tree, Bandit, and other checks before each commit. They call `python` from
+   the environment, so activate it or prefix commits with
+   `PATH="$PWD/.venv/bin:$PATH"`; a file in progress must already type-check
+   for a commit to go through. Never bypass the hooks.
 
-5. Verify the setup:
+4. Verify the setup:
    ```bash
-   pytest
+   just test        # or: uv run --frozen pytest -q
+   just check       # formatting, lint, typing, Bandit
    ```
 
 ## Coding Standards
@@ -103,7 +114,7 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 - Comment complex logic
 - Run Black explicitly to format code (line length 100); hooks check formatting
 - All code must pass flake8 linting
-- Type checking with mypy is enforced on core modules
+- Strict mypy is enforced on `src/towel` and the typed test helpers (`[tool.mypy] files` in `pyproject.toml`)
 
 ## Testing
 
@@ -134,9 +145,13 @@ coverage report --fail-under=85
 
 ## Documentation
 
-- Update the README.md if you change functionality
+- Update the README.md if you change functionality, and add an entry under
+  `[Unreleased]` in CHANGELOG.md
 - Add docstrings to new functions and classes
-- Update relevant documentation in the `docs/` directory
+- Update relevant documentation in the `docs/` directory: a new guard or
+  rejection belongs in KNOWN_LIMITATIONS.md, a new stage or rule in
+  ARCHITECTURE.md, a new engine defect found on real code in
+  ADVERSARIAL_REVIEW.md with its fixture
 - Include examples for new features
 - Keep documentation clear and concise
 

@@ -1,3 +1,18 @@
+## 2026-09-17
+
+- Version: 1.618
+- Development status: Beta (PyPI classifier `4 - Beta`)
+- Commit: tag `v1.618`
+- Summary:
+  - Imports: cross-file helpers are imported relatively by default (`from .module import helper`), which stays valid when an out-of-place output is adopted into its real location; an absolute import only when a packaging marker anchors the module name.
+  - Filtering: trivial forwarding helpers (a lone `raise`, a `return` of one call, a bare call) are no longer proposed; `skip_trivial_helpers=False` restores them.
+  - Placement: a cross-file helper is hosted in a module that closes no import cycle, preferring one the borrowers already import; the extraction is declined only when no placement is safe.
+  - Renaming: the rename tool no longer refuses a module merely for a local variable named `vars`, `globals`, `locals`, `eval`, or `exec`.
+  - Documentation: the README shipped still reading 1.414 in its release-status line, which PyPI froze; RELEASING.md now requires a version sweep before building.
+- Status: All tests green; ecosystem check unchanged from 1.414 (75 PASS, 13 NO_CHANGE, 3 BROKEN_KNOWN of 91)
+
+---
+
 ## 2026-09-15
 
 - Version: 1.414

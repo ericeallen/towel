@@ -39,7 +39,16 @@ rejects, and what remains outside its model. Read it together with
   conservatively: loops, `contextlib.suppress`, and non-exhaustive `match`
   statements never bind definitely.
 - **Rendering.** Every generated file compiles, and every generated call binds
-  to the generated helper's signature after method conversion.
+  to the generated helper's signature after method conversion. A formatter
+  may change only layout: each inserted snippet's syntax tree is compared
+  before and after formatting, and an import sorter's result is kept only
+  when it permutes or merges import statements and nothing else.
+- **Annotations.** With the project's type checker installed, every annotated
+  helper and its call sites are type-checked in place; a change that
+  introduces a type error has its annotations replaced by `Any`, and then
+  removed, before it is applied. A helper is annotated only in code that
+  already uses annotations, from what the sites declare and what the checker
+  reveals; see *Type annotations on helpers* below.
 
 These checks are syntactic and local. They establish that the helper is a
 faithful generalization of each block under Python's lexical scoping. They do
@@ -67,19 +76,22 @@ about where each one stops.
   extracted block calls a function that warns with `stacklevel`. The warning
   tells you which diffs to review or `--exclude`; it is a pointer, not a proof
   of breakage.
-- **Not detected, and therefore silent.** Three kinds of frame or source
-  sensitivity are outside both the guard and the warning, and are documented
-  `BROKEN_KNOWN` cases in the ecosystem check rather than things Towel can flag:
-  a module that reads a *sibling's* source as text through a plain `open` of a
-  `__file__`-relative path and copies regions of it (lark's standalone parser
-  generator); a *caller or test* that asserts on the exact frames or text of a
-  traceback the refactored code raises normally (glom and rich assert on
-  rendered tracebacks); and a plain `warnings.warn` with no `stacklevel`, whose
-  once-per-location deduplication is keyed on the line number, so moving code
-  can change how many warnings a run reports without changing any test result.
-  None of these can be distinguished statically from safe code that does the
-  same thing (a linter also opens `.py` files; every library raises
-  exceptions), so Towel does not warn on them to avoid a flood of false
+- **Not detected, and therefore silent.** Four kinds of frame, line, or
+  source sensitivity are outside both the guard and the warning, and are
+  documented `BROKEN_KNOWN` cases in the ecosystem check rather than things
+  Towel can flag: a module that reads a *sibling's* source as text through a
+  plain `open` of a `__file__`-relative path and copies regions of it (lark's
+  standalone parser generator); a *caller or test* that asserts on the exact
+  frames or text of a traceback the refactored code raises normally (glom and
+  rich assert on rendered tracebacks); a test that asserts the exact line
+  number a warning is issued from inside its own module, which a helper
+  inserted above it shifts (trio's `test_deprecate`); and a plain
+  `warnings.warn` with no `stacklevel`, whose once-per-location deduplication
+  is keyed on the line number, so moving code can change how many warnings a
+  run reports without changing any test result. None of these can be
+  distinguished statically from safe code that does the same thing (a linter
+  also opens `.py` files; every library raises exceptions; every module has
+  line numbers), so Towel does not warn on them to avoid a flood of false
   positives. Review the diff and run the tests, as with any refactoring.
 
 The remaining entries are other kinds of dynamic behavior that no scan
@@ -97,8 +109,13 @@ addresses:
   lookup, `__init_subclass__` hooks, and `__slots__` interactions with added
   methods are not modeled beyond compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
-  in a module, after imports. Cross-file helpers add a module import; static
-  local import cycles are rejected, dynamic ones are not detected.
+  in a module, after imports, except that a helper whose annotations name
+  classes or functions of the module goes after the last of them, so the
+  names can be written bare, when no statement before that point could run
+  code at import time. Cross-file helpers add a module import; static local
+  import cycles are rejected (including cycles through a package's
+  `__init__`, which `from . import name` runs), dynamic ones are not
+  detected.
 - **Concurrency of application.** Files are replaced atomically one at a time;
   a batch is not atomic across files. Application requires exclusive write
   access; a concurrent editor writing in the check/replace interval is not
@@ -132,6 +149,46 @@ receiver explicitly. Additional call sites gathered from the same file join
 a method helper only when they are methods of the same classes with the same
 receiver kind; other occurrences keep their code.
 
+## Type annotations on helpers
+
+Annotations are written only from evidence, and their limits follow from
+where the evidence comes from:
+
+- A helper is annotated only when some call site's enclosing function is
+  itself annotated. An unannotated project stays unannotated.
+- What the sites declare is copied: a parameter whose every argument is an
+  annotated, never-rebound parameter of the enclosing function, or a literal
+  of one builtin type; a return declared by every site's function, by the
+  annotated locals the helper returns, or `None` for a helper that returns
+  nothing. Copying does not reason: without a type checker installed, sites
+  that disagree on a parameter join into an unreduced union, and sites whose
+  declared return types differ leave the return bare.
+- Everything else needs the project's type checker (mypy, or pyright when
+  that is what the project configures, or both), installed with the `types`
+  extra: the type of an argument that is an expression, the reduction of a
+  union by subtyping, the meet of declared return types, the check that a
+  revealed return type is a subtype of every declaration, and the
+  verification of the generated code. Without a checker none of this
+  happens, and `--types` only copies.
+- A revealed type is written only when every name in it resolves where the
+  helper is defined; a type the checker spells with a module the host does
+  not import is not written, and the parameter is completed with `Any`.
+  `Any` inside a composite (`list[Any]`) is written as the checker revealed
+  it. A helper with any annotation has every parameter and its return
+  annotated, so the checker's incomplete-definition rule is never tripped.
+- Generic helpers are not synthesized: when sites pass `list[int]` and
+  `list[str]`, the parameter is their union, not a type variable.
+- Placement for bare names holds only within one module. For a helper
+  whose sites are in other modules, an annotation may name only builtins
+  and the `typing` names Towel imports itself (`Any`, `Callable`), since a
+  site's imports are not the host's; a type that names a class is then not
+  written and the parameter is completed with `Any`. Any subscripted
+  annotation that would not evaluate at definition time (`memoryview[int]`
+  on an interpreter where `memoryview` is not generic) is written as a
+  string.
+- The degradation on a type error is per proposal, not per parameter: one
+  annotation the checker rejects costs the helper all of them.
+
 ## Conservative rejections
 
 Towel prefers to leave code unchanged rather than transform it under
@@ -140,9 +197,18 @@ uncertainty. Common reasons a real duplicate is not extracted:
 - A differing sub-expression is a slice, a starred item, or a whole f-string;
   these are container syntax rather than values.
 - The extracted helper body would be a single forwarding statement — a lone
-  `raise`, a `return` of one call, or a bare call. Such a helper shares no
-  logic, only a name, so it is skipped by default; construct the engine with
+  `raise`, a `return` of one call, or a bare call — or a forwarding
+  statement whose result is bound and returned (`x = f(...)` then `return
+  x`, or the tuple form), or a body that only binds parameters and literals
+  to names and returns them. Such a helper shares no logic, only a name, so
+  it is skipped by default; construct the engine with
   `skip_trivial_helpers=False` to keep it.
+- A duplicate that is the whole body of an existing function is redirected
+  to that function rather than extracted, but only when the function is a
+  plain module-level `def`: a decorated, async, variadic, shadowed, or
+  rebound function, or one whose call across files would close an import
+  cycle, falls back to ordinary extraction (which the trivial-helper filter
+  then usually declines, since the helper would restate the function).
 - The block deletes, rebinds, or declares a name the caller keeps using.
 - A nested function or lambda shares a rebound name with the block.
 - The helper would need more than the configured maximum parameters.
@@ -171,8 +237,8 @@ Set `DEBUG_PROPOSAL_REJECTIONS=1` to print the reason for each rejected pair.
 
 ## Performance
 
-Analysis is quadratic in candidate blocks per file. Five measures keep it
-tractable, all exact: they change no proposal.
+Analysis is quadratic in candidate blocks per file. The measures below keep
+it tractable, all exact: they change no proposal.
 
 - Blocks that can never be accepted are not enumerated: one that returns on
   some path but not every path, or a lone expression statement. On pyflakes'
@@ -182,7 +248,19 @@ tractable, all exact: they change no proposal.
   results for the blocks it did not touch. Unification results are stored as
   positions and rehydrated onto the matching blocks.
 - The clustering pass memoizes its per-candidate pipeline on the template,
-  the candidate, and the pair's helper.
+  the candidate, and the pair's helper, and applies its constant-time
+  filters before the semantic guards.
+- Facts that depend only on a function, not on the block under test
+  (definite assignment at each statement, locally bound names, nested
+  scopes), are computed once per function, and candidate blocks are bucketed
+  on their whole statement-type sequence, which the unifier requires equal,
+  so most pairs are never formed. On Towel's own 16,000 lines these two
+  remove about half of all function calls since 1.618 with an identical
+  proposal list.
+- In directory mode, a global re-pass after the first re-pairs only the
+  functions in files rewritten since the previous global pass. This is
+  exact; the argument is in
+  [ARCHITECTURE.md](ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact).
 - The import-cycle check parses each module once per analysis and caches
   its import edges by path, modification time, and size; it used to
   re-parse every reachable module for every cross-file pair, which on a
@@ -211,12 +289,30 @@ stated), before and after this pass, with identical output in every case:
 | pygments, fixed point | 170 s | 107 s | 60 s |
 | pyflakes, fixed point | 300 s | 224 s | 54 s |
 
+A later pass (September 2026) added the per-function facts, the
+statement-sequence buckets, and the exact incremental global passes, and
+turned on formatting and typing by default. Measured the same way, one
+core, identical output between the on and off settings of each:
+
+| Target | 1.618 | Now, `--no-types --no-format` | Now, defaults |
+|---|---|---|---|
+| Towel's own source (16,000 lines), fixed point | 47.8 s | 33.9 s | 41.8 s |
+| h2 (hyper-h2), fixed point | 5.2 s | 7.0 s | 11.9 s |
+| Sphinx, fixed point, in the ecosystem check | 2513 s | not measured | 1938 s |
+
+The bare-engine speedup is what the caches and buckets buy; the defaults
+then spend part of it type-checking each applied refactoring, a cost
+proportional to the number of applied changes rather than to project size.
+The current engine also applies more refactorings than 1.618 did on the
+same input (h2: 20 against 14; Towel's source: 45 against 41), so the
+times compare a larger amount of work.
+
 The remaining cost is the pairwise evaluation of structurally distinct
 candidates, which no cache can share; large test modules with hundreds of
 similar methods remain the worst case. Progress is reported per phase.
 There is no time budget; interrupt with Ctrl-C, which leaves files
-unchanged. The ecosystem check applies a 30-minute limit per phase and
-reports `TIMEOUT`.
+unchanged. The ecosystem check applies a 30-minute limit per phase by
+default, longer for named projects, and reports `TIMEOUT`.
 
 ## Resources and platform
 

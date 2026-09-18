@@ -12,19 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Ask mypy what type an expression has at a point in a module.
+"""Ask the project's type checker about expressions, subtypes, and generated code.
 
 The engine copies annotations the call sites declare; for an argument that is
-an expression rather than an annotated name, only a type checker knows. When
-mypy is installed, :class:`MypyInferrer` builds a copy of the site's module in
+an expression rather than an annotated name, only a type checker knows. A
+:class:`TypeOracle` answers three questions: the type of each probed
+expression at a point in a module (``reveal``), whether one type is a
+subtype of another (``is_subtype``), and whether a file type-checks
+(``check``). :class:`MypyInferrer` builds a copy of the site's module in
 memory with ``reveal_type(<expression>)`` inserted where the block begins,
-so names resolve as they do at the call, and reads the revealed types back.
-Nothing is written to disk except mypy's own cache, which lives for the
-inferrer's lifetime so later proposals in the same run rebuild incrementally.
+so names resolve as they do at the call, and asks subtyping through probe
+functions ``def _probe(v: narrow) -> wide: return v`` appended to the copy,
+so the relation is mypy's own; nothing is written to disk except mypy's
+cache, which lives for the inferrer's lifetime so later proposals in the
+same run rebuild incrementally. :class:`PyrightOracle` does the same through
+the pyright command on a temporary sibling file. :class:`CombinedOracle`
+infers with one checker and verifies with several, and
+:func:`type_oracle_for_project` picks them from the project's configuration.
 
-The engine accepts any ``TypeInferrer``; the answers are strings in mypy's
-spelling, which ``towel.unification.annotations`` turns into annotations only
-when every name in them resolves where the helper is defined.
+The answers are strings in the checker's spelling, which
+``towel.unification.annotations`` turns into annotations only when every
+name in them resolves where the helper is defined.
 """
 
 from __future__ import annotations

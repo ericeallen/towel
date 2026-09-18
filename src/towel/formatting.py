@@ -12,14 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Formatting of the code Towel generates.
+"""Formatting of the code Towel generates, with the project's own tools.
 
 ``ast.unparse`` renders a helper or a call on one line with single-quoted
 strings. A formatter makes the inserted text read like the surrounding code.
-The engine accepts any ``SnippetFormatter``; this module supplies Black, when
-it is installed, configured from the project's own ``[tool.black]`` settings.
-Formatting must never change meaning, so every formatter is wrapped by
-:func:`checked`, which compares the syntax tree before and after.
+The engine accepts any ``SnippetFormatter``; :func:`formatter_for_project`
+supplies ``ruff format`` when the project configures ruff and Black
+otherwise, whichever is installed, at the line length the project declares
+in any of its tool sections. Formatting must never change meaning, so every
+formatter is wrapped by :func:`checked`, which compares the syntax tree
+before and after. :func:`import_sorter_for_project` supplies a
+``FileFinisher`` that sorts a modified file's imports with ruff's ``I`` rules
+or isort, as the project does, guarded by :func:`imports_permuted_only`,
+which keeps the sorter's result only when it permutes or merges import
+statements and nothing else.
 """
 
 from __future__ import annotations

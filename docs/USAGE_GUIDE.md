@@ -93,7 +93,7 @@ print("Termination:", reason)
 
 ### Localized Follow-Ups
 
-After each applied proposal, the engine re-analyzes only the changed files to enqueue *localized* follow-up proposals immediately. This accelerates chained extractions without rescanning the entire project every iteration.
+After each applied proposal, the engine re-analyzes only the changed files to enqueue *localized* follow-up proposals immediately. This accelerates chained extractions without rescanning the entire project every iteration. When that queue drains, a *global* pass re-pairs the project for cross-file duplicates; after the first, a global pass re-pairs only the functions in files rewritten since the previous global pass, which is exact (the argument is in [ARCHITECTURE.md](ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)). Construct the engine with `incremental_global_passes=False` to re-pair everything each time; the output is byte-identical.
 
 ## Command-Line Usage
 
@@ -123,6 +123,44 @@ engine = UnificationRefactorEngine(
 )
 ```
 
+The keyword-only parameters, all defaulting to what the CLI does:
+
+| Parameter | Default | Effect |
+|---|---|---|
+| `parameterize_constants` | `True` | Differing constants become helper parameters. |
+| `prefer_absolute_imports` | `None` | Cross-file helper import style; `None` lets the discovered layout decide (`--prefer-absolute-imports/--no-prefer-absolute-imports`). |
+| `pep420_namespace_packages` | `None` | Treat directories without `__init__.py` as packages; `None` infers it (`--pep420/--no-pep420`). |
+| `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`). |
+| `skip_trivial_helpers` | `True` | Do not propose a helper that only forwards, renames, or unpacks. |
+| `reuse_existing_functions` | `True` | A duplicate that is the whole body of a plain module-level function calls that function instead of a new helper. |
+| `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
+| `type_inferrer` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one nothing is inferred or verified (`--types/--no-types`). |
+| `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
+| `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports. |
+| `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). |
+
+The CLI's `dry` command wires the formatter, import sorter, and type oracle
+from the project's own configuration. Library callers can do the same:
+
+```python
+from pathlib import Path
+from towel.formatting import formatter_for_project, import_sorter_for_project
+from towel.type_inference import type_oracle_for_project
+
+root = Path("src/")
+formatter, note = formatter_for_project(root)   # ruff when configured, else Black; None if neither is installed
+sorter, note = import_sorter_for_project(root)  # ruff's I rules or isort, when the project uses them
+oracle, note = type_oracle_for_project(root)    # mypy, pyright, or both; None if neither is installed
+
+engine = UnificationRefactorEngine(
+    snippet_formatter=formatter, file_finisher=sorter, type_inferrer=oracle
+)
+```
+
+Each `note` says what was chosen and names a configured tool that is not
+installed. Without a formatter the rendering is `ast.unparse`'s: one
+statement per line, single-quoted strings, no blank-line conventions.
+
 ### Directory Scanning
 
 ```python
@@ -149,6 +187,9 @@ proposal.parameters_count     # Number of parameters in extracted function
 proposal.extracted_function   # The AST of the new function
 proposal.replacements         # List of (line_range, call_node, file_path)
 proposal.file_path            # Canonical location for the extracted function
+proposal.reused_function      # ReusedFunction(name, file_path, line_range) when the
+                              # sites call an existing function; None for a helper
+proposal.required_imports     # Imports the host needs for the helper's annotations
 ```
 
 ### Cross-File vs Same-File
@@ -166,6 +207,10 @@ else:
 ```
 
 ## Examples
+
+The outputs below are what `towel dry` writes with the defaults and Black
+installed. Through the API without a `snippet_formatter`, strings come out
+single-quoted and the layout is `ast.unparse`'s.
 
 ### Example 1: Simple Validation Code
 
@@ -195,23 +240,27 @@ def process_admin_data(admin_id):
 **After:**
 ```python
 def __extracted_func_0(__param_0):
-    if not __param_0.get('id'):
-        raise ValueError('User ID is required')
-    if not __param_0.get('name'):
-        raise ValueError('User name is required')
-    if len(__param_0.get('name', '')) < 2:
-        raise ValueError('User name too short')
+    if not __param_0.get("id"):
+        raise ValueError("User ID is required")
+    if not __param_0.get("name"):
+        raise ValueError("User name is required")
+    if len(__param_0.get("name", "")) < 2:
+        raise ValueError("User name too short")
+    return __param_0
+
 
 def process_user_data(user_id):
     user = {"id": user_id, "name": "John"}
-    __extracted_func_0(user)
-    return user
+    return __extracted_func_0(user)
 
 def process_admin_data(admin_id):
     admin = {"id": admin_id, "name": "Jane", "role": "admin"}
-    __extracted_func_0(admin)
-    return admin
+    return __extracted_func_0(admin)
 ```
+
+The trailing `return` joined the block because it is the same statement in
+both functions up to the renamed variable, so the call site becomes a
+`return` of the helper.
 
 ### Example 2: Cross-File Duplicates
 
@@ -241,29 +290,21 @@ def calculate_discount_for_premium_customer(price, customer):
     return final_price
 ```
 
-**After (file1.py):**
-```python
-def __extracted_func_0(customer, price):
-    base_discount = 0.1
-    if customer.get('years_member', 0) > 5:
-        base_discount += 0.05
-    if customer.get('total_purchases', 0) > 1000:
-        base_discount += 0.05
-    discount_amount = price * base_discount
-    final_price = price - discount_amount
-    return final_price
-
-def calculate_discount_for_regular_customer(price, customer):
-    return __extracted_func_0(customer, price)
-```
+**After (file1.py):** unchanged. The duplicate is the whole body of
+`calculate_discount_for_regular_customer`, so no helper is generated: the
+first-defined function is kept and the other calls it (the preview reports
+this as "Reuse calculate_discount_for_regular_customer (file1.py)").
 
 **After (file2.py):**
 ```python
-from file1 import __extracted_func_0
-
+from .file1 import calculate_discount_for_regular_customer
 def calculate_discount_for_premium_customer(price, customer):
-    return __extracted_func_0(customer, price)
+    return calculate_discount_for_regular_customer(price, customer)
 ```
+
+The import is relative because both modules sit in one package. Had the
+shared block been only part of each body, a `__extracted_func_0` helper would
+have been placed in one file and imported by the other in the same way.
 
 ## Tips
 

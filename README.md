@@ -47,9 +47,9 @@ infers for the rest, verified against the checker; `--no-types` turns that
 off:
 
 ```python
-def __extracted_func_0(record):
-    items = [i for i in record.items if i.in_stock]
-    subtotal = sum(i.price for i in items)
+def __extracted_func_0(__param_0):
+    items = [i for i in __param_0.items if i.in_stock]
+    subtotal = sum((i.price for i in items))
     total = round(subtotal * 1.08, 2)
     return total
 
@@ -94,7 +94,13 @@ Install `code-towel`, not `towel`: the name `towel` on PyPI is a different, unre
 uvx --from code-towel towel --help
 ```
 
-The runtime uses only the standard library; optional `tqdm` provides progress bars. Platform, CPU, memory, and disk requirements are in [Requirements](#requirements) below.
+The runtime uses only the standard library; optional `tqdm` provides progress bars. Two extras install the tools Towel uses when they are present: `code-towel[format]` (Black, ruff, isort) formats the code it inserts and sorts inserted imports the way the project does, and `code-towel[types]` (mypy, pyright) annotates generated helpers and type-checks the result. Both behaviors are on by default whenever the tool is installed, and `--no-format` and `--no-types` turn them off:
+
+```bash
+pip install "code-towel[format,types]"
+```
+
+Platform, CPU, memory, and disk requirements are in [Requirements](#requirements) below.
 
 ## Requirements
 
@@ -117,10 +123,11 @@ Rough expectations with the defaults:
 | One module | a 2,000-line file | seconds |
 | Small package | boltons, 24,000 lines | about 5 s |
 | Medium package | Click, 29,000 lines | about 12 s |
+| Towel's own source | 16,000 annotated lines, fixed point | about 40 s |
 | Large package | pygments, 137,000 lines | tens of seconds |
-| Largest in the corpus | networkx and Sphinx, 150,000 to 200,000 lines | several minutes to tens of minutes |
+| Largest in the corpus | networkx and Sphinx, 150,000 to 200,000 lines | several minutes to about half an hour |
 
-The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-analyzes the whole project after each applied change; the ecosystem check gives them extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine.
+The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add about a quarter to an annotated project's time, spent type-checking each applied refactoring: Towel's own source takes 34 s with `--no-types --no-format` and 42 s with the defaults.
 
 ## Use
 
@@ -137,15 +144,18 @@ towel dry path/to/project path/to/project --no-interactive
 
 # Bound the number of changes
 towel dry example.py cleaned.py --no-interactive --max-refactorings 10
+
+# Leave helpers unannotated, or insert code as rendered without formatting
+towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-format
 ```
 
 A separate output must not already exist or overlap the input. Cancellation leaves the filesystem unchanged. Symlinked Python files are excluded from directory analysis. The API accepts an empty output directory for fixture and integration workflows. Complete changes are staged and checked before the first write. Each file is replaced atomically; caught application failures roll back, and interrupted batches retain a recovery journal. Readers can observe a partially applied batch. Keep exclusive write access to the project and its parent while applying or recovering: snapshot checks detect stale files but cannot prevent a noncooperating editor from writing in the final check/replace interval.
 
 To roll back an interrupted batch, use `towel recover /path/to/.towel-transaction-active`. Recovery refuses detected conflicting edits and keeps the journal for resolution. Review local journals before recovery; they contain original source bytes. Do not delete a journal before resolving the interrupted operation. Initial out-of-place copying is staged separately so copy errors do not leave a partial output.
 
-For detailed conservative rejection reasons, set `DEBUG_PROPOSAL_REJECTIONS=1` when running preview.
+For detailed conservative rejection reasons, set `DEBUG_PROPOSAL_REJECTIONS=1` when running preview. `TOWEL_DEBUG_TYPES=1` prints what the type checker answered for each probed expression and the errors that make a helper's annotations fall back.
 
-Run `towel dry --help` for import-layout, iteration, and progress options.
+Run `towel dry --help` for the import-layout, typing, formatting, iteration, and progress options. Every boolean option is a `--x/--no-x` pair; the `--help` text names the default.
 
 ## What is analyzed
 
@@ -198,6 +208,10 @@ notify(lambda: welcome_email(user), user)
 
 The same reasoning covers an expression inside a loop (the thunk runs once per iteration, as the original did) or one that might raise. Towel keeps the wrapper only where it can matter: an expression the helper would evaluate first, once, and unconditionally is passed directly, because then nothing can observe the difference. So a `lambda:` in the output is a deliberate marker that Towel is preserving that argument's timing, count, or conditionality; its absence means eager evaluation was proven equivalent.
 
+## How helpers get their types
+
+Towel annotates a helper only in code that already uses annotations, and only from evidence: what the call sites declare, and what the project's own type checker says. A parameter whose every argument is an annotated, never-rebound parameter of the enclosing function takes that annotation. For an argument that is an expression, Towel asks the checker (mypy, or pyright when that is what the project configures) for the expression's type at the call. When sites disagree, the parameter takes the union of their types, normalized by the checker's own subtype relation, so `int | bool` is written `int` and a subclass disappears under its base. The return type must satisfy every site: when the enclosing functions declare return types, the helper returns the narrower declaration, or the type the checker reveals when the checker confirms it is a subtype of every declaration. Thunks are `Callable[[], T]`. Once a helper has one annotation, the rest are completed with `Any`, so no signature is partial. The annotated helper and its call sites are then type-checked, and if the change introduces an error the annotations fall back to `Any`, and then to none. A class defined in the same module is named bare, by placing the helper after that class when nothing before it runs code at import time; otherwise the name is quoted. Without a checker Towel copies and does not reason: unions are written unreduced and disagreeing declarations leave the return bare. [The architecture document](docs/ARCHITECTURE.md#helper-annotations) states the rules.
+
 ## Naming the helpers with an LLM
 
 Towel deliberately generates meaningless names, `__extracted_func_3` and `__param_0`, and leaves the naming to a separate, review-first step. Extraction is a verified mechanical transformation; choosing a good name is a judgment call, so the two are kept apart. The intended workflow hands the naming to a coding assistant, because the assistant reads far better names out of the call sites than any heuristic, and you review its choices before they touch the code.
@@ -221,7 +235,7 @@ The JSON inventory gives the assistant what it needs to name well: every helper 
 
 Each helper also carries a `changes` list: for every call site, the exact original block it replaced (`before`) next to the generated call (`after`). Seeing what the code did before extraction is what lets an assistant finish good names, write a docstring, and infer parameter and return types. This comes from a small `.towel-helpers.json` that `towel dry` writes next to its output; it is only for the naming step and is safe to delete afterward.
 
-Each inventory entry carries the exact mapping key to use as a rename target: `"path.py:helper"` renames a module-level helper together with its importers, `"helper"` renames a unique class-level helper together with every attribute reference, and `"path.py:helper.__param_0"` renames a parameter within the helper's scope. The rename is applied as one atomic batch with scope and importer checks; a name collision, a mangled name, or a dynamic reference aborts the whole batch and reports the reason, so a bad suggestion changes nothing. `--dry-run` reports the same JSON without writing.
+Each inventory entry carries the exact mapping key to use as a rename target: `"path.py:helper"` renames a module-level helper together with its importers, `"helper"` renames a unique class-level helper together with every attribute reference, and `"path.py:helper.__param_0"` renames a parameter within the helper's scope. The rename is applied as one atomic batch with scope and importer checks; a name collision, a mangled name, or a dynamic reference aborts the whole batch and reports the reason, so a bad suggestion changes nothing. `--preview` reports the same JSON without writing.
 
 The shared `towel-rename` skill (in the agent-skills repository) walks an assistant through the whole loop: extract, review the diff, name, apply, and re-test. An interactive prompt mode is also available for naming by hand, and it calls no LLM service.
 
@@ -240,11 +254,11 @@ uv run --frozen bandit -r src/towel -ll
 uv run --frozen python -m build
 ```
 
-Alternatively, create `.venv`, activate it, and install `pip install -e '.[dev]'`. `just check` checks formatting, lint, and typing; `just test` runs the tests. `just ci` runs both. These commands propagate failures. Activate the environment before installing/running pre-commit hooks so they use the same toolchain.
+Alternatively, create `.venv`, activate it, and install `pip install -e '.[dev]'`. `just check` checks formatting, lint, typing, and Bandit; `just test` runs the tests. These commands propagate failures. The pre-commit hooks call `python` from the environment, so activate it (or prefix `PATH="$PWD/.venv/bin:$PATH"`) before installing or running them; the mypy hook checks the whole tree, so files in progress must type-check too. The tests for formatting and typing need the `dev` extra's Black, ruff, isort, mypy, and pyright; the mypy and pyright tests skip when those are absent.
 
 `towel dry PKG PKG --exclude tests` leaves a directory name out of directory mode (repeatable); use it for packages that carry their test suite inside themselves. Large analyses fork worker processes after parsing when a timed probe projects enough work; set `TOWEL_WORKERS=1` to stay on one core or another value to cap the workers. Set `TOWEL_CHECK_AST_IMMUTABLE=1` to verify on every cache reuse that analysis left the module's AST untouched.
 
-`just ecosystem` runs the standing ecosystem check (`scripts/ecosystem_check.py`): it clones the public projects listed in `scripts/ecosystem/manifest.toml`, runs each project's own test suite, refactors a copy with the CLI defaults, runs the suite again, and reports `PASS`, `NO_CHANGE`, `BROKEN`, `CRASH`, `TIMEOUT`, `UNSUPPORTED`, or a documented `BROKEN_KNOWN` per project, with a Markdown and JSON report. It runs weekly and on demand in CI and is the evidence behind [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md).
+`just ecosystem` runs the standing ecosystem check (`scripts/ecosystem_check.py`): it clones the 141 public projects listed in `scripts/ecosystem/manifest.toml`, among them Towel's own releases and current `main`, runs each project's own test suite, refactors a copy with the CLI defaults, runs the suite again, and reports `PASS`, `NO_CHANGE`, `BROKEN`, `CRASH`, `TIMEOUT`, `UNSUPPORTED`, or a documented `BROKEN_KNOWN` per project, with a Markdown and JSON report. It runs weekly and on demand in CI and is the evidence behind [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). The harness imports Towel from `--towel-src` (this checkout's `src` by default) for the whole run, so a commit or stash made while it runs changes what later projects are tested with; it warns when the tree is dirty. To keep editing during a run, point `--towel-src` at a detached worktree of the commit under test.
 
 Behavioral tests compare sampled return values and types, exceptions, output, and argument mutations. Cross-file tests isolate imports for each execution. Empty selections, unsupported class construction, and cross-file returned closures do not count as success. Single-file callable comparison samples one returned-callable layer; deeper returned callables are not validated. These checks are regression evidence, not proof of equivalence for arbitrary programs.
 
