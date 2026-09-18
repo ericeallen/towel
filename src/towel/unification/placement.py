@@ -41,7 +41,7 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import imported_definition_sites
-from .visitors import MethodCallRewriter
+from .visitors import MethodCallRewriter, visit_as
 
 from .engine_state import EngineState
 
@@ -151,17 +151,17 @@ class HelperPlacement(EngineState):
         return None
 
     @staticmethod
-    def _has_decorator(fn: ast.FunctionDef, name: str) -> bool:
+    def _has_decorator(function: ast.FunctionDef, name: str) -> bool:
         """Return True when the function already carries a decorator with the given name."""
 
-        return any(HelperPlacement._decorator_name(dec) == name for dec in fn.decorator_list)
+        return any(HelperPlacement._decorator_name(dec) == name for dec in function.decorator_list)
 
     @staticmethod
-    def _strip_decorator(fn: ast.FunctionDef, name: str) -> None:
+    def _strip_decorator(function: ast.FunctionDef, name: str) -> None:
         """Remove any decorator whose resolved name matches ``name``."""
 
-        fn.decorator_list = [
-            dec for dec in fn.decorator_list if HelperPlacement._decorator_name(dec) != name
+        function.decorator_list = [
+            dec for dec in function.decorator_list if HelperPlacement._decorator_name(dec) != name
         ]
 
     @staticmethod
@@ -190,11 +190,11 @@ class HelperPlacement(EngineState):
 
         if original_name == final_name:
             return node
-        return cast(ast.AST, _CallRenamer(original_name, final_name).visit(node))
+        return visit_as(_CallRenamer(original_name, final_name), node)
 
     def _prepare_extracted_method_signature(
         self,
-        fn: ast.FunctionDef,
+        function: ast.FunctionDef,
         method_kind: MethodKind,
         implicit_param: Optional[str],
     ) -> None:
@@ -202,20 +202,20 @@ class HelperPlacement(EngineState):
 
         if method_kind == "instance":
             name = implicit_param or "self"
-            self._ensure_leading_param(fn, name)
+            self._ensure_leading_param(function, name)
             # Strip any conflicting decorators that might have been synthesized earlier
-            self._strip_decorator(fn, "staticmethod")
-            self._strip_decorator(fn, "classmethod")
+            self._strip_decorator(function, "staticmethod")
+            self._strip_decorator(function, "classmethod")
         elif method_kind == "classmethod":
             name = implicit_param or "cls"
-            self._ensure_leading_param(fn, name)
-            self._strip_decorator(fn, "staticmethod")
-            if not self._has_decorator(fn, "classmethod"):
-                fn.decorator_list.insert(0, ast.Name(id="classmethod", ctx=ast.Load()))
+            self._ensure_leading_param(function, name)
+            self._strip_decorator(function, "staticmethod")
+            if not self._has_decorator(function, "classmethod"):
+                function.decorator_list.insert(0, ast.Name(id="classmethod", ctx=ast.Load()))
         elif method_kind == "staticmethod":
-            self._strip_decorator(fn, "classmethod")
-            if not self._has_decorator(fn, "staticmethod"):
-                fn.decorator_list.insert(0, ast.Name(id="staticmethod", ctx=ast.Load()))
+            self._strip_decorator(function, "classmethod")
+            if not self._has_decorator(function, "staticmethod"):
+                function.decorator_list.insert(0, ast.Name(id="staticmethod", ctx=ast.Load()))
         else:
             raise ValueError(f"Unsupported method kind: {method_kind}")
 
@@ -268,7 +268,7 @@ class HelperPlacement(EngineState):
             implicit_name=implicit_param,
             class_name=class_name,
         )
-        return cast(ast.AST, rewriter.visit(node))
+        return visit_as(rewriter, node)
 
     @staticmethod
     def _drop_implicit_keyword(

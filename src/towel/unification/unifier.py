@@ -25,13 +25,14 @@ for a substitution making two terms equal.
 """
 
 import ast
-from typing import Callable, Dict, Optional, List, Tuple, Any, cast, Sequence, Union, Iterator
+from typing import Callable, Dict, Optional, List, Tuple, Any, Sequence, Type, Union, Iterator
 
 from .constant_consistency import ConstantConsistency
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
 from .substitution import Substitution
+from .visitors import all_instances
 
 
 class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
@@ -71,13 +72,13 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # Maps (block_idx, original_name) -> canonical_name
         self.alpha_renamings: Dict[Tuple[int, str], str] = {}
         # Store blocks being unified for context analysis
-        self.current_blocks: Optional[Sequence[Sequence[ast.AST]]] = None
+        self.current_blocks: Optional[Sequence[Sequence[ast.stmt]]] = None
         # Track constant occurrences: (block_idx, value) -> [position_paths]
         # position_path is a tuple of (stmt_idx, field_name, ...) identifying location
         self.constant_positions = {}
 
     def unify_blocks(
-        self, blocks: Sequence[Sequence[ast.AST]], hygienic_renames: List[Dict[str, str]]
+        self, blocks: Sequence[Sequence[ast.stmt]], hygienic_renames: List[Dict[str, str]]
     ) -> Optional[Substitution]:
         """
         Unify multiple code blocks.
@@ -110,18 +111,18 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self._setup_bound_variable_alpha_renamings(blocks)
 
         # Initialize substitution
-        subst = Substitution()
+        substitution = Substitution()
 
         # Unify statement by statement
         for stmt_idx in range(len(blocks[0])):
             stmts = [block[stmt_idx] for block in blocks]
 
             # Unify this statement across all blocks
-            if not self._unify_nodes(stmts, subst, list(range(len(blocks)))):
+            if not self._unify_nodes(stmts, substitution, list(range(len(blocks)))):
                 return None
 
         # Check we haven't exceeded max parameters
-        if len(subst.param_expressions) > self.max_parameters:
+        if len(substitution.param_expressions) > self.max_parameters:
             return None
 
         # Copy alpha-renamings to output hygienic_renames parameter
@@ -132,25 +133,25 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         # Also attach hygienic_renames to the substitution for downstream consumers
         # so they don't need to thread the mapping through every call.
-        subst.hygienic_renames = hygienic_renames
+        substitution.hygienic_renames = hygienic_renames
 
         # After successful unification, optionally promote literal arguments in
         # higher-order factory calls (Option B policy): even if literals are
         # equal across blocks, expose them as parameters and thread through calls.
         if self.promote_equal_hof_literals:
-            self._promote_hof_literals(blocks, subst)
+            self._promote_hof_literals(blocks, substitution)
 
-        return subst
+        return substitution
 
     def _unify_nodes(
-        self, nodes: Sequence[ast.AST], subst: Substitution, block_indices: Sequence[int]
+        self, nodes: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
     ) -> bool:
         """
         Unify a list of AST nodes (one from each block).
 
         Args:
             nodes: List of nodes to unify
-            subst: Current substitution
+            substitution: Current substitution
             block_indices: Block index for each node
 
         Returns:
@@ -161,15 +162,11 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         if len(set(node_types)) != 1:
             # Different types - cannot unify at the statement level
             # Try to parameterize the entire expression
-            return self._try_parameterize(nodes, subst, block_indices)
-
-        first_node = nodes[0]
-
-        # Special handling for different node types
+            return self._try_parameterize(nodes, substitution, block_indices)
 
         # Constants - check if they're identical, or parameterize if enabled
-        if isinstance(first_node, ast.Constant):
-            values = [cast(ast.Constant, n).value for n in nodes]
+        if all_instances(nodes, ast.Constant):
+            values = [n.value for n in nodes]
             if len(set(values)) == 1:
                 return True  # All same constant
 
@@ -193,17 +190,16 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     return False
 
                 # Parameterize differing constants
-                return self._try_parameterize(nodes, subst, block_indices)
+                return self._try_parameterize(nodes, substitution, block_indices)
             else:
                 # Cannot unify - constants must be identical
                 return False
 
         # Names - if they differ, check alpha-renaming first
-        if isinstance(first_node, ast.Name):
-            # Apply alpha-renaming to get canonical names
+        if all_instances(nodes, ast.Name):
             canonical_names = []
-            for idx, (node, block_idx) in enumerate(zip(nodes, block_indices)):
-                name = cast(ast.Name, node).id
+            for node, block_idx in zip(nodes, block_indices):
+                name = node.id
                 # Check if this name has an alpha-renaming for this block
                 renamed = self.alpha_renamings.get((block_idx, name), name)
                 canonical_names.append(renamed)
@@ -215,7 +211,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             # Different names even after alpha-renaming - track correspondence before parameterizing
             # Use first ORIGINAL name (not canonical) for free variable correspondence
             # This is important: we want to map admin→user, not admin→__temp_0
-            original_names = [cast(ast.Name, n).id for n in nodes]
+            original_names = [n.id for n in nodes]
             first_original_name = original_names[0]
 
             for node, block_idx, original_name in zip(nodes, block_indices, original_names):
@@ -225,35 +221,21 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     self.alpha_renamings[(block_idx, original_name)] = first_original_name
 
             # Now parameterize
-            return self._try_parameterize(nodes, subst, block_indices)
+            return self._try_parameterize(nodes, substitution, block_indices)
 
         # For compound nodes, recursively unify all fields
-        return self._unify_compound_node(nodes, subst, block_indices)
+        return self._unify_compound_node(nodes, substitution, block_indices)
 
     #: Node types whose bound names are alpha-equivalent, and the method that unifies each.
-    _BINDING_CONSTRUCT_UNIFIERS: Dict[type, str] = {
-        ast.For: "_unify_for_loop",
-        ast.Lambda: "_unify_lambda",
-        ast.JoinedStr: "_unify_joined_str",
-        ast.ListComp: "_unify_elt_comprehension",
-        ast.SetComp: "_unify_elt_comprehension",
-        ast.GeneratorExp: "_unify_elt_comprehension",
-        ast.DictComp: "_unify_dict_comp",
-        ast.AnnAssign: "_unify_ann_assign",
-        ast.With: "_unify_with",
-        ast.ExceptHandler: "_unify_except_handler",
-        ast.NamedExpr: "_unify_named_expr",
-    }
-
     def _unify_compound_node(
-        self, nodes: Sequence[ast.AST], subst: Substitution, block_indices: Sequence[int]
+        self, nodes: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
     ) -> bool:
         """
         Unify compound AST nodes by recursively unifying their fields.
 
         Args:
             nodes: List of nodes (all same type)
-            subst: Current substitution
+            substitution: Current substitution
             block_indices: Block indices
 
         Returns:
@@ -266,13 +248,9 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # is unified by a method of its own: the bound names are
         # alpha-equivalent, never parameterized, and f-string literal parts
         # and annotations are compared, never parameterized, likewise.
-        handler_name = self._BINDING_CONSTRUCT_UNIFIERS.get(type(first_node))
-        if handler_name is not None:
-            handler = cast(
-                Callable[[Sequence[ast.AST], Substitution, List[int]], bool],
-                getattr(self, handler_name),
-            )
-            return handler(nodes, subst, list(block_indices))
+        handler = self._BINDING_CONSTRUCT_UNIFIERS.get(type(first_node))
+        if handler is not None:
+            return handler(self, nodes, substitution, list(block_indices))
 
         # For each field in the node
         for field_name in first_node._fields:
@@ -295,12 +273,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
             elif isinstance(first_value, list):
                 # Lists of AST nodes or primitives
-                # Check all are lists
-                if not all(isinstance(v, list) for v in field_values):
-                    # Mixed list/non-list - can't unify
-                    return False
-                if not self._unify_lists(
-                    cast(Sequence[Sequence[Any]], field_values), subst, block_indices
+                if not all_instances(field_values, list) or not self._unify_lists(
+                    field_values, substitution, block_indices
                 ):
                     return False
 
@@ -324,8 +298,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     continue
 
                 # Regular AST nodes - _unify_nodes handles type differences via parameterization
-                if not self._unify_nodes(
-                    cast(Sequence[ast.AST], field_values), subst, block_indices
+                if not all_instances(field_values, ast.AST) or not self._unify_nodes(
+                    field_values, substitution, block_indices
                 ):
                     return False
 
@@ -338,14 +312,14 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                 # Must all be equal
                 if not all(v == first_value for v in field_values):
                     # Try to parameterize the entire node if primitives differ
-                    return self._try_parameterize(nodes, subst, block_indices)
+                    return self._try_parameterize(nodes, substitution, block_indices)
 
         return True
 
     def _unify_elt_comprehension(
         self,
         nodes: Sequence[Union[ast.ListComp, ast.SetComp, ast.GeneratorExp]],
-        subst: Substitution,
+        substitution: Substitution,
         block_indices: List[int],
     ) -> bool:
         """Unify comprehensions that produce one element, with alpha-renamed generator targets.
@@ -359,15 +333,15 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             return False
         return self._unify_comprehension_core(
             nodes,
-            subst,
+            substitution,
             block_indices,
-            lambda: self._unify_nodes([n.elt for n in nodes], subst, block_indices),
+            lambda: self._unify_nodes([n.elt for n in nodes], substitution, block_indices),
         )
 
     def _unify_comprehension_core(
         self,
         nodes: Sequence[Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]],
-        subst: Substitution,
+        substitution: Substitution,
         block_indices: List[int],
         finalize: Callable[[], bool],
     ) -> bool:
@@ -380,28 +354,28 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             num_gens = len(gen_lists[0])
             for gen_idx in range(num_gens):
                 comps = [g[gen_idx] for g in gen_lists]
-                if not self._unify_single_comprehension(comps, subst, block_indices):
+                if not self._unify_single_comprehension(comps, substitution, block_indices):
                     return False
             return finalize()
         finally:
             self.alpha_renamings = saved_alpha
 
     def _unify_dict_comp(
-        self, nodes: List[ast.DictComp], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.DictComp], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         if not nodes:
             return False
 
         return self._unify_comprehension_core(
             nodes,
-            subst,
+            substitution,
             block_indices,
-            lambda: self._unify_nodes([n.key for n in nodes], subst, block_indices)
-            and self._unify_nodes([n.value for n in nodes], subst, block_indices),
+            lambda: self._unify_nodes([n.key for n in nodes], substitution, block_indices)
+            and self._unify_nodes([n.value for n in nodes], substitution, block_indices),
         )
 
     def _unify_with(
-        self, nodes: List[ast.With], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.With], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """
         Unify With nodes, treating optional_vars as bound (alpha-equivalent).
@@ -423,7 +397,9 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             for i in range(num_items):
                 items_i = [lst[i] for lst in items_lists]
                 # Unify context_expr
-                if not self._unify_nodes([it.context_expr for it in items_i], subst, block_indices):
+                if not self._unify_nodes(
+                    [it.context_expr for it in items_i], substitution, block_indices
+                ):
                     return False
 
                 # Handle optional_vars as bindings
@@ -432,10 +408,9 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     pass  # nothing to do
                 else:
                     # All must be AST; if any None while others not, fail
-                    if any(ov is None for ov in optional_vars_raw):
+                    if not all_instances(optional_vars_raw, ast.expr):
                         return False
-                    # Establish alpha-renaming for targets
-                    targets = cast(List[ast.expr], optional_vars_raw)
+                    targets = optional_vars_raw
                     # Support simple Name or Tuple[List] of Names
                     # Collect names positionally
 
@@ -462,7 +437,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                             self.alpha_renamings[(block_idx, actual)] = canonical
 
             # Unify bodies
-            if not self._unify_lists([n.body for n in nodes], subst, block_indices):
+            if not self._unify_lists([n.body for n in nodes], substitution, block_indices):
                 return False
 
             # type_comment (if present) must match
@@ -475,7 +450,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             self.alpha_renamings = saved_alpha
 
     def _unify_except_handler(
-        self, nodes: List[ast.ExceptHandler], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.ExceptHandler], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """
         Unify ExceptHandler nodes, treating the 'name' as a bound identifier.
@@ -485,9 +460,9 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         if all(t is None for t in types_list):
             pass
         else:
-            if any(t is None for t in types_list):
+            if not all_instances(types_list, ast.expr):
                 return False
-            if not self._unify_nodes(cast(List[ast.AST], types_list), subst, block_indices):
+            if not self._unify_nodes(types_list, substitution, block_indices):
                 return False
 
         # Establish temporary alpha-renamings for the handler variable names (strings)
@@ -500,22 +475,22 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             else:
                 if not all((nm is None) == (names[0] is None) for nm in names):
                     return False
-                if names[0] is not None:
-                    names_str: List[str] = cast(List[str], names)
+                if all_instances(names, str):
+                    names_str = names
                     canonical = names_str[0]
                     for idx, block_idx in enumerate(block_indices):
                         actual = names_str[idx]
                         self.alpha_renamings[(block_idx, actual)] = canonical
 
             # Unify body
-            if not self._unify_lists([n.body for n in nodes], subst, block_indices):
+            if not self._unify_lists([n.body for n in nodes], substitution, block_indices):
                 return False
             return True
         finally:
             self.alpha_renamings = saved_alpha
 
     def _unify_named_expr(
-        self, nodes: List[ast.NamedExpr], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.NamedExpr], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """
         Unify walrus (NamedExpr) treating the target as a binding.
@@ -533,7 +508,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     self.alpha_renamings[(block_idx, names[idx])] = canonical
 
             # Unify values under established alpha-renamings
-            if not self._unify_nodes([n.value for n in nodes], subst, block_indices):
+            if not self._unify_nodes([n.value for n in nodes], substitution, block_indices):
                 return False
             # Do not require exact match for target identifiers (treated as bindings)
             return True
@@ -541,7 +516,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             self.alpha_renamings = saved_alpha
 
     def _unify_ann_assign(
-        self, nodes: List[ast.AnnAssign], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.AnnAssign], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """Unify annotated assignments by target and value, ignoring the annotation."""
         if not all(isinstance(node, ast.AnnAssign) for node in nodes):
@@ -551,14 +526,16 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         values = [node.value for node in nodes]
         if any(value is None for value in values):
             return all(value is None for value in values) and self._unify_nodes(
-                [node.target for node in nodes], subst, block_indices
+                [node.target for node in nodes], substitution, block_indices
             )
-        return self._unify_nodes(
-            cast(List[ast.AST], values), subst, block_indices
-        ) and self._unify_nodes([node.target for node in nodes], subst, block_indices)
+        if not all_instances(values, ast.expr):
+            return False
+        return self._unify_nodes(values, substitution, block_indices) and self._unify_nodes(
+            [node.target for node in nodes], substitution, block_indices
+        )
 
     def _unify_single_comprehension(
-        self, comps: List[ast.comprehension], subst: Substitution, block_indices: List[int]
+        self, comps: List[ast.comprehension], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """
         Unify a single 'comprehension' node across blocks, establishing
@@ -578,9 +555,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         targets = [c.target for c in comps]
 
         # Simple Name targets
-        if all(isinstance(t, ast.Name) for t in targets):
-            name_targets = cast(List[ast.Name], targets)
-            names = [t.id for t in name_targets]
+        if all_instances(targets, ast.Name):
+            names = [t.id for t in targets]
             canonical = names[0]
             # Establish alpha-renaming for the duration of the entire comprehension
             for idx, block_idx in enumerate(block_indices):
@@ -588,26 +564,27 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                 self.alpha_renamings[key] = canonical
 
             # Unify iterator and ifs under alpha-renaming
-            if not self._unify_nodes([c.iter for c in comps], subst, block_indices):
+            if not self._unify_nodes([c.iter for c in comps], substitution, block_indices):
                 return False
-            if not self._unify_lists([c.ifs for c in comps], subst, block_indices):
+            if not self._unify_lists([c.ifs for c in comps], substitution, block_indices):
                 return False
             return True
 
         # Tuple targets with simple names
-        if all(isinstance(t, ast.Tuple) for t in targets):
+        if all_instances(targets, ast.Tuple):
             # All tuples must be flat and same length with Name elts
-            tuple_targets = cast(List[ast.Tuple], targets)
-            lengths = [len(t.elts) for t in tuple_targets]
+            lengths = [len(t.elts) for t in targets]
             if len(set(lengths)) != 1:
                 return False
-            if not all(all(isinstance(e, ast.Name) for e in t.elts) for t in tuple_targets):
-                return False
+            name_rows: List[List[ast.Name]] = []
+            for t in targets:
+                if not all_instances(t.elts, ast.Name):
+                    return False
+                name_rows.append(t.elts)
 
             tuple_names: List[List[str]] = []  # per position names
             for pos in range(lengths[0]):
-                # We verified above that all elements are ast.Name, so cast for type checker
-                tuple_names.append([cast(ast.Name, t.elts[pos]).id for t in tuple_targets])
+                tuple_names.append([row[pos].id for row in name_rows])
 
             # Establish alpha-renaming per position to the first block's names
             for pos, names_at_pos in enumerate(tuple_names):
@@ -617,40 +594,40 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     self.alpha_renamings[key] = canonical
 
             # Unify iterator and ifs
-            if not self._unify_nodes([c.iter for c in comps], subst, block_indices):
+            if not self._unify_nodes([c.iter for c in comps], substitution, block_indices):
                 return False
-            if not self._unify_lists([c.ifs for c in comps], subst, block_indices):
+            if not self._unify_lists([c.ifs for c in comps], substitution, block_indices):
                 return False
             return True
 
         # Fallback: complex targets - unify structurally without alpha-renaming
         return (
-            self._unify_nodes([c.target for c in comps], subst, block_indices)
-            and self._unify_nodes([c.iter for c in comps], subst, block_indices)
-            and self._unify_lists([c.ifs for c in comps], subst, block_indices)
+            self._unify_nodes([c.target for c in comps], substitution, block_indices)
+            and self._unify_nodes([c.iter for c in comps], substitution, block_indices)
+            and self._unify_lists([c.ifs for c in comps], substitution, block_indices)
         )
 
     def _unify_loop_components(
         self,
         nodes: Sequence[ast.For],
-        subst: Substitution,
+        substitution: Substitution,
         block_indices: Sequence[int],
     ) -> bool:
         return (
-            self._unify_nodes([n.iter for n in nodes], subst, block_indices)
-            and self._unify_lists([n.body for n in nodes], subst, block_indices)
-            and self._unify_lists([n.orelse for n in nodes], subst, block_indices)
+            self._unify_nodes([n.iter for n in nodes], substitution, block_indices)
+            and self._unify_lists([n.body for n in nodes], substitution, block_indices)
+            and self._unify_lists([n.orelse for n in nodes], substitution, block_indices)
         )
 
     def _unify_for_loop(
-        self, nodes: List[ast.For], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.For], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """
         Unify For loops, treating loop variables as bound (alpha-equivalent).
 
         Args:
             nodes: List of For nodes
-            subst: Current substitution
+            substitution: Current substitution
             block_indices: Block indices
 
         Returns:
@@ -662,28 +639,25 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # Get the loop variable names
         targets = [n.target for n in nodes]
 
-        # Check if targets are simple Names or Tuples
-        if not all(isinstance(t, ast.Name) for t in targets):
-            # Check if all targets are tuples (for tuple unpacking support)
-            if all(isinstance(t, ast.Tuple) for t in targets):
+        if not all_instances(targets, ast.Name):
+            if all_instances(targets, ast.Tuple):
                 # Delegate to tuple unpacking handler
-                return self._unify_for_loop_with_tuple_targets(nodes, subst, block_indices)
+                return self._unify_for_loop_with_tuple_targets(nodes, substitution, block_indices)
 
             # Complex targets (nested structures, etc.) - fall back to default unification
             return (
-                self._unify_nodes(targets, subst, block_indices)
-                and self._unify_nodes([n.iter for n in nodes], subst, block_indices)
-                and self._unify_lists([n.body for n in nodes], subst, block_indices)
-                and self._unify_lists([n.orelse for n in nodes], subst, block_indices)
+                self._unify_nodes(targets, substitution, block_indices)
+                and self._unify_nodes([n.iter for n in nodes], substitution, block_indices)
+                and self._unify_lists([n.body for n in nodes], substitution, block_indices)
+                and self._unify_lists([n.orelse for n in nodes], substitution, block_indices)
             )
 
-        name_targets = cast(List[ast.Name], targets)
-        loop_var_names = [t.id for t in name_targets]
+        loop_var_names = [t.id for t in targets]
 
         # Check if all loop variables have the same name
         if len(set(loop_var_names)) == 1:
             # Same loop variable name - just unify normally
-            return self._unify_loop_components(nodes, subst, block_indices)
+            return self._unify_loop_components(nodes, substitution, block_indices)
 
         # Different loop variable names (i vs j) - establish alpha-equivalence
         # Use the first block's variable name as canonical
@@ -699,7 +673,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         try:
             # Unify the iterator
-            return self._unify_loop_components(nodes, subst, block_indices)
+            return self._unify_loop_components(nodes, substitution, block_indices)
 
         finally:
             # Restore old mappings or remove new ones
@@ -709,7 +683,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                 self._restore_alpha_mapping(key, old_mappings)
 
     def _unify_for_loop_with_tuple_targets(
-        self, nodes: List[ast.For], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.For], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """
         Unify For loops with tuple unpacking targets (e.g., for key, value in items).
@@ -720,7 +694,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         Args:
             nodes: List of For nodes with Tuple targets
-            subst: Current substitution
+            substitution: Current substitution
             block_indices: Block indices
 
         Returns:
@@ -728,29 +702,19 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         """
         targets = [n.target for n in nodes]
 
-        # Verify all targets are tuples
-        if not all(isinstance(t, ast.Tuple) for t in targets):
+        if not all_instances(targets, ast.Tuple):
             return False
-
-        # Check all tuples have the same number of elements
-        tuple_targets = cast(List[ast.Tuple], targets)
-        tuple_lengths = [len(t.elts) for t in tuple_targets]
+        tuple_lengths = [len(t.elts) for t in targets]
         if len(set(tuple_lengths)) != 1:
             return False
-
-        # Check all tuple elements are simple Name nodes
-        for target in tuple_targets:
-            if not all(isinstance(elt, ast.Name) for elt in target.elts):
+        name_rows: List[List[ast.Name]] = []
+        for target in targets:
+            if not all_instances(target.elts, ast.Name):
                 return False
+            name_rows.append(target.elts)
 
-        # Extract variable names for each position
         # var_names[position_idx] = [name_in_block0, name_in_block1, ...]
-        num_positions = len(tuple_targets[0].elts)
-        var_names = []
-        for pos in range(num_positions):
-            # We verified elements are ast.Name above; cast to satisfy type checker
-            names_at_pos = [cast(ast.Name, target.elts[pos]).id for target in tuple_targets]
-            var_names.append(names_at_pos)
+        var_names = [[row[pos].id for row in name_rows] for pos in range(tuple_lengths[0])]
 
         # Check if all corresponding names are identical
         # If so, no alpha-renaming needed
@@ -758,7 +722,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         if all_same:
             # All tuple unpacking uses same variable names - just unify normally
-            return self._unify_loop_components(nodes, subst, block_indices)
+            return self._unify_loop_components(nodes, substitution, block_indices)
 
         # Different variable names - establish alpha-equivalence for each position
         # Use the first block's variable names as canonical
@@ -775,7 +739,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         try:
             # Unify the iterator
-            return self._unify_loop_components(nodes, subst, block_indices)
+            return self._unify_loop_components(nodes, substitution, block_indices)
 
         finally:
             # Restore old mappings or remove new ones
@@ -786,7 +750,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     self._restore_alpha_mapping(key, old_mappings)
 
     def _unify_lambda(
-        self, nodes: List[ast.Lambda], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.Lambda], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """
         Unify lambda expressions with alpha-renaming support.
@@ -797,7 +761,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         Args:
             nodes: List of Lambda nodes
-            subst: Current substitution
+            substitution: Current substitution
             block_indices: Block indices
 
         Returns:
@@ -821,7 +785,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         num_params = param_counts[0]
         if num_params == 0:
             # No parameters - just unify bodies directly
-            return self._unify_nodes([n.body for n in nodes], subst, block_indices)
+            return self._unify_nodes([n.body for n in nodes], substitution, block_indices)
 
         # Create alpha-renaming mappings for lambda parameters
         # Use first lambda's parameter names as canonical
@@ -840,7 +804,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     self._assign_alpha_mapping(key, canonical_param, old_mappings)
 
             # Unify lambda bodies with alpha-renaming in effect
-            return self._unify_nodes([n.body for n in nodes], subst, block_indices)
+            return self._unify_nodes([n.body for n in nodes], substitution, block_indices)
 
         finally:
             # Restore old mappings or remove new ones
@@ -852,7 +816,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     self._restore_alpha_mapping(key, old_mappings)
 
     def _unify_joined_str(
-        self, nodes: List[ast.JoinedStr], subst: Substitution, block_indices: List[int]
+        self, nodes: List[ast.JoinedStr], substitution: Substitution, block_indices: List[int]
     ) -> bool:
         """
         Unify f-strings (JoinedStr), never parameterizing Constant children.
@@ -864,7 +828,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         Args:
             nodes: List of JoinedStr nodes
-            subst: Current substitution
+            substitution: Current substitution
             block_indices: Block indices
 
         Returns:
@@ -886,38 +850,30 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                 # Different types at this position - can't unify
                 return False
 
-            first_component = components[0]
-
-            if isinstance(first_component, ast.Constant):
-                # String literal parts MUST be identical - NEVER parameterize
-                const_components = cast(List[ast.Constant], components)
-                values = [c.value for c in const_components]
+            if all_instances(components, ast.Constant):
+                # String literal parts are compared, never parameterized
+                values = [c.value for c in components]
                 if not all(v == values[0] for v in values):
                     # Different string literals - can't unify f-strings with different text
                     return False
 
-            elif isinstance(first_component, ast.FormattedValue):
-                # FormattedValue contains an expression - unify it normally
-                # Extract the value expressions
-                fmt_components = cast(List[ast.FormattedValue], components)
-                value_exprs = [c.value for c in fmt_components]
-                if not self._unify_nodes(value_exprs, subst, block_indices):
+            elif all_instances(components, ast.FormattedValue):
+                value_exprs = [c.value for c in components]
+                if not self._unify_nodes(value_exprs, substitution, block_indices):
                     return False
 
                 # Also check conversion and format_spec if present
-                conversions = [c.conversion for c in fmt_components]
+                conversions = [c.conversion for c in components]
                 if not all(conv == conversions[0] for conv in conversions):
                     return False
 
                 # format_spec can be None or another JoinedStr
-                format_specs = [c.format_spec for c in fmt_components]
+                format_specs = [c.format_spec for c in components]
                 if format_specs[0] is not None:
-                    if not all(fs is not None for fs in format_specs):
+                    if not all_instances(format_specs, ast.JoinedStr):
                         return False
-                    if isinstance(format_specs[0], ast.JoinedStr):
-                        joined_specs = cast(List[ast.JoinedStr], format_specs)
-                        if not self._unify_joined_str(joined_specs, subst, block_indices):
-                            return False
+                    if not self._unify_joined_str(format_specs, substitution, block_indices):
+                        return False
 
             else:
                 # Unexpected component type
@@ -926,14 +882,17 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         return True
 
     def _unify_lists(
-        self, lists: Sequence[Sequence[Any]], subst: Substitution, block_indices: Sequence[int]
+        self,
+        lists: Sequence[Sequence[Any]],
+        substitution: Substitution,
+        block_indices: Sequence[int],
     ) -> bool:
         """
         Unify lists of values.
 
         Args:
             lists: List of lists to unify
-            subst: Current substitution
+            substitution: Current substitution
             block_indices: Block indices
 
         Returns:
@@ -956,11 +915,11 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
             if isinstance(first_elem, ast.AST):
                 # AST nodes - unify recursively
-                if not self._unify_nodes(elements, subst, block_indices):
+                if not self._unify_nodes(elements, substitution, block_indices):
                     return False
             elif isinstance(first_elem, list):
                 # Nested lists
-                if not self._unify_lists(elements, subst, block_indices):
+                if not self._unify_lists(elements, substitution, block_indices):
                     return False
             else:
                 # Primitive values - must be equal
@@ -983,7 +942,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.parameterize_constants = parameterize_constants
         self.promote_equal_hof_literals = promote_equal_hof_literals
 
-    def _reset_unification_state(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
+    def _reset_unification_state(self, blocks: Sequence[Sequence[ast.stmt]]) -> None:
         self.param_counter = 0
         self.current_blocks = blocks
         # A helper extracted on an earlier pass already binds names such as
@@ -993,3 +952,19 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         for block in blocks:
             for statement in block:
                 self._reserved_parameter_names |= mentioned_names(statement)
+
+    # A construct that binds names is unified by a method of its own, chosen by
+    # the node's type; each takes the nodes, the substitution and the block indices.
+    _BINDING_CONSTRUCT_UNIFIERS: Dict[Type[ast.AST], Callable[..., bool]] = {
+        ast.For: _unify_for_loop,
+        ast.Lambda: _unify_lambda,
+        ast.JoinedStr: _unify_joined_str,
+        ast.ListComp: _unify_elt_comprehension,
+        ast.SetComp: _unify_elt_comprehension,
+        ast.GeneratorExp: _unify_elt_comprehension,
+        ast.DictComp: _unify_dict_comp,
+        ast.AnnAssign: _unify_ann_assign,
+        ast.With: _unify_with,
+        ast.ExceptHandler: _unify_except_handler,
+        ast.NamedExpr: _unify_named_expr,
+    }

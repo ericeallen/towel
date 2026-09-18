@@ -51,17 +51,18 @@ import sys
 import tempfile
 from enum import Enum
 from typing import (
-    Any,
     Dict,
     Iterable,
     Iterator,
     List,
     Mapping,
+    NamedTuple,
     Optional,
     Protocol,
     Sequence,
     TYPE_CHECKING,
     Tuple,
+    Type,
     TypedDict,
     cast,
 )
@@ -70,10 +71,11 @@ from .diagnostics import LOG
 from .project_tools import ToolChoice
 from .project_layout import find_project_root, load_pyproject, package_chain
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from mypy.build import BuildSource
+if TYPE_CHECKING:
+    from types import ModuleType
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
+    from mypy.build import BuildSource
+    from mypy.errors import CompileError
     from mypy.options import Options
 
 RevealKey = Tuple[str, int, int]
@@ -207,13 +209,21 @@ def _verdicts_from_error_lines(
     return verdicts
 
 
-def _mypy() -> Tuple[Any, Any, Any]:
+class _MypyApi(NamedTuple):
+    """mypy's build entry points, imported on first use so the extra stays optional."""
+
+    build: "ModuleType"
+    build_source: "Type[BuildSource]"
+    compile_error: "Type[CompileError]"
+
+
+def _mypy() -> _MypyApi:
     """mypy's build module, its BuildSource and its CompileError, imported on first use."""
     from mypy import build
     from mypy.build import BuildSource
     from mypy.errors import CompileError
 
-    return build, BuildSource, CompileError
+    return _MypyApi(build, BuildSource, CompileError)
 
 
 class MypyInferrer:

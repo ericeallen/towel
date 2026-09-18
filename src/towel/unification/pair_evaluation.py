@@ -38,7 +38,7 @@ import ast
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, Tuple, cast, FrozenSet
+from typing import Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
 
 from ..diagnostics import VALIDATION, debugging
 from .definite_assignment import definitely_bound_after
@@ -165,7 +165,7 @@ class _Placement:
 
 
 def _is_trivial_return_of_bound_name(
-    block_nodes: Sequence[ast.AST], bound_before_block: Set[str], bound_in_block: Set[str]
+    block_nodes: Sequence[ast.stmt], bound_before_block: Set[str], bound_in_block: Set[str]
 ) -> bool:
     """A one-statement block that only returns a name bound before it."""
     if len(block_nodes) != 1:
@@ -199,7 +199,7 @@ class _PairContext:
 def _thunk_uncertain_free_variables(
     substitution: Substitution,
     free_variables: Set[str],
-    blocks: Sequence[Tuple[FunctionNode, Sequence[ast.AST]]],
+    blocks: Sequence[Tuple[FunctionNode, Sequence[ast.stmt]]],
     renames: Sequence[Dict[str, str]],
 ) -> Set[str]:
     """Pass free variables that may be unbound at the call as thunks.
@@ -226,7 +226,7 @@ def _thunk_uncertain_free_variables(
         function, block = blocks[index]
         if spelled not in locally_bound_names(function):
             return False  # resolves lexically outside the function; not path-dependent
-        return spelled not in definitely_bound_before(function, cast(ast.stmt, block[0]))
+        return spelled not in definitely_bound_before(function, block[0])
 
     # A parameter whose argument is a bare local name is read eagerly too.
     deferred = set(substitution.function_params) | set(substitution.params_used_as_callee)
@@ -255,7 +255,7 @@ def _thunk_uncertain_free_variables(
 
 
 def _fresh_parameter_name(
-    substitution: Substitution, blocks: Sequence[Tuple[FunctionNode, Sequence[ast.AST]]]
+    substitution: Substitution, blocks: Sequence[Tuple[FunctionNode, Sequence[ast.stmt]]]
 ) -> str:
     taken = set(substitution.param_expressions) | {
         node.id

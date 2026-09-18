@@ -40,7 +40,7 @@ class UnifierState:
     alpha_renamings: Dict[Tuple[int, str], str]
     """Per block, the canonical spelling of each alpha-renamed binder."""
 
-    current_blocks: Optional[Sequence[Sequence[ast.AST]]]
+    current_blocks: Optional[Sequence[Sequence[ast.stmt]]]
     """The blocks being unified, for checks that need the whole block."""
 
     parameterize_constants: bool

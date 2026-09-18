@@ -28,9 +28,39 @@ from __future__ import annotations
 
 import ast
 from .models import FunctionNode, MethodKind
-from typing import Callable, Iterable, List, Optional, Set, Tuple, Union, Sequence, TypeVar
+from typing import (
+    Callable,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Type,
+    TypeGuard,
+    TypeVar,
+    Union,
+    cast,
+)
 
 T = TypeVar("T")
+NodeT = TypeVar("NodeT", bound=ast.AST)
+
+
+def all_instances(items: Sequence[object], kind: Type[T]) -> TypeGuard[List[T]]:
+    """Whether every item is a ``kind``, narrowing the sequence for the type checker."""
+    return all(isinstance(item, kind) for item in items)
+
+
+def visit_as(transformer: ast.NodeTransformer, node: NodeT) -> NodeT:
+    """``transformer.visit(node)`` as a node of the same kind.
+
+    ``NodeTransformer.visit`` is typed as returning ``Any``; every transformer
+    here returns a node of the kind it was given (an expression for an
+    expression, a statement for a statement), and this is the one place
+    that says so.
+    """
+    return cast(NodeT, transformer.visit(node))
 
 
 class OwnScopeVisitor(ast.NodeVisitor):

@@ -11,7 +11,9 @@ import argparse
 import ast
 import json
 import os
+import re
 import sys
+import textwrap
 from importlib.metadata import version
 from pathlib import Path
 from typing import (
@@ -27,7 +29,7 @@ from typing import (
     Set,
 )
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
+if TYPE_CHECKING:
     from towel.type_inference import TypeOracle
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -35,7 +37,7 @@ from towel.changes import apply_changes, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source
-from towel.unification.models import ParameterKind
+from towel.unification.models import GENERATED_HELPER_NAME, ParameterKind
 from towel.unification.defaults import DEFAULT_MAX_ITERATIONS
 from towel.unification.progress import DEFAULT_PROGRESS, normalize_progress
 
@@ -646,8 +648,6 @@ def _print_call_sites(
     prop: "RefactoringProposal", target: str, is_dir: bool, source_cache: Dict[str, List[str]]
 ) -> None:
     """Print each call site's original block (before) and the generated call (after)."""
-    import textwrap
-
     print("\n   Call sites (- before / + after):")
     shown = 0
     for repl in sorted(
@@ -768,8 +768,6 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
 
     # List mode
     if args.list and args.json:
-        import json
-
         print(json.dumps(helper_inventory(target, helpers), indent=2))
         return
     if args.list:
@@ -802,9 +800,6 @@ def _find_extracted_helpers(
     function_filters: Optional[List[str]],
 ) -> List[Tuple[Path, str, int, str]]:
     """Find generated helpers, including unmangled helpers used by classes."""
-    import re
-
-    helper_pattern = re.compile(r"^_{1,2}extracted_func(?:_\d+)?$")
     helpers = []
 
     for py_file, (source, tree) in _load_modules(target).items():
@@ -816,7 +811,7 @@ def _find_extracted_helpers(
 
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
-                if helper_pattern.match(node.name):
+                if GENERATED_HELPER_NAME.fullmatch(node.name):
                     # Apply function filters
                     if function_filters and node.name not in function_filters:
                         continue
@@ -1179,9 +1174,6 @@ def _run_interactive_llm_mode(
     if not llm_response:
         print("No response provided. Aborted.")
         return
-
-    # Extract JSON from response (handle markdown code blocks)
-    import re
 
     # Try to extract JSON from markdown code block
     json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", llm_response, re.DOTALL)

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import ast
 from weakref import WeakKeyDictionary
-from typing import Callable, Dict, FrozenSet, List, Sequence, Set, Tuple, Union, cast
+from typing import Callable, Dict, FrozenSet, List, Sequence, Set, Tuple, Union
 
 from .parameters import parameter_names
 from .models import FunctionNode
@@ -349,7 +349,7 @@ _BOUND_IN_BLOCK: "WeakKeyDictionary[ast.AST, Dict[Tuple[int, str], FrozenSet[str
 """Per block (first statement, then length) and target text, what the finder collected."""
 
 
-def bound_variables_in_block(block: Sequence[ast.AST], target_expr: ast.AST) -> Set[str]:
+def bound_variables_in_block(block: Sequence[ast.stmt], target_expr: ast.AST) -> Set[str]:
     """``get_bound_variables_in_context`` over a block, memoized per block and target text.
 
     The finder's answer depends only on the block's statements and the
@@ -372,7 +372,7 @@ def bound_variables_in_block(block: Sequence[ast.AST], target_expr: ast.AST) -> 
     bound = by_target.get(key)
     if bound is None:
         finder = _BindingContextFinder(target_expr)
-        finder.visit(ast.Module(body=cast(List[ast.stmt], list(block)), type_ignores=[]))
+        finder.visit(ast.Module(body=list(block), type_ignores=[]))
         bound = frozenset(finder.bound_vars)
         by_target[key] = bound
     return set(bound & get_free_variables(target_expr))

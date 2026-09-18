@@ -33,7 +33,7 @@ import re
 import tomllib
 
 
-def _table(mapping: object, key: str) -> Dict[str, Any]:
+def _table(mapping: object, key: str) -> Mapping[str, object]:
     """``mapping[key]`` when both are tables, else an empty table; TOML is checked, never trusted."""
     value = mapping.get(key, {}) if isinstance(mapping, dict) else {}
     return value if isinstance(value, dict) else {}

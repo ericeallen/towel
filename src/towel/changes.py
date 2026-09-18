@@ -16,7 +16,7 @@ from pathlib import Path
 from .source_text import encode_like
 import stat
 import tempfile
-from typing import Mapping
+from typing import Mapping, TypedDict
 
 from .diagnostics import LOG
 
@@ -120,6 +120,28 @@ def _check(change: FileChange, expected: bytes) -> None:
         or stat.S_IMODE(change.path.stat().st_mode) != change.mode
     ):
         raise ChangeConflict(f"Target changed since planning: {change.path}")
+
+
+class _ManifestRecord(TypedDict):
+    """One entry of the transaction manifest: a target and the digests either side of it."""
+
+    path: str
+    mode: int
+    before: str
+    after: str
+
+
+def _manifest_record(record: object) -> _ManifestRecord:
+    """``record`` as the manifest writer produced it, or a ChangeConflict naming what is wrong."""
+    if not isinstance(record, dict):
+        raise ChangeConflict("Invalid transaction record")
+    relative, mode = record.get("path"), record.get("mode")
+    before, after = record.get("before"), record.get("after")
+    if not isinstance(relative, str) or not isinstance(mode, int) or not 0 <= mode <= 0o7777:
+        raise ChangeConflict("Invalid transaction path/mode")
+    if not isinstance(before, str) or not isinstance(after, str):
+        raise ChangeConflict("Invalid transaction digests")
+    return {"path": relative, "mode": mode, "before": before, "after": after}
 
 
 def _digest(content: bytes) -> str:
@@ -237,14 +259,9 @@ def recover(journal: Path) -> None:
     originals: list[tuple[Path, bytes, int, str]] = []
     seen: set[Path] = set()
     for index, record in enumerate(records):
-        if not isinstance(record, dict):
-            raise ChangeConflict("Invalid transaction record")
-        relative, mode = record.get("path"), record.get("mode")
-        before, after = record.get("before"), record.get("after")
-        if not isinstance(relative, str) or not isinstance(mode, int) or not 0 <= mode <= 0o7777:
-            raise ChangeConflict("Invalid transaction path/mode")
-        if not isinstance(before, str) or not isinstance(after, str):
-            raise ChangeConflict("Invalid transaction digests")
+        entry = _manifest_record(record)
+        relative, mode = entry["path"], entry["mode"]
+        before, after = entry["before"], entry["after"]
         path = journal.parent / relative
         if Path(relative).is_absolute() or ".." in Path(relative).parts or path in seen:
             raise ChangeConflict("Transaction path escapes its root or is duplicated")

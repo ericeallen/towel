@@ -233,7 +233,7 @@ class _AssignmentAnalyzer(OwnScopeVisitor):
 
 def has_reassignments_without_bindings(
     func: FunctionNode,
-    block_nodes: Sequence[ast.AST],
+    block_nodes: Sequence[ast.stmt],
     reassignments: Dict[int, bool],
 ) -> Tuple[bool, Set[str]]:
     """
@@ -376,7 +376,7 @@ def stored_names(target: ast.AST) -> Set[str]:
 
 
 def _collect_block_binding_stats(
-    block_nodes: Sequence[ast.AST], reassignments: Dict[int, bool]
+    block_nodes: Sequence[ast.stmt], reassignments: Dict[int, bool]
 ) -> Tuple[Set[str], Set[str]]:
     """Return (bound_in_block, reassigned_in_block) for the given nodes."""
     bound_in_block: Set[str] = set()

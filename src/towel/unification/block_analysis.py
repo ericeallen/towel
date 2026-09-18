@@ -99,7 +99,7 @@ class BlockAnalysis(EngineState):
 
     def _unify_memoized(
         self,
-        blocks: Sequence[Sequence[ast.AST]],
+        blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
         paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
@@ -125,7 +125,7 @@ class BlockAnalysis(EngineState):
     def _block_rejected(
         self,
         guard: Callable[..., bool],
-        nodes: Sequence[ast.AST],
+        nodes: Sequence[ast.stmt],
         func: Optional[FunctionNode] = None,
         analyzer: Optional[ScopeAnalyzer] = None,
         path: Optional[str] = None,
@@ -360,7 +360,7 @@ class BlockAnalysis(EngineState):
         self,
         name: str,
         func: FunctionNode,
-        block_nodes: Sequence[ast.AST],
+        block_nodes: Sequence[ast.stmt],
         compute: Callable[[], T],
         *,
         function_id: Optional[str] = None,
@@ -383,7 +383,7 @@ class BlockAnalysis(EngineState):
     def _build_block_binding_snapshot(
         self,
         func: FunctionNode,
-        block_nodes: Sequence[ast.AST],
+        block_nodes: Sequence[ast.stmt],
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
         *,
@@ -406,7 +406,7 @@ class BlockAnalysis(EngineState):
     def _compute_block_binding_snapshot(
         self,
         func: FunctionNode,
-        block_nodes: Sequence[ast.AST],
+        block_nodes: Sequence[ast.stmt],
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
     ) -> BlockBindingSnapshot:

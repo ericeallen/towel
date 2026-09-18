@@ -234,7 +234,7 @@ class FunctionArtifact(NamedTuple):
         return self.source_digest or source_digest_of(self.source)
 
 
-if TYPE_CHECKING:  # pragma: no cover - imported for typing only
+if TYPE_CHECKING:
     from .scope_analyzer import ScopeAnalyzer, Scope
 
 

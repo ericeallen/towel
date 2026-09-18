@@ -31,7 +31,7 @@ import dataclasses
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Tuple
 from .exceptions import RefactoringError
 from .models import (
     FunctionArtifact,
@@ -415,8 +415,9 @@ class ExistingFunctionReuse(EngineState):
                 candidates.append((index, target))
         candidates.sort(key=lambda item: (item[1].file_path, item[1].node.lineno))
         for index, target in candidates:
+            function = target.node
             call = self._unwrap_helper_call(proposal.replacements[index].node, helper_name)
-            if call is None:
+            if call is None or not isinstance(function, ast.FunctionDef):
                 continue
             plan = self._reuse_plan(call, target)
             if plan is None:
@@ -473,7 +474,7 @@ class ExistingFunctionReuse(EngineState):
             return dataclasses.replace(
                 proposal,
                 file_path=target.file_path,
-                extracted_function=cast(ast.FunctionDef, copy.deepcopy(target.node)),
+                extracted_function=copy.deepcopy(function),
                 replacements=rewritten,
                 description=(
                     f"Reuse {target.node.name} ({location}) for duplicated code in "

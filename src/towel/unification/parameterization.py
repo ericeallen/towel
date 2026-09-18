@@ -86,14 +86,14 @@ class Parameterization(UnifierState):
     """See the module docstring."""
 
     def _try_parameterize(
-        self, exprs: Sequence[ast.AST], subst: Substitution, block_indices: Sequence[int]
+        self, exprs: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
     ) -> bool:
         """
         Try to parameterize differing expressions.
 
         Args:
             exprs: List of expressions that differ
-            subst: Current substitution
+            substitution: Current substitution
             block_indices: Block index for each expression
 
         Returns:
@@ -103,11 +103,11 @@ class Parameterization(UnifierState):
             return False
         # Expressions already mapped must all map to one parameter.
         existing_params = [
-            subst.get_param_for_expr(idx, expr) for idx, expr in zip(block_indices, exprs)
+            substitution.get_param_for_expr(idx, expr) for idx, expr in zip(block_indices, exprs)
         ]
         if all(p is not None for p in existing_params):
             return len(set(existing_params)) == 1
-        if len(subst.param_expressions) >= self.max_parameters:
+        if len(substitution.param_expressions) >= self.max_parameters:
             return False
         common_bound_vars = self._common_bound_variables(exprs, block_indices)
         if common_bound_vars:
@@ -129,7 +129,7 @@ class Parameterization(UnifierState):
                     return False
         param_name = self._fresh_parameter_name()
         for idx, expr in zip(block_indices, exprs):
-            subst.add_mapping(idx, expr, param_name, bound_vars=common_bound_vars)
+            substitution.add_mapping(idx, expr, param_name, bound_vars=common_bound_vars)
         return True
 
     def _common_bound_variables(
@@ -159,7 +159,7 @@ class Parameterization(UnifierState):
             return set()
         return ScopeAnalyzer().get_free_variables(self.current_blocks[idx])
 
-    def _setup_bound_variable_alpha_renamings(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
+    def _setup_bound_variable_alpha_renamings(self, blocks: Sequence[Sequence[ast.stmt]]) -> None:
         """
         Setup alpha-renamings for block-level bound variables.
 

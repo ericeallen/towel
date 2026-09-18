@@ -565,7 +565,7 @@ class ScopeAnalyzer(ScopeVisitor):
                 self._add_assignment_bindings(elt)
         # Other cases (subscript, attribute) don't create bindings
 
-    def get_free_variables(self, nodes: Sequence[ast.AST]) -> Set[str]:
+    def get_free_variables(self, nodes: Sequence[ast.stmt]) -> Set[str]:
         """
         Get free variables in a block of code.
 

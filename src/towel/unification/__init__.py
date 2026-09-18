@@ -25,7 +25,7 @@ and everything it depends on.
 
 from typing import TYPE_CHECKING, List
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
+if TYPE_CHECKING:
     from .refactor_engine import UnificationRefactorEngine
 
 __all__: List[str] = ["UnificationRefactorEngine"]

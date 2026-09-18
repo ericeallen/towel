@@ -26,6 +26,7 @@ import ast
 import copy
 from typing import List, Dict, Sequence, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
 from .substitution import Substitution
+from .visitors import all_instances, visit_as
 from .definite_assignment import definitely_bound_after
 from .statement_facts import block_contains_return
 
@@ -154,14 +155,14 @@ class ParameterSubstituter(ast.NodeTransformer):
                 elif isinstance(value, ast.FormattedValue):
                     # For FormattedValue, recursively visit the value expression
                     new_formatted = ast.FormattedValue(
-                        value=cast(ast.expr, self.visit(value.value)),
+                        value=visit_as(self, value.value),
                         conversion=value.conversion,
                         format_spec=value.format_spec,
                     )
                     new_values.append(new_formatted)
                 else:
                     # Shouldn't happen, but handle gracefully
-                    new_values.append(cast(ast.expr, self.visit(value)))
+                    new_values.append(visit_as(self, value))
         finally:
             self.in_joinedstr = previous_state
         return ast.JoinedStr(values=new_values)
@@ -184,7 +185,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         self, node: Union[ast.For, ast.AsyncFor]
     ) -> Tuple[ast.expr, List[ast.stmt], List[ast.stmt]]:
         """The transformed iterator, body, and else of a loop; its target is a binding and stays."""
-        new_iter = cast(ast.expr, self.visit(node.iter))
+        new_iter = visit_as(self, node.iter)
         for var_name in self._variables_from_target(node.target):
             self._mark_shadowed(var_name)
         new_body = self._visit_branch_statements(node.body)
@@ -198,7 +199,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         In 'for target in iter', the 'target' is a BINDING occurrence.
         """
         # Transform the iterator
-        new_iter = cast(ast.expr, self.visit(node.iter))
+        new_iter = visit_as(self, node.iter)
 
         # Don't transform the target (comprehension variable) - it's a binding
         new_target = node.target
@@ -206,7 +207,7 @@ class ParameterSubstituter(ast.NodeTransformer):
             self._mark_shadowed(var_name)
 
         # Transform the filters
-        new_ifs = [cast(ast.expr, self.visit(cond)) for cond in node.ifs]
+        new_ifs = [visit_as(self, cond) for cond in node.ifs]
 
         return ast.comprehension(
             target=new_target, iter=new_iter, ifs=new_ifs, is_async=node.is_async
@@ -224,7 +225,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         - Otherwise, keep the target unchanged (new binding)
         """
         # Transform the value expression first
-        new_value = cast(ast.expr, self.visit(node.value))
+        new_value = visit_as(self, node.value)
 
         # Transform targets while preserving binding semantics
         new_targets: List[ast.expr] = []
@@ -245,13 +246,13 @@ class ParameterSubstituter(ast.NodeTransformer):
         return ast.Assign(targets=new_targets, value=new_value)
 
     def visit_If(self, node: ast.If) -> ast.If:
-        new_test = cast(ast.expr, self.visit(node.test))
+        new_test = visit_as(self, node.test)
         new_body = self._visit_branch_statements(node.body)
         new_orelse = self._visit_branch_statements(node.orelse)
         return ast.If(test=new_test, body=new_body, orelse=new_orelse)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.AugAssign:
-        new_value = cast(ast.expr, self.visit(node.value))
+        new_value = visit_as(self, node.value)
         if isinstance(node.target, ast.Name):
             self._mark_shadowed(node.target.id)
             new_target: Union[ast.Name, ast.Attribute, ast.Subscript] = node.target
@@ -265,7 +266,7 @@ class ParameterSubstituter(ast.NodeTransformer):
     def visit_With(self, node: ast.With) -> ast.With:
         new_items = [
             ast.withitem(
-                context_expr=cast(ast.expr, self.visit(item.context_expr)),
+                context_expr=visit_as(self, item.context_expr),
                 optional_vars=item.optional_vars,
             )
             for item in node.items
@@ -276,7 +277,7 @@ class ParameterSubstituter(ast.NodeTransformer):
     def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AsyncWith:
         new_items = [
             ast.withitem(
-                context_expr=cast(ast.expr, self.visit(item.context_expr)),
+                context_expr=visit_as(self, item.context_expr),
                 optional_vars=item.optional_vars,
             )
             for item in node.items
@@ -285,7 +286,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         return ast.AsyncWith(items=new_items, body=new_body)
 
     def visit_While(self, node: ast.While) -> ast.While:
-        new_test = cast(ast.expr, self.visit(node.test))
+        new_test = visit_as(self, node.test)
         new_body = self._visit_branch_statements(node.body)
         new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
         return ast.While(test=new_test, body=new_body, orelse=new_orelse)
@@ -294,7 +295,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         new_body = self._visit_branch_statements(node.body)
         new_handlers = []
         for handler in node.handlers:
-            new_type = cast(ast.expr, self.visit(handler.type)) if handler.type else None
+            new_type = visit_as(self, handler.type) if handler.type else None
             new_handler_body = self._visit_branch_statements(handler.body)
             new_handlers.append(
                 ast.ExceptHandler(type=new_type, name=handler.name, body=new_handler_body)
@@ -309,7 +310,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         )
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
-        new_value = cast(ast.expr, self.visit(node.value)) if node.value else None
+        new_value = visit_as(self, node.value) if node.value else None
         if isinstance(node.target, (ast.Tuple, ast.List, ast.Attribute, ast.Subscript)):
             new_target = self._transform_assignment_target(node.target)
         else:
@@ -338,26 +339,17 @@ class ParameterSubstituter(ast.NodeTransformer):
             return target
         if isinstance(target, (ast.Tuple, ast.List)):
             new_elts = [self._transform_assignment_target(elt) for elt in target.elts]
-            return cast(
-                ast.expr,
-                ast.copy_location(type(target)(elts=new_elts, ctx=target.ctx), target),
-            )
+            return ast.copy_location(type(target)(elts=new_elts, ctx=target.ctx), target)
         if isinstance(target, ast.Attribute):
-            new_value = cast(ast.expr, self.visit(target.value))
-            return cast(
-                ast.expr,
-                ast.copy_location(
-                    ast.Attribute(value=new_value, attr=target.attr, ctx=target.ctx), target
-                ),
+            new_value = visit_as(self, target.value)
+            return ast.copy_location(
+                ast.Attribute(value=new_value, attr=target.attr, ctx=target.ctx), target
             )
         if isinstance(target, ast.Subscript):
-            new_value = cast(ast.expr, self.visit(target.value))
-            new_slice = cast(ast.expr, self.visit(target.slice))
-            return cast(
-                ast.expr,
-                ast.copy_location(
-                    ast.Subscript(value=new_value, slice=new_slice, ctx=target.ctx), target
-                ),
+            new_value = visit_as(self, target.value)
+            new_slice = visit_as(self, target.slice)
+            return ast.copy_location(
+                ast.Subscript(value=new_value, slice=new_slice, ctx=target.ctx), target
             )
         # Fallback: rely on generic_visit to transform child nodes
         return cast(ast.expr, super().generic_visit(target))
@@ -366,7 +358,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         snapshot = self.var_to_param.copy()
         shadow_snapshot = self.shadowed_vars.copy()
         try:
-            result = [cast(ast.stmt, self.visit(stmt)) for stmt in statements]
+            result = [visit_as(self, stmt) for stmt in statements]
             current_state = self.var_to_param.copy()
         finally:
             current_state = locals().get("current_state", self.var_to_param.copy())
@@ -520,7 +512,7 @@ class HygienicExtractor:
     def extract_function(
         self,
         *,
-        template_block: Sequence[ast.AST],
+        template_block: Sequence[ast.stmt],
         substitution: Substitution,
         free_variables: Set[str],
         enclosing_names: Set[str],
@@ -573,7 +565,7 @@ class HygienicExtractor:
             param_names_unified,
             {name: name for name in param_names_unified},
         )
-        body: List[ast.stmt] = [cast(ast.stmt, n) for n in body_nodes]
+        body: List[ast.stmt] = list(body_nodes)
         if param_names_unified:
             # Parameters the body calls are passed as thunks; record them.
             finder = _CalleeParamFinder(set(param_names_unified))
@@ -644,9 +636,12 @@ class HygienicExtractor:
                 args_list[param_idx] = _free_variable_argument(
                     substitution, param_name, block_idx, inverse_renames
                 )
+        if not all_instances(args_list, ast.expr):
+            raise UnsupportedExtraction("a parameter has no argument at this site")
+        arguments: List[ast.expr] = args_list
         call = ast.Call(
             func=ast.Name(id=function_name, ctx=ast.Load()),
-            args=[cast(ast.expr, a) for a in args_list],
+            args=arguments,
             keywords=[],
         )
         mapped_return_vars = [inverse_renames.get(var, var) for var in return_variables or []]
@@ -660,11 +655,11 @@ class HygienicExtractor:
 
     def _substitute_parameters(
         self,
-        nodes: List[ast.AST],
+        nodes: Sequence[ast.stmt],
         substitution: Substitution,
         param_names: List[str],
         rename_mapping: Dict[str, str],
-    ) -> List[ast.AST]:
+    ) -> List[ast.stmt]:
         """
         Substitute unified expressions with parameter names.
 
@@ -679,7 +674,7 @@ class HygienicExtractor:
         """
 
         substituter = ParameterSubstituter(substitution, param_names, rename_mapping)
-        return [substituter.visit(node) for node in nodes]
+        return [visit_as(substituter, node) for node in nodes]
 
     def _ensure_unique_name(self, name: str, enclosing_names: Set[str]) -> str:
         """

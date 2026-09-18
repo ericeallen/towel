@@ -172,22 +172,19 @@ class ParallelEvaluation(EngineState):
 
         progress_mode, tqdm_cls = self._resolve_progress_backend(progress)
         use_tqdm = tqdm_cls is not None
-        tqdm_iter = None
-        # Always show progress for pair evaluation when progress is enabled, even if verbose=False
-        if use_tqdm and tqdm_cls is not None:
-            tqdm_iter = tqdm_cls(
-                block_pairs,
-                total=len(block_pairs),
-                desc="unify",
-                unit="pair",
-                leave=False,
+        # Pair evaluation shows progress whenever progress is enabled, verbose or not.
+        if tqdm_cls is not None:
+            bar = tqdm_cls(
+                total=len(block_pairs), desc="unify", unit="pair", dynamic_ncols=True, leave=False
             )
-
-        if use_tqdm and tqdm_iter is not None:
-            for pair in tqdm_iter:
-                proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
-                if proposal:
-                    proposals.append(proposal)
+            try:
+                for pair in block_pairs:
+                    proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
+                    if proposal:
+                        proposals.append(proposal)
+                    bar.update()
+            finally:
+                bar.close()
             return proposals
 
         use_inline_bar = wants_bar(progress_mode) and len(block_pairs) > 0 and not use_tqdm

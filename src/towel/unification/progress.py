@@ -22,7 +22,7 @@ never change an analysis outcome, so every call into a bar goes through
 """
 
 import importlib
-from typing import Any, Callable, Iterator, Literal, Mapping, Optional, Protocol, cast
+from typing import Callable, Literal, Mapping, Optional, Protocol, cast
 
 ProgressMode = Literal["auto", "tqdm", "none", "detail"]
 """How a run reports progress: tqdm bars, tqdm with an inline fallback, nothing, or per-phase detail."""
@@ -68,15 +68,19 @@ class ProgressBar(Protocol):  # pragma: no cover - protocol bodies are never run
         """Display compact progress details."""
         ...
 
-    def __iter__(self) -> Iterator[Any]:
-        """Iterate the wrapped iterable, advancing the bar."""
-        ...
-
 
 class ProgressBarFactory(Protocol):  # pragma: no cover - protocol bodies are never run
-    """``tqdm.auto.tqdm`` as the engine calls it: a bar over an iterable or a total."""
+    """``tqdm.auto.tqdm`` as the engine calls it: a bar counting toward a total, or open-ended."""
 
-    def __call__(self, *args: object, **kwargs: object) -> ProgressBar:
+    def __call__(
+        self,
+        *,
+        total: Optional[int],
+        desc: str,
+        unit: str,
+        dynamic_ncols: bool,
+        leave: bool,
+    ) -> ProgressBar:
         """Construct a bar."""
         ...
 

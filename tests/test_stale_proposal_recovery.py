@@ -19,7 +19,7 @@ import io
 import logging
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, List
 
 import pytest
 
@@ -124,16 +124,13 @@ class FakeBar:
 
     events: List[str] = []
 
-    def __init__(self, iterable: Optional[Any] = None, **kwargs: Any) -> None:
-        self.iterable = iterable
+    def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
-        FakeBar.events.append(f"create total={kwargs.get('total')} desc={kwargs.get('desc')}")
-
-    def __iter__(self) -> Iterator[Any]:
-        yield from self.iterable or ()
+        self.desc = kwargs.get("desc")
+        FakeBar.events.append(f"create total={kwargs.get('total')} desc={self.desc}")
 
     def update(self, n: int = 1) -> None:
-        FakeBar.events.append(f"update {n}")
+        FakeBar.events.append(f"update {n} {self.desc}")
 
     def set_postfix(self, postfix: Dict[str, Any], refresh: bool = True) -> None:
         FakeBar.events.append(f"postfix A={postfix['A']} Q={postfix['Q']}")
@@ -165,10 +162,10 @@ def test_tqdm_bar_receives_one_update_per_applied_proposal(
     assert applied == (max_iterations or 2)
     apply_bars = [e for e in FakeBar.events if e.startswith("create") and "desc=apply" in e]
     assert apply_bars == [f"create total={max_iterations or None} desc=apply"]
-    assert FakeBar.events.count("update 1") == applied
+    assert FakeBar.events.count("update 1 apply") == applied
     # The postfix after the last update: nothing queued at the fixed point,
     # one proposal still queued when the cap of one stops the run.
-    last_update = max(i for i, e in enumerate(FakeBar.events) if e == "update 1")
+    last_update = max(i for i, e in enumerate(FakeBar.events) if e == "update 1 apply")
     assert FakeBar.events[last_update + 1] == f"postfix A={applied} Q={2 - applied}"
     assert FakeBar.events[-1] == "close"
     if expected_reason == "fixed_point":

@@ -61,7 +61,7 @@ class _CallContextFinder(OwnScopeVisitor):
 
 
 def _is_used_as_callable_or_value_later(
-    block: Sequence[ast.AST], start_stmt_idx: int, var_name: str
+    block: Sequence[ast.stmt], start_stmt_idx: int, var_name: str
 ) -> bool:
     """Whether ``var_name`` is read in a call context by a later statement of ``block``."""
     finder = _CallContextFinder(var_name)
@@ -127,7 +127,7 @@ class LiteralPromotion(UnifierState):
     """See the module docstring."""
 
     def _promote_hof_literals(
-        self, blocks: Sequence[Sequence[ast.AST]], subst: Substitution
+        self, blocks: Sequence[Sequence[ast.stmt]], substitution: Substitution
     ) -> None:
         """
         Promote literal arguments in higher-order factory calls into parameters,
@@ -180,14 +180,16 @@ class LiteralPromotion(UnifierState):
 
             for arg_pos, arg0 in enumerate(stmt0.value.args):
                 if isinstance(arg0, ast.Constant):
-                    self._promote_argument(blocks, stmt_idx, call_path + ("args", arg_pos), subst)
+                    self._promote_argument(
+                        blocks, stmt_idx, call_path + ("args", arg_pos), substitution
+                    )
 
     def _promote_argument(
         self,
-        blocks: Sequence[Sequence[ast.AST]],
+        blocks: Sequence[Sequence[ast.stmt]],
         stmt_idx: int,
         arg_path: Tuple[Any, ...],
-        subst: Substitution,
+        substitution: Substitution,
     ) -> None:
         """Promote the literal at ``arg_path`` of statement ``stmt_idx`` to a fresh parameter.
 
@@ -205,13 +207,13 @@ class LiteralPromotion(UnifierState):
                 return
             per_block_exprs.append(node)
         if any(
-            subst.get_param_for_expr(bidx, expr) is not None
+            substitution.get_param_for_expr(bidx, expr) is not None
             for bidx, expr in enumerate(per_block_exprs)
         ):
             return
         param_name = self._fresh_parameter_name()
         for bidx, expr in enumerate(per_block_exprs):
-            subst.add_mapping(bidx, expr, param_name, bound_vars=None)
-        promoted = subst.promoted_literal_args.setdefault(param_name, {})
+            substitution.add_mapping(bidx, expr, param_name, bound_vars=None)
+        promoted = substitution.promoted_literal_args.setdefault(param_name, {})
         for bidx, expr in enumerate(per_block_exprs):
             promoted[bidx] = expr

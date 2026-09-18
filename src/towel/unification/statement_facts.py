@@ -136,7 +136,7 @@ def import_binding_names(node: Union[ast.Import, ast.ImportFrom]) -> List[str]:
     return [name for alias in node.names if (name := imported_binding_name(alias)) is not None]
 
 
-def block_contains_return(block: Sequence[ast.AST]) -> bool:
+def block_contains_return(block: Sequence[ast.stmt]) -> bool:
     """Whether any statement of ``block`` returns, outside nested functions."""
     return any(statement_facts(statement).contains_return for statement in block)
 

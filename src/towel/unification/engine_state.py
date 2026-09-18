@@ -370,7 +370,7 @@ class EngineState:
     def _block_rejected(
         self,
         guard: Callable[..., bool],
-        nodes: Sequence[ast.AST],
+        nodes: Sequence[ast.stmt],
         func: Optional[FunctionNode] = None,
         analyzer: Optional[ScopeAnalyzer] = None,
         path: Optional[str] = None,
@@ -384,7 +384,7 @@ class EngineState:
     def _build_block_binding_snapshot(
         self,
         func: FunctionNode,
-        block_nodes: Sequence[ast.AST],
+        block_nodes: Sequence[ast.stmt],
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
         *,
@@ -399,7 +399,7 @@ class EngineState:
         raise NotImplementedError
 
     def _get_block_indices(
-        self, function: FunctionNode, block_nodes: Sequence[ast.AST]
+        self, function: FunctionNode, block_nodes: Sequence[ast.stmt]
     ) -> Optional[Tuple[int, int]]:
         """Provided by InsertionPoints."""
         raise NotImplementedError
@@ -431,7 +431,7 @@ class EngineState:
         self,
         name: str,
         func: FunctionNode,
-        block_nodes: Sequence[ast.AST],
+        block_nodes: Sequence[ast.stmt],
         compute: Callable[[], Any],
         *,
         function_id: Optional[str] = None,
@@ -452,7 +452,7 @@ class EngineState:
 
     def _unify_memoized(
         self,
-        blocks: Sequence[Sequence[ast.AST]],
+        blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
         paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
@@ -472,8 +472,8 @@ class EngineState:
 
     def _are_structurally_similar(
         self,
-        block1: Sequence[ast.AST],
-        block2: Sequence[ast.AST],
+        block1: Sequence[ast.stmt],
+        block2: Sequence[ast.stmt],
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     ) -> bool:
         """Provided by Clustering."""
