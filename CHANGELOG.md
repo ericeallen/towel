@@ -130,6 +130,13 @@ ecosystem evidence behind each claim. The format follows
   `return (a, b)`. Without it, once Black wrapped such a body over the
   three-line minimum, two generated helpers of that shape paired with each
   other and extracted a third, without end (h2).
+- Property-based tests (hypothesis, in the `dev` extra) check that alpha-variant
+  blocks unify with a renaming-only substitution, that definite assignment
+  agrees with a path-enumerating reference, and that every generated helper
+  passes the instantiation round trip; `visitors.py` has direct tests; the
+  cross-file hostile battery pins which packages must transform; ten
+  cross-file integration tests fail instead of skipping when a fixture is
+  missing; six assertion-free tests assert what their names claim.
 - CI runs `pip-audit --strict` against the locked dependency set, and
   Dependabot proposes weekly, grouped minor/patch updates for the workflow
   actions and the `uv`-managed Python dependencies.
@@ -171,6 +178,55 @@ ecosystem evidence behind each claim. The format follows
   names what `--max-iterations` always did, and `rename-helpers --preview`
   replaces `--dry-run`, since "dry" already means DRY here. The earlier
   spellings still parse and are left out of the help.
+
+### Changed (library)
+- The engine is assembled from mixins, one module per responsibility
+  (`pair_evaluation`, `placement`, `reuse`, `insertion`,
+  `annotation_wiring`, `materialize`, `clustering`, `parallel`,
+  `fixed_point`), over an `EngineState` that declares the state and
+  operations each may rely on; `refactor_engine.py` went from 5,600 lines
+  to 1,400 and the 871-line pair decision is eleven typed stages. The
+  outputs are byte-identical on the exactness baselines.
+- `run_pipeline` takes the engine it drives (`engine=`) and the pipeline no
+  longer imports the engine; the two phase entry points it calls are public
+  (`find_block_pairs`, `process_block_pairs`). `from towel.unification
+  import UnificationRefactorEngine` still works and loads the engine lazily.
+- `formatter_for_project`, `import_sorter_for_project`, and
+  `type_oracle_for_project` return a `ToolChoice` (`tool`, `note`) instead
+  of a tuple; `TypeOracle.is_subtype` returns `Subtyping` verdicts
+  (`YES`, `NO`, `UNKNOWN`) instead of `Optional[bool]`; the `TypeInferrer`
+  alias is gone, `TypeOracle` is the name. Rejection reasons are a
+  `RejectReason` enum, evaluation kinds a `ParameterKind` literal, the
+  rename inventory a `TypedDict`, and the applied-change log is
+  `engine.change_log`, a sequence of `AppliedChange`.
+- The library prints no diagnostics. Warnings go to the `towel` logger,
+  which reaches stderr even when nothing configures logging, and the
+  rejection, validation, overlap, and type traces go to `towel.rejections`,
+  `towel.validation`, `towel.overlap`, and `towel.types` at DEBUG. The
+  documented environment variables still switch them on; they and
+  `TOWEL_WORKERS` are read once into `Settings` at engine construction
+  (`settings=` overrides them for library callers).
+- Helpers other modules imported under leading underscores are public:
+  `find_project_root`, `load_pyproject`, `is_package_dir`,
+  `walk_own_scope`, `body_without_docstring`, `stored_names`, `reindent`,
+  `relative_import_module`. Two implementations of the docstring stripper,
+  the own-scope walker, the `__param_N` minting rule, and the subtype
+  verdict reader became one each, and ten duplications Towel found in its
+  own source are named helpers.
+- The import-graph tables are an `ImportGraphCache` the engine owns per run,
+  bounded, instead of process-global dictionaries; the apply path parses
+  each modified file once per source text and re-reads a file only when
+  its stat changes; the pair loop skips two functions whose blocks share
+  no bucket key before visiting any block.
+- The pyright probe is created with `mkstemp` in the user's package
+  (exclusive, owner-only, never following a symlink) and removed at
+  interpreter exit if a crash skips the cleanup; it used to be a
+  predictable, world-readable file left behind by a kill.
+- Two catches that turned bugs into silent defaults (a module-name fallback
+  catching every exception, a call renderer swallowing a `TypeError`) are
+  narrowed or removed; the nine copies of `try/except/pass` around
+  progress-bar calls are one `quietly`; four unjustified `type: ignore`
+  comments and three `pragma: no cover` exclusions are gone.
 
 ### Security
 - The ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`)

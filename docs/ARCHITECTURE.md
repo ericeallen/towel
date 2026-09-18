@@ -11,8 +11,15 @@ source, so the intended use is preview, review the diff, and run the project's
 own tests.
 
 The engine is `UnificationRefactorEngine` in
-[`refactor_engine.py`](../src/towel/unification/refactor_engine.py); it
-orchestrates the modules named throughout this document.
+[`refactor_engine.py`](../src/towel/unification/refactor_engine.py). It is
+assembled from mixins, one module per responsibility (the pair decision,
+placement, reuse, insertion points, annotation wiring, materialization,
+clustering, parallel evaluation, the fixed-point drivers), over
+[`engine_state.py`](../src/towel/unification/engine_state.py), which
+declares every attribute and operation a mixin may rely on, so each module
+states its dependencies and mypy checks the seams. The core module keeps
+the constructor, the caches, the analysis entry points, block enumeration,
+and pairing.
 
 ## The pipeline
 
@@ -467,6 +474,17 @@ proposal.
   proposal list.
 - **Incremental global passes.** See the section above; only the files
   rewritten since the previous global pass are re-paired, exactly.
+- **The apply path parses once.** The files a proposal touches are parsed
+  once per source text (`parse_cached` in `pipeline.py`) for the arity
+  check and the insertion-point searches, and re-read from disk only when
+  their size or modification time changed; the annotation fallback variants
+  copy the helper alone, not the whole proposal.
+- **Owned, bounded caches.** The import-graph tables (edges, import
+  bindings, module lookups, source roots) are an `ImportGraphCache` the
+  engine owns per run, keyed by path, modification time, and size where the
+  answer depends on a file's contents, and bounded; the eviction index that
+  maps files to structural-cache entries prunes entries the bounded caches
+  already dropped.
 - **Fork-based parallelism.** A large cold analysis forks worker processes
   after parsing; each worker inherits the ASTs and caches copy-on-write and
   returns only accepted proposals, so nothing is pickled in and only results
@@ -487,6 +505,24 @@ of each applied refactoring; Sphinx in the ecosystem check went from 2513 s
 to 2058 s. Function calls on Towel's source fell from 464 million to 246
 million. The tables in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance)
 give the per-project figures.
+
+## Diagnostics and settings
+
+The library prints no diagnostics. User-facing warnings (a skipped file, a
+pool that fell back to serial, modules that inspect their own frames) go to
+the `towel` logger, which Python routes to stderr even when nothing
+configures logging; the command line installs a plain stderr handler. The
+traces that explain a decision go to child loggers at DEBUG, off unless
+enabled: `towel.rejections` (why each pair was declined),
+`towel.validation` (the pair stages step by step), `towel.overlap` (which
+overlapping proposals were dropped), and `towel.types` (what the checker
+revealed and the errors that made annotations fall back). Everything Towel
+takes from the environment is read once, at engine construction, into a
+frozen `Settings` ([`diagnostics.py`](../src/towel/diagnostics.py)):
+`TOWEL_WORKERS`, `TOWEL_CHECK_AST_IMMUTABLE`, and the four debug switches
+`DEBUG_PROPOSAL_REJECTIONS`, `DEBUG_VALIDATION`, `DEBUG_OVERLAP_FILTER`,
+and `TOWEL_DEBUG_TYPES`, which turn the corresponding loggers on. No other
+module consults `os.environ`.
 
 ## Application and recovery
 
@@ -569,8 +605,20 @@ but the ideas and their names are from the literature.
 
 | Concern | Modules |
 |---|---|
-| Orchestration, clustering, placement | `refactor_engine.py` |
-| Parse/analyze cache | `pipeline.py` |
+| Engine core: caches, analysis entry points, block enumeration, pairing | `refactor_engine.py` |
+| State and operations the mixins rely on | `engine_state.py` |
+| The pair decision, in eleven stages | `pair_evaluation.py` |
+| Method or module placement, base-class resolution | `placement.py` |
+| Reusing an existing function | `reuse.py` |
+| Insertion points and re-indentation | `insertion.py` |
+| Annotation wiring and type verification | `annotation_wiring.py` |
+| Materialization and the arity check | `materialize.py` |
+| Clustering further call sites | `clustering.py` |
+| Fork-based parallel evaluation | `parallel.py` |
+| Fixed-point drivers and the frame-sensitivity warning | `fixed_point.py` |
+| Overlap filtering | `overlap.py` |
+| Parse/analyze cache, pair-processor protocol | `pipeline.py` |
+| Loggers and settings | `diagnostics.py` (at `src/towel/`) |
 | Anti-unification | `unifier.py`, `nominal_unifier.py` |
 | Pair pre-filter | `block_signature.py` |
 | Verification | `instantiation.py` |

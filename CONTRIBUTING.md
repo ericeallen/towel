@@ -84,8 +84,9 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
    ```
 
    The `dev` extra includes Black, ruff, isort, mypy, and pyright, which the
-   formatting and typing tests exercise; the mypy and pyright tests skip when
-   those are absent.
+   formatting and typing tests exercise (the mypy and pyright tests skip when
+   those are absent), hypothesis for the property-based tests, and pip-audit
+   for the dependency scan CI runs.
 
 3. Install pre-commit hooks (enforces code quality):
    ```bash
@@ -120,7 +121,13 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 
 All code contributions should include tests:
 
-- Write unit tests for new functionality
+- Write unit tests for new functionality; a change to the unifier, definite
+  assignment, or the instantiation check should also keep the property-based
+  tests in `tests/test_properties.py` passing, and a new engine defect found on
+  real code becomes a hostile fixture
+- A library module never prints: warnings go to the `towel` logger and traces
+  to its child loggers (see `src/towel/diagnostics.py`); a new engine setting
+  read from the environment goes into `Settings`, not into `os.environ` reads
 - Ensure existing tests continue to pass
 - Run the test suite before submitting:
   ```bash

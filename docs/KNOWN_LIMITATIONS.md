@@ -188,6 +188,11 @@ where the evidence comes from:
   string.
 - The degradation on a type error is per proposal, not per parameter: one
   annotation the checker rejects costs the helper all of them.
+- Pyright reads files, so while it is consulted a probe copy of the module
+  exists beside it in the package, created exclusively with owner-only
+  permissions under a unique `_towel_probe_` name and removed afterwards,
+  or at interpreter exit if a crash skipped the cleanup. A kill signal can
+  leave it behind; it imports nothing the module does not.
 
 ## Conservative rejections
 
