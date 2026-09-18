@@ -55,6 +55,7 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .models import (
+    span_contains,
     BlockBindingSnapshot,
     ClassInfo,
     CodeBlockPair,
@@ -1007,8 +1008,7 @@ class PairEvaluation(EngineState):
                 for a in functions.in_file(source_path):
                     if (
                         a.class_name == replacement.class_name
-                        and a.node.lineno <= replacement.line_range[0]
-                        and (a.node.end_lineno or a.node.lineno) >= replacement.line_range[1]
+                        and span_contains(a.node, replacement.line_range)
                         and uses_class_private_names([a.node])
                     ):
                         self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)

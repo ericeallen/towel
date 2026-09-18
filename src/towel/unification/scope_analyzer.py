@@ -21,6 +21,7 @@ from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 from .models import FunctionNode
+from .statement_facts import import_binding_names
 from .parameters import parameter_names, parameter_nodes
 from .visitors import ScopeVisitor
 
@@ -243,15 +244,6 @@ class _ScopeRespectingWalker(ScopeVisitor):
             # Walrus bindings leak into the current scope
             self.bindings.add(node.target.id)
             self.assigned_so_far.add(node.target.id)
-
-    def visit_comprehension(self, node: ast.comprehension) -> None:
-        # Comprehension variable binds within comprehension scope
-        # This is called from _visit_comprehension_node which handles scoping
-        self.visit(node.iter)
-        comp_vars = self._extract_binding_names(node.target)
-        self._add_current_scope_bindings(comp_vars)
-        for condition in node.ifs:
-            self.visit(condition)
 
     def visit_Match(self, node: ast.Match) -> None:
         # Capture patterns bind in the enclosing function scope
@@ -519,21 +511,13 @@ class ScopeAnalyzer(ScopeVisitor):
         """Visit a nonlocal statement."""
         self._record_scope_declaration(self.nonlocal_vars, node.names)
 
-    def visit_comprehension(self, node: ast.comprehension) -> None:
-        """Visit a comprehension."""
-        self.visit(node.iter)
-        self._add_assignment_bindings(node.target)
-        for condition in node.ifs:
-            self.visit(condition)
-
     def visit_Import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            self.current_scope.add_binding(alias.asname or alias.name.split(".")[0], node)
+        for name in import_binding_names(node):
+            self.current_scope.add_binding(name, node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        for alias in node.names:
-            if alias.name != "*":
-                self.current_scope.add_binding(alias.asname or alias.name, node)
+        for name in import_binding_names(node):
+            self.current_scope.add_binding(name, node)
 
     def visit_Match(self, node: ast.Match) -> None:
         """Visit a match statement; capture patterns bind in the current scope."""

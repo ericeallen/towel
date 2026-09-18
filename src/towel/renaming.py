@@ -20,6 +20,7 @@ from .changes import ChangePlan
 from .project_layout import ProjectLayout
 from .unification.semantic_safety import is_namespace_access_call
 from .unification.models import GENERATED_HELPER_NAME, FunctionNode
+from .unification.statement_facts import import_binding_names, imported_binding_name
 from .unification.visitors import (
     OwnScopeVisitor,
     ScopeVisitor,
@@ -82,10 +83,10 @@ class _Bindings(OwnScopeVisitor):
             self.visit(expression)
 
     def visit_Import(self, node: ast.Import) -> None:
-        self.local.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        self.local.update(import_binding_names(node))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        self.local.update(alias.asname or alias.name for alias in node.names)
+        self.local.update(import_binding_names(node))
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if node.name:
@@ -470,8 +471,8 @@ def _identifiers_in(node: ast.AST) -> set[str]:
             names.add(child.name)
         elif isinstance(child, (ast.Global, ast.Nonlocal)):
             names.update(child.names)
-        elif isinstance(child, ast.alias):
-            names.add(child.asname or child.name.split(".")[0])
+        elif isinstance(child, ast.alias) and (bound := imported_binding_name(child)):
+            names.add(bound)
         elif isinstance(child, ast.MatchMapping) and child.rest:
             names.add(child.rest)
     return names
@@ -715,7 +716,9 @@ class _ModulePlanner:
     def _plan_import(self, node: ast.Import) -> None:
         scope = self.scopes.nodes[node]
         for alias in node.names:
-            local = alias.asname or alias.name.split(".")[0]
+            local = imported_binding_name(alias)
+            if local is None:
+                continue
             if scope is self.scopes.root and local in self.local_renames:
                 raise ValueError(
                     f"Imported binding redefines selected helper: {self.module.path}:{local}"
@@ -732,7 +735,9 @@ class _ModulePlanner:
         ):
             raise ValueError(f"Star import prevents safe helper rename: {self.module.path}")
         for alias in node.names:
-            local = alias.asname or alias.name
+            local = imported_binding_name(alias)
+            if local is None:
+                continue
             if (
                 scope is self.scopes.root
                 and local in self.local_renames

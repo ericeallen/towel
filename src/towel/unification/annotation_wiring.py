@@ -40,7 +40,7 @@ from .annotations import (
     sites_use_annotations,
     typing_imports_needed,
 )
-from .models import FunctionNode, RefactoringProposal
+from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
 
 from .engine_state import EngineState
@@ -179,7 +179,7 @@ class HelperAnnotationWiring(EngineState):
         for node in ast.walk(tree):
             if (
                 isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.lineno <= line <= (node.end_lineno or node.lineno)
+                and span_contains(node, (line, line))
                 and (innermost is None or node.lineno > innermost.lineno)
             ):
                 innermost = node

@@ -28,7 +28,7 @@ import ast
 from dataclasses import dataclass, field
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
-from .models import FunctionArtifact
+from .models import FunctionArtifact, span_contains
 
 
 @dataclass(frozen=True)
@@ -71,12 +71,10 @@ class FunctionIndex:
         self, file_path: str, line_range: Tuple[int, int]
     ) -> Optional[FunctionArtifact]:
         """The most deeply nested function of ``file_path`` whose span contains ``line_range``."""
-        start, end = line_range
         enclosing = [
             artifact
             for artifact in self.in_file(file_path)
-            if artifact.node.lineno <= start
-            and end <= (artifact.node.end_lineno or artifact.node.lineno)
+            if span_contains(artifact.node, line_range)
         ]
         if not enclosing:
             return None

@@ -28,7 +28,7 @@ from __future__ import annotations
 import ast
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable, FrozenSet, Sequence, TypeVar
+from typing import Callable, FrozenSet, List, Optional, Sequence, TypeVar, Union
 from weakref import WeakKeyDictionary
 
 _SIGNATURE_SKIPS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -118,6 +118,22 @@ _FACTS: "WeakKeyDictionary[ast.AST, StatementFacts]" = WeakKeyDictionary()
 def statement_facts(statement: ast.AST) -> StatementFacts:
     """The facts of one statement, computed on first request."""
     return memoized_per_node(_FACTS, statement, _compute_facts)
+
+
+def imported_binding_name(alias: ast.alias) -> Optional[str]:
+    """The local name an import alias binds, or None for a star import.
+
+    ``import a.b`` binds ``a``, ``import a.b as c`` binds ``c``, ``from m
+    import x`` binds ``x``; ``from m import *`` binds nothing nameable.
+    """
+    if alias.name == "*":
+        return None
+    return alias.asname or alias.name.split(".")[0]
+
+
+def import_binding_names(node: Union[ast.Import, ast.ImportFrom]) -> List[str]:
+    """The local names an import statement binds, in order, star imports aside."""
+    return [name for alias in node.names if (name := imported_binding_name(alias)) is not None]
 
 
 def block_contains_return(block: Sequence[ast.AST]) -> bool:

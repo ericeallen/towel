@@ -42,6 +42,7 @@ from .models import (
     is_generated_helper_name,
 )
 from .scope_analyzer import ScopeBinding
+from .statement_facts import imported_binding_name
 from .semantic_safety import would_create_import_cycle
 from .visitors import body_without_docstring
 
@@ -190,24 +191,20 @@ class ExistingFunctionReuse(EngineState):
         """
         if isinstance(left, ast.Import) and isinstance(right, ast.Import):
             left_targets = {
-                alias.name
-                for alias in left.names
-                if (alias.asname or alias.name.split(".")[0]) == name
+                alias.name for alias in left.names if imported_binding_name(alias) == name
             }
             right_targets = {
-                alias.name
-                for alias in right.names
-                if (alias.asname or alias.name.split(".")[0]) == name
+                alias.name for alias in right.names if imported_binding_name(alias) == name
             }
             return bool(left_targets) and left_targets == right_targets
         if isinstance(left, ast.ImportFrom) and isinstance(right, ast.ImportFrom):
             if left.level or right.level or left.module != right.module:
                 return False
             left_targets = {
-                alias.name for alias in left.names if (alias.asname or alias.name) == name
+                alias.name for alias in left.names if imported_binding_name(alias) == name
             }
             right_targets = {
-                alias.name for alias in right.names if (alias.asname or alias.name) == name
+                alias.name for alias in right.names if imported_binding_name(alias) == name
             }
             return bool(left_targets) and left_targets == right_targets
         return False

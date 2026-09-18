@@ -316,10 +316,12 @@ class HelperTemplate:
     bound_in_block: FrozenSet[str]
 
 
+def span_contains(node: ast.stmt, line_range: Tuple[int, int]) -> bool:
+    """Whether the source span of ``node`` covers every line of ``line_range``."""
+    start, end = line_range
+    return node.lineno <= start and end <= (node.end_lineno or node.lineno)
+
+
 def encloses(outer: FunctionNode, inner: FunctionNode) -> bool:
     """Whether ``inner`` is ``outer`` or lies within its source span."""
-    if outer is inner:
-        return True
-    outer_end = outer.end_lineno or outer.lineno
-    inner_end = inner.end_lineno or inner.lineno
-    return outer.lineno <= inner.lineno and inner_end <= outer_end and outer is not inner
+    return outer is inner or span_contains(outer, (inner.lineno, inner.end_lineno or inner.lineno))

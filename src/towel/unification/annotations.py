@@ -57,6 +57,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tupl
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, Subtyping, TypeOracle
 from .models import FunctionNode
+from .statement_facts import import_binding_names, imported_binding_name
 from ..diagnostics import TYPES, debugging
 
 _BUILTIN_NAMES: Set[str] = set(dir(builtins))
@@ -157,9 +158,7 @@ def _rebinds(function: FunctionNode, name: str) -> bool:
             return True
         if isinstance(node, ast.ExceptHandler) and node.name == name:
             return True
-        if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
-            (alias.asname or alias.name.split(".")[0]) == name for alias in node.names
-        ):
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and name in import_binding_names(node):
             return True
         if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == name:
             return True
@@ -436,12 +435,13 @@ def _evaluates_at_runtime(expression: ast.expr, host: Optional[ast.Module]) -> b
     if host is not None:
         for node in host.body:
             if isinstance(node, ast.ImportFrom) and node.module in _TYPING_MODULES:
-                generic_names.update(alias.asname or alias.name for alias in node.names)
+                generic_names.update(import_binding_names(node))
             elif isinstance(node, ast.Import):
                 typing_modules.update(
-                    alias.asname or alias.name
+                    bound
                     for alias in node.names
                     if alias.name in _TYPING_MODULES
+                    and (bound := imported_binding_name(alias)) is not None
                 )
     for sub in ast.walk(expression):
         if not isinstance(sub, ast.Subscript):
@@ -475,10 +475,8 @@ def _defers_annotations(module: ast.Module) -> bool:
 def _import_bound_names(module: ast.Module) -> Set[str]:
     bound: Set[str] = set()
     for node in module.body:
-        if isinstance(node, ast.Import):
-            bound.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            bound.update(alias.asname or alias.name for alias in node.names if alias.name != "*")
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound.update(import_binding_names(node))
     return bound
 
 

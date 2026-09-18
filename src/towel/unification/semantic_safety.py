@@ -28,7 +28,7 @@ from .bounded_cache import BoundedCache
 from .exceptions import UnsupportedLayoutError
 from ..project_layout import ProjectLayout
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
-from .statement_facts import memoized_per_node
+from .statement_facts import import_binding_names, imported_binding_name, memoized_per_node
 from .visitors import OwnScopeVisitor
 from ..source_text import read_source
 
@@ -595,9 +595,9 @@ def _module_level_import_bindings(
             prefix: Tuple[str, ...] = ("." * node.level,) if node.level else ()
             module = tuple(node.module.split(".")) if node.module else ()
             for alias in node.names:
-                if alias.name == "*":
-                    continue
-                bindings[alias.asname or alias.name] = (*prefix, *module, alias.name)
+                bound = imported_binding_name(alias)
+                if bound is not None:
+                    bindings[bound] = (*prefix, *module, alias.name)
     return cache.bindings.put(key, bindings)
 
 
@@ -766,9 +766,7 @@ def _statement_bound_names(statement: ast.AST) -> FrozenSet[str]:
         elif isinstance(node, ast.match_case):
             names.update(pattern_capture_names(node.pattern))
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                if alias.name != "*":
-                    names.add(alias.asname or alias.name.split(".")[0])
+            names.update(import_binding_names(node))
     return frozenset(names)
 
 

@@ -14,6 +14,7 @@ from .assignment_analyzer import stored_names
 from .models import FunctionNode
 from .parameters import parameter_names
 from .scope_analyzer import pattern_capture_names
+from .statement_facts import import_binding_names
 from functools import cached_property
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set
 from weakref import WeakKeyDictionary, ref
@@ -184,11 +185,7 @@ def _locally_bound_names(function: FunctionNode) -> Set[str]:
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.add(node.id)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update(
-                alias.asname or alias.name.split(".")[0]
-                for alias in node.names
-                if alias.name != "*"
-            )
+            names.update(import_binding_names(node))
         elif isinstance(node, ast.ExceptHandler) and node.name:
             names.add(node.name)
         elif isinstance(node, ast.match_case):
@@ -200,22 +197,18 @@ def _locally_bound_names(function: FunctionNode) -> Set[str]:
 def _bindings_on_entry(container: ast.AST, field: str) -> Set[str]:
     """Names a compound statement binds before running the listed field."""
     if isinstance(container, (ast.For, ast.AsyncFor)) and field == "body":
-        return _targets(container.target)
+        return stored_names(container.target)
     if isinstance(container, (ast.With, ast.AsyncWith)) and field == "body":
         names: Set[str] = set()
         for item in container.items:
             if item.optional_vars is not None:
-                names |= _targets(item.optional_vars)
+                names |= stored_names(item.optional_vars)
         return names
     if isinstance(container, ast.ExceptHandler) and field == "body" and container.name:
         return {container.name}
     if isinstance(container, ast.match_case) and field == "body":
         return pattern_capture_names(container.pattern)
     return set()
-
-
-def _targets(target: ast.AST) -> Set[str]:
-    return stored_names(target)
 
 
 def _meet(left: Definite, right: Definite) -> Definite:
@@ -287,16 +280,16 @@ def _definite_statement(statement: ast.stmt) -> Definite:
     if isinstance(statement, ast.Assign):
         names: Set[str] = set()
         for target in statement.targets:
-            names |= _targets(target)
+            names |= stored_names(target)
         return frozenset(names)
     if isinstance(statement, ast.AnnAssign):
-        return frozenset(_targets(statement.target)) if statement.value is not None else frozenset()
-    if isinstance(statement, (ast.Import, ast.ImportFrom)):
-        return frozenset(
-            alias.asname or alias.name.split(".")[0]
-            for alias in statement.names
-            if alias.name != "*"
+        return (
+            frozenset(stored_names(statement.target))
+            if statement.value is not None
+            else frozenset()
         )
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return frozenset(import_binding_names(statement))
     if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return frozenset({statement.name})
     if isinstance(statement, ast.If):
@@ -307,7 +300,7 @@ def _definite_statement(statement: ast.stmt) -> Definite:
         names = set()
         for item in statement.items:
             if item.optional_vars is not None:
-                names |= _targets(item.optional_vars)
+                names |= stored_names(item.optional_vars)
         body = _definite(statement.body)
         return None if body is None else frozenset(names) | body
     if isinstance(statement, ast.Try):

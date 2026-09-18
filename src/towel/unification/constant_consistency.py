@@ -29,19 +29,6 @@ from typing import Any, List, Sequence, Tuple
 from .unifier_state import UnifierState
 
 
-class _ConstantOccurrenceFinder(ast.NodeVisitor):
-    """Collect every constant node whose value equals the one sought."""
-
-    def __init__(self, value: object) -> None:
-        self.value = value
-        self.occurrences: List[ast.AST] = []
-
-    def visit_Constant(self, node: ast.Constant) -> None:
-        if node.value == self.value:
-            self.occurrences.append(node)
-        self.generic_visit(node)
-
-
 class ConstantConsistency(UnifierState):
     """See the module docstring."""
 
@@ -163,19 +150,3 @@ class ConstantConsistency(UnifierState):
             elif isinstance(field_value, ast.AST):
                 child_path = path + (field_name,)
                 self._record_constants_in_tree(field_value, child_path, block_idx)
-
-    def _find_all_occurrences(self, value: Any, block: Sequence[ast.AST]) -> List[ast.AST]:
-        """
-        Find all AST nodes in a block that are constants with the given value.
-
-        Args:
-            value: The constant value to search for
-            block: List of AST statements
-
-        Returns:
-            List of ast.Constant nodes with matching value
-        """
-        finder = _ConstantOccurrenceFinder(value)
-        for stmt in block:
-            finder.visit(stmt)
-        return finder.occurrences

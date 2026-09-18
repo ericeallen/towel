@@ -28,6 +28,7 @@ import ast
 from typing import Dict, Sequence, Set, Tuple, Union
 
 from .scope_analyzer import pattern_capture_names
+from .statement_facts import import_binding_names
 from .models import FunctionNode
 from .parameters import parameter_names
 from .visitors import OwnScopeVisitor
@@ -132,9 +133,7 @@ class _AssignmentAnalyzer(OwnScopeVisitor):
         self._bind_import_aliases(node)
 
     def _bind_import_aliases(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
-        names = [
-            alias.asname or alias.name.split(".")[0] for alias in node.names if alias.name != "*"
-        ]
+        names = import_binding_names(node)
         self.reassignments[id(node)] = any(name in self.bound_vars for name in names)
         self.bound_vars.update(names)
 
@@ -341,10 +340,7 @@ class _BindingCollector(OwnScopeVisitor):
         self._bind_import_aliases(node)
 
     def _bind_import_aliases(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
-        names = [
-            alias.asname or alias.name.split(".")[0] for alias in node.names if alias.name != "*"
-        ]
-        self._destination(node).update(names)
+        self._destination(node).update(import_binding_names(node))
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         # Augmented assignments are always reassignments
