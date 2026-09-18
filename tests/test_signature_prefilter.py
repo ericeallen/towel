@@ -2,7 +2,6 @@ import ast
 from towel.unification.block_signature import (
     extract_block_signature,
     quick_filter,
-    evaluate_signature,
     IDENT_COUNT_TOLERANCE,
 )
 
@@ -68,11 +67,3 @@ def inner():
     assert s_outer.call_count == s_nested.call_count
     assert s_outer.stmt_count != s_nested.stmt_count
     assert quick_filter(s_outer, s_nested) is False
-
-
-def test_evaluate_signature_wrapper():
-    b = _block("x = 1\ny = 2\n")
-    s = extract_block_signature(b)
-    decision, info = evaluate_signature(s, s)
-    assert decision is True
-    assert isinstance(info, dict) and not info

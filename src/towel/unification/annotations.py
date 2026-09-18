@@ -49,6 +49,7 @@ from __future__ import annotations
 import ast
 import builtins
 import copy
+import textwrap
 from dataclasses import dataclass
 import re
 from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
@@ -889,7 +890,7 @@ def _return_probes(
         return []
     block_source = "".join(lines[site.start_line - 1 : site.end_line])
     try:
-        block = ast.parse(textwrap_dedent(block_source))
+        block = ast.parse(textwrap.dedent(block_source))
     except SyntaxError:
         return []
     probes: List[Tuple[int, str, Tuple[str, ...]]] = []
@@ -903,12 +904,6 @@ def _return_probes(
     return probes
 
 
-def textwrap_dedent(text: str) -> str:
-    import textwrap
-
-    return textwrap.dedent(text)
-
-
 def _joined_revealed(
     texts: Sequence[Optional[str]],
     host: Optional[ast.Module],
@@ -917,12 +912,11 @@ def _joined_revealed(
     allowed: Optional[Set[str]] = None,
 ) -> Optional[ast.expr]:
     """The normalized union of what mypy revealed at every site, when all of it can be written."""
-    if not texts or any(text is None for text in texts):
+    present = [text for text in texts if text is not None]
+    if not present or len(present) != len(texts):
         return None
     extra = allowed if allowed is not None else set(TYPING_NAMES)
-    candidates = [
-        annotation_from_revealed(cast_str(text), host, same_module, extra) for text in texts
-    ]
+    candidates = [annotation_from_revealed(text, host, same_module, extra) for text in present]
     if any(candidate is None for candidate in candidates):
         return None
     return _joined(
@@ -952,8 +946,3 @@ def _joined_tuple(
         slice=ast.Tuple(elts=[e for e in elements if e is not None], ctx=ast.Load()),
         ctx=ast.Load(),
     )
-
-
-def cast_str(text: Optional[str]) -> str:
-    assert text is not None
-    return text

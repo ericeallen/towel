@@ -78,7 +78,13 @@ from .parameters import parameter_names
 from .semantic_safety import (
     ImportGraphCache,
 )
-from .block_signature import BlockSignature, extract_block_signature, quick_filter
+from .block_signature import (
+    BlockBucketKey,
+    BlockSignature,
+    extract_block_signature,
+    quick_filter,
+    signature_bucket_key,
+)
 from .models import (
     CodeBlockPair,
     FunctionArtifact,
@@ -988,7 +994,6 @@ class UnificationRefactorEngine(
         Returns:
             List of code block pairs
         """
-        from .block_signature import BlockBucketKey, BlockSignature, signature_bucket_key
 
         self._record_function_paths(all_functions)
 

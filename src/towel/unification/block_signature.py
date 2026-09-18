@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import List, Tuple, Dict
+from typing import List, Tuple
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.6
 """Structural similarity a clustered occurrence must reach to join a helper."""
@@ -128,11 +128,3 @@ def quick_filter(sig1: BlockSignature, sig2: BlockSignature) -> bool:
     if sig1.stmt_seq and sig2.stmt_seq and sig1.stmt_seq != sig2.stmt_seq:
         return False
     return True
-
-
-def evaluate_signature(
-    sig1: BlockSignature, sig2: BlockSignature
-) -> Tuple[bool, Dict[str, object]]:
-    """Minimal compatibility wrapper retained so refactor_engine telemetry calls
-    do not break. Returns (decision, empty_info)."""
-    return quick_filter(sig1, sig2), {}

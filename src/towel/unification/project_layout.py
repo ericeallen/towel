@@ -25,6 +25,8 @@ from keyword import iskeyword
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
+
+from ..diagnostics import LOG
 import re
 import sys
 
@@ -47,8 +49,14 @@ def load_pyproject(project_root: Path) -> Dict[str, Any]:
     try:
         with pyproject_path.open("rb") as f:
             return tomllib.load(f)
-    except (OSError, ValueError):
-        # Malformed or inaccessible configuration provides no layout information.
+    except OSError:
+        return {}
+    except ValueError as error:
+        LOG.warning(
+            "%s could not be parsed; no layout information taken from it: %s",
+            pyproject_path,
+            error,
+        )
         return {}
 
 

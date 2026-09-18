@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from .parameters import parameter_names, fresh_parameter_name
 from .visitors import OwnScopeVisitor
 from ..diagnostics import UNIFIER
+from .scope_analyzer import ScopeAnalyzer
 
 
 @dataclass
@@ -575,7 +576,7 @@ class Unifier:
             try:
                 self._promote_hof_literals(blocks, subst)
             except (AttributeError, KeyError, TypeError, IndexError, ValueError) as error:
-                UNIFIER.debug("literal promotion rolled back: %r", error)
+                UNIFIER.warning("literal promotion failed and was rolled back: %r", error)
                 subst.mappings = saved_mappings
                 subst.param_expressions = saved_param_expressions
                 subst.function_params = saved_function_params
@@ -1964,11 +1965,7 @@ class Unifier:
             # (i.e., they're free variables of the block, not just comprehension variables)
             for idx, expr in zip(block_indices, exprs):
                 if self.current_blocks is not None and idx < len(self.current_blocks):
-                    from .scope_analyzer import ScopeAnalyzer
-                    from typing import Any as _Any, cast as _cast
-
-                    analyzer1 = _cast(_Any, ScopeAnalyzer)()
-                    block_free_vars = analyzer1.get_free_variables(self.current_blocks[idx])
+                    block_free_vars = ScopeAnalyzer().get_free_variables(self.current_blocks[idx])
 
                     # Check if all bound variables used in the expression are free variables
                     for var in common_bound_vars:
@@ -1987,19 +1984,14 @@ class Unifier:
                     # Simple variable reference - needs to exist at call site
                     # Get free variables of the entire block to see what's available
                     if self.current_blocks is not None and idx < len(self.current_blocks):
-                        from .scope_analyzer import ScopeAnalyzer
-                        from typing import Any as _Any, cast as _cast
-
-                        analyzer2 = _cast(_Any, ScopeAnalyzer)()
-                        block_free_vars = analyzer2.get_free_variables(self.current_blocks[idx])
+                        block_free_vars = ScopeAnalyzer().get_free_variables(
+                            self.current_blocks[idx]
+                        )
 
                         # Check if this variable is available at call site
                         if expr.id not in block_free_vars:
                             # Variable not available at call site - can't parameterize
-                            import logging
-
-                            logger = logging.getLogger(__name__)
-                            logger.debug(
+                            UNIFIER.debug(
                                 f"Skipping refactoring: Variable '{expr.id}' is not accessible at function scope. "
                                 f"It may be defined inside a nested function or be an unbound variable reference."
                             )

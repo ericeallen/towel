@@ -24,6 +24,7 @@ after a change so only new errors count.
 from __future__ import annotations
 
 import ast
+from collections import Counter
 import copy
 import dataclasses
 
@@ -234,8 +235,6 @@ class HelperAnnotationWiring(EngineState):
         project already has do not count and moved lines do not confuse it.
         """
         assert self.type_inferrer is not None
-        from collections import Counter
-
         for path, after_source in modified_files.items():
             before_source = self._read_source(path)
             if before_source is None or before_source == after_source:

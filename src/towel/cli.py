@@ -7,8 +7,11 @@ This module provides CLI entry points for the Towel code refactoring tool.
 
 from __future__ import annotations
 
-import sys
 import argparse
+import ast
+import json
+import os
+import sys
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, List, Tuple, Optional, Mapping, TypedDict, cast
@@ -377,8 +380,6 @@ class HelperInventory(TypedDict):
 
 def _change_sidecar_path(target: "Path") -> "Path":
     """Where the before/after record lives for a dry output target (file or dir)."""
-    from pathlib import Path
-
     target = Path(target)
     if target.is_dir():
         return target / CHANGE_SIDECAR_NAME
@@ -393,9 +394,6 @@ def _write_change_sidecar(engine: "UnificationRefactorEngine", output: str) -> N
     docstrings, and types. Written next to the refactored output; delete it
     once naming is done.
     """
-    import json
-    import os
-    from pathlib import Path
 
     records = engine.change_log
     if not records:
@@ -474,7 +472,6 @@ def _banner(title: str) -> None:
 
 def _existing_target(path: str) -> Tuple[bool, bool]:
     """``(is_file, is_dir)`` for a path the command may work on; exits with a message otherwise."""
-    import os
 
     if not os.path.exists(path):
         print(f"Error: '{path}' does not exist")
@@ -590,8 +587,6 @@ def _run_dry(args: argparse.Namespace) -> None:
 
 def _run_preview(args: argparse.Namespace) -> None:
     """Run the preview command."""
-    import os
-    import ast
     import textwrap
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
@@ -782,7 +777,6 @@ def _find_extracted_helpers(
     function_filters: Optional[List[str]],
 ) -> List[Tuple[Path, str, int, str]]:
     """Find generated helpers, including unmangled helpers used by classes."""
-    import ast
     import re
 
     helper_pattern = re.compile(r"^_{1,2}extracted_func(?:_\d+)?$")
@@ -832,8 +826,6 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
     expression bound to each parameter, and the exact mapping keys that
     rename the helper or one of its parameters.
     """
-    import ast
-    import json
 
     changes_by_helper: Dict[str, List[ChangeRecord]] = {}
     sidecar = _change_sidecar_path(target)
@@ -980,7 +972,6 @@ def _apply_rename_file(
     it exits with status 2 and states the reason, so the caller can pick
     another name and retry. Nothing is written unless every entry is valid.
     """
-    import json
 
     # Load rename mappings
     try:
@@ -1110,7 +1101,6 @@ def _run_interactive_llm_mode(
         return
 
     # Extract JSON from response (handle markdown code blocks)
-    import json
     import re
 
     # Try to extract JSON from markdown code block

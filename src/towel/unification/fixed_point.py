@@ -37,6 +37,7 @@ from .progress import ProgressBarFactory, load_tqdm, quietly, render_inline_bar
 from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangeConflict, ChangePlan, apply_changes
 from ..diagnostics import LOG, REJECTIONS, debugging
+from ..filesystem import copy_project
 
 from .engine_state import EngineState
 
@@ -220,7 +221,6 @@ class FixedPointDrivers(EngineState):
             termination_reason ∈ {"fixed_point", "iteration_cap"}
         """
         self._change_log = []
-        from pathlib import Path
         import textwrap
 
         progress_mode, tqdm_wrapper, use_tqdm = self._resolve_progress_backend(progress)
@@ -239,8 +239,6 @@ class FixedPointDrivers(EngineState):
                 raise ValueError("Output directory must be empty")
 
         if resolved_input != resolved_output:
-            from towel.filesystem import copy_project
-
             copy_project(input_path, output_path, allow_empty=True)
         elif not output_path.is_dir():
             raise ValueError("Input directory does not exist")
@@ -356,7 +354,7 @@ class FixedPointDrivers(EngineState):
 
         def _detail(msg: str) -> None:
             if progress_mode == "detail":
-                print(f"[towel] {msg}")
+                LOG.info("[towel] %s", msg)
 
         # Main loop -------------------------------------------------------
         while True:
@@ -408,9 +406,9 @@ class FixedPointDrivers(EngineState):
                 if progress_mode == "detail":
                     for i, p in enumerate(proposal_queue[:25], 1):  # cap verbose listing
                         short = textwrap.shorten(p.description, width=100, placeholder="...")
-                        print(f"    {i:2d}. {short}")
+                        LOG.info("    %2d. %s", i, short)
                     if len(proposal_queue) > 25:
-                        print(f"    ... {len(proposal_queue)-25} more")
+                        LOG.info("    ... %d more", len(proposal_queue) - 25)
                 _fallback_bar(total_applied, len(proposal_queue), "discovered", "proposals queued")
                 if use_tqdm and progress_bar is None:
                     # Lazily create tqdm now that we have proposals to apply

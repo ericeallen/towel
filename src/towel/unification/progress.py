@@ -25,7 +25,7 @@ import importlib
 from typing import Any, Callable, Iterator, Mapping, Optional, Protocol, cast
 
 
-class ProgressBar(Protocol):
+class ProgressBar(Protocol):  # pragma: no cover - protocol bodies are never run
     """The part of a tqdm bar the engine and the pipeline use."""
 
     def update(self, n: int = 1) -> object:
@@ -49,7 +49,7 @@ class ProgressBar(Protocol):
         ...
 
 
-class ProgressBarFactory(Protocol):
+class ProgressBarFactory(Protocol):  # pragma: no cover - protocol bodies are never run
     """``tqdm.auto.tqdm`` as the engine calls it: a bar over an iterable or a total."""
 
     def __call__(self, *args: object, **kwargs: object) -> ProgressBar:

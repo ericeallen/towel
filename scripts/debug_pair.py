@@ -9,6 +9,7 @@ Usage:
 
 import sys
 import ast
+import os
 from pathlib import Path
 from typing import Optional, Tuple, List, Union, Sequence
 
@@ -51,6 +52,9 @@ def main() -> None:
     analyzer = ScopeAnalyzer()
     scope = analyzer.analyze(tree)
 
+    # The validation trace is a logger the engine enables from its settings at
+    # construction, so the switch must be set before the engine exists.
+    os.environ["DEBUG_VALIDATION"] = "1"
     eng = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
     # Build a minimal all_functions tuple as expected by engine internal call
@@ -94,11 +98,6 @@ def main() -> None:
         source1=src,
         source2=src,
     )
-
-    # Monkey-print debug by setting env var inside process
-    import os
-
-    os.environ["DEBUG_VALIDATION"] = "1"
 
     res = eng._try_refactor_pair_multi_file(pair, all_functions)
     if res:

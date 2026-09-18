@@ -1,6 +1,10 @@
+import contextlib
 import io
+import logging
 import sys
 from pathlib import Path
+
+import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -31,21 +35,18 @@ def g2():
     (dir_path / "sample.py").write_text(code, encoding="utf-8")
 
 
-def test_detail_progress_lists_proposals(tmp_path: Path) -> None:
+def test_detail_progress_lists_proposals(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     fixture = tmp_path / "proj"
     _make_fixture(fixture)
     engine = UnificationRefactorEngine(min_lines=3)
     out_dir = tmp_path / "out_dir"  # outside input to avoid recursive copy
-    captured = io.StringIO()
-    old_stdout = sys.stdout
-    sys.stdout = captured
-    try:
+    # Detail mode reports through the towel logger at INFO, which the command
+    # line routes to stderr; here the records are read directly.
+    with caplog.at_level(logging.INFO, logger="towel"), contextlib.redirect_stdout(io.StringIO()):
         results, termination = engine.refactor_directory_to_fixed_point(
             str(fixture), str(out_dir), max_iterations=1, progress="detail"
         )
-    finally:
-        sys.stdout = old_stdout
-    output = captured.getvalue()
+    output = "\n".join(record.getMessage() for record in caplog.records)
     assert "Discovered" in output
     assert "Reuse f1" in output or "Extract common code" in output  # a proposal listed
     # iteration_cap expected because we limited iterations to 1 with >1 proposals available

@@ -33,7 +33,9 @@ from __future__ import annotations
 import ast
 import configparser
 from dataclasses import dataclass
+import copy
 from pathlib import Path
+import sys
 import shutil
 import subprocess
 from typing import Callable, List, Mapping, Optional, Tuple
@@ -222,8 +224,6 @@ def _ruff_executable() -> Optional[List[str]]:
         import ruff  # noqa: F401
     except ImportError:
         return None
-    import sys
-
     return [sys.executable, "-m", "ruff"]
 
 
@@ -358,8 +358,6 @@ def imports_permuted_only(finisher: FileFinisher) -> FileFinisher:
 
 def _imports_stripped(module: ast.Module) -> str:
     """The module's dump with every import statement, at any depth, removed."""
-    import copy
-
     stripped = copy.deepcopy(module)
     for node in ast.walk(stripped):
         for field, value in ast.iter_fields(node):

@@ -140,6 +140,8 @@ class ParallelEvaluation(EngineState):
             if sys.platform != "darwin":
                 resident *= 1024  # Linux reports kilobytes
         except (ValueError, OSError, AttributeError):
+            # os.sysconf is absent on some platforms (AttributeError) and its
+            # names vary (ValueError); without a reading, one worker per core.
             return os.cpu_count() or 1
         if resident <= 0:
             return os.cpu_count() or 1
