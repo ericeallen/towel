@@ -20,6 +20,7 @@ import ast
 from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
+from .models import FunctionNode
 from .parameters import parameter_names, parameter_nodes
 from .visitors import ScopeVisitor
 
@@ -397,7 +398,7 @@ class ScopeAnalyzer(ScopeVisitor):
         self.current_scope = new_scope
         return new_scope
 
-    def is_method(self, function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> bool:
+    def is_method(self, function: FunctionNode) -> bool:
         """Whether ``function`` is defined directly in a class body.
 
         A function nested inside a method shares the method's lexical class for

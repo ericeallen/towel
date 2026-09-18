@@ -20,9 +20,13 @@ from typing import Iterable, Literal, Sequence, cast
 from .changes import ChangePlan
 from .project_layout import ProjectLayout
 from .unification.semantic_safety import is_namespace_access_call
-from .unification.visitors import OwnScopeVisitor, ScopeVisitor, visit_comprehension_result
-
-Function = ast.FunctionDef | ast.AsyncFunctionDef
+from .unification.models import FunctionNode
+from .unification.visitors import (
+    OwnScopeVisitor,
+    ScopeVisitor,
+    visit_comprehension_generators,
+    visit_comprehension_result,
+)
 
 
 def _class_head_expressions(node: ast.ClassDef) -> Iterable[ast.AST]:
@@ -33,7 +37,7 @@ def _class_head_expressions(node: ast.ClassDef) -> Iterable[ast.AST]:
         yield item.value
 
 
-def _outer_expressions(node: Function | ast.Lambda) -> Iterable[ast.AST]:
+def _outer_expressions(node: FunctionNode | ast.Lambda) -> Iterable[ast.AST]:
     yield from node.args.defaults
     yield from (value for value in node.args.kw_defaults if value is not None)
     for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
@@ -64,7 +68,7 @@ class _Bindings(OwnScopeVisitor):
     def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
         self.nonlocal_names.update(node.names)
 
-    def _nested_function(self, node: Function) -> None:
+    def _nested_function(self, node: FunctionNode) -> None:
         self.local.add(node.name)
         for expression in _outer_expressions(node):
             self.visit(expression)
@@ -108,10 +112,7 @@ class _Bindings(OwnScopeVisitor):
     ) -> None:
         # Comprehension iteration targets are local to the comprehension, while
         # assignment expressions bind in its containing non-comprehension scope.
-        for generator in node.generators:
-            self.visit(generator.iter)
-            for condition in generator.ifs:
-                self.visit(condition)
+        visit_comprehension_generators(self, node)
         visit_comprehension_result(self, node)
 
 
@@ -269,7 +270,7 @@ class _Edits:
         assert node.end_lineno is not None and node.end_col_offset is not None
         self.add(node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, replacement)
 
-    def identifier(self, node: Function | ast.Global, old: str, new: str) -> None:
+    def identifier(self, node: FunctionNode | ast.Global, old: str, new: str) -> None:
         source = self.module.raw.decode("utf-8")
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
             if token.start[0] < node.lineno:

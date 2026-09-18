@@ -27,6 +27,7 @@ insertion points) are the ones more than one module needs.
 from __future__ import annotations
 
 import ast
+from .models import FunctionNode
 from typing import Callable, Iterable, List, Optional, Set, Tuple, Union, Literal, Sequence, TypeVar
 
 MethodKind = Literal["instance", "classmethod", "staticmethod"]
@@ -67,7 +68,7 @@ class OwnScopeVisitor(ast.NodeVisitor):
     visit_DictComp = visit_ListComp
     visit_GeneratorExp = visit_ListComp
 
-    def _nested_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+    def _nested_function(self, node: FunctionNode) -> None:
         """Hook: a function defined in this scope. The default does not enter it."""
 
     def _nested_class(self, node: ast.ClassDef) -> None:
@@ -137,7 +138,7 @@ class ScopeVisitor(ast.NodeVisitor):
     a comprehension in the enclosing scope, and say so where they do.
     """
 
-    def visit_FunctionDef(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+    def visit_FunctionDef(self, node: FunctionNode) -> None:
         self._visit_definition_head(node)
         self._bind_definition_name(node)
         self._enter_scope(node)
@@ -244,7 +245,7 @@ class FunctionCollector(DefinitionDepthVisitor):
     def __init__(
         self,
         sink: Callable[
-            [Union[ast.FunctionDef, ast.AsyncFunctionDef], Optional[str], Optional[str], List[str]],
+            [FunctionNode, Optional[str], Optional[str], List[str]],
             None,
         ],
     ) -> None:
@@ -449,7 +450,7 @@ class FuncLocator(OwnScopeVisitor):
         self.function_name = function_name
         self.result: Optional[Tuple[int, str]] = None
 
-    def _nested_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+    def _nested_function(self, node: FunctionNode) -> None:
         if node.name != self.function_name:
             self.generic_visit(node)
             return
@@ -531,6 +532,17 @@ def visit_each(visitor: ast.NodeVisitor, nodes: Iterable[ast.AST]) -> None:
     """Visit every node in turn; the visitor accumulates whatever it collects."""
     for node in nodes:
         visitor.visit(node)
+
+
+def visit_comprehension_generators(
+    visitor: ast.NodeVisitor,
+    node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp],
+) -> None:
+    """Visit each generator's iterable and conditions, in order; the targets are left to the caller."""
+    for generator in node.generators:
+        visitor.visit(generator.iter)
+        for condition in generator.ifs:
+            visitor.visit(condition)
 
 
 def visit_comprehension_result(

@@ -54,6 +54,7 @@ from .models import (
     CodeBlockPair,
     RefactoringProposal,
 )
+from .models import FunctionNode
 from .scope_analyzer import ScopeAnalyzer
 from .overlap import filter_overlapping_proposals
 from .progress import (
@@ -182,7 +183,7 @@ def collect_functions(mods: Sequence[ParsedModule]) -> List[FunctionArtifact]:
         root_scope = mod.root_scope
 
         def sink(
-            node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+            node: FunctionNode,
             class_name: Optional[str],
             enclosing_function: Optional[str],
             ancestry: List[str],

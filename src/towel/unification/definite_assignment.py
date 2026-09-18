@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import ast
 from .assignment_analyzer import stored_names
+from .models import FunctionNode
 from .parameters import parameter_names
 from .scope_analyzer import pattern_capture_names
 from functools import cached_property
-from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Union
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set
 from weakref import WeakKeyDictionary, ref
-
-Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 # ``None`` stands for "every name": the position is unreachable, so any
 # claim about it is vacuously true. It is the identity of intersection.
@@ -36,11 +35,11 @@ class _FunctionFacts:
     the life of the process.
     """
 
-    def __init__(self, function: Function) -> None:
+    def __init__(self, function: FunctionNode) -> None:
         self._function = ref(function)
 
     @property
-    def function(self) -> Function:
+    def function(self) -> FunctionNode:
         function = self._function()
         if function is None:
             raise RuntimeError("the analyzed function these facts describe is gone")
@@ -95,7 +94,7 @@ def _collect_definite_before(
 _FACTS: "WeakKeyDictionary[ast.AST, _FunctionFacts]" = WeakKeyDictionary()
 
 
-def _facts(function: Function) -> _FunctionFacts:
+def _facts(function: FunctionNode) -> _FunctionFacts:
     facts = _FACTS.get(function)
     if facts is None:
         facts = _FunctionFacts(function)
@@ -103,7 +102,7 @@ def _facts(function: Function) -> _FunctionFacts:
     return facts
 
 
-def definitely_bound_before(function: Function, statement: ast.stmt) -> Set[str]:
+def definitely_bound_before(function: FunctionNode, statement: ast.stmt) -> Set[str]:
     """Names bound on every path from the function's entry to ``statement``."""
     known = _facts(function).definite_before.get(statement)
     if known is not None:
@@ -111,7 +110,7 @@ def definitely_bound_before(function: Function, statement: ast.stmt) -> Set[str]
     return _definitely_bound_before_uncached(function, statement)
 
 
-def _definitely_bound_before_uncached(function: Function, statement: ast.stmt) -> Set[str]:
+def _definitely_bound_before_uncached(function: FunctionNode, statement: ast.stmt) -> Set[str]:
     """The path-walking form, kept as the reference and as the fallback."""
     parents: Dict[ast.AST, ast.AST] = {
         child: parent for parent in ast.walk(function) for child in ast.iter_child_nodes(parent)
@@ -162,7 +161,7 @@ def definitely_bound_before_each(statements: Sequence[ast.stmt]) -> Iterator[Opt
             )
 
 
-def locally_bound_names(function: Function) -> Set[str]:
+def locally_bound_names(function: FunctionNode) -> Set[str]:
     """Names the function's own scope binds anywhere: parameters and local statements.
 
     Only these names have a path-dependent binding state inside the function.
@@ -172,7 +171,7 @@ def locally_bound_names(function: Function) -> Set[str]:
     return set(_facts(function).locally_bound)
 
 
-def _locally_bound_names(function: Function) -> Set[str]:
+def _locally_bound_names(function: FunctionNode) -> Set[str]:
     names: Set[str] = set(parameter_names(function.args))
     pending: List[ast.AST] = list(function.body)
     while pending:

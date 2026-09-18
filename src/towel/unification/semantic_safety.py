@@ -20,6 +20,7 @@ from typing import (
 from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
+from .models import FunctionNode
 from .bounded_cache import BoundedCache
 from .exceptions import UnsupportedLayoutError
 from ..project_layout import ProjectLayout
@@ -46,9 +47,7 @@ def uses_class_private_names(nodes: Iterable[ast.AST]) -> bool:
     return False
 
 
-def nested_bindings_escape(
-    function: Union[ast.FunctionDef, ast.AsyncFunctionDef], nodes: Iterable[ast.AST]
-) -> bool:
+def nested_bindings_escape(function: FunctionNode, nodes: Iterable[ast.AST]) -> bool:
     """Reject nested extraction whose local writes are observable outside it.
 
     The engine's return-variable analysis covers top-level statement slices.
@@ -95,7 +94,7 @@ def nested_bindings_escape(
 
 def snapshots_rebound_external_names(
     analyzer: ScopeAnalyzer,
-    function: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    function: FunctionNode,
     nodes: Iterable[ast.AST],
 ) -> bool:
     """Reject snapshots of external bindings with visible rebinding hazards.
@@ -799,7 +798,7 @@ def _statement_deleted_names(statement: ast.AST) -> FrozenSet[str]:
 
 
 def unbinds_external_name(
-    function: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    function: FunctionNode,
     nodes: Iterable[ast.AST],
     bound_before: Set[str],
 ) -> bool:
@@ -838,7 +837,7 @@ class _ScopeFacts:
     function each time made it quadratic in the function's size per block.
     """
 
-    def __init__(self, function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+    def __init__(self, function: FunctionNode) -> None:
         self.nested: Tuple[Tuple[ast.AST, FrozenSet[str]], ...] = tuple(
             (node, frozenset(_loaded_names(node)))
             for node in ast.walk(function)
@@ -852,7 +851,7 @@ class _ScopeFacts:
 _SCOPE_FACTS: "WeakKeyDictionary[ast.AST, _ScopeFacts]" = WeakKeyDictionary()
 
 
-def _scope_facts(function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> _ScopeFacts:
+def _scope_facts(function: FunctionNode) -> _ScopeFacts:
     facts = _SCOPE_FACTS.get(function)
     if facts is None:
         facts = _ScopeFacts(function)
@@ -860,9 +859,7 @@ def _scope_facts(function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> _Sco
     return facts
 
 
-def nested_scopes_cross_block_boundary(
-    function: Union[ast.FunctionDef, ast.AsyncFunctionDef], nodes: Iterable[ast.AST]
-) -> bool:
+def nested_scopes_cross_block_boundary(function: FunctionNode, nodes: Iterable[ast.AST]) -> bool:
     """Reject extraction when a closure and the block share a mutable binding.
 
     A nested function, lambda or generator reads its free names when it runs,
@@ -970,9 +967,7 @@ def defer_impure_parameters(
             substitution.function_params[name] = []
 
 
-def moves_scope_declaration(
-    function: Union[ast.FunctionDef, ast.AsyncFunctionDef], nodes: Iterable[ast.AST]
-) -> bool:
+def moves_scope_declaration(function: FunctionNode, nodes: Iterable[ast.AST]) -> bool:
     """Whether the block carries a ``global``/``nonlocal`` declaration the caller still needs.
 
     A declaration inside the block moves into the helper with it. Any remaining

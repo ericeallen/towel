@@ -27,6 +27,8 @@ from weakref import WeakKeyDictionary
 from typing import Callable, Dict, FrozenSet, List, Sequence, Set, Tuple, Union, cast
 
 from .parameters import parameter_names
+from .models import FunctionNode
+from .visitors import visit_comprehension_generators
 
 _UNPARSED: "WeakKeyDictionary[ast.AST, str]" = WeakKeyDictionary()
 
@@ -113,18 +115,14 @@ class _BindingContextFinder(ast.NodeVisitor):
         else:
             return set()
 
-    def visit_For(self, node: ast.For) -> None:
+    def visit_For(self, node: Union[ast.For, ast.comprehension]) -> None:
+        """A loop or a generator binds its target around the part that holds the target expression."""
         if self._contains_target(node):
             self._visit_binding_target(node, lambda: self.generic_visit(node))
         else:
             self.generic_visit(node)
 
-    def visit_comprehension(self, node: ast.comprehension) -> None:
-        # comprehension node (part of generators list in ListComp, etc.)
-        if self._contains_target(node):
-            self._visit_binding_target(node, lambda: self.generic_visit(node))
-        else:
-            self.generic_visit(node)
+    visit_comprehension = visit_For
 
     def visit_ListComp(self, node: Union[ast.ListComp, ast.SetComp, ast.GeneratorExp]) -> None:
         # Comprehension variables must be bound when visiting the element:
@@ -261,24 +259,18 @@ class _BindingContextFinder(ast.NodeVisitor):
         node: Union[ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp],
         visit_expression: Callable[[], None],
     ) -> None:
-        def _visit_generators() -> None:
-            for gen in node.generators:
-                self.visit(gen.iter)
-                for if_clause in gen.ifs:
-                    self.visit(if_clause)
-
         for gen in node.generators:
             comp_vars = self._get_binding_vars(gen.target)
             self.binding_stack.append(comp_vars)
 
         try:
-            _visit_generators()
+            visit_comprehension_generators(self, node)
             visit_expression()
         finally:
             for _ in node.generators:
                 self.binding_stack.pop()
 
-    def _visit_function_like(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+    def _visit_function_like(self, node: FunctionNode) -> None:
         if not self._contains_target(node):
             self.assignments.add(node.name)
             return
@@ -298,9 +290,7 @@ class _BindingContextFinder(ast.NodeVisitor):
         finally:
             self.binding_stack.pop()
 
-    def _visit_function_body(
-        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef], saved_assignments: Set[str]
-    ) -> None:
+    def _visit_function_body(self, node: FunctionNode, saved_assignments: Set[str]) -> None:
         self.assignments = set()
         try:
             for stmt in node.body:

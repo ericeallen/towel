@@ -23,6 +23,7 @@ import ast
 from typing import List, Sequence, Set, Tuple, Union
 
 from .definite_assignment import definitely_bound_before_each
+from .models import FunctionNode
 from .visitors import OwnScopeVisitor, visit_each
 
 
@@ -76,7 +77,7 @@ class _BindingCollector(OwnScopeVisitor):
         self._collect_names(node.target)
         self.generic_visit(node)
 
-    def _nested_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+    def _nested_function(self, node: FunctionNode) -> None:
         self.bindings.add(node.name)
 
     def _nested_class(self, node: ast.ClassDef) -> None:

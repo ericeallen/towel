@@ -28,11 +28,12 @@ import ast
 from typing import Dict, Sequence, Set, Tuple, Union
 
 from .scope_analyzer import pattern_capture_names
+from .models import FunctionNode
 from .parameters import parameter_names
 from .visitors import OwnScopeVisitor
 
 
-def analyze_assignments(func: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> Dict[int, bool]:
+def analyze_assignments(func: FunctionNode) -> Dict[int, bool]:
     """
     Analyze assignments in a function to identify reassignments.
 
@@ -67,7 +68,7 @@ class _AssignmentAnalyzer(OwnScopeVisitor):
         self.bound_vars: Set[str] = set()
         self.reassignments: Dict[int, bool] = {}  # node id -> is_reassignment
 
-    def _nested_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+    def _nested_function(self, node: FunctionNode) -> None:
         """The first function seen is the one analyzed: its parameters are bound, its body visited.
 
         A function nested inside it is another scope and is not entered.
@@ -232,7 +233,7 @@ class _AssignmentAnalyzer(OwnScopeVisitor):
 
 
 def has_reassignments_without_bindings(
-    func: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    func: FunctionNode,
     block_nodes: Sequence[ast.AST],
     reassignments: Dict[int, bool],
 ) -> Tuple[bool, Set[str]]:
