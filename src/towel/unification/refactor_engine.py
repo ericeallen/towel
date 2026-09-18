@@ -983,7 +983,7 @@ class UnificationRefactorEngine(
         Find all non-overlapping pairs of code blocks across multiple files.
 
         Args:
-            all_functions: List of (file_path, function, source, scope_analyzer, root_scope)
+            all_functions: The analyzed functions with their context
 
         Returns:
             List of code block pairs
@@ -1038,37 +1038,15 @@ class UnificationRefactorEngine(
         func_pairs_done = 0
 
         # For each pair of functions (including across files)
-        for i, entry1 in enumerate(all_functions):
-            # Backward compatibility: allow 5-tuples (no class context)
-            if len(entry1) >= 8:
-                file1, func1, source1, analyzer1, scope1, class1, encl1, anc1 = entry1
-            elif len(entry1) == 7:
-                file1, func1, source1, analyzer1, scope1, class1, encl1 = entry1
-                anc1 = []
-            else:
-                file1, func1, source1, analyzer1, scope1 = entry1
-                class1 = None
-                encl1 = None
-                anc1 = []
-
-            file1_changed = changed_files is None or file1 in changed_files
-            for j, entry2 in enumerate(all_functions[i + 1 :], i + 1):
+        for i, first in enumerate(all_functions):
+            file1_changed = changed_files is None or first.file_path in changed_files
+            for j, second in enumerate(all_functions[i + 1 :], i + 1):
                 if (
                     changed_files is not None
                     and not file1_changed
-                    and entry2[0] not in changed_files
+                    and second.file_path not in changed_files
                 ):
                     continue  # both files unchanged since the last global pass: verdict stands
-                if len(entry2) >= 8:
-                    file2, func2, source2, analyzer2, scope2, class2, encl2, anc2 = entry2
-                elif len(entry2) == 7:
-                    file2, func2, source2, analyzer2, scope2, class2, encl2 = entry2
-                    anc2 = []
-                else:
-                    file2, func2, source2, analyzer2, scope2 = entry2
-                    class2 = None
-                    encl2 = None
-                    anc2 = []
                 # Only compare structurally compatible buckets; tolerance
                 # checks still use the unchanged quick_filter below.
                 blocks1 = signed_blocks[i] if not bucket_keys[i].isdisjoint(bucket_keys[j]) else ()
@@ -1081,28 +1059,28 @@ class UnificationRefactorEngine(
 
                         # Create pair with all necessary context
                         pair = CodeBlockPair(
-                            file_path=file1,
-                            function1_name=func1.name,
-                            function2_name=func2.name,
+                            file_path=first.file_path,
+                            function1_name=first.node.name,
+                            function2_name=second.node.name,
                             block1_range=block1_range,
                             block2_range=block2_range,
                             block1_nodes=block1_nodes,
                             block2_nodes=block2_nodes,
-                            file_path2=file2,
-                            class1_name=class1,
-                            class2_name=class2,
-                            enclosing_function1_name=encl1,
-                            enclosing_function2_name=encl2,
-                            function1_ancestry=anc1,
-                            function2_ancestry=anc2,
-                            scope_analyzer1=analyzer1,
-                            scope_analyzer2=analyzer2,
-                            root_scope1=scope1,
-                            root_scope2=scope2,
-                            source1=source1,
-                            source2=source2,
-                            function1_node=func1,
-                            function2_node=func2,
+                            file_path2=second.file_path,
+                            class1_name=first.class_name,
+                            class2_name=second.class_name,
+                            enclosing_function1_name=first.enclosing_function,
+                            enclosing_function2_name=second.enclosing_function,
+                            function1_ancestry=first.ancestry,
+                            function2_ancestry=second.ancestry,
+                            scope_analyzer1=first.scope_analyzer,
+                            scope_analyzer2=second.scope_analyzer,
+                            root_scope1=first.root_scope,
+                            root_scope2=second.root_scope,
+                            source1=first.source,
+                            source2=second.source,
+                            function1_node=first.node,
+                            function2_node=second.node,
                         )
                         pairs.append(pair)
 
