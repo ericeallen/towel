@@ -63,10 +63,12 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 
 ## Development Setup
 
-1. Clone the repository:
+1. Clone your fork and add this repository as `upstream`, which the
+   pull-request steps below rebase on:
    ```bash
-   git clone https://github.com/ericeallen/towel.git
+   git clone https://github.com/<your-account>/towel.git
    cd towel
+   git remote add upstream https://github.com/ericeallen/towel.git
    ```
 
 2. Create the pinned development environment with uv (Python 3.13 for the
