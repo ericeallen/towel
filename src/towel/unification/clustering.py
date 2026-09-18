@@ -212,7 +212,7 @@ class Clustering(EngineState):
         # Build a set of already covered ranges to avoid duplicates
         covered = {
             (pair.file_path, pair.block1_range),
-            (pair.file_path2 or pair.file_path, pair.block2_range),
+            (pair.file_path2, pair.block2_range),
         }
         # Template signature from block1
         tmpl_sig = extract_block_signature(pair.block1_nodes)

@@ -41,21 +41,27 @@ class CodeBlockPair:
     block2_range: Tuple[int, int]
     block1_nodes: List[ast.stmt]
     block2_nodes: List[ast.stmt]
-    file_path2: Optional[str] = None
-    class1_name: Optional[str] = None
-    class2_name: Optional[str] = None
-    enclosing_function1_name: Optional[str] = None
-    enclosing_function2_name: Optional[str] = None
-    function1_ancestry: Optional[List[str]] = None
-    function2_ancestry: Optional[List[str]] = None
-    scope_analyzer1: Optional["ScopeAnalyzer"] = None
-    scope_analyzer2: Optional["ScopeAnalyzer"] = None
-    root_scope1: Optional["Scope"] = None
-    root_scope2: Optional["Scope"] = None
-    source1: Optional[str] = None
-    source2: Optional[str] = None
-    function1_node: Optional[Union[ast.FunctionDef, ast.AsyncFunctionDef]] = None
-    function2_node: Optional[Union[ast.FunctionDef, ast.AsyncFunctionDef]] = None
+    file_path2: str
+    # The class and enclosing function of each block's function, when it has them.
+    class1_name: Optional[str]
+    class2_name: Optional[str]
+    enclosing_function1_name: Optional[str]
+    enclosing_function2_name: Optional[str]
+    function1_ancestry: List[str]
+    function2_ancestry: List[str]
+    scope_analyzer1: "ScopeAnalyzer"
+    scope_analyzer2: "ScopeAnalyzer"
+    root_scope1: "Scope"
+    root_scope2: "Scope"
+    source1: str
+    source2: str
+    function1_node: "FunctionNode"
+    function2_node: "FunctionNode"
+
+    @property
+    def is_cross_file(self) -> bool:
+        """Whether the two blocks live in different files."""
+        return self.file_path2 != self.file_path
 
 
 @dataclass

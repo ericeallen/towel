@@ -470,7 +470,7 @@ class HelperPlacement(EngineState):
         ):
             return None
         if pair.class2_name is not None and not _unique_module_level_class(
-            class_infos, pair.file_path2 or pair.file_path, pair.class2_name
+            class_infos, pair.file_path2, pair.class2_name
         ):
             return None
         k1, k2 = method_info1.kind, method_info2.kind
@@ -483,7 +483,7 @@ class HelperPlacement(EngineState):
             return None
 
         file1 = pair.file_path
-        file2 = pair.file_path2 or pair.file_path
+        file2 = pair.file_path2
 
         # At this point we know effective_kind is valid because we've already validated k1/k2
         effective_kind: Literal["instance", "classmethod", "staticmethod"] = k1

@@ -106,14 +106,6 @@ _CALL_ARGUMENT_BUILTINS = frozenset(
 
 MethodKind = Literal["instance", "classmethod", "staticmethod"]
 
-_EMPTY_SNAPSHOT = BlockBindingSnapshot(
-    bound_in_block=set(),
-    reassigned_in_block=set(),
-    bound_before_block=set(),
-    bound_after_block=set(),
-    initially_bound=set(),
-)
-
 
 @dataclass(frozen=True)
 class _PairSetup:
@@ -209,20 +201,17 @@ def _is_trivial_return_of_bound_name(
 
 @dataclass(frozen=True)
 class _PairContext:
-    """Each block's resolved function, scope analyzer, and root scope."""
+    """Each block's function, scope analyzer and root scope, and the pair's structural ids."""
 
-    func1: Optional[FunctionNode]
-    func2: Optional[FunctionNode]
-    scope_analyzer: Optional[ScopeAnalyzer]
-    scope_analyzer2: Optional[ScopeAnalyzer]
-    root_scope: Optional[Scope]
-    # The analyzer discovered for block1's own function, before falling back to
-    # the pair-provided analyzer; some downstream checks need the raw value.
-    scope_analyzer1: Optional[ScopeAnalyzer]
+    func1: FunctionNode
+    func2: FunctionNode
+    scope_analyzer: ScopeAnalyzer
+    scope_analyzer2: ScopeAnalyzer
+    root_scope: Scope
     # Structural ids of the functions and blocks, computed once: every guard
     # and per-block analysis of the pair is memoized under them.
-    function1_id: Optional[str]
-    function2_id: Optional[str]
+    function1_id: str
+    function2_id: str
     block1_id: str
     block2_id: str
 
@@ -366,8 +355,6 @@ class PairEvaluation(EngineState):
         if debug_enabled:
             VALIDATION.debug("\n=== Finding Functions ===")
             VALIDATION.debug(f"Looking for: {pair.function1_name} and {pair.function2_name}")
-            VALIDATION.debug(f"Found func1: {ctx.func1 is not None}")
-            VALIDATION.debug(f"Found func2: {ctx.func2 is not None}")
 
         analysis = self._analyze_bindings(pair, ctx)
         if analysis is None:
@@ -407,7 +394,7 @@ class PairEvaluation(EngineState):
         ) or self._block_rejected(
             requires_original_frame,
             pair.block2_nodes,
-            path=pair.file_path2 or pair.file_path,
+            path=pair.file_path2,
             block_id=ctx.block2_id,
         ):
             self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
@@ -499,8 +486,6 @@ class PairEvaluation(EngineState):
         analyze and the snapshots stay empty.
         """
         func1, func2 = ctx.func1, ctx.func2
-        if not (func1 and func2):
-            return _BindingAnalysis(_EMPTY_SNAPSHOT, _EMPTY_SNAPSHOT, set(), set())
         debug_enabled = debugging(VALIDATION)
         reassignments1 = self._get_assignment_reuse(func1)
         reassignments2 = self._get_assignment_reuse(func2)
@@ -672,7 +657,7 @@ class PairEvaluation(EngineState):
         if debug_enabled:
             VALIDATION.debug("  Attempting unification...")
         substitution = self._unify_memoized(
-            blocks, hygienic_renames, (pair.file_path, pair.file_path2 or pair.file_path)
+            blocks, hygienic_renames, (pair.file_path, pair.file_path2)
         )
         if not substitution:
             self._reject(
@@ -712,7 +697,7 @@ class PairEvaluation(EngineState):
         """The function the helper may go into, and the names it must not shadow there."""
         dce_insert_func: Optional[str] = None
         dce_node: Optional[FunctionNode] = None
-        same_file = pair.file_path2 is not None and pair.file_path2 == pair.file_path
+        same_file = not pair.is_cross_file
         if same_file:
             dce_insert_func = self._deepest_common_ancestry(
                 pair.function1_ancestry, pair.function2_ancestry
@@ -721,16 +706,16 @@ class PairEvaluation(EngineState):
             # share names (prompt_toolkit: two ``_all_children``). The helper
             # may go into a function only when exactly one function of that
             # name encloses both blocks' functions.
-            if dce_insert_func and ctx.func1 is not None and ctx.func2 is not None:
+            if dce_insert_func:
                 dce_node = self._enclosing_function_named(
                     dce_insert_func, pair.file_path, functions, (ctx.func1, ctx.func2)
                 )
                 if dce_node is None:
                     dce_insert_func = None
 
-        enclosing_names = set(ctx.root_scope.bindings.keys()) if ctx.root_scope else set()
+        enclosing_names = set(ctx.root_scope.bindings.keys())
         if dce_insert_func:
-            for artifact in functions.named(pair.file_path2 or pair.file_path, dce_insert_func)[:1]:
+            for artifact in functions.named(pair.file_path2, dce_insert_func)[:1]:
                 func_scope = artifact.scope_analyzer.node_scopes.get(artifact.node)
                 if func_scope is not None:
                     enclosing_names.update(func_scope.bindings.keys())
@@ -807,25 +792,19 @@ class PairEvaluation(EngineState):
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
         self._strip_fstring_params(substitution)
         free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1)
-        if self._rejects_module_data_lookup(
-            pair,
-            ctx.scope_analyzer1 or pair.scope_analyzer1,
-            scope_analyzer2 or pair.scope_analyzer2,
-        ):
+        if self._rejects_module_data_lookup(pair, pair.scope_analyzer1, pair.scope_analyzer2):
             return None
         # A parameter cannot also be declared global or nonlocal in the helper.
-        assert scope_analyzer is not None
         globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
             pair, scope_analyzer, free_vars
         )
         defer_impure_parameters(substitution, pair.block1_nodes)
-        if ctx.func1 is not None and ctx.func2 is not None:
-            free_vars = _thunk_uncertain_free_variables(
-                substitution,
-                free_vars,
-                ((ctx.func1, pair.block1_nodes), (ctx.func2, pair.block2_nodes)),
-                unified.hygienic_renames,
-            )
+        free_vars = _thunk_uncertain_free_variables(
+            substitution,
+            free_vars,
+            ((ctx.func1, pair.block1_nodes), (ctx.func2, pair.block2_nodes)),
+            unified.hygienic_renames,
+        )
         return _FreeVariables(
             free_vars, free_vars1, free_vars2, globals_to_declare, nonlocals_to_declare
         )
@@ -876,7 +855,7 @@ class PairEvaluation(EngineState):
         """
         # The last function of each name, as the original list scan resolved it.
         found1 = functions.named(pair.file_path, pair.function1_name)
-        found2 = functions.named(pair.file_path2 or pair.file_path, pair.function2_name)
+        found2 = functions.named(pair.file_path2, pair.function2_name)
         if not (found1 and found2):
             return False
         func1, func2 = found1[-1].node, found2[-1].node
@@ -923,7 +902,7 @@ class PairEvaluation(EngineState):
         for block_idx, (block_range, file_path) in enumerate(
             [
                 (pair.block1_range, pair.file_path),
-                (pair.block2_range, pair.file_path2 or pair.file_path),
+                (pair.block2_range, pair.file_path2),
             ]
         ):
             try:
@@ -993,7 +972,7 @@ class PairEvaluation(EngineState):
 
         # Same-file clustering: further identical blocks join this proposal, for
         # non-returning helpers only.
-        same_file = (pair.file_path2 is None) or (pair.file_path2 == pair.file_path)
+        same_file = not pair.is_cross_file
         if same_file and not analysis.return_variables1 and not analysis.return_variables2:
             self._add_clustered_replacements(
                 HelperTemplate(
@@ -1034,7 +1013,7 @@ class PairEvaluation(EngineState):
         insert_into_function: Optional[str] = None
         method_kind_metadata: Optional[MethodKind] = None
         method_param_name: Optional[str] = None
-        same_file = (pair.file_path2 is None) or (pair.file_path2 == pair.file_path)
+        same_file = not pair.is_cross_file
 
         if same_file and scope.dce_insert_func:
             # The helper is placed textually by function name (FuncLocator),
@@ -1086,7 +1065,7 @@ class PairEvaluation(EngineState):
             ]
 
         # Closures with nonlocal variables are left alone.
-        if self._declares_nonlocal(ctx.func1, ctx.scope_analyzer1) or self._declares_nonlocal(
+        if self._declares_nonlocal(ctx.func1, ctx.scope_analyzer) or self._declares_nonlocal(
             ctx.func2, ctx.scope_analyzer2
         ):
             self._debug_reject(RejectReason.NONLOCAL_SAFETY_SKIP, pair)
@@ -1161,10 +1140,9 @@ class PairEvaluation(EngineState):
         functions: FunctionIndex,
     ) -> Optional[RefactoringProposal]:
         """The proposal, unless the helper only forwards; redirected to an existing function or annotated."""
-        is_cross_file = pair.file_path2 is not None and pair.file_path != pair.file_path2
+        is_cross_file = pair.is_cross_file
         desc = f"Extract common code from {pair.function1_name}"
         if is_cross_file:
-            assert pair.file_path2 is not None
             desc += f" ({Path(pair.file_path).name}) and {pair.function2_name} ({Path(pair.file_path2).name})"
         else:
             desc += f" and {pair.function2_name}"
@@ -1209,53 +1187,15 @@ class PairEvaluation(EngineState):
         pair: CodeBlockPair,
         functions: FunctionIndex,
     ) -> "_PairContext":
-        """Resolve each block's function, scope analyzer, and root scope.
-
-        Prefers the analyzer/scope discovered for the block's own function in the
-        aggregated function list, falling back to the values carried on the pair.
-        """
-        # A pair that carries its function nodes keeps them, and its own
-        # analyzers below; one that names its functions resolves each name to
-        # the first function of that name in its file.
-        func1: Optional[FunctionNode] = pair.function1_node
-        func2: Optional[FunctionNode] = pair.function2_node
-        scope_analyzer1: Optional[ScopeAnalyzer] = None
-        scope_analyzer2: Optional[ScopeAnalyzer] = None
-        root_scope1: Optional[Scope] = None
-        root_scope2: Optional[Scope] = None
-        if func1 is None:
-            for entry in functions.named(pair.file_path, pair.function1_name)[:1]:
-                func1, scope_analyzer1, root_scope1 = (
-                    entry.node,
-                    entry.scope_analyzer,
-                    entry.root_scope,
-                )
-        if func2 is None:
-            for entry in functions.named(pair.file_path2 or pair.file_path, pair.function2_name)[
-                :1
-            ]:
-                func2, scope_analyzer2, root_scope2 = (
-                    entry.node,
-                    entry.scope_analyzer,
-                    entry.root_scope,
-                )
-
-        # Fallback to the pair-provided analyzers/scopes when discovery fails
-        scope_analyzer = scope_analyzer1 or pair.scope_analyzer1
-        root_scope = root_scope1 or pair.root_scope1
-        if scope_analyzer2 is None and pair.scope_analyzer2 is not None:
-            scope_analyzer2 = pair.scope_analyzer2
-        if root_scope2 is None and pair.root_scope2 is not None:
-            root_scope2 = pair.root_scope2
+        """The pair's functions, analyzers and root scope, with their structural ids."""
         return _PairContext(
-            func1=func1,
-            func2=func2,
-            scope_analyzer=scope_analyzer,
-            scope_analyzer2=scope_analyzer2,
-            root_scope=root_scope,
-            scope_analyzer1=scope_analyzer1,
-            function1_id=self._sid([func1]) if func1 is not None else None,
-            function2_id=self._sid([func2]) if func2 is not None else None,
+            func1=pair.function1_node,
+            func2=pair.function2_node,
+            scope_analyzer=pair.scope_analyzer1,
+            scope_analyzer2=pair.scope_analyzer2,
+            root_scope=pair.root_scope1,
+            function1_id=self._sid([pair.function1_node]),
+            function2_id=self._sid([pair.function2_node]),
             block1_id=self._sid(pair.block1_nodes),
             block2_id=self._sid(pair.block2_nodes),
         )
