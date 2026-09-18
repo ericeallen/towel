@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 from ..diagnostics import LOG
+from .exceptions import UnsupportedLayoutError
 import re
 import sys
 
@@ -118,17 +119,21 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
     if not isinstance(build_system, dict) or build_system.get("build-backend") != "hatchling.build":
         return []
     if (project_root / "hatch.toml").exists():
-        raise ValueError("Hatch layout in hatch.toml is unsupported; cannot infer safe imports")
+        raise UnsupportedLayoutError(
+            "Hatch layout in hatch.toml is unsupported; cannot infer safe imports"
+        )
     tool = data.get("tool", {})
     hatch = tool.get("hatch", {}) if isinstance(tool, dict) else {}
     build = hatch.get("build", {}) if isinstance(hatch, dict) else {}
     targets = build.get("targets", {}) if isinstance(build, dict) else {}
     wheel = targets.get("wheel", {}) if isinstance(targets, dict) else {}
     if not isinstance(build, dict) or not isinstance(wheel, dict):
-        raise ValueError("Invalid Hatch wheel configuration")
+        raise UnsupportedLayoutError("Invalid Hatch wheel configuration")
     for key in ("include", "force-include"):
         if key in wheel or key in build:
-            raise ValueError(f"Unsupported Hatch {key} layout; cannot infer safe imports")
+            raise UnsupportedLayoutError(
+                f"Unsupported Hatch {key} layout; cannot infer safe imports"
+            )
     sources = wheel.get("sources", build.get("sources"))
     if sources is not None:
         # ``sources = ["src"]`` strips the prefix from every file under it, so
@@ -136,53 +141,67 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
         # glob patterns are refused; ``only-include`` must stay within the
         # listed sources for the roots to be complete.
         if not isinstance(sources, list) or not sources:
-            raise ValueError("Unsupported Hatch sources layout; cannot infer safe imports")
+            raise UnsupportedLayoutError(
+                "Unsupported Hatch sources layout; cannot infer safe imports"
+            )
         roots = []
         for value in sources:
             if not isinstance(value, str) or any(char in value for char in "*?[]"):
-                raise ValueError("Unsupported Hatch sources layout; cannot infer safe imports")
+                raise UnsupportedLayoutError(
+                    "Unsupported Hatch sources layout; cannot infer safe imports"
+                )
             root = (project_root / value).resolve()
             if not root.is_relative_to(project_root) or not root.is_dir():
-                raise ValueError("Hatch source must be a directory within the project")
+                raise UnsupportedLayoutError("Hatch source must be a directory within the project")
             roots.append(root)
         only_include = wheel.get("only-include", build.get("only-include"))
         if only_include is not None:
             if not isinstance(only_include, list):
-                raise ValueError("Unsupported Hatch only-include layout; cannot infer safe imports")
+                raise UnsupportedLayoutError(
+                    "Unsupported Hatch only-include layout; cannot infer safe imports"
+                )
             for value in only_include:
                 if not isinstance(value, str) or any(char in value for char in "*?[]"):
-                    raise ValueError("Unsupported Hatch only-include layout")
+                    raise UnsupportedLayoutError("Unsupported Hatch only-include layout")
                 included = (project_root / value).resolve()
                 if not any(included == root or included.is_relative_to(root) for root in roots):
-                    raise ValueError(
+                    raise UnsupportedLayoutError(
                         "Hatch only-include outside sources; cannot infer safe imports"
                     )
         return roots
     if "only-include" in wheel or "only-include" in build:
-        raise ValueError("Unsupported Hatch only-include layout; cannot infer safe imports")
+        raise UnsupportedLayoutError(
+            "Unsupported Hatch only-include layout; cannot infer safe imports"
+        )
     packages = wheel.get("packages", build.get("packages"))
     if packages is not None:
         if not isinstance(packages, list) or not packages:
-            raise ValueError("Hatch packages must be a nonempty list of classic package paths")
+            raise UnsupportedLayoutError(
+                "Hatch packages must be a nonempty list of classic package paths"
+            )
         roots = []
         for value in packages:
             if not isinstance(value, str) or any(char in value for char in "*?[]"):
-                raise ValueError("Unsupported Hatch package path")
+                raise UnsupportedLayoutError("Unsupported Hatch package path")
             package = (project_root / value).resolve()
             if not package.is_relative_to(project_root) or not (package / "__init__.py").is_file():
-                raise ValueError("Hatch package must be a classic package within the project")
+                raise UnsupportedLayoutError(
+                    "Hatch package must be a classic package within the project"
+                )
             if package.parent not in roots:
                 roots.append(package.parent)
         return roots
     project = data.get("project", {})
     name = project.get("name") if isinstance(project, dict) else None
     if not isinstance(name, str):
-        raise ValueError("Hatch project name is required to infer safe imports")
+        raise UnsupportedLayoutError("Hatch project name is required to infer safe imports")
     normalized = re.sub(r"[-_.]+", "_", name).lower()
     for root in (project_root, project_root / "src"):
         if (root / normalized / "__init__.py").is_file():
             return [root.resolve()]
-    raise ValueError("Unsupported Hatch default package layout; cannot infer safe imports")
+    raise UnsupportedLayoutError(
+        "Unsupported Hatch default package layout; cannot infer safe imports"
+    )
 
 
 def _flit_source_roots(project_root: Path, data: Dict[str, Any]) -> List[Path]:
@@ -201,12 +220,12 @@ def _flit_source_roots(project_root: Path, data: Dict[str, Any]) -> List[Path]:
         project = data.get("project", {})
         name = project.get("name") if isinstance(project, dict) else None
     if not isinstance(name, str) or not name:
-        raise ValueError("Flit module name is required to infer safe imports")
+        raise UnsupportedLayoutError("Flit module name is required to infer safe imports")
     normalized = name.replace("-", "_")
     for root in (project_root, project_root / "src"):
         if (root / normalized / "__init__.py").is_file() or (root / f"{normalized}.py").is_file():
             return [root.resolve()]
-    raise ValueError("Flit module was not found beside pyproject.toml or under src")
+    raise UnsupportedLayoutError("Flit module was not found beside pyproject.toml or under src")
 
 
 def _poetry_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Path]:
@@ -223,27 +242,35 @@ def _poetry_source_roots(project_root: Path, data: Mapping[str, object]) -> List
     tool = data.get("tool", {})
     poetry = tool.get("poetry", {}) if isinstance(tool, dict) else {}
     if not isinstance(poetry, dict):
-        raise ValueError("Invalid Poetry configuration")
+        raise UnsupportedLayoutError("Invalid Poetry configuration")
     packages = poetry.get("packages")
     if packages is not None:
         if not isinstance(packages, list) or not packages:
-            raise ValueError("Poetry packages must be a nonempty list; cannot infer safe imports")
+            raise UnsupportedLayoutError(
+                "Poetry packages must be a nonempty list; cannot infer safe imports"
+            )
         roots: List[Path] = []
         for entry in packages:
             if not isinstance(entry, dict) or "to" in entry:
-                raise ValueError("Unsupported Poetry package entry; cannot infer safe imports")
+                raise UnsupportedLayoutError(
+                    "Unsupported Poetry package entry; cannot infer safe imports"
+                )
             include = entry.get("include")
             origin = entry.get("from", "")
             if not isinstance(include, str) or not isinstance(origin, str):
-                raise ValueError("Unsupported Poetry package entry; cannot infer safe imports")
+                raise UnsupportedLayoutError(
+                    "Unsupported Poetry package entry; cannot infer safe imports"
+                )
             if any(char in include + origin for char in "*?[]"):
-                raise ValueError("Unsupported Poetry package pattern; cannot infer safe imports")
+                raise UnsupportedLayoutError(
+                    "Unsupported Poetry package pattern; cannot infer safe imports"
+                )
             root = (project_root / origin).resolve()
             included = (root / include).resolve()
             if not root.is_relative_to(project_root) or not included.is_relative_to(root):
-                raise ValueError("Poetry package must lie within the project")
+                raise UnsupportedLayoutError("Poetry package must lie within the project")
             if not (included.is_dir() or included.suffix == ".py" and included.is_file()):
-                raise ValueError(f"Poetry package {include!r} was not found")
+                raise UnsupportedLayoutError(f"Poetry package {include!r} was not found")
             if root not in roots:
                 roots.append(root)
         return roots
@@ -252,13 +279,13 @@ def _poetry_source_roots(project_root: Path, data: Mapping[str, object]) -> List
         project = data.get("project", {})
         name = project.get("name") if isinstance(project, dict) else None
     if not isinstance(name, str) or not name:
-        raise ValueError("Poetry project name is required to infer safe imports")
+        raise UnsupportedLayoutError("Poetry project name is required to infer safe imports")
     normalized = re.sub(r"[-.]+", "_", name)
     for root in (project_root, project_root / "src"):
         for candidate in (normalized, normalized.lower()):
             if (root / candidate / "__init__.py").is_file() or (root / f"{candidate}.py").is_file():
                 return [root.resolve()]
-    raise ValueError("Poetry package was not found beside pyproject.toml or under src")
+    raise UnsupportedLayoutError("Poetry package was not found beside pyproject.toml or under src")
 
 
 def _pdm_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Path]:
@@ -273,16 +300,16 @@ def _pdm_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Pa
     pdm = tool.get("pdm", {}) if isinstance(tool, dict) else {}
     build = pdm.get("build", {}) if isinstance(pdm, dict) else {}
     if not isinstance(build, dict):
-        raise ValueError("Invalid pdm build configuration")
+        raise UnsupportedLayoutError("Invalid pdm build configuration")
     package_dir = build.get("package-dir")
     if package_dir is None:
         source = project_root / "src"
         return [source.resolve() if source.is_dir() else project_root.resolve()]
     if not isinstance(package_dir, str) or any(char in package_dir for char in "*?[]"):
-        raise ValueError("Unsupported pdm package-dir; cannot infer safe imports")
+        raise UnsupportedLayoutError("Unsupported pdm package-dir; cannot infer safe imports")
     root = (project_root / package_dir).resolve()
     if not root.is_relative_to(project_root) or not root.is_dir():
-        raise ValueError("pdm package-dir must be a directory within the project")
+        raise UnsupportedLayoutError("pdm package-dir must be a directory within the project")
     return [root]
 
 
@@ -444,7 +471,7 @@ class ProjectLayout:
             if conventional:
                 source_roots = conventional
             else:
-                raise ValueError(
+                raise UnsupportedLayoutError(
                     f"Unsupported build backend {backend!r}; no conventional "
                     "name-based package or src layout to infer safe imports from"
                 )

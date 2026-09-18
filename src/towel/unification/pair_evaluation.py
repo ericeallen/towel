@@ -72,6 +72,7 @@ from .semantic_safety import (
     snapshots_rebound_external_names,
     unbinds_external_name,
     uses_class_private_names,
+    layout_is_known,
     would_create_import_cycle,
 )
 from .thunk_inlining import inline_leading_thunks
@@ -1053,6 +1054,9 @@ class PairEvaluation(EngineState):
         participating = {canonical_file} | {
             replacement.file_path or canonical_file for replacement in replacements
         }
+        if len(participating) > 1 and not layout_is_known(canonical_file, self.import_graph):
+            self._debug_reject(RejectReason.UNKNOWN_LAYOUT, pair)
+            return None
         if would_create_import_cycle(canonical_file, participating, self.import_graph):
             safe_home = None
             if insert_into_class is None and insert_into_function is None:

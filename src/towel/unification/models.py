@@ -240,6 +240,7 @@ class RejectReason(StrEnum):
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
     FRAME_SENSITIVE_BLOCK = "frame_sensitive_block"
     IMPORT_CYCLE = "import_cycle"
+    UNKNOWN_LAYOUT = "unknown_layout"
     IMPURE_EAGER_PARAMETER = "impure_eager_parameter"
     INCOMPLETE_LIFETIME_BLOCK1 = "incomplete_lifetime_block1"
     INCOMPLETE_LIFETIME_BLOCK2 = "incomplete_lifetime_block2"

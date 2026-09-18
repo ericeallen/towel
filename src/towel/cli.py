@@ -21,6 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
+from towel.unification.exceptions import TowelError
 from towel.source_text import read_source
 from towel.unification.models import ParameterKind
 from towel.unification.progress import DEFAULT_PROGRESS, normalize_progress
@@ -76,14 +77,17 @@ def main() -> None:
     if args.command == "dry":
         try:
             _run_dry(args)
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, TowelError) as error:
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "preview":
-        _run_preview(args)
+        try:
+            _run_preview(args)
+        except (OSError, ValueError, TowelError) as error:
+            parser.exit(1, f"Error: {error}\n")
     elif args.command == "rename-helpers":
         try:
             _run_rename_helpers(args)
-        except (OSError, ValueError, SyntaxError) as error:
+        except (OSError, ValueError, SyntaxError, TowelError) as error:
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "recover":
         try:

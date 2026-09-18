@@ -23,6 +23,7 @@ from typing import (
 from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
+from .exceptions import UnsupportedLayoutError
 from .project_layout import ProjectLayout
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
 from .visitors import OwnScopeVisitor
@@ -385,13 +386,23 @@ DEFAULT_IMPORT_GRAPH = ImportGraphCache()
 """For callers without an engine of their own."""
 
 
+def layout_is_known(canonical_file: str, cache: ImportGraphCache) -> bool:
+    """Whether the project around ``canonical_file`` has a layout Towel can model.
+
+    Cross-file helpers need an import, and an import needs the project's
+    source roots; a layout that discovery refuses leaves every cross-file
+    pair in that project undecidable.
+    """
+    return _source_roots(Path(canonical_file).resolve(), cache) is not None
+
+
 def _source_roots(path: Path, cache: ImportGraphCache) -> Optional[Tuple[Path, ...]]:
     """The project's source roots as seen from ``path``, or None when the layout is unknown."""
     roots = cache.source_roots.get(path)
     if roots is None:
         try:
             roots = tuple(ProjectLayout.discover(path).source_roots)
-        except ValueError:
+        except UnsupportedLayoutError:
             return None
         cache.source_roots.put(path, roots)
     return roots
@@ -692,18 +703,18 @@ def would_create_import_cycle(
 
     Follow static imports through local modules, including modules without any
     candidate functions and package initializers. Imports inside functions are
-    included conservatively. Dynamic imports cannot be resolved statically.
+    included conservatively. Dynamic imports cannot be resolved statically. A
+    project whose layout cannot be modelled (see ``layout_is_known``) counts
+    as a cycle: the helper's import cannot be shown safe there.
     """
     canonical = Path(canonical_file).resolve()
     targets = {Path(path).resolve() for path in replacement_files} - {canonical}
     if not targets:
         return False
     common_root = Path(os.path.commonpath([str(path.parent) for path in targets | {canonical}]))
-    source_roots = cache.source_roots.get(canonical)
+    source_roots = _source_roots(canonical, cache)
     if source_roots is None:
-        source_roots = cache.source_roots.put(
-            canonical, tuple(ProjectLayout.discover(canonical).source_roots)
-        )
+        return True
     roots = frozenset(source_roots) | {common_root}
 
     # Importing ``pkg.sub.helper`` runs ``pkg/__init__.py`` and
