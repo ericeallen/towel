@@ -79,3 +79,75 @@ def b():
     assert termination == "fixed_point"
     total = sum(c for c, _ in results.values())
     assert total == 1
+
+
+def _two_round_project(root: Path) -> None:
+    """Two extractions, the second found only after the first is applied (a localized re-analysis)."""
+    root.mkdir()
+    (root / "a.py").write_text(
+        "def alpha(items):\n    total = 0\n    for item in items:\n        total += item * 3\n"
+        '    print(total, "alpha")\n    return total\n\n\n'
+        "def alpha_two(records):\n    names = []\n    for record in records:\n"
+        "        names.append(record.name.strip().lower())\n"
+        '    print(names, "alpha_two")\n    return names\n'
+    )
+    (root / "b.py").write_text(
+        "def beta(values):\n    total = 0\n    for value in values:\n        total += value * 3\n"
+        '    print(total, "beta")\n    return total\n'
+    )
+    (root / "c.py").write_text(
+        "def gamma(entries):\n    names = []\n    for entry in entries:\n"
+        "        names.append(entry.name.strip().lower())\n"
+        '    print(names, "gamma")\n    return names\n'
+    )
+
+
+def test_none_is_silent_through_every_re_analysis(tmp_path: Path) -> None:
+    _two_round_project(tmp_path / "proj")
+    engine = UnificationRefactorEngine(min_lines=3)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        results, reason = engine.refactor_directory_to_fixed_point(
+            str(tmp_path / "proj"), str(tmp_path / "out"), max_iterations=0, progress="none"
+        )
+    assert reason == "fixed_point"
+    assert sum(count for count, _ in results.values()) == 4
+    assert out.getvalue() == "" and err.getvalue() == ""
+
+
+def test_none_is_silent_for_a_single_file(tmp_path: Path) -> None:
+    _make_fixture(tmp_path / "proj")
+    engine = UnificationRefactorEngine(min_lines=3)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        _, applied, _ = engine.refactor_to_fixed_point(
+            str(tmp_path / "proj" / "sample.py"), progress="none"
+        )
+    assert applied > 0
+    assert out.getvalue() == "" and err.getvalue() == ""
+
+
+def test_drivers_run_to_a_fixed_point_by_default(tmp_path: Path) -> None:
+    _two_round_project(tmp_path / "proj")
+    engine = UnificationRefactorEngine(min_lines=3)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        _, reason = engine.refactor_directory_to_fixed_point(
+            str(tmp_path / "proj"), str(tmp_path / "out"), progress="none"
+        )
+    assert reason == "fixed_point"
+
+
+def test_preview_honours_progress_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from towel.cli import main
+
+    _two_round_project(tmp_path / "proj")
+    monkeypatch.setattr(
+        sys, "argv", ["towel", "preview", str(tmp_path / "proj"), "--progress", "none"]
+    )
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        main()
+    assert "Analyzing directory" in out.getvalue()
+    assert err.getvalue() == ""

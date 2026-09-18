@@ -10,6 +10,35 @@ ensuring the refactoring system handles all edge cases correctly.
 # =============================================================================
 
 
+def __extracted_func_3(__param_0, __param_1):
+    result = len(f'{__param_0 + __param_1}')
+    result += len(f'{__param_0 * 2:04d}')
+    result += len(f'{__param_0:.2f}')
+    return result
+
+
+def __extracted_func_2(__param_0, __param_1, __param_2, data):
+    result = __param_0
+    result += __param_1
+    result += __param_2()
+    return result
+
+
+def __extracted_func_1(__param_0, __param_1, __param_2, __param_3, s1):
+    s2 = __param_0 % (__param_1, __param_2)
+    s3 = __param_3.format(__param_1, __param_2)
+    result = len(s1) + len(s2) + len(s3)
+    return result
+
+
+def __extracted_func_0(__param_0):
+    x, y = __param_0[:2]
+    result = x + y
+    a, b, c = __param_0[:3]
+    result += a + b + c
+    return result
+
+
 def literals_a(x):
     """Test all literal types."""
     result = x + 42  # int
@@ -106,10 +135,7 @@ def logical_a(x, y):
 
 def logical_b(a, b):
     """Test logical operators."""
-    output = a and b
-    output = output or b
-    output = not output
-    return output
+    return logical_a(a, b)
 
 
 # =============================================================================
@@ -163,10 +189,7 @@ def augmented_b(y):
 
 def unpacking_a(data):
     """Test various unpacking patterns."""
-    x, y = data[:2]
-    result = x + y
-    a, b, c = data[:3]
-    result += a + b + c
+    result = __extracted_func_0(data)
     first, *rest = data
     result += first + sum(rest)
     return result
@@ -174,10 +197,7 @@ def unpacking_a(data):
 
 def unpacking_b(items):
     """Test various unpacking patterns."""
-    p, q = items[:2]
-    output = p + q
-    m, n, o = items[:3]
-    output += m + n + o
+    output = __extracted_func_0(items)
     head, *tail = items
     output += head + sum(tail)
     return output
@@ -227,10 +247,7 @@ def attributes_a(obj):
 
 def attributes_b(thing):
     """Test attribute access."""
-    output = thing.value
-    output += thing.data[0]
-    output += thing.get_value()
-    return output
+    return attributes_a(thing)
 
 
 # =============================================================================
@@ -272,10 +289,7 @@ def list_comp_a(data):
 
 def list_comp_b(items):
     """Test list comprehensions."""
-    output = sum([x * 2 for x in items])
-    output += sum([x for x in items if x > 0])
-    output += sum([x + y for x in items for y in items])
-    return output
+    return list_comp_a(items)
 
 
 # =============================================================================
@@ -292,9 +306,7 @@ def set_comp_a(data):
 
 def set_comp_b(items):
     """Test set comprehensions."""
-    output = sum({x * 2 for x in items})
-    output += sum({x for x in items if x > 0})
-    return output
+    return set_comp_a(items)
 
 
 # =============================================================================
@@ -311,9 +323,7 @@ def dict_comp_a(data):
 
 def dict_comp_b(items):
     """Test dict comprehensions."""
-    output = sum({i: x * 2 for i, x in enumerate(items)}.values())
-    output += sum({i: x for i, x in enumerate(items) if x > 0}.values())
-    return output
+    return dict_comp_a(items)
 
 
 # =============================================================================
@@ -330,9 +340,7 @@ def generator_a(data):
 
 def generator_b(items):
     """Test generator expressions."""
-    output = sum(x * 2 for x in items)
-    output += sum(x for x in items if x > 0)
-    return output
+    return generator_a(items)
 
 
 # =============================================================================
@@ -350,10 +358,7 @@ def lambda_a(data):
 
 def lambda_b(items):
     """Test lambda expressions."""
-    mapper = lambda x: x * 2
-    output = sum(map(mapper, items))
-    output += sum(map(lambda x: x + 1, items))
-    return output
+    return lambda_a(items)
 
 
 # =============================================================================
@@ -370,9 +375,7 @@ def ternary_a(x, threshold):
 
 def ternary_b(y, limit):
     """Test conditional expressions."""
-    output = y * 2 if y > limit else y
-    output = output + 10 if output < 100 else output - 10
-    return output
+    return ternary_a(y, limit)
 
 
 # =============================================================================
@@ -383,19 +386,13 @@ def ternary_b(y, limit):
 def string_fmt_a(x, y):
     """Test string formatting."""
     s1 = f"x={x}, y={y}"
-    s2 = "x=%d, y=%d" % (x, y)
-    s3 = "x={}, y={}".format(x, y)
-    result = len(s1) + len(s2) + len(s3)
-    return result
+    return __extracted_func_1('x=%d, y=%d', x, y, 'x={}, y={}', s1)
 
 
 def string_fmt_b(a, b):
     """Test string formatting."""
     s1 = f"a={a}, b={b}"
-    s2 = "a=%d, b=%d" % (a, b)
-    s3 = "a={}, b={}".format(a, b)
-    output = len(s1) + len(s2) + len(s3)
-    return output
+    return __extracted_func_1('a=%d, b=%d', a, b, 'a={}, b={}', s1)
 
 
 # =============================================================================
@@ -405,18 +402,14 @@ def string_fmt_b(a, b):
 
 def fstring_a(x, y):
     """Test f-string with expressions."""
-    result = len(f"{x + y}")
-    result += len(f"{x * 2:04d}")
-    result += len(f"{x:.2f}")
+    result = __extracted_func_3(x, y)
     result += len(f"{x=}")
     return result
 
 
 def fstring_b(a, b):
     """Test f-string with expressions."""
-    output = len(f"{a + b}")
-    output += len(f"{a * 2:04d}")
-    output += len(f"{a:.2f}")
+    output = __extracted_func_3(a, b)
     output += len(f"{a=}")
     return output
 
@@ -473,10 +466,7 @@ def context_mgr_a(x):
 
 def context_mgr_b(y):
     """Test context managers."""
-    output = y
-    with DummyContext(10) as value:
-        output += value
-    return output
+    return context_mgr_a(y)
 
 
 # =============================================================================
@@ -514,10 +504,7 @@ def chained_comp_a(x, y, z):
 
 def chained_comp_b(a, b, c):
     """Test chained comparisons."""
-    output = 1 if a < b < c else 0
-    output += 1 if a <= b <= c else 0
-    output += 1 if a == b == c else 0
-    return output
+    return chained_comp_a(a, b, c)
 
 
 # =============================================================================
@@ -534,9 +521,7 @@ def short_circuit_a(x, y):
 
 def short_circuit_b(a, b):
     """Test boolean short-circuit evaluation."""
-    output = a and b or a
-    output = output and (a + b) or (a - b)
-    return output
+    return short_circuit_a(a, b)
 
 
 # =============================================================================
@@ -546,18 +531,12 @@ def short_circuit_b(a, b):
 
 def nested_a(data):
     """Test nested data structure access."""
-    result = data[0][0]
-    result += data[1]["key"]
-    result += data[2][0][1]
-    return result
+    return __extracted_func_2(data[0][0], data[1]['key'], lambda: data[2][0][1], data)
 
 
 def nested_b(items):
     """Test nested data structure access."""
-    output = items[0][0]
-    output += items[1]["key"]
-    output += items[2][0][1]
-    return output
+    return nested_a(items)
 
 
 # =============================================================================
@@ -576,11 +555,7 @@ def multi_assign_a(x, y):
 
 def multi_assign_b(m, n):
     """Test multi-target assignment."""
-    output = sum_val = m + n
-    output += sum_val
-    p = q = r = m
-    output += p + q + r
-    return output
+    return multi_assign_a(m, n)
 
 
 # =============================================================================
@@ -613,18 +588,12 @@ def starred_b(items):
 
 def membership_a(x, data):
     """Test membership operators."""
-    result = 1 if x in data else 0
-    result += 1 if x not in data else 0
-    result += 1 if "key" in {"key": x} else 0
-    return result
+    return __extracted_func_2(1 if x in data else 0, 1 if x not in data else 0, lambda: 1 if 'key' in {'key': x} else 0, data)
 
 
 def membership_b(y, items):
     """Test membership operators."""
-    output = 1 if y in items else 0
-    output += 1 if y not in items else 0
-    output += 1 if "key" in {"key": y} else 0
-    return output
+    return membership_a(y, items)
 
 
 # =============================================================================
@@ -642,10 +611,7 @@ def identity_a(x, y):
 
 def identity_b(a, b):
     """Test identity operators."""
-    output = 1 if a is None else 0
-    output += 1 if a is not None else 0
-    output += 1 if a is b else 0
-    return output
+    return identity_a(a, b)
 
 
 # =============================================================================
@@ -663,7 +629,4 @@ def complex_expr_a(x, y, data):
 
 def complex_expr_b(a, b, items):
     """Test complex nested expressions."""
-    output = (a + b) * 2 + sum([i * 2 for i in items if i > a])
-    output += len([i for i in items if a < i < b])
-    output += sum(map(lambda i: i**2, filter(lambda i: i > 0, items)))
-    return output
+    return complex_expr_a(a, b, items)

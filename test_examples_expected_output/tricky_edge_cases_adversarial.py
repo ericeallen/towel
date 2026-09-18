@@ -115,9 +115,7 @@ def chained_comparisons_a(x, lower, upper):
 
 def chained_comparisons_b(y, min_val, max_val):
     """Similar chained comparison."""
-    output = False
-    output = min_val < y < max_val
-    return output
+    return chained_comparisons_a(y, min_val, max_val)
 
 
 def mixed_types_a(value):
@@ -159,9 +157,7 @@ def membership_test_a(item, collection):
 
 def membership_test_b(element, group):
     """Similar membership test."""
-    exists = False
-    exists = element in group
-    return exists
+    return membership_test_a(element, group)
 
 
 def set_operations_a(set1, set2):

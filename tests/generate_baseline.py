@@ -96,7 +96,7 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
             with tempfile.TemporaryDirectory(prefix="towel-baseline-") as temporary:
                 staged_output = Path(temporary) / project_dir.name
                 results, termination_reason = engine.refactor_directory_to_fixed_point(
-                    str(project_dir), str(staged_output), max_iterations=10
+                    str(project_dir), str(staged_output), progress="none"
                 )
                 shutil.copytree(staged_output, project_output, dirs_exist_ok=True)
             total = sum(count for count, _ in results.values()) if results else 0

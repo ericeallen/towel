@@ -62,6 +62,7 @@ from .parallel import ParallelEvaluation
 from .clustering import Clustering
 from .pair_evaluation import PairEvaluation
 from .block_analysis import BlockAnalysis
+from .defaults import DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from .insertion import InsertionPoints
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
@@ -86,11 +87,6 @@ from .models import (
 from ..type_inference import TypeOracle
 from ..source_text import read_source
 from .pipeline import run_pipeline, AnalysisSession
-
-# Configuration defaults
-DEFAULT_MAX_PARAMETERS = 5
-DEFAULT_MIN_LINES = 3
-DEFAULT_MAX_ITERATIONS = 0  # Unlimited
 
 
 class UnificationRefactorEngine(

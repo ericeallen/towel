@@ -173,6 +173,7 @@ class TestSingleFileRegression(unittest.TestCase):
         test examples. Any failures indicate a regression in refactoring quality.
         """
         results = self.tester.test_all_examples(str(self.test_examples), verbose=True)
+        self.assertGreater(results["total_proposals_tested"], 0, "no proposal was tested")
 
         # Collect failed files
         failed_files = []
@@ -250,6 +251,17 @@ class TestSingleFileRegression(unittest.TestCase):
             normalized_current = normalize_generated_names(current_output)
             normalized_baseline = normalize_generated_names(baseline_output)
 
+            # A golden that differs from its input records an extraction; the
+            # engine must still make one, or an engine that does nothing passes.
+            baseline_changed = normalized_baseline != normalize_generated_names(py_file.read_text())
+            if (num_applied > 0) != baseline_changed:
+                differences.append(
+                    f"{py_file.name}: applied {num_applied} refactoring(s) but the baseline "
+                    f"{'differs from' if baseline_changed else 'equals'} the input"
+                )
+                print("count", flush=True)
+                continue
+
             if normalized_current != normalized_baseline:
                 differences.append(
                     f"{py_file.name}: Output differs from baseline (after normalization)\n"
@@ -318,8 +330,7 @@ class TestCrossFileRegression(unittest.TestCase):
             if d.is_dir() and not d.name.startswith(".")
         ]
 
-        if not project_dirs:
-            self.skipTest("No cross-file test projects found")
+        self.assertTrue(project_dirs, "no cross-file test projects found")
 
         total_passed = 0
         total_failed = 0
@@ -345,6 +356,48 @@ class TestCrossFileRegression(unittest.TestCase):
                 f"Success rate: {100 * total_passed / (total_passed + total_failed):.1f}%\n"
             ) + "\n".join(failures)
             self.fail(failure_msg)
+
+    def test_crossfile_output_stability(self):
+        """Each project's fixed point matches its golden tree, up to generated names."""
+        project_dirs = sorted(
+            d
+            for d in self.crossfile_examples.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        )
+        self.assertTrue(project_dirs, "no cross-file test projects found")
+        differences = []
+        for project_dir in project_dirs:
+            golden_dir = self.expected_output / project_dir.name
+            self.assertTrue(golden_dir.is_dir(), f"no cross-file golden for {project_dir.name}")
+            with tempfile.TemporaryDirectory(prefix="towel-regression-") as directory:
+                out = Path(directory) / project_dir.name
+                engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+                results, reason = engine.refactor_directory_to_fixed_point(
+                    str(project_dir), str(out), progress="none"
+                )
+                self.assertEqual(reason, "fixed_point", project_dir.name)
+                self.assertTrue(results, f"{project_dir.name}: nothing was refactored")
+                current = {
+                    p.relative_to(out): normalize_generated_names(p.read_text())
+                    for p in sorted(out.rglob("*.py"))
+                }
+            golden = {
+                p.relative_to(golden_dir): normalize_generated_names(p.read_text())
+                for p in sorted(golden_dir.rglob("*.py"))
+            }
+            if current != golden:
+                changed = sorted(
+                    str(k)
+                    for k in set(current) ^ set(golden)
+                    | {k for k in current if k in golden and current[k] != golden[k]}
+                )
+                differences.append(f"{project_dir.name}: {', '.join(changed)}")
+        if differences:
+            self.fail(
+                "Cross-file output changed:\n  "
+                + "\n  ".join(differences)
+                + "\nIf intentional: just regenerate-baseline"
+            )
 
 
 def main():

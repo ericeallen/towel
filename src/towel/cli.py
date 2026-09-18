@@ -24,6 +24,7 @@ from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source
 from towel.unification.models import ParameterKind
+from towel.unification.defaults import DEFAULT_MAX_ITERATIONS
 from towel.unification.progress import DEFAULT_PROGRESS, normalize_progress
 
 
@@ -164,7 +165,7 @@ Examples:
         "--max-iterations",  # earlier spelling, kept for scripts
         dest="max_refactorings",
         type=int,
-        default=0,
+        default=DEFAULT_MAX_ITERATIONS,
         metavar="N",
         help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
     )
@@ -190,12 +191,17 @@ Examples:
         "inserts code as rendered.",
     )
 
+    _add_progress_flag(parser)
+
+
+def _add_progress_flag(parser: argparse.ArgumentParser) -> None:
+    """Add ``--progress``, shared by the commands that analyze a project."""
     parser.add_argument(
         "--progress",
         choices=["auto", "tqdm", "none", "detail"],
         default=DEFAULT_PROGRESS,
-        help="Progress display mode: 'tqdm' shows bars, 'auto' falls back if tqdm unavailable, "
-        "'none' disables output, 'detail' prints per-phase summaries.",
+        help="Progress display mode: 'tqdm' shows bars (the default), 'auto' falls back if tqdm "
+        "is unavailable, 'none' disables output, 'detail' logs per-phase summaries.",
     )
 
 
@@ -208,6 +214,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     )
 
     parser.add_argument("target", help="File or directory to analyze")
+    _add_progress_flag(parser)
 
     _add_import_layout_flags(parser)
 
@@ -558,6 +565,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
             output_path,
             max_iterations=getattr(args, "max_refactorings", getattr(args, "max_iterations", 0)),
+            progress=normalize_progress(args.progress),
         )
 
         if num_applied > 0:
@@ -621,7 +629,7 @@ def _run_preview(args: argparse.Namespace) -> None:
     else:
         print(f"Analyzing directory: {target}")
         all_proposals = engine.analyze_directory(
-            target, recursive=True, verbose=True, progress="auto"
+            target, recursive=True, verbose=True, progress=normalize_progress(args.progress)
         )
 
     print(f"\nFound {len(all_proposals)} refactoring opportunities")

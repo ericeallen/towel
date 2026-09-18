@@ -31,6 +31,7 @@ import textwrap
 
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
+from .defaults import DEFAULT_MAX_ITERATIONS
 from .models import RefactoringProposal
 from .overlap import filter_overlapping_proposals
 from .progress import (
@@ -102,7 +103,10 @@ class FixedPointDrivers(EngineState):
         return normalized, tqdm_cls, use_tqdm
 
     def refactor_to_fixed_point(
-        self, file_path: str, max_iterations: int = 10
+        self,
+        file_path: str,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        progress: ProgressMode = DEFAULT_PROGRESS,
     ) -> Tuple[str, int, List[str]]:
         """
             Apply refactorings iteratively until a fixed point is reached.
@@ -123,6 +127,7 @@ class FixedPointDrivers(EngineState):
                 Tuple of (final_code, num_refactorings_applied, descriptions)
         """
         self._change_log = []
+        analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         current_bytes = Path(file_path).read_bytes()
         current_code = decode_source(current_bytes)
         num_applied = 0
@@ -132,7 +137,9 @@ class FixedPointDrivers(EngineState):
         while True:
             # Analyze for refactoring opportunities
             # Important: invalidate cached analysis for this path so we see latest edits
-            proposals = self.analyze_files([file_path], invalidate_paths=[file_path])
+            proposals = self.analyze_files(
+                [file_path], invalidate_paths=[file_path], progress=analysis_progress
+            )
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
@@ -209,7 +216,7 @@ class FixedPointDrivers(EngineState):
         self,
         input_dir: str,
         output_dir: str,
-        max_iterations: int = 10,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
         progress: ProgressMode = DEFAULT_PROGRESS,
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], str]:
         """
@@ -304,7 +311,9 @@ class FixedPointDrivers(EngineState):
                 ]
 
                 localized = self.analyze_files(
-                    list(changed_paths), invalidate_paths=list(changed_paths)
+                    list(changed_paths),
+                    invalidate_paths=list(changed_paths),
+                    progress=reporter.analysis_mode,
                 )
                 if localized:
                     localized = filter_overlapping_proposals(localized)
@@ -384,7 +393,9 @@ class FixedPointDrivers(EngineState):
                     for p in proposal_queue
                     if not ({path for path, _ in p.source_digests} & set(stale_paths))
                 ]
-                refreshed = self.analyze_files(stale_paths, invalidate_paths=stale_paths)
+                refreshed = self.analyze_files(
+                    stale_paths, invalidate_paths=stale_paths, progress=reporter.analysis_mode
+                )
                 if refreshed:
                     proposal_queue = filter_overlapping_proposals(refreshed) + proposal_queue
                 continue
