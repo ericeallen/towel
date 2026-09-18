@@ -26,7 +26,7 @@ from .definite_assignment import definitely_bound_before
 from .models import FunctionNode
 from .bounded_cache import BoundedCache
 from .exceptions import UnsupportedLayoutError
-from ..project_layout import ProjectLayout
+from ..project_layout import ProjectLayout, package_chain
 from .scope_analyzer import ScopeAnalyzer, pattern_capture_names
 from .statement_facts import import_binding_names, imported_binding_name, memoized_per_node
 from .visitors import OwnScopeVisitor
@@ -465,11 +465,9 @@ def _module_files_relocated(
 
 
 def _package_tree_root(module: Path) -> Path:
-    """The topmost package directory containing ``module``."""
-    directory = module.parent
-    while (directory.parent / "__init__.py").is_file() and directory.parent != directory:
-        directory = directory.parent
-    return directory
+    """The topmost package directory containing ``module``, or its own directory."""
+    packages = package_chain(module)
+    return packages[-1] if packages else module.parent
 
 
 def _suffix_in_tree(
@@ -679,16 +677,10 @@ def _package_initializers(module: Path, roots: FrozenSet[Path]) -> List[Path]:
     import of a module inside it.
     """
     initializers: List[Path] = []
-    directory = module.parent
-    while directory not in roots:
-        initializer = directory / "__init__.py"
-        if not initializer.is_file():
+    for directory in package_chain(module):
+        if directory in roots:
             break
-        initializers.append(initializer.resolve())
-        parent = directory.parent
-        if parent == directory:
-            break
-        directory = parent
+        initializers.append((directory / "__init__.py").resolve())
     return initializers
 
 

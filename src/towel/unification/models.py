@@ -41,6 +41,9 @@ import ast
 import hashlib
 import re
 
+MethodKind = Literal["instance", "classmethod", "staticmethod"]
+"""How a helper placed in a class binds its receiver."""
+
 
 @dataclass
 class CodeBlockPair:
@@ -80,7 +83,7 @@ class CodeBlockPair:
 class MethodInfo:
     """Describes how a function participates as a method within a class."""
 
-    kind: Optional[Literal["instance", "classmethod", "staticmethod"]]
+    kind: Optional[MethodKind]
     implicit_param: Optional[str]
     # False when a decorator or special method name makes the receiver's
     # meaning unknowable statically; such blocks get module-level helpers.
@@ -103,8 +106,24 @@ class ClassInsertionPlan:
 
     class_name: str
     file_path: str
-    method_kind: Literal["instance", "classmethod", "staticmethod"]
+    method_kind: MethodKind
     implicit_param: Optional[str]
+
+
+@dataclass(frozen=True)
+class HelperHome:
+    """Where a helper is placed: the file, and the class or function within it that hosts it.
+
+    ``method_param_name`` is the helper's own receiver parameter when it
+    becomes a method; a call site's ``implicit_param`` (see
+    ``Replacement``) is the receiver name in the method that hosts the call.
+    """
+
+    file_path: str
+    insert_into_class: Optional[str]
+    insert_into_function: Optional[str]
+    method_kind: Optional[MethodKind]
+    method_param_name: Optional[str]
 
 
 @dataclass
@@ -115,7 +134,7 @@ class Replacement:
     node: ast.AST
     file_path: Optional[str] = None
     class_name: Optional[str] = None
-    method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+    method_kind: Optional[MethodKind] = None
     implicit_param: Optional[str] = None
 
 
@@ -154,7 +173,7 @@ class RefactoringProposal:
     return_variables: List[str] = field(default_factory=list)
     insert_into_class: Optional[str] = None
     insert_into_function: Optional[str] = None
-    method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+    method_kind: Optional[MethodKind] = None
     method_param_name: Optional[str] = None
     source_digests: Tuple[Tuple[str, str], ...] = ()
     # When set, ``extracted_function`` is that existing definition (for display)

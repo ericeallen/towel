@@ -27,10 +27,9 @@ insertion points) are the ones more than one module needs.
 from __future__ import annotations
 
 import ast
-from .models import FunctionNode
-from typing import Callable, Iterable, List, Optional, Set, Tuple, Union, Literal, Sequence, TypeVar
+from .models import FunctionNode, MethodKind
+from typing import Callable, Iterable, List, Optional, Set, Tuple, Union, Sequence, TypeVar
 
-MethodKind = Literal["instance", "classmethod", "staticmethod"]
 T = TypeVar("T")
 
 

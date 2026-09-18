@@ -35,9 +35,10 @@ None for a rejection that was already traced through ``_debug_reject``:
 from __future__ import annotations
 
 import ast
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple, cast, FrozenSet
+from typing import Dict, List, Optional, Sequence, Set, Tuple, cast, FrozenSet
 
 from ..diagnostics import VALIDATION, debugging
 from .definite_assignment import definitely_bound_after
@@ -55,6 +56,7 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .models import (
+    HelperHome,
     span_contains,
     BlockBindingSnapshot,
     ClassInfo,
@@ -84,10 +86,6 @@ from .semantic_safety import (
 from .thunk_inlining import inline_leading_thunks
 from .substitution import Substitution
 from .visitors import body_without_docstring
-
-"""Builtins a generated call may name without them being bound at the site."""
-
-MethodKind = Literal["instance", "classmethod", "staticmethod"]
 
 
 @dataclass(frozen=True)
@@ -159,25 +157,10 @@ class _CallSites:
 
 
 @dataclass(frozen=True)
-class _HelperHome:
-    """Where a helper is placed before the cross-module checks: file, and class or function within it."""
-
-    file_path: str
-    insert_into_class: Optional[str]
-    insert_into_function: Optional[str]
-    method_kind: Optional[MethodKind]
-    method_param_name: Optional[str]
-
-
-@dataclass(frozen=True)
 class _Placement:
     """Stage 10: where the helper goes and which call sites survive."""
 
-    canonical_file: str
-    insert_into_class: Optional[str]
-    insert_into_function: Optional[str]
-    method_kind: Optional[MethodKind]
-    method_param_name: Optional[str]
+    home: HelperHome
     replacements: List[Replacement]
 
 
@@ -1013,14 +996,8 @@ class PairEvaluation(EngineState):
                     ):
                         self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)
                         return None
-        return _Placement(
-            canonical_file,
-            home.insert_into_class,
-            home.insert_into_function,
-            home.method_kind,
-            home.method_param_name,
-            replacements,
-        )
+        # The cross-module check may move the helper to another file.
+        return _Placement(dataclasses.replace(home, file_path=canonical_file), replacements)
 
     def _helper_home(
         self,
@@ -1029,7 +1006,7 @@ class PairEvaluation(EngineState):
         scope: _HelperScope,
         functions: FunctionIndex,
         class_infos: List[ClassInfo],
-    ) -> "_HelperHome":
+    ) -> "HelperHome":
         """The function or class the helper goes into, if any; otherwise the pair's own module."""
         canonical_file = pair.file_path
         if not pair.is_cross_file and scope.dce_insert_func:
@@ -1042,7 +1019,7 @@ class PairEvaluation(EngineState):
             # free variable is already a parameter, so a module-level helper
             # is equally correct; fall back to it when the name is ambiguous.
             if len(functions.named(canonical_file, scope.dce_insert_func)) == 1:
-                return _HelperHome(canonical_file, None, scope.dce_insert_func, None, None)
+                return HelperHome(canonical_file, None, scope.dce_insert_func, None, None)
         class_plan = self._choose_class_insertion(
             pair, setup.method_info1, setup.method_info2, class_infos
         )
@@ -1056,19 +1033,19 @@ class PairEvaluation(EngineState):
                 class_plan.class_name in {pair.class1_name, pair.class2_name} and not same_class
             )
             if not target_is_concrete_sibling:
-                return _HelperHome(
+                return HelperHome(
                     class_plan.file_path,
                     class_plan.class_name,
                     None,
                     class_plan.method_kind,
                     class_plan.implicit_param,
                 )
-        return _HelperHome(canonical_file, None, None, None, None)
+        return HelperHome(canonical_file, None, None, None, None)
 
     def _safe_home_across_modules(
         self,
         pair: CodeBlockPair,
-        home: "_HelperHome",
+        home: "HelperHome",
         replacements: Sequence[Replacement],
         functions: FunctionIndex,
     ) -> Optional[str]:
@@ -1126,21 +1103,21 @@ class PairEvaluation(EngineState):
             desc += f" ({Path(pair.file_path).name}) and {pair.function2_name} ({Path(pair.file_path2).name})"
         else:
             desc += f" and {pair.function2_name}"
-        participating_paths = {placement.canonical_file} | {
-            replacement.file_path or placement.canonical_file
-            for replacement in placement.replacements
+        home = placement.home
+        participating_paths = {home.file_path} | {
+            replacement.file_path or home.file_path for replacement in placement.replacements
         }
         proposal = RefactoringProposal(
-            file_path=placement.canonical_file,
+            file_path=home.file_path,
             extracted_function=rendered.func_def,
             replacements=placement.replacements,
             description=desc,
             parameters_count=len(unified.substitution.param_expressions),
             return_variables=list(unified.ordered_return_variables[0]),
-            insert_into_class=placement.insert_into_class,
-            insert_into_function=placement.insert_into_function,
-            method_kind=placement.method_kind,
-            method_param_name=placement.method_param_name,
+            insert_into_class=home.insert_into_class,
+            insert_into_function=home.insert_into_function,
+            method_kind=home.method_kind,
+            method_param_name=home.method_param_name,
             source_digests=tuple(
                 sorted(
                     (path, digest)

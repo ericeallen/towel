@@ -36,7 +36,6 @@ from typing import (
     FrozenSet,
     Iterable,
     List,
-    Literal,
     MutableMapping,
     Optional,
     Sequence,
@@ -52,6 +51,7 @@ from .bounded_cache import BoundedCache
 from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
 from .models import (
+    MethodKind,
     AppliedChange,
     BlockBindingSnapshot,
     ClassInfo,
@@ -247,7 +247,7 @@ class EngineState:
     def _prepare_extracted_method_signature(
         self,
         fn: ast.FunctionDef,
-        method_kind: Literal["instance", "classmethod", "staticmethod"],
+        method_kind: MethodKind,
         implicit_param: Optional[str],
     ) -> None:
         """Provided by HelperPlacement."""
@@ -263,7 +263,7 @@ class EngineState:
         node: ast.AST,
         original_name: str,
         new_name: str,
-        method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]],
+        method_kind: Optional[MethodKind],
         implicit_param: Optional[str],
         class_name: Optional[str],
         receiver_parameter_index: Optional[int] = None,

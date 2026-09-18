@@ -372,7 +372,7 @@ class ParameterRecord(TypedDict):
     bindings: List[BindingRecord]
 
 
-ScopeKind = Literal["module", "class", "function"]
+HelperScopeKind = Literal["module", "class", "function"]
 """Where a helper was placed; the inventory's ``scope`` is this, then ``:<name>`` unless module."""
 
 
@@ -968,7 +968,7 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
             if not isinstance(node, ast.FunctionDef) or node.name != name or node.lineno != lineno:
                 continue
             enclosing = parents.get(node)
-            scope_kind: ScopeKind
+            scope_kind: HelperScopeKind
             if isinstance(enclosing, ast.ClassDef):
                 scope_kind, scope_name = "class", enclosing.name
             elif isinstance(enclosing, (ast.FunctionDef, ast.AsyncFunctionDef)):

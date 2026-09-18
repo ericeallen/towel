@@ -30,8 +30,15 @@ from __future__ import annotations
 import ast
 
 from collections import deque
-from typing import List, Literal, Optional, Sequence, Set, Tuple, cast
-from .models import ClassInfo, ClassInsertionPlan, CodeBlockPair, FunctionNode, MethodInfo
+from typing import List, Optional, Sequence, Set, Tuple, cast
+from .models import (
+    ClassInfo,
+    ClassInsertionPlan,
+    CodeBlockPair,
+    FunctionNode,
+    MethodInfo,
+    MethodKind,
+)
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import imported_definition_sites
 from .visitors import MethodCallRewriter
@@ -188,7 +195,7 @@ class HelperPlacement(EngineState):
     def _prepare_extracted_method_signature(
         self,
         fn: ast.FunctionDef,
-        method_kind: Literal["instance", "classmethod", "staticmethod"],
+        method_kind: MethodKind,
         implicit_param: Optional[str],
     ) -> None:
         """Normalize the extracted helper so it behaves like the requested method type."""
@@ -217,7 +224,7 @@ class HelperPlacement(EngineState):
         node: ast.AST,
         original_name: str,
         new_name: str,
-        method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]],
+        method_kind: Optional[MethodKind],
         implicit_param: Optional[str],
         class_name: Optional[str],
         receiver_parameter_index: Optional[int] = None,
@@ -299,7 +306,7 @@ class HelperPlacement(EngineState):
         if func is None or class_name is None:
             return MethodInfo(kind=None, implicit_param=None)
 
-        kind: Optional[Literal["instance", "classmethod", "staticmethod"]] = None
+        kind: Optional[MethodKind] = None
         receiver_known = func.name not in _IMPLICIT_RECEIVER_SPECIAL_METHODS
         for decorator in func.decorator_list:
             name = self._decorator_name(decorator)
@@ -486,7 +493,7 @@ class HelperPlacement(EngineState):
         file2 = pair.file_path2
 
         # At this point we know effective_kind is valid because we've already validated k1/k2
-        effective_kind: Literal["instance", "classmethod", "staticmethod"] = k1
+        effective_kind: MethodKind = k1
         if file1 == file2 and pair.class1_name == pair.class2_name:
             implicit_param = method_info1.implicit_param or method_info2.implicit_param
             if effective_kind == "instance" and not implicit_param:

@@ -62,17 +62,31 @@ def load_pyproject(project_root: Path) -> Dict[str, Any]:
         return {}
 
 
-def is_package_dir(path: Path, pep420: bool) -> bool:
-    """Determine if a directory is a Python package root.
+def is_package_dir(path: Path) -> bool:
+    """Whether ``path`` is a regular package: a directory holding ``__init__.py``.
 
-    - Traditional packages: must contain __init__.py
-    - Namespace packages (PEP 420): any directory is a potential package component
+    Namespace packages (PEP 420) have no marker file; whether a bare
+    directory counts is a property of the project layout
+    (``ProjectLayout.pep420_namespace_packages``), not of the directory.
     """
-    if not path.is_dir():
-        return False
-    if pep420:
-        return True
-    return (path / "__init__.py").exists()
+    return path.is_dir() and (path / "__init__.py").exists()
+
+
+def package_chain(path: Path) -> List[Path]:
+    """The regular packages enclosing ``path``, innermost first.
+
+    Ascends from the containing directory while each directory holds an
+    ``__init__.py``; the chain ends at the first directory that does not,
+    so every entry is importable through the ones after it.
+    """
+    chain: List[Path] = []
+    directory = path.parent
+    while is_package_dir(directory):
+        chain.append(directory)
+        if directory.parent == directory:
+            break
+        directory = directory.parent
+    return chain
 
 
 def _setuptools_default_src_root(project_root: Path, data: Mapping[str, object]) -> Optional[Path]:
@@ -579,7 +593,7 @@ class ProjectLayout:
                     cursor = src_root
                     for comp in parts[:-1]:
                         cursor = cursor / comp
-                        if not is_package_dir(cursor, pep420=False):
+                        if not is_package_dir(cursor):
                             # Not a classic package path; fall back to absolute-from-project
                             break
                 return _valid_module_path(".".join(parts))

@@ -189,11 +189,13 @@ class TestProjectLayoutBehavior(unittest.TestCase):
             # Create a file (not directory) to test is_package_dir False path
             file_path = root / "not_a_dir.py"
             file_path.write_text("pass\n")
-            self.assertFalse(is_package_dir(file_path, pep420=False))
-            # pep420 True returns True for any directory; create directory to test True
+            self.assertFalse(is_package_dir(file_path))
+            # A bare directory is not a regular package; one with __init__.py is.
             pkg_dir = root / "pkg"
             pkg_dir.mkdir()
-            self.assertTrue(is_package_dir(pkg_dir, pep420=True))
+            self.assertFalse(is_package_dir(pkg_dir))
+            (pkg_dir / "__init__.py").write_text("")
+            self.assertTrue(is_package_dir(pkg_dir))
 
             # With mapping to 'src', ensure fallback handles non-.py under project root
             (root / "pyproject.toml").write_text(textwrap.dedent("""

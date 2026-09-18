@@ -68,7 +68,7 @@ from typing import (
 
 from .diagnostics import LOG
 from .project_tools import ToolChoice
-from .project_layout import find_project_root, load_pyproject
+from .project_layout import find_project_root, load_pyproject, package_chain
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mypy.build import BuildSource
@@ -144,17 +144,14 @@ def _module_name_and_root(path: Path) -> Tuple[str, Path]:
     placeholder identifier, which the annotation writer then drops in favour
     of the name the host module binds.
     """
-    parts = [path.stem]
-    directory = path.parent
-    while (directory / "__init__.py").is_file():
-        parts.append(directory.name if directory.name.isidentifier() else "_towel_package")
-        parent = directory.parent
-        if parent == directory:
-            break
-        directory = parent
+    packages = package_chain(path)
+    parts = [path.stem] + [
+        package.name if package.name.isidentifier() else "_towel_package" for package in packages
+    ]
     if path.name == "__init__.py":
         parts = parts[1:]
-    return ".".join(reversed(parts)), directory
+    root = packages[-1].parent if packages else path.parent
+    return ".".join(reversed(parts)), root
 
 
 def _with_probes(request: RevealRequest) -> Tuple[str, List[int]]:

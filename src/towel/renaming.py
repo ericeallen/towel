@@ -18,6 +18,7 @@ from typing import Iterable, Literal, Sequence, cast
 
 from .changes import ChangePlan
 from .project_layout import ProjectLayout
+from .source_text import decode_source
 from .unification.semantic_safety import is_namespace_access_call
 from .unification.models import GENERATED_HELPER_NAME, FunctionNode
 from .unification.statement_facts import import_binding_names, imported_binding_name
@@ -245,6 +246,10 @@ def _resolve(scope: _Scope, name: str) -> _Scope:
 class _Module:
     path: Path
     name: str
+    # The bytes on disk, which the change plan starts from and whose encoding
+    # the rewritten file keeps.
+    original: bytes
+    # The decoded source as UTF-8, which the syntax tree's column offsets index.
     raw: bytes
     tree: ast.Module
     scopes: _Scopes
@@ -337,7 +342,7 @@ def plan_renames(
     generated helper names are unique across the project.
     """
     function_specifications, parameter_specifications = _split_specifications(specifications)
-    modules = _load_modules(target)
+    modules = _load_rename_modules(target)
     by_name = {module.name: module for module in modules}
     selected, method_specifications = _select_definitions(modules, function_specifications)
     _extend_to_generated_importers(modules, selected)
@@ -359,7 +364,7 @@ def plan_renames(
         parameters_found |= _plan_parameter_renames(module, parameter_specifications, edits)
         content = edits.render()
         if content != module.raw:
-            before[str(module.path)] = module.raw
+            before[str(module.path)] = module.original
             after[str(module.path)] = content.decode("utf-8")
             count += len(edits.changes)
     missing = {
@@ -395,17 +400,33 @@ def _split_specifications(
     return function_specifications, parameter_specifications
 
 
-def _load_modules(target: Path) -> list[_Module]:
-    """Every module under ``target`` (symlinks excluded), parsed, compiled and scope-analyzed."""
+def _load_rename_modules(target: Path) -> list[_Module]:
+    """Every module under ``target`` (symlinks excluded), parsed, compiled and scope-analyzed.
+
+    The inventory commands skip a file they cannot read; a rename refuses
+    instead, since it rewrites references across the whole tree and a module
+    it could not see might hold one. Encodings are honoured the way the
+    refactoring commands honour them (byte-order mark, coding cookie).
+    """
     layout = _rename_layout(target)
     modules: list[_Module] = []
     for path in sorted(target.rglob("*.py")):
         if path.is_symlink():
             continue
-        raw = path.read_bytes()
-        tree = ast.parse(raw.decode("utf-8"), filename=str(path))
+        original = path.read_bytes()
+        text = decode_source(original)
+        tree = ast.parse(text, filename=str(path))
         compile(tree, str(path), "exec")
-        modules.append(_Module(path, _module_name(layout, path), raw, tree, _Scopes(tree)))
+        modules.append(
+            _Module(
+                path,
+                _module_name(layout, path),
+                original,
+                text.encode("utf-8"),
+                tree,
+                _Scopes(tree),
+            )
+        )
     if len({module.name for module in modules}) != len(modules):
         raise ValueError("Ambiguous module paths in rename target")
     return modules

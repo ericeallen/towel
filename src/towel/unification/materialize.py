@@ -35,10 +35,10 @@ import textwrap
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Optional
 from .exceptions import RefactoringError
 from .insertion import reindent, relative_import_module
-from .models import AppliedChange, RefactoringProposal, Replacement
+from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
 from ..project_layout import ProjectLayout, is_package_dir
 from towel.changes import ChangeConflict, ChangePlan
 from ..source_text import read_source
@@ -374,7 +374,7 @@ class Materialization(EngineState):
         relative = relative_import_module(from_path, to_path)
         # A relative import only resolves inside a classic package; flat
         # modules on sys.path (no __init__.py) must use an absolute name.
-        importer_in_package = is_package_dir(to_path.parent, pep420=False)
+        importer_in_package = is_package_dir(to_path.parent)
         # Prefer an absolute import only when the layout is anchored by
         # real packaging metadata, so the name stays valid after an
         # out-of-place output is adopted into its real location. Otherwise
@@ -399,7 +399,7 @@ class Materialization(EngineState):
         self,
         modified_files: Dict[str, str],
         helper_name: str,
-        method_kind: Optional[Literal["instance", "classmethod", "staticmethod"]],
+        method_kind: Optional[MethodKind],
     ) -> None:
         """Fail loudly if any generated call cannot bind to the generated helper.
 
