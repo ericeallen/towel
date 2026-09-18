@@ -243,7 +243,10 @@ class UnificationRefactorEngine(
         )
         self._cluster_cache: "OrderedDict[Tuple[Any, ...], Optional[ast.AST]]" = OrderedDict()
         self._structural_ids: Dict[Tuple[ast.AST, ...], str] = {}
-        self._function_sources: Dict[FunctionNode, str] = {}
+        # Which file each analyzed function came from, and a digest of that
+        # file's source: weak, so a function whose tree the analysis session
+        # has dropped is forgotten with it instead of pinning the tree.
+        self._function_sources: WeakKeyDictionary[FunctionNode, str] = WeakKeyDictionary()
         self._source_digests: Dict[str, str] = {}
         # Per-block analyses (binding snapshot, reassignment and unbinding
         # checks) depend only on the function and the block; a block takes
@@ -254,7 +257,7 @@ class UnificationRefactorEngine(
         # iterations evicts exactly its own entries and unchanged files keep
         # theirs across iterations.
         self._cache_entries_by_path: Dict[str, List[Tuple[MutableMapping[Any, Any], Any]]] = {}
-        self._function_paths: Dict[FunctionNode, str] = {}
+        self._function_paths: WeakKeyDictionary[FunctionNode, str] = WeakKeyDictionary()
         self._function_index_cache: Optional[Tuple[Sequence[FunctionArtifact], FunctionIndex]] = (
             None
         )

@@ -135,7 +135,7 @@ class EngineState:
     unifier: Unifier
     # Every function of the current analysis, keyed by its node, to the file
     # it was parsed from.
-    _function_paths: Dict[FunctionNode, str]
+    _function_paths: WeakKeyDictionary[FunctionNode, str]
     # Memoization caches keyed by the identity of AST nodes parsed for this
     # engine run; the weak ones vanish with their trees.
     _assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]]
