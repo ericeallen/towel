@@ -88,14 +88,6 @@ warn_unused_ignores = true
 warn_no_return = true
 files = ["src/towel", "tests/test_helpers.py", "tests/edge_case_values.py"]
 
-[tool.flake8]
-max-line-length = 100
-exclude = ["venv", "env", "__pycache__", "tests"]
-# E501: Line too long (we use Black's 100 char limit, not PEP8's 79)
-# W503: Line break before binary operator (Black style)
-# E203: Whitespace before ':' (Black vs flake8 conflict in slices)
-ignore = ["E501", "W503", "E203"]
-
 [tool.coverage.run]
 source = ["src/towel"]
 omit = ["*/tests/*", "*/__pycache__/*"]
