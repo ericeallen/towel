@@ -28,9 +28,14 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
+from .semantic_safety import ImportGraphCache
+
 
 class EngineState:
     """Attributes and operations shared across the engine's mixins (declarations only)."""
 
     _source_lines_cache: Dict[str, Tuple[Tuple[int, int], Tuple[str, ...]]]
     """Lines of files the apply path read, keyed by path, with the stat they were read at."""
+
+    import_graph: ImportGraphCache
+    """What this run has learned about the project's import graph."""
