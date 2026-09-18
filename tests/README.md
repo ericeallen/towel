@@ -109,6 +109,15 @@ cross-file examples in `test_examples_crossfile/`,
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
 
+Three goldens are byte-identical to their inputs because single-file mode
+finds nothing to extract in them. `EXPECTED_UNCHANGED_EXAMPLES` in
+`test_regression.py` names them, and the regression test asserts that the
+unchanged goldens, and the inputs the engine leaves untouched, are exactly
+that set: an extraction that silently stops happening, or one that starts,
+fails the test instead of being regenerated into the baseline unnoticed.
+When such a change is intended, move the file in or out of the set and say
+why in the commit.
+
 The corpus has 26 files; each is a self-contained module whose name says
 what it exercises (see `test_examples/README.md`):
 

@@ -132,6 +132,10 @@ All code contributions should include tests:
 - A library module never prints: warnings go to the `towel` logger and traces
   to its child loggers (see `src/towel/diagnostics.py`); a new engine setting
   read from the environment goes into `Settings`, not into `os.environ` reads
+- A change to what the engine extracts from `test_examples/` shows up in
+  `tests/test_regression.py`: regenerate the goldens only after verifying the
+  new output, and if an example starts or stops being refactored, move it in
+  or out of `EXPECTED_UNCHANGED_EXAMPLES` there and explain why in the commit
 - Ensure existing tests continue to pass
 - Run the test suite before submitting:
   ```bash

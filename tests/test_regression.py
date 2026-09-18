@@ -130,6 +130,21 @@ def find_duplicate_helpers(root: Path) -> list[str]:
     return duplicates
 
 
+# Inputs whose golden is byte-identical to the input: the engine must find
+# nothing to extract in them, and their goldens must stay unchanged. A file
+# whose extraction stops happening, or that starts to be refactored, moves in
+# or out of this set with an explanation in the commit, never silently.
+#
+# - bindings_comprehensions.py: every candidate block is a comprehension whose
+#   binder names differ, so nothing unifies without a parameter budget overrun.
+# - example3_file1.py / example3_file2.py: their duplicate is across the two
+#   files, which single-file mode cannot see (the cross-file run is covered by
+#   test_crossfile_integration.py).
+EXPECTED_UNCHANGED_EXAMPLES = frozenset(
+    {"bindings_comprehensions.py", "example3_file1.py", "example3_file2.py"}
+)
+
+
 class TestSingleFileRegression(unittest.TestCase):
     """
     Regression tests for single-file refactorings.
@@ -169,6 +184,21 @@ class TestSingleFileRegression(unittest.TestCase):
                 f"{formatted}\n"
                 "Regenerate baselines or audit the engine to ensure helper names remain unique."
             )
+
+    def test_unchanged_goldens_are_exactly_the_declared_ones(self):
+        """The goldens identical to their inputs are the ones EXPECTED_UNCHANGED_EXAMPLES names."""
+        unchanged = {
+            example.name
+            for example in self.test_examples.glob("*.py")
+            if (self.expected_output / example.name).is_file()
+            and (self.expected_output / example.name).read_bytes() == example.read_bytes()
+        }
+        self.assertEqual(
+            unchanged,
+            set(EXPECTED_UNCHANGED_EXAMPLES),
+            "A golden stopped or started matching its input; if the engine change is "
+            "intended, update EXPECTED_UNCHANGED_EXAMPLES and say why in the commit",
+        )
 
     def test_observational_equivalence_all_examples(self):
         """
@@ -219,6 +249,7 @@ class TestSingleFileRegression(unittest.TestCase):
         ]
 
         differences = []
+        untouched: set[str] = set()
 
         files_sorted = sorted(python_files)
         total_files = len(files_sorted)
@@ -259,6 +290,8 @@ class TestSingleFileRegression(unittest.TestCase):
             # A golden that differs from its input records an extraction; the
             # engine must still make one, or an engine that does nothing passes.
             baseline_changed = normalized_baseline != normalize_generated_names(py_file.read_text())
+            if num_applied == 0:
+                untouched.add(py_file.name)
             if (num_applied > 0) != baseline_changed:
                 differences.append(
                     f"{py_file.name}: applied {num_applied} refactoring(s) but the baseline "
@@ -276,6 +309,13 @@ class TestSingleFileRegression(unittest.TestCase):
                 print("differs", flush=True)
             else:
                 print("ok", flush=True)
+
+        if untouched != EXPECTED_UNCHANGED_EXAMPLES:
+            differences.append(
+                "the examples the engine left untouched are not the declared ones: "
+                f"stopped being refactored {sorted(untouched - EXPECTED_UNCHANGED_EXAMPLES)}, "
+                f"started being refactored {sorted(EXPECTED_UNCHANGED_EXAMPLES - untouched)}"
+            )
 
         if differences:
             failure_msg = (
