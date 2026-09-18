@@ -105,7 +105,7 @@ class TestUnifierBatch3(unittest.TestCase):
         return out
         """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
         self.assertIsNotNone(subst)
         assert subst is not None

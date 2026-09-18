@@ -86,7 +86,26 @@ warn_redundant_casts = true
 warn_unreachable = true
 warn_unused_ignores = true
 warn_no_return = true
-files = ["src/towel", "tests/test_helpers.py", "tests/edge_case_values.py"]
+files = ["src/towel", "tests"]
+# Hostile fixtures are executed as written by the batteries; they are inputs, not code to check.
+exclude = ["^tests/hostile_cases/", "^tests/hostile_crossfile/"]
+
+# Test bodies are checked with every strict flag above, but the suite's unittest
+# methods and pytest functions are largely unannotated and calling them from a
+# runner adds nothing that a signature would catch; requiring signatures on more
+# than a thousand of them buys no safety. The two typed support modules that were
+# always strict stay strict below.
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+module = ["tests.test_helpers", "tests.edge_case_values"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_calls = true
 
 [tool.coverage.run]
 source = ["src/towel"]

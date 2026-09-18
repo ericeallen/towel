@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 CROSSFILE_DIR = PROJECT_ROOT / "test_examples_crossfile"
 
 
-def _participating_files(proposal) -> set:
+def _participating_files(proposal) -> set[str]:
     """Files a proposal touches, counting a reused definition's module.
 
     When one duplicate is the whole body of an existing function, that
@@ -316,7 +316,7 @@ class TestCrossFilePerformance:
 
         files = get_crossfile_project_files("simple_crossfile")
         engine = UnificationRefactorEngine()
-        evaluated = []
+        evaluated: list[tuple[str, tuple[int, int], str, tuple[int, int]]] = []
         original = UnificationRefactorEngine.process_block_pairs
 
         def record(self, block_pairs, *args, **kwargs):

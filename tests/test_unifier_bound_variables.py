@@ -52,7 +52,7 @@ return output
         block2 = ast.parse(code2).body
 
         # Attempt unification
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
@@ -104,7 +104,7 @@ return q
         block2 = ast.parse(code2).body
 
         # Attempt unification
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
@@ -163,7 +163,7 @@ output = output * 2
         block2 = ast.parse(code2).body
 
         # Attempt unification
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
@@ -211,7 +211,7 @@ return output
         block2 = ast.parse(code2).body
 
         # Attempt unification
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
@@ -251,7 +251,7 @@ return other
         block2 = ast.parse(code2).body
 
         # Attempt unification
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should fail - different structure
@@ -282,7 +282,7 @@ return result
         block2 = ast.parse(code2).body
 
         # Attempt unification
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed
@@ -319,7 +319,7 @@ return output
         block2 = ast.parse(code2).body
 
         # Attempt unification
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
 
         # Should succeed

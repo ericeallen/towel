@@ -422,7 +422,7 @@ def test_inconsistent_subtype_verdicts_never_empty_a_union() -> None:
     members = [parse("A"), parse("B"), parse("C")]
     cyclic = {("A", "B"): YES, ("B", "C"): YES, ("C", "A"): YES}
 
-    def relation(pairs):  # type: ignore[no-untyped-def]
+    def relation(pairs):
         return [cyclic.get((ast.unparse(n), ast.unparse(w)), UNKNOWN) for n, w in pairs]
 
     kept = normalize_union(members, relation)

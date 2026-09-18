@@ -55,8 +55,11 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
         )
         # Expect assignment with lambda wrapping forwarding args/kwargs
         self.assertIsInstance(call_stmt, ast.Assign)
+        assert isinstance(call_stmt, ast.Assign)
+        assert isinstance(call_stmt.value, ast.Call)
         arg_expr = call_stmt.value.args[0]  # first argument passed to extracted function
         self.assertIsInstance(arg_expr, ast.Lambda)
+        assert isinstance(arg_expr, ast.Lambda)
         # Lambda should have vararg/kwarg and body making a call to original f
         self.assertIsNotNone(arg_expr.args.vararg)
         self.assertIsNotNone(arg_expr.args.kwarg)
@@ -114,8 +117,10 @@ class TestExtractorCalleeAndMultiReturn(unittest.TestCase):
             hygienic_renames=[{}, {}],
         )
         self.assertIsInstance(call_stmt, ast.Assign)
+        assert isinstance(call_stmt, ast.Assign)
         target = call_stmt.targets[0]
         self.assertIsInstance(target, ast.Tuple)
+        assert isinstance(target, ast.Tuple)
         self.assertEqual(len(target.elts), 2)
 
 

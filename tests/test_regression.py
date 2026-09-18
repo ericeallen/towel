@@ -137,6 +137,11 @@ class TestSingleFileRegression(unittest.TestCase):
     Compares current refactoring output against baseline expected output.
     """
 
+    engine: UnificationRefactorEngine
+    tester: AutomaticEquivalenceTester
+    test_examples: Path
+    expected_output: Path
+
     @classmethod
     def setUpClass(cls):
         """Set up test fixtures."""
@@ -176,7 +181,7 @@ class TestSingleFileRegression(unittest.TestCase):
         self.assertGreater(results["total_proposals_tested"], 0, "no proposal was tested")
 
         # Collect failed files
-        failed_files = []
+        failed_files: list[str] = []
         for filename, file_result in results["file_results"].items():
             if file_result["failed"] > 0:
                 # Add whitespace before each failed file for clarity
@@ -288,6 +293,11 @@ class TestCrossFileRegression(unittest.TestCase):
 
     Ensures cross-file refactorings remain stable and correct.
     """
+
+    engine: UnificationRefactorEngine
+    tester: CrossFileEquivalenceTester
+    crossfile_examples: Path
+    expected_output: Path
 
     @classmethod
     def setUpClass(cls):

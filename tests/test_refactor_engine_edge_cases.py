@@ -197,8 +197,11 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
             self.assertTrue(returns)
             for ret in returns:
                 call = ret.value
+                assert isinstance(call, ast.Call)
                 self.assertIsInstance(call.func, ast.Attribute)
+                assert isinstance(call.func, ast.Attribute)
                 self.assertIsInstance(call.func.value, ast.Name)
+                assert isinstance(call.func.value, ast.Name)
                 self.assertEqual(call.func.value.id, "self")
                 self.assertEqual(call.func.attr, helper_name)
 
@@ -244,6 +247,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
             for call in call_sites:
                 if isinstance(call.func, ast.Attribute) and call.func.attr == helper_name:
                     self.assertIsInstance(call.func.value, ast.Name)
+                    assert isinstance(call.func.value, ast.Name)
                     self.assertEqual(call.func.value.id, method.args.args[0].arg)
 
     def test_staticmethods_extracted_into_class(self):
@@ -290,6 +294,7 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
             for call in call_sites:
                 if isinstance(call.func, ast.Attribute) and call.func.attr == helper_name:
                     self.assertIsInstance(call.func.value, ast.Name)
+                    assert isinstance(call.func.value, ast.Name)
                     self.assertEqual(call.func.value.id, "Example")
 
     def test_sibling_instance_methods_promote_to_common_base(self):
@@ -339,7 +344,9 @@ class TestRefactorEngineEdgeCases(unittest.TestCase):
             ]
             self.assertTrue(helper_calls)
             for call in helper_calls:
+                assert isinstance(call.func, ast.Attribute)
                 self.assertIsInstance(call.func.value, ast.Name)
+                assert isinstance(call.func.value, ast.Name)
                 self.assertEqual(call.func.value.id, method.args.args[0].arg)
 
 

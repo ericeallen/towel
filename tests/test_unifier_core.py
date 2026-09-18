@@ -21,7 +21,7 @@ class TestUnifierCore(unittest.TestCase):
             z = y ** 2
             """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         self.assertIsNone(uni.unify_blocks([b0, b1], hr))
 
     def test_constant_parameterization_consistent(self) -> None:
@@ -35,7 +35,7 @@ class TestUnifierCore(unittest.TestCase):
             z = y ** 3
             """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
         self.assertIsNotNone(subst)
         assert subst is not None
@@ -53,7 +53,7 @@ class TestUnifierCore(unittest.TestCase):
             return out
             """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
         self.assertIsNotNone(subst)
         assert subst is not None
@@ -75,7 +75,7 @@ class TestUnifierCore(unittest.TestCase):
                 y = y
             """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
         self.assertIsNotNone(subst)
         assert subst is not None
@@ -94,7 +94,7 @@ class TestUnifierCore(unittest.TestCase):
                 b = value
             """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
         self.assertIsNotNone(subst)
         assert subst is not None
@@ -104,7 +104,7 @@ class TestUnifierCore(unittest.TestCase):
         b0 = parse_block("f = lambda *args: args")
         b1 = parse_block("f = lambda *args: args")
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         self.assertIsNone(uni.unify_blocks([b0, b1], hr))
 
     def test_except_handler_name_mismatch_none_vs_present(self) -> None:
@@ -121,7 +121,7 @@ class TestUnifierCore(unittest.TestCase):
                 pass
             """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         self.assertIsNone(uni.unify_blocks([b0, b1], hr))
 
     def test_except_handler_name_both_present(self) -> None:
@@ -138,7 +138,7 @@ class TestUnifierCore(unittest.TestCase):
                 x = err
             """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
         self.assertIsNotNone(subst)
 
@@ -152,7 +152,7 @@ class TestUnifierCore(unittest.TestCase):
                 x = g
             """)
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
         self.assertIsNotNone(subst)
         assert subst is not None
@@ -162,7 +162,7 @@ class TestUnifierCore(unittest.TestCase):
         b0 = parse_block("s = f'hi {x}'")
         b1 = parse_block("s = f'hi {y}'")
         uni = Unifier()
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         subst = uni.unify_blocks([b0, b1], hr)
         self.assertIsNotNone(subst)
         assert subst is not None
@@ -174,7 +174,7 @@ class TestUnifierCore(unittest.TestCase):
         b0 = parse_block("x = a + b")
         b1 = parse_block("x = c + d")
         uni = Unifier(max_parameters=1)
-        hr = [{}, {}]
+        hr: list[dict[str, str]] = [{}, {}]
         self.assertIsNone(uni.unify_blocks([b0, b1], hr))
 
 

@@ -92,9 +92,9 @@ class TestAnalyzeScopes:
             assert mod.root_scope is not None
 
     def test_analyze_scopes_empty_list(self):
-        """analyze_scopes on no modules is a no-op that returns None."""
+        """analyze_scopes on no modules is a no-op."""
         modules: List[ParsedModule] = []
-        assert analyze_scopes(modules) is None
+        analyze_scopes(modules)
         assert modules == []
 
 

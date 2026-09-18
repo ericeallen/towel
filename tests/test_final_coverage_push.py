@@ -27,6 +27,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         from towel.unification.substitution import Substitution
 
@@ -127,6 +128,8 @@ def gen():
         tree2 = ast.parse(code2)
         func1 = tree1.body[0]
         func2 = tree2.body[0]
+        assert isinstance(func1, ast.FunctionDef)
+        assert isinstance(func2, ast.FunctionDef)
 
         result = self.unifier.unify_blocks([func1.body, func2.body], [{}, {}])
         self.assertIsNotNone(result)

@@ -192,6 +192,8 @@ def bar():
 
         foo_func = tree.body[1]
         bar_func = tree.body[2]
+        assert isinstance(foo_func, ast.FunctionDef)
+        assert isinstance(bar_func, ast.FunctionDef)
 
         from towel.unification.unifier import Unifier
 

@@ -7,11 +7,8 @@ which would break the code by modifying the same lines multiple times.
 
 import unittest
 import ast
-from towel.unification.refactor_engine import (
-    RefactoringProposal,
-)
 from towel.unification.overlap import get_affected_lines, filter_overlapping_proposals
-from towel.unification.models import Replacement
+from towel.unification.models import RefactoringProposal, Replacement
 
 
 class TestGetAffectedLines(unittest.TestCase):

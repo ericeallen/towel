@@ -24,6 +24,7 @@ class TestProjectLayoutBehavior(unittest.TestCase):
                 layout = ProjectLayout.discover(module)
                 name = layout.module_name_for(module)
                 self.assertEqual(name, "conventional_layout_fixture.example")
+                assert name is not None
                 self.assertEqual(layout.source_roots, [(root / "src").resolve()])
                 result = subprocess.run(
                     [
@@ -243,7 +244,9 @@ class TestProjectLayoutBehavior(unittest.TestCase):
                     return FakeRel()
 
             # Should return None, but importantly executes the `if not parts:` line
-            self.assertIsNone(layout.module_name_for(FakePath()))
+            self.assertIsNone(
+                layout.module_name_for(FakePath())  # type: ignore[arg-type]  # deliberate fake
+            )
 
     def test_multiple_source_roots_mixed_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as td:

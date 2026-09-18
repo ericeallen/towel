@@ -22,11 +22,13 @@ class TestExtractorFinalLines(unittest.TestCase):
             is_value_producing=False,
         )
         module = ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[]))
-        namespace = {}
+        namespace: dict[str, object] = {}
         exec(compile(module, "<augmented-target-regression>", "exec"), namespace)
         obj = SimpleNamespace(value=10)
         data = {"count": 20}
-        namespace[function.name](data, obj)
+        extracted = namespace[function.name]
+        assert callable(extracted)
+        extracted(data, obj)
         self.assertEqual(obj.value, 12)
         self.assertEqual(data["count"], 23)
 
@@ -50,11 +52,12 @@ class TestExtractorFinalLines(unittest.TestCase):
             hygienic_renames=None,  # triggers fallback path
         )
         # Argument should use original name after inverse mapping, proving fallback executed
-        self.assertIsInstance(call_stmt, ast.Expr)
-        self.assertIsInstance(call_stmt.value, ast.Call)
+        assert isinstance(call_stmt, ast.Expr)
+        assert isinstance(call_stmt.value, ast.Call)
         self.assertEqual(len(call_stmt.value.args), 1)
-        self.assertIsInstance(call_stmt.value.args[0], ast.Name)
-        self.assertEqual(call_stmt.value.args[0].id, "original_x")
+        argument = call_stmt.value.args[0]
+        assert isinstance(argument, ast.Name)
+        self.assertEqual(argument.id, "original_x")
 
     def test_binding_occurrence_not_replaced(self) -> None:
         """Line 402: binding Name with Store ctx should not be substituted."""
@@ -68,17 +71,18 @@ class TestExtractorFinalLines(unittest.TestCase):
         # Wrap in Module + fix locations so ast.unparse inside substitution works
         mod = ast.Module(body=[assign], type_ignores=[])
         ast.fix_missing_locations(mod)
-        template_block = [assign]
+        template_block: list[ast.AST] = [assign]
         replaced = extractor._substitute_parameters(
             template_block, subst, ["__param_0"], {"__param_0": "__param_0"}
         )
         self.assertEqual(len(replaced), 1)
-        assign = replaced[0]
-        self.assertIsInstance(assign, ast.Assign)
+        replaced_assign = replaced[0]
+        assert isinstance(replaced_assign, ast.Assign)
         # Target should remain 'a' (not replaced with '__param_0')
-        self.assertIsInstance(assign.targets[0], ast.Name)
-        self.assertEqual(assign.targets[0].id, "a")
-        self.assertIsInstance(assign.targets[0].ctx, ast.Store)
+        target = replaced_assign.targets[0]
+        assert isinstance(target, ast.Name)
+        self.assertEqual(target.id, "a")
+        self.assertIsInstance(target.ctx, ast.Store)
 
     def test_skip_formatted_value_replacement(self) -> None:
         """Line 406: FormattedValue node itself is not replaced; its child is."""
@@ -95,18 +99,18 @@ class TestExtractorFinalLines(unittest.TestCase):
         # Fix missing locations to allow ast.unparse comparisons
         mod = ast.Module(body=[ast.Expr(value=joined)], type_ignores=[])
         ast.fix_missing_locations(mod)
-        template_block = [ast.Expr(value=joined)]
+        template_block: list[ast.AST] = [ast.Expr(value=joined)]
         replaced = extractor._substitute_parameters(
             template_block, subst, ["__param_0"], {"__param_0": "__param_0"}
         )
         expr = replaced[0]
-        self.assertIsInstance(expr, ast.Expr)
-        self.assertIsInstance(expr.value, ast.JoinedStr)
+        assert isinstance(expr, ast.Expr)
+        assert isinstance(expr.value, ast.JoinedStr)
         self.assertEqual(len(expr.value.values), 1)
         fv = expr.value.values[0]
-        self.assertIsInstance(fv, ast.FormattedValue)
+        assert isinstance(fv, ast.FormattedValue)
         # Child value should be replaced with param name
-        self.assertIsInstance(fv.value, ast.Name)
+        assert isinstance(fv.value, ast.Name)
         self.assertEqual(fv.value.id, "__param_0")
         assignment = ast.Assign(targets=[ast.Name(id="result", ctx=ast.Store())], value=expr.value)
         module = ast.fix_missing_locations(ast.Module(body=[assignment], type_ignores=[]))

@@ -89,6 +89,7 @@ def test_func(x):
 
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         # If we extract lines 2-4 (result = x + 1, result += 2, result += 3)
         # we should detect that:
@@ -105,9 +106,9 @@ def test_func(x):
         # Check if any initially bound variables are used after
         from towel.unification.assignment_analyzer import _collect_bindings_and_reassignments
 
-        bound_in_block = set()
-        reassigned_in_block = set()
-        reassignments = {}
+        bound_in_block: set[str] = set()
+        reassigned_in_block: set[str] = set()
+        reassignments: dict[int, bool] = {}
 
         for node in block_stmts:
             _collect_bindings_and_reassignments(
@@ -117,7 +118,7 @@ def test_func(x):
         # Find variables bound BEFORE the block starts
         # In this test case, the block starts at the beginning of the function,
         # so there are no variables bound before the block
-        bound_before_block = set()
+        bound_before_block: set[str] = set()
 
         # Variables that are newly introduced in the block
         initially_bound = bound_in_block - bound_before_block

@@ -28,6 +28,7 @@ def test_reuses_parse_and_scope_work_without_copying(tmp_path):
     # Reuse hands back the cached graph itself, so an engine's node-identity
     # caches stay valid for the file across fixed-point iterations.
     assert second is first
+    assert isinstance(second.module.tree, ast.Module)
     assert second.functions[0].node is second.module.tree.body[0]
     assert second.functions[0].scope_analyzer is second.module.scope_analyzer
     assert second.functions[0].root_scope is second.module.root_scope

@@ -51,6 +51,7 @@ class TestScopeBasics(unittest.TestCase):
         binding = scope.lookup("x")
 
         self.assertIsNotNone(binding, "Should find local binding")
+        assert binding is not None
         self.assertEqual(binding.name, "x")
 
     def test_scope_lookup_parent(self):
@@ -63,6 +64,7 @@ class TestScopeBasics(unittest.TestCase):
         binding = child_scope.lookup("x")
 
         self.assertIsNotNone(binding, "Should find binding in parent scope")
+        assert binding is not None
         self.assertEqual(binding.name, "x")
         self.assertEqual(binding.scope_id, 0, "Should be from parent scope")
 
@@ -79,6 +81,7 @@ class TestScopeBasics(unittest.TestCase):
         binding = child_scope.lookup("x")
 
         self.assertIsNotNone(binding, "Should find binding")
+        assert binding is not None
         self.assertEqual(binding.scope_id, 1, "Should find child's binding, not parent's")
 
     def test_scope_lookup_not_found(self):
@@ -222,6 +225,7 @@ def outer(x):
 """
         tree = ast.parse(code)
         outer_def = tree.body[0]
+        assert isinstance(outer_def, ast.FunctionDef)
         inner_def = outer_def.body[0]
 
         self.analyzer.analyze(tree)
@@ -367,6 +371,7 @@ def outer():
 """
         tree = ast.parse(code)
         outer_def = tree.body[0]
+        assert isinstance(outer_def, ast.FunctionDef)
         inner_def = outer_def.body[1]
 
         self.analyzer.analyze(tree)
@@ -434,6 +439,7 @@ def foo(x):
 """
         tree = ast.parse(code)
         func_def = tree.body[0]
+        assert isinstance(func_def, ast.FunctionDef)
 
         self.analyzer.analyze(tree)
         free_vars = self.analyzer.get_free_variables(func_def.body)

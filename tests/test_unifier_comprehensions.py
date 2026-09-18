@@ -29,11 +29,12 @@ class TestUnifierNestedComprehensions(unittest.TestCase):
         block_b = self._get_blocks(NESTED_B)
 
         unifier = Unifier(max_parameters=5, parameterize_constants=True)
-        hyg = [{}, {}]
+        hyg: list[dict[str, str]] = [{}, {}]
         subst = unifier.unify_blocks([block_a, block_b], hyg)
 
         # Should unify successfully with zero parameters (pure alpha-equivalence)
         self.assertIsNotNone(subst, "Nested comprehensions should unify")
+        assert subst is not None
         self.assertEqual(
             len(subst.param_expressions), 0, "No parameters expected for alpha-equivalent code"
         )
@@ -49,10 +50,11 @@ class TestUnifierNestedComprehensions(unittest.TestCase):
         b_assign = [s for s in b_body if isinstance(s, ast.Assign)]
 
         unifier = Unifier(max_parameters=5, parameterize_constants=True)
-        hyg = [{}, {}]
+        hyg: list[dict[str, str]] = [{}, {}]
         subst = unifier.unify_blocks([a_assign, b_assign], hyg)
 
         self.assertIsNotNone(subst)
+        assert subst is not None
         self.assertEqual(len(subst.param_expressions), 0)
 
 

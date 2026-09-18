@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import copy
 from pathlib import Path
+from typing import Sequence
 
 from towel.unification.structural_memo import (
     load_substitution,
@@ -13,6 +14,9 @@ from towel.unification.structural_memo import (
     store_substitution,
     structural_id,
 )
+from towel.unification.substitution import Substitution
+
+Unification = tuple[Sequence[Sequence[ast.AST]], Substitution, list[dict[str, str]]]
 
 SOURCE = (Path(__file__).parent / "hostile_cases" / "r86_annotated_assignment_live.py").read_text()
 
@@ -35,7 +39,7 @@ def test_every_node_has_a_resolvable_path() -> None:
         assert resolve_path(block, path) is node
 
 
-def _engine_unification(tmp_path):
+def _engine_unification(tmp_path: Path) -> Unification:
     """A genuine unification captured from the engine on SOURCE, with its blocks."""
     import contextlib
     import io
@@ -45,7 +49,7 @@ def _engine_unification(tmp_path):
     path = tmp_path / "m.py"
     path.write_text(SOURCE)
     engine = UnificationRefactorEngine(min_lines=3)
-    captured: list = []
+    captured: list[Unification] = []
     original = engine.unifier.unify_blocks
 
     def capture(blocks, renames):

@@ -2,6 +2,7 @@
 
 import ast
 from pathlib import Path
+from typing import Any
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -27,7 +28,7 @@ def test_receiver_operand_is_not_dropped(tmp_path: Path) -> None:
     assert proposals
     for proposal in proposals:
         result = engine.apply_refactoring(str(path), proposal)
-        scope = {}
+        scope: dict[str, Any] = {}
         exec(compile(result, str(path), "exec"), scope)
         box = scope["Box"]()
         box.reset()

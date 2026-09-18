@@ -37,7 +37,7 @@ z = 3
 """
         tree = ast.parse(code)
         visitor = CountingVisitor()
-        result_set = set()
+        result_set: set[str] = set()
 
         _apply_visitor_to_nodes(result_set, visitor, tree.body)
 
@@ -69,7 +69,7 @@ z = 3
             pass
 
         visitor = DummyVisitor()
-        result_set = set()
+        result_set: set[str] = set()
 
         result = _apply_visitor_to_nodes(result_set, visitor, [])
 
@@ -310,8 +310,9 @@ class TestGetUsedVariables(unittest.TestCase):
         """Test simple variable usage."""
         code = "y = x"
         tree = ast.parse(code)
+        block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(tree.body)
+        result = get_used_variables(block)
 
         self.assertIn("x", result, "Should find used variable x")
         self.assertNotIn("y", result, "Should not include assignment target")
@@ -320,8 +321,9 @@ class TestGetUsedVariables(unittest.TestCase):
         """Test multiple variable uses."""
         code = "result = x + y - z"
         tree = ast.parse(code)
+        block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(tree.body)
+        result = get_used_variables(block)
 
         self.assertEqual(result, {"x", "y", "z"}, "Should find all used variables")
 
@@ -329,8 +331,9 @@ class TestGetUsedVariables(unittest.TestCase):
         """Test variable usage in expressions."""
         code = "result = (a + b) * c"
         tree = ast.parse(code)
+        block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(tree.body)
+        result = get_used_variables(block)
 
         self.assertEqual(result, {"a", "b", "c"}, "Should find all expression variables")
 
@@ -338,8 +341,9 @@ class TestGetUsedVariables(unittest.TestCase):
         """Test variable usage in function calls."""
         code = "result = foo(x, y)"
         tree = ast.parse(code)
+        block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(tree.body)
+        result = get_used_variables(block)
 
         self.assertIn("foo", result, "Should find function name")
         self.assertIn("x", result, "Should find argument x")
@@ -349,8 +353,9 @@ class TestGetUsedVariables(unittest.TestCase):
         """Test that Store context names are not collected."""
         code = "x = 1"
         tree = ast.parse(code)
+        block: list[ast.AST] = list(tree.body)
 
-        result = get_used_variables(tree.body)
+        result = get_used_variables(block)
 
         self.assertNotIn("x", result, "Should not collect Store context name")
 
@@ -373,6 +378,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 1))
         has_orphans = bool(orphaned)
@@ -389,6 +396,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -406,6 +415,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -422,6 +433,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -442,6 +455,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 1))
         has_orphans = bool(orphaned)
@@ -461,6 +476,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 1))
         has_orphans = bool(orphaned)
@@ -479,6 +496,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -496,6 +515,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -514,6 +535,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         # Extract first 3 lines (indices 0, 1, 2)
         orphaned = orphaned_variables(func.body, (0, 2))
@@ -534,6 +557,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -549,6 +574,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -565,6 +592,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -582,6 +611,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
         has_orphans = bool(orphaned)
@@ -604,6 +635,8 @@ def process_data():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         # Extract middle operations (lines 1-2: cleaned and transformed)
         orphaned = orphaned_variables(func.body, (1, 2))
@@ -624,6 +657,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (1, 1))
         has_orphans = bool(orphaned)
@@ -641,6 +676,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 2))
         has_orphans = bool(orphaned)
@@ -661,6 +698,8 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 2))
         has_orphans = bool(orphaned)

@@ -4,13 +4,12 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from typing import Any, FrozenSet, List, Optional
 
-from towel.unification.refactor_engine import (
-    RefactoringProposal,
-    UnificationRefactorEngine,
-)
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.overlap import filter_overlapping_proposals
-from towel.unification.models import Replacement
+from towel.unification.models import RefactoringProposal, Replacement
+from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode
 
 
 class TestRefactorEngineTargetedBranches(unittest.TestCase):
@@ -60,6 +59,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                     extracted_indent = ln[: len(ln) - len(ln.lstrip())]
             self.assertIsNotNone(outer_indent)
             self.assertIsNotNone(extracted_indent)
+            assert outer_indent is not None
             self.assertEqual(extracted_indent, outer_indent + "    ")
         finally:
             os.remove(path)
@@ -214,6 +214,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
 
             helper_func = ast.parse("def helper(value):\n    return value + 1\n").body[0]
+            assert isinstance(helper_func, ast.FunctionDef)
             call_node = ast.parse("return helper(self, value)").body[0]
 
             proposal = RefactoringProposal(
@@ -239,7 +240,7 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
 
             self.assertIn("def _helper(self, value):", updated_code)
             self.assertIn("return self._helper(value)", updated_code)
-            namespace = {}
+            namespace: dict[str, Any] = {}
             exec(compile(updated_code, path, "exec"), namespace)
             self.assertEqual(namespace["Example"]().method(10), 11)
         finally:
@@ -274,6 +275,7 @@ def consumer(data):
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
 
             helper_func = ast.parse("def helper(value):\n    return value\n").body[0]
+            assert isinstance(helper_func, ast.FunctionDef)
             repl_a = ast.parse("return helper(value)").body[0]
             repl_b = ast.parse("return helper(data)").body[0]
 
@@ -316,10 +318,19 @@ def consumer(data):
                     self._calls = 0
                     self.applied = 0
 
-                def analyze_directory(self, directory: str, **kwargs):
+                def analyze_directory(
+                    self,
+                    directory: str,
+                    recursive: bool = True,
+                    *,
+                    verbose: bool = False,
+                    progress: ProgressMode = DEFAULT_PROGRESS,
+                    changed_files: Optional[FrozenSet[str]] = None,
+                ) -> List[RefactoringProposal]:
                     if Path(directory) == self.output_root and self._calls == 0:
                         self._calls += 1
                         func = ast.parse("def helper():\n    pass\n").body[0]
+                        assert isinstance(func, ast.FunctionDef)
                         proposal = RefactoringProposal(
                             file_path=str(self.output_root / "module.py"),
                             extracted_function=func,
@@ -352,6 +363,7 @@ def consumer(data):
 
     def test_filter_overlapping_proposals_prefers_larger_spans(self):
         func = ast.parse("def helper():\n    pass\n").body[0]
+        assert isinstance(func, ast.FunctionDef)
         stmt = ast.parse("x = 1").body[0]
 
         big = RefactoringProposal(

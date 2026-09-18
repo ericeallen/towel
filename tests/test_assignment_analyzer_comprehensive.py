@@ -26,6 +26,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -45,6 +46,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -66,6 +68,7 @@ def foo(x):
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -84,6 +87,7 @@ def foo(a, b, c):
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -108,6 +112,7 @@ def foo(*args):
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -123,6 +128,7 @@ def foo(**kwargs):
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -139,6 +145,7 @@ def foo(*, x, y):
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -163,6 +170,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -179,6 +187,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -197,6 +206,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -212,6 +222,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -232,6 +243,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -250,6 +262,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -272,6 +285,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -291,6 +305,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -312,6 +327,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -328,6 +344,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -351,6 +368,7 @@ def outer():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -374,6 +392,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -392,6 +411,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -414,6 +434,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
         block_nodes = func.body  # All statements
@@ -435,6 +456,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
         block_nodes = func.body  # All statements
@@ -457,6 +479,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
 
@@ -480,6 +503,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
 
@@ -506,10 +530,11 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
-        bound_vars = set()
-        reassigned_vars = set()
+        bound_vars: set[str] = set()
+        reassigned_vars: set[str] = set()
 
         for node in func.body:
             _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
@@ -526,10 +551,11 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
-        bound_vars = set()
-        reassigned_vars = set()
+        bound_vars: set[str] = set()
+        reassigned_vars: set[str] = set()
 
         for node in func.body:
             _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
@@ -546,10 +572,11 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
-        bound_vars = set()
-        reassigned_vars = set()
+        bound_vars: set[str] = set()
+        reassigned_vars: set[str] = set()
 
         for node in func.body:
             _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
@@ -566,10 +593,11 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
-        bound_vars = set()
-        reassigned_vars = set()
+        bound_vars: set[str] = set()
+        reassigned_vars: set[str] = set()
 
         for node in func.body:
             _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
@@ -587,10 +615,11 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         reassignments = analyze_assignments(func)
-        bound_vars = set()
-        reassigned_vars = set()
+        bound_vars: set[str] = set()
+        reassigned_vars: set[str] = set()
 
         for node in func.body:
             _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
@@ -610,6 +639,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -623,6 +653,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -636,6 +667,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -655,6 +687,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 
@@ -675,6 +708,7 @@ def foo():
 """
         tree = ast.parse(code)
         func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
 
         result = analyze_assignments(func)
 

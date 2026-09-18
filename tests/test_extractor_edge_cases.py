@@ -37,6 +37,8 @@ def bar():
 
     foo_func = tree.body[1]
     bar_func = tree.body[2]
+    assert isinstance(foo_func, ast.FunctionDef)
+    assert isinstance(bar_func, ast.FunctionDef)
 
     unifier = Unifier(max_parameters=5)
     substitution = unifier.unify_blocks([foo_func.body, bar_func.body], [{}, {}])
@@ -84,7 +86,8 @@ other = value * 2
     assert isinstance(func_def.body[-1], ast.Return)
     ret = func_def.body[-1].value
     assert isinstance(ret, ast.Tuple)
-    returned_ids = [elt.id for elt in ret.elts]
+    returned_ids = [elt.id for elt in ret.elts if isinstance(elt, ast.Name)]
+    assert len(returned_ids) == len(ret.elts), "every returned element must be a Name"
     assert set(returned_ids) == {"value", "other"}
     # Parameters include unified first then free variables sorted
     assert [a.arg for a in func_def.args.args][:2] == ["__param_0", "__param_1"]
@@ -163,6 +166,7 @@ def test_generate_call_function_param_lambda_lift():
         is_value_producing=True,
         return_variables=["result"],
     )
+    assert isinstance(call_stmt, ast.Assign)
     call = call_stmt.value
     assert isinstance(call, ast.Call)
     # The unified function param should be passed a lambda? No, generate_call wraps lambda only for params_used_as_callee or function params with bound variables
@@ -200,7 +204,9 @@ def test_generate_call_aug_assign_mapping():
         is_value_producing=True,
         return_variables=["result"],
     )
+    assert isinstance(call_stmt, ast.Assign)
     call = call_stmt.value
+    assert isinstance(call, ast.Call)
     # Find argument corresponding to free variable '__param_2'
     free_param_idx = param_order["__param_2"]
     arg = call.args[free_param_idx]

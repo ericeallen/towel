@@ -64,10 +64,13 @@ class TestExtractorAugAssignAndFStrings(unittest.TestCase):
             hygienic_renames=[{}, {}],
         )
         # First call should pass Name('acc'), second should pass Name('total') per mapping
+        assert isinstance(call0, ast.Assign) and isinstance(call0.value, ast.Call)
+        assert isinstance(call1, ast.Assign) and isinstance(call1.value, ast.Call)
         arg0 = call0.value.args[order["acc"]]
         arg1 = call1.value.args[order["acc"]]
         self.assertIsInstance(arg0, ast.Name)
         self.assertIsInstance(arg1, ast.Name)
+        assert isinstance(arg0, ast.Name) and isinstance(arg1, ast.Name)
         self.assertEqual(arg0.id, "acc")
         self.assertEqual(arg1.id, "total")
 

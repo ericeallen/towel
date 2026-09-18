@@ -11,12 +11,9 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from towel.unification.refactor_engine import (
-    UnificationRefactorEngine,
-    RefactoringProposal,
-)
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.overlap import filter_overlapping_proposals
-from towel.unification.models import Replacement
+from towel.unification.models import RefactoringProposal, Replacement
 from tests.test_helpers import temporary_test_directory
 
 

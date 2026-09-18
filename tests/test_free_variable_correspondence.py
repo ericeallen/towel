@@ -37,7 +37,7 @@ class TestFreeVariableCorrespondence(unittest.TestCase):
         block1 = [ast.parse(code1, mode="eval").body]
 
         # Unify the blocks
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block0, block1], hygienic_renames)
 
         self.assertIsNotNone(substitution, "Blocks should unify")
@@ -73,7 +73,7 @@ if not admin.get("id"):
         block1 = ast.parse(code1).body
 
         # Unify
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block0, block1], hygienic_renames)
 
         self.assertIsNotNone(substitution, "Blocks should unify")
@@ -99,7 +99,7 @@ if not admin.get("id"):
         block0 = [ast.parse(code0, mode="eval").body]
         block1 = [ast.parse(code1, mode="eval").body]
 
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block0, block1], hygienic_renames)
 
         self.assertIsNotNone(substitution, "Blocks should unify")
@@ -127,7 +127,7 @@ if not admin.get("id"):
         block0 = [ast.parse(code0, mode="eval").body]
         block1 = [ast.parse(code1, mode="eval").body]
 
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block0, block1], hygienic_renames)
 
         self.assertIsNotNone(substitution, "Blocks should unify")
@@ -158,7 +158,7 @@ if not admin.get("id"):
         block1 = [ast.parse(code1, mode="eval").body]
         block2 = [ast.parse(code2, mode="eval").body]
 
-        hygienic_renames = [{}, {}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}, {}]
         substitution = self.unifier.unify_blocks([block0, block1, block2], hygienic_renames)
 
         self.assertIsNotNone(substitution, "All blocks should unify")
@@ -204,10 +204,11 @@ if not admin.get("name"):
         block1 = ast.parse(code1).body
 
         # Unify
-        hygienic_renames = [{}, {}]
+        hygienic_renames: list[dict[str, str]] = [{}, {}]
         substitution = self.unifier.unify_blocks([block0, block1], hygienic_renames)
 
         self.assertIsNotNone(substitution, "Blocks should unify")
+        assert substitution is not None
 
         # Extract function
         free_variables = {"user"}  # Canonical name

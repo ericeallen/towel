@@ -214,6 +214,7 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         self.assertTrue({"a", "b"}.issubset({p.name for p in params}))
         for p in params:
             self.assertIs(p.scope_node, func_node)
+            assert isinstance(p.scope_node, ast.FunctionDef)
             self.assertEqual(p.scope_node.lineno, func_line)
             # Binding line should match its AST node
             self.assertEqual(p.line_number, getattr(p.node, "lineno", -1))
@@ -231,6 +232,7 @@ class TestBindingDetectorEdgeCases(unittest.TestCase):
         ]
         self.assertEqual({p.name for p in lam_params}, {"u", "v", "w"})
         for lp in lam_params:
+            assert isinstance(lp.scope_node, ast.Lambda)
             self.assertEqual(lp.scope_node.lineno, lam_node.lineno)
             self.assertEqual(lp.line_number, getattr(lp.node, "lineno", -1))
 

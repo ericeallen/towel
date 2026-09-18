@@ -115,7 +115,11 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 - Comment complex logic
 - Run Black explicitly to format code (line length 100); hooks check formatting
 - All code must pass flake8 linting
-- Strict mypy is enforced on `src/towel` and the typed test helpers (`[tool.mypy] files` in `pyproject.toml`)
+- Strict mypy is enforced on `src/towel` and on `tests/` (`[tool.mypy]` in
+  `pyproject.toml`). Test bodies are checked with every strict flag; the only
+  relaxation is that test functions and unittest methods need no signatures
+  (`tests.*` override). `warn_unused_ignores` is on, so a `# type: ignore`
+  must be necessary and must name its error code
 
 ## Testing
 

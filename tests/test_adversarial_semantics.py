@@ -198,7 +198,7 @@ def test_external_rebinding_is_not_snapshotted(tmp_path: Path, closure: bool) ->
         source = "def outer():\n" + "".join("    " + line + "\n" for line in inner.splitlines())
         source += "    return first(), second()\n"
         observed = "observed = outer()"
-        expected = ((1, 42), (42, 42))
+        expected: tuple[tuple[float, int], tuple[int, int]] = ((1, 42), (42, 42))
     else:
         source = (
             "from math import pi as value\ndef update():\n    global value\n    value = 42\n"

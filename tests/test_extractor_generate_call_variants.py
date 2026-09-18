@@ -33,8 +33,8 @@ class TestExtractorGenerateCallVariants(unittest.TestCase):
             return_variables=None,
             hygienic_renames=[{}],
         )
-        self.assertIsInstance(call_stmt, ast.Return)
-        self.assertIsInstance(call_stmt.value, ast.Call)  # type: ignore
+        assert isinstance(call_stmt, ast.Return)
+        self.assertIsInstance(call_stmt.value, ast.Call)
 
     def test_expr_stmt_non_value_producing(self):
         subst = Substitution()
@@ -53,8 +53,8 @@ class TestExtractorGenerateCallVariants(unittest.TestCase):
             is_value_producing=False,
             hygienic_renames=[{}],
         )
-        self.assertIsInstance(call_stmt, ast.Expr)
-        self.assertIsInstance(call_stmt.value, ast.Call)  # type: ignore
+        assert isinstance(call_stmt, ast.Expr)
+        self.assertIsInstance(call_stmt.value, ast.Call)
 
     def test_function_param_lambda_wrapping_in_call(self):
         # Mark __param_0 as a function parameter that takes bound vars ['a','b']
@@ -75,12 +75,13 @@ class TestExtractorGenerateCallVariants(unittest.TestCase):
             is_value_producing=False,
             hygienic_renames=[{"fv": "fv"}],
         )
-        self.assertIsInstance(call_stmt, ast.Expr)
-        call = call_stmt.value  # type: ignore
+        assert isinstance(call_stmt, ast.Expr)
+        call = call_stmt.value
+        assert isinstance(call, ast.Call)
         self.assertEqual(len(call.args), 2)
-        self.assertIsInstance(call.args[0], ast.Lambda)
         lam = call.args[0]
-        self.assertEqual([a.arg for a in lam.args.args], ["a", "b"])  # type: ignore
+        assert isinstance(lam, ast.Lambda)
+        self.assertEqual([a.arg for a in lam.args.args], ["a", "b"])
 
 
 if __name__ == "__main__":

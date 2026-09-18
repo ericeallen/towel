@@ -186,5 +186,6 @@ def test_enumerated_blocks_always_have_a_statement(tmp_path):
     engine = UnificationRefactorEngine(min_lines=1)
     source = "def f(a):\n    x = a\n    if x:\n        return 1\n    return 0\n"
     function = ast.parse(source).body[0]
+    assert isinstance(function, ast.FunctionDef)
     for _span, nodes, signature in engine._signed_blocks(function):
         assert nodes and signature.stmt_seq

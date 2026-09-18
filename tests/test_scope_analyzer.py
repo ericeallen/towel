@@ -28,6 +28,7 @@ def foo(a, b, /, c):
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # Position-only args should be bound
         self.assertIn("a", func_scope.bindings)
@@ -46,6 +47,7 @@ def foo(a, *, b, c=10):
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # Keyword-only args should be bound
         self.assertIn("a", func_scope.bindings)
@@ -64,6 +66,7 @@ def foo(a, *args, **kwargs):
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # *args and **kwargs should be bound
         self.assertIn("a", func_scope.bindings)
@@ -86,6 +89,7 @@ async def fetch(url):
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # Parameters and local vars should be bound in function scope
         self.assertIn("url", func_scope.bindings)
@@ -105,6 +109,7 @@ def foo():
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # Annotated variables should be bound
         self.assertIn("x", func_scope.bindings)
@@ -126,6 +131,7 @@ def foo(x):
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # Variables in both branches should be bound
         self.assertIn("y", func_scope.bindings)
@@ -144,10 +150,15 @@ def foo():
 
         # Find the Name nodes
         func = tree.body[1]
+        assert isinstance(func, ast.FunctionDef)
         return_stmt = func.body[1]
+        assert isinstance(return_stmt, ast.Return)
         binop = return_stmt.value
+        assert isinstance(binop, ast.BinOp)
         x_name = binop.left
         y_name = binop.right
+        assert isinstance(x_name, ast.Name)
+        assert isinstance(y_name, ast.Name)
 
         # Get bindings
         x_binding = self.analyzer.get_binding_for_name(x_name)
@@ -170,6 +181,7 @@ def foo(items):
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # 'result' should be bound, but not 'x' (it's local to comprehension)
         self.assertIn("result", func_scope.bindings)
@@ -187,6 +199,7 @@ def complex_func(a, b, /, c, d=10, *args, e, f=20, **kwargs):
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # All argument types should be bound
         for arg_name in ["a", "b", "c", "d", "args", "e", "f", "kwargs"]:
@@ -210,6 +223,7 @@ def search(items, target):
         func = tree.body[0]
         func_scope = self.analyzer.node_scopes.get(func)
         self.assertIsNotNone(func_scope)
+        assert func_scope is not None
 
         # Variables in both for body and else clause should be bound
         self.assertIn("item", func_scope.bindings)
