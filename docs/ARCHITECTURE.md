@@ -14,13 +14,19 @@ The engine is `UnificationRefactorEngine` in
 [`refactor_engine.py`](../src/towel/unification/refactor_engine.py). It is
 assembled from mixins, one module per responsibility (block analysis, the
 pair decision, placement, reuse, insertion points, annotation wiring,
-materialization, clustering, parallel evaluation, the fixed-point drivers),
-over
+materialization, clustering, parallel evaluation, the fixed-point drivers).
+Each mixin inherits the mixins it calls, so the call graph is the class
+hierarchy: the pair decision builds on block analysis, clustering,
+placement, reuse and annotation wiring; materialization on insertion
+points, placement, reuse and annotation wiring; the drivers on
+materialization; parallel evaluation on the drivers and the pair
+decision; and the engine on parallel evaluation. All of them share
 [`engine_state.py`](../src/towel/unification/engine_state.py), which
-declares every attribute and operation a mixin may rely on, so each module
-states its dependencies and mypy checks the seams. The core module keeps
-the constructor, the caches, the analysis entry points, block enumeration,
-and pairing.
+declares the attributes every mixin may rely on and the operations the
+core module provides (parsing, structural ids, the rejection trace, the
+cache index, the analysis entry points), so mypy checks the seams. The
+core module keeps the constructor, the caches, the analysis entry points,
+block enumeration, and pairing.
 
 ## The pipeline
 
@@ -382,8 +388,14 @@ same guards and, for a method helper, is a method of the same class with the
 same receiver kind; a site whose scope cannot see the helper is skipped. A
 helper that returns the block's live variables admits a site whose own
 live variables map into that tuple (`align_return_variables`); the site's
-call assigns them under its own spelling. The per-candidate pipeline is
-memoized on the template, the candidate, and the helper.
+call assigns them under its own spelling. The scan of a file for a template's
+sites runs once per distinct template and file content and is shared by
+every pair that renders that template (each pair then drops its own two
+blocks and any overlap, in scan order); the per-candidate pipeline is
+memoized on the template, the candidate, and the helper. The analysis
+session holds at least as many files as an analysis covers, so a
+directory run above the old 128-file limit keeps every parse and every
+weak per-node memo between passes.
 
 Together with reuse, this keeps repeated passes flat: identical blocks in
 many functions become one helper with many calls on the first pass, and a
@@ -480,9 +492,11 @@ reference behavior.
 
 ## Performance architecture
 
-Analysis is quadratic in candidate blocks per file, so the engine spends its
-effort avoiding and reusing comparisons. Every measure is exact and changes no
-proposal.
+Pairing is quadratic in candidate blocks per file, and with N near-identical
+blocks in one file every pair proposes the same N-site extraction, so
+proposal construction is cubic there until the first application collapses
+them; the engine spends its effort avoiding and reusing comparisons. Every
+measure is exact and changes no proposal.
 
 - **Enumeration filter.** A block that returns on some path but not all, or a
   lone expression statement, can never be accepted and is never enumerated.

@@ -215,14 +215,32 @@ ecosystem evidence behind each claim. The format follows
   from 186 MB to 179 MB (1.11 GB to 1.06 GB with type checking).
 - A fourth pass, after an audit that found the same concepts written
   several ways: the local name an import alias binds, the names a
-  statement binds, span containment, the method-kind literal, the
-  helper-home record and package-chain ascent each have one
-  implementation; the unifier's dispatch table holds methods rather than
-  their names; blocks are sequences of statements throughout, so the casts
-  that the wider annotation forced are gone; two typing helpers
-  (`all_instances`, `visit_as`) replace most of the rest; the rename
-  command decodes sources the way the refactoring commands do; and
-  comments that restated the next line are removed.
+  statement binds (`bindings_of`, replacing five collectors that
+  disagreed), the names an expression reads, span containment, the
+  method-kind literal, the helper-home and cluster-context records and
+  package-chain ascent each have one implementation; the unifier's
+  dispatch table holds methods rather than their names; blocks are
+  sequences of statements throughout, so the casts that the wider
+  annotation forced are gone; two typing helpers (`all_instances`,
+  `visit_as`) replace most of the rest; each command reads its arguments
+  once into a typed record; the rename command decodes sources the way
+  the refactoring commands do; and comments that restated the next line
+  are removed. The engine's mixins now inherit the mixins they call, so
+  the forty-nine one-caller stubs on `EngineState` are gone and it declares
+  only the shared attributes and the eleven operations the core provides.
+- The clustering pass scans a file for the sites that can share a helper
+  once per distinct helper template instead of once per pair, and the
+  reuse redirect finds a function whose body starts at a site through an
+  index instead of scanning the file per replacement: 50 identical
+  functions took 17 s and now 8 s, 100 took 134 s and now 42 s, 200 took
+  over 800 s and now 262 s, with identical output. Orphan detection, the
+  instantiation check's normalized block and the class-private-name scan
+  are memoized on structure, so the re-parse after each applied proposal
+  hits too. The analysis session grows to the number of files an analysis
+  covers, so a project above 128 files no longer re-parses everything on
+  every pass (trio's second pass: 144 parses and 7.2 s, now none and
+  5.0 s). Both insertion-position parses go through the engine's parse
+  memo.
 - The AST visitors are built on three Template Method bases in
   `visitors.py`: `OwnScopeVisitor` for collectors that read one scope's own
   code, `DefinitionDepthVisitor` for those that track how deeply a

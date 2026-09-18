@@ -114,7 +114,7 @@ Platform, CPU, memory, and disk requirements are in [Requirements](#requirements
 
 ## How long it takes
 
-There is no time budget; progress is reported per phase and Ctrl-C leaves the files unchanged. Cost is roughly quadratic in the number of similar candidate blocks per file, so a few large modules with many near-identical methods are the worst case, not total line count.
+There is no time budget; progress is reported per phase and Ctrl-C leaves the files unchanged. Pairing is quadratic in the number of candidate blocks per file, so a few large modules with many near-identical methods are the worst case, not total line count. With N near-identical blocks in one file every pair proposes the same N-site extraction, so building and filtering those proposals grows as N cubed until the first application collapses them into one helper.
 
 Rough expectations with the defaults:
 

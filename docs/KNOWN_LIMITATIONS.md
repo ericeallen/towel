@@ -253,9 +253,27 @@ it tractable, all exact: they change no proposal.
   identity, so a fixed-point iteration that re-parses a file still reuses
   results for the blocks it did not touch. Unification results are stored as
   positions and rehydrated onto the matching blocks.
-- The clustering pass memoizes its per-candidate pipeline on the template,
-  the candidate, and the pair's helper, and applies its constant-time
-  filters before the semantic guards.
+- The clustering pass scans a file for the sites that can share a helper
+  once per distinct helper template, not once per pair (every pair of N
+  near-identical blocks renders the same template; 50 identical functions
+  took 17 s and 100 took 134 s before, 8 s and 42 s after, together with
+  the reuse index below), memoizes its per-candidate pipeline on the
+  template, the candidate, and the pair's helper, and applies its
+  constant-time filters before the semantic guards. The remaining growth is
+  cubic: every one of the N²/2 pairs legitimately proposes the same N-site
+  extraction until the first application collapses them.
+- The reuse redirect finds a function whose body starts where a site does
+  through an index, instead of scanning every function of the file for
+  every replacement of every proposal.
+- Three pure per-block analyses (orphan detection, the instantiation check's
+  normalized block, the class-private-name scan) are memoized on structure,
+  so the re-parse after each applied proposal hits too: on a 5,300-line
+  test package the profiled run fell from 120 s to 97 s with 13,300 private
+  name scans reduced to 24.
+- The analysis session grows to the number of files an analysis covers, so
+  a project above the old 128-file limit (trio: 144) no longer re-parses
+  every file on every pass; trio's second pass went from 144 parses and
+  7.2 s to none and 5.0 s.
 - Facts that depend only on a function, not on the block under test
   (definite assignment at each statement, locally bound names, nested
   scopes), are computed once per function, and candidate blocks are bucketed
