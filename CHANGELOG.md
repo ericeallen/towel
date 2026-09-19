@@ -9,6 +9,22 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+### Added
+- Extracted module-level helpers can preserve relationships among argument and
+  return types through type anti-unification. Nested containers, multiple type
+  parameters, and supported existing generic binders receive fresh helper type
+  parameters. Concrete disagreements can use constrained `TypeVar` declarations
+  when an unrestricted generic body does not type-check.
+- Generic signatures, their imports, and their declarations are checked with
+  the complete prospective project and committed as one transaction. Failed
+  attempts leave no declarations behind. Generated syntax remains compatible
+  with Python 3.11; existing PEP 695 input requires Python 3.12 or newer.
+
+### Fixed
+- Type probes at adjacent extraction sites retain their lexical scope even when
+  they share a source line. Conflicting mypy specialization notes for one probe
+  are treated as ambiguous evidence instead of silently retaining the last type.
+
 ## [1.732.post1] - 2026-09-19
 
 ### Fixed

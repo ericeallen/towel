@@ -16,8 +16,8 @@
 
 The engine asks annotations.py to copy what the call sites declare and to
 infer the rest through the project's type checker, decides whether the
-generated code is to be type-checked, produces the fallback variants (every
-annotation Any, then none), and compares the checker's messages before and
+generated code is to be type-checked, supplies generic candidates before the
+fallback variants (every annotation Any, then none), and compares messages before and
 after a change. Oracle inference and verification run only when the complete
 original project is clean; existing errors and checker infrastructure failures
 refuse application with distinct diagnostics.
@@ -30,7 +30,7 @@ from collections import Counter
 import copy
 import dataclasses
 
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Dict, Iterator, List, Optional, Sequence, Set
 from .annotations import (
     ApplySite,
     CallSite,
@@ -50,6 +50,7 @@ from ..type_inference import CheckFailure, TypeOracle
 from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
+from .generic_annotations import generic_helpers
 
 
 class HelperAnnotationWiring(EngineState):
@@ -171,33 +172,9 @@ class HelperAnnotationWiring(EngineState):
             proposal.extracted_function = completed.helper
             proposal.required_imports = completed.required_imports
             return
-        sites: List[ApplySite] = []
-        sources: Dict[str, str] = {}
-        for replacement in proposal.replacements:
-            file_path = replacement.file_path or proposal.file_path
-            call = call_in_statement(replacement.node, proposal.extracted_function.name)
-            if call is None:
-                return
-            source = sources.get(file_path)
-            if source is None:
-                source = read_source(file_path)
-                sources[file_path] = source
-            lines = source_lines(source)
-            start_line, end_line = replacement.line_range
-            if not 1 <= start_line <= len(lines):
-                return
-            sites.append(
-                ApplySite(
-                    file_path=file_path,
-                    source=source,
-                    start_line=start_line,
-                    end_line=end_line,
-                    indent=self._get_indent(lines[start_line - 1]),
-                    statement=replacement.node,
-                    call=call,
-                    declared_return=self._declared_return_at(source, start_line),
-                )
-            )
+        sites = self._annotation_sites(proposal)
+        if not sites:
+            return
         inferred = infer_missing_annotations(
             respell_bare(proposal.extracted_function, host, bare_ok),
             sites,
@@ -211,6 +188,93 @@ class HelperAnnotationWiring(EngineState):
         proposal.required_imports = tuple(
             dict.fromkeys(inferred.required_imports + completed.required_imports)
         )
+
+    def _annotation_sites(self, proposal: RefactoringProposal) -> List[ApplySite]:
+        """Keep the current source and return context of each replacement together."""
+        sites: List[ApplySite] = []
+        sources: Dict[str, str] = {}
+        for replacement in proposal.replacements:
+            file_path = replacement.file_path or proposal.file_path
+            call = call_in_statement(replacement.node, proposal.extracted_function.name)
+            if call is None:
+                return []
+            source = sources.get(file_path)
+            if source is None:
+                source = read_source(file_path)
+                sources[file_path] = source
+            lines = source_lines(source)
+            start_line, end_line = replacement.line_range
+            if not 1 <= start_line <= len(lines):
+                return []
+            sites.append(
+                ApplySite(
+                    file_path=file_path,
+                    source=source,
+                    start_line=start_line,
+                    end_line=end_line,
+                    indent=self._get_indent(lines[start_line - 1]),
+                    statement=replacement.node,
+                    call=call,
+                    declared_return=self._declared_return_at(source, start_line),
+                )
+            )
+        return sites
+
+    def _generic_helper_variants(
+        self, proposal: RefactoringProposal
+    ) -> Iterator[RefactoringProposal]:
+        """Candidate parametric signatures, still requiring complete project verification."""
+        if (
+            not proposal.wants_type_inference
+            or proposal.reused_function is not None
+            or proposal.insert_into_class is not None
+            or proposal.insert_into_function is not None
+        ):
+            return
+        oracle = self._active_type_oracle()
+        if oracle is None:
+            return
+        source = self._read_source(proposal.file_path)
+        if source is None:
+            return
+        for candidate in generic_helpers(
+            proposal.extracted_function,
+            self._annotation_sites(proposal),
+            proposal.file_path,
+            source,
+            proposal.return_variables,
+            oracle,
+        ):
+            yield dataclasses.replace(
+                proposal,
+                extracted_function=candidate.helper,
+                required_imports=(),
+                helper_type_declarations=candidate.declarations,
+            )
+
+    @staticmethod
+    def _helper_uses_any(proposal: RefactoringProposal) -> bool:
+        """Whether the ordinary signature has already lost part of its type information."""
+        helper = proposal.extracted_function
+        annotations = [arg.annotation for arg in helper.args.posonlyargs + helper.args.args]
+        annotations.append(helper.returns)
+        for annotation in annotations:
+            if annotation is None:
+                return True
+            if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+                try:
+                    annotation = ast.parse(annotation.value, mode="eval").body
+                except SyntaxError:
+                    return True
+            if any(
+                isinstance(node, ast.Name)
+                and node.id == "Any"
+                or isinstance(node, ast.Attribute)
+                and node.attr == "Any"
+                for node in ast.walk(annotation)
+            ):
+                return True
+        return False
 
     @staticmethod
     def _annotation_names(helper: ast.FunctionDef) -> Set[str]:
@@ -269,7 +333,9 @@ class HelperAnnotationWiring(EngineState):
         proposal, and materialization copies each one before touching it.
         """
         helper = copy.deepcopy(proposal.extracted_function)
-        variant = dataclasses.replace(proposal, extracted_function=helper)
+        variant = dataclasses.replace(
+            proposal, extracted_function=helper, helper_type_declarations=()
+        )
         for arg in helper.args.posonlyargs + helper.args.args:
             arg.annotation = ast.Name(id="Any", ctx=ast.Load())
         helper.returns = ast.Name(id="Any", ctx=ast.Load())
@@ -282,7 +348,9 @@ class HelperAnnotationWiring(EngineState):
     def _without_annotations(proposal: RefactoringProposal) -> RefactoringProposal:
         """The proposal with the helper unannotated; see ``_with_every_annotation_any``."""
         helper = copy.deepcopy(proposal.extracted_function)
-        variant = dataclasses.replace(proposal, extracted_function=helper)
+        variant = dataclasses.replace(
+            proposal, extracted_function=helper, helper_type_declarations=()
+        )
         for arg in helper.args.posonlyargs + helper.args.args:
             arg.annotation = None
         helper.returns = None

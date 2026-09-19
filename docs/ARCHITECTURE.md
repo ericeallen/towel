@@ -106,8 +106,11 @@ fixed-point loop (below).
    each modified file (see *Generated code formatting*); the generated
    Python is compiled to confirm it parses, overlapping replacements are
    detected, and with type verification enabled all prospective files are
-   checked together with unchanged consumers. Annotations fall back to `Any`
-   and then to none on new errors; every variant must pass before application.
+   checked together with unchanged consumers. A precise ordinary signature is
+   tried first. Type anti-unification supplies generic candidates before an
+   `Any`-containing signature or after a precise ordinary signature fails.
+   Annotations finally fall back to `Any` and then to none on new errors;
+   every variant must pass before application.
 8. **Apply.** `changes.py` turns accepted proposals into an immutable byte
    plan and applies it transactionally (see *Application and recovery*).
 
@@ -339,7 +342,7 @@ precede it. `reuse_existing_functions=False` restores extraction.
 ## Helper annotations
 
 `annotations.py` annotates a helper only in code that already uses
-annotations among its call sites, and only from evidence, in two layers.
+annotations among its call sites, and only from evidence.
 
 *Copying.* A parameter is annotated when every site passes an annotated,
 never-rebound parameter of its enclosing function, or a literal of one
@@ -404,12 +407,40 @@ lattice ones:
   `collections.abc` name, or a module that defers annotations) and quoted
   otherwise. A union of forward references is quoted as one string.
 
+*Type anti-unification.* `generic_annotations.py` retains complete per-site
+argument/result rows. `type_bindings.py` resolves annotation constructors and
+source type parameters by their bindings, including legacy `TypeVar` declarations
+and PEP 695 scopes. `type_generalization.py` recursively keeps common type
+constructors and shares a fresh parameter for each repeated disagreement vector.
+Thus `(list[int], int)` and `(list[str], str)` can become `(list[T], T)`.
+Different vectors remain independent, and a return-only variable is refused.
+Local annotations inside the extracted body use the same substitutions, verified
+against all original spans. An annotation whose relationship to the signature
+cannot be recovered declines the generic candidate instead of being erased.
+
+A precise ordinary signature is kept when it passes. Generic candidates are
+tried before an ordinary signature containing `Any`, or after a precise ordinary
+signature fails. The first generic candidate leaves concrete disagreements
+unrestricted; the second constrains eligible variables to two to four observed
+concrete alternatives. Existing free variables retain compatible source bounds
+or constraints and receive fresh invariant function binders. There are at most
+two generic candidates. Unsupported or conflicting domains are declined rather
+than replaced with invented bounds. The helper body and calls decide whether
+these candidate relationships are valid through the project's checkers.
+
+Generic inference currently applies to new module-level helpers. The constructor
+import uses a fresh alias, and declarations and the helper share one transaction.
+Their annotations, bounds, and constraints are quoted to avoid evaluating project
+types before those types exist. Rejected candidates leave neither declarations
+nor imports behind. Existing functions reused as helpers keep their signatures.
+
 When verification is enabled, all modified files are overlaid together for
 each prospective variant, including
 unchanged consumers under the project's checker configuration. Mypy receives
 all replacements as in-memory build sources; pyright receives a private project
 snapshot with the original module names. A proposal introducing
-an error is retried with every annotation `Any`, and then with none. Each
+an error tries the generic candidates where supported, then retries with every
+annotation `Any`, and then with none. Each
 variant must pass; checker failure or a remaining new error declines the
 proposal. `close()` releases checker resources, and the CLI calls it in a
 `finally` block. Without an
@@ -417,10 +448,9 @@ oracle Towel copies and does not reason: unions are written unreduced and
 the meet requires identical declarations, because there is no second
 implementation of the subtype relation to fall back on.
 
-The current inference treats parameters independently and does not synthesize
-type variables. The [type-parameter proposal](proposals/type-parameters.md)
-describes how a future release could preserve relationships among argument
-and return types, and where that would still be insufficient.
+The [type-parameter design](proposals/type-parameters.md) records the checker
+obligations and boundaries, including why a helper's generic signature cannot
+restore narrowing lost by moving a guard away from a captured lambda.
 
 ## Generated code formatting
 
@@ -862,6 +892,8 @@ but the ideas and their names are from the literature.
 | Reusing an existing function | `reuse.py` |
 | Insertion points and re-indentation | `insertion.py` |
 | Annotation wiring and type verification | `annotation_wiring.py` |
+| Binding-aware type terms and scoped type parameters | `type_bindings.py` |
+| Signature anti-unification and fresh generic candidates | `type_generalization.py`, `generic_annotations.py` |
 | Materialization and the arity check | `materialize.py` |
 | Clustering further call sites | `clustering.py` |
 | Fork-based parallel evaluation | `parallel.py` |

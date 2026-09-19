@@ -173,8 +173,15 @@ rerun the CLI with `--no-types`. This option preserves existing source
 annotations but generates unannotated helpers; library callers obtain the
 same behavior with `type_oracle=None` and `annotate_helpers=False`. A checker
 crash or timeout remains a distinct verification failure. A clean baseline
-keeps prospective-project verification enabled throughout the run. Generic helper inference is
-[proposed for a later release](proposals/type-parameters.md).
+keeps prospective-project verification enabled throughout the run.
+
+For new module-level helpers, Towel also anti-unifies the corresponding argument
+and result types. For example, `list[int] -> int` and `list[str] -> str` can become
+`list[T] -> T`. Already-generic callers receive fresh helper binders with their
+supported bounds or constraints preserved. The generated `TypeVar` declarations
+work on Python 3.11 and newer. Every candidate is checked with its rewritten calls
+and unchanged consumers before it is accepted; `--no-types` does not synthesize
+generic contracts. See the [design and supported boundaries](proposals/type-parameters.md).
 
 Each fixed-point call starts a new run and checks the original before creating
 an output copy. Direct `apply_refactoring` calls share an implicit run; call
@@ -214,6 +221,7 @@ proposal.file_path            # Canonical location for the extracted function
 proposal.reused_function      # ReusedFunction(name, file_path, line_range) when the
                               # sites call an existing function; None for a helper
 proposal.required_imports     # Imports the host needs for the helper's annotations
+proposal.helper_type_declarations  # Fresh generic declarations, materialized with the helper
 proposal.return_variables     # Names the helper returns, in the call's unpacking order
 proposal.insert_into_class    # The class the helper becomes a method of, if any;
 proposal.method_kind          # instance, class, or static, with insert_into_function

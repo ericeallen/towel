@@ -152,6 +152,12 @@ class TypeOracle(Protocol):
     """Inference and coherent project verification, with explicit failure and ownership."""
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        """Return unambiguous expression types, omitting unavailable evidence.
+
+        This flat protocol cannot correlate separate constrained-TypeVar
+        instantiations. A checker reporting distinct types for the same probe
+        does not establish any single one of those types for the expression.
+        """
         raise NotImplementedError
 
     def is_subtype(
@@ -577,13 +583,21 @@ class MypyInferrer:
             return {}
         errors = result.messages
         revealed: Dict[RevealKey, str] = {}
+        ambiguous: set[RevealKey] = set()
         for message in errors:
             match = _REVEALED.match(message)
             if match is None:
                 continue
             key = probe_lines.get((os.path.abspath(match.group("path")), int(match.group("line"))))
-            if key is not None:
-                revealed[key] = match.group("type")
+            if key is not None and key not in ambiguous:
+                kind = match.group("type")
+                if key in revealed and revealed[key] != kind:
+                    # mypy checks constrained generic bodies once per concrete
+                    # specialization. Keep neither branch as the whole type.
+                    ambiguous.add(key)
+                    del revealed[key]
+                else:
+                    revealed[key] = kind
         return revealed
 
 

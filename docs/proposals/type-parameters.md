@@ -1,6 +1,6 @@
 # Proposal: preserve type relationships in extracted helpers
 
-Status: deferred beyond 1.732; design proposal, not implemented.
+Status: implemented in development after 1.732.post1; not yet released.
 Author: design note from the 2026-09 release audit
 
 ## Problem
@@ -63,8 +63,8 @@ example, not evidence that every extraction can receive a generic signature.
 
 Mypy documents constrained generic functions, and Pyright documents both their
 consistent argument constraints and checking of the corresponding result type.
-The proposed feature would infer a restricted class of such signatures; it
-would not introduce a new type-system extension.
+The implementation infers a restricted class of such signatures using the
+checkers' existing generic-function rules.
 ([Mypy](https://mypy.readthedocs.io/en/stable/generics.html#value-constrained-type-variables),
 [Pyright](https://github.com/microsoft/pyright/blob/main/docs/type-concepts-advanced.md#value-constrained-type-variables))
 
@@ -96,14 +96,15 @@ annotations` does not make this syntax parse on Python 3.11.
 ([Mypy syntax compatibility](https://mypy.readthedocs.io/en/stable/generics.html#defining-generic-classes),
 [PEP 695](https://peps.python.org/pep-0695/))
 
-## Proposed first implementation
+## Implemented inference
 
-Start with fresh module-level helpers, fixed positional parameters, and a single
-returned value. Infer at most one new constrained type parameter, with at most
-four concrete alternatives, in the first implementation. Keep these limits
-explicit and deterministic; extend them only with evidence from useful examples.
-Keep a concrete signature when it already verifies. Otherwise try the constrained
-generic candidate before the existing `Any` or bare-helper fallback variants.
+Fresh module-level helpers use fixed positional parameters and a result type,
+which may itself be a tuple. Corresponding argument and result types are
+anti-unified together, recursively through matching type constructors. Multiple
+independent disagreement columns receive distinct parameters; repeated columns
+share a parameter. A precise ordinary signature is retained when it verifies.
+Generic candidates take precedence over an ordinary signature containing `Any`,
+and are also tried when a precise ordinary signature fails.
 
 1. Preserve the existing syntactic and semantic extraction checks. Type inference
    begins with a valid proposed helper and its actual call sites. It does not
@@ -111,16 +112,26 @@ generic candidate before the existing `Any` or bare-helper fallback variants.
 2. Record each site's argument types and required result type together. A row
    belongs to one call site; do not independently union the columns and discard
    the rows. Retain the source and binding that justify each type.
-3. Find candidate positions whose concrete types agree within each row and vary
-   across rows. For the example above, the rows are `(int, int, int)` and
-   `(str, str, str)`. Propose `_T` in those positions and retain concrete types in
-   positions that do not participate. Equal observed columns are a candidate
+3. Generalize equal disagreement vectors together. For example, rows
+   `(int, int, int)` and `(str, str, str)` yield `(_T, _T, _T)`;
+   `(list[int], int)` and `(list[str], str)` yield `(list[_T], _T)`.
+   Different constructors can become a variable for the entire type, but the
+   algorithm never invents a higher-kinded constructor variable. Every fresh
+   parameter must occur in an input. Equal observed columns are a candidate
    hypothesis, not proof of a universal relationship.
-4. Initially require concrete, resolvable nominal types in those positions.
-   Decline inference involving `Any`, `Unknown`, unresolved names, unsupported
-   unions, existing unbound variables, overloads, or nested type constructors.
-   Do not infer a subtype-preserving promise from constrained variables when
-   constraint promotion would lose a caller's required subtype.
+4. Try an unrestricted parameter for each concrete disagreement first. If the
+   body needs a finite domain, try a second candidate with two to four distinct
+   concrete alternatives as constraints. Existing free variables retain compatible
+   bounds or constraints in both candidates. There are at most two generic
+   candidates, avoiding an exponential search over constraint combinations.
+   `Any`, `Unknown`, ambiguous bindings, unavailable host names, unsupported
+   variadic binders, dependent bounds, and conflicting free-variable domains
+   decline inference. Constraint promotion must still satisfy every caller's
+   required subtype in the prospective project check.
+   Apply the same substitutions to corresponding local annotations in the
+   extracted body. Both free binders and concrete types such as `list[int]` and
+   `list[str]` can then become `list[T]`. Require agreement across the original
+   spans; do not guess an annotation's binding from its spelling or erase it.
 5. Ask the configured checkers to validate the generic helper body and all
    rewritten calls in the complete prospective project. A call-site matrix alone
    cannot prove that the body works for every permitted constraint. Keep only
@@ -128,15 +139,15 @@ generic candidate before the existing `Any` or bare-helper fallback variants.
    required result type.
 6. Allocate a fresh private type-variable name, its declaration, and its import
    with the helper. Treat these as one transactional proposal. Roll them back
-   with a declined helper; include them in helper inventory and subsequent
-   naming/import handling. Do not leave unused declarations after trying a
+   with a declined helper; preserve them through subsequent helper inventory
+   and renaming. Do not leave unused declarations after trying a
    different variant.
 
-An unconstrained identity helper or a useful upper bound may deserve a later
-rule. They should not be inferred by replacing a failed constraint set with
-`object`, a union bound, or `Any`. Each rule needs its own body and call-site
-obligations. This proposal does not attempt arbitrary relational or dependent
-type inference, overload synthesis, or automatic invention of protocols.
+The unrestricted candidate preserves exact subtypes when the body is parametric.
+It is checked first, rather than replacing a failed constraint set with `object`,
+a union bound, or `Any`. Bounds are retained from source variables, not invented
+from observations. Arbitrary relational or dependent type inference, overload
+synthesis, and automatic invention of protocols remain outside this design.
 
 ## Placement, existing generics, and reuse
 
@@ -147,13 +158,25 @@ and PEP 695 gives new-style type parameters their own lexical scope.
 ([Pyright scoping](https://github.com/microsoft/pyright/blob/main/docs/type-concepts-advanced.md#type-variable-scoping),
 [PEP 695 scopes](https://peps.python.org/pep-0695/#type-parameter-scopes))
 
-The initial inference rule should decline a candidate that requires moving or
-rebinding an existing generic parameter. Later support must distinguish retaining
-an enclosing parameter from introducing an independent helper parameter, preserve
-bounds and constraints, and rename binders without capturing source names. A
-module-level helper cannot simply refer to a type parameter scoped to a source
-method. A declaration's constraint names must also resolve at its insertion
-point; postponed annotations do not postpone an ordinary `TypeVar(...)` call.
+Source variables declared through legacy `TypeVar` or PEP 695 are resolved in
+their lexical scopes and receive independent helper binders. Repeated spellings
+in distinct scopes therefore do not create false relationships. Compatible
+bounds and constraints are preserved; function binders do not copy class
+variance flags. Calls infer the fresh helper's type arguments, including caller
+type variables, without explicit type arguments at the call site.
+
+Both mypy and Pyright accept this rebinding, including nested `list[T]` and
+`dict[str, list[T]]` types. They reject dependent declarations such as a type
+variable bounded by `list[T]` or constrained by another free variable. Towel
+therefore generalizes structure to `list[U]` when possible, and never emits a
+dependent bound. Imported binders whose declarations are unavailable are not
+assigned invented metadata; unavailable host bindings decline inference.
+
+Fresh names avoid source bindings and annotation names. Helper annotations,
+bounds, and constraints use string forms so project classes need not exist when
+the helper or `TypeVar` call is evaluated. A fresh alias for the `TypeVar`
+constructor avoids capturing or overwriting a source name. Postponed annotations
+alone would not postpone an ordinary `TypeVar(...)` call.
 
 Reusing an existing generic function is a separate operation. Its published
 signature, bounds, constraints, and overloads remain unchanged. Verify the new
@@ -173,8 +196,8 @@ class must be checked together before method inference is enabled.
 Type relationships inside constructors need their declared variance. In
 particular, mutable lists are invariant; `list[int]` cannot be treated as
 `list[int | str]`. Read-only interfaces and mutable interfaces do not justify the
-same substitutions. Later support for `list[_T]`, `Sequence[_T]`, tuples, or
-mappings must preserve the original operations and independently verify both
+same substitutions. The implemented structural inference for `list[_T]`,
+`Sequence[_T]`, tuples, and mappings preserves the original operations and checks both
 argument acceptance and returned values.
 ([Typing specification: variance](https://typing.python.org/en/latest/spec/generics.html#variance))
 
@@ -182,8 +205,8 @@ Callable parameter types are contravariant and result types covariant. A union
 of callables is not generally a callable taking union arguments. A constructor
 signature is also insufficient evidence that a value is a class suitable for
 `isinstance`; retain the distinction between `type[C]` and an arbitrary callable
-returning `C`. Initially decline callable and class-object inference rather than
-flattening either into a convenient signature.
+returning `C`. Structural inference preserves this distinction; it does not
+flatten a class object into a callable or bypass the checkers' variance rules.
 ([Typing specification: callables](https://typing.python.org/en/latest/spec/callables.html#assignability-rules-for-callables),
 [Python's class-object types](https://docs.python.org/3/library/typing.html#the-type-of-class-objects))
 
@@ -232,7 +255,7 @@ conditions for retaining narrowing in closures; extraction must preserve them.
 
 ## Verification and fallback
 
-The 1.732 release policy is established separately from this deferred proposal:
+The implementation retains the 1.732 release policy:
 check the initial complete project before using checker-driven inference or
 verification or writing refactored output. If that baseline contains type
 errors, abort with a clear instruction to fix them or explicitly rerun with
@@ -267,30 +290,32 @@ successful generic inference. A run explicitly using `--no-types` bypasses the
 checker and must not synthesize these new generic contracts from an unverified
 hypothesis.
 
-## Phases and acceptance tests
+## Validation and remaining work
 
-1. **Capture evidence and report candidates.** Represent per-site type rows and
-   binder identities explicitly. Report a bounded inference candidate without
-   changing generated code. Keep the successful addition example and the Sphinx
-   refusal as distinct fixtures.
-2. **Fresh module-level constrained helpers.** Implement the single-variable rule
-   above using Python 3.11-compatible `TypeVar`. Add declarations/imports to the
-   proposal and transactional plan. Enable only after both checker validation and
-   behavioral tests pass.
-3. **Existing generic bindings and structured positions.** Add one supported
-   family at a time, with binding-aware scope rules and explicit variance
-   obligations. Method placement, nested generics, and callable relationships
-   require their own designs; they are not implied by phase 2.
-4. **Optional newer syntax and corpus evaluation.** Gate PEP 695 rendering on
-   project/checker support. Measure accepted transformations, refused candidates,
-   added checker cost, and readability on the pinned ecosystem corpus before
-   changing defaults.
+Per-site rows, binder identities, fresh module-level helpers, structured positions,
+and supported source generic bindings are implemented. The suite exercises real
+extraction with each checker, plus pure anti-unification, lexical resolution,
+transactional declarations, and subsequent inventory/renaming. Independent
+checker experiments cover both accepted patterns and dependent-bound failures.
 
-The acceptance suite should test the obligations, not merely the generated text:
+Generic method placement, function-hosted generic helpers, more expressive source
+domains, and optional PEP 695 output remain later work. A pinned ecosystem run is
+also needed before assigning this feature a release performance claim; existing
+1.732 corpus measurements do not measure the new inference.
+
+One checker-evidence boundary remains: mypy specializes constrained functions and
+can emit several types for the same unannotated local. The oracle refuses such
+ambiguous reveals instead of retaining the last note. Declared constrained
+parameters are supported, and Pyright can retain scoped variables for the local
+case. General recovery under mypy needs correlated specialization metadata;
+matching a set of concrete notes to a similarly constrained source variable
+would not establish that variable's identity.
+
+The acceptance suite exercises the following obligations:
 
 - Both checkers accept the original addition functions and generated generic
   version, preserve `int`/`str` results, and reject the mixed call `shared(1, "x")`.
-  Exercise extraction with `min_lines=2` for the two-statement example. Runtime
+  Extraction uses `min_lines=2` for the two-statement example. Runtime
   examples produce the same values and exceptions as the originals.
 - The independent-union and union-bound alternatives do not accidentally pass
   as equivalent contracts. A subclass fixture detects constraint promotion when

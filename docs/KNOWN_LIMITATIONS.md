@@ -242,19 +242,37 @@ where the evidence comes from:
   `Any` inside a composite (`list[Any]`) is written as the checker revealed
   it. A helper with any annotation has every parameter and its return
   annotated, so the checker's incomplete-definition rule is never tripped.
-- Generic helpers are not synthesized: when sites pass `list[int]` and
-  `list[str]`, the parameter is their union, not a type variable. Independent
-  parameter unions can lose relationships among arguments and results;
-  [type-parameter inference](proposals/type-parameters.md) is deferred beyond
-  1.732.
-- Placement for bare names holds only within one module. For a helper
+- Fresh module-level helpers can use generic signatures obtained by
+  anti-unifying complete argument/result rows, including nested constructors.
+  Type-variable identity includes its original binding scope. Existing free
+  variables are rebound with compatible bounds or constraints; dependent bounds,
+  conflicting free-variable domains, variadic type parameters, unresolved names,
+  and `Any`/`Unknown` decline generic inference. At most two generic contracts
+  are tried: unrestricted concrete disagreements, then constraints with two to
+  four concrete alternatives. Every helper type parameter must occur in an
+  input. Generic methods and function-hosted helpers remain unsupported. See
+  the [type-parameter design](proposals/type-parameters.md).
+- Mypy can report several different specializations for one expression inside
+  a constrained generic function. Towel treats that reveal as ambiguous instead
+  of keeping whichever note appeared last. A constrained local whose generic
+  relationship is absent from the source signature can therefore still decline
+  extraction with mypy, even when Pyright supplies its scoped type variable.
+  Recovering that relationship needs correlated specialization evidence; a
+  union of the notes does not identify which source binder they came from.
+- Pyright's strict `reportPrivateUsage` rule rejects the generated private
+  helper name when another module imports it, even when its generic signature
+  is valid. Such cross-file proposals remain refused under that configuration;
+  type inference does not suppress project rules.
+- Placement for bare names in ordinary inferred signatures holds only within one module. For a helper
   whose sites are in other modules, an annotation may name only builtins
   and the `typing` names Towel imports itself (`Any`, `Callable`), since a
   site's imports are not the host's; a type that names a class is then not
   written and the parameter is completed with `Any`. Any subscripted
   annotation that would not evaluate at definition time (`memoryview[int]`
   on an interpreter where `memoryview` is not generic) is written as a
-  string.
+  string. Generic inference can also retain a foreign site's imported type when
+  the helper's host binds the same canonical import; matching spellings alone
+  are insufficient. Its annotations and TypeVar domains are quoted.
 - The degradation on a type error is per proposal, not per parameter: one
   annotation the checker rejects costs the helper all of them.
 - Verification first requires a clean original project, then checks complete

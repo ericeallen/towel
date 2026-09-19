@@ -19,9 +19,10 @@ rendered through the project's formatter, and each file is rebuilt with the
 helper inserted and every call site replaced, then the generated Python is
 compiled and every generated call is checked to bind the helper's
 signature. When the run's original project passes its type checker, every
-prospective project is checked. The annotated variant is tried first and
-falls back to Any and then to no annotations when it introduces a type
-error. Existing project errors refuse the run before any output is created.
+prospective project is checked. Precise ordinary signatures are tried first;
+generic candidates are tried before losing type information to Any. Every
+fallback, including a bare helper, must also pass. Existing project errors
+refuse the run before any output is created.
 Reused functions keep their existing signatures; a type error declines the
 reuse rather than weakening those signatures. The immutable byte plan is
 applied transactionally by changes.py.
@@ -38,7 +39,7 @@ import textwrap
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional, Set
 from .exceptions import RefactoringError
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
@@ -50,6 +51,7 @@ from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring
 from .insertion import InsertionPoints
 from .placement import HelperPlacement
+from .statement_facts import bindings_of, loaded_names
 
 
 @dataclass(frozen=True)
@@ -143,30 +145,21 @@ class Materialization(
         # Materialization owns its ASTs; callers may reuse or inspect the proposal.
         proposal = copy.deepcopy(proposal)
         self._infer_helper_annotations(proposal)
-        variants = [proposal]
         check_types = self._active_type_oracle() is not None
-        if (
-            check_types
-            and proposal.reused_function is None
-            and self._helper_has_annotations(proposal)
-        ):
-            variants += [
-                self._with_every_annotation_any(proposal),
-                self._without_annotations(proposal),
-            ]
         counters = dict(self._helper_name_counters)
-        for variant in variants:
+        for variant in self._annotation_variants(proposal, check_types):
             mark = len(self._change_log)
             # Each attempt allocates the helper's name; restore the counters so
             # every attempt gets the same name and none is consumed by a retry.
             self._helper_name_counters = dict(counters)
-            files = self._materialize_once(variant)
-            if not check_types:
-                return files
             try:
-                if not self._introduces_type_errors(files):
+                # Naming mutates the rendered helper. Keep the lazy generator's
+                # source proposal intact so later variants still retarget calls
+                # from the original helper name.
+                files = self._materialize_once(copy.deepcopy(variant))
+                if not check_types or not self._introduces_type_errors(files):
                     return files
-            except RefactoringError:
+            except Exception:
                 del self._change_log[mark:]
                 raise
             del self._change_log[mark:]
@@ -174,8 +167,36 @@ class Materialization(
             raise RefactoringError("Reusing the existing function introduces project type errors")
         raise RefactoringError("Every helper annotation variant introduces project type errors")
 
+    def _annotation_variants(
+        self, proposal: RefactoringProposal, check_types: bool
+    ) -> Iterator[RefactoringProposal]:
+        """Keep a precise ordinary signature; try generics before losing annotations.
+
+        Generation is lazy: successful concrete signatures need no additional
+        checker probes. An ordinary signature containing Any is already lossy,
+        so a parametric signature takes precedence when one can be verified.
+        """
+        if not check_types or proposal.reused_function is not None:
+            yield proposal
+            return
+        lossy = self._helper_uses_any(proposal)
+        if lossy:
+            yield from self._generic_helper_variants(proposal)
+        yield proposal
+        if not lossy:
+            yield from self._generic_helper_variants(proposal)
+        if self._helper_has_annotations(proposal):
+            yield self._with_every_annotation_any(proposal)
+            yield self._without_annotations(proposal)
+
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
+        if proposal.helper_type_declarations and (
+            proposal.reused_function is not None
+            or proposal.insert_into_class is not None
+            or proposal.insert_into_function is not None
+        ):
+            raise RefactoringError("Type declarations require a fresh module-level helper")
         replacements_by_file: Dict[str, List[Replacement]] = {}
         for repl in proposal.replacements:
             file_path = repl.file_path or proposal.file_path
@@ -209,6 +230,7 @@ class Materialization(
         already use.
         """
         original_name = proposal.extracted_function.name
+        declaration_names = self._type_declaration_names(proposal)
         class_context = bool(proposal.insert_into_class) or any(
             replacement.class_name is not None for replacement in proposal.replacements
         )
@@ -220,8 +242,14 @@ class Materialization(
             proposal.extracted_function.name = self._allocate_helper_name(
                 proposal.file_path, class_context=class_context, related_paths=related_paths
             )
+            while proposal.extracted_function.name in declaration_names:
+                proposal.extracted_function.name = self._allocate_helper_name(
+                    proposal.file_path, class_context=class_context, related_paths=related_paths
+                )
         elif proposal.insert_into_class and not original_name.startswith("_"):
             proposal.extracted_function.name = f"_{original_name}"
+        if proposal.extracted_function.name in declaration_names:
+            raise RefactoringError("The helper name conflicts with its type declarations")
         receiver_name = proposal.method_param_name or (
             "cls" if proposal.method_kind == "classmethod" else "self"
         )
@@ -376,10 +404,22 @@ class Materialization(
     def _insert_helper_at_module_level(
         self, proposal: RefactoringProposal, lines: List[str]
     ) -> None:
-        func_lines = [line + "\n" for line in self._render(proposal.extracted_function).split("\n")]
-        insert_line = self._find_insert_position(
-            lines, self._annotation_names(proposal.extracted_function)
-        )
+        node: ast.AST = proposal.extracted_function
+        dependencies = self._annotation_names(proposal.extracted_function)
+        if proposal.helper_type_declarations:
+            node = ast.Module(
+                body=[*proposal.helper_type_declarations, proposal.extracted_function],
+                type_ignores=[],
+            )
+            dependencies |= {
+                name
+                for statement in proposal.helper_type_declarations
+                for name in loaded_names(statement)
+            } - self._type_declaration_names(proposal)
+        func_lines = [line + "\n" for line in self._render(node).split("\n")]
+        insert_line = self._find_insert_position(lines, dependencies)
+        if proposal.helper_type_declarations:
+            insert_line = self._type_declaration_position(lines, dependencies, insert_line)
         lines_to_insert: List[str] = []
         if insert_line > 0:
             blank_lines_before = 0
@@ -392,6 +432,31 @@ class Materialization(
         lines_to_insert.extend(func_lines)
         lines_to_insert.extend(["\n", "\n"])
         lines[insert_line:insert_line] = lines_to_insert
+
+    @staticmethod
+    def _type_declaration_names(proposal: RefactoringProposal) -> Set[str]:
+        return {
+            name
+            for statement in proposal.helper_type_declarations
+            for name in bindings_of(statement, into_nested_scopes=False)
+        }
+
+    def _type_declaration_position(
+        self, lines: List[str], dependencies: Set[str], insert_line: int
+    ) -> int:
+        """Keep eager declaration dependencies available before the helper can be called."""
+        body = self._parse_source("".join(lines)).body
+        movable = True
+        for statement in body:
+            movable = movable and self._is_definition_like(statement)
+            if not dependencies.intersection(bindings_of(statement, into_nested_scopes=False)):
+                continue
+            if not movable or isinstance(statement, (ast.If, ast.Try)):
+                raise RefactoringError(
+                    "A helper type declaration depends on an unavailable binding"
+                )
+            insert_line = max(insert_line, statement.end_lineno or statement.lineno)
+        return insert_line
 
     def _insert_helper_import(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]
