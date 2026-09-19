@@ -340,6 +340,39 @@ def changed(ready: Path, package: str) -> Tuple[int, str]:
     return count, stat[-1] if stat else ""
 
 
+def _pytest_arguments_start(command: Sequence[str]) -> Optional[int]:
+    """The argument boundary for an explicit pytest executable or Python module call."""
+    if not command:
+        return None
+    executable = Path(command[0]).name
+    if executable in {"pytest", "py.test"}:
+        return 1
+    if (
+        re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", executable)
+        and len(command) >= 3
+        and list(command[1:3]) == ["-m", "pytest"]
+    ):
+        return 3
+    return None
+
+
+def _prepare_test_command(command: Sequence[str]) -> List[str]:
+    """Request pytest outcome identities after project defaults and reporting options.
+
+    Keep selections and configuration intact. A literal ``--`` ends option
+    parsing, so insert the reporting option immediately before it. Other
+    runners are left alone and still need recognizable outcomes to qualify.
+    """
+    prepared = list(command)
+    start = _pytest_arguments_start(command)
+    if start is None:
+        return prepared
+    end = prepared.index("--", start) if "--" in prepared[start:] else len(prepared)
+    if end == start or prepared[end - 1] != "-ra":
+        prepared.insert(end, "-ra")
+    return prepared
+
+
 def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -> Result:
     # A project may carry its own per-phase budget when it is far larger
     # than the rest of the corpus (networkx: 198k lines with its tests).
@@ -359,7 +392,7 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
             else str(error.stderr)[-500:]
         )
         return result
-    test = [part.format(python=python) for part in project.test]
+    test = _prepare_test_command([part.format(python=python) for part in project.test])
     env = base_env(project.pythonpath, python.parent)
     result.baseline = run(test, source, env, timeout, logs / f"{project.name}-before.log")
     baseline_outcome = _completed_test_run(result.baseline)
@@ -481,7 +514,7 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
     return result
 
 
-_OPTIONS_WITH_VALUES = {"-o", "-p", "-k", "-m", "-c", "-W", "--tb", "--rootdir"}
+_OPTIONS_WITH_VALUES = {"-o", "-p", "-k", "-m", "-c", "-W", "-r", "--tb", "--rootdir"}
 
 
 def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> List[str]:
@@ -491,11 +524,15 @@ def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> List[str]:
     so pytest runs only the named tests; option values stay in place.
     """
     command = list(test)
+    if "--" in command:
+        command = command[: command.index("--")]
+    if command and command[-1] == "-ra":
+        command.pop()
     while command and not command[-1].startswith("-"):
         if len(command) >= 2 and command[-2] in _OPTIONS_WITH_VALUES:
             break
         command.pop()
-    return [*command, *test_ids]
+    return _prepare_test_command([*command, *test_ids])
 
 
 def _retest_agrees(
@@ -509,7 +546,9 @@ def _retest_agrees(
     project: Project,
 ) -> bool:
     """Whether the tests that differed fail identically on both trees when rerun alone."""
-    if any(test_id.startswith("unittest:") for test_id in test_ids):
+    if _pytest_arguments_start(test) is None or any(
+        test_id.startswith("unittest:") for test_id in test_ids
+    ):
         # unittest (including custom runners) does not accept pytest node ids
         # or options. Preserve the observed difference instead of guessing.
         return False

@@ -114,6 +114,7 @@ def _check(
         if "towel.cli" in command:
             (root / "fixture-cleaned").write_text("value = 2\n" if changed else "value = 1\n")
             return _phase(log, 0, "Applied 1 refactoring\n")
+        assert command[-1] == "-ra", "Baseline and after commands must request failure identities"
         code, output = next(phases)
         return _phase(log, code, output)
 
@@ -335,6 +336,7 @@ def test_retest_requires_matching_recognized_outcomes(
     def run(
         command: Sequence[str], cwd: Path, env: dict[str, str], timeout: int, log: Path
     ) -> ecosystem.Phase:
+        assert command[-1] == "-ra", "Retests must request the same failure identities"
         code, output = next(phases)
         return _phase(log, code, output)
 
@@ -388,3 +390,105 @@ def test_recognition_matches_real_local_runner_output(
     assert outcome.returncode == phase.returncode == int(failing)
     assert outcome.summary == phase.summary
     assert outcome.collected == 4
+
+
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        (
+            ["python", "-m", "pytest", "-q", "tests"],
+            ["python", "-m", "pytest", "-q", "tests", "-ra"],
+        ),
+        (["/env/bin/pytest", "-q", "tests"], ["/env/bin/pytest", "-q", "tests", "-ra"]),
+        (["python3.13", "-m", "pytest", "-rs"], ["python3.13", "-m", "pytest", "-rs", "-ra"]),
+        (
+            ["python", "-m", "pytest", "-k", "selected", "-o", "addopts=", "--", "tests"],
+            ["python", "-m", "pytest", "-k", "selected", "-o", "addopts=", "-ra", "--", "tests"],
+        ),
+        (["python", "-m", "unittest", "discover"], ["python", "-m", "unittest", "discover"]),
+        (["python", "runtests.py"], ["python", "runtests.py"]),
+        (["sh", "-c", "python -m pytest"], ["sh", "-c", "python -m pytest"]),
+    ],
+)
+def test_test_command_preparation_preserves_runner_and_selection(
+    command: list[str], expected: list[str]
+) -> None:
+    original = list(command)
+    prepared = ecosystem._prepare_test_command(command)
+    assert prepared == expected
+    assert command == original
+    assert ecosystem._prepare_test_command(prepared) == prepared
+
+
+@pytest.mark.parametrize("selection", [["tests"], ["--", "tests"]])
+def test_retest_retains_reporting_without_repeating_the_original_selection(
+    selection: list[str],
+) -> None:
+    command = ecosystem._prepare_test_command(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *selection]
+    )
+    assert ecosystem._retest_command(command, ["tests/test_case.py::test_selected"]) == [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests/test_case.py::test_selected",
+        "-ra",
+    ]
+
+
+@pytest.mark.parametrize("reporting", ["-rs", "-rxXs"])
+def test_project_reporting_defaults_cannot_hide_failed_test_identities(
+    tmp_path: Path, reporting: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        f'[tool.pytest.ini_options]\naddopts = "{reporting}"\n'
+    )
+    source = tmp_path / "test_cases.py"
+    source.write_text(
+        "def test_fail():\n    assert False, 'fixture'\n\n" "def test_pass():\n    assert True\n"
+    )
+    command = [sys.executable, "-m", "pytest", "-q", str(source)]
+    env = {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+    hidden = ecosystem.run(command, tmp_path, env, 20, tmp_path / "hidden.log")
+    assert hidden.returncode == 1
+    assert ecosystem.failed_tests(hidden.log) == set()
+    assert ecosystem._completed_test_run(hidden) is None
+    prepared = ecosystem._prepare_test_command(command)
+    visible = ecosystem.run(prepared, tmp_path, env, 20, tmp_path / "visible.log")
+    assert visible.returncode == 1
+    failed = ecosystem.failed_tests(visible.log)
+    assert failed == {"test_cases.py::test_fail"}
+    outcome = ecosystem._completed_test_run(visible)
+    assert outcome is not None and outcome.collected == 2
+    narrowed = ecosystem.run(
+        ecosystem._retest_command(prepared, sorted(failed)),
+        tmp_path,
+        env,
+        20,
+        tmp_path / "retest.log",
+    )
+    retested = ecosystem._completed_test_run(narrowed)
+    assert retested is not None and retested.collected == 1
+    assert ecosystem.failed_tests(narrowed.log) == failed
+
+
+def test_unrecognized_custom_runner_never_receives_pytest_retest_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unexpected_run(*_: object) -> ecosystem.Phase:
+        raise AssertionError("A custom command was rewritten as a pytest command")
+
+    monkeypatch.setattr(ecosystem, "run", unexpected_run)
+    assert not ecosystem._retest_agrees(
+        ["sh", "-c", "python -m pytest"],
+        ["test_cases.py::test_fail"],
+        tmp_path,
+        tmp_path,
+        {},
+        10,
+        tmp_path,
+        ecosystem.Project("fixture", "unused", "pinned", "package.py"),
+    )
