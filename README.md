@@ -11,12 +11,12 @@ Towel finds repeated Python code and proposes helper function extractions.
 > `pip install code-towel`
 > Do **not** install `towel`: `pip install towel` and `uvx towel` fetch a different, unrelated project.
 
-**Release status: 1.732 (beta, in preparation).** Since 1.618, Towel can reuse
+**Release status: 1.732 (beta).** Since 1.618, Towel can reuse
 existing functions instead of creating new helpers. With the optional tools
 installed, it formats generated code to match your project and checks helper
 type annotations with mypy or Pyright. This release also strengthens refactoring
 and renaming safety and adds controls for large projects. See the
-[1.732 changelog](CHANGELOG.md#1732---unreleased) for details.
+[1.732 changelog](CHANGELOG.md#1732---2026-09-19) for details.
 
 **New here?** The [Quick start](docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
 
@@ -101,6 +101,8 @@ towel --version
 towel --help
 ```
 
+To update an existing installation, run `pip install --upgrade code-towel`.
+
 Install `code-towel`, not `towel`: the name `towel` on PyPI is a different, unrelated project, so `pip install towel` and `uvx towel` will not install this tool. To run it with `uvx` without installing, name the package explicitly:
 
 ```bash
@@ -117,13 +119,13 @@ Platform, CPU, memory, and disk requirements are in [Requirements](#requirements
 
 ## Requirements
 
-**Platform.** Python 3.11 to 3.13 on a POSIX system (macOS or Linux). Applying changes needs POSIX filesystem semantics. Parallel analysis uses the `fork` start method, so on Windows, or under any start method that is not `fork`, the tool runs on a single core; everything else works.
+**Platform.** Python 3.11 to 3.13 on a POSIX system (macOS or Linux). Applying changes needs POSIX filesystem semantics. Parallel analysis uses the `fork` start method; under other start methods analysis runs on a single core. Windows is not a supported or validated release platform.
 
 **CPU.** One core is enough. The tool parallelizes a large analysis by forking one worker per core, which speeds up big projects but changes nothing about the result; `TOWEL_WORKERS=1` keeps it on one core and `TOWEL_WORKERS=N` caps the workers.
 
 **Memory.** Measured in September 2026: a single analysis process holds the parsed modules and its caches: tens of megabytes for one file, about 250 MB for a 140,000-line project. Forking multiplies that by the worker count, because each worker starts as a copy-on-write fork whose caches then diverge; a 200,000-line project on an 18-core machine peaked near 7.4 GB across 20 processes. The tool estimates the parent's size against physical memory at fork time and caps the workers at roughly a third of RAM, but the estimate is not a guarantee. On a memory-constrained machine, or when running several large refactorings at once, set `TOWEL_WORKERS` low; at `TOWEL_WORKERS=1` the footprint stays at the single-process figure.
 
-**Disk.** In-place refactoring needs no extra space. Out-of-place refactoring first copies the whole project to the output directory. Recovery journals, `.towel-transaction-<id>` directories at the common root of a batch, hold the original source bytes until you resolve them; a pending journal blocks a later run only when its manifest names a file that run would change.
+**Disk.** Both in-place and out-of-place refactoring need temporary space for staged changes and recovery journals. Out-of-place refactoring also copies the whole project to the output directory, and optional type checking can create project snapshots and caches. Recovery journals, `.towel-transaction-<id>` directories at the common root of a batch, hold the original source bytes until you resolve them; a pending journal blocks a later run only when its manifest names a file that run would change.
 
 ## How long it takes
 
@@ -322,7 +324,7 @@ How it works and why to trust it:
 
 Project:
 
-- [Changelog](CHANGELOG.md) — changes by release, including the upcoming 1.732
+- [Changelog](CHANGELOG.md) — changes by release, including 1.732
 - [Release log](docs/RELEASE_LOG.md) — engineering checkpoints and validation history
 - [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Releasing](docs/RELEASING.md)
 

@@ -4,7 +4,7 @@ Towel rewrites source code. Review the generated diff and run the affected proje
 
 ## Supported versions
 
-Security fixes are provided for the latest released version, currently **1.618** (1.732 is in preparation). Earlier versions are not supported; the PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and are not a recommended installation target. Upgrade to the latest release rather than relying on a fix to an older one.
+Security fixes are provided for the latest released version, currently **1.732**. Earlier versions are not supported; the PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and are not a recommended installation target. Upgrade to the latest release rather than relying on a fix to an older one.
 
 ## Reporting a vulnerability
 

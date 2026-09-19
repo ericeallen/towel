@@ -1,8 +1,9 @@
 # Production readiness
 
-**1.732 remains a beta release candidate, not a published release.** The
-runtime is frozen at `1d246075`; validated source `d4c9001` adds test and
-ecosystem-harness corrections after that runtime. The runtime remains unchanged.
+**1.732 is a beta release.** The runtime is frozen at `1d246075`; validated
+source `2e4ebe6` adds test and ecosystem-harness corrections after that runtime.
+The release commit adds documentation updates only; runtime, tests, harness,
+dependencies, and build configuration remain unchanged from `2e4ebe6`.
 The current evidence below is separate from the historical 1.732 and 1.414
 runs retained later in this report. Passing the sampled tests does not
 establish equivalence for arbitrary Python programs; review generated changes
@@ -10,13 +11,13 @@ and the [known limitations](KNOWN_LIMITATIONS.md).
 
 ## Current 1.732 validation (September 19, 2026)
 
-The completed source matrix at `d4c9001` recorded:
+The completed source matrix at `2e4ebe6` recorded:
 
 | Python | Passed | Skipped | Subtests passed | Coverage |
 |---|---:|---:|---:|---:|
-| 3.11 | 2,526 | 11 | 34 | 93% |
-| 3.12 | 2,537 | 0 | 34 | 93% |
-| 3.13 | 2,537 | 0 | 34 | 93% |
+| 3.11 | 2,534 | 11 | 34 | 93% |
+| 3.12 | 2,545 | 0 | 34 | 93% |
+| 3.13 | 2,545 | 0 | 34 | 93% |
 
 The 3.11 skips exercise PEP 695 syntax that requires Python 3.12 or later.
 All three runs completed without warnings. Black, Flake8, strict mypy, Bandit,
@@ -26,8 +27,11 @@ retained in the accompanying September 19 audit evidence archive.
 The audit fixes cover generic binding scopes and builtin shadowing, ordered
 imports, helper renaming, checker isolation and cleanup, coherent project
 verification, and termination after permanent application refusals. The
-[1.732 changelog](../CHANGELOG.md#1732---unreleased) records the changes and
-their regressions; type-parameter inference remains deferred.
+[1.732 changelog](../CHANGELOG.md#1732---2026-09-19) records the changes and
+their regressions; type-parameter inference remains deferred. Eight final
+regression cases cover missing corpus dependencies, PLY's import origin, and
+full-suite confirmation after isolated reruns. The original faulty manifest
+and an isolated-only harness mutation fail the corresponding negative controls.
 
 The 141-project consumer evidence requests `--no-types` explicitly. Its
 manifest installs runtime test dependencies, not each project's complete
@@ -83,8 +87,8 @@ fixture inventory, and complete logs. This supplements the typed integration
 tests without extending the r6 corpus's typing claims.
 
 Exact wheel and source-distribution hashes and their installation-check
-results are retained in the accompanying audit evidence, separately from
-these source-gate results. Publication remains a separate maintainer decision.
+results are retained in the accompanying audit and release evidence, separately
+from these source-gate results.
 
 ## Historical 1.732 candidate run (September 19, 2026)
 

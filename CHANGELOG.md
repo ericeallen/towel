@@ -7,9 +7,11 @@ ecosystem evidence behind each claim. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## [1.732] - Unreleased
+## [Unreleased]
 
-Changes since 1.618. This release is still in preparation.
+## [1.732] - 2026-09-19
+
+Changes since 1.618.
 
 ### Added
 - A duplicate that is the whole body of a plain module-level function now
@@ -762,6 +764,7 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[1.732]: https://github.com/ericeallen/towel/compare/v1.618...HEAD
+[Unreleased]: https://github.com/ericeallen/towel/compare/v1.732...HEAD
+[1.732]: https://github.com/ericeallen/towel/compare/v1.618...v1.732
 [1.618]: https://github.com/ericeallen/towel/compare/v1.414...v1.618
 [1.414]: https://github.com/ericeallen/towel/releases/tag/v1.414

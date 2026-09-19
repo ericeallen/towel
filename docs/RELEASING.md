@@ -1,12 +1,12 @@
 # Preparing a release
 
-The recorded latest release is `1.618` (September 17, 2026). Version `1.732`
-is in preparation and is not tagged or published. Its
-[changelog](../CHANGELOG.md#1732---unreleased) summarizes reuse of existing
+The `1.732` beta release is dated September 19, 2026. Its
+[changelog](../CHANGELOG.md#1732---2026-09-19) summarizes reuse of existing
 functions, optional formatting and typing, larger-project controls, and the
 pre-release audit fixes. Runtime `1d246075` and validated source
-`d4c9001` are distinguished from earlier candidates in the
-[readiness report](PRODUCTION_READINESS.md).
+`2e4ebe6` are distinguished from earlier candidates in the
+[readiness report](PRODUCTION_READINESS.md). The release commit adds only
+documentation updates. No subsequent release version has been chosen.
 
 The `347d62b` report of 118 PASS, 19 NO_CHANGE and 4 BROKEN_KNOWN among
 141 projects is historical. Current coverage combines the complete r6 run

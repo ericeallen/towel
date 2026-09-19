@@ -3,22 +3,26 @@
 This log records notable repository states and the scope of their validation.
 A historical passing result applies to its recorded commit and test environment.
 
-## 2026-09-19 (current 1.732 release candidate)
+## 2026-09-19 (1.732)
 
-- Version: 1.732, beta; not tagged or published.
-- Runtime: `1d246075`; validated source: `d4c9001`. The intervening changes
+- Version: 1.732, beta; release tag: `v1.732`.
+- Runtime: `1d246075`; validated source: `2e4ebe6`. The intervening changes
   affect tests and the ecosystem harness; the runtime remains unchanged.
+  The release commit updates documentation only.
 - Audit fixes: generic binding scopes, builtin shadowing, import order,
   renaming safety, checker ownership and whole-project verification, and
   progress after rendering or verification refusals. See the
-  [changelog](../CHANGELOG.md#1732---unreleased) for the full release summary.
+  [changelog](../CHANGELOG.md#1732---2026-09-19) for the full release summary.
 - Type policy: an available checker must accept the complete original project
   before output copying. Existing errors require repair or explicit
   `--no-types`; infrastructure failure remains a distinct error. Clean
   projects retain verification of prospective changes and unchanged consumers.
-- Validation at `d4c9001`: 2,526/2,537/2,537 passing tests on Python
+- Validation at `2e4ebe6`: 2,534/2,545/2,545 passing tests on Python
   3.11/3.12/3.13, 34 subtests each, 11 PEP 695 skips on 3.11, and 93% coverage;
   no warnings. Black, Flake8, strict mypy, Bandit and lockfile checks passed.
+  The final eight regression cases cover corpus dependencies, PLY's source
+  imports, and the full-suite confirmation required after isolated agreement;
+  the original manifest and a faulty harness mutation fail negative controls.
 - Consumer evidence: 119 `PASS`, 19 `NO_CHANGE`, and three `BROKEN_KNOWN`
   across 141 entries in explicit `--no-types` mode. This combines the complete
   r6 run with three corrected-environment runs for Cheroot, PLY, and SimPy;
@@ -27,8 +31,7 @@ A historical passing result applies to its recorded commit and test environment.
   [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)
   distinguishes this evidence from older corpus runs.
 - Exact artifact hashes and wheel/source installation-check results are
-  retained in the accompanying September 19 audit evidence archive.
-  Publication remains a separate maintainer decision.
+  retained in the accompanying September 19 audit and release evidence archives.
 
 ---
 
