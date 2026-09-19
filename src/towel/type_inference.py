@@ -691,11 +691,19 @@ class PyrightOracle:
             return CheckFailure(f"Could not create a pyright probe: {error}")
 
     def _run_diagnostics(
-        self, paths: Sequence[str], directory: Path
+        self, paths: Sequence[str], directory: Path, *, project: bool = False
     ) -> _PyrightDiagnostics | CheckFailure:
+        project_arguments = ["--project", str(directory)] if project else []
         try:
             completed = subprocess.run(
-                [*self._command, "--outputjson", "--pythonpath", sys.executable, *paths],
+                [
+                    *self._command,
+                    "--outputjson",
+                    "--pythonpath",
+                    sys.executable,
+                    *project_arguments,
+                    *paths,
+                ],
                 capture_output=True,
                 text=True,
                 cwd=str(directory),
@@ -826,7 +834,9 @@ class PyrightOracle:
                 with checker_snapshot(
                     root, replacements, excluded_paths=excluded_paths
                 ) as snapshot:
-                    result = self._run_diagnostics([str(snapshot)], snapshot)
+                    # A positional directory overrides both configured include
+                    # and exclude lists. Project mode preserves their scope.
+                    result = self._run_diagnostics([], snapshot, project=True)
                     if isinstance(result, CheckFailure):
                         return result
                     for diagnostic in result.diagnostics:

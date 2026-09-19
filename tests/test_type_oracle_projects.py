@@ -82,6 +82,62 @@ def test_pretty_mypy_config_checks_in_memory_lines_without_reading_disk(tmp_path
         checker.close()
 
 
+@pytest.mark.skipif(importlib.util.find_spec("pyright") is None, reason="pyright absent")
+@pytest.mark.parametrize(
+    "config_name, config_text",
+    [
+        (
+            "pyrightconfig.json",
+            '{"include": ["src"], "exclude": ["src/excluded.py"], "typeCheckingMode": "strict"}',
+        ),
+        (
+            "pyproject.toml",
+            '[tool.pyright]\ninclude = ["src"]\nexclude = ["src/excluded.py"]\n'
+            'typeCheckingMode = "strict"\n',
+        ),
+    ],
+)
+def test_pyright_project_scope_matches_configuration_and_checks_unchanged_consumers(
+    tmp_path: Path, config_name: str, config_text: str
+) -> None:
+    import json
+
+    (tmp_path / config_name).write_text(config_text)
+    source = tmp_path / "src"
+    source.mkdir()
+    host, consumer = source / "host.py", source / "consumer.py"
+    host.write_text("def value() -> str:\n    return 'one'\n")
+    consumer.write_text("from host import value\ntext: str = value()\n")
+    (source / "excluded.py").write_text("value: int = 'excluded'\n")
+    (tmp_path / "outside.py").write_text("value: int = 'outside'\n")
+    independent = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-m",
+            "pyright",
+            "--outputjson",
+            "--project",
+            str(tmp_path),
+            "--pythonpath",
+            sys.executable,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert independent.returncode == 0, independent.stdout + independent.stderr
+    assert json.loads(independent.stdout)["summary"]["filesAnalyzed"] == 2
+    checker = PyrightOracle()
+    assert checker.check(str(host), host.read_text()) == CheckSuccess()
+    changed = checker.check(str(host), "def value() -> int:\n    return 1\n")
+    assert isinstance(changed, CheckSuccess)
+    assert {error.path for error in changed.errors} == {str(consumer)}
+    assert all("reportAssignmentType" in error.message for error in changed.errors)
+
+
 def test_all_prospective_modules_are_visible_together(tmp_path: Path, oracle: TypeOracle) -> None:
     package = _package(tmp_path)
     host, caller = package / "host.py", package / "caller.py"
