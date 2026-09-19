@@ -21,12 +21,10 @@ for a method helper is a method of the same classes with the same receiver
 kind, and, when the helper reads shared names bare, resolves every such
 name at module scope too (a same-spelled local of the candidate's function
 or of an enclosing one keeps it out); a site whose scope cannot see the
-helper is skipped. The
-per-candidate pipeline is memoized on the template, the candidate, and the
-helper, and its constant-time filters run before the semantic guards.
+helper is skipped. The per-candidate constant-time filters run before the
+semantic guards.
 
-The scan of a file is itself memoized on the file's content and the
-template: with N similar blocks in one file, N^2 pairs each produce the same
+The scan of a file is memoized on the file's content and the template: with N similar blocks in one file, N^2 pairs each produce the same
 template, and each used to scan all N sites again. A scan lists every
 admissible site; the pair's own blocks and overlaps are filtered out on the
 way out, so every pair sees exactly what its own scan would have found.
@@ -65,7 +63,7 @@ from .thunk_inlining import inline_leading_thunks
 from .visitors import body_without_docstring
 
 from .builtins import CALL_ARGUMENT_BUILTINS
-from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, TemplateKey
+from .engine_state import ClusteredSite, ClusterScanKey, TemplateKey
 from .insertion import InsertionPoints
 from .placement import HelperPlacement
 from .block_analysis import BlockAnalysis
@@ -293,8 +291,6 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         """
         pair = template.pair
         template_signature = extract_block_signature(pair.block1_nodes)
-        template_key = self._template_key(template)
-
         for entry in functions.in_file(pair.file_path):
             fn = entry.node
             # A helper inserted into the pair's deepest common enclosing
@@ -308,7 +304,6 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             candidate_info = self._get_method_context(fn, candidate_class)
             context = ClusterContext(candidate_class, candidate_info)
             fn_id = self._sid([fn])
-            module_digest = self._module_digest(fn)
             for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
                 # The size gate and signature filter are constant-time and
                 # reject most blocks; the semantic guards each walk the
@@ -322,8 +317,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 candidate = self._admissible_candidate(entry, fn_id, cand_nodes, cand_id)
                 if candidate is None:
                     continue
-                key = ClusterKey(template_key, cand_id, fn_id, module_digest)
-                call_node = self._clustered_call(key, template, candidate)
+                # Not memoized per candidate: a candidate's call is computed
+                # only when its template's scan is, and a scan is memoized
+                # whole, so a per-candidate table was never read (no hit on
+                # h2, Towel's source, or a file of near-identical functions)
+                # while holding a call node per candidate.
+                call_node = self._cluster_candidate_call(template, candidate)
                 if call_node is None:
                     continue
                 yield ClusteredSite(
@@ -419,14 +418,6 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             template.module_names,
             template.bound_in_block,
         )
-
-    def _clustered_call(
-        self, key: ClusterKey, template: "HelperTemplate", candidate: "_ClusterCandidate"
-    ) -> Optional[ast.stmt]:
-        """The candidate's call, memoized under ``key``; every hit is the same node, never mutated."""
-        if key in self._cluster_cache:
-            return self._cluster_cache[key]
-        return self._cluster_cache.put(key, self._cluster_candidate_call(template, candidate))
 
     def _are_structurally_similar(
         self,

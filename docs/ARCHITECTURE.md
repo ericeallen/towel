@@ -460,9 +460,11 @@ every pair that renders that template (each pair then drops its own two
 blocks and any overlap, in scan order); the template's key
 (`TemplateKey`, built by `_template_key`) carries, of the site's available
 names, only those the template block reads, plus the module names the
-helper reads bare, so the key does not differ per function position; the
-per-candidate pipeline is memoized on the template, the candidate, and the
-helper. The analysis
+helper reads bare, so the key does not differ per function position.
+There is no per-candidate memo beneath the scan: a candidate's call is
+computed only when its template's scan is, so such a table was never read
+(no hit on hyper-h2, Towel's source, or a file of near-identical functions)
+and only held a call node per candidate. The analysis
 session holds at least as many files as an analysis covers, so a
 directory run above the old 128-file limit keeps every parse and every
 weak per-node memo between passes.

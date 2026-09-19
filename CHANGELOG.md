@@ -346,7 +346,9 @@ ecosystem evidence behind each claim. The format follows
   decline every pair in seconds, is evaluated in full: a thousand
   near-identical five-line functions reading one module global take 33
   minutes on one core (commit `5ff2458`, September 19, 2026) and yield one
-  helper with 669 sites; its pair evaluation is what `--max-pairs` bounds.
+  helper with 669 sites, peaking at 6.6 GB (8.8 GB before the scan cache
+  was bounded); its pair evaluation is what `--max-pairs` bounds. A
+  per-candidate memo beneath the scan, which no run ever read, is gone.
 - The verdict of the instantiation check is memoized on the helper, call
   and block, which it repeated many times over across pair and cluster
   evaluation: a file of a hundred similar functions took 31 s instead of

@@ -96,15 +96,6 @@ class TemplateKey(NamedTuple):
     bound_in_block: FrozenSet[str]
 
 
-class ClusterKey(NamedTuple):
-    """What a clustered call site depends on: the candidate, its module, and the helper template."""
-
-    template: TemplateKey
-    candidate_id: str
-    function_id: str
-    module_digest: Optional[str]
-
-
 class ClusterScanKey(NamedTuple):
     """What the scan of a file for clustered sites depends on.
 
@@ -163,7 +154,6 @@ class EngineState:
     extractor: HygienicExtractor
     """Renders helpers and call sites."""
 
-    _cluster_cache: BoundedCache["ClusterKey", Optional[ast.stmt]]
     """Memo of the per-candidate clustering pipeline; a hit is the same node, never mutated."""
 
     _cluster_scan_cache: BoundedCache["ClusterScanKey", Tuple[ClusteredSite, ...]]

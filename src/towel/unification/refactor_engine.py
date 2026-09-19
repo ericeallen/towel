@@ -66,7 +66,7 @@ from .progress import (
 )
 from .parallel import ParallelEvaluation
 from .bounded_cache import BoundedCache
-from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, GuardKey
+from .engine_state import ClusteredSite, ClusterScanKey, GuardKey
 from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
@@ -373,9 +373,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # by path.
         self._unify_cache: BoundedCache[Tuple[str, str], Optional[StoredSubstitution]] = (
             BoundedCache(self.STRUCTURAL_CACHE_LIMIT)
-        )
-        self._cluster_cache: BoundedCache[ClusterKey, Optional[ast.stmt]] = BoundedCache(
-            self.STRUCTURAL_CACHE_LIMIT
         )
         # Every pair that yields one template scans the whole file for sites
         # that can share its helper; with N similar blocks that is N^2 pairs

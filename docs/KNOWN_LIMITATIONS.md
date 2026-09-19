@@ -401,7 +401,10 @@ it tractable, all exact: they change no proposal.
   global, which the module-name rule admits where the module-data rule used
   to decline every pair in seconds, take 33 minutes on one core (commit
   `5ff2458`, September 19, 2026) and yield one helper with 669 call sites.
-  Lower `--max-pairs` or raise `--min-lines` to trade that result for time.
+  Its peak memory was 8.8 GB; bounding the scan cache by sites brought it
+  to 6.7 GB, and what holds the rest has not been established. Lower
+  `--max-pairs` or raise `--min-lines` to trade that result for time and
+  memory.
 - The reuse redirect finds a function whose body starts where a site does
   through an index, instead of scanning every function of the file for
   every replacement of every proposal.
