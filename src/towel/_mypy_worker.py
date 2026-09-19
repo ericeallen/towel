@@ -67,6 +67,9 @@ def _options(root: Path, config: str | None, cache: str, roots: Sequence[str]) -
     options.hide_error_codes = True
     options.show_column_numbers = False
     options.show_error_end = False
+    # Pretty diagnostics read snippets from disk, but prospective sources and
+    # probes exist only in memory and can extend beyond the physical file.
+    options.pretty = False
     options.mypy_path = list(
         dict.fromkeys(
             [

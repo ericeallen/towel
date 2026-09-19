@@ -19,6 +19,7 @@ from towel.type_inference import (
     CombinedOracle,
     MypyInferrer,
     PyrightOracle,
+    RevealRequest,
     Subtyping,
     TypeOracle,
     type_oracle_for_project,
@@ -57,6 +58,28 @@ def _package(root: Path) -> Path:
     package.mkdir()
     (package / "__init__.py").write_text("")
     return package
+
+
+@pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
+def test_pretty_mypy_config_checks_in_memory_lines_without_reading_disk(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.mypy]\npretty = true\nstrict = true\n")
+    path = tmp_path / "example.py"
+    source = "value: int = 1\n"
+    path.write_text(source)
+    checker = MypyInferrer()
+    try:
+        assert checker.is_subtype(str(path), source, [("int", "str"), ("int", "object")]) == [
+            Subtyping.NO,
+            Subtyping.YES,
+        ]
+        revealed = checker.reveal([RevealRequest(str(path), source, 2, "", ("value",))])
+        assert revealed[(str(path), 2, 0)].removeprefix("builtins.") == "int"
+        result = checker.check(str(path), source + "\ndef untyped(value):\n    return value\n")
+        assert isinstance(result, CheckSuccess)
+        assert any("missing a type annotation" in error.message for error in result.errors)
+        assert path.read_text() == source
+    finally:
+        checker.close()
 
 
 def test_all_prospective_modules_are_visible_together(tmp_path: Path, oracle: TypeOracle) -> None:

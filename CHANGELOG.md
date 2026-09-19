@@ -391,6 +391,10 @@ ecosystem evidence behind each claim. The format follows
   output under its original module identities, and closes the checker on
   success and failure. Project type rules are honored while plugins,
   configured executables and report destinations remain disabled.
+- Mypy diagnostic presentation is normalized for in-memory sources. A
+  project's `pretty = true` setting no longer crashes when a subtype probe
+  or prospective helper extends beyond the on-disk file; project type rules
+  remain unchanged.
 - Checker outcomes distinguish infrastructure failure from valid diagnostics.
   A pyright timeout, malformed output or failure is never evidence of a clean
   project or a successful subtype relation.
