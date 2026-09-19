@@ -9,6 +9,8 @@ ecosystem evidence behind each claim. The format follows
 
 ## [1.732] - Unreleased
 
+Changes since 1.618. This release is still in preparation.
+
 ### Added
 - A duplicate that is the whole body of a plain module-level function now
   calls that function instead of extracting a helper. Two identical functions
@@ -64,11 +66,12 @@ ecosystem evidence behind each claim. The format follows
   for a project with `[tool.mypy]`, `mypy.ini`, `.mypy.ini` or a `[mypy]`
   section in `setup.cfg`, pyright for one with `[tool.pyright]` or
   `pyrightconfig.json`; for a project configuring both,
-  mypy infers while both verify the generated code, so the project's own
-  check stays green. Pyright runs as a command on a temporary sibling copy
-  of the module; mypy reveals each expression in an in-memory copy of the
-  site's module, at the point where the call will stand, once per applied
-  refactoring with an incremental cache. A revealed type is written only
+  mypy infers while both verify the prospective project for new errors.
+  For inference, Pyright probes a temporary sibling copy of the module;
+  mypy reveals expressions in an in-memory copy of the site's module, at
+  the point where the call will stand, using an owned worker with incremental
+  caches. Verification checks the modified files together with unchanged
+  consumers under the project's configured scope. A revealed type is written only
   when it is not bare `Any` and every name in it resolves where the helper
   is defined. `--no-types` leaves helpers unannotated; library callers pass
   a `type_oracle` to the engine.
@@ -383,6 +386,11 @@ ecosystem evidence behind each claim. The format follows
   and dropped with the engine.
 
 ### Fixed
+- The ecosystem release gate requires completed, nonempty test runs. Setup
+  failures, incomplete runs, unknown verdicts, changed failing-test identities,
+  and missing tests cannot pass merely because exit codes or totals match.
+  Documented known failures and flaky-test reruns cannot hide a changed test
+  count; matching pre-existing failures remain visible in the report.
 - Mypy runs in an owned persistent worker with incremental caches and periodic
   garbage collection. Its process-global state cannot freeze or unfreeze a
   library caller's heap, concurrent requests are serialized, and explicit

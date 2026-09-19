@@ -4,7 +4,7 @@
 
 ## Getting started with the API
 
-There are three ways to use Towel, the unification-based code refactoring tool:
+There are three ways to use Towel, the code refactoring tool based on anti-unification:
 
 ### 1. Analyze a Single File
 

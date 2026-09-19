@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-Unification-based code refactoring.
+Code refactoring using anti-unification.
 
 This module implements a principled approach to detecting and extracting
-duplicate code using unification from automated theorem proving.
+duplicate code by computing a common generalization of its syntax trees.
 
 ``UnificationRefactorEngine`` is imported on first use, so importing one
 analysis module (the unifier, the scope analyzer) does not load the engine

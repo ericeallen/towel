@@ -5,13 +5,18 @@
 > [Douglas Adams](https://www.goodreads.com/quotes/24779-a-towel-the-hitchhiker-s-guide-to-the-galaxy-says-is),
 > [*The Hitchhiker's Guide to the Galaxy*](https://en.wikipedia.org/wiki/Towel_Day#Origin)
 
-Towel finds repeated Python code using unification and proposes helper-function extractions.
+Towel finds repeated Python code and proposes helper function extractions.
 
 > **Install from PyPI as [`code-towel`](https://pypi.org/project/code-towel/)** (the command is `towel`):
 > `pip install code-towel`
 > Do **not** install `towel`: `pip install towel` and `uvx towel` fetch a different, unrelated project.
 
-**Release status: 1.732 (beta).** Every accepted proposal is verified by instantiating the helper with each call's arguments and comparing the result with the block it replaces; arguments that could have observable effects or fresh identity are evaluated inside the helper at their original position. A standing ecosystem check refactors 141 public projects, among them Towel's own releases, and runs each one's own test suite before and after: 118 pass identically, 19 produce no proposal, and 4 differ only in documented frame-, line-, or source-sensitive ways (see below; the 1.732 release candidate, commit `347d62b`, September 19, 2026). Refactoring is still a change to your code: preview first, review the diff, and run your tests. [Known limitations](docs/KNOWN_LIMITATIONS.md) lists what is verified, what is rejected, and what remains outside the model; [the readiness report](docs/PRODUCTION_READINESS.md) records the evidence.
+**Release status: 1.732 (beta, in preparation).** Since 1.618, Towel can reuse
+existing functions instead of creating new helpers. With the optional tools
+installed, it formats generated code to match your project and checks helper
+type annotations with mypy or Pyright. This release also strengthens refactoring
+and renaming safety and adds controls for large projects. See the
+[1.732 changelog](CHANGELOG.md#1732---unreleased) for details.
 
 **New here?** The [Quick start](docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
 
@@ -19,9 +24,10 @@ Towel finds repeated Python code using unification and proposes helper-function 
 
 Towel finds code that is repeated across your functions and pulls each group of
 duplicates into one shared helper, rewriting the copies as calls to it. It works
-by *anti-unification*: it computes the least-general generalization of the
-matching blocks, so the parts that are the same become the helper's body and the
-parts that differ become its parameters.
+by *anti-unification*, following the work of
+[Reynolds and Plotkin](docs/ARCHITECTURE.md#references): it computes the
+least-general generalization of the matching blocks, so the parts that are the
+same become the helper's body and the parts that differ become its parameters.
 
 Given two functions that share a block:
 
@@ -72,16 +78,18 @@ extract a helper that would only restate it: the function is kept and the other
 copies call it, so two identical functions become one function and one
 one-line forwarder.
 
-What makes Towel different from a search-and-replace is that it is conservative
-and verified. It proposes an extraction only when it can prove the result runs
-the same as the original — instantiating the helper with each call's arguments
-and comparing against the block it replaced — and it refuses cases it cannot
-establish rather than guess. It skips trivial extractions that would add
+Towel checks each proposed extraction by instantiating the helper with each
+call's arguments and comparing it with the block it replaces. It also checks
+name binding, control flow, and evaluation order, and declines transformations
+that fail these checks. It skips trivial extractions that would add
 indirection without sharing real logic, wraps arguments that must not be
 evaluated eagerly in zero-argument `lambda`s (see
 [below](#why-some-arguments-are-wrapped-in-lambda)), and leaves naming to you.
 Nothing is written without your say-so: the workflow is preview, refactor into a
 copy, review the diff, and run your tests.
+The [known limitations](docs/KNOWN_LIMITATIONS.md) describe behavior outside
+these checks; the [readiness report](docs/PRODUCTION_READINESS.md) records the
+validation evidence.
 
 ## Install
 
@@ -289,7 +297,9 @@ How it works and why to trust it:
 
 Project:
 
-- [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Releasing](docs/RELEASING.md)
+- [Changelog](CHANGELOG.md) — changes by release, including the upcoming 1.732
+- [Release log](docs/RELEASE_LOG.md) — engineering checkpoints and validation history
+- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Releasing](docs/RELEASING.md)
 
 ## License
 

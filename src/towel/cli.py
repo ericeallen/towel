@@ -221,7 +221,7 @@ def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentPar
         "dry",
         help="Apply refactorings to remove duplicate code",
         formatter_class=argparse.RawTextHelpFormatter,
-        description="Analyze and apply unification-based refactorings to file(s) or directories.",
+        description="Analyze and apply refactorings using anti-unification to files or directories.",
         epilog="""
 Examples:
   towel dry src/ cleaned/                         # Refactor directory until fixed point
@@ -345,7 +345,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     parser = subparsers.add_parser(
         "preview",
         help="Preview duplicate code detection (read-only)",
-        description="Preview unification-based refactoring opportunities without modifying files.",
+        description="Preview refactoring opportunities using anti-unification without modifying files.",
     )
 
     parser.add_argument("target", help="File or directory to analyze")

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Data models for the unification-based refactoring system: parsed and
+"""Data models for the anti-unification refactoring system: parsed and
 analyzed modules, functions and classes with their context, candidate block
 pairs, the helper template and clustered-site records, replacements and
 proposals (including a redirect to an existing function), applied changes,
