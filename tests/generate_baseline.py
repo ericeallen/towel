@@ -43,29 +43,26 @@ def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: P
     for py_file in sorted(python_files):
         print(f"  Processing {py_file.name}...")
 
-        # Apply refactorings to fixed point using a temporary copy to avoid
-        # modifying files under test_examples.
-        with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as tmp:
-            tmp.write(py_file.read_text())
-            tmp.flush()
-            tmp_path = Path(tmp.name)
-
-        try:
-            final_code, num_applied, descriptions = engine.refactor_to_fixed_point(str(tmp_path))
-            if num_applied > 0:
-                print(f"    Applied {num_applied} refactoring(s) to fixed point")
-                for i, d in enumerate(descriptions[:3], 1):
-                    print(f"      {i}. {d}")
-            else:
-                print("    No proposals found (fixed point)")
-        except Exception as e:
-            print(f"    Fixed-point refactoring failed: {e}")
-            raise
-        finally:
+        # Apply refactorings to fixed point on a copy in a directory of its
+        # own: test_examples stays untouched, and the transaction journal a run
+        # places beside the file never lands at the temp root, where it would
+        # block every other Towel run under $TMPDIR.
+        with tempfile.TemporaryDirectory(prefix="towel-baseline-") as temporary:
+            tmp_path = Path(temporary) / py_file.name
+            tmp_path.write_text(py_file.read_text())
             try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+                final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
+                    str(tmp_path)
+                )
+            except Exception as e:
+                print(f"    Fixed-point refactoring failed: {e}")
+                raise
+        if num_applied > 0:
+            print(f"    Applied {num_applied} refactoring(s) to fixed point")
+            for i, d in enumerate(descriptions[:3], 1):
+                print(f"      {i}. {d}")
+        else:
+            print("    No proposals found (fixed point)")
 
         # Save final code to output directory
         output_file = output_dir / py_file.name

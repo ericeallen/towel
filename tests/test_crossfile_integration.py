@@ -18,11 +18,17 @@ from typing import List
 
 import pytest
 
+from towel.unification.models import RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.pipeline import run_pipeline
 
 PROJECT_ROOT = Path(__file__).parent.parent
 CROSSFILE_DIR = PROJECT_ROOT / "test_examples_crossfile"
+
+# The one proposal analysis of the simple_crossfile project produces.
+REUSE_ADMIN_EMAIL = (
+    "Reuse validate_admin_email (admin_service.py) for duplicated code in validate_user_email"
+)
 
 
 def _participating_files(proposal) -> set[str]:
@@ -76,10 +82,7 @@ class TestCrossFileProposalStructure:
 
         # The one duplicate is the whole body of validate_admin_email, so the
         # user module is rewritten to call it.
-        assert [p.description for p in proposals] == [
-            "Reuse validate_admin_email (admin_service.py) for duplicated code in "
-            "validate_user_email"
-        ]
+        assert [p.description for p in proposals] == [REUSE_ADMIN_EMAIL]
 
     def test_crossfile_proposal_has_replacements_in_multiple_files(self):
         """Cross-file proposals should have replacements spanning multiple files."""
@@ -158,10 +161,7 @@ class TestCrossFileWithPipeline:
         files = get_crossfile_project_files("simple_crossfile")
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
 
-        assert [p.description for p in proposals] == [
-            "Reuse validate_admin_email (admin_service.py) for duplicated code in "
-            "validate_user_email"
-        ]
+        assert [p.description for p in proposals] == [REUSE_ADMIN_EMAIL]
 
     def test_pipeline_crossfile_matches_engine(self):
         """Pipeline and engine should produce same results for cross-file."""
@@ -171,8 +171,21 @@ class TestCrossFileWithPipeline:
         engine_proposals = engine.analyze_files(files)
         pipeline_proposals = run_pipeline(files, engine=engine, progress="none")
 
-        # Should produce same number of proposals
-        assert len(engine_proposals) == len(pipeline_proposals)
+        def signatures(proposals: list[RefactoringProposal]) -> list[tuple[object, ...]]:
+            return sorted(
+                (
+                    p.description,
+                    p.parameters_count,
+                    len(p.replacements),
+                    p.insert_into_class,
+                    p.insert_into_function,
+                    p.method_kind,
+                )
+                for p in proposals
+            )
+
+        assert [p.description for p in pipeline_proposals] == [REUSE_ADMIN_EMAIL]
+        assert signatures(engine_proposals) == signatures(pipeline_proposals)
 
 
 class TestNestedStructureCrossFile:
@@ -337,7 +350,7 @@ class TestCrossFilePerformance:
         with patch.object(UnificationRefactorEngine, "process_block_pairs", record):
             proposals = engine.analyze_files(files, progress="none")
 
-        assert isinstance(proposals, list)
+        assert [p.description for p in proposals] == [REUSE_ADMIN_EMAIL]
         assert evaluated, "the project has duplicate blocks to pair"
         assert len(evaluated) == len(set(evaluated)), "a block pair was evaluated twice"
 
@@ -346,7 +359,7 @@ class TestCrossFilePerformance:
         files = get_crossfile_project_files("simple_crossfile")
 
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
-        assert isinstance(proposals, list)
+        assert [p.description for p in proposals] == [REUSE_ADMIN_EMAIL]
 
 
 EXAMPLE3_REUSE = (

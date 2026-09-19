@@ -83,8 +83,6 @@ TRANSFORMED = {
     "r50_helper_name_collision",
     "r69_annassign",
     "r76_return_order",
-    # r86_annotated_assignment_live: its shared block only binds a literal and
-    # a parameter, which the trivial-helper filter now declines.
     "r94_import_binds_live_name",
     "r96_unpacked_targets_live",
     # Fifth audit: the eager-argument rule on flow, the comprehension scope, object
@@ -113,6 +111,9 @@ TRANSFORMED = {
     "r138_u2028_comment_same_indent_neighbours",
     "r139_literal_roundtrip",
 }
+# Every other fixture must come back byte-identical. One of them once changed:
+# r86_annotated_assignment_live left the set when the trivial-helper filter
+# began declining its shared block, which binds only a literal and a parameter.
 
 
 def _run(script: Path) -> tuple[int, str, list[str]]:

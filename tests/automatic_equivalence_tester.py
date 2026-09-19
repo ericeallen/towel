@@ -12,7 +12,6 @@ files behave identically to their original versions by:
 import ast
 import re
 import tempfile
-import os
 from typing import List, Tuple, Dict, Any, Optional, TypedDict
 from pathlib import Path
 
@@ -20,10 +19,18 @@ from tests.test_observational_equivalence import (
     compare_function_behavior,
 )
 from tests.edge_case_values import EdgeCaseValues
-from tests.equivalence_targets import affected_functions, invocation_definitions
+from tests.equivalence_targets import Callable, affected_functions, invocation_definitions
 
-# Global test file paths created once and reused
+# The directory of text fixtures for filename parameters, created once and
+# reused; it lives under a directory of its own, never at the temp root.
+_TEST_FILE_DIRECTORY: Optional[tempfile.TemporaryDirectory[str]] = None
 _TEST_FILES: Optional[List[str]] = None
+
+_TEST_FILE_CONTENTS = {
+    "empty.txt": "",
+    "single_line.txt": "test line\n",
+    "multi_line.txt": "line 1\nline 2\nline 3\n",
+}
 
 
 def get_test_files() -> List[str]:
@@ -32,42 +39,28 @@ def get_test_files() -> List[str]:
 
     Returns a list of file paths that can be safely opened and read.
     """
-    global _TEST_FILES
+    global _TEST_FILE_DIRECTORY, _TEST_FILES
 
     if _TEST_FILES is None:
+        _TEST_FILE_DIRECTORY = tempfile.TemporaryDirectory(prefix="towel_equivalence_")
+        directory = Path(_TEST_FILE_DIRECTORY.name)
         _TEST_FILES = []
-
-        # Create an empty file
-        f1 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
-        f1.close()
-        _TEST_FILES.append(f1.name)
-
-        # Create a file with a single line
-        f2 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
-        f2.write("test line\n")
-        f2.close()
-        _TEST_FILES.append(f2.name)
-
-        # Create a file with multiple lines
-        f3 = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
-        f3.write("line 1\nline 2\nline 3\n")
-        f3.close()
-        _TEST_FILES.append(f3.name)
+        for name, contents in _TEST_FILE_CONTENTS.items():
+            path = directory / name
+            path.write_text(contents)
+            _TEST_FILES.append(str(path))
 
     return _TEST_FILES
 
 
 def cleanup_test_files():
     """Clean up temporary test files."""
-    global _TEST_FILES
+    global _TEST_FILE_DIRECTORY, _TEST_FILES
 
-    if _TEST_FILES is not None:
-        for filepath in _TEST_FILES:
-            try:
-                os.unlink(filepath)
-            except:
-                pass
-        _TEST_FILES = None
+    if _TEST_FILE_DIRECTORY is not None:
+        _TEST_FILE_DIRECTORY.cleanup()
+    _TEST_FILE_DIRECTORY = None
+    _TEST_FILES = None
 
 
 def extract_function_names_from_proposal(description: str) -> List[str]:
@@ -117,7 +110,7 @@ def get_function_signature(code: str, function_name: str) -> Optional[ast.Functi
     return None
 
 
-def analyze_parameter_usage(func_def: ast.FunctionDef, param_name: str) -> Optional[str]:
+def analyze_parameter_usage(func_def: Callable, param_name: str) -> Optional[str]:
     """
     Analyze how a parameter is used in the function body to infer its type.
 
@@ -249,15 +242,9 @@ def generate_test_values_for_type(
 
             # Use comprehensive edge case values for better coverage
             # Note: Keep collections small to avoid performance issues, but full numeric coverage
-            if "int" in type_name:
-                # Full integer edge cases - large ints don't cause issues unless used in range()
-                edge_ints = EdgeCaseValues.integers()
-                return edge_ints  # All int edge cases including sys.maxsize, 10**100
-            elif "str" in type_name:
-                edge_strs = EdgeCaseValues.strings()
-                # Exclude only the very long string (last one: 'a' * 1000)
-                return edge_strs[:-1]  # All except last
-            elif "list" in type_name:
+            # The containers are matched first: ``list[int]`` is a list, and
+            # its item type must not make it an int.
+            if "list" in type_name:
                 edge_lists = EdgeCaseValues.lists()
                 # Exclude very large lists (last few with 100+ elements)
                 return edge_lists[:10]  # Up to 10 elements max
@@ -265,6 +252,14 @@ def generate_test_values_for_type(
                 edge_dicts = EdgeCaseValues.dicts()
                 # Exclude very large dicts (last one with 100 keys)
                 return edge_dicts[:-1]  # All except last
+            elif "int" in type_name:
+                # Full integer edge cases - large ints don't cause issues unless used in range()
+                edge_ints = EdgeCaseValues.integers()
+                return edge_ints  # All int edge cases including sys.maxsize, 10**100
+            elif "str" in type_name:
+                edge_strs = EdgeCaseValues.strings()
+                # Exclude only the very long string (last one: 'a' * 1000)
+                return edge_strs[:-1]  # All except last
             elif "bool" in type_name:
                 return EdgeCaseValues.booleans()
             elif "float" in type_name:
@@ -342,7 +337,7 @@ def generate_test_values_for_type(
 TestCase = Tuple[Tuple[object, ...], Dict[str, object]]
 
 
-def generate_test_cases_for_function(func_def: ast.FunctionDef) -> List[TestCase]:
+def generate_test_cases_for_function(func_def: Callable) -> List[TestCase]:
     """
     Generate test cases (args, kwargs) for a function based on its signature.
 

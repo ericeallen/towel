@@ -1,5 +1,4 @@
 import ast
-import os
 import tempfile
 import textwrap
 import unittest
@@ -7,18 +6,13 @@ from pathlib import Path
 from typing import Any, FrozenSet, List, Optional
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.test_helpers import TemporaryModuleTestCase
 from towel.unification.overlap import filter_overlapping_proposals
 from towel.unification.models import RefactoringProposal, Replacement
 from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode
 
 
-class TestRefactorEngineTargetedBranches(unittest.TestCase):
-    def _write_temp(self, code: str) -> str:
-        fd, path = tempfile.mkstemp(suffix="_engine_target.py")
-        os.close(fd)
-        Path(path).write_text(code)
-        return path
-
+class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
     def test_deepest_common_enclosing_function_insertion(self):
         # Two inner functions inside an outer function with similar multi-line blocks.
         code = textwrap.dedent("""
@@ -38,31 +32,28 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 return inner1() + inner2()
             """)
         path = self._write_temp(code)
-        try:
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
-            proposals = engine.analyze_file(path)
-            # Expect at least one proposal extracting common inner blocks
-            self.assertTrue(proposals, "Expected a proposal for similar inner blocks")
-            # Apply first proposal and ensure extracted function inserted inside outer, not module-level only
-            modified = engine.apply_refactoring(path, proposals[0])
-            # Extracted helper should appear inside outer before the return statement
-            # Accept either standard or hygienic naming depending on policy
-            self.assertIn("def __extracted_func", modified)
-            # Ensure it's indented exactly one level inside outer (outer + 4 spaces)
-            lines = modified.splitlines()
-            outer_indent = None
-            extracted_indent = None
-            for ln in lines:
-                if ln.strip().startswith("def outer"):
-                    outer_indent = ln[: len(ln) - len(ln.lstrip())]
-                if ln.strip().startswith("def __extracted_func"):
-                    extracted_indent = ln[: len(ln) - len(ln.lstrip())]
-            self.assertIsNotNone(outer_indent)
-            self.assertIsNotNone(extracted_indent)
-            assert outer_indent is not None
-            self.assertEqual(extracted_indent, outer_indent + "    ")
-        finally:
-            os.remove(path)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+        proposals = engine.analyze_file(path)
+        # Expect at least one proposal extracting common inner blocks
+        self.assertTrue(proposals, "Expected a proposal for similar inner blocks")
+        # Apply first proposal and ensure extracted function inserted inside outer, not module-level only
+        modified = engine.apply_refactoring(path, proposals[0])
+        # Extracted helper should appear inside outer before the return statement
+        # Accept either standard or hygienic naming depending on policy
+        self.assertIn("def __extracted_func", modified)
+        # Ensure it's indented exactly one level inside outer (outer + 4 spaces)
+        lines = modified.splitlines()
+        outer_indent = None
+        extracted_indent = None
+        for ln in lines:
+            if ln.strip().startswith("def outer"):
+                outer_indent = ln[: len(ln) - len(ln.lstrip())]
+            if ln.strip().startswith("def __extracted_func"):
+                extracted_indent = ln[: len(ln) - len(ln.lstrip())]
+        self.assertIsNotNone(outer_indent)
+        self.assertIsNotNone(extracted_indent)
+        assert outer_indent is not None
+        self.assertEqual(extracted_indent, outer_indent + "    ")
 
     def test_preserves_reasonable_spacing_when_inserting_helper(self):
         code = textwrap.dedent("""
@@ -77,23 +68,20 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 return y
             """).lstrip("\n")
         path = self._write_temp(code)
-        try:
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
-            proposals = engine.analyze_file(path)
-            self.assertTrue(proposals, "Expected proposal for identical module-level functions")
-            modified = engine.apply_refactoring(path, proposals[0])
-            self.assertTrue(modified.endswith("\n"))
-            # No runaway blank-line sequences anywhere in output
-            self.assertNotIn(
-                "\n\n\n\n",
-                modified,
-                "Helper insertion should not introduce excessive blank lines",
-            )
-            # Ensure EOF blank lines are capped (≤3 newlines at end)
-            trailing = len(modified) - len(modified.rstrip("\n"))
-            self.assertLessEqual(trailing, 3)
-        finally:
-            os.remove(path)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+        proposals = engine.analyze_file(path)
+        self.assertTrue(proposals, "Expected proposal for identical module-level functions")
+        modified = engine.apply_refactoring(path, proposals[0])
+        self.assertTrue(modified.endswith("\n"))
+        # No runaway blank-line sequences anywhere in output
+        self.assertNotIn(
+            "\n\n\n\n",
+            modified,
+            "Helper insertion should not introduce excessive blank lines",
+        )
+        # Ensure EOF blank lines are capped (≤3 newlines at end)
+        trailing = len(modified) - len(modified.rstrip("\n"))
+        self.assertLessEqual(trailing, 3)
 
     def test_trivial_single_line_return_blocks_rejected(self):
         code = textwrap.dedent("""
@@ -106,15 +94,12 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 return value
             """)
         path = self._write_temp(code)
-        try:
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
-            proposals = engine.analyze_file(path)
-            # Should reject trivial single-line return blocks (only 'return <name>' duplicated)
-            self.assertFalse(any("trivial" in p.description.lower() for p in proposals))
-            # More directly: either zero proposals or proposals should not be built from the single-line return blocks
-            # We allow zero proposals here.
-        finally:
-            os.remove(path)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+        proposals = engine.analyze_file(path)
+        # Should reject trivial single-line return blocks (only 'return <name>' duplicated)
+        self.assertFalse(any("trivial" in p.description.lower() for p in proposals))
+        # More directly: either zero proposals or proposals should not be built from the single-line return blocks
+        # We allow zero proposals here.
 
     def test_incomplete_return_coverage_rejection(self):
         # If block ends with an if that only returns in one branch, it's incomplete return coverage
@@ -132,13 +117,10 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 b = 3  # no return in else path
             """)
         path = self._write_temp(code)
-        try:
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
-            proposals = engine.analyze_file(path)
-            # Should reject due to missing complete return coverage
-            self.assertFalse(proposals, "Expected no proposals due to incomplete return coverage")
-        finally:
-            os.remove(path)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+        proposals = engine.analyze_file(path)
+        # Should reject due to missing complete return coverage
+        self.assertFalse(proposals, "Expected no proposals due to incomplete return coverage")
 
     def test_global_assignment_promotes_declaration(self):
         # Global variable assigned in both blocks should be declared in extracted function
@@ -157,22 +139,19 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 return b
             """)
         path = self._write_temp(code)
-        try:
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
-            proposals = engine.analyze_file(path)
-            self.assertTrue(proposals, "Expected proposal for global assignment blocks")
-            modified = engine.apply_refactoring(path, proposals[0])
-            # Depending on current engine behavior, global may or may not be promoted.
-            # Accept either explicit global declaration or implicit pass-through of G as parameter.
-            if "global G" in modified:
-                self.assertIn("global G", modified)
-            else:
-                # Fallback: ensure helper exists referencing G
-                self.assertIn("def __extracted_func", modified)
-                # Extracted function signature should include G or body should assign to G.
-                self.assertRegex(modified, r"def (?:__)?extracted_func\([^)]*G[^)]*\):|G = G \+")
-        finally:
-            os.remove(path)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        proposals = engine.analyze_file(path)
+        self.assertTrue(proposals, "Expected proposal for global assignment blocks")
+        modified = engine.apply_refactoring(path, proposals[0])
+        # Depending on current engine behavior, global may or may not be promoted.
+        # Accept either explicit global declaration or implicit pass-through of G as parameter.
+        if "global G" in modified:
+            self.assertIn("global G", modified)
+        else:
+            # Fallback: ensure helper exists referencing G
+            self.assertIn("def __extracted_func", modified)
+            # Extracted function signature should include G or body should assign to G.
+            self.assertRegex(modified, r"def (?:__)?extracted_func\([^)]*G[^)]*\):|G = G \+")
 
     def test_nonlocal_in_enclosing_functions_skips_proposal(self):
         # Nonlocal variables in enclosing function should cause engine to skip proposal
@@ -194,13 +173,10 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                 return inner1() + inner2()
             """)
         path = self._write_temp(code)
-        try:
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
-            proposals = engine.analyze_file(path)
-            # Should skip due to nonlocal presence
-            self.assertFalse(proposals, "Expected no proposals when nonlocal variables present")
-        finally:
-            os.remove(path)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        proposals = engine.analyze_file(path)
+        # Should skip due to nonlocal presence
+        self.assertFalse(proposals, "Expected no proposals when nonlocal variables present")
 
     def test_apply_refactoring_multi_file_inserts_method_and_rewrites_calls(self):
         code = textwrap.dedent("""
@@ -210,41 +186,38 @@ class TestRefactorEngineTargetedBranches(unittest.TestCase):
                     return interim
             """)
         path = self._write_temp(code)
-        try:
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
 
-            helper_func = ast.parse("def helper(value):\n    return value + 1\n").body[0]
-            assert isinstance(helper_func, ast.FunctionDef)
-            call_node = ast.parse("return helper(self, value)").body[0]
+        helper_func = ast.parse("def helper(value):\n    return value + 1\n").body[0]
+        assert isinstance(helper_func, ast.FunctionDef)
+        call_node = ast.parse("return helper(self, value)").body[0]
 
-            proposal = RefactoringProposal(
-                file_path=path,
-                extracted_function=helper_func,
-                replacements=[
-                    Replacement(
-                        line_range=(4, 5),
-                        node=call_node,
-                        file_path=path,
-                        class_name="Example",
-                        method_kind="instance",
-                        implicit_param="self",
-                    )
-                ],
-                description="Insert helper method",
-                parameters_count=1,
-            )
-            proposal.insert_into_class = "Example"
+        proposal = RefactoringProposal(
+            file_path=path,
+            extracted_function=helper_func,
+            replacements=[
+                Replacement(
+                    line_range=(4, 5),
+                    node=call_node,
+                    file_path=path,
+                    class_name="Example",
+                    method_kind="instance",
+                    implicit_param="self",
+                )
+            ],
+            description="Insert helper method",
+            parameters_count=1,
+        )
+        proposal.insert_into_class = "Example"
 
-            modified = engine.apply_refactoring_multi_file(proposal)
-            updated_code = modified[path]
+        modified = engine.apply_refactoring_multi_file(proposal)
+        updated_code = modified[path]
 
-            self.assertIn("def _helper(self, value):", updated_code)
-            self.assertIn("return self._helper(value)", updated_code)
-            namespace: dict[str, Any] = {}
-            exec(compile(updated_code, path, "exec"), namespace)
-            self.assertEqual(namespace["Example"]().method(10), 11)
-        finally:
-            os.remove(path)
+        self.assertIn("def _helper(self, value):", updated_code)
+        self.assertIn("return self._helper(value)", updated_code)
+        namespace: dict[str, Any] = {}
+        exec(compile(updated_code, path, "exec"), namespace)
+        self.assertEqual(namespace["Example"]().method(10), 11)
 
     def test_apply_refactoring_multi_file_adds_crossfile_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:

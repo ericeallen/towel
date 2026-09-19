@@ -7,6 +7,9 @@ Tests that refactored code behaves identically to original code by:
 3. Ensuring refactoring preserves semantics
 """
 
+import asyncio
+import inspect
+import itertools
 import unittest
 import io
 import copy
@@ -14,7 +17,11 @@ import re
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from contextlib import redirect_stdout, redirect_stderr
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_helpers import get_test_example_path, assert_file_not_modified
+from tests.test_helpers import (
+    TemporaryModuleTestCase,
+    get_test_example_path,
+    assert_file_not_modified,
+)
 
 CallCase = Tuple[Tuple[object, ...], Dict[str, object]]
 """The positional and keyword arguments of one call to a function under test."""
@@ -143,6 +150,15 @@ def compare_callable_returns(
     return True
 
 
+def same_named_classes(first: type, second: type) -> bool:
+    """Whether two class objects are definitions of the same class statement."""
+    return (
+        first.__module__ == second.__module__
+        and first.__qualname__ == second.__qualname__
+        and first.__dict__.keys() == second.__dict__.keys()
+    )
+
+
 class FunctionExecutionResult:
     """Captures the result of executing a function."""
 
@@ -206,7 +222,15 @@ class FunctionExecutionResult:
         import math
 
         if type(val1) is not type(val2):
-            return False
+            # The original and the refactored module each execute their own
+            # class statements, so an instance of a class either defines is
+            # never of the other's type. Two definitions of one class are
+            # compared by the state their instances carry.
+            if not same_named_classes(type(val1), type(val2)):
+                return False
+            if not (hasattr(val1, "__dict__") and hasattr(val2, "__dict__")):
+                return False
+            return self._values_equal(vars(val1), vars(val2))
 
         # Check if both are floats and both are NaN
         if isinstance(val1, float) and isinstance(val2, float):
@@ -309,21 +333,47 @@ def execute_function(
     return result
 
 
+MATERIALIZED_ITEMS = 10_000
+"""How much of a returned generator is consumed and compared."""
+
+
+def materialize(value: object) -> object:
+    """Run a returned coroutine to completion, or consume a returned generator.
+
+    A generator or coroutine object is never equal to another, so comparing
+    the objects a generator function or coroutine function returns would
+    report every such function as changed. What they compute is what is
+    compared: the items the generator yields (bounded, so an endless one
+    still terminates) or the value the coroutine settles on. An exception
+    raised while consuming or awaiting propagates like one raised by the
+    call, since the caller would observe it the same way.
+    """
+    if inspect.iscoroutine(value):
+        return asyncio.run(value)
+    if inspect.isgenerator(value):
+        return list(itertools.islice(value, MATERIALIZED_ITEMS))
+    return value
+
+
 def execute_callable(
     function: Callable[..., object],
     args: Tuple[object, ...],
     kwargs: Dict[str, object],
     capture_output: bool = True,
 ) -> FunctionExecutionResult:
-    """Invoke a callable and observe output even when it raises."""
+    """Invoke a callable and observe output even when it raises.
+
+    A generator or coroutine the call returns is materialized (see
+    ``materialize``) inside the same output capture.
+    """
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     try:
         if capture_output:
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                result = function(*args, **kwargs)
+                result = materialize(function(*args, **kwargs))
         else:
-            result = function(*args, **kwargs)
+            result = materialize(function(*args, **kwargs))
         return FunctionExecutionResult(
             return_value=result, stdout=stdout_capture.getvalue(), stderr=stderr_capture.getvalue()
         )
@@ -466,10 +516,11 @@ class TestAutomaticObservationalEquivalenceWithConstants(unittest.TestCase):
             self.fail(f"{failed} proposals failed:\n" + "\n".join(errors))
 
 
-class TestObservationalEquivalence(unittest.TestCase):
+class TestObservationalEquivalence(TemporaryModuleTestCase):
     """Test that refactorings preserve observational equivalence."""
 
     def setUp(self):
+        super().setUp()
         self.engine = UnificationRefactorEngine(
             max_parameters=5, min_lines=4, parameterize_constants=True
         )
@@ -615,40 +666,35 @@ def calculate_b(y):
 '''
 
         # Apply refactoring
-        import tempfile
-        import os
+        temp_file = self._write_temp(original_code)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(original_code)
-            temp_file = f.name
+        proposals = self.engine.analyze_file(temp_file)
+        # calculate_b duplicates the whole body of calculate_a, so the one
+        # proposal rewrites it to call calculate_a.
+        self.assertEqual(
+            [p.description for p in proposals],
+            ["Reuse calculate_a (m.py) for duplicated code in calculate_b"],
+        )
 
-        try:
-            proposals = self.engine.analyze_file(temp_file)
+        refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
 
-            if not proposals:
-                self.skipTest("No refactoring proposals found")
+        # Test both functions with same inputs
+        test_cases: List[CallCase] = [
+            ((5,), {}),
+            ((0,), {}),
+            ((-3,), {}),
+            ((100,), {}),
+        ]
 
-            refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
+        for func_name in ["calculate_a", "calculate_b"]:
+            all_passed, differences = compare_function_behavior(
+                original_code, refactored_code, func_name, test_cases
+            )
 
-            # Test both functions with same inputs
-            test_cases: List[CallCase] = [
-                ((5,), {}),
-                ((0,), {}),
-                ((-3,), {}),
-                ((100,), {}),
-            ]
-
-            for func_name in ["calculate_a", "calculate_b"]:
-                all_passed, differences = compare_function_behavior(
-                    original_code, refactored_code, func_name, test_cases
+            if not all_passed:
+                self.fail(
+                    f"Semantic equivalence failed for {func_name}:\n" + "\n".join(differences)
                 )
-
-                if not all_passed:
-                    self.fail(
-                        f"Semantic equivalence failed for {func_name}:\n" + "\n".join(differences)
-                    )
-        finally:
-            os.unlink(temp_file)
 
     def test_referential_transparency_observational_equivalence(self):
         """
@@ -664,46 +710,37 @@ def calculate_b(y):
         original_content = example_path.read_text()
 
         # Use fixed-point iteration (the fixed approach)
-        import tempfile
-        import os
+        temp_file = self._write_temp(original_content)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(original_content)
-            temp_file = f.name
+        # Apply refactorings using fixed-point iteration
+        refactored_content, num_applied, descriptions = self.engine.refactor_to_fixed_point(
+            temp_file, max_iterations=10
+        )
 
-        try:
-            # Apply refactorings using fixed-point iteration
-            refactored_content, num_applied, descriptions = self.engine.refactor_to_fixed_point(
-                temp_file, max_iterations=10
+        if num_applied == 0:
+            self.skipTest("No refactorings applied")
+
+        # Test update_mutable_state functions
+        test_cases: List[CallCase] = [
+            (([10, 20, 30], {}), {}),
+            (([5], {}), {}),
+        ]
+
+        for func_name in ["update_mutable_state_v1", "update_mutable_state_v2"]:
+            all_passed, differences = compare_function_behavior(
+                original_content, refactored_content, func_name, test_cases
             )
 
-            if num_applied == 0:
-                self.skipTest("No refactorings applied")
+            if not all_passed:
+                # Print the refactored code for debugging
+                print("\n=== REFACTORED CODE (first 100 lines) ===")
+                for i, line in enumerate(refactored_content.split("\n")[:100], 1):
+                    print(f"{i:3}: {line}")
+                print("=" * 50)
 
-            # Test update_mutable_state functions
-            test_cases: List[CallCase] = [
-                (([10, 20, 30], {}), {}),
-                (([5], {}), {}),
-            ]
-
-            for func_name in ["update_mutable_state_v1", "update_mutable_state_v2"]:
-                all_passed, differences = compare_function_behavior(
-                    original_content, refactored_content, func_name, test_cases
+                self.fail(
+                    f"Observational equivalence failed for {func_name}:\n" + "\n".join(differences)
                 )
-
-                if not all_passed:
-                    # Print the refactored code for debugging
-                    print("\n=== REFACTORED CODE (first 100 lines) ===")
-                    for i, line in enumerate(refactored_content.split("\n")[:100], 1):
-                        print(f"{i:3}: {line}")
-                    print("=" * 50)
-
-                    self.fail(
-                        f"Observational equivalence failed for {func_name}:\n"
-                        + "\n".join(differences)
-                    )
-        finally:
-            os.unlink(temp_file)
 
         # Verify original file wasn't modified
         assert_file_not_modified(example_path, original_content)

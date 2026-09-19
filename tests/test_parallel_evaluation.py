@@ -55,7 +55,7 @@ def _module(functions_per_shape: int) -> str:
     )
 
 
-def _settings(workers: int) -> Settings:
+def _settings(workers: int | None) -> Settings:
     return Settings(
         workers=workers,
         check_ast_immutable=False,
@@ -171,8 +171,7 @@ def test_too_few_pairs_for_two_workers_stays_serial(
 
 
 def test_default_worker_count_is_bounded_by_cores_and_memory() -> None:
-    engine = UnificationRefactorEngine(min_lines=3, settings=_settings(1))
-    engine._settings = Settings(**{**engine._settings.__dict__, "workers": None})
+    engine = UnificationRefactorEngine(min_lines=3, settings=_settings(None))
     workers = engine._parallel_workers()
     assert 1 <= workers <= max(1, os.cpu_count() or 1)
     assert ParallelEvaluation._workers_that_fit_in_memory() >= 0
