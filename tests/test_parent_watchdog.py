@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
@@ -38,12 +39,16 @@ DRIVER = textwrap.dedent("""
 
 
 def _children_of(pid: int) -> list[int]:
-    listing = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True).stdout
+    listing = subprocess.run(
+        ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, check=True
+    ).stdout
     return [int(row.split()[0]) for row in listing.splitlines() if int(row.split()[1]) == pid]
 
 
 def _alive(pids: list[int]) -> list[int]:
-    listing = subprocess.run(["ps", "-axo", "pid="], capture_output=True, text=True).stdout
+    listing = subprocess.run(
+        ["ps", "-axo", "pid="], capture_output=True, text=True, check=True
+    ).stdout
     present = {int(row) for row in listing.split()}
     return [pid for pid in pids if pid in present]
 
@@ -78,3 +83,28 @@ def test_workers_exit_after_the_parent_is_killed() -> None:
     for pid in survivors:
         os.kill(pid, signal.SIGKILL)
     assert not survivors, f"workers outlived their parent: {survivors}"
+
+
+@pytest.mark.parametrize("observer", ["children", "alive"])
+def test_process_observer_failure_never_reports_an_empty_process_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, observer: str
+) -> None:
+    # Run an owned executable, never the machine's process listing. An empty
+    # stdout from a failed observer says nothing about whether workers exist.
+    executable = tmp_path / "ps"
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        'sys.stderr.write("simulated process observer failure\\n")\n'
+        "sys.exit(73)\n"
+    )
+    executable.chmod(0o700)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        if observer == "children":
+            _children_of(os.getpid())
+        else:
+            _alive([os.getpid()])
+    assert failure.value.returncode == 73
+    assert failure.value.stdout == ""
+    assert failure.value.stderr == "simulated process observer failure\n"
