@@ -30,7 +30,8 @@ rejects, and what remains outside its model. Read it together with
   definitely bound where the block ends or have entered as a parameter.
 - **Frame and control flow.** Blocks containing `yield`, `await`, `async`
   loops or context managers, `locals()`, `globals()`, `vars()`, `eval`,
-  `exec`, zero-argument `super()`, `break`/`continue` targeting an outer loop,
+  `exec`, zero-argument `super()` or `dir()`, `break`/`continue` targeting an
+  outer loop,
   comprehension assignment expressions, `warnings.warn(..., stacklevel=)`,
   or direct frame or stack inspection are rejected.
 - **Unbound locals.** A free variable that is a local of the containing
@@ -64,7 +65,8 @@ unchanged. Towel handles this in three layers, and it is worth being explicit
 about where each one stops.
 
 - **Rejected outright.** A block that *itself* contains generator or async
-  suspension, `locals()`/`globals()`/`vars()`/`super()` with no arguments,
+  suspension, `locals()`/`globals()`/`vars()`/`dir()`/`super()` with no
+  arguments,
   `eval`/`exec`, direct frame or stack inspection (`sys._getframe`,
   `inspect.stack`, and the like), or `warnings.warn(..., stacklevel=...)` is
   never extracted. This is exact for constructs written directly in the block.
@@ -256,8 +258,10 @@ it tractable, all exact: they change no proposal.
 - The clustering pass scans a file for the sites that can share a helper
   once per distinct helper template, not once per pair (every pair of N
   near-identical blocks renders the same template; 50 identical functions
-  took 17 s and 100 took 134 s before, 8 s and 42 s after, together with
-  the reuse index below), memoizes its per-candidate pipeline on the
+  took 17 s and 100 took 134 s before this pass and the reuse index below;
+  re-measured with `scripts/bench_similar_blocks.py` on September 18, 2026,
+  one core of a machine shared with other work, 50 take 6.8 s and 100 take
+  36 s), memoizes its per-candidate pipeline on the
   template, the candidate, and the pair's helper, and applies its
   constant-time filters before the semantic guards. The remaining growth is
   cubic: every one of the N²/2 pairs legitimately proposes the same N-site
@@ -303,8 +307,11 @@ it tractable, all exact: they change no proposal.
   fork time, an estimate rather than a guarantee: several simultaneous
   large runs on one machine should still set `TOWEL_WORKERS` low.
 
-Measured with the CLI defaults (macOS, Python 3.13, single core unless
-stated), before and after this pass, with identical output in every case:
+Measured in September 2026 with the CLI defaults (macOS, Python 3.13,
+single core unless stated): the wall time of a whole `towel dry` run on the
+ecosystem check's clone of each project, before and after the measures
+above, with identical output in every case. This is the one measured table
+of package timings; the README refers here rather than repeating figures.
 
 | Target | Before | After, one core | After, forking |
 |---|---|---|---|
@@ -330,9 +337,10 @@ proportional to the number of applied changes rather than to project size.
 The current engine also applies more refactorings than 1.618 did on the
 same input (h2: 20 against 14; Towel's source: 45 against 41), so the
 times compare a larger amount of work. The times depend on the input as
-much as on the engine: today's Towel source, with the third audit's
-removals, has 18 duplicates to apply and runs in 5.6 s without the type
-checker and formatter and 9.0 s with them (one core, September 2026).
+much as on the engine: today's Towel source, after the later audits'
+removals, has 12 duplicates to apply and runs in 4.7 s without the type
+checker and formatter and 9.5 s with them (one core, September 18, 2026,
+on a machine shared with other work).
 
 The remaining cost is the pairwise evaluation of structurally distinct
 candidates, which no cache can share; large test modules with hundreds of

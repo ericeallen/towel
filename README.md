@@ -116,18 +116,18 @@ Platform, CPU, memory, and disk requirements are in [Requirements](#requirements
 
 There is no time budget; progress is reported per phase and Ctrl-C leaves the files unchanged. Pairing is quadratic in the number of candidate blocks per file, so a few large modules with many near-identical methods are the worst case, not total line count. With N near-identical blocks in one file every pair proposes the same N-site extraction, so building and filtering those proposals grows as N cubed until the first application collapses them into one helper.
 
-Rough expectations with the defaults:
+Rough expectations with the defaults, one core: a 2,000-line module takes
+seconds; Towel's own source (21,000 lines, 16,800 of code) runs to a fixed
+point in 9.5 s, or 4.7 s without the type checker and formatter (September
+18, 2026); a package the size of boltons (24,000 lines) or Click (29,000
+lines) takes tens of seconds, and pygments (137,000 lines) about two
+minutes, by the dated measurements in the
+[performance section of Known limitations](docs/KNOWN_LIMITATIONS.md#performance),
+which is the one table of package timings and says what each figure
+measured; the largest projects in the ecosystem check, networkx and Sphinx
+(150,000 to 200,000 lines), take several minutes to about half an hour.
 
-| Scale | Example | Time |
-|---|---|---|
-| One module | a 2,000-line file | seconds |
-| Small package | boltons, 24,000 lines | about 5 s |
-| Medium package | Click, 29,000 lines | about 12 s |
-| Towel's own source | 21,000 lines (16,600 of code), fixed point, September 2026 | about 9 s (5.6 s without the type checker and formatter) |
-| Large package | pygments, 137,000 lines | tens of seconds |
-| Largest in the corpus | networkx and Sphinx, 150,000 to 200,000 lines | several minutes to about half an hour |
-
-The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (18 applied) takes 5.6 s with `--no-types --no-format` and 9.0 s with the defaults, one core; the type checker also holds mypy in-process, which raises peak memory from about 160 MB to about 900 MB there.
+The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (12 applied, September 18, 2026) takes 4.7 s with `--no-types --no-format` and 9.5 s with the defaults, one core; the type checker also holds mypy in-process, which raises peak memory from about 160 MB to about 900 MB there.
 
 ## Use
 

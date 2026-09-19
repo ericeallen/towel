@@ -182,7 +182,7 @@ def test_interactive_helper_prompt_accepts_manual_markdown_json(
     assert "return x * 2" in result.stdout
     assert "double_value" in result.stdout
     if dry_run:
-        assert "DRY RUN" in result.stdout
+        assert "PREVIEW" in result.stdout
         assert source.read_text() == HELPER
     else:
         namespace: dict[str, object] = {}

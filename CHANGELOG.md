@@ -239,7 +239,7 @@ ecosystem evidence behind each claim. The format follows
   (fifteen `type: ignore` comments ignored nothing; the AST accesses behind
   the rest are `isinstance` assertions now), coverage traces the forked
   pair workers (`parallel.py` 85% to 95%), the helpers copied across test
-  modules live in `conftest.py`, thirty-odd non-emptiness assertions state
+  modules live in `tests/test_helpers.py`, thirty-odd non-emptiness assertions state
   the value they are about, the goldens expected to equal their inputs are
   named and checked exactly, the example3 tests run the cross-file path
   they describe, a symlinked input directory is pinned, and the engine and
@@ -248,8 +248,10 @@ ecosystem evidence behind each claim. The format follows
   once per distinct helper template instead of once per pair, and the
   reuse redirect finds a function whose body starts at a site through an
   index instead of scanning the file per replacement: 50 identical
-  functions took 17 s and now 8 s, 100 took 134 s and now 42 s, 200 took
-  over 800 s and now 262 s, with identical output. Orphan detection, the
+  functions took 17 s and 100 took 134 s before; re-measured with
+  `scripts/bench_similar_blocks.py` on September 18, 2026, one core of a
+  machine shared with other work, 50 take 6.8 s and 100 take 36 s, with
+  identical output. Orphan detection, the
   instantiation check's normalized block and the class-private-name scan
   are memoized on structure, so the re-parse after each applied proposal
   hits too. The analysis session grows to the number of files an analysis
@@ -317,6 +319,11 @@ ecosystem evidence behind each claim. The format follows
   narrowed or removed; the nine copies of `try/except/pass` around
   progress-bar calls are one `quietly`; four unjustified `type: ignore`
   comments and three `pragma: no cover` exclusions are gone.
+- The candidate pairs an analysis evaluates are bounded by a configurable
+  candidate-pair budget, and the minimum block length (`--min-lines`) is
+  exposed on the command line.
+- The structural memo is keyed on a block's structure, so equal blocks share
+  one entry wherever they appear.
 
 ### Deprecated
 - The `--max-iterations` and `rename-helpers --dry-run` spellings still
@@ -328,6 +335,39 @@ ecosystem evidence behind each claim. The format follows
   Python 3.10, below the supported floor, with its `tomli` dev dependency.
 
 ### Fixed
+- The eager-argument guard is rebuilt on control flow. Twelve shapes that
+  passed a differing name eagerly where the original read it only on some
+  path are thunked or declined: a failed optional import, a `TYPE_CHECKING`
+  import, a class attribute read bare in a method, a name bound later,
+  deleted, or bound conditionally in the enclosing function, and at module
+  level a name bound by `except ... as`, a `match` capture, a later `def`,
+  or a later import.
+- A comprehension variable is no longer thunked.
+- The frame-reading builtins and `eval`/`exec` anywhere in the enclosing
+  function decline the block, not only inside it, and aliases of them are
+  resolved through bindings.
+- `warnings.warn` without `stacklevel`, and a `stacklevel` reached through
+  an alias, decline the block.
+- An object bound in the block whose lifetime a later read observes (a
+  temporary file, a weak reference) is returned from the helper rather
+  than dropped when the helper's frame ends.
+- A cross-file helper import goes after the host's leading executable
+  statements.
+- A form feed or a Unicode line separator in a source no longer crashes the
+  splice: lines are counted the way the tokenizer counts them.
+- Async comprehensions are declined.
+- A rendering failure in one proposal ends that proposal, not the run.
+- A relative output path no longer ends the fixed point early.
+- Type inference no longer switches off when the working directory is
+  above the output.
+- The transaction journal lives under the project root, and only that root
+  is checked for one.
+- A killed run's pyright probe cannot be mistaken for source.
+- The mypy cache and partial-copy directories are cleaned on SIGTERM.
+- An ASCII locale no longer breaks a run.
+- The change sidecar is written atomically.
+- `--interactive` with a closed stdin declines instead of raising.
+- Settings are read from the environment once per run.
 - Three ways an extraction could change what a program does, each found by
   executing crafted inputs before and after refactoring: a closure created
   inside the block over a name the block binds (a loop target) kept the
