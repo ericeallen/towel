@@ -1,5 +1,10 @@
 # Towel
 
+> “A towel, it says, is about the most massively useful thing an interstellar hitchhiker can have.”
+>
+> [Douglas Adams](https://www.goodreads.com/quotes/24779-a-towel-the-hitchhiker-s-guide-to-the-galaxy-says-is),
+> [*The Hitchhiker's Guide to the Galaxy*](https://en.wikipedia.org/wiki/Towel_Day#Origin)
+
 Towel finds repeated Python code using unification and proposes helper-function extractions.
 
 > **Install from PyPI as [`code-towel`](https://pypi.org/project/code-towel/)** (the command is `towel`):
