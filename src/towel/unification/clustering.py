@@ -16,9 +16,12 @@
 
 Once a pair is accepted and its helper template fixed, the rest of the
 file is scanned for blocks that unify with the template and can call the
-same helper. A clustered site joins only when it passes the same guards
-and, for a method helper, is a method of the same classes with the same
-receiver kind; a site whose scope cannot see the helper is skipped. The
+same helper. A clustered site joins only when it passes the same guards,
+for a method helper is a method of the same classes with the same receiver
+kind, and, when the helper reads shared names bare, resolves every such
+name at module scope too (a same-spelled local of the candidate's function
+or of an enclosing one keeps it out); a site whose scope cannot see the
+helper is skipped. The
 per-candidate pipeline is memoized on the template, the candidate, and the
 helper, and its constant-time filters run before the semantic guards.
 
@@ -48,6 +51,7 @@ from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import statement_shape
 from .semantic_safety import (
     available_argument_names,
+    module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
     moves_scope_declaration,
@@ -55,7 +59,6 @@ from .semantic_safety import (
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
     frame_read_outside_block,
-    snapshots_rebound_external_names,
     unbinds_external_name,
 )
 from .thunk_inlining import inline_leading_thunks
@@ -107,6 +110,20 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             cluster_renames,
         )
         if not subst2:
+            return None
+        # The helper reads the template's module names bare; a candidate whose
+        # same-spelled name is a local of its function or of an enclosing one
+        # would read something else through the helper.
+        if template.module_names:
+            resolved = module_resolved_names(
+                candidate.function, candidate.analyzer, template.module_names
+            )
+            if resolved != template.module_names:
+                return None
+        if (
+            self._rebound_external_names(candidate.function, candidate.nodes, candidate.analyzer)
+            - template.module_names
+        ):
             return None
         available = (
             template.available_names,
@@ -348,15 +365,6 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             if self._block_rejected(guard, cand_nodes, fn, function_id=fn_id, block_id=cand_id):
                 return None
-        if self._block_rejected(
-            snapshots_rebound_external_names,
-            cand_nodes,
-            fn,
-            analyzer,
-            function_id=fn_id,
-            block_id=cand_id,
-        ):
-            return None
         reassignments = self._get_assignment_reuse(fn)
         if self._per_block(
             "reassignments",
@@ -408,6 +416,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             template.preamble_length,
             template.available_names,
             template.return_variables,
+            template.module_names,
             template.bound_in_block,
         )
 

@@ -33,6 +33,7 @@ from typing import (
     NamedTuple,
     Any,
     Callable,
+    Hashable,
     Dict,
     FrozenSet,
     Iterable,
@@ -91,6 +92,7 @@ class TemplateKey(NamedTuple):
     preamble_length: int
     available_names: FrozenSet[str]
     return_variables: Tuple[str, ...]
+    module_names: FrozenSet[str]
     bound_in_block: FrozenSet[str]
 
 
@@ -141,6 +143,9 @@ class EngineState:
     """What this run has learned about the project's import graph."""
 
     _helper_name_counters: Dict[str, int]
+    # Identities of the proposals this analysis has finished; a pair whose
+    # proposal repeats one is declined before reuse, filtering and annotation.
+    _seen_proposals: Set[Hashable]
     """Next helper number per file, so generated names are unique across a run."""
 
     incremental_global_passes: bool

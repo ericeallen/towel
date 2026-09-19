@@ -14,13 +14,12 @@ from towel.project_layout import ProjectLayout
 from towel.unification.exceptions import UnsupportedLayoutError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-# ``compute`` is defined first: a call site resolves only names bound before
-# its function, so a helper defined later would be passed as a thunk and the
-# whole-body reuse of ``f1`` this test expects would not apply.
+# ``compute`` is defined below its callers: the helper reads it as a bare
+# module name, so the whole-body reuse of ``f1`` still applies.
 SAME_FILE = (
-    "def compute(v):\n    return v\n\n\n"
     "def f1(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n\n"
     "def f2(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n\n"
+    "def compute(v):\n    return v\n\n\n"
 )
 CROSS_A = (
     "def g(items):\n    names = []\n    for item in items:\n"

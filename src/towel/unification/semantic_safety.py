@@ -1,4 +1,13 @@
-"""Conservative guards for extractions that change execution context."""
+"""Conservative guards for extractions that change execution context.
+
+Reads that depend on the frame (``locals``, ``eval``, ``warnings.warn`` stack
+levels, and the module's imported or assigned aliases of them), external
+names another function may rebind while the block runs, nested scopes and
+loop control that cross the block boundary, names the block unbinds or
+declares ``global``/``nonlocal``, arguments that cannot be evaluated eagerly,
+and the names a block resolves at module scope, which a same-module helper
+may read bare.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +29,11 @@ from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
 from .builtins import is_builtin
-from .definite_assignment import definitely_bound_after, definitely_bound_before
+from .definite_assignment import (
+    definitely_bound_after,
+    definitely_bound_before,
+    locally_bound_names,
+)
 from .models import FunctionNode
 from .bounded_cache import BoundedCache
 from .scope_analyzer import ScopeAnalyzer
@@ -114,46 +127,65 @@ def nested_bindings_escape(function: FunctionNode, nodes: Iterable[ast.AST]) -> 
     return False
 
 
-def snapshots_rebound_external_names(
+UNKNOWABLE_HAZARD = "*"
+"""Stands for every external name when the module's scopes cannot be trusted."""
+
+
+def rebound_external_names(
     analyzer: ScopeAnalyzer,
     function: FunctionNode,
     nodes: Iterable[ast.AST],
-) -> bool:
-    """Reject snapshots of external bindings with visible rebinding hazards.
+) -> FrozenSet[str]:
+    """The external names the block reads that another function may rebind meanwhile.
 
-    Explicit global/nonlocal declarations identify bindings another function can
-    update during the extraction. Namespace reflection makes that identification
-    unreliable, so its presence conservatively disqualifies external snapshots.
-    Opaque mutation originating outside the analyzed module is not modeled.
+    Passing such a name to the helper snapshots it before the block's later
+    reads; a helper that reads it bare, where the block did, sees the
+    rebinding as the block did. Explicit global/nonlocal declarations
+    identify the bindings another function can update. Namespace reflection
+    makes that identification unreliable, so its presence makes every external
+    read a hazard, and a function the analyzer could not place is
+    ``UNKNOWABLE_HAZARD``. Opaque mutation from outside the module is not
+    modeled.
     """
     scope = analyzer.node_scopes.get(function)
     root = analyzer.root_scope
     if scope is None or root is None:
-        return True
+        return frozenset({UNKNOWABLE_HAZARD})
     hazards = analyzer.external_binding_hazards
     if hazards is None:
-        return True
+        return frozenset({UNKNOWABLE_HAZARD})
     rebound = hazards.rebound
-    unresolved = hazards.unresolved_nonlocal
-    reflective = hazards.reflective
+    unreliable = hazards.unresolved_nonlocal or hazards.reflective
+    found: Set[str] = set()
     for statement in nodes:
         for node in ast.walk(statement):
             if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
                 continue
             binding = scope.lookup(node.id)
             if binding is None:
-                if unresolved or reflective or (root.scope_id, node.id) in rebound:
-                    return True
+                if unreliable or (root.scope_id, node.id) in rebound:
+                    found.add(node.id)
                 continue
             # A local captured by a nested function is a mutable cell too.
             # Passing it to the helper snapshots it before that function runs.
             if (binding.scope_id, node.id) in rebound:
-                return True
-            if binding.scope_id == scope.scope_id:
-                continue
-            if unresolved or reflective:
-                return True
-    return False
+                found.add(node.id)
+            elif binding.scope_id != scope.scope_id and unreliable:
+                found.add(node.id)
+    return frozenset(found)
+
+
+def snapshots_rebound_external_names(
+    analyzer: ScopeAnalyzer,
+    function: FunctionNode,
+    nodes: Iterable[ast.AST],
+    deferred: AbstractSet[str] = frozenset(),
+) -> bool:
+    """Whether passing the block's external names would snapshot a rebinding hazard.
+
+    Names in ``deferred`` are read bare by the helper and are no hazard.
+    """
+    return bool(rebound_external_names(analyzer, function, nodes) - deferred)
 
 
 def _has_comprehension_assignment(nodes: Iterable[ast.AST]) -> bool:
@@ -260,6 +292,8 @@ class FrameAliases:
     namespace_functions: FrozenSet[str] = frozenset()
     warnings_modules: FrozenSet[str] = frozenset()
     warn_functions: FrozenSet[str] = frozenset()
+    # ``gf = sys._getframe``: names bound to a frame- or stack-reading function.
+    frame_functions: FrozenSet[str] = frozenset()
 
 
 NO_ALIASES = FrameAliases()
@@ -277,6 +311,7 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
     namespace_functions: Set[str] = set()
     warnings_modules: Set[str] = set()
     warn_functions: Set[str] = set()
+    frame_functions: Set[str] = set()
     for node in ast.walk(module):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -292,11 +327,52 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
                     namespace_functions.add(alias.asname or alias.name)
                 elif node.module == "warnings" and alias.name == "warn":
                     warn_functions.add(alias.asname or alias.name)
+    # ``e = eval`` and ``warn = warnings.warn`` are aliases too, wherever they
+    # are written; the pass is a fixed point, since an alias of an alias is
+    # one. Rebinding elsewhere makes this conservative, never unsound.
+    grew = True
+    while grew:
+        grew = False
+        for node in ast.walk(module):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+                continue
+            aliased = targets[0].id
+            value = node.value
+            if isinstance(value, ast.Name):
+                frame_builtin = (
+                    value.id in _NAMESPACE_CALLEES
+                    or value.id in _NAMESPACE_CALLEES_NO_ARGS
+                    or value.id in namespace_functions
+                )
+                warning = value.id in warn_functions
+                frame_reader = value.id in frame_functions
+            elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+                frame_builtin = value.value.id in builtins_modules and (
+                    value.attr in _NAMESPACE_CALLEES or value.attr in _NAMESPACE_CALLEES_NO_ARGS
+                )
+                warning = value.value.id in warnings_modules and value.attr == "warn"
+                # Any receiver: the attribute name alone identifies these.
+                frame_reader = value.attr in _FRAME_RELATIVE_CALLEES
+            else:
+                continue
+            if frame_builtin and aliased not in namespace_functions:
+                namespace_functions.add(aliased)
+                grew = True
+            if warning and aliased not in warn_functions:
+                warn_functions.add(aliased)
+                grew = True
+            if frame_reader and aliased not in frame_functions:
+                frame_functions.add(aliased)
+                grew = True
     result = FrameAliases(
         frozenset(builtins_modules),
         frozenset(namespace_functions),
         frozenset(warnings_modules),
         frozenset(warn_functions),
+        frozenset(frame_functions),
     )
     _FRAME_ALIASES[module] = result
     return result
@@ -407,20 +483,23 @@ def frame_read_outside_block(
             if id(node) in inside:
                 break
             if isinstance(node, ast.Call) and (
-                is_namespace_access_call(node, aliases) or _reads_own_frame(node)
+                is_namespace_access_call(node, aliases) or _reads_own_frame(node, aliases)
             ):
                 return True
     return False
 
 
-def _reads_own_frame(call: ast.Call) -> bool:
+def _reads_own_frame(call: ast.Call, aliases: FrameAliases) -> bool:
     """``sys._getframe()`` or ``inspect.currentframe()``: a handle to this frame's locals.
 
     Stack listings and warnings attribute to frames above the call and are
     unchanged by a helper that has already returned; a frame object read
-    later sees whatever locals are still there.
+    later sees whatever locals are still there. A name bound to one of these
+    (``gf = sys._getframe``) is over-approximated as the function itself.
     """
     callee = call.func
+    if isinstance(callee, ast.Name) and callee.id in aliases.frame_functions:
+        return True
     name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
     return name in {"_getframe", "currentframe"}
 
@@ -448,7 +527,7 @@ def _statement_requires_original_frame(statement: ast.AST, aliases: FrameAliases
                 and not node.keywords
             ):
                 return True
-            if _is_frame_relative_call(node) or _is_warning_call(node, aliases):
+            if _is_frame_relative_call(node, aliases) or _is_warning_call(node, aliases):
                 return True
     return False
 
@@ -458,15 +537,18 @@ _FRAME_RELATIVE_CALLEES = frozenset(
 )
 
 
-def _is_frame_relative_call(call: ast.Call) -> bool:
+def _is_frame_relative_call(call: ast.Call, aliases: FrameAliases = NO_ALIASES) -> bool:
     """Calls whose result depends on how many frames sit above them.
 
     ``warnings.warn(..., stacklevel=n)`` attributes the warning to the n-th
     caller; a helper adds one frame. Frame and stack inspection is likewise
-    relative to the current frame. Only direct, recognizably named calls are
-    detected; a callee that inspects frames internally is not.
+    relative to the current frame. Only direct, recognizably named calls and
+    the module's assigned aliases of them are detected; a callee that
+    inspects frames internally is not.
     """
     callee = call.func
+    if isinstance(callee, ast.Name) and callee.id in aliases.frame_functions:
+        return True
     name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
     if any(keyword.arg == "stacklevel" for keyword in call.keywords):
         return True
@@ -716,6 +798,9 @@ def available_argument_names(
     if not isinstance(module, ast.Module):
         return frozenset(names)
     parents = _module_parents(module)
+    if _within_class(parents, function):
+        # The compiler fills the ``__class__`` cell before any method runs.
+        names.add("__class__")
     inner: ast.AST = function
     while True:
         enclosing = _enclosing_function(parents, inner)
@@ -728,6 +813,31 @@ def available_argument_names(
 
 
 _MODULE_PARENTS: "WeakKeyDictionary[ast.AST, Dict[ast.AST, ast.AST]]" = WeakKeyDictionary()
+
+
+def module_resolved_names(
+    function: FunctionNode, analyzer: "ScopeAnalyzer", names: AbstractSet[str]
+) -> FrozenSet[str]:
+    """Of ``names``, those a read inside ``function`` resolves at module scope or nowhere.
+
+    A name the function binds anywhere is its local everywhere in it, and a
+    name an enclosing function binds is a cell; either read is not the
+    module's. Class bodies do not count: a method's bare names skip them.
+    Anything else reaches the module's namespace, then the builtins, and is
+    the same lookup from any function of the module.
+    """
+    # ``__class__`` is the cell the compiler gives a method for zero-argument
+    # ``super()``; it names the defining class, not a module binding.
+    resolved = set(names) - locally_bound_names(function) - {"__class__"}
+    module = analyzer.analyzed_tree
+    if not isinstance(module, ast.Module):
+        return frozenset(resolved)
+    parents = _module_parents(module)
+    enclosing = _enclosing_function(parents, function)
+    while enclosing is not None and resolved:
+        resolved -= locally_bound_names(enclosing)
+        enclosing = _enclosing_function(parents, enclosing)
+    return frozenset(resolved)
 
 
 def _module_parents(module: ast.Module) -> Dict[ast.AST, ast.AST]:
@@ -749,6 +859,16 @@ def _module_parents(module: ast.Module) -> Dict[ast.AST, ast.AST]:
 
 
 _SCOPE_NODES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _within_class(parents: Dict[ast.AST, ast.AST], node: ast.AST) -> bool:
+    """Whether a class body encloses ``node`` at any depth."""
+    current = parents.get(node)
+    while current is not None:
+        if isinstance(current, ast.ClassDef):
+            return True
+        current = parents.get(current)
+    return False
 
 
 def _enclosing_function(parents: Dict[ast.AST, ast.AST], node: ast.AST) -> Optional[FunctionNode]:

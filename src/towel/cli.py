@@ -83,7 +83,7 @@ For more help on a specific command:
     recovery.add_argument(
         "journal",
         type=Path,
-        help="the .towel-transaction-active directory an interrupted run left behind",
+        help="the .towel-transaction-<id> directory an interrupted run left behind",
     )
     return parser
 

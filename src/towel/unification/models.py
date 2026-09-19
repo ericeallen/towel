@@ -36,6 +36,7 @@ from typing import (
     Tuple,
     Union,
     FrozenSet,
+    Hashable,
 )
 import ast
 import hashlib
@@ -295,6 +296,7 @@ class RejectReason(StrEnum):
     TRIVIAL_FORWARDING_HELPER = "trivial_forwarding_helper"
     TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"
     UNBINDS_EXTERNAL_NAME = "unbinds_external_name"
+    DUPLICATE_PROPOSAL = "duplicate_proposal"
     FORWARDED_CALLEE = "forwarded_callee"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
     UNIFICATION_FAILED = "unification_failed"
@@ -350,6 +352,9 @@ class HelperTemplate:
     # only names that map into the former, and its own block must bind them.
     return_variables: Tuple[str, ...]
     bound_in_block: FrozenSet[str]
+    # Shared free names the helper reads as bare module references; an
+    # occurrence may join only where every read of them resolves the same way.
+    module_names: FrozenSet[str]
 
 
 def span_contains(node: ast.stmt, line_range: Tuple[int, int]) -> bool:
@@ -361,3 +366,29 @@ def span_contains(node: ast.stmt, line_range: Tuple[int, int]) -> bool:
 def encloses(outer: FunctionNode, inner: FunctionNode) -> bool:
     """Whether ``inner`` is ``outer`` or lies within its source span."""
     return outer is inner or span_contains(outer, (inner.lineno, inner.end_lineno or inner.lineno))
+
+
+def proposal_identity(proposal: RefactoringProposal) -> Hashable:
+    """What makes two proposals the same refactoring: the helper, its home, and its sites.
+
+    Many pairs of a file of similar functions propose one helper over one
+    set of clustered sites; the pair that found it first names it, the rest
+    add nothing. The helper's generated name is left out, since each
+    proposal mints its own. A site is its span: the same helper over the
+    same block yields the same call, since the arguments are the block's own
+    expressions in the helper's parameter order.
+    """
+    return (
+        proposal.file_path,
+        proposal.insert_into_class,
+        proposal.insert_into_function,
+        proposal.method_kind,
+        proposal.method_param_name,
+        GENERATED_HELPER_NAME.sub("", ast.dump(proposal.extracted_function)),
+        tuple(
+            sorted(
+                (replacement.file_path or proposal.file_path, replacement.line_range)
+                for replacement in proposal.replacements
+            )
+        ),
+    )

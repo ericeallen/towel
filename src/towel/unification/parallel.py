@@ -26,7 +26,6 @@ TOWEL_WORKERS=1 keeps evaluation serial; any other value caps the workers.
 
 from __future__ import annotations
 
-import ast
 import multiprocessing
 import os
 import resource
@@ -39,8 +38,8 @@ from .models import (
     ClassInfo,
     CodeBlockPair,
     FunctionArtifact,
-    GENERATED_HELPER_NAME,
     RefactoringProposal,
+    proposal_identity,
 )
 from concurrent.futures import ProcessPoolExecutor
 from ..diagnostics import LOG
@@ -108,6 +107,9 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, Refactoring
     if _worker_pairs is None:
         raise RuntimeError("Worker has no pairs to evaluate")
     start, end = bounds
+    # The parent's probe left identities behind at fork time; a chunk's
+    # first-by-index copy must win, so the worker starts from none.
+    _worker_engine._seen_proposals.clear()
     accepted: List[Tuple[int, RefactoringProposal]] = []
     for index in range(start, end):
         proposal = _worker_engine._try_refactor_pair_multi_file(
@@ -116,36 +118,6 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, Refactoring
         if proposal is not None:
             accepted.append((index, proposal))
     return accepted
-
-
-def proposal_identity(proposal: RefactoringProposal) -> Hashable:
-    """What makes two proposals the same refactoring: the helper, its home, and its sites.
-
-    Many pairs of a file of similar functions propose one helper over one
-    set of clustered sites; the pair that found it first names it, the rest
-    add nothing. The helper's generated name is left out of the identity,
-    since each proposal mints its own.
-    """
-    helper = ast.dump(proposal.extracted_function)
-    sites = tuple(
-        sorted(
-            (
-                replacement.file_path or proposal.file_path,
-                replacement.line_range,
-                GENERATED_HELPER_NAME.sub("", ast.dump(replacement.node)),
-            )
-            for replacement in proposal.replacements
-        )
-    )
-    return (
-        proposal.file_path,
-        proposal.insert_into_class,
-        proposal.insert_into_function,
-        proposal.method_kind,
-        proposal.method_param_name,
-        GENERATED_HELPER_NAME.sub("", helper),
-        sites,
-    )
 
 
 class _DistinctProposals:
@@ -321,6 +293,8 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         cold = [index for index in cold if index not in evaluated]
 
         def finish_serially(indices: Iterable[int]) -> List[RefactoringProposal]:
+            # Pairs evaluated here may precede the probe's; let a lower index win.
+            self._seen_proposals.clear()
             for index in indices:
                 serial_proposal = self._try_refactor_pair_multi_file(
                     block_pairs[index], all_functions, class_infos

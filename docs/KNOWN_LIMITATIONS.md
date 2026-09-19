@@ -39,13 +39,21 @@ rejects, and what remains outside its model. Read it together with
   path before the block, a module name bound on every path before the
   top-level statement holding the function and never deleted, or a binding
   of an enclosing function made before the inner function's definition. Any
-  other free variable (a local bound only on some path, a module name bound
-  later or nowhere, a name bound nowhere at all) is passed as a thunk so it
-  is read where the block read it; a helper defined below its callers is
-  therefore passed as `lambda: helper` unless the block reads it first.
-  Definite assignment is computed conservatively: loops,
-  `contextlib.suppress`, and non-exhaustive `match` statements never bind
-  definitely.
+  other free variable (a local bound only on some path, a cell of an
+  enclosing function not yet filled) is passed as a thunk so it is read
+  where the block read it. Definite assignment is computed conservatively:
+  loops, `contextlib.suppress`, and non-exhaustive `match` statements never
+  bind definitely.
+- **Module names stay module names.** A free name that both sites resolve at
+  module scope (or nowhere: a builtin, or a name the module never binds) is
+  not passed to a same-module helper at all; the helper reads it bare, where
+  the block did, so a helper defined below its callers, a class, an import,
+  or module data a callback rebinds between two reads all behave as before.
+  A clustered occurrence whose same-spelled name is a local of its function
+  or of an enclosing one does not join such a helper. Across files the
+  other module's same-named binding may differ, so the name stays a
+  parameter there, and module data that a callback may rebind still
+  declines the pair (`module_data_lookup`, `rebound_external_binding`).
 - **Forwarded callees.** A differing expression in call position would be
   passed as `lambda *args, **kwargs: callee(*args, **kwargs)`; such a call
   site reads worse than the duplication it removes, so the pair is declined

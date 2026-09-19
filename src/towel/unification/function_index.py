@@ -51,6 +51,11 @@ class FunctionIndex:
     _by_body_start: Mapping[Tuple[str, int], Tuple[FunctionArtifact, ...]] = field(
         default_factory=dict, compare=False
     )
+    # Every clustered site of every pair asks for its function; the answer
+    # for one (file, range) never changes within an analysis.
+    _innermost: Dict[Tuple[str, Tuple[int, int]], Optional[FunctionArtifact]] = field(
+        default_factory=dict, compare=False
+    )
 
     @classmethod
     def build(cls, functions: Sequence[FunctionArtifact]) -> FunctionIndex:
@@ -86,14 +91,17 @@ class FunctionIndex:
         self, file_path: str, line_range: Tuple[int, int]
     ) -> Optional[FunctionArtifact]:
         """The most deeply nested function of ``file_path`` whose span contains ``line_range``."""
+        key = (file_path, line_range)
+        if key in self._innermost:
+            return self._innermost[key]
         enclosing = [
             artifact
             for artifact in self.in_file(file_path)
             if span_contains(artifact.node, line_range)
         ]
-        if not enclosing:
-            return None
-        return max(enclosing, key=lambda artifact: artifact.node.lineno)
+        found = max(enclosing, key=lambda artifact: artifact.node.lineno) if enclosing else None
+        self._innermost[key] = found
+        return found
 
     def declares_global(self, file_path: str) -> bool:
         """Whether any function of ``file_path`` carries a ``global`` statement."""

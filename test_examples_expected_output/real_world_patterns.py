@@ -6,7 +6,7 @@ data validation, ETL pipelines, error handling, and logging.
 """
 
 
-def __extracted_func_6(__param_0, __extracted_func_5, auth, logger, rate_limiter, request):
+def __extracted_func_6(__param_0, auth, logger, rate_limiter, request):
     if not auth.verify_token(request.headers.get('Authorization')):
         logger.warn('Invalid token')
         return ({'error': 'Unauthorized'}, 401)
@@ -118,13 +118,13 @@ def __extracted_func_0(__param_0, events, time_window):
 def handle_api_request_v1(request, auth, rate_limiter, logger):
     """Version 1: Complete API request handling."""
     # Authentication and rate limiting
-    return __extracted_func_6(100, __extracted_func_5, auth, logger, rate_limiter, request)
+    return __extracted_func_6(100, auth, logger, rate_limiter, request)
 
 
 def handle_api_request_v2(request, auth, rate_limiter, logger):
     """Version 2: Different rate limit, same handling pattern."""
     # Same pattern, different limit
-    return __extracted_func_6(200, __extracted_func_5, auth, logger, rate_limiter, request)
+    return __extracted_func_6(200, auth, logger, rate_limiter, request)
 
 
 def etl_pipeline_extract_a(source, config, logger):

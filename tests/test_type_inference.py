@@ -182,7 +182,8 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
     assert "from typing import Any" in result
-    assert _signature(result) == "def __extracted_func_0(json: Any, text: str) -> list[Any]:"
+    # ``json`` is the module's import, read bare inside the helper, not a parameter.
+    assert _signature(result) == "def __extracted_func_0(text: str) -> list[Any]:"
     exec(compile(result, "<any>", "exec"), {})
 
 
@@ -304,9 +305,7 @@ def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
     result = engine.apply_refactoring(str(path), proposals[0])
     # ``Box`` the class is passed as a parameter, revealed as its constructor
     # signature; the helper is placed after the class, so the return is bare.
-    assert (
-        _signature(result) == "def __extracted_func_0(Box: Callable[[], Box], flag: bool) -> Box:"
-    )
+    assert _signature(result) == "def __extracted_func_0(flag: bool) -> Box:"
 
 
 def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:

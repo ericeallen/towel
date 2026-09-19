@@ -117,6 +117,14 @@ Each parameter is passed in the way that preserves the original evaluation:
   read where the block read it; this applies to the free variables the
   blocks share as much as to a differing argument
   (`available_argument_names` in `semantic_safety.py`).
+- **Module name.** A free name that both sites resolve at module scope, or
+  nowhere, is not a parameter of a same-module helper: the helper reads it
+  bare, which is the same lookup the block made, at the same moment
+  (`module_resolved_names`). This covers helpers defined below their callers,
+  classes, imports, and module data that another function rebinds through
+  `global`. A clustered occurrence joins only where every such name resolves
+  the same way. A cross-file helper keeps them as parameters, since the
+  other module's same-named binding may differ.
 - **Thunk.** Any other expression is passed as a zero-argument lambda (a *thunk*
   [Ingerman 1961]) and called inside the helper exactly where the original
   expression stood. This
@@ -244,10 +252,10 @@ decides:
   classes (a `BaseEndpoint` per protocol) does not misattribute the ancestor.
 - **Module level otherwise.** When the blocks are in local classes, nested
   functions, or functions whose common enclosing function name is not unique in
-  the file, the helper is hoisted to module level and takes everything as
-  parameters. Every free variable is already a parameter, so a module-level
-  helper is always a correct fallback, and it avoids placing a helper in a
-  scope that a same-named sibling function cannot see.
+  the file, the helper is hoisted to module level. Every free variable is a
+  parameter or a module name read bare, so a module-level helper is always
+  a correct fallback, and it avoids placing a helper in a scope that a
+  same-named sibling function cannot see.
 - **After the definitions its annotations name.** A module-level helper goes
   before the module's first definition, after its imports and docstring.
   When its annotations name classes or functions of the module, it goes

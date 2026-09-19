@@ -17,19 +17,25 @@
 The decision runs as a sequence of stages, each returning a typed result or
 None for a rejection that was already traced through ``_debug_reject``:
 
-1. guards on the blocks themselves (frames, rebound externals, closures);
+1. guards on the blocks themselves (frame reads, escaping nested bindings,
+   closures crossing the block boundary, moved ``global``/``nonlocal``
+   declarations);
 2. binding analysis of each block within its function, and the variables
    later code reads that the helper must return;
 3. the shape check: both blocks value-producing or neither, complete return
    coverage, not a trivial ``return name``, structurally similar;
 4. unification, and alignment of the returned variables across the blocks;
 5. where the helper will be visible from, for hygienic naming;
-6. the helper's free variables and their lifetimes, declarations, thunks;
-7. rendering the helper;
+6. the helper's free variables: the shared names a same-file helper reads
+   bare because both sites resolve them at module scope, the module-data
+   and rebound-external guards on the rest, lifetimes, declarations, thunks;
+7. rendering the helper, inlining leading thunks, and declining impure eager
+   parameters and helpers that only forward;
 8. the orphan check on what the blocks leave behind;
 9. the call sites, each verified by instantiation, plus clustered sites;
 10. placement: function, class, or module, and a host that closes no cycle;
-11. the proposal, the trivial-helper filter, reuse, and annotations.
+11. the proposal: reuse of an existing function, the filter that declines
+    reducing an earlier pass's helper to a forwarder, and annotations.
 """
 
 from __future__ import annotations
@@ -42,11 +48,13 @@ from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, Froz
 
 from ..diagnostics import VALIDATION, debugging
 from .definite_assignment import definitely_bound_after
+from .statement_facts import loaded_names
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
 from .builtins import CALL_ARGUMENT_BUILTINS, is_builtin
 from .semantic_safety import (
     available_argument_names,
+    module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
 )
@@ -60,6 +68,7 @@ from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .models import (
     HelperHome,
+    proposal_identity,
     span_contains,
     BlockBindingSnapshot,
     ClassInfo,
@@ -82,7 +91,6 @@ from .semantic_safety import (
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
     frame_read_outside_block,
-    snapshots_rebound_external_names,
     unbinds_external_name,
     uses_class_private_names,
 )
@@ -141,6 +149,10 @@ class _FreeVariables:
     # Per block, the names its call site can resolve; an argument that is a
     # bare name is hoisted only when it is one of these.
     available_names: Tuple[FrozenSet[str], FrozenSet[str]]
+    # Shared free names the helper reads as bare references instead of taking
+    # as parameters: every read at both sites resolves at module scope (or
+    # nowhere), and the helper lives in that module, so the lookup is the same.
+    module_names: FrozenSet[str]
 
 
 @dataclass(frozen=True)
@@ -392,28 +404,6 @@ class PairEvaluation(
 
         func1, func2 = ctx.func1, ctx.func2
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
-
-        if (
-            self._block_rejected(
-                snapshots_rebound_external_names,
-                pair.block1_nodes,
-                func1,
-                scope_analyzer,
-                function_id=ctx.function1_id,
-                block_id=ctx.block1_id,
-            )
-        ) or (
-            self._block_rejected(
-                snapshots_rebound_external_names,
-                pair.block2_nodes,
-                func2,
-                scope_analyzer2,
-                function_id=ctx.function2_id,
-                block_id=ctx.block2_id,
-            )
-        ):
-            self._debug_reject(RejectReason.REBOUND_EXTERNAL_BINDING, pair)
-            return None
 
         # A function nested inside a method shares the class for name mangling
         # but has no receiver; only a function defined directly in the class
@@ -743,12 +733,28 @@ class PairEvaluation(
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
         self._strip_fstring_params(substitution)
         free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1)
-        if self._rejects_module_data_lookup(pair, pair.scope_analyzer1, pair.scope_analyzer2):
-            return None
         # A parameter cannot also be declared global or nonlocal in the helper.
         globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
             pair, scope_analyzer, free_vars
         )
+        module_names = self._names_kept_free(pair, ctx, free_vars)
+        free_vars -= module_names
+        if self._rejects_module_data_lookup(
+            pair, pair.scope_analyzer1, pair.scope_analyzer2, deferred=module_names
+        ):
+            return None
+        # An external name another function may rebind is snapshotted by the
+        # call unless the helper reads it bare.
+        if any(
+            self._rebound_external_names(func, nodes, analyzer, function_id, block_id)
+            - module_names
+            for func, nodes, analyzer, function_id, block_id in (
+                (ctx.func1, pair.block1_nodes, scope_analyzer, ctx.function1_id, ctx.block1_id),
+                (ctx.func2, pair.block2_nodes, scope_analyzer2, ctx.function2_id, ctx.block2_id),
+            )
+        ):
+            self._debug_reject(RejectReason.REBOUND_EXTERNAL_BINDING, pair)
+            return None
         available = (
             available_argument_names(ctx.func1, pair.block1_nodes, ctx.scope_analyzer),
             available_argument_names(ctx.func2, pair.block2_nodes, ctx.scope_analyzer2),
@@ -762,8 +768,35 @@ class PairEvaluation(
             available,
         )
         return _FreeVariables(
-            free_vars, free_vars1, free_vars2, globals_to_declare, nonlocals_to_declare, available
+            free_vars,
+            free_vars1,
+            free_vars2,
+            globals_to_declare,
+            nonlocals_to_declare,
+            available,
+            module_names,
         )
+
+    def _names_kept_free(
+        self, pair: CodeBlockPair, ctx: "_PairContext", free_vars: Set[str]
+    ) -> FrozenSet[str]:
+        """The shared free names a same-file helper reads as bare references.
+
+        A name every read of which, at both sites, the module binds or nothing
+        binds is the same lookup from a helper in that module: the helper's
+        home encloses both sites (module level, their common function, or
+        their class), so no scope between it and the module binds the name,
+        and the helper reads it where the block did, as late and as
+        conditionally. Passing it instead would snapshot module data at the
+        call. Across files the other module's same-named binding may differ,
+        so the name stays a parameter there.
+        """
+        if pair.is_cross_file or not free_vars:
+            return frozenset()
+        # A shared free name is spelled the same at both sites: hygienic
+        # renaming touches only the names a block binds.
+        kept = module_resolved_names(ctx.func1, ctx.scope_analyzer, free_vars)
+        return module_resolved_names(ctx.func2, ctx.scope_analyzer2, kept)
 
     # -- 7 ---------------------------------------------------------------------
 
@@ -782,7 +815,7 @@ class PairEvaluation(
                 template_block=pair.block1_nodes,
                 substitution=unified.substitution,
                 free_variables=free.free_vars,
-                enclosing_names=scope.enclosing_names,
+                enclosing_names=scope.enclosing_names | free.module_names,
                 is_value_producing=value_producing,
                 return_variables=list(unified.ordered_return_variables[0]),
                 global_decls=free.globals_to_declare if free.globals_to_declare else None,
@@ -877,9 +910,17 @@ class PairEvaluation(
                     is_value_producing=value_producing,
                     globals_to_declare=free.globals_to_declare,
                     nonlocals_to_declare=free.nonlocals_to_declare,
-                    available_names=free.available_names[0],
+                    # Only the names the template block reads can matter to a
+                    # candidate's eager-argument check; the rest would make
+                    # the template's key differ per function position.
+                    # Only the names the template block reads can matter to a
+                    # candidate's eager-argument check; the rest would make
+                    # the template's key differ per function position.
+                    available_names=free.available_names[0]
+                    & set().union(*(loaded_names(node) for node in pair.block1_nodes)),
                     return_variables=tuple(unified.ordered_return_variables[0]),
                     bound_in_block=frozenset(analysis.snapshot1.bound_in_block),
+                    module_names=free.module_names,
                 ),
                 scope.dce_node,
                 functions,
@@ -1173,6 +1214,13 @@ class PairEvaluation(
                 )
             ),
         )
+        identity = proposal_identity(proposal)
+        if identity in self._seen_proposals:
+            # The same helper over the same sites, found through another pair:
+            # nothing the rest of this stage computes would differ.
+            self._debug_reject(RejectReason.DUPLICATE_PROPOSAL, pair)
+            return None
+        self._seen_proposals.add(identity)
         if self.reuse_existing_functions:
             redirected = self._redirect_to_existing_function(proposal, functions)
             if redirected is not None:

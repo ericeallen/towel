@@ -6,7 +6,7 @@ collide with variables in the surrounding scope or in the calling context.
 """
 
 
-def __extracted_func_5(__param_0, __param_1, __extracted_func_4, data):
+def __extracted_func_5(__param_0, __param_1, data):
     results = []
     for item in data:
         a = item ** __param_0
@@ -20,7 +20,7 @@ def __extracted_func_4(__param_0, a, results):
     results.append(c)
 
 
-def __extracted_func_3(__param_0, __extracted_func_2, data, result):
+def __extracted_func_3(__param_0, data, result):
     for item in data:
         x = item * __param_0
         __extracted_func_2(result, x)
@@ -53,13 +53,13 @@ def __extracted_func_0(__param_0, values, x, y):
 def process_with_temp_var_v1(data, result):
     """Version 1: Uses 'result' in outer scope, 'x' in duplicate block."""
     result = []
-    return __extracted_func_3(2, __extracted_func_2, data, result)
+    return __extracted_func_3(2, data, result)
 
 
 def process_with_temp_var_v2(data, result):
     """Version 2: Same pattern but 'result' is a parameter name."""
     result = []
-    return __extracted_func_3(3, __extracted_func_2, data, result)
+    return __extracted_func_3(3, data, result)
 
 
 def calculate_nested_scope_a(values, x, y):
@@ -133,7 +133,7 @@ def nested_function_scope_v1(data, helper, processor):
     def processor(x):
         return x + 5
 
-    return __extracted_func_5(2, 100, __extracted_func_4, data)
+    return __extracted_func_5(2, 100, data)
 
 
 def nested_function_scope_v2(data, helper, processor):
@@ -145,4 +145,4 @@ def nested_function_scope_v2(data, helper, processor):
     def processor(x):
         return x + 5
 
-    return __extracted_func_5(3, 200, __extracted_func_4, data)
+    return __extracted_func_5(3, 200, data)

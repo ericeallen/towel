@@ -1,6 +1,9 @@
 """Behavioral regressions for release-critical filesystem and cache defects."""
 
+import contextlib
+import io
 from pathlib import Path
+from typing import Dict
 
 import pytest
 
@@ -83,13 +86,28 @@ def test_helper_available_during_module_initialization(tmp_path: Path) -> None:
     assert namespace["RESULT"] == 7
 
 
-def test_module_data_is_not_snapshotted_across_callbacks(tmp_path: Path) -> None:
+def test_module_data_is_read_where_the_block_read_it_across_callbacks(tmp_path: Path) -> None:
+    """A same-module helper reads ``value`` bare, so the callback's rebinding is seen."""
     path = tmp_path / "example.py"
-    body = "    before = value\n    update()\n    after = value\n    return before, after\n"
+    body = "    before = value\n    update()\n    after = value\n    print(before, after)\n"
     source = "value = 1\ndef update():\n    global value\n    value += 1\n"
-    source += "def first():\n" + body + "def second():\n" + body
+    source += "def first():\n" + body + "    return before\n"
+    source += "def second():\n    value_seen = value\n" + body + "    return after + value_seen\n"
     path.write_text(source)
-    assert UnificationRefactorEngine().analyze_file(str(path)) == []
+    final, applied, _ = UnificationRefactorEngine().refactor_to_fixed_point(
+        str(path), progress="none"
+    )
+    assert applied == 1
+    helper = next(line for line in final.splitlines() if line.startswith("def __extracted_func"))
+    assert "value" not in helper
+    outputs = []
+    for text in (source, final):
+        namespace: Dict[str, object] = {}
+        with contextlib.redirect_stdout(io.StringIO()) as captured:
+            exec(compile(text, "example.py", "exec"), namespace)
+            results = (namespace["first"](), namespace["second"]())  # type: ignore[operator]
+        outputs.append((results, captured.getvalue()))
+    assert outputs[0] == outputs[1]
 
 
 def test_global_and_local_with_same_spelling_are_not_conflated(tmp_path: Path) -> None:

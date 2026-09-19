@@ -330,6 +330,15 @@ ecosystem evidence behind each claim. The format follows
   under the pair budget peaked at 33.6 GB holding the copies and now peaks
   at 0.74 GB; the output is the same, since the overlap filter never chose
   a later copy.
+- A proposal whose helper, home and call sites repeat an earlier pair's is
+  declined (`duplicate_proposal`) before the reuse redirect, the forwarder
+  filter and annotation run on it; the clustering scan's key no longer
+  carries names the template block never reads, which made it differ per
+  function position; and the function lookup every clustered site makes is
+  memoized. A file of hundreds of near-identical functions that all read
+  one module global, which the module-name rule now admits, runs several
+  times faster than it otherwise would; its pair evaluation is still what
+  `--max-pairs` bounds.
 - The verdict of the instantiation check is memoized on the helper, call
   and block, which it repeated many times over across pair and cluster
   evaluation: a file of a hundred similar functions takes 31 s instead of
@@ -360,9 +369,22 @@ ecosystem evidence behind each claim. The format follows
   a branch no run takes, used to be hoisted into an eager argument and raise
   `NameError` at every call (found by the new property test); a helper
   defined below its callers, called once at import time before its
-  definition, raised the same way. Both are now thunks, and a helper defined
-  below its callers is passed as `lambda: helper` unless the block reads it
-  first.
+  definition, raised the same way. Both are now read where the block read
+  them: a same-module helper reads the name bare (next entry), and a
+  cross-file helper takes it as a thunk.
+- A free name that both sites resolve at module scope, or nowhere, is no
+  longer a parameter of a same-module helper: the helper reads it bare,
+  which is the lookup the block made, at the moment the block made it. A
+  helper defined below its callers, a class, an import, or module data a
+  callback rebinds between two reads (previously declined as
+  `module_data_lookup` or `rebound_external_binding`) all extract, with
+  fewer parameters and no thunk; hyper-h2 loses seven such parameters and
+  gains three extractions, and its own 1,662 tests pass on the output. A
+  clustered occurrence whose same-spelled name is a local does not join;
+  cross-file helpers still take the name as a parameter, and module data
+  a callback may rebind still declines a cross-file pair. `__class__`, the
+  cell zero-argument `super()` reads, names the defining class and stays a
+  parameter of a method helper.
 - A call site that would pass a callee as
   `lambda *args, **kwargs: callee(*args, **kwargs)` is declined by name
   (`forwarded_callee`). It used to be declined by accident, because the
@@ -370,9 +392,11 @@ ecosystem evidence behind each claim. The format follows
   that miscount also declined any thunk containing a lambda, such as
   `lambda: sorted(items, key=lambda x: x)`, which now extracts.
 - A comprehension variable is no longer thunked.
-- The frame-reading builtins and `eval`/`exec` anywhere in the enclosing
-  function decline the block, not only inside it, and aliases of them are
-  resolved through bindings.
+- The frame-reading builtins, `eval`/`exec`, `sys._getframe` and
+  `inspect.currentframe` anywhere in the enclosing function decline the
+  block, not only inside it, and their aliases, imported or assigned
+  (`e = eval`, `warn = warnings.warn`, `gf = sys._getframe`, an alias of an
+  alias), are resolved through the module's bindings.
 - `warnings.warn` without `stacklevel`, and a `stacklevel` reached through
   an alias, decline the block.
 - An object a class instantiation or a resource factory (`open`,

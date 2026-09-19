@@ -16,7 +16,8 @@ from typing import List, Tuple
 
 from towel.diagnostics import Settings
 from towel.unification.models import RefactoringProposal, Replacement
-from towel.unification.parallel import _DistinctProposals, proposal_identity
+from towel.unification.models import proposal_identity
+from towel.unification.parallel import _DistinctProposals
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})

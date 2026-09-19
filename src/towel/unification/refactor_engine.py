@@ -33,6 +33,7 @@ from typing import (
     Set,
     Any,
     Callable,
+    Hashable,
     List,
     Tuple,
     Dict,
@@ -409,6 +410,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         )
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
+        self._seen_proposals: Set[Hashable] = set()
         # Per-run record of what each applied extraction replaced: the original
         # block and the generated call, for the naming step's before/after view.
         self._change_log: List[AppliedChange] = []
@@ -652,6 +654,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         if not block_pairs:
             return []
 
+        self._seen_proposals.clear()
         self._record_function_paths(all_functions)
         if self._should_use_parallel(len(block_pairs)):
             return self._evaluate_pairs_parallel(

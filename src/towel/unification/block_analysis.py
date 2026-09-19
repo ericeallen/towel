@@ -15,7 +15,10 @@
 """Facts about one block within its function, and the filters that read them.
 
 What a block binds, reads, and returns; whether it produces a value;
-whether it reassigns a name it did not bind; which names must be declared
+whether it reassigns a name it did not bind; which external names another
+function may rebind while it runs, and whether it reads module data a
+callback could rebind (exempting names the helper reads bare); which names
+must be declared
 global or nonlocal in a helper; and the two filters that decline helpers
 which only forward or rename. Every answer is memoized per block structure
 or per function, since the pair stages ask the same questions of the same
@@ -26,7 +29,19 @@ from __future__ import annotations
 
 import ast
 
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, cast
+from typing import (
+    AbstractSet,
+    Callable,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    cast,
+)
 from .assignment_analyzer import (
     stored_names,
     _collect_bindings_and_reassignments,
@@ -44,7 +59,7 @@ from .models import (
 )
 from .parameters import parameter_names
 from .scope_analyzer import ScopeAnalyzer
-from .semantic_safety import walk_own_scope
+from .semantic_safety import rebound_external_names, walk_own_scope
 from .structural_memo import load_substitution, store_substitution
 from .substitution import Substitution
 from .visitors import (
@@ -673,18 +688,36 @@ class BlockAnalysis(EngineState):
                     parameterized_vars.add(expr.id)
         return set(free_vars1) - parameterized_vars
 
+    def _rebound_external_names(
+        self,
+        func: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        analyzer: ScopeAnalyzer,
+        function_id: Optional[str] = None,
+        block_id: Optional[str] = None,
+    ) -> FrozenSet[str]:
+        """``rebound_external_names`` of the block, computed once per (function, block)."""
+        return self._per_block(
+            "rebound_external_names",
+            func,
+            nodes,
+            lambda: rebound_external_names(analyzer, func, nodes),
+            function_id=function_id,
+            block_id=block_id,
+        )
+
     def _rejects_module_data_lookup(
         self,
         pair: CodeBlockPair,
         analyzer1: Optional[ScopeAnalyzer],
         analyzer2: Optional[ScopeAnalyzer],
+        deferred: AbstractSet[str] = frozenset(),
     ) -> bool:
         """True when a block reads a module-level name that a callback could rebind.
 
         Module data can be rebound between two reads; passing it as a helper
-        argument snapshots the value, but retaining the global name could capture
-        a different caller's local. Reject until extraction can represent
-        deferred, scope-correct lookups.
+        argument snapshots the value. A name in ``deferred`` is exempt: the
+        helper keeps it as a bare reference and reads it where the block did.
         """
         for block, block_analyzer in (
             (pair.block1_nodes, analyzer1),
@@ -695,6 +728,8 @@ class BlockAnalysis(EngineState):
             for statement in block:
                 for node in ast.walk(statement):
                     if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                        continue
+                    if node.id in deferred:
                         continue
                     binding = block_analyzer.identifier_bindings.get(
                         node
