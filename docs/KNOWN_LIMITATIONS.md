@@ -128,7 +128,8 @@ about where each one stops.
   plain `open` of a `__file__`-relative path and copies regions of it (lark's
   standalone parser generator); a *caller or test* that asserts on the exact
   frames or text of a traceback the refactored code raises normally (glom and
-  rich assert on rendered tracebacks); a test that asserts the exact line
+  rich assert on rendered tracebacks, and pyparsing's `ParseException.explain`
+  counts the frames of the traceback it was raised through); a test that asserts the exact line
   number a warning is issued from inside its own module, which a helper
   inserted above it shifts (trio's `test_deprecate`); and a *callee* that
   reads its caller's frame, which the block-level guard cannot see through
@@ -245,6 +246,16 @@ where the evidence comes from:
   string.
 - The degradation on a type error is per proposal, not per parameter: one
   annotation the checker rejects costs the helper all of them.
+- Each modified file is checked on its own, against the other files as
+  they are on disk. For a helper hosted in another module, the file that
+  now imports it is checked while the host still lacks it, and pyright
+  reports the import as an unknown symbol under every variant, so the
+  helper ends unannotated. In the eight corpus projects whose output
+  pyright's verification changed, 25 of the 459 new-error reports that
+  made annotations fall back were this (itsdangerous, structlog, trio,
+  werkzeug; September 19, 2026); the rest were annotations pyright rejects
+  under the project's own configuration where mypy accepted them. The
+  result is fewer annotations, never wrong code.
 - Pyright reads files, so while it is consulted a probe copy of the module
   exists beside it in the package, created exclusively with owner-only
   permissions under a unique `_towel_probe_` name and removed afterwards,

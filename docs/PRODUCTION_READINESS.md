@@ -7,16 +7,80 @@ original position, and a standing 141-project ecosystem check passes every
 project's own test suite before and after transformation, apart from 4
 documented frame-, line-, or source-sensitive cases. This supersedes
 the alpha disposition in [OPEN_SOURCE_AUDIT.md](OPEN_SOURCE_AUDIT.md). The
-first section below records the current corpus and run; the sections after
-it are the 1.414 report, kept as the record of how the corpus was built and
-what it found.
+first section below records the 1.732 release-candidate run; the next
+records how the corpus grew to 141 projects and what that run found; the
+sections after it are the 1.414 report.
 
-The run predates the fifth audit's engine changes (everything after
-`938d351`); those are covered by the hostile batteries, the property tests,
-and per-project spot checks (hyper-h2's own 1,662 tests pass on the current
-output, bare and with the defaults, and Towel's own suite passes on Towel
-refactored by the current engine, at `5ff2458`, September 19, 2026), but
-the corpus has not been re-run.
+## The 1.732 candidate run (September 19, 2026)
+
+The release gate for 1.732 ran on commit `347d62b` from a detached
+worktree snapshot, macOS, Python 3.13.7 for the harness, the refactoring
+and every project's environment, rebuilt in a fresh work directory. (The
+previous directory's environments mixed Python 3.12 and 3.13, some without
+a `pyvenv.cfg`, and macOS's daily cleanup of `/tmp` had deleted `HEAD`,
+`config` and `index` from 39 of its clones.) Three projects ran at a time
+with Towel's default forked workers, and the defaults were on: formatting
+through Black, isort and ruff, annotations inferred through mypy and
+verified by every checker the project configures, mypy or pyright or both.
+An external sampler recorded the memory of every refactor's process tree
+every two seconds.
+
+**Totals: PASS 118, NO_CHANGE 19, BROKEN_KNOWN 4, BROKEN 0.** Against the
+`938d351` run: dpath now changes and passes; pluggy and trio, previously
+known-broken, pass because nothing their known tests watch differs; rich's
+documented traceback test now differs and is known-broken as the manifest
+records; and pyparsing is newly known-broken. The module-name rule admits
+six of its blocks that end in `raise ParseException(...)`, and
+`ParseException.explain(depth=1)` counts traceback frames, so the helper's
+frame shows (the traceback-shape limitation, as for glom; the manifest
+names only that test). The four known-broken projects are glom, lark,
+pyparsing and rich.
+
+Two earlier candidate runs that day found five defects, each fixed before
+this run, with a regression test:
+
+- oauthlib: a same-file pair's helper hosted in a shared ancestor class
+  defined in another module read `BearerToken` bare, and 55 tests raised
+  `NameError` (`52a754f`, fixture xf15).
+- typing_extensions: blocks that call its own `_caller()`, which reads
+  `sys._getframe(depth + 1)`, were extracted, and six `TypeAliasType`
+  pickling tests failed; calls to a module's own caller-frame readers now
+  count as frame reads (`09ba025`, fixture r146).
+- pyright ran as `python -m pyright` from the module's directory, which
+  put the project's own packages ahead of the standard library, so sphinx's
+  `locale` package was executed and pyright produced nothing for flask,
+  pytest, structlog, sphinx, trio and werkzeug; it now runs with
+  `python -P` (`0bb2075`).
+- mypy's finished builds piled up as uncollected reference cycles, and
+  sphinx's refactor reached 40 GB in one process; the oracle now collects
+  them every ten builds, and the same refactor, run alone, peaks at 1.76 GB
+  and takes 1,140 s (`e42ed4f` and its follow-up).
+- The candidate-pair budget's default of 2,000,000 cut networkx (9.25
+  million pairs) and sphinx (8.45 million) on every pass, and their changed
+  files fell from 105 to 73 and from 101 to 87; the default is now
+  20,000,000 (`b68c9c8`), and sphinx changes 107 files.
+
+**Memory.** The machine's used memory peaked at 34.1 GB of 128 GB, and free
+memory never fell below 66.8 GB, with three projects in flight. The median
+refactor's largest process peaked at 153 MB and no single refactor process
+exceeded 1.65 GB (sphinx). Summed over forked workers, the largest trees
+were sphinx 22.6 GB, croniter 15.6 GB and networkx 10.8 GB, but forked
+workers share their pages copy-on-write, so those sums overstate what the
+machine held.
+
+**Time.** The run took 77 minutes, 61 of them sphinx, whose refactor now
+checks every change with pyright as well as mypy (its configuration asks
+for both) and is no longer cut by the budget. Per-project refactor times in
+this run are not a clean comparison with `938d351`: other refactors ran on
+the same machine during it while the defects above were being measured.
+Measured alone on the final commit, sphinx's refactor takes 1,140 s
+(2,058 s at `938d351`) and applies 440 refactorings across 107 files, and
+Towel's own source takes 13.3 s against 12.8 s at `5ff2458` (Python 3.13,
+one core, the defaults).
+
+Commits after `347d62b` change timing only: the exactness baselines are
+byte-identical, and click and jinja2 produce identical output with and
+without the last of them.
 
 ## The 141-project corpus (September 17–18, 2026)
 

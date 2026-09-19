@@ -15,7 +15,7 @@ This log records notable repository states with all tests passing, to make it ea
   - Environment: the result does not depend on the working directory or path spelling; journals are per batch and scoped to the files they name; SIGTERM, Ctrl-C and a closed pipe end a run cleanly; progress is on stderr.
   - Performance: the engine is a chain of typed mixins; per-function and per-statement facts, statement-sequence buckets, exact incremental global passes, one proposal per identity, the instantiation memo and the candidate-pair budget; a hundred similar functions take 16 s (September 19, 2026, one core).
   - Security and packaging: pyright runs with the project's interpreter, the ecosystem check is opt-in with pinned commits, dependency audit and Dependabot in CI, the `format` extra's Black floor matches the goldens, a slimmer sdist.
-- Status: All tests green (2,182 tests and 34 subtests on Python 3.12 at `5ff2458`; hyper-h2's own 1,662 tests and Towel's own suite pass on their refactored outputs). Ecosystem check: 117 PASS, 20 NO_CHANGE, 4 BROKEN_KNOWN of 141 on commit `938d351` ([PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)), 154 commits before this candidate; not yet rerun.
+- Status: All tests green (2,182 tests and 34 subtests on Python 3.12 at `5ff2458`; hyper-h2's own 1,662 tests and Towel's own suite pass on their refactored outputs). Ecosystem check: 118 PASS, 19 NO_CHANGE, 4 BROKEN_KNOWN, 0 BROKEN of 141 on commit `347d62b`, September 19, 2026, Python 3.13 ([PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)); two earlier candidate runs that day found five defects, fixed before it. Later commits change timing only.
 
 ---
 
