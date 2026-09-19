@@ -398,9 +398,18 @@ Changes since 1.618. This release is still in preparation.
   count; matching pre-existing failures remain visible in the report. Pytest
   commands request complete tallies and failure identities; custom runner
   failure statuses must be declared, and retests retain their actual statuses.
+  Retests remove broad selectors wherever they occur and require the exact
+  selected test count; ambiguous command options decline the retest. Agreement
+  on isolated tests requires confirmation with the complete original test
+  command, so test-order regressions cannot disappear from the check. Failed
+  Git observations cannot become `NO_CHANGE`, and added, deleted, or renamed
+  paths count as changes. Source provenance names the checkout actually used;
+  archives explicitly require a separately retained source manifest.
   The harness records its requested typing mode. Its explicit `--no-types`
   option supports behavioral validation of projects without a complete typing
   environment; it never retries a failed typed run by silently opting out.
+- The worker-cleanup regression fails when process inspection fails, instead
+  of treating an empty result from a failed command as proof that workers exited.
 - Mypy runs in an owned persistent worker with incremental caches and periodic
   garbage collection. Its process-global state cannot freeze or unfreeze a
   library caller's heap, concurrent requests are serialized, and explicit
