@@ -8,9 +8,10 @@ The current candidate requires its own release gates before publication.
 **Historical disposition: ready for production use as a reviewed refactoring tool.**
 Every accepted proposal is checked by a syntactic instantiation invariant,
 arguments with possible effects are evaluated inside the helper at their
-original position, and a standing 141-project ecosystem check passes every
-project's own test suite before and after transformation, apart from 4
-documented frame-, line-, or source-sensitive cases. This supersedes
+original position, and a standing 141-project ecosystem check compares each
+project's own test suite before and after transformation. Outcomes match,
+including any pre-existing failures, apart from 4 documented frame-, line-,
+or source-sensitive cases. This supersedes
 the alpha disposition in [OPEN_SOURCE_AUDIT.md](OPEN_SOURCE_AUDIT.md). The
 first section below records the 1.732 release-candidate run; the next
 records how the corpus grew to 141 projects and what that run found; the
@@ -83,9 +84,10 @@ Measured alone on the final commit, sphinx's refactor takes 1,140 s
 Towel's own source takes 13.3 s against 12.8 s at `5ff2458` (Python 3.13,
 one core, the defaults).
 
-Commits after `347d62b` change timing only: the exactness baselines are
-byte-identical, and click and jinja2 produce identical output with and
-without the last of them.
+The subsequent timing-only changes, through the reviewed `83f4d8a` checkpoint,
+left the exactness baselines byte-identical, and click and jinja2 produced
+identical output with and without the last of them. The later audit fixes
+require fresh behavioral validation, as noted above.
 
 ## The 141-project corpus (September 17–18, 2026)
 

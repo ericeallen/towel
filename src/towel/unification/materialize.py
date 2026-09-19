@@ -20,7 +20,9 @@ helper inserted and every call site replaced, then the generated Python is
 compiled and every generated call is checked to bind the helper's
 signature. With a type checker installed the annotated variant is tried
 first and falls back to Any and then to no annotations when it introduces a
-type error. The immutable byte plan is applied transactionally by
+type error. Reused functions are checked with their existing signatures;
+a type error declines the reuse rather than weakening those signatures.
+The immutable byte plan is applied transactionally by
 changes.py.
 """
 
@@ -130,8 +132,8 @@ class Materialization(
         proposal = copy.deepcopy(proposal)
         self._infer_helper_annotations(proposal)
         variants = [proposal]
-        check_types = self._checks_generated_types(proposal)
-        if check_types:
+        check_types = self._checks_project_types(proposal)
+        if check_types and proposal.reused_function is None:
             variants += [
                 self._with_every_annotation_any(proposal),
                 self._without_annotations(proposal),
@@ -157,6 +159,8 @@ class Materialization(
                 del self._change_log[mark:]
                 raise
             del self._change_log[mark:]
+        if proposal.reused_function is not None:
+            raise RefactoringError("Reusing the existing function introduces project type errors")
         raise RefactoringError("Every helper annotation variant introduces project type errors")
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:

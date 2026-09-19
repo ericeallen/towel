@@ -258,8 +258,9 @@ where the evidence comes from:
   an additional occurrence. Safe project checking rules are honored; project
   plugins, configured executables and report destinations are not executed.
 - Pyright verification uses a private copy of Python sources, stubs, typing
-  markers and checker configuration. Cyclic or external source symlinks
-  cannot be represented safely and cause verification to decline the proposal.
+  markers and checker configuration. Cyclic or external source symlinks and
+  configured source or stub search roots outside the project cannot be
+  represented safely and cause verification to decline the proposal.
   Project include/exclude settings still determine the checker's coverage.
 - Mypy runs in an owned worker process and never freezes the caller's garbage
   collector. Library users should call the oracle's `close()` when finished;

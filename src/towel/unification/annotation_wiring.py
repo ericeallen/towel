@@ -193,10 +193,12 @@ class HelperAnnotationWiring(EngineState):
         except SyntaxError:
             return None
 
-    def _checks_generated_types(self, proposal: RefactoringProposal) -> bool:
-        """Whether the generated code is to be type-checked: a checker exists and the helper is annotated."""
-        if self.type_oracle is None or proposal.reused_function is not None:
+    def _checks_project_types(self, proposal: RefactoringProposal) -> bool:
+        """Check reused calls and annotated new helpers when an oracle is present."""
+        if self.type_oracle is None:
             return False
+        if proposal.reused_function is not None:
+            return True
         helper = proposal.extracted_function
         return helper.returns is not None or any(
             arg.annotation is not None for arg in helper.args.posonlyargs + helper.args.args

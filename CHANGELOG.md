@@ -104,9 +104,11 @@ ecosystem evidence behind each claim. The format follows
   string annotation: `memoryview[int]`, copied from tornado's own signatures,
   raised `TypeError` at import on an interpreter where `memoryview` is not
   generic.
-- With a type checker installed, all modified files are checked together in
-  the prospective project, including unchanged consumers. New errors make
-  annotations fall back to `Any`, then to none; every variant must pass.
+- With a type checker installed, annotated helper extractions and existing
+  function reuse check all modified files together in the prospective project,
+  including unchanged consumers. New errors make generated helper annotations
+  fall back to `Any`, then to none; every variant must pass. Reused functions
+  keep their existing signatures, and incompatible calls decline the reuse.
   Checker failure or remaining new errors decline the proposal. Cross-file
   helper imports no longer lose valid annotations because their host was stale.
 - Property-based tests (hypothesis, in the `dev` extra) check that alpha-variant
@@ -153,15 +155,13 @@ ecosystem evidence behind each claim. The format follows
   form `a, b = call(...)` then `return (a, b)`; without it, once Black
   wrapped such a body over the three-line minimum, two generated helpers of
   that shape paired with each other and extracted a third, without end (h2).
-- In directory mode, a global re-pass after the first re-pairs only the
-  functions in files rewritten since the previous global pass. This is exact
-  (the argument is in `docs/ARCHITECTURE.md`): an unchanged pair's verdict
-  depends on its two files, the class hierarchy, which refactoring never
-  alters, and the import graph, to which refactoring only adds edges, and
-  every proposal such a pair produced has been applied, dropped, or
-  filtered along with a rewritten file. `dry` output is byte-identical with
-  the restriction on and off; `incremental_global_passes=False` restores
-  full re-pairing.
+- In directory mode, a global re-pass after the first re-pairs functions in
+  rewritten files and files with deferred verification refusals. Deferred
+  proposals are retried only after the project changes, since verification can
+  depend on unchanged consumers elsewhere in the project. Other unchanged
+  pairs retain their verdict under the conditions explained in
+  `docs/ARCHITECTURE.md`; `incremental_global_passes=False` restores full
+  re-pairing.
 - Analysis facts are computed once per function instead of once per candidate
   block (definite assignment, locally bound names, nested scopes), and the
   same-file clustering pass applies its constant-time filters before the
