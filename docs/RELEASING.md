@@ -1,12 +1,15 @@
 # Preparing a release
 
-The `1.732` beta release is dated September 19, 2026. Its
+The `1.732.post1` beta release is dated September 19, 2026. It corrects PyPI
+documentation links without changing the Python implementation in `1.732`. The
+[post-release changelog](../CHANGELOG.md#1732post1---2026-09-19) records that fix;
+the
 [changelog](../CHANGELOG.md#1732---2026-09-19) summarizes reuse of existing
 functions, optional formatting and typing, larger-project controls, and the
 pre-release audit fixes. Runtime `1d246075` and validated source
 `2e4ebe6` are distinguished from earlier candidates in the
-[readiness report](PRODUCTION_READINESS.md). The release commit adds only
-documentation updates. No subsequent release version has been chosen.
+[readiness report](PRODUCTION_READINESS.md). No subsequent release version has
+been chosen.
 
 The `347d62b` report of 118 PASS, 19 NO_CHANGE and 4 BROKEN_KNOWN among
 141 projects is historical. Current coverage combines the complete r6 run
@@ -106,6 +109,38 @@ For the exact candidate commit:
 5. Review the current audit report and unresolved limitations. Confirm generated documentation claims only what [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) verifies and states the remaining limitations.
 
 `just release VERSION` prepares local artifacts. Inspect its current recipe before use; it does not replace the full evidence above or authorize publication.
+
+### Publication order and documentation links
+
+PyPI renders the README embedded in the distribution metadata. Pushing a README
+change to GitHub does not update an already uploaded release's description.
+PyPI also does not resolve repository-relative Markdown links against GitHub.
+Use absolute GitHub URLs pinned to the release tag for README links to other
+repository files; fragment-only links within the README can stay relative.
+Update the pinned tag in those URLs when changing the package version. The
+documentation-link tests reject relative file links and mismatched tags.
+`twine check --strict` checks description rendering, not whether links reach
+the intended documents. Checking that PyPI received the correct README text
+does not establish that its links work there; verify the URL destinations too.
+
+Before uploading to PyPI:
+
+1. Commit the reviewed source and documentation, build the exact distributions,
+   and finish the local checks above.
+2. Resolve publication permissions, including any standing prohibition on
+   pushing. An agent must not upload while leaving an unresolved GitHub push
+   for the maintainer afterward.
+3. Publish the release commit and tag to GitHub, wait for all CI jobs on that
+   exact commit to pass, and verify the README's documentation URLs against
+   that tag.
+4. Upload the verified distributions to PyPI, then compare the remote hashes
+   and description with the local artifacts and smoke-test a fresh installation.
+5. Create the GitHub release from the existing tag with the same artifacts and
+   release notes. Verify its tag, assets, and links before declaring completion.
+
+Uploaded artifacts cannot be replaced. A documentation-only correction after
+publication requires a new post-release, such as `1.732.post1`; do not delete
+and try to reuse a published version.
 
 ## Recording the release
 

@@ -1,8 +1,12 @@
 # Production readiness
 
-**1.732 is a beta release.** The runtime is frozen at `1d246075`; validated
+**1.732.post1 is a documentation-only update to the 1.732 beta release.**
+It fixes README links on PyPI and adds documentation-link regression checks.
+The Python implementation and dependency pins are unchanged.
+
+The runtime is frozen at `1d246075`; validated
 source `2e4ebe6` adds test and ecosystem-harness corrections after that runtime.
-The release commit adds documentation updates only; runtime, tests, harness,
+The original 1.732 release commit adds documentation updates only; runtime, tests, harness,
 dependencies, and build configuration remain unchanged from `2e4ebe6`.
 The current evidence below is separate from the historical 1.732 and 1.414
 runs retained later in this report. Passing the sampled tests does not

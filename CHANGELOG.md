@@ -9,6 +9,16 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+## [1.732.post1] - 2026-09-19
+
+### Fixed
+- README documentation links use absolute URLs pinned to the release tag, so
+  they resolve from PyPI as well as GitHub. The Python implementation is
+  unchanged from 1.732.
+- Regression checks reject repository-relative README links and stale release
+  tags in documentation URLs. The release procedure verifies GitHub source,
+  documentation, and CI before uploading packages to PyPI.
+
 ## [1.732] - 2026-09-19
 
 Changes since 1.618.
@@ -764,7 +774,8 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[Unreleased]: https://github.com/ericeallen/towel/compare/v1.732...HEAD
+[Unreleased]: https://github.com/ericeallen/towel/compare/v1.732.post1...HEAD
+[1.732.post1]: https://github.com/ericeallen/towel/compare/v1.732...v1.732.post1
 [1.732]: https://github.com/ericeallen/towel/compare/v1.618...v1.732
 [1.618]: https://github.com/ericeallen/towel/compare/v1.414...v1.618
 [1.414]: https://github.com/ericeallen/towel/releases/tag/v1.414

@@ -3,6 +3,21 @@
 This log records notable repository states and the scope of their validation.
 A historical passing result applies to its recorded commit and test environment.
 
+## 2026-09-19 (1.732.post1)
+
+- Version: 1.732.post1, beta; release tag: `v1.732.post1`.
+- Documentation-only follow-up to `v1.732` (`989f27b`). The README now uses
+  absolute GitHub documentation URLs pinned to the post-release tag. Relative
+  paths worked on GitHub but did not resolve to repository files on PyPI.
+- The Python implementation and dependency pins are unchanged. The 1.732
+  validation below remains applicable to that code; the new documentation-link
+  regressions and exact post-release artifacts have separate release evidence.
+- Publication checks verify the pushed commit and tag, hosted CI, and actual
+  GitHub documentation before uploading the distributions to PyPI. The release
+  archive records package checks, published hashes, and installation results.
+
+---
+
 ## 2026-09-19 (1.732)
 
 - Version: 1.732, beta; release tag: `v1.732`.
