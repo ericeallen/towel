@@ -320,8 +320,20 @@ ecosystem evidence behind each claim. The format follows
   progress-bar calls are one `quietly`; four unjustified `type: ignore`
   comments and three `pragma: no cover` exclusions are gone.
 - The candidate pairs an analysis evaluates are bounded by a configurable
-  candidate-pair budget, and the minimum block length (`--min-lines`) is
-  exposed on the command line.
+  candidate-pair budget (`--max-pairs`, default 2,000,000; past it the
+  largest groups of similar blocks are left out with a warning), and the
+  minimum block length (`--min-lines`) and helper parameter limit
+  (`--max-parameters`) are exposed on the command line.
+- Pair evaluation keeps one proposal per distinct refactoring (the same
+  helper over the same clustered sites, whichever pair found it first)
+  instead of every pair's copy. A file of sixty near-identical functions
+  under the pair budget peaked at 33.6 GB holding the copies and now peaks
+  at 0.74 GB; the output is the same, since the overlap filter never chose
+  a later copy.
+- The verdict of the instantiation check is memoized on the helper, call
+  and block, which it repeated many times over across pair and cluster
+  evaluation: a file of a hundred similar functions takes 31 s instead of
+  43 s.
 - The structural memo is keyed on a block's structure, so equal blocks share
   one entry wherever they appear.
 

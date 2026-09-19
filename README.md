@@ -114,7 +114,7 @@ Platform, CPU, memory, and disk requirements are in [Requirements](#requirements
 
 ## How long it takes
 
-There is no time budget; progress is reported per phase and Ctrl-C leaves the files unchanged. Pairing is quadratic in the number of candidate blocks per file, so a few large modules with many near-identical methods are the worst case, not total line count. With N near-identical blocks in one file every pair proposes the same N-site extraction, so building and filtering those proposals grows as N cubed until the first application collapses them into one helper.
+There is no time budget; progress is reported per phase and Ctrl-C leaves the files unchanged. Pairing is quadratic in the number of candidate blocks per file, so a few large modules with many near-identical methods are the worst case, not total line count. With N near-identical blocks in one file every pair proposes the same N-site extraction; each distinct proposal is kept once, but evaluating the pairs still grows as N cubed until the first application collapses them into one helper. `--max-pairs` bounds the candidate pairs one analysis evaluates (the largest groups of similar blocks are left out, with a warning) and `--min-lines` raises the smallest block considered.
 
 Rough expectations with the defaults, one core: a 2,000-line module takes
 seconds; Towel's own source (21,000 lines, 16,800 of code) runs to a fixed

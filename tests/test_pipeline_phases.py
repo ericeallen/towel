@@ -22,7 +22,6 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 # The one proposal single-file analysis of example1_simple leaves after
 # overlap filtering, and the one example2_classes adds to it.
 USER_ADMIN = "Extract common code from process_user_data and process_admin_data"
-USER_GUEST = "Extract common code from process_user_data and process_guest_data"
 ADMIN_GUEST = "Extract common code from process_admin_data and process_guest_data"
 PROCESS_PROCESS = "Extract common code from process and process"
 
@@ -289,8 +288,12 @@ class TestUnifyBlocks:
 
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
         # Before overlap filtering, each pair of the three functions unifies
-        # into six overlapping proposals, in pairing order.
-        assert descriptions(proposals) == [USER_ADMIN] * 6 + [USER_GUEST] * 6 + [ADMIN_GUEST] * 6
+        # into six overlapping proposals, in pairing order; a proposal a later
+        # pair repeats (the same helper over the same clustered sites) is
+        # kept once, under the pair that found it first. The user/guest pairs
+        # repeat the user/admin proposals; three admin/guest proposals order
+        # the helper's parameters differently and are their own.
+        assert descriptions(proposals) == [USER_ADMIN] * 6 + [ADMIN_GUEST] * 3
 
 
 class TestFilterOverlaps:
@@ -307,8 +310,8 @@ class TestFilterOverlaps:
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
 
         filtered = filter_overlaps(proposals)
-        # The eighteen overlapping proposals collapse to the one the engine reports.
-        assert len(proposals) == 18
+        # The nine distinct overlapping proposals collapse to the one the engine reports.
+        assert len(proposals) == 9
         assert descriptions(filtered) == [USER_ADMIN]
 
 

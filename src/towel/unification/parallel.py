@@ -26,6 +26,7 @@ TOWEL_WORKERS=1 keeps evaluation serial; any other value caps the workers.
 
 from __future__ import annotations
 
+import ast
 import multiprocessing
 import os
 import resource
@@ -33,8 +34,14 @@ import sys
 import threading
 import time
 
-from typing import Dict, List, Optional, Sequence, Tuple, Iterable
-from .models import ClassInfo, CodeBlockPair, FunctionArtifact, RefactoringProposal
+from typing import Dict, Hashable, List, Optional, Sequence, Tuple, Iterable
+from .models import (
+    ClassInfo,
+    CodeBlockPair,
+    FunctionArtifact,
+    GENERATED_HELPER_NAME,
+    RefactoringProposal,
+)
 from concurrent.futures import ProcessPoolExecutor
 from ..diagnostics import LOG
 from .progress import ProgressMode, wants_bar
@@ -105,6 +112,64 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, Refactoring
     return accepted
 
 
+def proposal_identity(proposal: RefactoringProposal) -> Hashable:
+    """What makes two proposals the same refactoring: the helper, its home, and its sites.
+
+    Many pairs of a file of similar functions propose one helper over one
+    set of clustered sites; the pair that found it first names it, the rest
+    add nothing. The helper's generated name is left out of the identity,
+    since each proposal mints its own.
+    """
+    helper = ast.dump(proposal.extracted_function)
+    sites = tuple(
+        sorted(
+            (
+                replacement.file_path or proposal.file_path,
+                replacement.line_range,
+                GENERATED_HELPER_NAME.sub("", ast.dump(replacement.node)),
+            )
+            for replacement in proposal.replacements
+        )
+    )
+    return (
+        proposal.file_path,
+        proposal.insert_into_class,
+        proposal.insert_into_function,
+        proposal.method_kind,
+        proposal.method_param_name,
+        GENERATED_HELPER_NAME.sub("", helper),
+        sites,
+    )
+
+
+class _DistinctProposals:
+    """Proposals in pair order, the first of each identity kept.
+
+    Holding every pair's proposal until the overlap filter is what took a
+    file of sixty similar functions to 33 GB: nearly every pair proposed
+    the same few helpers over the same sites. Indices are the pairs'
+    positions; a duplicate that arrives with a lower index replaces the one
+    held, so the result is the same as filtering after the fact.
+    """
+
+    def __init__(self) -> None:
+        self._by_index: Dict[int, RefactoringProposal] = {}
+        self._index_of: Dict[Hashable, int] = {}
+
+    def add(self, index: int, proposal: RefactoringProposal) -> None:
+        identity = proposal_identity(proposal)
+        held = self._index_of.get(identity)
+        if held is not None:
+            if held <= index:
+                return
+            del self._by_index[held]
+        self._index_of[identity] = index
+        self._by_index[index] = proposal
+
+    def in_order(self) -> List[RefactoringProposal]:
+        return [self._by_index[index] for index in sorted(self._by_index)]
+
+
 class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
     """ParallelEvaluation methods of the engine; see the module docstring."""
 
@@ -168,7 +233,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         *,
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
-        proposals: List[RefactoringProposal] = []
+        proposals = _DistinctProposals()
 
         progress_mode, tqdm_cls = self._resolve_progress_backend(progress)
         use_tqdm = tqdm_cls is not None
@@ -178,14 +243,14 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
                 total=len(block_pairs), desc="unify", unit="pair", dynamic_ncols=True, leave=False
             )
             try:
-                for pair in block_pairs:
+                for index, pair in enumerate(block_pairs):
                     proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
                     if proposal:
-                        proposals.append(proposal)
+                        proposals.add(index, proposal)
                     bar.update()
             finally:
                 bar.close()
-            return proposals
+            return proposals.in_order()
 
         use_inline_bar = wants_bar(progress_mode) and len(block_pairs) > 0 and not use_tqdm
         last_pct = -1
@@ -194,7 +259,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         for idx, pair in enumerate(block_pairs, 1):
             proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
             if proposal:
-                proposals.append(proposal)
+                proposals.add(idx - 1, proposal)
             if use_inline_bar:
                 pct = int(100 * idx / len(block_pairs))
                 if pct != last_pct:
@@ -203,7 +268,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
 
         self._finish_inline_status(use_inline_bar)
 
-        return proposals
+        return proposals.in_order()
 
     def _evaluate_pairs_parallel(
         self,
@@ -235,7 +300,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         # the early functions are the untouched ones whose analyses are
         # cached, so a prefix would understate the cost; a stride samples
         # cached and cold regions alike.
-        results: Dict[int, RefactoringProposal] = {}
+        results = _DistinctProposals()
         stride = max(1, len(cold) // self.PARALLEL_PROBE_PAIRS)
         probe = cold[::stride][: self.PARALLEL_PROBE_PAIRS]
         started = time.monotonic()
@@ -244,10 +309,10 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
                 block_pairs[index], all_functions, class_infos
             )
             if probed is not None:
-                results[index] = probed
+                results.add(index, probed)
         per_pair = (time.monotonic() - started) / max(1, len(probe))
-        probed_indices = set(probe)
-        cold = [index for index in cold if index not in probed_indices]
+        evaluated = set(probe)
+        cold = [index for index in cold if index not in evaluated]
 
         def finish_serially(indices: Iterable[int]) -> List[RefactoringProposal]:
             for index in indices:
@@ -255,8 +320,8 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
                     block_pairs[index], all_functions, class_infos
                 )
                 if serial_proposal is not None:
-                    results[index] = serial_proposal
-            return [results[index] for index in sorted(results)]
+                    results.add(index, serial_proposal)
+            return results.in_order()
 
         if per_pair * len(cold) < self.PARALLEL_MIN_PROJECTED_SECONDS:
             return finish_serially(cold)
@@ -280,14 +345,15 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             with ProcessPoolExecutor(
                 max_workers=workers, mp_context=context, initializer=_start_parent_watchdog
             ) as executor:
-                for _bounds, accepted in zip(chunks, executor.map(_evaluate_pair_chunk, chunks)):
+                for bounds, accepted in zip(chunks, executor.map(_evaluate_pair_chunk, chunks)):
                     for index, proposal in accepted:
-                        results[index] = proposal
+                        results.add(index, proposal)
+                    evaluated.update(range(*bounds))
         except (BrokenProcessPool, OSError) as error:
             # A pool that cannot be started or that lost a worker; anything a
             # worker raised itself propagates, since it is a bug to fix.
             LOG.warning("Parallel pair evaluation unavailable (%s); finishing serially", error)
-            return finish_serially([index for index in cold if index not in results])
+            return finish_serially([index for index in cold if index not in evaluated])
         finally:
             _worker_engine = _worker_functions = _worker_class_infos = _worker_pairs = None
-        return [results[index] for index in sorted(results)]
+        return results.in_order()
