@@ -239,3 +239,35 @@ def test_lambda_parameters_are_alpha_equivalent_only_inside_their_lambda() -> No
     )
     assert normalized("f = lambda v=x: v") == normalized("f = lambda w=x: w")
     assert normalized("f = lambda v=x: v") != normalized("f = lambda w=y: w")
+
+
+@pytest.mark.parametrize(
+    "call_source, reason",
+    [
+        ("h(lambda: value, x)", "thunk arity"),
+        ("h(lambda *a, **k: f(x, *a, **k), x)", "forwarding thunk shape"),
+    ],
+)
+def test_a_thunk_the_reducer_cannot_apply_is_a_named_mismatch(
+    call_source: str, reason: str
+) -> None:
+    """A corrupted proposal whose thunk cannot be beta-reduced is refused, not raised through.
+
+    The helper calls its thunk with one argument; a zero-parameter thunk and
+    a forwarding thunk that adds an argument of its own both make the
+    reducer raise, and the check reports the reason instead of propagating.
+    """
+    helper = function_def("def h(__param_0, x):\n    use(__param_0(x))\n")
+    block = _block("use(value)\n")
+    assert (
+        instantiation_mismatch(
+            helper,
+            _statement(call_source),
+            block,
+            {},
+            {},
+            preamble_length=0,
+            returns_variables=False,
+        )
+        == reason
+    )

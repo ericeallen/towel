@@ -268,3 +268,61 @@ def test_import_identity_uses_python_layout_not_ancestor_git(tmp_path, configura
     _apply_rename_mappings(target, {f"{relative}:__extracted_func_0": "answer"}, False)
     assert execute(main) == expected
     assert "helpers.answer()" in consumer.read_text()
+
+
+def test_except_as_and_match_captures_shadow_the_helper_in_their_scope(tmp_path):
+    """A name bound by ``except ... as`` or a ``match`` capture is that function's own.
+
+    Each of ``caught``, ``first``, ``rest`` and ``remaining`` rebinds the
+    helper's name locally (an exception, a capture, a star capture, a mapping
+    rest), so the reads in them are of the local and must keep their spelling;
+    only ``calls`` reads the helper.
+    """
+    path = tmp_path / "main.py"
+    path.write_text(HELPER + """
+def caught():
+    try:
+        raise ValueError(3)
+    except ValueError as __extracted_func_0:
+        return __extracted_func_0.args[0]
+
+
+def first(value):
+    match value:
+        case [__extracted_func_0, *_]:
+            return __extracted_func_0
+        case _:
+            return None
+
+
+def rest(value):
+    match value:
+        case [_, *__extracted_func_0]:
+            return __extracted_func_0
+        case _:
+            return None
+
+
+def remaining(value):
+    match value:
+        case {"k": _, **__extracted_func_0}:
+            return __extracted_func_0
+        case _:
+            return None
+
+
+def calls():
+    return __extracted_func_0()
+
+
+print(caught(), first([1, 2]), rest([1, 2, 3]), remaining({"k": 0, "z": 9}), calls())
+""")
+    expected = execute(path)
+    assert expected == "3 1 [2, 3] {'z': 9} 7\n"
+    _rename_function_in_directory(tmp_path, "__extracted_func_0", "answer", False)
+    assert execute(path) == expected
+    result = path.read_text()
+    assert result.startswith("def answer():\n")
+    assert "    return answer()\n" in result
+    # Two spellings per shadowing function: the binding and the read.
+    assert result.count("__extracted_func_0") == 8

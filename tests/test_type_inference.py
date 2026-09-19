@@ -524,3 +524,35 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
     assert _signature(result) == "def __extracted_func_0(__param_0: int, box: Box) -> str:"
+
+
+def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) -> None:
+    """A helper returning two variables is annotated with the tuple of their revealed types."""
+    path = tmp_path / "m.py"
+    path.write_text(textwrap.dedent("""
+            class Box:
+                def __init__(self) -> None:
+                    self.count = 1
+                    self.name = "n"
+
+            def first(box: Box) -> str:
+                scaled = box.count * 2
+                label = box.name.upper()
+                print(scaled)
+                return label + str(scaled)
+
+            def second(box: Box) -> str:
+                scaled = box.count * 2
+                label = box.name.upper()
+                print(scaled)
+                return label * scaled
+            """))
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
+    )
+    proposals = engine.analyze_file(str(path))
+    assert [p.description for p in proposals] == ["Extract common code from first and second"]
+    result = engine.apply_refactoring(str(path), proposals[0])
+    assert _signature(result) == "def __extracted_func_0(box: Box) -> tuple[str, int]:"
+    assert result.count("label, scaled = __extracted_func_0(box)") == 2
+    exec(compile(result, "<inferred>", "exec"), {})
