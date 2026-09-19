@@ -14,7 +14,37 @@ Recheck live version availability immediately before publishing. The proposed ve
 
 ## Local evidence required
 
-Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`. Run the commands documented in the README (`just ci` runs the same set): formatting, lint, typing, Bandit, the dependency audit (`pip-audit --strict`), the full tests, the unconditional 85% coverage gate (`coverage combine` before the report), and a wheel/source build. Repeat the full tests and coverage on every supported interpreter, currently Python 3.11–3.13. If dependencies or the `format`/`types`/`dev` extras changed, refresh `uv.lock` (`uv lock`) and commit it before the `--frozen` runs. Run the ecosystem check from a committed snapshot of the candidate (`--towel-src` pointing at a detached worktree), since the harness imports Towel's source live for the whole run; it executes the manifest's projects with your privileges, so run `just ecosystem --run-untrusted-code` only on a disposable machine or container, and refresh the manifest's pinned commits (`--print-pins`) only after reviewing them.
+Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`. Run the commands documented in the README (`just ci` runs the same set): formatting, lint, typing, Bandit, the dependency audit (`just audit-dependencies`, described below), the full tests, the unconditional 85% coverage gate (`coverage combine` before the report), and a wheel/source build. Repeat the full tests and coverage on every supported interpreter, currently Python 3.11–3.13. If dependencies or the `format`/`types`/`dev` extras changed, refresh `uv.lock` (`uv lock`) and commit it before the `--frozen` runs. Run the ecosystem check from a committed snapshot of the candidate (`--towel-src` pointing at a detached worktree), since the harness imports Towel's source live for the whole run; it executes the manifest's projects with your privileges, so run `just ecosystem --run-untrusted-code` only on a disposable machine or container, and refresh the manifest's pinned commits (`--print-pins`) only after reviewing them.
+
+### Dependency audit
+
+Audit the installed versions after the frozen sync. A bare `pip-audit --strict`
+also tries to look up the local `code-towel` candidate on PyPI and fails before
+that version is published. Export every installed third-party distribution,
+excluding only `code-towel`, then audit the complete list of exact versions:
+
+```bash
+set -euo pipefail
+uv sync --frozen --extra dev
+requirements="$(mktemp "${TMPDIR:-/tmp}/towel-dependencies.XXXXXX")"
+uv run --frozen python scripts/audit_dependencies.py > "$requirements"
+uv run --frozen python -m pip_audit --strict --no-deps --disable-pip --requirement "$requirements"
+```
+
+`just audit-dependencies` runs the last three commands and prints the retained
+inventory path; CI uses the same export and audit flags. The inventory includes
+installed transitive dependencies, all installed extras and development tools,
+and third-party editable packages. It rejects incomplete metadata and conflicting
+installed versions instead of silently dropping packages. `--no-deps` and
+`--disable-pip` prevent a second resolution from substituting a different set of
+versions; they do not remove anything from the complete exported inventory.
+`--strict` remains enabled, and no vulnerability IDs are ignored. Record the
+inventory, audit date, tool version, output, and exit status. Repeat in any
+supported interpreter or platform environment that resolves a different set.
+The exporter itself needs only the standard library and also works in a bare
+wheel environment; the audit command requires `pip-audit` in the audit environment.
+
+### Candidate artifacts
 
 **Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` rewrites the version in `pyproject.toml` and then refreshes `uv.lock` and the dev environment (`uv lock`, `uv sync --frozen --extra dev`); it touches no other file. After bumping, grep the tree for the outgoing version and update at least `README.md`'s `**Release status: X (beta).**` line and `SECURITY.md`'s "currently **X**" supported-version line, then rebuild so the corrected README is what gets embedded. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
 
@@ -22,7 +52,7 @@ For the exact candidate commit:
 
 1. Record the commit, tool/interpreter versions, commands, exit statuses, and coverage results. Review every changed golden snapshot; regeneration is not validation.
 2. Run representative consumer projects' own tests before and after real transformations in disposable copies. Record upstream revisions, changed files/proposals, baseline failures or skips, and after-test results. A no-change run or compilation alone is not a consumer equivalence check.
-3. Inspect both distributions, check metadata and license inclusion, install the wheel into a clean environment, and exercise its CLI entry points. Do this twice: once bare, where `towel dry` must note that no formatter or checker is installed and still refactor, and once with the `format` and `types` extras, where it must format inserted code and annotate helpers on a small annotated project. Ensure the version matches the proposed release throughout the metadata.
+3. Inspect both distributions, check metadata and license inclusion, install the exact candidate wheel into a clean environment, and exercise its CLI entry points on Python 3.11, 3.12, and 3.13. For each interpreter do this twice: once bare, where `towel dry` must note that no formatter or checker is installed and still refactor, and once with the `format` and `types` extras, where it must format inserted code and annotate helpers on a small annotated project. Run from outside the checkout with `PYTHONPATH` unset, and verify that the imported `towel.__file__` belongs to the new environment's `site-packages`; an import from `src/towel` tests the checkout, not the wheel. Record the exact wheel path and hash, never select from stale `dist/` files with a broad wildcard. Ensure the version matches the proposed release throughout the metadata. CI builds the distributions and runs source tests on this interpreter matrix; it does not currently perform these clean-wheel smoke checks, so retain separate evidence for them.
 4. Audit the resolved runtime and development dependencies and perform a secret scan of the release contents and tracked history. Record the scope and limitations of each scan; a clean result does not guarantee absence of vulnerabilities or secrets.
 5. Review the current audit report and unresolved limitations. Confirm generated documentation claims only what [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) verifies and states the remaining limitations.
 

@@ -1,6 +1,11 @@
 # Production readiness
 
-**Disposition: ready for production use as a reviewed refactoring tool.**
+**The ecosystem results below describe earlier candidate `347d62b`.**
+Subsequent pre-release audit fixes change semantics, renaming and checker
+verification; the earlier corpus result is not validation of those changes.
+The current candidate requires its own release gates before publication.
+
+**Historical disposition: ready for production use as a reviewed refactoring tool.**
 Every accepted proposal is checked by a syntactic instantiation invariant,
 arguments with possible effects are evaluated inside the helper at their
 original position, and a standing 141-project ecosystem check passes every

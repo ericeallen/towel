@@ -104,10 +104,11 @@ ecosystem evidence behind each claim. The format follows
   string annotation: `memoryview[int]`, copied from tornado's own signatures,
   raised `TypeError` at import on an interpreter where `memoryview` is not
   generic.
-- With a type checker installed the generated code is type-checked: each
-  modified file is checked before and after, and if the change introduces an
-  error the helper's annotations degrade to `Any`, and then to none, until
-  it does not.
+- With a type checker installed, all modified files are checked together in
+  the prospective project, including unchanged consumers. New errors make
+  annotations fall back to `Any`, then to none; every variant must pass.
+  Checker failure or remaining new errors decline the proposal. Cross-file
+  helper imports no longer lose valid annotations because their host was stale.
 - Property-based tests (hypothesis, in the `dev` extra) check that alpha-variant
   blocks unify with a renaming-only substitution, that definite assignment
   agrees with a path-enumerating reference, and that every generated helper
@@ -382,19 +383,30 @@ ecosystem evidence behind each claim. The format follows
   and dropped with the engine.
 
 ### Fixed
-- The type checker's memory no longer grows with the number of applied
-  refactorings. Each in-process mypy build leaves its whole graph as
-  reference cycles, and Python's cyclic collector runs its full passes
-  more rarely as the heap grows, so finished builds piled up: sphinx, type
-  checked once per applied refactoring, reached 40 GB in the
-  release-candidate ecosystem run. The oracle now freezes the existing heap
-  when a window of ten builds starts and collects when it ends, so the
-  collection frees what the builds left without a pass over Towel's own
-  analysis. Collecting after every build bounded memory too but made Towel
-  on its own source 41 percent slower, from a large fixed cost per
-  collection; every tenth build costs 6 percent (13.3 s against 12.5 s,
-  peak 436 MB against 839 MB). sphinx's refactor, verified by mypy and
-  pyright, now peaks at 1.76 GB and takes 1,140 s alone.
+- Mypy runs in an owned persistent worker with incremental caches and periodic
+  garbage collection. Its process-global state cannot freeze or unfreeze a
+  library caller's heap, concurrent requests are serialized, and explicit
+  cleanup covers both combined checkers and failed optional-dependency setup.
+  The CLI preserves input-project configuration while checking the copied
+  output under its original module identities, and closes the checker on
+  success and failure. Project type rules are honored while plugins,
+  configured executables and report destinations remain disabled.
+- Checker outcomes distinguish infrastructure failure from valid diagnostics.
+  A pyright timeout, malformed output or failure is never evidence of a clean
+  project or a successful subtype relation.
+- Lexical binding analysis recognizes PEP 695 type parameters and shadowed
+  builtins, preserving generic identity and conditional-name evaluation.
+- Ruff subprocesses exclude the current project from Python's import path.
+  Import sorting preserves ordered providers of shared bindings and statement
+  boundaries. Permanent filesystem conflicts stop instead of retrying forever.
+  Directory mode also terminates after all proposals in an unchanged project
+  fail rendering or type verification, and retries deferred proposals after
+  another successful change can alter their checking context.
+- Helper renaming preserves builtin reads, keyword callers, exact selection
+  filters and Python protocol behavior. Static aliases and re-exports are
+  tracked; ambiguous callable/module aliases, visible reflection and dynamic
+  keyword dictionaries are refused before writing. Source discovery prunes
+  environments and excluded directories and reports unreadable consumers.
 - The eager-argument guard is rebuilt on control flow. Twelve shapes that
   passed a differing name eagerly where the original read it only on some
   path are thunked or declined: a failed optional import, a `TYPE_CHECKING`
@@ -619,7 +631,7 @@ ecosystem evidence behind each claim. The format follows
   information is taken from it) instead of being read as empty.
 
 ### Security
-- The pyright oracle starts `python -P -m pyright`. It runs from the
+- The pyright oracle starts `python -I -m pyright`. It runs from the
   module's directory, and `-m` put that directory first on `sys.path`, so a
   project package named like a standard module was imported and executed
   in its place: sphinx's `locale` package ran when pyright's launcher

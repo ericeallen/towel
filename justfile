@@ -118,6 +118,15 @@ typecheck:
 security:
     uv run --frozen bandit -r src/towel scripts -ll
 
+# Audit every installed third-party dependency, retaining the exact pins as evidence
+audit-dependencies:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    requirements="$(mktemp "${TMPDIR:-/tmp}/towel-dependencies.XXXXXX")"
+    uv run --frozen python scripts/audit_dependencies.py > "$requirements"
+    echo "Auditing installed dependency pins recorded in $requirements"
+    uv run --frozen python -m pip_audit --strict --no-deps --disable-pip --requirement "$requirements"
+
 # All quality gates: formatting, lint, typing, security
 check: format-check lint typecheck security
     @echo "Quality checks passed."
@@ -138,12 +147,13 @@ build:
 release VERSION:
     just bump-version {{quote(VERSION)}}
     just check
+    just audit-dependencies
     just test
     just build
     @echo "Local distributions built. Review the audit and artifacts before publication."
 
 # Everything CI runs: quality gates, tests, coverage gate, build
-ci: check coverage build
+ci: check audit-dependencies coverage build
     @echo "CI checks passed."
 
 # === Maintenance ===

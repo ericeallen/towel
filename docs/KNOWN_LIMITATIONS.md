@@ -75,11 +75,16 @@ rejects, and what remains outside its model. Read it together with
   to the generated helper's signature after method conversion. A formatter
   may change only layout: each inserted snippet's syntax tree is compared
   before and after formatting, and an import sorter's result is kept only
-  when it permutes or merges import statements and nothing else.
+  when it only reorders or merges consecutive imports within one statement
+  list while preserving each bound name's ordered providers. Wildcard imports,
+  future imports and non-import statements are barriers. Configured sorting
+  of independent imports can still change import-time side-effect order; static
+  binding checks do not establish that arbitrary module initializers commute.
 - **Annotations.** With the project's type checker installed, every annotated
-  helper and its call sites are type-checked in place; a change that
-  introduces a type error has its annotations replaced by `Any`, and then
-  removed, before it is applied. A helper is annotated only in code that
+  helper and its call sites are checked together in the prospective project,
+  including unchanged consumers. A change that introduces a type error has
+  its annotations replaced by `Any`, and then removed. Every variant must
+  pass; an unavailable checker or a remaining new error declines the change. A helper is annotated only in code that
   already uses annotations, from what the sites declare and what the checker
   reveals; see *Type annotations on helpers* below.
 
@@ -246,16 +251,20 @@ where the evidence comes from:
   string.
 - The degradation on a type error is per proposal, not per parameter: one
   annotation the checker rejects costs the helper all of them.
-- Each modified file is checked on its own, against the other files as
-  they are on disk. For a helper hosted in another module, the file that
-  now imports it is checked while the host still lacks it, and pyright
-  reports the import as an unknown symbol under every variant, so the
-  helper ends unannotated. In the eight corpus projects whose output
-  pyright's verification changed, 25 of the 459 new-error reports that
-  made annotations fall back were this (itsdangerous, structlog, trio,
-  werkzeug; September 19, 2026); the rest were annotations pyright rejects
-  under the project's own configuration where mypy accepted them. The
-  result is fewer annotations, never wrong code.
+- Verification compares the complete original and prospective project graphs,
+  overlaying all changed files together. A newly imported helper therefore
+  exists in its host while its consumers are checked. Diagnostic paths and
+  messages are compared as multisets, so one pre-existing error cannot hide
+  an additional occurrence. Safe project checking rules are honored; project
+  plugins, configured executables and report destinations are not executed.
+- Pyright verification uses a private copy of Python sources, stubs, typing
+  markers and checker configuration. Cyclic or external source symlinks
+  cannot be represented safely and cause verification to decline the proposal.
+  Project include/exclude settings still determine the checker's coverage.
+- Mypy runs in an owned worker process and never freezes the caller's garbage
+  collector. Library users should call the oracle's `close()` when finished;
+  `CombinedOracle.close()` closes both checkers. The CLI closes its oracle on
+  both success and failure.
 - Pyright reads files, so while it is consulted a probe copy of the module
   exists beside it in the package, created exclusively with owner-only
   permissions under a unique `_towel_probe_` name and removed afterwards,
@@ -534,8 +543,9 @@ modules and its bounded caches: about 36 MB for one small module, 85 MB for
 boltons (24,000 lines), 103 MB for Click (29,000 lines), and 247 MB for
 pygments (137,000 lines), measured as peak resident size with
 `TOWEL_WORKERS=1` and `--no-types`. With the type checker on (the default
-when mypy is installed) mypy runs in-process and its own footprint is added:
-Towel's source (22,690 lines, 15 applied) peaks at 174 MB without it and
+when mypy is installed), the current implementation adds an owned checker
+process. The following figures measure the earlier in-process implementation,
+not current whole-project verification: Towel's source (22,690 lines, 15 applied) peaks at 174 MB without it and
 894 MB with it (`5ff2458`, September 19, 2026, Apple M5 Max,
 `TOWEL_WORKERS=1`, Python 3.12). Forking multiplies that: each worker is a copy-on-write fork
 whose caches then diverge, so peak memory scales with the worker count.

@@ -105,9 +105,9 @@ fixed-point loop (below).
    formatter formats each inserted snippet and its import sorter finishes
    each modified file (see *Generated code formatting*); the generated
    Python is compiled to confirm it parses, overlapping replacements are
-   detected, and with a type checker installed each modified file is
-   type-checked before and after, the helper's annotations falling back to
-   `Any` and then to none if the change introduced an error.
+   detected, and with a type checker installed all prospective files are
+   checked together with unchanged consumers. Annotations fall back to `Any`
+   and then to none on new errors; every variant must pass before application.
 8. **Apply.** `changes.py` turns accepted proposals into an immutable byte
    plan and applies it transactionally (see *Application and recovery*).
 
@@ -351,8 +351,10 @@ annotated, or as `None` when it returns nothing. Copying does not reason.
 ([`type_inference.py`](../src/towel/type_inference.py)) answers three
 questions: what type an expression has at a point in a module
 (`reveal`), whether one type is a subtype of another (`is_subtype`), and
-whether a file type-checks (`check`). `MypyInferrer` builds a copy of the
-site's module in memory with `reveal_type(...)` probes inserted where the
+whether a prospective project type-checks (`check_project`). Results distinguish
+`CheckFailure` from `CheckSuccess`, whose diagnostics carry project paths.
+`MypyInferrer` builds a copy of the
+site's module in an owned worker process with `reveal_type(...)` probes inserted where the
 call will stand, so names resolve as they do at the call, and asks
 subtyping through probe functions `def _probe(v: narrow) -> wide: return v`
 appended to the module, so the relation is mypy's own. `PyrightOracle`
@@ -393,10 +395,16 @@ lattice ones:
   `collections.abc` name, or a module that defers annotations) and quoted
   otherwise. A union of forward references is quoted as one string.
 
-Then the change is verified: with an oracle, each modified file is checked
-before and after, and a proposal that introduces a type error is retried
-with every annotation `Any`, and then with none. A helper with annotations
-that the checker rejects therefore never reaches the file. Without an
+Then the change is verified: the original project is checked once and all
+modified files are overlaid together for each prospective variant, including
+unchanged consumers under the project's checker configuration. Mypy receives
+all replacements as in-memory build sources; pyright receives a private project
+snapshot with the original module names. Path/message diagnostic multisets
+preserve error multiplicity while ignoring line shifts. A proposal introducing
+an error is retried with every annotation `Any`, and then with none. Each
+variant must pass; checker failure or a remaining new error declines the
+proposal. `close()` releases checker resources, and the CLI calls it in a
+`finally` block. Without an
 oracle Towel copies and does not reason: unions are written unreduced and
 the meet requires identical declarations, because there is no second
 implementation of the subtype relation to fall back on.
@@ -415,9 +423,11 @@ file, and every formatter is wrapped by `checked`, which compares each
 snippet's syntax tree before and after and raises if formatting changed
 it. A `FileFinisher` sorts the imports of each modified file the way the
 project does, with ruff's `I` rules when selected or isort when configured;
-`imports_permuted_only` accepts the sorter's result only if it permutes or
-merges import statements, at any nesting depth, and otherwise keeps the
-file as Towel assembled it. The tools are optional (`code-towel[format]`);
+`imports_permuted_only` accepts only reordering or merging within consecutive
+import runs in the same statement list, preserving each bound name's ordered
+providers. Wildcard imports, future imports and other statements are barriers;
+otherwise the file stays as Towel assembled it. Independent imports can still
+have order-sensitive initialization, which this binding check cannot model. The tools are optional (`code-towel[format]`);
 without them code is inserted as rendered, and the CLI says so.
 
 ## Cross-file behavior
@@ -511,11 +521,14 @@ refactoring a *localized* pass re-analyzes only the files it rewrote and
 queues the follow-ups found inside them. When the queue drains, a *global*
 pass re-pairs the whole project, because a change in one file can create a
 cross-file duplicate with a file the localized pass never looked at. The
-loop ends when a global pass proposes nothing.
+loop ends when a global pass proposes nothing or every proposal in the
+unchanged project has been declined during rendering or verification.
 
 A global pass after the first re-pairs only functions in files rewritten
-since the previous global pass (`incremental_global_passes`, on by
-default). Every pair of functions in two *unchanged* files is skipped. This
+since the previous global pass, together with files of proposals deferred by
+rendering or type verification (`incremental_global_passes`, on by default).
+A change elsewhere can make a deferred proposal type-check, so those paths
+remain eligible. Other pairs of functions in two *unchanged* files are skipped. This
 is exact, in the sense that the skipped pairs' verdicts cannot differ from
 the verdicts the previous global pass computed, and every proposal the
 previous pass produced from them has since been consumed:
@@ -552,7 +565,10 @@ previous pass produced from them has since been consumed:
    chain ends in an application that rewrote the shared file, or in the whole
    chain staying unapplied with its files untouched, in which case the same
    filtering yields the same result again. In every case, a pair whose
-   proposal could still be pending involves a rewritten file.
+   proposal could still be pending involves a rewritten file. A proposal
+   declined during rendering or verification is the additional case: its
+   files are explicitly retained as deferred paths for the next changed
+   project revision. No further global pass runs on an unchanged revision.
 6. *Rejections stand.* A pair rejected by the previous pass is rejected by
    the same guards on the same inputs (1 to 3), except for the cycle guard,
    whose input grew monotonically (4).
@@ -748,6 +764,12 @@ copy error leaves no partial output. A batch is atomic per file, not globally
 atomic to a concurrent reader, and apply/recover need exclusive write access:
 snapshot checks detect a racing writer but cannot prevent one. See
 [SECURITY.md](../SECURITY.md).
+
+For out-of-place runs, `relocate_oracle` preserves the input project's tool
+configuration and module identities. It overlays every current output source
+and stub, plus the prospective replacements, onto that logical project. This
+retains earlier applied changes and unchanged external consumers without
+scanning the copied output as a second module tree.
 
 ## Helper naming
 

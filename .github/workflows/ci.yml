@@ -22,8 +22,11 @@ jobs:
       - run: uv run --frozen flake8 src/towel scripts tests
       - run: uv run --frozen mypy
       - run: uv run --frozen bandit -r src/towel scripts -ll
-      # Known-vulnerability scan of the locked dependency set; once, not per interpreter.
-      - run: uv run --frozen pip-audit --strict
+      # Inventory the frozen environment, excluding only the unpublished project.
+      # --no-deps avoids resolving a different set: the export includes transitive deps.
+      - run: |
+          uv run --frozen python scripts/audit_dependencies.py > "$RUNNER_TEMP/towel-dependencies.txt"
+          uv run --frozen python -m pip_audit --strict --no-deps --disable-pip --requirement "$RUNNER_TEMP/towel-dependencies.txt"
       - run: uv run --frozen python -m build
 
   tests:
