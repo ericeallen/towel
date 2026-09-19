@@ -5,7 +5,10 @@ from __future__ import annotations
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
+import shlex
+import shutil
 import subprocess
 import sys
 from typing import Callable, Sequence
@@ -326,12 +329,12 @@ def test_unittest_differences_never_use_a_pytest_retest_command(
         (
             (0, "\x1b[32m=== 3 passed, 2 warnings in 0.01s ===\x1b[0m\n"),
             (0, "=== 3 passed, 5 warnings in 4.00s ===\n"),
-            True,
+            False,
         ),
         (
             (0, "3 passed, 5 subtests passed in 0.01s\n"),
             (0, "3 passed, 5 subtests passed in 0.03s\n"),
-            True,
+            False,
         ),
         (
             (1, "FAILED test_case.py::test_frame\n1 failed in 0.01s\n"),
@@ -461,17 +464,19 @@ def test_retest_retains_reporting_without_repeating_the_original_selection(
     command = ecosystem._prepare_test_command(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *selection]
     )
-    assert ecosystem._retest_command(command, ["tests/test_case.py::test_selected"]) == [
+    expected = [
         sys.executable,
         "-m",
         "pytest",
         "-q",
         "-p",
         "no:cacheprovider",
-        "tests/test_case.py::test_selected",
-        "--verbosity=0",
-        "-ra",
     ]
+    if "--" in selection:
+        expected += ["--verbosity=0", "-ra", "--", "tests/test_case.py::test_selected"]
+    else:
+        expected += ["tests/test_case.py::test_selected", "--verbosity=0", "-ra"]
+    assert ecosystem._retest_command(command, ["tests/test_case.py::test_selected"]) == expected
 
 
 @pytest.mark.parametrize("reporting", ["-rs", "-rxXs"])
@@ -498,8 +503,10 @@ def test_project_reporting_defaults_cannot_hide_failed_test_identities(
     assert failed == {"test_cases.py::test_fail"}
     outcome = ecosystem._completed_test_run(visible)
     assert outcome is not None and outcome.collected == 2
+    retest = ecosystem._retest_command(prepared, sorted(failed))
+    assert retest is not None
     narrowed = ecosystem.run(
-        ecosystem._retest_command(prepared, sorted(failed)),
+        retest,
         tmp_path,
         env,
         20,
@@ -819,3 +826,159 @@ def test_type_baseline_refusal_is_distinct_and_never_retried_without_types(
     assert result.verdict == expected and result.typing_mode == "default"
     assert result.after is None
     assert result.refactor is not None and result.refactor.returncode == 1
+
+
+def _git_fixture(root: Path) -> Path:
+    source = root / "repository"
+    (source / "package").mkdir(parents=True)
+    (source / "package/original.py").write_text("value = 1\n")
+    for arguments in [
+        ["init", "-q"],
+        ["add", "package"],
+        [
+            "-c",
+            "user.name=Audit Fixture",
+            "-c",
+            "user.email=audit@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    ]:
+        subprocess.run(
+            ["git", "-C", str(source), *arguments], check=True, capture_output=True, timeout=20
+        )
+    return source
+
+
+def _fail_git_command(root: Path, monkeypatch: pytest.MonkeyPatch, command: str) -> None:
+    actual = shutil.which("git")
+    assert actual is not None
+    binaries = root / "bin"
+    binaries.mkdir()
+    wrapper = binaries / "git"
+    wrapper.write_text(
+        '#!/bin/sh\nfor argument in "$@"; do\n'
+        f'  if [ "$argument" = {shlex.quote(command)} ]; then exit 73; fi\n'
+        "done\n"
+        f'exec {shlex.quote(actual)} "$@"\n'
+    )
+    wrapper.chmod(0o700)
+    monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ["PATH"])
+
+
+@pytest.mark.parametrize("command", ["status", "diff"])
+def test_changed_never_interprets_git_failure_as_zero_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    source = _git_fixture(tmp_path)
+    (source / "package/original.py").write_text("value = 2\n")
+    _fail_git_command(tmp_path, monkeypatch, command)
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        ecosystem.changed(source, "package")
+    assert failure.value.returncode == 73
+
+
+@pytest.mark.parametrize(
+    "operation,expected", [("modify", 1), ("new", 1), ("delete", 1), ("rename", 2), ("type", 1)]
+)
+def test_changed_counts_every_affected_path_including_newlines(
+    tmp_path: Path, operation: str, expected: int
+) -> None:
+    source = _git_fixture(tmp_path)
+    original = source / "package/original.py"
+    if operation == "modify":
+        original.write_text("value = 2\n")
+    elif operation == "new":
+        nested = source / "package/new directory"
+        nested.mkdir()
+        (nested / "new\nhelper.py").write_text("helper = 3\n")
+    elif operation == "delete":
+        original.unlink()
+    elif operation == "rename":
+        original.rename(source / "package/new\nname.py")
+    else:
+        original.unlink()
+        original.symlink_to("target.py")
+    assert ecosystem.changed(source, "package")[0] == expected
+
+
+@pytest.mark.parametrize("command", ["rev-parse", "status"])
+def test_checkout_revision_and_cleanliness_require_successful_git_observations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    source = _git_fixture(tmp_path)
+    _fail_git_command(tmp_path, monkeypatch, command)
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        ecosystem.source_revision(source / "package")
+    assert failure.value.returncode == 73
+
+
+def test_source_archive_revision_is_explicitly_unavailable(tmp_path: Path) -> None:
+    assert ecosystem.source_revision(tmp_path) == (None, None)
+
+
+def test_revision_describes_the_requested_source_checkout(tmp_path: Path) -> None:
+    source = _git_fixture(tmp_path)
+    (source / "package/original.py").write_text("value = 2\n")
+    commit, dirty = ecosystem.source_revision(source / "package")
+    expected = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True, timeout=20
+    ).strip()
+    assert commit == expected
+    assert dirty and "package/original.py" in dirty
+
+
+@pytest.mark.parametrize(
+    "arguments,options",
+    [
+        (["tests", "-q", "other_tests"], ["-q"]),
+        (["tests", "-q", "-c", "config.ini", "other_tests"], ["-q", "-c", "config.ini"]),
+        (
+            ["tests", "-k", "selected and not slow", "-o", "addopts=-q"],
+            ["-k", "selected and not slow", "-o", "addopts=-q"],
+        ),
+        (
+            ["tests", "--maxfail=1", "--plugin-value=setting"],
+            ["--maxfail=1", "--plugin-value=setting"],
+        ),
+        (["tests", "-q", "--", "-literal.py"], ["-q", "--"]),
+    ],
+)
+def test_retest_removes_selectors_anywhere_and_preserves_unambiguous_option_values(
+    arguments: list[str], options: list[str]
+) -> None:
+    prefix = [sys.executable, "-m", "pytest"]
+    selected = ["tests/test_cases.py::test_selected"]
+    expected = ecosystem._prepare_test_command([*prefix, *options, *selected])
+    assert ecosystem._retest_command([*prefix, *arguments], selected) == expected
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["tests", "--plugin-option", "setting"], ["tests", "--unknown-flag"], ["tests", "-c"]],
+)
+def test_retest_declines_ambiguous_options(arguments: list[str]) -> None:
+    assert (
+        ecosystem._retest_command(["pytest", *arguments], ["test_cases.py::test_selected"]) is None
+    )
+
+
+def test_actual_retest_does_not_run_the_original_selector_before_an_option(tmp_path: Path) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_cases.py").write_text(
+        "def test_selected():\n    assert True\n\n"
+        "def test_unrelated():\n    assert False, 'broad selector retained'\n"
+    )
+    command = ecosystem._retest_command(
+        [sys.executable, "-m", "pytest", "tests", "-q"],
+        ["tests/test_cases.py::test_selected"],
+    )
+    assert command is not None
+    phase = ecosystem.run(
+        command, tmp_path, {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}, 20, tmp_path / "retest.log"
+    )
+    outcome = ecosystem._completed_test_run(phase)
+    assert outcome is not None and outcome.returncode == 0 and outcome.collected == 1
+    assert "test_unrelated" not in Path(phase.log).read_text()

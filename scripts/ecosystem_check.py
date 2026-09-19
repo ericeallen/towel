@@ -349,24 +349,61 @@ def environment(project: Project, work: Path, source: Path) -> Path:
 
 
 def changed(ready: Path, package: str) -> Tuple[int, str]:
+    """Count affected package paths, failing if Git cannot observe them."""
     status = subprocess.run(
-        ["git", "-C", str(ready), "status", "--porcelain", "--", package],
+        [
+            "git",
+            "-c",
+            "status.renames=false",
+            "-C",
+            str(ready),
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            package,
+        ],
         capture_output=True,
         text=True,
-        check=False,
+        check=True,
+        timeout=60,
     ).stdout
-    count = sum(1 for line in status.splitlines() if line[:2].strip() in {"M", "MM", "A", "AM"})
+    count = sum(bool(record) for record in status.split("\0"))
     stat = (
         subprocess.run(
             ["git", "-C", str(ready), "diff", "--stat", "--", package],
             capture_output=True,
             text=True,
-            check=False,
+            check=True,
+            timeout=60,
         )
         .stdout.strip()
         .splitlines()
     )
     return count, stat[-1] if stat else ""
+
+
+def source_revision(source: Path) -> Tuple[Optional[str], Optional[str]]:
+    """Observe the actual source checkout, or explicitly identify an archive."""
+    source = source.resolve(strict=True)
+    if not any((parent / ".git").exists() for parent in (source, *source.parents)):
+        return None, None
+    commit = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    ).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "-C", str(source), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    ).stdout.strip()
+    return commit, dirty
 
 
 def _pytest_arguments_start(command: Sequence[str]) -> Optional[int]:
@@ -561,26 +598,77 @@ _OPTIONS_WITH_VALUES = {
     "--tb",
     "--rootdir",
     "--verbosity",
+    "--override-ini",
+    "--ignore",
+    "--ignore-glob",
+    "--deselect",
+    "--maxfail",
+    "--confcutdir",
+    "--basetemp",
+    "--junitxml",
+    "--junit-xml",
+    "--import-mode",
+    "--assert",
+    "--capture",
+    "--color",
+    "--durations",
+    "--durations-min",
+}
+_OPTIONS_WITHOUT_VALUES = {
+    "--verbose",
+    "--quiet",
+    "--disable-warnings",
+    "--disable-pytest-warnings",
+    "--no-header",
+    "--no-summary",
+    "--strict-markers",
+    "--strict-config",
+    "--continue-on-collection-errors",
 }
 
 
-def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> List[str]:
+def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> Optional[List[str]]:
     """The project's test command narrowed to the given node ids.
 
-    Trailing positional arguments (a tests directory or module) are dropped
-    so pytest runs only the named tests; option values stay in place.
+    Remove positional selectors wherever they appear. Preserve known options
+    and their values, and decline ambiguous plugin options instead of guessing
+    whether the following token is a value or another selector.
     """
-    command = list(test)
-    if "--" in command:
-        command = command[: command.index("--")]
+    start = _pytest_arguments_start(test)
+    if start is None:
+        return None
+    command = list(test[:start])
+    index = start
+    separator = False
+    while index < len(test):
+        argument = test[index]
+        if argument == "--":
+            separator = True
+            break
+        if argument in _OPTIONS_WITH_VALUES:
+            if index + 1 == len(test):
+                return None
+            command.extend(test[index : index + 2])
+            index += 2
+            continue
+        if argument.startswith("-"):
+            attached = argument.startswith("--") and "=" in argument
+            short_value = argument[:2] in _OPTIONS_WITH_VALUES and len(argument) > 2
+            if not (
+                attached
+                or short_value
+                or argument in _OPTIONS_WITHOUT_VALUES
+                or re.fullmatch(r"-[qvsx]+", argument)
+            ):
+                return None
+            command.append(argument)
+        index += 1
     if command[-2:] == ["--verbosity=0", "-ra"]:
         del command[-2:]
-    elif command and command[-1] == "-ra":
+    elif command[-1:] == ["-ra"]:
         command.pop()
-    while command and not command[-1].startswith("-"):
-        if len(command) >= 2 and command[-2] in _OPTIONS_WITH_VALUES:
-            break
-        command.pop()
+    if separator or any(identity.startswith("-") for identity in test_ids):
+        command.append("--")
     return _prepare_test_command([*command, *test_ids])
 
 
@@ -602,6 +690,8 @@ def _retest_agrees(
         # or options. Preserve the observed difference instead of guessing.
         return False
     command = _retest_command(test, test_ids)
+    if command is None:
+        return False
     before = run(command, source, env, timeout, logs / f"{project.name}-retest-before.log")
     after = run(command, ready, env, timeout, logs / f"{project.name}-retest-after.log")
     evidence = RetestEvidence(
@@ -612,9 +702,14 @@ def _retest_agrees(
     )
     before_outcome = _completed_test_run(before, project.failure_exit_codes)
     after_outcome = _completed_test_run(after, project.failure_exit_codes)
-    if before_outcome is None or before_outcome != after_outcome:
+    if (
+        before_outcome is None
+        or before_outcome != after_outcome
+        or before_outcome.collected != len(set(test_ids))
+    ):
         return False
-    return failed_tests(before.log) == failed_tests(after.log)
+    before_failed = failed_tests(before.log)
+    return before_failed == failed_tests(after.log) and before_failed <= set(test_ids)
 
 
 REFUSAL = re.compile(
@@ -786,11 +881,10 @@ def main() -> int:
     _lock_work_directory(args.work)
     report_dir = args.work / "report"
     report_dir.mkdir(exist_ok=True)
-    towel_commit = subprocess.run(
-        ["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-    ).stdout.strip()
+    towel_commit, dirty = source_revision(args.towel_src)
+    displayed_commit = towel_commit[:12] if towel_commit else "unavailable (source archive)"
     print(
-        f"ecosystem check: {len(projects)} projects, towel {towel_commit[:12]}, "
+        f"ecosystem check: {len(projects)} projects, towel {displayed_commit}, "
         f"typing mode: {typing_mode}",
         flush=True,
     )
@@ -798,13 +892,13 @@ def main() -> int:
     # commit (pre-commit stashes the tree) in that checkout changes the subject
     # mid-run and invalidates the results. Say so up front when the tree is dirty,
     # and recommend a detached worktree for the source under test.
-    dirty = subprocess.run(
-        ["git", "-C", str(args.towel_src), "status", "--porcelain"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
-    if dirty:
+    if dirty is None:
+        print(
+            "WARNING: Towel source is outside a Git checkout; revision and dirty-state "
+            "provenance are unavailable. Retain an independent source manifest.",
+            flush=True,
+        )
+    elif dirty:
         print(
             "WARNING: the Towel checkout under test has uncommitted changes; edits or "
             "commits during the run will change what the workers import. Prefer a "
@@ -852,7 +946,7 @@ def main() -> int:
     for result in results:
         counts[result.verdict] = counts.get(result.verdict, 0) + 1
     lines = [
-        f"# Ecosystem check — towel `{towel_commit}`",
+        f"# Ecosystem check — towel `{towel_commit or 'unavailable (source archive)'}`",
         "",
         f"Typing mode: `{typing_mode}`. This records the requested mode; runtime test "
         "outcomes do not establish type-checking coverage.",
