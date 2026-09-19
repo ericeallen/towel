@@ -192,11 +192,9 @@ class Materialization(
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
         if proposal.helper_type_declarations and (
-            proposal.reused_function is not None
-            or proposal.insert_into_class is not None
-            or proposal.insert_into_function is not None
+            proposal.reused_function is not None or proposal.insert_into_function is not None
         ):
-            raise RefactoringError("Type declarations require a fresh module-level helper")
+            raise RefactoringError("Type declarations require a fresh module or class helper")
         replacements_by_file: Dict[str, List[Replacement]] = {}
         for repl in proposal.replacements:
             file_path = repl.file_path or proposal.file_path
@@ -355,6 +353,8 @@ class Materialization(
         if proposal.insert_into_function:
             self._insert_helper_into_function(proposal, lines)
         elif proposal.insert_into_class:
+            if proposal.helper_type_declarations:
+                self._insert_method_type_declarations(proposal, lines)
             self._insert_helper_into_class(proposal, file_path, lines)
         else:
             self._insert_helper_at_module_level(proposal, lines)
@@ -411,11 +411,7 @@ class Materialization(
                 body=[*proposal.helper_type_declarations, proposal.extracted_function],
                 type_ignores=[],
             )
-            dependencies |= {
-                name
-                for statement in proposal.helper_type_declarations
-                for name in loaded_names(statement)
-            } - self._type_declaration_names(proposal)
+            dependencies |= self._type_declaration_dependencies(proposal)
         func_lines = [line + "\n" for line in self._render(node).split("\n")]
         insert_line = self._find_insert_position(lines, dependencies)
         if proposal.helper_type_declarations:
@@ -432,6 +428,37 @@ class Materialization(
         lines_to_insert.extend(func_lines)
         lines_to_insert.extend(["\n", "\n"])
         lines[insert_line:insert_line] = lines_to_insert
+
+    def _insert_method_type_declarations(
+        self, proposal: RefactoringProposal, lines: List[str]
+    ) -> None:
+        """Keep fresh method binders at module scope, before the host class."""
+        classes = [
+            node
+            for node in self._parse_source("".join(lines)).body
+            if isinstance(node, ast.ClassDef) and node.name == proposal.insert_into_class
+        ]
+        if len(classes) != 1:
+            raise RefactoringError("Type declarations need one module-level host class")
+        owner = classes[0]
+        class_start = min([owner.lineno, *(item.lineno for item in owner.decorator_list)]) - 1
+        dependencies = self._type_declaration_dependencies(proposal)
+        position = self._type_declaration_position(
+            lines, dependencies, self._find_insert_position(lines, dependencies)
+        )
+        if position > class_start:
+            raise RefactoringError("A method type declaration depends on a binding after its host")
+        module = ast.Module(body=list(proposal.helper_type_declarations), type_ignores=[])
+        rendered = [line + "\n" for line in self._render(module).split("\n")]
+        lines[position:position] = _padded(lines, position, rendered)
+
+    @staticmethod
+    def _type_declaration_dependencies(proposal: RefactoringProposal) -> Set[str]:
+        return {
+            name
+            for statement in proposal.helper_type_declarations
+            for name in loaded_names(statement)
+        } - Materialization._type_declaration_names(proposal)
 
     @staticmethod
     def _type_declaration_names(proposal: RefactoringProposal) -> Set[str]:

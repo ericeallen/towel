@@ -33,8 +33,14 @@ import textwrap
 import tokenize
 
 from .annotations import ApplySite, CallSite, _argument_annotation, _return_probes
-from .models import FunctionNode, span_contains
-from .type_bindings import TypeKind, TypeResolver, TypeTerm, contains_type_parameter, render_type
+from .models import FunctionNode, MethodKind, span_contains
+from .type_bindings import (
+    TypeKind,
+    TypeResolver,
+    TypeTerm,
+    render_type,
+    type_parameter_identities,
+)
 from .type_generalization import GenericSignature, generalize_signatures
 from ..type_inference import RevealRequest, TypeOracle
 
@@ -45,6 +51,15 @@ class GenericHelper:
 
     helper: ast.FunctionDef
     declarations: tuple[ast.stmt, ...]
+
+
+@dataclass(frozen=True)
+class MethodContext:
+    """The lexical host and implicit receiver already chosen by helper placement."""
+
+    host_class: str
+    kind: MethodKind
+    receiver_name: str | None
 
 
 @dataclass(frozen=True)
@@ -123,15 +138,26 @@ def _site_types(
     host_source: str,
     return_variables: Sequence[str],
     probes: _Probes,
+    host_class: str | None = None,
+    receiver_index: int | None = None,
 ) -> _SiteTypes | None:
     module = ast.parse(site.source)
     function = _function_at(module, site.start_line)
     if function is None:
         return None
-    resolver = TypeResolver(site.source, site.file_path, site.start_line, host_source, host_file)
+    resolver = TypeResolver(
+        site.source,
+        site.file_path,
+        site.start_line,
+        host_source,
+        host_file,
+        host_class=host_class,
+    )
     declared_site = CallSite(site.statement, site.call, function, module, site.file_path)
     arguments: list[TypeTerm | _ProbeKey] = []
     for index, argument in enumerate(site.call.args):
+        if index == receiver_index:
+            continue
         annotation = _argument_annotation(declared_site, index)
         kind = resolver.resolve(annotation) if annotation is not None else None
         arguments.append(
@@ -168,11 +194,16 @@ def _signature_rows(
     host_source: str,
     return_variables: Sequence[str],
     oracle: TypeOracle,
+    *,
+    host_class: str | None = None,
+    receiver_index: int | None = None,
 ) -> tuple[tuple[TypeTerm, ...], ...]:
     probes = _Probes()
     contexts: list[_SiteTypes] = []
     for site in sites:
-        context = _site_types(site, host_file, host_source, return_variables, probes)
+        context = _site_types(
+            site, host_file, host_source, return_variables, probes, host_class, receiver_index
+        )
         if context is None:
             return ()
         contexts.append(context)
@@ -278,10 +309,14 @@ def _signature_substitutions(
 
 
 def _generalize_annotation(
-    column: tuple[TypeTerm, ...], substitutions: dict[tuple[TypeTerm, ...], TypeTerm]
+    column: tuple[TypeTerm, ...],
+    substitutions: dict[tuple[TypeTerm, ...], TypeTerm],
+    retained_parameters: frozenset[str],
 ) -> TypeTerm | None:
     first = column[0]
-    if not contains_type_parameter(first) and all(term == first for term in column):
+    if type_parameter_identities(first) <= retained_parameters and all(
+        term == first for term in column
+    ):
         return first
     if column in substitutions:
         return substitutions[column]
@@ -296,7 +331,7 @@ def _generalize_annotation(
     ):
         return None
     children = tuple(
-        _generalize_annotation(values, substitutions)
+        _generalize_annotation(values, substitutions, retained_parameters)
         for values in zip(*(term.children for term in column))
     )
     if any(child is None for child in children):
@@ -311,6 +346,8 @@ def _body_annotations(
     signature: GenericSignature,
     host_file: str,
     host_source: str,
+    host_class: str | None = None,
+    retained_parameters: frozenset[str] = frozenset(),
 ) -> tuple[TypeTerm | None, ...] | None:
     """Prove a common rebinding for every original site's local annotation.
 
@@ -339,7 +376,12 @@ def _body_annotations(
             tuple(_annotation_structure(node.annotation) for node in original) == structure
         )
         resolver = TypeResolver(
-            site.source, site.file_path, site.start_line, host_source, host_file
+            site.source,
+            site.file_path,
+            site.start_line,
+            host_source,
+            host_file,
+            host_class=host_class,
         )
         terms: list[TypeTerm] = []
         for node in original:
@@ -353,7 +395,7 @@ def _body_annotations(
     substitutions = _signature_substitutions(rows, signature.types)
     rewritten: list[TypeTerm | None] = []
     for column in zip(*annotations):
-        term = _generalize_annotation(column, substitutions)
+        term = _generalize_annotation(column, substitutions, retained_parameters)
         if term is None:
             return None
         rewritten.append(term if any(original != term for original in column) else None)
@@ -365,9 +407,15 @@ def _render_generic(
     signature: GenericSignature,
     typevar_alias: str,
     body_annotations: Sequence[TypeTerm | None],
+    receiver_index: int | None = None,
 ) -> GenericHelper:
     annotated = copy.deepcopy(helper)
     parameters = annotated.args.posonlyargs + annotated.args.args
+    if receiver_index is not None:
+        parameters[receiver_index].annotation = None
+        parameters = [
+            parameter for index, parameter in enumerate(parameters) if index != receiver_index
+        ]
     for parameter, term in zip(parameters, signature.types[:-1]):
         parameter.annotation = _quoted_type(term)
     annotated.returns = _quoted_type(signature.types[-1])
@@ -376,11 +424,13 @@ def _render_generic(
     for statement, annotation in zip(local_annotations, body_annotations):
         if annotation is not None:
             statement.annotation = _quoted_type(annotation)
-    declarations: list[ast.stmt] = [
-        ast.ImportFrom(
-            module="typing", names=[ast.alias(name="TypeVar", asname=typevar_alias)], level=0
+    declarations: list[ast.stmt] = []
+    if signature.parameters:
+        declarations.append(
+            ast.ImportFrom(
+                module="typing", names=[ast.alias(name="TypeVar", asname=typevar_alias)], level=0
+            )
         )
-    ]
     for binder in signature.parameters:
         arguments: list[ast.expr] = [ast.Constant(value=binder.name)]
         arguments.extend(_quoted_type(constraint) for constraint in binder.constraints)
@@ -411,12 +461,52 @@ def generic_helpers(
     host_source: str,
     return_variables: Sequence[str],
     oracle: TypeOracle,
+    *,
+    method: MethodContext | None = None,
 ) -> Iterator[GenericHelper]:
-    """Fresh generic contracts for module-level extraction, never unchecked fallbacks."""
-    width = len(helper.args.posonlyargs) + len(helper.args.args)
+    """Generic contracts preserving host binders, never unchecked fallbacks."""
+    parameters = helper.args.posonlyargs + helper.args.args
+    width = len(parameters)
     if len(sites) < 2 or any(len(site.call.args) != width for site in sites):
         return
-    rows = _signature_rows(sites, host_file, host_source, return_variables, oracle)
+    host_class = method.host_class if method is not None else None
+    retained: frozenset[str] = frozenset()
+    receiver_index = None
+    if method is not None and method.kind != "staticmethod":
+        receiver_index = next(
+            (
+                index
+                for index, parameter in enumerate(parameters)
+                if parameter.arg == method.receiver_name
+            ),
+            None,
+        )
+        for site in sites:
+            function = _function_at(ast.parse(site.source), site.start_line)
+            if function is None:
+                return
+            positional = function.args.posonlyargs + function.args.args
+            # An explicit self/cls contract may restrict dispatch to a subset
+            # of the class. Do not silently replace it by the inferred host.
+            if not positional or positional[0].annotation is not None:
+                return
+            if receiver_index is not None:
+                receiver = site.call.args[receiver_index]
+                if not isinstance(receiver, ast.Name) or receiver.id != positional[0].arg:
+                    return
+    if method is not None and method.kind != "staticmethod":
+        retained = TypeResolver(
+            host_source, host_file, 1, host_source, host_file, host_class=host_class
+        ).host_class_parameter_identities
+    rows = _signature_rows(
+        sites,
+        host_file,
+        host_source,
+        return_variables,
+        oracle,
+        host_class=host_class,
+        receiver_index=receiver_index,
+    )
     if not rows:
         return
     reserved = _reserved_names(helper, [host_source, *(site.source for site in sites)])
@@ -424,7 +514,14 @@ def generic_helpers(
     while alias in reserved:
         alias += "_"
     reserved.add(alias)
-    for signature in generalize_signatures(rows, reserved):
-        body_annotations = _body_annotations(helper, sites, rows, signature, host_file, host_source)
+    signatures = (
+        generalize_signatures(rows, reserved, retained_parameters=retained)
+        if method is not None
+        else generalize_signatures(rows, reserved)
+    )
+    for signature in signatures:
+        body_annotations = _body_annotations(
+            helper, sites, rows, signature, host_file, host_source, host_class, retained
+        )
         if body_annotations is not None:
-            yield _render_generic(helper, signature, alias, body_annotations)
+            yield _render_generic(helper, signature, alias, body_annotations, receiver_index)

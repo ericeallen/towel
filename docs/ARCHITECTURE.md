@@ -428,8 +428,27 @@ two generic candidates. Unsupported or conflicting domains are declined rather
 than replaced with invented bounds. The helper body and calls decide whether
 these candidate relationships are valid through the project's checkers.
 
-Generic inference currently applies to new module-level helpers. The constructor
-import uses a fresh alias, and declarations and the helper share one transaction.
+Generic inference applies to new module-level helpers and instance, class, and
+static helper methods. An instance or class method keeps parameters bound by its
+host class while freshening independent method parameters. The receiver is identified before
+method rendering reorders the arguments; its type is supplied by the host class,
+not inferred by joining the observed receivers. Explicit source `self`/`cls`
+annotations currently decline generic method inference rather than losing their
+contract. The complete prospective project checks inherited helper bodies in
+their actual host class.
+
+Static helpers are called through the class name, which does not carry the
+caller's class specialization. They therefore receive fresh parameters for
+source class variables too, inferred from explicit arguments. The original
+methods retain their class-bound signatures, and the new private helper must
+verify for its more general contract. No runtime class subscription or cast
+is introduced to force a specialization.
+
+The constructor import uses a fresh alias, and declarations and the helper share
+one transaction.
+Fresh method parameters are declared at module scope before the host class,
+including before its decorators. Eager declaration dependencies must precede
+that class; unavailable dependencies decline the proposal.
 Their annotations, bounds, and constraints are quoted to avoid evaluating project
 types before those types exist. Rejected candidates leave neither declarations
 nor imports behind. Existing functions reused as helpers keep their signatures.

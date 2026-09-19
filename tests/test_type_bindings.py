@@ -7,11 +7,21 @@ import textwrap
 
 import pytest
 
-from towel.unification.type_bindings import TypeKind, TypeResolver, TypeTerm, render_type
+from towel.unification.type_bindings import (
+    TypeKind,
+    TypeResolver,
+    TypeTerm,
+    render_type,
+    type_parameter_identities,
+)
 
 
 def resolver(
-    source: str, host: str | None = None, file: str = "/project/site.py", line: int | None = None
+    source: str,
+    host: str | None = None,
+    file: str = "/project/site.py",
+    line: int | None = None,
+    host_class: str | None = None,
 ) -> TypeResolver:
     source = textwrap.dedent(source)
     host = source if host is None else textwrap.dedent(host)
@@ -21,6 +31,7 @@ def resolver(
         line or len(source.splitlines()),
         host,
         file if host == source else "/project/host.py",
+        host_class=host_class,
     )
 
 
@@ -296,3 +307,179 @@ def test_pep695_body_rebinding_is_not_confused_with_the_type_binder():
 )
 def test_pep695_default_is_not_silently_discarded():
     assert resolve("def f[T = int]():\n    pass", "T") is None
+
+
+@pytest.mark.parametrize(
+    "base", ["Generic[T]", "G[T]", "Protocol[T]", "t.Generic[T]", "list[T]", "dict[str, T]"]
+)
+def test_class_parameters_include_explicit_and_proven_implicit_generic_bases(base):
+    source = f"""\
+from typing import Generic, Generic as G, Protocol, TypeVar
+import typing as t
+T = TypeVar("T")
+U = TypeVar("U")
+class Host({base}):
+    def method(self, value: T, other: U) -> tuple[T, U]:
+        return value, other
+"""
+    instance = resolver(source, host_class="Host")
+    term = instance.resolve(ast.Name(id="T"))
+    other = instance.resolve(ast.Name(id="U"))
+    assert term is not None and other is not None
+    assert instance.host_class_parameters == (term,)
+    assert type_parameter_identities(term) == instance.host_class_parameter_identities
+    assert type_parameter_identities(other).isdisjoint(instance.host_class_parameter_identities)
+    compound = instance.resolve(ast.parse("tuple[T, U]", mode="eval").body)
+    assert compound is not None
+    assert type_parameter_identities(compound) == (
+        type_parameter_identities(term) | type_parameter_identities(other)
+    )
+
+
+def test_generic_user_base_resolves_known_type_parameters():
+    source = """\
+from typing import Generic, TypeVar
+T = TypeVar("T")
+U = TypeVar("U")
+class Base(Generic[T]):
+    pass
+class Host(Base[U]):
+    def method(self, value: U) -> U:
+        return value
+"""
+    instance = resolver(source, host_class="Host")
+    term = instance.resolve(ast.Name(id="U"))
+    assert term is not None and instance.host_class_parameters == (term,)
+
+
+def test_shared_legacy_declaration_is_bound_separately_by_each_class():
+    source = """\
+from typing import Generic, TypeVar
+T = TypeVar("T")
+class First(Generic[T]):
+    def method(self, value: T) -> T:
+        return value
+class Second(Generic[T]):
+    def method(self, value: T) -> T:
+        return value
+def free(value: T) -> T:
+    return value
+"""
+    first = resolver(source, host_class="First", line=5)
+    second = resolver(source, host_class="Second", line=8)
+    free = resolver(source, host_class="First", line=10)
+    first_term = first.resolve(ast.Name(id="T"))
+    second_term = second.resolve(ast.Name(id="T"))
+    free_term = free.resolve(ast.Name(id="T"))
+    assert first_term is not None and second_term is not None and free_term is not None
+    assert len({first_term, second_term, free_term}) == 3
+    assert first.host_class_parameter_identities.isdisjoint(second.host_class_parameter_identities)
+    assert type_parameter_identities(free_term).isdisjoint(first.host_class_parameter_identities)
+
+
+@pytest.mark.parametrize("decorator", ["", "    @classmethod\n", "    @staticmethod\n"])
+def test_descriptor_kind_does_not_erase_lexical_class_parameters(decorator):
+    source = 'from typing import Generic, TypeVar\nT = TypeVar("T")\nclass Host(Generic[T]):\n'
+    source += decorator + "    def method(value: T) -> T:\n        return value\n"
+    instance = resolver(source, host_class="Host")
+    term = instance.resolve(ast.Name(id="T"))
+    assert (
+        term is not None
+        and type_parameter_identities(term) == instance.host_class_parameter_identities
+    )
+
+
+def test_class_local_import_shadows_module_import_without_changing_identity():
+    host = "from outer import Value\nclass Host:\n    from inner import Value\n    pass"
+    local = resolver(host, host_class="Host").resolve(ast.Name(id="Value"))
+    assert local is not None and local.name == "inner.Value" and rendered(local) == "Value"
+    foreign = resolver("from outer import Value", host=host, host_class="Host")
+    assert foreign.resolve(ast.Name(id="Value")) is None
+    alias_host = "import outer as outside\n" + host
+    alias = resolver("from outer import Value", host=alias_host, host_class="Host")
+    assert rendered(alias.resolve(ast.Name(id="Value"))) == "outside.Value"
+
+
+def test_class_shadowed_builtin_uses_only_an_existing_unshadowed_module_alias():
+    host = "class Host:\n    int = str\n"
+    assert resolver("", host=host, host_class="Host").resolve(ast.Name(id="int")) is None
+    alias = resolver("", host="import builtins as b\n" + host, host_class="Host")
+    assert rendered(alias.resolve(ast.Name(id="int"))) == "b.int"
+    # Supplying no class leaves the module helper's existing behavior intact.
+    assert rendered(resolver("", host=host).resolve(ast.Name(id="int"))) == "int"
+
+
+def test_fresh_parameter_domains_use_module_spelling_despite_class_shadowing():
+    source = """\
+from typing import TypeVar
+from collections.abc import Sized as Bound
+U = TypeVar("U", bound=Bound)
+class Host:
+    Bound = str
+    def method(self, value: U) -> U:
+        return value
+"""
+    instance = resolver(source, host_class="Host")
+    term = instance.resolve(ast.Name(id="U"))
+    assert term is not None and term.parameter is not None
+    assert rendered(term.parameter.bound) == "Bound"
+    assert term.parameter.bound is not None and term.parameter.bound.name == "collections.abc.Sized"
+    assert instance.resolve(ast.Name(id="Bound")) is None
+
+
+def test_class_only_bound_and_type_alias_decline_instead_of_escaping_to_module():
+    source = """\
+from typing import TypeVar
+class Host:
+    from collections.abc import Sized as LocalBound
+    U = TypeVar("U", bound=LocalBound)
+    Alias = list[int]
+    def method(self):
+        pass
+"""
+    instance = resolver(source, host_class="Host")
+    assert instance.resolve(ast.Name(id="U")) is None
+    assert instance.resolve(ast.Name(id="Alias")) is None
+
+
+@pytest.mark.parametrize(
+    "source,host_class",
+    [
+        ("class Host: pass\nclass Host: pass", "Host"),
+        ("class Other: pass", "Host"),
+        ("class Outer:\n    class Host: pass", "Outer.Host"),
+        ("class Host(factory()): pass", "Host"),
+        ("class Host(Unresolved[T]): pass", "Host"),
+        ("from typing import Generic\nfrom other import T\nclass Host(Generic[T]): pass", "Host"),
+        ("from other import Base, T\nclass Host(Base[T]): pass", "Host"),
+        (
+            'from typing import Generic, TypeVar\nT = TypeVar("T")\nclass Host(Generic[T]):\n    T = int',
+            "Host",
+        ),
+    ],
+)
+def test_unproven_class_hosts_or_binders_decline(source, host_class):
+    instance = resolver(source, host_class=host_class)
+    assert instance.resolve(ast.Name(id="int")) is None
+    assert not instance.host_class_parameter_identities
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
+def test_pep695_host_binder_is_retained_while_method_binder_remains_independent():
+    source = "class Host[T]:\n    def method[U: int](self, value: T, other: U) -> tuple[T, U]:\n        return value, other"
+    instance = resolver(source, host_class="Host")
+    host = instance.resolve(ast.Name(id="T"))
+    method = instance.resolve(ast.Name(id="U"))
+    assert host is not None and method is not None and method.parameter is not None
+    assert instance.host_class_parameters == (host,)
+    assert type_parameter_identities(method).isdisjoint(instance.host_class_parameter_identities)
+    assert rendered(method.parameter.bound) == "int"
+    assert instance.resolve_revealed("T@Host") == host
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
+def test_pep695_dependent_class_bound_or_class_local_method_bound_is_not_exported():
+    dependent = "class Host[T, U: T]:\n    def method(self):\n        pass"
+    assert resolver(dependent, host_class="Host").resolve(ast.Name(id="T")) is None
+    local = "class Host:\n    from collections.abc import Sized as Local\n    def method[T: Local](self):\n        pass"
+    assert resolver(local, host_class="Host").resolve(ast.Name(id="T")) is None

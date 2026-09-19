@@ -242,15 +242,21 @@ where the evidence comes from:
   `Any` inside a composite (`list[Any]`) is written as the checker revealed
   it. A helper with any annotation has every parameter and its return
   annotated, so the checker's incomplete-definition rule is never tripped.
-- Fresh module-level helpers can use generic signatures obtained by
-  anti-unifying complete argument/result rows, including nested constructors.
+- Fresh module-level helpers and helper methods can use generic signatures
+  obtained by anti-unifying complete argument/result rows, including nested constructors.
   Type-variable identity includes its original binding scope. Existing free
   variables are rebound with compatible bounds or constraints; dependent bounds,
   conflicting free-variable domains, variadic type parameters, unresolved names,
   and `Any`/`Unknown` decline generic inference. At most two generic contracts
   are tried: unrestricted concrete disagreements, then constraints with two to
-  four concrete alternatives. Every helper type parameter must occur in an
-  input. Generic methods and function-hosted helpers remain unsupported. See
+  four concrete alternatives. Every fresh helper type parameter must occur in an
+  input. Instance and class helpers retain type parameters bound by their host
+  class, which can also appear only in the result. Static helpers freshen source
+  class parameters and must infer them from explicit arguments. Generic method
+  inference currently requires implicit `self`/`cls` typing; explicit receiver
+  contracts are not generalized.
+  Inherited helpers must type-check in the chosen ancestor, without assuming
+  subclass-only attributes. Function-hosted generic helpers remain unsupported. See
   the [type-parameter design](proposals/type-parameters.md).
 - Mypy can report several different specializations for one expression inside
   a constrained generic function. Towel treats that reveal as ambiguous instead

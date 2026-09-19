@@ -138,21 +138,66 @@ def test_unavailable_eager_type_binding_refuses_without_writing(
     assert path.read_text() == original
 
 
-@pytest.mark.parametrize("placement", ["class", "function", "reuse"])
-def test_type_declarations_require_a_fresh_module_helper(tmp_path: Path, placement: str) -> None:
+@pytest.mark.parametrize("placement", ["function", "reuse"])
+def test_type_declarations_require_a_fresh_module_or_class_helper(
+    tmp_path: Path, placement: str
+) -> None:
     path = tmp_path / "module.py"
     original = "def first(value):\n    return value\n"
     path.write_text(original)
     proposal = _proposal(path, "from typing import TypeVar\n_T = TypeVar('_T')\n")
-    if placement == "class":
-        proposal = replace(proposal, insert_into_class="Host")
-    elif placement == "function":
+    if placement == "function":
         proposal = replace(proposal, insert_into_function="first")
     else:
         proposal = replace(proposal, reused_function=ReusedFunction("first", str(path), (1, 2)))
-    with pytest.raises(RefactoringError, match="fresh module-level"):
+    with pytest.raises(RefactoringError, match="fresh module or class"):
         _engine().plan_refactoring(proposal)
     assert path.read_text() == original
+
+
+@pytest.mark.parametrize("bound_before_host", [True, False])
+def test_method_declarations_respect_module_dependencies_and_host_decorators(
+    tmp_path: Path, bound_before_host: bool
+) -> None:
+    path = tmp_path / "module.py"
+    bound = "class Bound:\n    pass\n\n"
+    source = (
+        '"""Example."""\nfrom __future__ import annotations\n\n'
+        "def first(value):\n    return value\n\n"
+        "def decorate(cls):\n    return cls\n\n"
+        + (bound if bound_before_host else "")
+        + "@decorate\nclass Host:\n    pass\n\n"
+        + ("" if bound_before_host else bound)
+    )
+    path.write_text(source)
+    proposal = _proposal(path, "from typing import TypeVar as _TV\n_T = _TV('_T', bound=Bound)\n")
+    proposal = replace(
+        proposal,
+        insert_into_class="Host",
+        method_kind="staticmethod",
+        replacements=[
+            replace(item, class_name="Host", method_kind="staticmethod")
+            for item in proposal.replacements
+        ],
+    )
+    engine = _engine()
+    if bound_before_host:
+        rendered = engine.apply_refactoring(str(path), proposal)
+        assert rendered.index("class Bound:") < rendered.index("_T =") < rendered.index("@decorate")
+        assert "@decorate\nclass Host:" in rendered
+        namespace: dict[str, object] = {}
+        exec(
+            compile(
+                rendered + "\nvalue = Bound()\nassert first(value) is value\n", str(path), "exec"
+            ),
+            namespace,
+        )
+        assert namespace["__doc__"] == "Example."
+    else:
+        with pytest.raises(RefactoringError, match="binding after its host"):
+            engine.apply_refactoring(str(path), proposal)
+        assert engine.change_log == ()
+    assert path.read_text() == source
 
 
 def test_helper_name_allocation_avoids_its_own_type_declarations(tmp_path: Path) -> None:

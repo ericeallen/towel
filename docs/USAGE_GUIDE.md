@@ -175,11 +175,14 @@ same behavior with `type_oracle=None` and `annotate_helpers=False`. A checker
 crash or timeout remains a distinct verification failure. A clean baseline
 keeps prospective-project verification enabled throughout the run.
 
-For new module-level helpers, Towel also anti-unifies the corresponding argument
-and result types. For example, `list[int] -> int` and `list[str] -> str` can become
+For new module-level helpers and helper methods, Towel also anti-unifies the
+corresponding argument and result types. For example, `list[int] -> int` and `list[str] -> str` can become
 `list[T] -> T`. Already-generic callers receive fresh helper binders with their
 supported bounds or constraints preserved. The generated `TypeVar` declarations
-work on Python 3.11 and newer. Every candidate is checked with its rewritten calls
+work on Python 3.11 and newer. Instance and class helpers retain parameters
+bound by the host class; static helpers infer fresh parameters from explicit
+arguments. Fresh method parameters are declared before the host class
+at module scope. Every candidate is checked with its rewritten calls
 and unchanged consumers before it is accepted; `--no-types` does not synthesize
 generic contracts. See the [design and supported boundaries](proposals/type-parameters.md).
 

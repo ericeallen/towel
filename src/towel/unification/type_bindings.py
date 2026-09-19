@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import ast
 import builtins
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import os
 import re
@@ -186,6 +186,12 @@ class _Scope:
     node: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
     bindings: dict[str, _Binding]
     wildcard: bool
+
+
+@dataclass(frozen=True)
+class _ClassParameter:
+    declaration_identity: str
+    term: TypeTerm
 
 
 class _Collector(ast.NodeVisitor):
@@ -372,13 +378,30 @@ def _scopes(module: ast.Module, file_path: str, line: int) -> tuple[_Scope, ...]
 
 
 class TypeResolver:
-    """Resolve one site's types in its lexical scope for a module-level helper."""
+    """Resolve one site's types for a module helper or a named host class.
+
+    Class parameters are exposed separately; the caller chooses whether their
+    identities remain bound or are freshened for the helper's actual dispatch.
+    Bounds and constraints always use module-visible spellings because fresh
+    TypeVar declarations are emitted outside the class.
+    """
 
     def __init__(
-        self, source: str, file_path: str, line: int, host_source: str, host_file: str
+        self,
+        source: str,
+        file_path: str,
+        line: int,
+        host_source: str,
+        host_file: str,
+        *,
+        host_class: str | None = None,
     ) -> None:
         self.file_path = os.path.abspath(file_path)
         self.host_file = os.path.abspath(host_file)
+        self.host_class_parameters: tuple[TypeTerm, ...] = ()
+        self.host_class_parameter_identities: frozenset[str] = frozenset()
+        self._source_class_parameters: tuple[_ClassParameter, ...] = ()
+        self._module_resolver: TypeResolver | None = None
         try:
             module = ast.parse(source)
             host = ast.parse(host_source)
@@ -388,6 +411,107 @@ class TypeResolver:
         else:
             self.scopes = _scopes(module, self.file_path, line)
             self.host = _scope(host, self.host_file)
+            if host_class is not None:
+                self._configure_class_host(source, line, host_source, host, host_class)
+
+    def _configure_class_host(
+        self,
+        source: str,
+        line: int,
+        host_source: str,
+        host: ast.Module,
+        host_class: str,
+    ) -> None:
+        classes = [
+            node for node in host.body if isinstance(node, ast.ClassDef) and node.name == host_class
+        ]
+        if len(classes) != 1 or self.host is None:
+            self.host = None
+            return
+        class_scope = _scope(classes[0], self.host_file)
+        self._module_resolver = TypeResolver(
+            source, self.file_path, line, host_source, self.host_file
+        )
+        host_resolver = TypeResolver(
+            host_source, self.host_file, classes[0].lineno, host_source, self.host_file
+        )
+        host_parameters = host_resolver._declared_class_parameters(len(host_resolver.scopes) - 1)
+        source_parameters: list[_ClassParameter] = []
+        for index, scope in enumerate(self.scopes):
+            if isinstance(scope.node, ast.ClassDef):
+                parameters = self._module_resolver._declared_class_parameters(index)
+                if parameters is None:
+                    self.host = None
+                    return
+                source_parameters.extend(parameters)
+        if host_parameters is None or class_scope.wildcard:
+            self.host = None
+            return
+        self.host = _Scope(host, {**self.host.bindings, **class_scope.bindings}, self.host.wildcard)
+        self._source_class_parameters = tuple(source_parameters)
+        self.host_class_parameters = tuple(parameter.term for parameter in host_parameters)
+        self.host_class_parameter_identities = frozenset(
+            identity
+            for term in self.host_class_parameters
+            for identity in type_parameter_identities(term)
+        )
+
+    def _declared_class_parameters(self, index: int) -> tuple[_ClassParameter, ...] | None:
+        """Prove class binders from explicit parameters and resolved generic bases."""
+        scope = self.scopes[index]
+        if not isinstance(scope.node, ast.ClassDef) or scope.wildcard:
+            return None
+        declared: object = getattr(scope.node, "type_params", ())
+        explicit = isinstance(declared, list) and bool(declared)
+        terms: dict[str, TypeTerm] = {}
+        if isinstance(declared, list):
+            for parameter in declared:
+                name: object = getattr(parameter, "name", None)
+                if not isinstance(name, str):
+                    return None
+                term = self._name(name, index + 1, frozenset(), False)
+                if term is None or term.parameter is None:
+                    return None
+                terms[term.parameter.identity] = term
+        for base in scope.node.bases:
+            term = self._resolve(base, index + 1 if explicit else index, frozenset(), False)
+            if term is None:
+                return None
+            if (
+                term.kind is TypeKind.APPLY
+                and term.children
+                and term.children[0].name in ("typing.Generic", "typing.Protocol")
+                and any(argument.parameter is None for argument in term.children[1:])
+            ):
+                return None
+            if term.kind is TypeKind.APPLY and not all(
+                _known_base_argument(argument) for argument in term.children[1:]
+            ):
+                # An imported bare name might itself be an imported TypeVar.
+                # Without its declaration we cannot prove the class is closed.
+                return None
+            for parameter_term in _parameter_terms(term):
+                assert parameter_term.parameter is not None
+                terms.setdefault(parameter_term.parameter.identity, parameter_term)
+        result: list[_ClassParameter] = []
+        for identity, term in terms.items():
+            assert term.parameter is not None
+            binding = scope.bindings.get(term.spelling)
+            if binding is not None and binding.kind != "parameter":
+                return None
+            parameter_identity = (
+                identity
+                if explicit
+                else f"class-parameter:{self.file_path}:{scope.node.lineno}:{identity}"
+            )
+            parameter = replace(term.parameter, identity=parameter_identity)
+            result.append(
+                _ClassParameter(
+                    identity,
+                    replace(term, name=parameter_identity, parameter=parameter),
+                )
+            )
+        return tuple(result)
 
     def resolve(self, annotation: ast.expr) -> TypeTerm | None:
         """Resolve a declared annotation, including a quoted forward annotation."""
@@ -581,9 +705,12 @@ class TypeResolver:
         if (bound is not None and constraints) or len(constraints) == 1:
             return None
         seen = active | {identity}
-        resolved_bound = self._resolve(bound, index + 1, seen, False) if bound is not None else None
+        domain_resolver = self._module_resolver or self
+        resolved_bound = (
+            domain_resolver._resolve(bound, index + 1, seen, False) if bound is not None else None
+        )
         resolved_constraints = tuple(
-            self._resolve(item, index + 1, seen, False) for item in constraints
+            domain_resolver._resolve(item, index + 1, seen, False) for item in constraints
         )
         if (bound is not None and resolved_bound is None) or any(
             item is None for item in resolved_constraints
@@ -596,7 +723,11 @@ class TypeResolver:
         ):
             return None
         parameter = TypeParameter(identity, resolved_bound, terms)
-        return TypeTerm(TypeKind.ATOM, identity, name, parameter=parameter)
+        term = TypeTerm(TypeKind.ATOM, identity, name, parameter=parameter)
+        for class_parameter in reversed(self._source_class_parameters):
+            if class_parameter.declaration_identity == identity:
+                return class_parameter.term
+        return term
 
     def _resolve(
         self,
@@ -698,9 +829,29 @@ class TypeResolver:
 
 def contains_type_parameter(term: TypeTerm) -> bool:
     """Whether a type includes a source or freshly generated generic binder."""
-    return term.parameter is not None or any(
-        contains_type_parameter(child) for child in term.children
+    return bool(type_parameter_identities(term))
+
+
+def _parameter_terms(term: TypeTerm) -> tuple[TypeTerm, ...]:
+    own = (term,) if term.parameter is not None else ()
+    return own + tuple(
+        parameter for child in term.children for parameter in _parameter_terms(child)
     )
+
+
+def _known_base_argument(term: TypeTerm) -> bool:
+    if term.parameter is not None:
+        return True
+    if term.kind is TypeKind.ATOM:
+        return term.name.startswith(("builtins.", "local:", "typing.", "collections.abc."))
+    children = term.children[1:] if term.kind is TypeKind.APPLY else term.children
+    return all(_known_base_argument(child) for child in children)
+
+
+def type_parameter_identities(term: TypeTerm) -> frozenset[str]:
+    """Every scoped parameter identity mentioned by an immutable type term."""
+    own = frozenset((term.parameter.identity,)) if term.parameter is not None else frozenset()
+    return own.union(*(type_parameter_identities(child) for child in term.children))
 
 
 def _union(members: tuple[TypeTerm | None, ...]) -> TypeTerm | None:

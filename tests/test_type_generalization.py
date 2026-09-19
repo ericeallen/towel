@@ -200,3 +200,40 @@ def test_inputs_and_reserved_name_set_remain_unchanged_and_results_are_determini
     assert reserved == {"_TowelT0", "_TowelT1"}
     assert rows == ((INT, INT), (STR, STR))
     assert first[0].parameters[0].name not in reserved
+
+
+def test_host_class_parameter_stays_bound_while_method_parameters_are_freshened():
+    host = parameter("class:Box:T")
+    left, right = parameter("first:U"), parameter("second:V")
+    result = generalize_signatures(
+        (
+            (applied("list", left), applied("tuple", host, left)),
+            (applied("list", right), applied("tuple", host, right)),
+        ),
+        set(),
+        retained_parameters=frozenset({"class:Box:T"}),
+    )
+    assert len(result) == 1 and len(result[0].parameters) == 1
+    assert result[0].types[1].children[1] == host
+    assert result[0].types[0].children[1] == result[0].types[1].children[2]
+
+
+def test_implicit_receiver_can_supply_a_class_bound_result_without_new_parameters():
+    host = parameter("class:Box:T")
+    result = generalize_signatures(
+        ((host,), (host,)), set(), retained_parameters=frozenset({"class:Box:T"})
+    )
+    assert len(result) == 1 and result[0].types == (host,) and result[0].parameters == ()
+    assert generalize_signatures(((host,), (host,)), set()) == ()
+
+
+def test_host_retention_does_not_capture_a_different_binder_with_the_same_spelling():
+    host, source = parameter("class:Box:T"), parameter("method:T")
+    result = generalize_signatures(
+        ((source, applied("tuple", host, source)),) * 2,
+        set(),
+        retained_parameters=frozenset({"class:Box:T"}),
+    )[0]
+    assert result.types[1].children[1] == host
+    assert result.types[0] not in {host, source}
+    assert len(result.parameters) == 1

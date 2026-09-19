@@ -50,7 +50,7 @@ from ..type_inference import CheckFailure, TypeOracle
 from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
-from .generic_annotations import generic_helpers
+from .generic_annotations import MethodContext, generic_helpers
 
 
 class HelperAnnotationWiring(EngineState):
@@ -227,7 +227,6 @@ class HelperAnnotationWiring(EngineState):
         if (
             not proposal.wants_type_inference
             or proposal.reused_function is not None
-            or proposal.insert_into_class is not None
             or proposal.insert_into_function is not None
         ):
             return
@@ -237,6 +236,16 @@ class HelperAnnotationWiring(EngineState):
         source = self._read_source(proposal.file_path)
         if source is None:
             return
+        method = (
+            MethodContext(
+                proposal.insert_into_class,
+                proposal.method_kind or "instance",
+                proposal.method_param_name
+                or ("cls" if proposal.method_kind == "classmethod" else "self"),
+            )
+            if proposal.insert_into_class is not None
+            else None
+        )
         for candidate in generic_helpers(
             proposal.extracted_function,
             self._annotation_sites(proposal),
@@ -244,6 +253,7 @@ class HelperAnnotationWiring(EngineState):
             source,
             proposal.return_variables,
             oracle,
+            method=method,
         ):
             yield dataclasses.replace(
                 proposal,

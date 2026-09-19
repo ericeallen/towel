@@ -19,6 +19,11 @@ ecosystem evidence behind each claim. The format follows
   the complete prospective project and committed as one transaction. Failed
   attempts leave no declarations behind. Generated syntax remains compatible
   with Python 3.11; existing PEP 695 input requires Python 3.12 or newer.
+- Generic instance, class, and static helper methods preserve argument/result
+  relationships. Instance and class helpers retain the host's type parameters;
+  static helpers infer fresh parameters from their explicit arguments. Fresh
+  declarations precede the host class at module scope, preserving descriptor
+  behavior and declaration rollback.
 
 ### Fixed
 - Type probes at adjacent extraction sites retain their lexical scope even when

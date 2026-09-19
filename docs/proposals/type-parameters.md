@@ -98,8 +98,8 @@ annotations` does not make this syntax parse on Python 3.11.
 
 ## Implemented inference
 
-Fresh module-level helpers use fixed positional parameters and a result type,
-which may itself be a tuple. Corresponding argument and result types are
+Fresh module-level helpers and methods use fixed positional parameters and a
+result type, which may itself be a tuple. Corresponding argument and result types are
 anti-unified together, recursively through matching type constructors. Multiple
 independent disagreement columns receive distinct parameters; repeated columns
 share a parameter. A precise ordinary signature is retained when it verifies.
@@ -117,7 +117,8 @@ and are also tried when a precise ordinary signature fails.
    `(list[int], int)` and `(list[str], str)` yield `(list[_T], _T)`.
    Different constructors can become a variable for the entire type, but the
    algorithm never invents a higher-kinded constructor variable. Every fresh
-   parameter must occur in an input. Equal observed columns are a candidate
+   parameter must occur in an input; a parameter already bound by the host class
+   need not. Equal observed columns are a candidate
    hypothesis, not proof of a universal relationship.
 4. Try an unrestricted parameter for each concrete disagreement first. If the
    body needs a finite domain, try a second candidate with two to four distinct
@@ -185,11 +186,37 @@ extraction through the ordinary proposal machinery; do not generalize the
 existing callee to make a new caller fit. Calls in unchanged modules remain part
 of whole-project verification.
 
-Methods need a later placement rule. In the Sphinx audit, a helper placed on
-`ASTBase` received a `self` annotation restricted to two subclasses, which mypy
-rejected. Replacing that annotation with a type parameter is not automatically a
-valid method contract. Receiver bounds, inherited accessibility, and the host
-class must be checked together before method inference is enabled.
+Instance, class, and static helper methods are supported in their existing
+selected host. Instance and class helpers keep parameters bound by that class;
+independent method parameters receive fresh binders. For example, a method in
+`Box[T]` can accept `list[U]` and return `tuple[T, U]`: `T` still describes `self.value`, while
+`U` varies independently at each call. Legacy `Generic[T]` and PEP 695 class
+bindings are both recognized. Fresh declarations live at module scope before
+the host class, so they do not become class attributes or depend on class-body
+name lookup. They share the helper's transaction and are removed with a rejected
+candidate.
+
+Static helper calls use the class name, which does not carry a specialization
+such as `Box[T]`. A static helper therefore freshens source class parameters too,
+and infers them from its explicit arguments. For example, a private static helper
+can generalize `(T, list[U]) -> tuple[T, U]` to independent fresh parameters
+`(H, list[J]) -> tuple[H, J]`. The source methods keep their class-bound signatures;
+the helper's body and all rewritten calls must check with this more general
+contract. This avoids Pyright's unknown class arguments at `Box.helper(...)`
+without adding casts or evaluating `Box[T]` at runtime.
+
+For instance and class methods, the implicit receiver is excluded from the
+generalization rows and typed by its actual host. Explicit source receiver
+annotations currently decline generic inference because they can restrict which
+class instantiations may call the method. The implementation does not erase or
+invent such contracts. Function-local generic helpers remain later work.
+
+In the Sphinx audit, a helper placed on `ASTBase` received a `self` annotation
+restricted to two subclasses, which mypy rejected. This establishes a receiver
+and placement obligation, not a general prohibition on generic methods. Every
+inherited helper must type-check in its actual host with all callers, including
+accesses to receiver attributes. Anti-unification does not grant the ancestor
+attributes belonging only to its subclasses.
 
 ## Containers, callables, and narrowing
 
@@ -292,15 +319,15 @@ hypothesis.
 
 ## Validation and remaining work
 
-Per-site rows, binder identities, fresh module-level helpers, structured positions,
+Per-site rows, binder identities, module and method helpers, structured positions,
 and supported source generic bindings are implemented. The suite exercises real
 extraction with each checker, plus pure anti-unification, lexical resolution,
 transactional declarations, and subsequent inventory/renaming. Independent
 checker experiments cover both accepted patterns and dependent-bound failures.
 
-Generic method placement, function-hosted generic helpers, more expressive source
-domains, and optional PEP 695 output remain later work. A pinned ecosystem run is
-also needed before assigning this feature a release performance claim; existing
+Explicit receiver contracts, function-hosted generic helpers, more expressive
+source domains, and optional PEP 695 output remain later work. A pinned ecosystem
+run is also needed before assigning this feature a release performance claim; existing
 1.732 corpus measurements do not measure the new inference.
 
 One checker-evidence boundary remains: mypy specializes constrained functions and
