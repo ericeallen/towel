@@ -387,9 +387,14 @@ ecosystem evidence behind each claim. The format follows
   reference cycles, and Python's cyclic collector runs its full passes
   more rarely as the heap grows, so finished builds piled up: sphinx, type
   checked once per applied refactoring, reached 40 GB in the
-  release-candidate ecosystem run. Each build now freezes the existing heap,
-  runs, and collects what it created, so the collection costs a fraction of
-  the build; the same sphinx refactor holds under 1 GB.
+  release-candidate ecosystem run. The oracle now freezes the existing heap
+  when a window of ten builds starts and collects when it ends, so the
+  collection frees what the builds left without a pass over Towel's own
+  analysis. Collecting after every build bounded memory too but made Towel
+  on its own source 41 percent slower, from a large fixed cost per
+  collection; every tenth build costs 6 percent (13.3 s against 12.5 s,
+  peak 436 MB against 839 MB). sphinx's refactor, verified by mypy and
+  pyright, now peaks at 1.76 GB and takes 1,140 s alone.
 - The eager-argument guard is rebuilt on control flow. Twelve shapes that
   passed a differing name eagerly where the original read it only on some
   path are thunked or declined: a failed optional import, a `TYPE_CHECKING`

@@ -255,15 +255,30 @@ class MypyInferrer:
             self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
             cache_dir = Path(self._cache.name)
         self._cache_dir = cache_dir
+        self._builds = 0
+        self._heap_frozen = False
+
+    #: Builds whose garbage is collected together. Collecting after every build
+    #: made Towel on its own source 41 percent slower (a large fixed cost per
+    #: collection); every tenth costs 6 percent and still bounds memory.
+    COLLECT_EVERY = 10
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
 
     def close(self) -> None:
-        """Remove the cache directory this inferrer created, if it created one."""
+        """Collect any builds' garbage still pending and remove the cache directory this inferrer made."""
+        self._collect_builds()
         if self._cache is not None:
             self._cache.cleanup()
             self._cache = None
+
+    def _collect_builds(self) -> None:
+        """Free the garbage of the builds since the heap was frozen, then thaw it."""
+        if self._heap_frozen:
+            gc.collect()
+            gc.unfreeze()
+            self._heap_frozen = False
 
     def __del__(self) -> None:
         self.close()
@@ -288,17 +303,21 @@ class MypyInferrer:
         A build leaves its whole graph (trees, symbol tables, types) as reference
         cycles, which only the cyclic collector frees, and its full passes grow
         rarer as the heap grows: sphinx, with a check per applied refactoring,
-        reached 40 GB of finished builds. Freezing the heap first confines the
-        collection to what the build created, so it costs a fraction of the
-        build instead of a pass over Towel's own analysis.
+        reached 40 GB of finished builds. The heap is frozen when a window of
+        builds starts, so the collection that ends it, every ``COLLECT_EVERY``
+        builds, frees what those builds left without a pass over Towel's own
+        analysis.
         """
         build, _, _ = _mypy()
-        gc.freeze()
+        if not self._heap_frozen:
+            gc.freeze()
+            self._heap_frozen = True
         try:
             return list(build.build(sources=sources, options=self._options(roots)).errors)
         finally:
-            gc.collect()
-            gc.unfreeze()
+            self._builds += 1
+            if self._builds % self.COLLECT_EVERY == 0:
+                self._collect_builds()
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
