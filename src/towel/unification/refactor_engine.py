@@ -265,7 +265,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 blocks, so a file of many long, similar functions can propose
                 tens of millions of pairs and exhaust memory; past the budget the
                 largest buckets of similar blocks are left out, with a warning
-                (default: 2,000,000).
+                (default: 20,000,000).
             parameterize_constants: Whether differing constants across the matched
                 blocks become helper parameters (default: True).
             prefer_absolute_imports: For a cross-file helper, prefer an absolute

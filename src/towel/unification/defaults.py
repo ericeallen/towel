@@ -23,5 +23,11 @@ DEFAULT_MIN_LINES = 3
 DEFAULT_MAX_ITERATIONS = 0
 """Applied refactorings after which a driver stops; zero runs to a fixed point."""
 
-DEFAULT_MAX_CANDIDATE_PAIRS = 2_000_000
-"""Candidate block pairs an analysis evaluates before it starts leaving buckets out."""
+DEFAULT_MAX_CANDIDATE_PAIRS = 20_000_000
+"""Candidate block pairs an analysis evaluates before it starts leaving buckets out.
+
+Above every project in the ecosystem corpus (networkx needs 9.25 million,
+sphinx 8.45 million), so real projects are analyzed in full; a pathological
+file of hundreds of near-identical long functions still stops here. The
+pairs themselves take about 150 bytes each, about 3 GB at the limit.
+"""

@@ -133,7 +133,7 @@ ecosystem evidence behind each claim. The format follows
   Dependabot proposes weekly, grouped minor/patch updates for the workflow
   actions and the `uv`-managed Python dependencies.
 - The candidate pairs an analysis evaluates are bounded by a configurable
-  candidate-pair budget (`--max-pairs`, default 2,000,000; past it the
+  candidate-pair budget (`--max-pairs`, default 20,000,000; past it the
   largest groups of similar blocks are left out with a warning), and the
   minimum block length (`--min-lines`) and helper parameter limit
   (`--max-parameters`) are exposed on the command line.

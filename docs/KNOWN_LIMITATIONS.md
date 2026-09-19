@@ -360,9 +360,12 @@ formed pair:
   would have to be rendered inside the preceding branch's `else`; the
   `elif`'s own body and further branches remain candidates. This gives up a
   valid extraction when the preceding branch always exits (tabulate).
-- Past the candidate-pair budget (`--max-pairs`, 2,000,000 by default) the
+- Past the candidate-pair budget (`--max-pairs`, 20,000,000 by default) the
   largest groups of similar blocks are left out of pairing, with a warning
-  naming them.
+  naming them. The default is above every project in the ecosystem corpus
+  (networkx needs 9.25 million pairs, sphinx 8.45 million); the 2,000,000
+  the release candidate first shipped cut both, and sphinx made 346
+  refactorings instead of 413.
 - setuptools, Hatch, Flit, Poetry, and pdm layouts are read from their own
   configuration. Any other build backend (for example ``flit_scm``) falls back
   to conventional inference: a package or module named after the distribution,
@@ -404,7 +407,7 @@ it tractable, all exact: they change no proposal.
   38-line functions under `--max-pairs 200000` peaked at 33.6 GB before and
   0.74 GB after (`1db56a1`, September 18, 2026, before the module-name
   rule). The clustering scan cache is likewise bounded by the sites it
-  holds, not only by its entry count. `--max-pairs` (2,000,000 by default)
+  holds, not only by its entry count. `--max-pairs` (20,000,000 by default)
   bounds the candidate pairs one analysis evaluates by leaving out the
   largest groups of similar blocks with a warning naming them. What it does
   not bound is a file below the budget whose every pair is admissible: a
@@ -498,7 +501,7 @@ dry src/towel` runs in 8.4 s without the type checker and formatter and
 The remaining cost is the pairwise evaluation of structurally distinct
 candidates, which no cache can share; large test modules with hundreds of
 similar methods remain the worst case. Progress is reported per phase.
-There is no time budget, but `--max-pairs` (2,000,000 by default) bounds
+There is no time budget, but `--max-pairs` (20,000,000 by default) bounds
 the candidate pairs one analysis evaluates by leaving out the largest
 groups of similar blocks with a warning; interrupt with Ctrl-C, which
 leaves files unchanged. The ecosystem check applies a 30-minute limit per

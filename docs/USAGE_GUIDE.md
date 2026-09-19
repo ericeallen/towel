@@ -133,7 +133,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `prefer_absolute_imports` | `None` | Cross-file helper import style; `None` lets the discovered layout decide (`--prefer-absolute-imports/--no-prefer-absolute-imports`). |
 | `pep420_namespace_packages` | `None` | Treat directories without `__init__.py` as packages; `None` infers it (`--pep420/--no-pep420`). |
 | `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`). |
-| `max_candidate_pairs` | `2_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
+| `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
 | `skip_trivial_helpers` | `True` | Do not propose a helper that only forwards, renames, or unpacks. |
 | `reuse_existing_functions` | `True` | A duplicate that is the whole body of a plain module-level function calls that function instead of a new helper. |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |

@@ -136,7 +136,7 @@ per pair. Pair evaluation keeps one proposal per identity (helper body,
 home and sites) and declines the rest as `duplicate_proposal`: sixty
 near-identical 38-line functions under `--max-pairs 200000` peaked at
 33.6 GB before and 0.74 GB after (`1db56a1`). The candidate-pair budget
-(`--max-pairs`, 2,000,000 by default) leaves out the largest groups of
+(`--max-pairs`, 20,000,000 by default) leaves out the largest groups of
 similar blocks with a warning when the projected pair count exceeds it,
 and the verdict of the instantiation check is memoized on the helper, the
 call and the block's structure. The CHANGELOG's `[Unreleased]` section

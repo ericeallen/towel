@@ -45,7 +45,7 @@ fixed-point loop (below).
 4. **Pair.** `block_signature.py` computes a cheap structural signature per
    block; `find_block_pairs` buckets blocks on their statement-type sequence
    and rejects incompatible pairs before the expensive step, and, when the
-   projected pair count exceeds `--max-pairs` (2,000,000 by default), leaves
+   projected pair count exceeds `--max-pairs` (20,000,000 by default), leaves
    out the largest buckets of similar blocks with a warning naming them
    (`_buckets_over_budget`).
 5. **Decide each pair.** `pair_evaluation.py` runs eleven stages, each
@@ -584,7 +584,7 @@ measure is exact and changes no proposal.
   `--max-pairs 200000` peaked at 33.6 GB holding every pair's copy and at
   0.74 GB with one (`1db56a1`, September 18, 2026, before the module-name
   rule). The candidate-pair budget itself (`max_candidate_pairs`, the CLI's
-  `--max-pairs`, 2,000,000 by default) bounds what one analysis evaluates by
+  `--max-pairs`, 20,000,000 by default) bounds what one analysis evaluates by
   leaving out the largest statement-sequence buckets with a warning.
 - **Instantiation memo.** The verdict of the instantiation check is memoized
   on the helper's dump, the call, and the block's structure, since the same
