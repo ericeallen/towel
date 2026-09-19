@@ -31,15 +31,23 @@ error code.
 
 ### Unit Tests (`tests/`)
 
-The suite is 126 `test_*.py` files holding 1,978 tests and 34 subtests (about
-70 s; counts as of this writing). Rather than list them all (they change
+The suite is 129 `test_*.py` files holding 2,007 tests and 34 subtests (about
+100 s; counts as of this writing). Rather than list them all (they change
 often), here is how they group by concern, with a representative file for
 each. Small helpers the tests share (parsing a dedented block, fixing
 synthesized positions, taking a module's functions by name, writing a module
 into `tmp_path`, running the engine to a fixed point with its output
-silenced, the `EngineOptions` a test may forward) live in `test_helpers.py`,
-which is strictly typed; `conftest.py` only keeps pytest from collecting the
-example corpora and scratch output directories.
+silenced, the `EngineOptions` a test may forward, and `TemporaryModuleTestCase`
+for `unittest` classes that write modules) live in `test_helpers.py`, which is
+strictly typed; `conftest.py` only keeps pytest from collecting the example
+corpora and scratch output directories.
+
+A test that writes a module the engine will refactor puts it in a directory
+of its own: pytest's `tmp_path`, or `TemporaryModuleTestCase._write_temp` in
+a `unittest` class. Never `NamedTemporaryFile` or `mkstemp` at the temp root:
+Towel places its transaction journal at the common parent of the files a run
+changes, so a module refactored directly in `$TMPDIR` leaves the journal
+there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
 
 - **Binding & scope** — `test_bindings.py`, `test_binding_detector.py`,
   `test_definite_assignment.py`: alpha-renaming, comprehension and loop
@@ -61,6 +69,12 @@ example corpora and scratch output directories.
 - **Soundness batteries** — `test_adversarial_semantics.py`,
   `test_adversarial_renaming.py`, `test_*_observational_equivalence.py`:
   instantiation-based equivalence checks and the hostile fixtures behind them.
+  The equivalence harness (`automatic_equivalence_tester.py`,
+  `equivalence_targets.py`, `crossfile_equivalence_tester.py`) consumes a
+  returned generator and runs a returned coroutine before comparing, compares
+  instances of a class each executed module defines for itself by their
+  state, and constructs a subclass target when its module declares the
+  constructor.
 - **Application & recovery** — `test_change_transactions.py`,
   `test_copy_preservation.py`: atomic byte plans, rollback, and interruption
   recovery.
@@ -109,10 +123,19 @@ example corpora and scratch output directories.
   `docs/ADVERSARIAL_REVIEW.md`; the others pin behaviour the engine must keep.
 - **Property-based tests** — `test_properties.py` generates programs from
   small grammars with Hypothesis (300 deterministic examples for the pure
-  properties, 60 for the engine property, no deadline) and checks three invariants: consistently renamed binders
-  unify with no parameters, `definitely_bound_after` matches a
-  path-enumerating reference, and every engine proposal for two blocks that
-  differ in one leaf passes the public instantiation check.
+  properties, 60 for each engine property, no deadline). The pure properties:
+  consistently renamed binders unify with no parameters, and
+  `definitely_bound_after` is sound against a path-enumerating reference
+  whose grammar includes `del` and `except ... as` (containment, since the
+  analysis treats both path-insensitively). The engine properties, on two
+  blocks that differ in one leaf: every proposal passes the public
+  instantiation check, a directory run's output is a fixed point, byte
+  conventions survive, both call sites stay observationally equivalent, a
+  block defining a closure over a binder rebound after it is declined or
+  kept equivalent, no proposal covers an argument-free `dir()`, `locals()`
+  or `vars()`, and a name nothing binds under `if limit < 0` is never
+  hoisted into an eager argument. The last is `xfail(strict=True)` until
+  the eager-argument guard lands; the marker comes off at merge.
 - **AST visitors** — `test_visitors.py`: each visitor in
   `towel.unification.visitors` (function collection, method-call rewriting,
   loop-return and name collection, assignment targets, class and function
@@ -143,7 +166,9 @@ example corpora and scratch output directories.
 
 Real Python code examples used by the test suite. Their expected fixed-point
 outputs are the goldens in `test_examples_expected_output/` and, for the
-cross-file examples in `test_examples_crossfile/`,
+cross-file packages in `test_examples_crossfile/` (`simple_crossfile`,
+`nested_structure`, `multi_level`, and `class_hierarchy`, a subclass in a
+second module repeating its base class's method body),
 `test_examples_crossfile_expected_output/`; regenerate them only after
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
@@ -157,9 +182,11 @@ fails the test instead of being regenerated into the baseline unnoticed.
 When such a change is intended, move the file in or out of the set and say
 why in the commit.
 
-The corpus has 26 files; each is a self-contained module whose name says
+The corpus has 28 files; each is a self-contained module whose name says
 what it exercises (see `test_examples/README.md`):
 
+- `annotated_module.py` (annotated locals in the duplicated blocks,
+  keyword-only parameters, a frozen dataclass)
 - `binding_constructs_comprehensive.py`
 - `bindings_comprehensions.py`
 - `bindings_for_loops.py`
@@ -175,6 +202,8 @@ what it exercises (see `test_examples/README.md`):
 - `exception_adversarial.py`
 - `fstrings_constants.py`
 - `functional_patterns.py`
+- `generators_async.py` (a prefix shared by generators and coroutines is
+  extracted; blocks containing `yield` or `await` are declined)
 - `global_nonlocal_examples.py`
 - `hygienic_naming.py`
 - `method_chains.py`
