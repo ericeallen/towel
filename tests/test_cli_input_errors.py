@@ -35,18 +35,24 @@ def _run_quietly(
 
 def test_a_file_that_does_not_decode_is_reported_by_name(tmp_path: Path) -> None:
     source = tmp_path / "latin.py"
-    source.write_bytes(b'def f():\n    return "caf\xe9"\n')
+    original = b'def f():\n    return "caf\xe9"\n'
+    source.write_bytes(original)
     destination = tmp_path / "out.py"
-    with pytest.raises(ValueError, match=r"out\.py: 'utf-8' codec"):
+    with pytest.raises(ValueError, match=r"latin\.py: 'utf-8' codec"):
         _run_quietly(_run_dry, _dry_arguments(source, destination))
+    assert source.read_bytes() == original
+    assert not destination.exists(), "Invalid input must be rejected before copying"
 
 
 def test_a_file_that_does_not_parse_is_reported_with_its_line(tmp_path: Path) -> None:
     source = tmp_path / "broken.py"
-    source.write_text("def f(:\n    pass\n")
+    original = "def f(:\n    pass\n"
+    source.write_text(original)
     destination = tmp_path / "out.py"
-    with pytest.raises(ValueError, match=r"out\.py: line 1: invalid syntax"):
+    with pytest.raises(ValueError, match=r"broken\.py: line 1: invalid syntax"):
         _run_quietly(_run_dry, _dry_arguments(source, destination))
+    assert source.read_text() == original
+    assert not destination.exists(), "Invalid input must be rejected before copying"
 
 
 def test_a_negative_refactoring_count_is_refused_by_the_parser(
