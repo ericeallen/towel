@@ -77,6 +77,17 @@ def _store_target(names: Sequence[str]) -> ast.expr:
     return ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Store()) for name in names], ctx=ast.Store())
 
 
+def _bare_names(expression: ast.expr) -> Optional[List[str]]:
+    """The name ``x`` spells, or the names a tuple ``x, y`` of names spells; None for anything else."""
+    if isinstance(expression, ast.Name):
+        return [expression.id]
+    if isinstance(expression, ast.Tuple) and all(
+        isinstance(elt, ast.Name) for elt in expression.elts
+    ):
+        return [elt.id for elt in expression.elts if isinstance(elt, ast.Name)]
+    return None
+
+
 class ExistingFunctionReuse(EngineState):
     """ExistingFunctionReuse methods of the engine; see the module docstring."""
 
@@ -109,24 +120,14 @@ class ExistingFunctionReuse(EngineState):
         """The names a generated ``x = helper()`` or ``x, y = helper()`` binds; None for other shapes."""
         if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
             return None
-        target = statement.targets[0]
-        if isinstance(target, ast.Name):
-            return [target.id]
-        if isinstance(target, ast.Tuple) and all(isinstance(elt, ast.Name) for elt in target.elts):
-            return [elt.id for elt in target.elts if isinstance(elt, ast.Name)]
-        return None
+        return _bare_names(statement.targets[0])
 
     @staticmethod
     def _returned_names(statement: ast.stmt) -> Optional[List[str]]:
         """The names a plain ``return x`` or ``return x, y`` yields; None for other shapes."""
-        if not isinstance(statement, ast.Return):
+        if not isinstance(statement, ast.Return) or statement.value is None:
             return None
-        value = statement.value
-        if isinstance(value, ast.Name):
-            return [value.id]
-        if isinstance(value, ast.Tuple) and all(isinstance(elt, ast.Name) for elt in value.elts):
-            return [elt.id for elt in value.elts if isinstance(elt, ast.Name)]
-        return None
+        return _bare_names(statement.value)
 
     @classmethod
     def _return_positions(

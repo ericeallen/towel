@@ -187,14 +187,14 @@ def _alpha_normalize(module: ast.Module) -> ast.Module:
             node.annotation = ast.Name(id="__annotation__", ctx=ast.Load())
     # A lambda's parameters are visible only inside it; they are renamed
     # there, by position, before the block-level binders are.
-    module = cast(ast.Module, _LambdaBinderRenamer().visit(module))
+    module = visit_as(_LambdaBinderRenamer(), module)
     bound = bound_names(module.body) - _fixed_import_names(module.body)
     order: Dict[str, str] = {}
     for node in ast.walk(module):
         for name in _identifiers(node):
             if name in bound and name not in order:
                 order[name] = f"__alpha_{len(order)}"
-    return cast(ast.Module, _IdentifierRenamer(order).visit(module))
+    return visit_as(_IdentifierRenamer(order), module)
 
 
 def _fixed_import_names(statements: Sequence[ast.stmt]) -> Set[str]:
@@ -369,7 +369,7 @@ def _beta_reduce(
     bindings: Dict[str, ast.expr] = {
         parameter.arg: actual for parameter, actual in zip(signature.args, actual_args)
     }
-    return cast(ast.AST, _Reducer(bindings).visit(copy.deepcopy(thunk.body)))
+    return visit_as(_Reducer(bindings), copy.deepcopy(thunk.body))
 
 
 class _LambdaBinderRenamer(ast.NodeTransformer):
@@ -392,9 +392,9 @@ class _LambdaBinderRenamer(ast.NodeTransformer):
         index = self._count
         self._count += 1
         arguments = node.args
-        arguments.defaults = [cast(ast.expr, self.visit(default)) for default in arguments.defaults]
+        arguments.defaults = [visit_as(self, default) for default in arguments.defaults]
         arguments.kw_defaults = [
-            cast(ast.expr, self.visit(default)) if default is not None else None
+            visit_as(self, default) if default is not None else None
             for default in arguments.kw_defaults
         ]
         parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
@@ -407,7 +407,7 @@ class _LambdaBinderRenamer(ast.NodeTransformer):
             mapping[parameter.arg] = f"__lambda_{index}_{position}"
             parameter.arg = mapping[parameter.arg]
         self._scopes.append(mapping)
-        node.body = cast(ast.expr, self.visit(node.body))
+        node.body = visit_as(self, node.body)
         self._scopes.pop()
         return node
 

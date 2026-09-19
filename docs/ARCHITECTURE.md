@@ -108,9 +108,15 @@ than turned into parameters.
 
 Each parameter is passed in the way that preserves the original evaluation:
 
-- **Value.** A name, literal, or tuple of those is passed eagerly. It has no
-  observable effect and no fresh identity, so evaluating it at the call site is
-  indistinguishable from evaluating it in place.
+- **Value.** A literal, a name the call site resolves on every path, or a
+  tuple of those is passed eagerly. It has no observable effect and no fresh
+  identity, so evaluating it at the call site is indistinguishable from
+  evaluating it in place. A name the site may not resolve (a local bound only
+  on some path before the block, a module name bound later or nowhere, a
+  cell of an enclosing function not yet filled) is a thunk instead, so it is
+  read where the block read it; this applies to the free variables the
+  blocks share as much as to a differing argument
+  (`available_argument_names` in `semantic_safety.py`).
 - **Thunk.** Any other expression is passed as a zero-argument lambda (a *thunk*
   [Ingerman 1961]) and called inside the helper exactly where the original
   expression stood. This
@@ -640,11 +646,12 @@ takes from the environment goes through a frozen `Settings`
 ([`diagnostics.py`](../src/towel/diagnostics.py)): `TOWEL_WORKERS`,
 `TOWEL_CHECK_AST_IMMUTABLE`, and the four debug switches
 `DEBUG_PROPOSAL_REJECTIONS`, `DEBUG_VALIDATION`, `DEBUG_OVERLAP_FILTER`,
-and `TOWEL_DEBUG_TYPES`. Three places read it today, each once: the
-command line at startup, to turn the corresponding loggers on; the engine
-at construction (`settings=` overrides it for library callers); and the
-analysis session at construction, for `TOWEL_CHECK_AST_IMMUTABLE`. No
-other module consults `os.environ`. The engine never changes logger levels
+and `TOWEL_DEBUG_TYPES`. The command line reads it once at startup, turns
+the corresponding loggers on, and hands it to every engine it builds
+(`settings=`); an engine built by a library caller reads it at
+construction and passes what the analysis session needs
+(`TOWEL_CHECK_AST_IMMUTABLE`) along, so a session reads the environment
+only when built on its own. No other module consults `os.environ`. The engine never changes logger levels
 itself, so a library caller who wants the switches honoured calls
 `Settings.from_environ().enable_debug_logging()` once.
 

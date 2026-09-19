@@ -44,7 +44,13 @@ from .models import (
 )
 from concurrent.futures import ProcessPoolExecutor
 from ..diagnostics import LOG
-from .progress import ProgressMode, wants_bar
+from .progress import (
+    ProgressMode,
+    finish_inline_status,
+    start_inline_status,
+    update_inline_status,
+    wants_bar,
+)
 from concurrent.futures.process import BrokenProcessPool
 
 from .fixed_point import FixedPointDrivers
@@ -254,7 +260,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
 
         use_inline_bar = wants_bar(progress_mode) and len(block_pairs) > 0 and not use_tqdm
         last_pct = -1
-        self._start_inline_status("Analyzing pairs (unify):", use_inline_bar)
+        start_inline_status("Analyzing pairs (unify):", use_inline_bar)
 
         for idx, pair in enumerate(block_pairs, 1):
             proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
@@ -264,9 +270,9 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
                 pct = int(100 * idx / len(block_pairs))
                 if pct != last_pct:
                     last_pct = pct
-                    self._update_inline_status("Analyzing pairs (unify):", pct)
+                    update_inline_status("Analyzing pairs (unify):", pct)
 
-        self._finish_inline_status(use_inline_bar)
+        finish_inline_status(use_inline_bar)
 
         return proposals.in_order()
 
