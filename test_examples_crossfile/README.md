@@ -66,6 +66,28 @@ multi_level/
 
 ---
 
+### 4. class_hierarchy
+
+**Structure**:
+```
+class_hierarchy/
+├── base_record.py
+└── scored_record.py
+```
+
+**Purpose**: Tests a class hierarchy that spans two modules: `ScoredRecord`
+in `scored_record.py` inherits from `Record` in `base_record.py`.
+
+**Duplicates**: `Record.summary()` and `ScoredRecord.report()` compute the
+same four series statistics before building different results.
+
+**Expected**: The statistics move into one module-level helper beside the
+base class, taking the receiver as its argument; the subclass's module
+imports it next to the base class it already imports. The equivalence
+harness constructs the subclass through its own `__init__`.
+
+---
+
 ## Running Cross-File Tests
 
 ### Using Justfile

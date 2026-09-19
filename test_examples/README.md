@@ -4,7 +4,7 @@ This directory contains comprehensive test examples designed to stress test Towe
 
 ## Overview
 
-**Total Examples:** 26 Python files
+**Total Examples:** 28 Python files
 
 These examples are intentionally designed to test edge cases, complex patterns,
 and challenging scenarios that might break naive duplicate detection systems.
@@ -341,6 +341,24 @@ correct engine must decline the unsafe ones.
 
 ---
 
+### 15. Annotated, Generator and Async Code
+
+Added by the fifth audit, which found no annotated code, generators, async
+functions, decorated classes or keyword-only parameters among the goldens.
+
+- `annotated_module.py` — PEP 526 annotated locals inside the duplicated
+  blocks (the helpers keep them and derive their return annotations), annotated
+  signatures with keyword-only parameters, a frozen `@dataclass` and absolute
+  stdlib imports. Three extractions: two module-level helpers and one method
+  helper.
+- `generators_async.py` — the same four-line prefix duplicated across two
+  generator functions and two `async` functions is extracted once (a helper
+  called from all four); the duplicated blocks that contain `yield`
+  (`numbered_*`) or `await` (`drain_*`) stay where they are, because a helper
+  cannot suspend the caller's frame.
+
+---
+
 ## Summary Statistics
 
 | Category | Files |
@@ -356,7 +374,8 @@ correct engine must decline the unsafe ones.
 | Real World | 1 |
 | Edge Cases/Stress | 1 |
 | Adversarial & Comprehensive | 7 |
-| **TOTAL** | **26** |
+| Annotated, Generator and Async | 2 |
+| **TOTAL** | **28** |
 
 ## What These Tests Validate
 
