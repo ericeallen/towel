@@ -744,7 +744,6 @@ def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     options = DryOptions.from_namespace(args)
     # Import here to avoid loading heavy modules if not needed
-    from towel.filesystem import copy_project
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
     input_path = options.input
@@ -780,19 +779,13 @@ def _run_dry(args: argparse.Namespace) -> None:
             print("Aborted.")
             return
 
-    if source != destination:
-        copy_project(source, destination)
-    else:
+    if source == destination:
         journal = _pending_journal(destination)
         if journal is not None:
             raise ValueError(f"Recover the interrupted transaction first: towel recover {journal}")
 
     oracle = _type_oracle(Path(input_path)) if options.types else None
     try:
-        if oracle is not None:
-            from towel.type_inference import relocate_oracle
-
-            oracle = relocate_oracle(oracle, source, destination)
         engine = UnificationRefactorEngine(
             max_parameters=options.max_parameters,
             min_lines=options.min_lines,
@@ -815,9 +808,10 @@ def _run_dry(args: argparse.Namespace) -> None:
         if is_file:
             print(f"Refactoring file: {output_path}")
             final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
-                output_path,
+                input_path,
                 max_iterations=options.max_refactorings,
                 progress=options.progress,
+                output_path=output_path,
             )
 
             if num_applied > 0:
@@ -829,7 +823,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         else:
             print(f"Refactoring directory: {output_path}")
             results, termination_reason = engine.refactor_directory_to_fixed_point(
-                output_path,
+                input_path,
                 output_path,
                 max_iterations=options.max_refactorings,
                 progress=options.progress,

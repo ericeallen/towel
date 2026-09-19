@@ -18,12 +18,13 @@ Materialization owns its syntax trees: the proposal is copied, annotated,
 rendered through the project's formatter, and each file is rebuilt with the
 helper inserted and every call site replaced, then the generated Python is
 compiled and every generated call is checked to bind the helper's
-signature. With a type checker installed the annotated variant is tried
-first and falls back to Any and then to no annotations when it introduces a
-type error. Reused functions are checked with their existing signatures;
-a type error declines the reuse rather than weakening those signatures.
-The immutable byte plan is applied transactionally by
-changes.py.
+signature. When the run's original project passes its type checker, every
+prospective project is checked. The annotated variant is tried first and
+falls back to Any and then to no annotations when it introduces a type
+error. Existing project errors refuse the run before any output is created.
+Reused functions keep their existing signatures; a type error declines the
+reuse rather than weakening those signatures. The immutable byte plan is
+applied transactionally by changes.py.
 """
 
 from __future__ import annotations
@@ -44,7 +45,6 @@ from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
 from ..project_layout import ProjectLayout, is_package_dir
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
-from ..type_inference import CheckResult
 
 from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring
@@ -101,10 +101,22 @@ class Materialization(
         return ChangePlan.from_sources(before, after)
 
     def apply_refactoring_multi_file(self, proposal: RefactoringProposal) -> Dict[str, str]:
-        """Render without writing or mutating caller-owned proposal ASTs."""
+        """Render without writing or mutating caller-owned proposal ASTs.
+
+        The first application establishes the run's complete original type
+        baseline before inference or materialization. Later applications keep
+        that policy until ``begin_refactoring_run`` starts another run.
+        """
         for path, digest in proposal.source_digests:
             if hashlib.sha256(read_source(path).encode("utf-8")).hexdigest() != digest:
                 raise StaleSource(f"Stale proposal; analyze again: {path}")
+        self._ensure_type_checking(
+            [
+                *self._analysis_paths,
+                proposal.file_path,
+                *(rep.file_path or proposal.file_path for rep in proposal.replacements),
+            ]
+        )
         counters = self._helper_name_counters.copy()
         try:
             return self._materialize_refactoring(proposal)
@@ -132,16 +144,17 @@ class Materialization(
         proposal = copy.deepcopy(proposal)
         self._infer_helper_annotations(proposal)
         variants = [proposal]
-        check_types = self._checks_project_types(proposal)
-        if check_types and proposal.reused_function is None:
+        check_types = self._active_type_oracle() is not None
+        if (
+            check_types
+            and proposal.reused_function is None
+            and self._helper_has_annotations(proposal)
+        ):
             variants += [
                 self._with_every_annotation_any(proposal),
                 self._without_annotations(proposal),
             ]
         counters = dict(self._helper_name_counters)
-        # Every attempt compares against the same original files on the same
-        # disk, so each original is checked once for all of them.
-        errors_before: Optional[CheckResult] = None
         for variant in variants:
             mark = len(self._change_log)
             # Each attempt allocates the helper's name; restore the counters so
@@ -150,10 +163,8 @@ class Materialization(
             files = self._materialize_once(variant)
             if not check_types:
                 return files
-            if errors_before is None:
-                errors_before = self._original_type_errors(files)
             try:
-                if not self._introduces_type_errors(files, errors_before):
+                if not self._introduces_type_errors(files):
                     return files
             except RefactoringError:
                 del self._change_log[mark:]

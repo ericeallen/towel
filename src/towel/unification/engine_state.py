@@ -47,7 +47,7 @@ from typing import (
 from weakref import WeakKeyDictionary
 
 from ..diagnostics import Settings
-from ..type_inference import TypeOracle
+from ..type_inference import CheckResult, TypeOracle
 from .block_signature import BlockSignature
 from .bounded_cache import BoundedCache
 from .extractor import HygienicExtractor
@@ -190,6 +190,12 @@ class EngineState:
 
     # The project's type checker, when one is installed and wanted.
     type_oracle: Optional[TypeOracle]
+    _type_run_oracle: Optional[TypeOracle]
+    """Per-run view of the caller's oracle, relocated when the driver copies its input."""
+    _type_run_baseline: Optional[CheckResult]
+    """Original complete-project result; None means the run has not checked its baseline."""
+    _analysis_paths: Tuple[str, ...]
+    """Paths from the latest analysis, used to seed a direct application's initial check."""
     # The unifier every pair is matched with; its options are fixed at
     # construction.
     unifier: Unifier

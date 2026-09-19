@@ -57,6 +57,7 @@ from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..diagnostics import LOG, REJECTIONS, debugging
 from ..filesystem import copy_project
 from ..source_text import decode_source, encode_like, read_source
+from ..type_inference import relocate_oracle
 
 from .materialize import Materialization
 
@@ -99,6 +100,8 @@ class FixedPointDrivers(Materialization):
         file_path: str,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         progress: ProgressMode = DEFAULT_PROGRESS,
+        *,
+        output_path: Optional[str] = None,
     ) -> Tuple[str, int, List[str]]:
         """Apply refactorings to one file, one at a time, until none remain.
 
@@ -113,13 +116,15 @@ class FixedPointDrivers(Materialization):
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
                 installed), ``auto`` (that, or an inline bar), ``detail``
                 (a line per proposal), or ``none``.
+            output_path: An optional new copy to refactor. The original project
+                is checked before the output is created, and subsequent checks
+                retain its configuration and unchanged consumers.
 
         Returns:
             The final source, the number of refactorings applied, and their
             descriptions in application order.
         """
         self._change_log = []
-        self._warn_about_frame_sensitive_files(file_path)
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         current_bytes = Path(file_path).read_bytes()
         try:
@@ -129,6 +134,15 @@ class FixedPointDrivers(Materialization):
             raise ValueError(f"{file_path}: {error}") from error
         except SyntaxError as error:
             raise ValueError(f"{file_path}: line {error.lineno}: {error.msg}") from error
+        self.begin_refactoring_run([file_path])
+        if output_path is not None and Path(output_path).resolve() != Path(file_path).resolve():
+            source, destination = Path(file_path), Path(output_path)
+            copy_project(source, destination)
+            if self._type_run_oracle is not None:
+                self._type_run_oracle = relocate_oracle(self._type_run_oracle, source, destination)
+            file_path = output_path
+            self._analysis_paths = (file_path,)
+        self._warn_about_frame_sensitive_files(file_path)
         num_applied = 0
         descriptions = []
 
@@ -286,10 +300,16 @@ class FixedPointDrivers(Materialization):
             if output_path.exists() and any(output_path.iterdir()):
                 raise ValueError("Output directory must be empty")
 
+        if not input_path.is_dir():
+            raise ValueError("Input directory does not exist")
+        self.begin_refactoring_run(self._find_python_files(input_dir))
         if resolved_input != resolved_output:
             copy_project(input_path, output_path, allow_empty=True)
-        elif not output_path.is_dir():
-            raise ValueError("Input directory does not exist")
+            if self._type_run_oracle is not None:
+                self._type_run_oracle = relocate_oracle(
+                    self._type_run_oracle, input_path, output_path
+                )
+            self._analysis_paths = tuple(self._find_python_files(output_dir))
 
         self._warn_about_frame_sensitive_files(output_dir)
 

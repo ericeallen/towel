@@ -18,7 +18,9 @@ The engine asks annotations.py to copy what the call sites declare and to
 infer the rest through the project's type checker, decides whether the
 generated code is to be type-checked, produces the fallback variants (every
 annotation Any, then none), and compares the checker's messages before and
-after a change so only new errors count.
+after a change. Oracle inference and verification run only when the complete
+original project is clean; existing errors and checker infrastructure failures
+refuse application with distinct diagnostics.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from collections import Counter
 import copy
 import dataclasses
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Sequence, Set
 from .annotations import (
     ApplySite,
     CallSite,
@@ -43,7 +45,7 @@ from .annotations import (
 from .exceptions import RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
-from ..type_inference import CheckFailure, CheckResult
+from ..type_inference import CheckFailure, TypeOracle
 
 from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
@@ -52,6 +54,64 @@ from .function_index import FunctionIndex
 
 class HelperAnnotationWiring(EngineState):
     """Helper AnnotationWiring methods of the engine; see the module docstring."""
+
+    def begin_refactoring_run(self, file_paths: Sequence[str]) -> None:
+        """Establish a new run's original project before inference or changes.
+
+        Fixed-point drivers call this automatically. Direct library callers
+        may call it to start another run on the same engine; otherwise their
+        applications share one lazily initialized run. The supplied paths
+        anchor the oracle's complete project snapshot, including unchanged
+        consumers. This never closes or replaces the caller-owned oracle.
+        """
+        self._type_run_oracle = self.type_oracle
+        self._type_run_baseline = None
+        self._analysis_paths = tuple(file_paths)
+        self._ensure_type_checking(file_paths)
+
+    def _ensure_type_checking(self, file_paths: Sequence[str]) -> None:
+        """Check once; neither existing errors nor checker failure permit application."""
+        if self._type_run_oracle is None:
+            return
+        if self._type_run_baseline is None and file_paths:
+            originals: Dict[str, str] = {}
+            for path in dict.fromkeys(file_paths):
+                source = self._read_source(path)
+                if source is None:
+                    self._type_run_baseline = CheckFailure(f"Cannot read original source: {path}")
+                    break
+                originals[path] = source
+            else:
+                self._type_run_baseline = self._type_run_oracle.check_project(originals)
+                if not isinstance(self._type_run_baseline, CheckFailure):
+                    for diagnostic in self._type_run_baseline.errors:
+                        TYPES.debug("original error in %s: %s", diagnostic.path, diagnostic.message)
+        if isinstance(self._type_run_baseline, CheckFailure):
+            raise RefactoringError(
+                f"Original project type check failed: {self._type_run_baseline.reason}"
+            )
+        if self._type_run_baseline is not None and self._type_run_baseline.errors:
+            errors = self._type_run_baseline.errors
+            details = "\n".join(f"  {error.path}: {error.message}" for error in errors[:3])
+            if len(errors) > 3:
+                details += (
+                    f"\n  ... and {len(errors) - 3} more "
+                    "(TOWEL_DEBUG_TYPES=1 shows all diagnostics)."
+                )
+            raise RefactoringError(
+                f"Original project check reported {len(errors)} type error(s):\n{details}\n"
+                "Fix the existing errors or rerun with --no-types "
+                "(library: type_oracle=None, annotate_helpers=False)."
+            )
+
+    def _active_type_oracle(self) -> Optional[TypeOracle]:
+        """The caller's oracle only when this run's original check completed cleanly."""
+        if self._type_run_oracle is None:
+            return None
+        self._ensure_type_checking(())
+        if self._type_run_baseline is None:
+            raise RefactoringError("The original project type check has not run")
+        return self._type_run_oracle
 
     def _with_helper_annotations(
         self, proposal: RefactoringProposal, functions: FunctionIndex
@@ -104,7 +164,8 @@ class HelperAnnotationWiring(EngineState):
         host_source = self._read_source(proposal.file_path)
         bare_ok = self.placeable_after(host_source) if module_level and host_source else set()
         host = self._parsed_host(proposal.file_path)
-        if self.type_oracle is None:
+        oracle = self._active_type_oracle()
+        if oracle is None:
             respelled = respell_bare(proposal.extracted_function, host, bare_ok)
             completed = complete_with_any(respelled, host)
             proposal.extracted_function = completed.helper
@@ -142,7 +203,7 @@ class HelperAnnotationWiring(EngineState):
             sites,
             proposal.file_path,
             proposal.return_variables,
-            self.type_oracle,
+            oracle,
             bare_ok,
         )
         completed = complete_with_any(respell_bare(inferred.helper, host, bare_ok), host)
@@ -193,12 +254,9 @@ class HelperAnnotationWiring(EngineState):
         except SyntaxError:
             return None
 
-    def _checks_project_types(self, proposal: RefactoringProposal) -> bool:
-        """Check reused calls and annotated new helpers when an oracle is present."""
-        if self.type_oracle is None:
-            return False
-        if proposal.reused_function is not None:
-            return True
+    @staticmethod
+    def _helper_has_annotations(proposal: RefactoringProposal) -> bool:
+        """Whether a new helper has annotations that can be weakened on retry."""
         helper = proposal.extracted_function
         return helper.returns is not None or any(
             arg.annotation is not None for arg in helper.args.posonlyargs + helper.args.args
@@ -231,30 +289,15 @@ class HelperAnnotationWiring(EngineState):
         variant.required_imports = ()
         return variant
 
-    def _original_type_errors(self, modified_files: Dict[str, str]) -> CheckResult:
-        """Check the complete original project once for every prospective variant."""
-        if self.type_oracle is None:
+    def _introduces_type_errors(self, modified_files: Dict[str, str]) -> bool:
+        """Preserve this run's clean project, including unchanged consumers."""
+        oracle = self._active_type_oracle()
+        if oracle is None:
             raise RefactoringError("Type checking was requested without a type oracle")
-        originals: Dict[str, str] = {}
-        for path in modified_files:
-            source = self._read_source(path)
-            if source is None:
-                return CheckFailure(f"Cannot read original source: {path}")
-            originals[path] = source
-        return self.type_oracle.check_project(originals)
-
-    def _introduces_type_errors(
-        self, modified_files: Dict[str, str], errors_before: CheckResult
-    ) -> bool:
-        """Compare complete prospective and original projects, including unchanged consumers."""
-        if self.type_oracle is None:
-            raise RefactoringError("Type checking was requested without a type oracle")
-        if isinstance(errors_before, CheckFailure):
-            raise RefactoringError(f"Original project type check failed: {errors_before.reason}")
-        after = self.type_oracle.check_project(modified_files)
+        after = oracle.check_project(modified_files)
         if isinstance(after, CheckFailure):
             raise RefactoringError(f"Prospective project type check failed: {after.reason}")
-        new = Counter(after.errors) - Counter(errors_before.errors)
+        new = Counter(after.errors)
         for diagnostic, count in new.items():
             TYPES.debug("new error x%d in %s: %s", count, diagnostic.path, diagnostic.message)
         return bool(new)

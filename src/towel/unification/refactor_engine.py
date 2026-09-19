@@ -295,11 +295,15 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 declared return type -- in code that already uses annotations
                 (default: True). Nothing is inferred unless ``type_oracle``
                 is given.
-            type_oracle: Asked, when a proposal is applied, for the types of
-                the argument expressions and returned values the copied
-                annotations could not name, for example ``MypyInferrer`` (see
-                ``towel.type_inference``). Used only where the sites declare
-                types. None (default) infers nothing.
+            type_oracle: Checks the complete original project before the run's
+                first application. Existing type errors and checker failures
+                refuse application with distinct diagnostics. A clean baseline
+                enables inference where sites declare types and verification of
+                every prospective change.
+                Direct applications share an implicit run until
+                ``begin_refactoring_run(paths)`` starts another; each fixed-point
+                call starts its own run. None (default) infers and checks nothing.
+                The caller retains ownership of the oracle and must close it.
             snippet_formatter: Renders each generated helper definition and
                 call statement from ``ast.unparse`` output to the text that is
                 inserted, for example Black (see ``towel.formatting``). None
@@ -333,6 +337,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.reuse_existing_functions = reuse_existing_functions
         self.annotate_helpers = annotate_helpers
         self.type_oracle = type_oracle
+        self._type_run_oracle = type_oracle
+        self._type_run_baseline = None
         self.snippet_formatter = snippet_formatter
         self.file_finisher = file_finisher
         self.incremental_global_passes = incremental_global_passes

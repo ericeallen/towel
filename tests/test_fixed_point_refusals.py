@@ -131,11 +131,11 @@ def test_real_checker_failure_terminates_directory_run(tmp_path: Path) -> None:
         proposals = engine.analyze_directory(str(tmp_path), progress="none")
         assert proposals, "The failing checker must encounter a real extraction"
         with patch.object(engine, "analyze_directory", side_effect=[proposals]) as analyze:
-            results, reason = engine.refactor_directory_to_fixed_point(
-                str(tmp_path), str(tmp_path), max_iterations=0, progress="none"
-            )
-        assert results == {} and reason == "fixed_point"
-        assert analyze.call_count == 1
+            with pytest.raises(RefactoringError, match="Original project type check failed"):
+                engine.refactor_directory_to_fixed_point(
+                    str(tmp_path), str(tmp_path), max_iterations=0, progress="none"
+                )
+        assert analyze.call_count == 0, "A failed baseline must stop before proposal analysis"
         assert path.read_text() == original
     finally:
         checker.close()
