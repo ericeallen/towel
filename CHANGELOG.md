@@ -602,6 +602,13 @@ ecosystem evidence behind each claim. The format follows
   information is taken from it) instead of being read as empty.
 
 ### Security
+- The pyright oracle starts `python -P -m pyright`. It runs from the
+  module's directory, and `-m` put that directory first on `sys.path`, so a
+  project package named like a standard module was imported and executed
+  in its place: sphinx's `locale` package ran when pyright's launcher
+  imported `subprocess`, and pyright produced nothing for flask, pytest,
+  structlog, sphinx, trio and werkzeug in the release-candidate ecosystem
+  run.
 - Pyright runs with Towel's interpreter (`--pythonpath`), so a `venv`
   setting in the analyzed project's pyright configuration can no longer
   execute that project's interpreter; SECURITY.md says exactly what each

@@ -555,3 +555,22 @@ def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) ->
     assert _signature(result) == "def __extracted_func_0(box: Box) -> tuple[str, int]:"
     assert result.count("label, scaled = __extracted_func_0(box)") == 2
     exec(compile(result, "<inferred>", "exec"), {})
+
+
+def test_pyright_never_executes_a_project_package_that_shadows_the_standard_library(
+    tmp_path: Path,
+) -> None:
+    """pyright runs from the module's directory; a ``locale`` package there must not run."""
+    from towel.type_inference import PyrightOracle
+
+    package = tmp_path / "proj"
+    shadow = package / "locale"
+    shadow.mkdir(parents=True)
+    marker = tmp_path / "executed"
+    (shadow / "__init__.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    module = package / "m.py"
+    source = "def f(x: int) -> int:\n    return x + 1\n"
+    module.write_text(source)
+    messages = PyrightOracle().check(str(module), source)
+    assert not marker.exists(), "the project's locale package was executed"
+    assert not any("could not" in message.lower() for message in messages)

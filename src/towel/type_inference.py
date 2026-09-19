@@ -594,7 +594,10 @@ def _pyright_command() -> Optional[List[str]]:
     except ImportError:
         executable = shutil.which("pyright")
         return [executable] if executable else None
-    return [sys.executable, "-m", "pyright"]
+    # ``-P``: pyright runs from the module's directory, and ``-m`` would put
+    # that directory first on sys.path, where a project package named like a
+    # standard module (sphinx's ``locale``) shadows it and is executed.
+    return [sys.executable, "-P", "-m", "pyright"]
 
 
 class CombinedOracle:
