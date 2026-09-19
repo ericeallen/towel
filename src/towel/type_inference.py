@@ -42,6 +42,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import atexit
+import gc
 import os
 from pathlib import Path
 import re
@@ -281,6 +282,24 @@ class MypyInferrer:
         options.hide_error_codes = True
         return options
 
+    def _build_errors(self, sources: "List[BuildSource]", roots: Sequence[str]) -> List[str]:
+        """The messages of one mypy build, with the build's own garbage collected.
+
+        A build leaves its whole graph (trees, symbol tables, types) as reference
+        cycles, which only the cyclic collector frees, and its full passes grow
+        rarer as the heap grows: sphinx, with a check per applied refactoring,
+        reached 40 GB of finished builds. Freezing the heap first confines the
+        collection to what the build created, so it costs a fraction of the
+        build instead of a pass over Towel's own analysis.
+        """
+        build, _, _ = _mypy()
+        gc.freeze()
+        try:
+            return list(build.build(sources=sources, options=self._options(roots)).errors)
+        finally:
+            gc.collect()
+            gc.unfreeze()
+
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
     ) -> Sequence[Subtyping]:
@@ -289,20 +308,18 @@ class MypyInferrer:
         One probe function per pair is appended to an in-memory copy of the
         module (see :func:`_subtype_probes`); mypy's error lines give the verdicts.
         """
-        build, build_source, compile_error = _mypy()
+        _, build_source, compile_error = _mypy()
         if not pairs:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
         module, root = _module_name_and_root(Path(file_path))
         try:
-            result = build.build(
-                sources=[build_source(file_path, module, text)], options=self._options([str(root)])
-            )
+            errors = self._build_errors([build_source(file_path, module, text)], [str(root)])
         except compile_error:
             return [Subtyping.UNKNOWN] * len(pairs)
         error_lines = [
             int(match.group("line"))
-            for match in (_ERROR.match(message) for message in result.errors)
+            for match in (_ERROR.match(message) for message in errors)
             if match is not None and _same_file(match.group("path"), file_path)
         ]
         return _verdicts_from_error_lines(len(pairs), error_lines, signature_line, return_line)
@@ -313,17 +330,14 @@ class MypyInferrer:
         Positions are stripped so two versions of a file can be compared for
         new errors regardless of where lines moved.
         """
-        build, build_source, compile_error = _mypy()
+        _, build_source, compile_error = _mypy()
         module, root = _module_name_and_root(Path(file_path))
         try:
-            result = build.build(
-                sources=[build_source(file_path, module, source)],
-                options=self._options([str(root)]),
-            )
+            errors = self._build_errors([build_source(file_path, module, source)], [str(root)])
         except compile_error as error:
             return [line for line in error.messages if "error:" in line]
         messages: List[str] = []
-        for message in result.errors:
+        for message in errors:
             match = _ERROR.match(message)
             if match is not None and _same_file(match.group("path"), file_path):
                 messages.append(message[match.end() :].strip())
@@ -331,7 +345,7 @@ class MypyInferrer:
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         """Reveal each request through one mypy build per module, probes appended in memory."""
-        build, build_source, compile_error = _mypy()
+        _, build_source, compile_error = _mypy()
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
             by_file.setdefault(request.file_path, []).append(request)
@@ -371,12 +385,12 @@ class MypyInferrer:
         if not sources:
             return {}
         try:
-            result = build.build(sources=sources, options=self._options(roots))
+            errors = self._build_errors(sources, roots)
         except compile_error as error:
             LOG.warning("mypy could not build %s; no types inferred there: %s", roots, error)
             return {}
         revealed: Dict[RevealKey, str] = {}
-        for message in result.errors:
+        for message in errors:
             match = _REVEALED.match(message)
             if match is None:
                 continue

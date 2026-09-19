@@ -378,6 +378,14 @@ ecosystem evidence behind each claim. The format follows
   and dropped with the engine.
 
 ### Fixed
+- The type checker's memory no longer grows with the number of applied
+  refactorings. Each in-process mypy build leaves its whole graph as
+  reference cycles, and Python's cyclic collector runs its full passes
+  more rarely as the heap grows, so finished builds piled up: sphinx, type
+  checked once per applied refactoring, reached 40 GB in the
+  release-candidate ecosystem run. Each build now freezes the existing heap,
+  runs, and collects what it created, so the collection costs a fraction of
+  the build; the same sphinx refactor holds under 1 GB.
 - The eager-argument guard is rebuilt on control flow. Twelve shapes that
   passed a differing name eagerly where the original read it only on some
   path are thunked or declined: a failed optional import, a `TYPE_CHECKING`
