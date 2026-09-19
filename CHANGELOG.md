@@ -107,13 +107,22 @@ Changes since 1.618. This release is still in preparation.
   string annotation: `memoryview[int]`, copied from tornado's own signatures,
   raised `TypeError` at import on an interpreter where `memoryview` is not
   generic.
-- With a type checker installed, annotated helper extractions and existing
+- With a clean original type-checking baseline, helper extractions and existing
   function reuse check all modified files together in the prospective project,
   including unchanged consumers. New errors make generated helper annotations
   fall back to `Any`, then to none; every variant must pass. Reused functions
   keep their existing signatures, and incompatible calls decline the reuse.
   Checker failure or remaining new errors decline the proposal. Cross-file
   helper imports no longer lose valid annotations because their host was stale.
+- Before oracle inference or verification, the original complete project is
+  checked. If it already has type errors, Towel aborts and asks the user to
+  fix them or explicitly rerun with `--no-types`. That option preserves
+  existing source annotations and generates unannotated helpers. Checker
+  crashes and timeouts remain distinct failures; checking is never silently disabled.
+  A clean baseline keeps verification enabled for subsequent proposals.
+- A [proposal for type-parameter inference](docs/proposals/type-parameters.md)
+  records how generic helpers could preserve relationships among arguments
+  and return values. This work is deferred beyond 1.732.
 - Property-based tests (hypothesis, in the `dev` extra) check that alpha-variant
   blocks unify with a renaming-only substitution, that definite assignment
   agrees with a path-enumerating reference, and that every generated helper
@@ -353,10 +362,6 @@ Changes since 1.618. This release is still in preparation.
   helper with 669 sites, peaking at 6.6 GB (8.8 GB before the scan cache
   was bounded); its pair evaluation is what `--max-pairs` bounds. A
   per-candidate memo beneath the scan, which no run ever read, is gone.
-- When a refactoring's annotations introduce a type error and the
-  all-`Any` and bare variants are tried in turn, each original file is
-  type-checked once for all three attempts instead of once per attempt:
-  click and jinja2 run 11 to 14 percent faster with identical output.
 - The verdict of the instantiation check is memoized on the helper, call
   and block, which it repeated many times over across pair and cluster
   evaluation: a file of a hundred similar functions took 31 s instead of
@@ -390,7 +395,12 @@ Changes since 1.618. This release is still in preparation.
   failures, incomplete runs, unknown verdicts, changed failing-test identities,
   and missing tests cannot pass merely because exit codes or totals match.
   Documented known failures and flaky-test reruns cannot hide a changed test
-  count; matching pre-existing failures remain visible in the report.
+  count; matching pre-existing failures remain visible in the report. Pytest
+  commands request complete tallies and failure identities; custom runner
+  failure statuses must be declared, and retests retain their actual statuses.
+  The harness records its requested typing mode. Its explicit `--no-types`
+  option supports behavioral validation of projects without a complete typing
+  environment; it never retries a failed typed run by silently opting out.
 - Mypy runs in an owned persistent worker with incremental caches and periodic
   garbage collection. Its process-global state cannot freeze or unfreeze a
   library caller's heap, concurrent requests are serialized, and explicit

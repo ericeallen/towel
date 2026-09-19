@@ -80,11 +80,14 @@ rejects, and what remains outside its model. Read it together with
   future imports and non-import statements are barriers. Configured sorting
   of independent imports can still change import-time side-effect order; static
   binding checks do not establish that arbitrary module initializers commute.
-- **Annotations.** With the project's type checker installed, every annotated
+- **Annotations.** When the original project passes its type check, every generated
   helper and its call sites are checked together in the prospective project,
   including unchanged consumers. A change that introduces a type error has
   its annotations replaced by `Any`, and then removed. Every variant must
-  pass; an unavailable checker or a remaining new error declines the change. A helper is annotated only in code that
+  pass; checker failure or a remaining error declines the change. If the
+  original project already has type errors, Towel aborts and asks the user to
+  fix them or explicitly rerun with `--no-types`. It never silently disables
+  verification. A helper is annotated only in code that
   already uses annotations, from what the sites declare and what the checker
   reveals; see *Type annotations on helpers* below.
 
@@ -240,7 +243,10 @@ where the evidence comes from:
   it. A helper with any annotation has every parameter and its return
   annotated, so the checker's incomplete-definition rule is never tripped.
 - Generic helpers are not synthesized: when sites pass `list[int]` and
-  `list[str]`, the parameter is their union, not a type variable.
+  `list[str]`, the parameter is their union, not a type variable. Independent
+  parameter unions can lose relationships among arguments and results;
+  [type-parameter inference](proposals/type-parameters.md) is deferred beyond
+  1.732.
 - Placement for bare names holds only within one module. For a helper
   whose sites are in other modules, an annotation may name only builtins
   and the `typing` names Towel imports itself (`Any`, `Callable`), since a
@@ -251,11 +257,10 @@ where the evidence comes from:
   string.
 - The degradation on a type error is per proposal, not per parameter: one
   annotation the checker rejects costs the helper all of them.
-- Verification compares the complete original and prospective project graphs,
-  overlaying all changed files together. A newly imported helper therefore
-  exists in its host while its consumers are checked. Diagnostic paths and
-  messages are compared as multisets, so one pre-existing error cannot hide
-  an additional occurrence. Safe project checking rules are honored; project
+- Verification first requires a clean original project, then checks complete
+  prospective project graphs, overlaying all changed files together. A newly
+  imported helper therefore exists in its host while its consumers are checked.
+  Safe project checking rules are honored; project
   plugins, configured executables and report destinations are not executed.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration. Cyclic or external source symlinks and

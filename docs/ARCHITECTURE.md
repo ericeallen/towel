@@ -105,7 +105,7 @@ fixed-point loop (below).
    formatter formats each inserted snippet and its import sorter finishes
    each modified file (see *Generated code formatting*); the generated
    Python is compiled to confirm it parses, overlapping replacements are
-   detected, and with a type checker installed all prospective files are
+   detected, and with type verification enabled all prospective files are
    checked together with unchanged consumers. Annotations fall back to `Any`
    and then to none on new errors; every variant must pass before application.
 8. **Apply.** `changes.py` turns accepted proposals into an immutable byte
@@ -364,6 +364,15 @@ for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
 `pyrightconfig.json`, and for a project configuring both, mypy infers
 while both verify, so the project's own check stays green.
 
+Before using the oracle, the engine checks the complete original project.
+If that completed check reports type errors, it aborts with an instruction to
+fix the errors or explicitly rerun with `--no-types`. That option disables
+helper annotation generation, inference and verification while preserving
+existing source annotations. A checker crash, timeout or incomplete result is
+a distinct `CheckFailure` and does not permit unchecked application. A clean
+baseline keeps verification enabled, so errors introduced by a transformation
+cannot subsequently be treated as pre-existing errors that disable checking.
+
 With an oracle, `infer_missing_annotations` types each parameter the copy
 left bare from the revealed types of its arguments. The rules are the
 lattice ones:
@@ -395,12 +404,11 @@ lattice ones:
   `collections.abc` name, or a module that defers annotations) and quoted
   otherwise. A union of forward references is quoted as one string.
 
-Then the change is verified: the original project is checked once and all
-modified files are overlaid together for each prospective variant, including
+When verification is enabled, all modified files are overlaid together for
+each prospective variant, including
 unchanged consumers under the project's checker configuration. Mypy receives
 all replacements as in-memory build sources; pyright receives a private project
-snapshot with the original module names. Path/message diagnostic multisets
-preserve error multiplicity while ignoring line shifts. A proposal introducing
+snapshot with the original module names. A proposal introducing
 an error is retried with every annotation `Any`, and then with none. Each
 variant must pass; checker failure or a remaining new error declines the
 proposal. `close()` releases checker resources, and the CLI calls it in a
@@ -408,6 +416,11 @@ proposal. `close()` releases checker resources, and the CLI calls it in a
 oracle Towel copies and does not reason: unions are written unreduced and
 the meet requires identical declarations, because there is no second
 implementation of the subtype relation to fall back on.
+
+The current inference treats parameters independently and does not synthesize
+type variables. The [type-parameter proposal](proposals/type-parameters.md)
+describes how a future release could preserve relationships among argument
+and return types, and where that would still be insufficient.
 
 ## Generated code formatting
 

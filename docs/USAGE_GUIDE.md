@@ -167,6 +167,21 @@ installed, and its `note` says what was chosen and names a configured tool
 that is not installed. Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
 
+The engine checks the original project before using its type oracle. If that
+check completes with type errors, it aborts: fix the errors or explicitly
+rerun the CLI with `--no-types`. This option preserves existing source
+annotations but generates unannotated helpers; library callers obtain the
+same behavior with `type_oracle=None` and `annotate_helpers=False`. A checker
+crash or timeout remains a distinct verification failure. A clean baseline
+keeps prospective-project verification enabled throughout the run. Generic helper inference is
+[proposed for a later release](proposals/type-parameters.md).
+
+Each fixed-point call starts a new run and checks the original before creating
+an output copy. Direct `apply_refactoring` calls share an implicit run; call
+`engine.begin_refactoring_run(paths)` when starting a separate run on the same
+engine. The caller owns the oracle and should call `oracle.tool.close()` in a
+`finally` block when `oracle.tool` is not `None`.
+
 ### Directory Scanning
 
 ```python
