@@ -17,9 +17,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Generic, Optional, TypeVar
 
 T = TypeVar("T")
+
+
+def python_tool_environment() -> dict[str, str]:
+    """Keep child tools independent of caller-supplied Python import/startup settings.
+
+    Isolated interpreter flags protect module launches; a tool discovered on
+    PATH may instead be a Python console script whose shebang we cannot change.
+    Neither path should load project code through PYTHONPATH or sitecustomize.
+    """
+    return {
+        **{name: value for name, value in os.environ.items() if not name.startswith("PYTHON")},
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONSAFEPATH": "1",
+    }
 
 
 @dataclass(frozen=True)

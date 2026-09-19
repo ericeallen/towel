@@ -14,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 
 import ast
+import builtins
 from typing import (
     Dict,
     Optional,
@@ -30,7 +31,7 @@ from dataclasses import dataclass
 from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
-from .builtins import is_builtin
+from .builtins import PYTHON_BUILTINS
 from .definite_assignment import (
     definitely_bound_after,
     definitely_bound_before,
@@ -38,7 +39,7 @@ from .definite_assignment import (
 )
 from .models import FunctionNode
 from .bounded_cache import BoundedCache
-from .scope_analyzer import ScopeAnalyzer
+from .scope_analyzer import ScopeAnalyzer, type_parameter_names
 from .statement_facts import (
     bindings_of,
     loaded_names,
@@ -815,7 +816,7 @@ def is_eagerly_evaluable(expression: ast.AST, available: AbstractSet[str]) -> bo
     if isinstance(expression, ast.Constant):
         return True
     if isinstance(expression, ast.Name):
-        return expression.id in available or is_builtin(expression.id)
+        return expression.id in available
     # A tuple of such values is immutable, so one evaluation is as good as
     # many. List, set and dict displays create a fresh mutable object each
     # time they run; hoisting one out of a loop would alias every iteration.
@@ -846,29 +847,75 @@ def available_argument_names(
       after its definition, and a name the enclosing function binds later, or
       only on some path, is an empty cell until then.
 
-    Class bodies never count: a method reads a class attribute through the
-    instance or the class, never as a bare name. Builtins are always available
-    and are not listed.
+    Class attributes never count: a method reads them through the instance or
+    class. PEP 695 type parameters do count, through their annotation scope.
+    A binding in a nearer scope shadows every outer binding of the same name,
+    even on paths where it is unbound. Only unshadowed builtins are available.
     """
     names: Set[str] = set()
-    if block:
-        names |= definitely_bound_before(function, block[0])
     module = analyzer.analyzed_tree
     if not isinstance(module, ast.Module):
-        return frozenset(names)
+        return frozenset(definitely_bound_before(function, block[0]) if block else ())
     parents = _module_parents(module)
-    if _within_class(parents, function):
+    shadowed: Set[str] = set()
+    module_only: Set[str] = set()
+    for scope in _lexical_name_scopes(function, analyzer):
+        module_only.update(scope.global_names - shadowed)
+        local_names = scope.local_names - module_only
+        if isinstance(scope.node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if scope.node is function:
+                bound = definitely_bound_before(function, block[0]) if block else set()
+            else:
+                statement = _statement_within(parents, scope.node, function)
+                bound = definitely_bound_before(scope.node, statement) - _deleted_names(
+                    scope.node.body
+                )
+            names.update((bound & local_names) - shadowed)
+        shadowed.update(local_names)
+        parameters = scope.type_parameters - module_only
+        names.update(parameters - shadowed)
+        shadowed.update(parameters)
+    if "__class__" not in shadowed | module_only and _within_class(parents, function):
         # The compiler fills the ``__class__`` cell before any method runs.
         names.add("__class__")
-    inner: ast.AST = function
-    while True:
-        enclosing = _enclosing_function(parents, inner)
-        if enclosing is None:
-            names |= _module_names_bound_before(module, _top_level_statement(parents, inner))
-            return frozenset(names)
-        statement = _statement_within(parents, enclosing, inner)
-        names |= definitely_bound_before(enclosing, statement) - _deleted_names(enclosing.body)
-        inner = enclosing
+    module_names = _module_names_bound_before(module, _top_level_statement(parents, function))
+    names.update((module_names | _AVAILABLE_BUILTINS) - shadowed)
+    return frozenset(names)
+
+
+_AVAILABLE_BUILTINS = frozenset(PYTHON_BUILTINS & vars(builtins).keys())
+
+
+@dataclass(frozen=True)
+class _LexicalNameScope:
+    node: ast.AST
+    local_names: FrozenSet[str]
+    type_parameters: FrozenSet[str]
+    global_names: FrozenSet[str]
+
+
+def _lexical_name_scopes(
+    function: FunctionNode, analyzer: "ScopeAnalyzer"
+) -> Iterable[_LexicalNameScope]:
+    """Function locals and annotation scopes, nearest first; class attributes are skipped."""
+    module = analyzer.analyzed_tree
+    parents = _module_parents(module) if isinstance(module, ast.Module) else {}
+    node: Optional[ast.AST] = function
+    while node is not None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            local_names: Set[str] = set()
+            global_names: Set[str] = set()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope = analyzer.node_scopes.get(node)
+                nonlocal_names: Set[str] = set()
+                if scope is not None:
+                    global_names = analyzer.global_vars.get(scope.scope_id, set())
+                    nonlocal_names = analyzer.nonlocal_vars.get(scope.scope_id, set())
+                local_names = locally_bound_names(node) - global_names - nonlocal_names
+            yield _LexicalNameScope(
+                node, frozenset(local_names), type_parameter_names(node), frozenset(global_names)
+            )
+        node = parents.get(node)
 
 
 _MODULE_PARENTS: "WeakKeyDictionary[ast.AST, Dict[ast.AST, ast.AST]]" = WeakKeyDictionary()
@@ -881,21 +928,18 @@ def module_resolved_names(
 
     A name the function binds anywhere is its local everywhere in it, and a
     name an enclosing function binds is a cell; either read is not the
-    module's. Class bodies do not count: a method's bare names skip them.
+    module's. The annotation scopes of generic functions and classes bind
+    their type parameters too. Class attributes do not count.
     Anything else reaches the module's namespace, then the builtins, and is
     the same lookup from any function of the module.
     """
     # ``__class__`` is the cell the compiler gives a method for zero-argument
     # ``super()``; it names the defining class, not a module binding.
-    resolved = set(names) - locally_bound_names(function) - {"__class__"}
-    module = analyzer.analyzed_tree
-    if not isinstance(module, ast.Module):
-        return frozenset(resolved)
-    parents = _module_parents(module)
-    enclosing = _enclosing_function(parents, function)
-    while enclosing is not None and resolved:
-        resolved -= locally_bound_names(enclosing)
-        enclosing = _enclosing_function(parents, enclosing)
+    resolved = set(names) - {"__class__"}
+    module_only: Set[str] = set()
+    for scope in _lexical_name_scopes(function, analyzer):
+        module_only.update(scope.global_names & resolved)
+        resolved -= (scope.local_names | scope.type_parameters) - module_only
     return frozenset(resolved)
 
 
@@ -928,16 +972,6 @@ def _within_class(parents: Dict[ast.AST, ast.AST], node: ast.AST) -> bool:
             return True
         current = parents.get(current)
     return False
-
-
-def _enclosing_function(parents: Dict[ast.AST, ast.AST], node: ast.AST) -> Optional[FunctionNode]:
-    """The nearest enclosing function, skipping class bodies and lambdas; None at module level."""
-    current = parents.get(node)
-    while current is not None:
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return current
-        current = parents.get(current)
-    return None
 
 
 def _statement_within(

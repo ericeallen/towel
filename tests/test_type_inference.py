@@ -10,6 +10,7 @@ is defined. ``towel dry --no-types`` leaves helpers bare.
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
 from typing import Dict
 import textwrap
@@ -17,11 +18,20 @@ import textwrap
 import pytest
 
 from tests.test_cli_integration import invoke
-from towel.type_inference import MypyInferrer, RevealRequest
+from towel.type_inference import (
+    CheckFailure,
+    CheckSuccess,
+    MypyInferrer,
+    RevealRequest,
+    TypeDiagnostic,
+)
 from towel.unification.annotations import annotation_from_revealed
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-pytest.importorskip("mypy")
+requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
+requires_pyright = pytest.mark.skipif(
+    importlib.util.find_spec("pyright") is None, reason="pyright absent"
+)
 
 from towel.type_inference import Subtyping  # noqa: E402
 
@@ -66,6 +76,7 @@ def test_dotted_names_reduce_to_what_the_host_binds() -> None:
     assert annotation_from_revealed("pkg.elsewhere.Thing", host, True) is None
 
 
+@requires_mypy
 def test_mypy_inferrer_reveals_types_at_the_probe_line(tmp_path: Path) -> None:
     package = tmp_path / "pkg"
     package.mkdir()
@@ -85,11 +96,12 @@ def test_mypy_inferrer_reveals_types_at_the_probe_line(tmp_path: Path) -> None:
     revealed = inferrer(
         [RevealRequest(str(module), source, 7, "    ", ("box.value", "label.upper()", "box"))]
     )
-    assert revealed[(str(module), 7, 0)] == "int"
-    assert revealed[(str(module), 7, 1)] == "str"
+    assert revealed[(str(module), 7, 0)].removeprefix("builtins.") == "int"
+    assert revealed[(str(module), 7, 1)].removeprefix("builtins.") == "str"
     assert revealed[(str(module), 7, 2)].endswith("Box")
 
 
+@requires_mypy
 def test_engine_fills_expression_arguments_and_the_return_from_mypy(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -118,6 +130,7 @@ def test_engine_fills_expression_arguments_and_the_return_from_mypy(tmp_path: Pa
     exec(compile(result, "<inferred>", "exec"), {})
 
 
+@requires_mypy
 def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()
@@ -148,6 +161,7 @@ def test_non_identifier_package_names_never_reach_an_annotation() -> None:
     assert stream is not None and ast.unparse(stream) == "'H2Stream'"
 
 
+@requires_mypy
 def test_inferrer_names_a_non_identifier_package_with_a_placeholder(tmp_path: Path) -> None:
     package = tmp_path / "cleaned-out"
     package.mkdir()
@@ -159,6 +173,7 @@ def test_inferrer_names_a_non_identifier_package_with_a_placeholder(tmp_path: Pa
     assert revealed[(str(module), 5, 0)] == "_towel_package.m.Box"
 
 
+@requires_mypy
 def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -188,6 +203,7 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
     exec(compile(result, "<any>", "exec"), {})
 
 
+@requires_mypy
 def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -215,6 +231,7 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
     assert _signature(result) == "def __extracted_func_0(__param_0: float, box: Box) -> str:"
 
 
+@requires_mypy
 def test_subtype_oracle_judges_pairs_in_the_module_context(tmp_path: Path) -> None:
     package = tmp_path / "pkg"
     package.mkdir()
@@ -239,6 +256,7 @@ def test_subtype_oracle_judges_pairs_in_the_module_context(tmp_path: Path) -> No
     assert verdicts == [YES, NO, YES, NO, YES, YES, YES, UNKNOWN]
 
 
+@requires_mypy
 def test_unions_are_normalized_by_the_oracle(tmp_path: Path) -> None:
     from towel.unification.annotations import normalize_union, oracle_subtypes
 
@@ -257,6 +275,7 @@ def test_unions_are_normalized_by_the_oracle(tmp_path: Path) -> None:
     assert [ast.unparse(m) for m in normalized] == ["Base", "int", "Sequence[int]", "None"]
 
 
+@requires_mypy
 def test_revealed_return_is_written_when_it_satisfies_every_declaration(tmp_path: Path) -> None:
     # Sites declare ``-> int`` and ``-> object``; the helper returns an int,
     # which mypy confirms is a subtype of both, so ``int`` is written.
@@ -281,6 +300,7 @@ def test_revealed_return_is_written_when_it_satisfies_every_declaration(tmp_path
     assert _signature(result) == "def __extracted_func_0(value: int) -> int:"
 
 
+@requires_mypy
 def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
     # ``Box`` is a subclass of ``Base``; only mypy knows, and the meet is Box.
     path = tmp_path / "m.py"
@@ -309,6 +329,7 @@ def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
     assert _signature(result) == "def __extracted_func_0(flag: bool) -> Box:"
 
 
+@requires_mypy
 def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -358,12 +379,25 @@ class _Oracle:
         return self.inner.is_subtype(file_path, source, pairs)
 
     def check(self, file_path, source):
-        errors = list(self.inner.check(file_path, source))
-        if "extracted_func" in source and ": Any" not in source and "-> Any" not in source:
-            errors.append("Simulated: annotated helper does not type-check")
-        return errors
+        return self.check_project({file_path: source})
+
+    def check_project(self, sources, *, excluded_paths=()):
+        result = self.inner.check_project(sources, excluded_paths=excluded_paths)
+        if isinstance(result, CheckFailure):
+            return result
+        errors = list(result.errors)
+        for file_path, source in sources.items():
+            if "extracted_func" in source and ": Any" not in source and "-> Any" not in source:
+                errors.append(
+                    TypeDiagnostic(file_path, "Simulated: annotated helper does not type-check")
+                )
+        return CheckSuccess(tuple(errors))
+
+    def close(self):
+        self.inner.close()
 
 
+@requires_mypy
 def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -393,11 +427,13 @@ class _CountingOracle(_Oracle):
         super().__init__()
         self.checks: Dict[str, int] = {}
 
-    def check(self, file_path, source):
-        self.checks[source] = self.checks.get(source, 0) + 1
-        return super().check(file_path, source)
+    def check_project(self, sources, *, excluded_paths=()):
+        for source in sources.values():
+            self.checks[source] = self.checks.get(source, 0) + 1
+        return super().check_project(sources, excluded_paths=excluded_paths)
 
 
+@requires_mypy
 def test_each_original_is_checked_once_across_the_fallback_attempts(tmp_path: Path) -> None:
     """The annotated, all-``Any`` and bare attempts compare against one original."""
     path = tmp_path / "m.py"
@@ -423,6 +459,7 @@ def test_each_original_is_checked_once_across_the_fallback_attempts(tmp_path: Pa
     assert oracle.checks[source] == 1
 
 
+@requires_mypy
 def test_thunk_arguments_get_callable_annotations(tmp_path: Path) -> None:
     # The differing expression sits under ``if``, so it is passed as a thunk;
     # mypy reveals the lambda as ``def () -> int``, spelled ``Callable[[], int]``.
@@ -449,9 +486,6 @@ def test_thunk_arguments_get_callable_annotations(tmp_path: Path) -> None:
     exec(compile(result, "<callable>", "exec"), {})
 
 
-pytest.importorskip("pyright")
-
-
 def _pyright_package(tmp_path: Path) -> tuple[Path, str]:
     package = tmp_path / "pkg"
     package.mkdir()
@@ -470,6 +504,7 @@ def _pyright_package(tmp_path: Path) -> tuple[Path, str]:
     return module, source
 
 
+@requires_pyright
 def test_pyright_oracle_reveals_types(tmp_path: Path) -> None:
     from towel.type_inference import PyrightOracle
 
@@ -484,6 +519,7 @@ def test_pyright_oracle_reveals_types(tmp_path: Path) -> None:
     assert not list(module.parent.glob("_towel_probe_*")), "probe files are removed"
 
 
+@requires_pyright
 def test_pyright_oracle_judges_subtypes_and_checks(tmp_path: Path) -> None:
     from towel.type_inference import PyrightOracle
 
@@ -492,10 +528,10 @@ def test_pyright_oracle_judges_subtypes_and_checks(tmp_path: Path) -> None:
     assert oracle.is_subtype(
         str(module), source, [("bool", "int"), ("int", "bool"), ("Box", "Base"), ("int", "Unknown")]
     ) == [YES, NO, YES, UNKNOWN]
-    assert oracle.check(str(module), source) == []
-    assert any(
-        "pyright" in message for message in oracle.check(str(module), source + "x: int = 'a'\n")
-    )
+    assert oracle.check(str(module), source) == CheckSuccess()
+    result = oracle.check(str(module), source + "x: int = 'a'\n")
+    assert isinstance(result, CheckSuccess)
+    assert any("pyright" in error.message for error in result.errors)
 
 
 def test_pyright_callable_spelling() -> None:
@@ -505,6 +541,8 @@ def test_pyright_callable_spelling() -> None:
     assert result is not None and ast.unparse(result) == "Callable[[], int]"
 
 
+@requires_mypy
+@requires_pyright
 def test_checker_follows_the_projects_configuration(tmp_path: Path) -> None:
     from towel.type_inference import (
         CombinedOracle,
@@ -533,6 +571,7 @@ def test_checker_follows_the_projects_configuration(tmp_path: Path) -> None:
     assert isinstance(oracle, MypyInferrer)
 
 
+@requires_pyright
 def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
     from towel.type_inference import PyrightOracle
 
@@ -563,6 +602,7 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
     assert _signature(result) == "def __extracted_func_0(__param_0: int, box: Box) -> str:"
 
 
+@requires_mypy
 def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) -> None:
     """A helper returning two variables is annotated with the tuple of their revealed types."""
     path = tmp_path / "m.py"
@@ -595,6 +635,7 @@ def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) ->
     exec(compile(result, "<inferred>", "exec"), {})
 
 
+@requires_pyright
 def test_pyright_never_executes_a_project_package_that_shadows_the_standard_library(
     tmp_path: Path,
 ) -> None:
@@ -611,4 +652,5 @@ def test_pyright_never_executes_a_project_package_that_shadows_the_standard_libr
     module.write_text(source)
     messages = PyrightOracle().check(str(module), source)
     assert not marker.exists(), "the project's locale package was executed"
-    assert not any("could not" in message.lower() for message in messages)
+    assert isinstance(messages, CheckSuccess)
+    assert not messages.errors

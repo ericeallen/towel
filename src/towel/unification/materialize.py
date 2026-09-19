@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import ast
 import copy
-from collections import Counter
 import hashlib
 import os
 import re
@@ -41,8 +40,9 @@ from .exceptions import RefactoringError
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
 from ..project_layout import ProjectLayout, is_package_dir
-from towel.changes import ChangeConflict, ChangePlan
+from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
+from ..type_inference import CheckResult
 
 from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring
@@ -95,14 +95,14 @@ class Materialization(
         after = self.apply_refactoring_multi_file(proposal)
         for path in paths:
             if Path(path).read_bytes() != before[path]:
-                raise ChangeConflict(f"Source changed during planning: {path}")
+                raise StaleSource(f"Source changed during planning: {path}")
         return ChangePlan.from_sources(before, after)
 
     def apply_refactoring_multi_file(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render without writing or mutating caller-owned proposal ASTs."""
         for path, digest in proposal.source_digests:
             if hashlib.sha256(read_source(path).encode("utf-8")).hexdigest() != digest:
-                raise ChangeConflict(f"Stale proposal; analyze again: {path}")
+                raise StaleSource(f"Stale proposal; analyze again: {path}")
         counters = self._helper_name_counters.copy()
         try:
             return self._materialize_refactoring(proposal)
@@ -130,7 +130,8 @@ class Materialization(
         proposal = copy.deepcopy(proposal)
         self._infer_helper_annotations(proposal)
         variants = [proposal]
-        if self._checks_generated_types(proposal):
+        check_types = self._checks_generated_types(proposal)
+        if check_types:
             variants += [
                 self._with_every_annotation_any(proposal),
                 self._without_annotations(proposal),
@@ -138,17 +139,25 @@ class Materialization(
         counters = dict(self._helper_name_counters)
         # Every attempt compares against the same original files on the same
         # disk, so each original is checked once for all of them.
-        errors_before: Dict[str, Counter[str]] = {}
-        for index, variant in enumerate(variants):
+        errors_before: Optional[CheckResult] = None
+        for variant in variants:
             mark = len(self._change_log)
             # Each attempt allocates the helper's name; restore the counters so
             # every attempt gets the same name and none is consumed by a retry.
             self._helper_name_counters = dict(counters)
             files = self._materialize_once(variant)
-            if index == len(variants) - 1 or not self._introduces_type_errors(files, errors_before):
+            if not check_types:
                 return files
+            if errors_before is None:
+                errors_before = self._original_type_errors(files)
+            try:
+                if not self._introduces_type_errors(files, errors_before):
+                    return files
+            except RefactoringError:
+                del self._change_log[mark:]
+                raise
             del self._change_log[mark:]
-        raise AssertionError("unreachable: the bare variant is always accepted")
+        raise RefactoringError("Every helper annotation variant introduces project type errors")
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""

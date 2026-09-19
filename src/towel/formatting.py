@@ -38,10 +38,10 @@ from pathlib import Path
 import sys
 import shutil
 import subprocess
-from typing import Callable, List, Mapping, Optional, Tuple
+from typing import Callable, List, Mapping, Optional
 
 from .project_layout import find_project_root, load_pyproject
-from .project_tools import ToolChoice
+from .project_tools import ToolChoice, python_tool_environment
 from .diagnostics import LOG
 
 SnippetFormatter = Callable[[str], str]
@@ -231,7 +231,9 @@ def _ruff_executable() -> Optional[List[str]]:
     except ImportError:
         executable = shutil.which("ruff")
         return [executable] if executable else None
-    return [sys.executable, "-m", "ruff"]
+    # Both callers run from the analyzed project's root. Do not let a
+    # project-owned ruff.py, or a shadow of one of its dependencies, run.
+    return [sys.executable, "-I", "-m", "ruff"]
 
 
 def ruff_formatter(path: Path) -> SnippetFormatter:
@@ -253,6 +255,7 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
                 capture_output=True,
                 text=True,
                 cwd=str(root),
+                env=python_tool_environment(),
                 check=False,
                 timeout=TOOL_TIMEOUT_SECONDS,
             )
@@ -320,6 +323,7 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
                     capture_output=True,
                     text=True,
                     cwd=str(root),
+                    env=python_tool_environment(),
                     check=False,
                     timeout=TOOL_TIMEOUT_SECONDS,
                 )
@@ -363,11 +367,12 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
 def imports_permuted_only(finisher: FileFinisher) -> FileFinisher:
     """``finisher`` guarded so it can only reorder or merge import statements.
 
-    Imports at any depth may move or merge (a sorter also orders the imports
-    under ``if TYPE_CHECKING:`` or in a ``try``); everything else must be the
-    same, in the same order, and the set of names the imports bind must be
-    unchanged. A result that fails that test is discarded and the text is
-    left as Towel assembled it: a sorter must never cost a refactoring.
+    Each consecutive group of imports may move or merge within its own
+    statement list, including inside ``if TYPE_CHECKING:`` or ``try``.
+    Repeated bindings to the same name keep their order. Other statements,
+    wildcard imports and future imports are boundaries a sort cannot cross.
+    A result that fails that test is discarded and the text is left as
+    Towel assembled it: a sorter must never cost a refactoring.
     """
 
     def finish(file_path: str, source: str) -> str:
@@ -378,36 +383,55 @@ def imports_permuted_only(finisher: FileFinisher) -> FileFinisher:
             before, after = ast.parse(source), ast.parse(finished)
         except SyntaxError:
             return source
-        if _imports_stripped(before) != _imports_stripped(after):
-            return source
-        if _imported_names(before) != _imported_names(after):
+        if _normalized_imports(before) != _normalized_imports(after):
             return source
         return finished
 
     return finish
 
 
-def _imports_stripped(module: ast.Module) -> str:
-    """The module's dump with every import statement, at any depth, removed."""
-    stripped = copy.deepcopy(module)
-    for node in ast.walk(stripped):
+def _normalized_imports(module: ast.Module) -> str:
+    """A dump that ignores safe permutations within each import group."""
+    normalized = copy.deepcopy(module)
+    for node in ast.walk(normalized):
         for field, value in ast.iter_fields(node):
             if isinstance(value, list) and value and isinstance(value[0], ast.stmt):
-                setattr(
-                    node,
-                    field,
-                    [s for s in value if not isinstance(s, (ast.Import, ast.ImportFrom))],
+                setattr(node, field, _normalize_import_groups(value))
+    return ast.dump(normalized)
+
+
+def _normalize_import_groups(statements: list[ast.stmt]) -> list[ast.stmt]:
+    """Sort independent bindings, keeping every binding's providers in order.
+
+    Splitting aliases into singleton imports lets merged statements compare
+    equal. Keeping an ordered list per bound name preserves last-writer wins
+    for aliases such as ``import math as numeric; import cmath as numeric``.
+    Wildcard imports bind unknown names, so they cannot join a sorted group.
+    """
+    result: list[ast.stmt] = []
+    bindings: dict[str, list[ast.stmt]] = {}
+
+    def flush() -> None:
+        result.extend(statement for name in sorted(bindings) for statement in bindings[name])
+        bindings.clear()
+
+    for statement in statements:
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                name = alias.asname or alias.name.split(".")[0]
+                bindings.setdefault(name, []).append(ast.Import(names=[alias]))
+        elif (
+            isinstance(statement, ast.ImportFrom)
+            and statement.module != "__future__"
+            and all(alias.name != "*" for alias in statement.names)
+        ):
+            for alias in statement.names:
+                name = alias.asname or alias.name
+                bindings.setdefault(name, []).append(
+                    ast.ImportFrom(module=statement.module, names=[alias], level=statement.level)
                 )
-    return ast.dump(stripped)
-
-
-def _imported_names(module: ast.Module) -> frozenset[Tuple[object, ...]]:
-    names: set[Tuple[object, ...]] = set()
-    for node in ast.walk(module):
-        if isinstance(node, ast.Import):
-            names.update((alias.name, alias.asname) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            names.update(
-                (node.level, node.module, alias.name, alias.asname) for alias in node.names
-            )
-    return frozenset(names)
+        else:
+            flush()
+            result.append(statement)
+    flush()
+    return result

@@ -42,6 +42,7 @@ from .models import (
     is_generated_helper_name,
 )
 from .scope_analyzer import ScopeBinding
+from .semantic_safety import module_resolved_names
 from .statement_facts import imported_binding_name
 from .import_graph import import_runs_new_code, would_create_import_cycle
 from .visitors import body_without_docstring
@@ -232,6 +233,14 @@ class ExistingFunctionReuse(EngineState):
         if len(set(names)) != len(names):
             return None
         if not set(parameters) <= set(names):
+            return None
+        ambient_names = set(names) - set(parameters)
+        if (
+            module_resolved_names(target.node, target.scope_analyzer, ambient_names)
+            != ambient_names
+        ):
+            # Same-spelled type parameters of different generic functions are
+            # different lexical bindings, never ambient module objects.
             return None
         scope = target.scope_analyzer.node_scopes.get(target.node)
         if scope is None:

@@ -17,7 +17,7 @@ from towel.changes import ChangeConflict, recover
 from towel.cli import _confirm, _find_extracted_helpers, helper_inventory
 from towel.diagnostics import Settings
 from towel.formatting import FormattingChangedCode, checked, import_sorter_for_project
-from towel.type_inference import PyrightOracle
+from towel.type_inference import CheckFailure, PyrightOracle
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -90,7 +90,7 @@ def test_pyright_output_of_the_wrong_shape_infers_nothing(
     oracle._command = ["pyright"]
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(stdout))
     with caplog.at_level(logging.WARNING, logger="towel"):
-        assert oracle._diagnostics(str(module), "x = 1\n") == []
+        assert isinstance(oracle._diagnostics(str(module), "x = 1\n"), CheckFailure)
     assert fragment in caplog.text
 
 
@@ -107,7 +107,7 @@ def test_a_hung_pyright_is_abandoned_with_a_warning(
 
     monkeypatch.setattr(subprocess, "run", hang)
     with caplog.at_level(logging.WARNING, logger="towel"):
-        assert oracle._diagnostics(str(module), "x = 1\n") == []
+        assert isinstance(oracle._diagnostics(str(module), "x = 1\n"), CheckFailure)
     assert "timed out" in caplog.text
 
 

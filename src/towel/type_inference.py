@@ -18,15 +18,16 @@ The engine copies annotations the call sites declare; for an argument that is
 an expression rather than an annotated name, only a type checker knows. A
 :class:`TypeOracle` answers three questions: the type of each probed
 expression at a point in a module (``reveal``), whether one type is a
-subtype of another (``is_subtype``), and whether a file type-checks
-(``check``). :class:`MypyInferrer` builds a copy of the site's module in
-memory with ``reveal_type(<expression>)`` inserted where the block begins,
+subtype of another (``is_subtype``), and whether a prospective project type-checks
+(``check_project``). :class:`MypyInferrer` builds a copy of the site's module in
+an owned worker process with ``reveal_type(<expression>)`` inserted where the block begins,
 so names resolve as they do at the call, and asks subtyping through probe
 functions ``def _probe(v: narrow) -> wide: return v`` appended to the copy,
 so the relation is mypy's own; nothing is written to disk except mypy's
 cache, which lives for the inferrer's lifetime so later proposals in the
-same run rebuild incrementally. :class:`PyrightOracle` does the same through
-the pyright command on a temporary sibling file. :class:`CombinedOracle`
+same run rebuild incrementally. :class:`PyrightOracle` infers through
+the pyright command on a temporary sibling file. Verification uses a complete
+private project snapshot so changed hosts and unchanged consumers agree. :class:`CombinedOracle`
 infers with one checker and verifies with several, and
 :func:`type_oracle_for_project` picks them from the project's configuration.
 
@@ -42,7 +43,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import atexit
-import gc
+import importlib.util
+import select
+import threading
+import time
 import os
 from pathlib import Path
 import re
@@ -57,28 +61,39 @@ from typing import (
     Iterator,
     List,
     Mapping,
-    NamedTuple,
     Optional,
     Protocol,
     Sequence,
-    TYPE_CHECKING,
     Tuple,
-    Type,
     TypedDict,
     cast,
 )
 
 from .diagnostics import LOG
-from .project_tools import ToolChoice
-from .source_text import source_lines
+from .project_tools import ToolChoice, python_tool_environment
+from .checker_project import checker_snapshot
+from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
 
-if TYPE_CHECKING:
-    from types import ModuleType
+from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_probe_file
 
-    from mypy.build import BuildSource
-    from mypy.errors import CompileError
-    from mypy.options import Options
+__all__ = [
+    "CheckFailure",
+    "CheckResult",
+    "CheckSuccess",
+    "CombinedOracle",
+    "MypyInferrer",
+    "PROBE_PREFIX",
+    "PyrightOracle",
+    "RevealKey",
+    "RevealRequest",
+    "Subtyping",
+    "TypeDiagnostic",
+    "TypeOracle",
+    "is_probe_file",
+    "type_oracle_for_project",
+    "relocate_oracle",
+]
 
 RevealKey = Tuple[str, int, int]
 """(file path, line the probe was inserted before, index of the expression)."""
@@ -108,28 +123,54 @@ class Subtyping(Enum):
     """The checker could not resolve a name in the question, so it could not judge."""
 
 
-class TypeOracle(Protocol):
-    """What the annotation writer asks a type checker.
+@dataclass(frozen=True)
+class TypeDiagnostic:
+    """A position-independent error at its original, absolute project path."""
 
-    ``reveal`` maps each requested expression to the checker's spelling of
-    its type, when known. ``is_subtype`` answers, for each ``(narrow, wide)``
-    pair spelled as annotations in the given module, whether ``narrow`` is
-    assignable to ``wide``: True, False, or None when the checker could not
-    judge (a name it cannot resolve).
-    """
+    path: str
+    message: str
+
+
+@dataclass(frozen=True)
+class CheckSuccess:
+    """A completed check, including its errors (which may be empty)."""
+
+    errors: Tuple[TypeDiagnostic, ...] = ()
+
+
+@dataclass(frozen=True)
+class CheckFailure:
+    """The checker could not finish; this is never evidence that code is valid."""
+
+    reason: str
+
+
+CheckResult = CheckSuccess | CheckFailure
+
+
+class TypeOracle(Protocol):
+    """Inference and coherent project verification, with explicit failure and ownership."""
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        """The checker's spelling of each requested expression's type."""
         raise NotImplementedError
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
     ) -> Sequence[Subtyping]:
-        """Whether each narrow type is assignable to its wide type, in the module's context."""
         raise NotImplementedError
 
-    def check(self, file_path: str, source: str) -> Sequence[str]:
-        """The checker's error messages for ``source`` as ``file_path``, without positions."""
+    def check(self, file_path: str, source: str) -> CheckResult:
+        """Check the project with one prospective source replaced."""
+        raise NotImplementedError
+
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        """Check all project consumers against all prospective sources together."""
+        raise NotImplementedError
+
+    def close(self) -> None:
+        """Release checker processes and owned temporary files."""
         raise NotImplementedError
 
 
@@ -223,101 +264,224 @@ def _verdicts_from_error_lines(
     return verdicts
 
 
-class _MypyApi(NamedTuple):
-    """mypy's build entry points, imported on first use so the extra stays optional."""
+@dataclass(frozen=True)
+class _BuildSource:
+    path: str
+    module: str
+    text: str
 
-    build: "ModuleType"
-    build_source: "Type[BuildSource]"
-    compile_error: "Type[CompileError]"
+
+@dataclass(frozen=True)
+class _BuildMessages:
+    messages: Tuple[str, ...]
 
 
-def _mypy() -> _MypyApi:
-    """mypy's build module, its BuildSource and its CompileError, imported on first use."""
-    from mypy import build
-    from mypy.build import BuildSource
-    from mypy.errors import CompileError
+def _checker_root(path: Path) -> Path:
+    """Nearest checker or packaging root, independently of import-layout inference."""
+    path = path.resolve()
+    directory = path.parent if path.is_file() or path.suffix in {".py", ".pyi"} else path
+    for root in (directory, *directory.parents):
+        if any(
+            (root / name).is_file()
+            for name in (
+                "mypy.ini",
+                ".mypy.ini",
+                "pyrightconfig.json",
+                "pyproject.toml",
+                "setup.cfg",
+                "setup.py",
+            )
+        ):
+            return root
+    return find_project_root(directory)
 
-    return _MypyApi(build, BuildSource, CompileError)
+
+def _mypy_config(root: Path) -> Optional[str]:
+    for name in ("mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg"):
+        path = root / name
+        if path.is_file() and (
+            name in {"mypy.ini", ".mypy.ini"}
+            or (name == "pyproject.toml" and _has_tool_section(root, "mypy"))
+            or (name == "setup.cfg" and _has_ini_section(path, "mypy"))
+        ):
+            return str(path)
+    return None
+
+
+def _configured_root(path: Path, checker: str) -> Optional[Path]:
+    """Checker discovery must not stop at an unrelated packaging configuration."""
+    path = path.resolve()
+    directory = path.parent if path.is_file() or path.suffix in {".py", ".pyi"} else path
+    configured = project_configures_mypy if checker == "mypy" else project_configures_pyright
+    for root in (directory, *directory.parents):
+        if configured(root):
+            return root
+        if (root / ".git").exists() or (root / ".hg").exists():
+            break
+    return None
+
+
+def _source_groups(sources: Mapping[str, str], checker: str) -> Dict[Path, Dict[str, str]]:
+    groups: Dict[Path, Dict[str, str]] = {}
+    for path, source in sources.items():
+        absolute = str(Path(path).resolve())
+        groups.setdefault(
+            _configured_root(Path(absolute), checker) or _checker_root(Path(absolute)), {}
+        )[absolute] = source
+    return groups
 
 
 class MypyInferrer:
-    """A ``TypeOracle`` backed by mypy's in-process build.
+    """A persistent, isolated mypy worker with an owned incremental cache.
 
-    Raises ``ImportError`` at construction when mypy is not installed; install
-    the ``types`` extra (``pip install "code-towel[types]"``) to provide it.
+    Builds run serially in an owned process. mypy's GC, imports and mutable
+    globals cannot change this application's state or race between callers.
+    Project checking options apply; project plugins and executables do not.
     """
 
     def __init__(self, cache_dir: Optional[Path] = None) -> None:
-        from mypy import build  # noqa: F401  (import error surfaces here)
-
+        # Cleanup must be valid even if dependency detection/construction fails.
+        self._lock = threading.RLock()
+        self._process: Optional[subprocess.Popen[bytes]] = None
         self._cache: Optional[tempfile.TemporaryDirectory[str]] = None
+        self._closed = False
+        self._owner_pid = os.getpid()
+        if importlib.util.find_spec("mypy") is None:
+            raise ImportError("mypy is not installed")
         if cache_dir is None:
             self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
             cache_dir = Path(self._cache.name)
-        self._cache_dir = cache_dir
-        self._builds = 0
-        self._heap_frozen = False
-
-    #: Builds whose garbage is collected together. Collecting after every build
-    #: made Towel on its own source 41 percent slower (a large fixed cost per
-    #: collection); every tenth costs 6 percent and still bounds memory.
-    COLLECT_EVERY = 10
+        self._cache_dir = cache_dir.resolve()
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
 
     def close(self) -> None:
-        """Collect any builds' garbage still pending and remove the cache directory this inferrer made."""
-        self._collect_builds()
-        if self._cache is not None:
-            self._cache.cleanup()
-            self._cache = None
+        """Reap the owned worker and remove its cache; safe after partial construction."""
+        if self._owner_pid != os.getpid():
+            return  # A forked analysis worker never owns its parent's checker.
+        with self._lock:
+            self._closed = True
+            self._stop_worker()
+            if self._cache is not None:
+                self._cache.cleanup()
+                self._cache = None
 
-    def _collect_builds(self) -> None:
-        """Free the garbage of the builds since the heap was frozen, then thaw it."""
-        if self._heap_frozen:
-            gc.collect()
-            gc.unfreeze()
-            self._heap_frozen = False
+    def _stop_worker(self) -> None:
+        process, self._process = self._process, None
+        if process is None:
+            return
+        if process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass  # A failed worker may already have closed the receiving pipe.
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        if process.stdout is not None:
+            process.stdout.close()
 
     def __del__(self) -> None:
         self.close()
 
-    def _options(self, roots: Sequence[str]) -> "Options":
-        from mypy.options import Options
-
-        options = Options()
-        options.ignore_missing_imports = True
-        options.follow_imports = "silent"
-        options.incremental = True
-        options.cache_dir = str(self._cache_dir)
-        options.check_untyped_defs = True
-        options.explicit_package_bases = True
-        options.mypy_path = list(roots)
-        options.hide_error_codes = True
-        return options
-
-    def _build_errors(self, sources: "List[BuildSource]", roots: Sequence[str]) -> List[str]:
-        """The messages of one mypy build, with the build's own garbage collected.
-
-        A build leaves its whole graph (trees, symbol tables, types) as reference
-        cycles, which only the cyclic collector frees, and its full passes grow
-        rarer as the heap grows: sphinx, with a check per applied refactoring,
-        reached 40 GB of finished builds. The heap is frozen when a window of
-        builds starts, so the collection that ends it, every ``COLLECT_EVERY``
-        builds, frees what those builds left without a pass over Towel's own
-        analysis.
-        """
-        build, _, _ = _mypy()
-        if not self._heap_frozen:
-            gc.freeze()
-            self._heap_frozen = True
-        try:
-            return list(build.build(sources=sources, options=self._options(roots)).errors)
-        finally:
-            self._builds += 1
-            if self._builds % self.COLLECT_EVERY == 0:
-                self._collect_builds()
+    def _build_errors(
+        self,
+        sources: Sequence[_BuildSource],
+        roots: Sequence[str],
+        *,
+        complete: bool = False,
+        excluded_paths: Sequence[str] = (),
+    ) -> _BuildMessages | CheckFailure:
+        if self._owner_pid != os.getpid():
+            return CheckFailure("Create a new mypy oracle after fork")
+        with self._lock:
+            if self._closed:
+                return CheckFailure("mypy oracle is closed")
+            if not sources:
+                return _BuildMessages(())
+            root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
+                Path(sources[0].path)
+            )
+            request = {
+                "root": str(root),
+                "config": _mypy_config(root),
+                "roots": list(roots),
+                "sources": {str(Path(source.path).resolve()): source.text for source in sources},
+                "complete": complete,
+                "excluded_paths": list(excluded_paths),
+                "modules": {str(Path(source.path).resolve()): source.module for source in sources},
+            }
+            try:
+                if self._process is None:
+                    self._process = subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-I",
+                            str(Path(__file__).with_name("_mypy_worker.py")),
+                            str(self._cache_dir),
+                        ],
+                        bufsize=0,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                        cwd=tempfile.gettempdir(),
+                        env=python_tool_environment(),
+                    )
+                process = self._process
+                if process.stdin is None or process.stdout is None:
+                    return CheckFailure("mypy worker has no protocol pipes")
+                deadline = time.monotonic() + MYPY_TIMEOUT_SECONDS
+                pending = (json.dumps(request) + "\n").encode("utf-8")
+                written = 0
+                response = bytearray()
+                input_fd, output_fd = process.stdin.fileno(), process.stdout.fileno()
+                os.set_blocking(input_fd, False)
+                os.set_blocking(output_fd, False)
+                while not response.endswith(b"\n"):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        self._stop_worker()
+                        return CheckFailure("mypy timed out")
+                    readable, writable, _ = select.select(
+                        [output_fd], [input_fd] if written < len(pending) else [], [], remaining
+                    )
+                    if writable:
+                        try:
+                            written += os.write(
+                                input_fd, memoryview(pending)[written : written + 65536]
+                            )
+                        except BlockingIOError:
+                            pass  # Another ready pipe can be consumed before trying again.
+                    if readable:
+                        try:
+                            chunk = os.read(output_fd, 65536)
+                        except BlockingIOError:
+                            continue
+                        if not chunk:
+                            self._stop_worker()
+                            return CheckFailure("mypy worker exited before returning diagnostics")
+                        response.extend(chunk)
+                payload = json.loads(response)
+            except (OSError, ValueError) as error:
+                self._stop_worker()
+                return CheckFailure(f"mypy worker failed: {error}")
+            if not isinstance(payload, dict):
+                return CheckFailure("mypy worker returned an invalid response")
+            failure, messages = payload.get("failure"), payload.get("messages")
+            if isinstance(failure, str):
+                return CheckFailure(failure)
+            if failure is not None:
+                return CheckFailure("mypy worker returned an invalid failure status")
+            if not isinstance(messages, list) or not all(isinstance(m, str) for m in messages):
+                return CheckFailure("mypy worker returned invalid diagnostics")
+            return _BuildMessages(tuple(m for m in messages if isinstance(m, str)))
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
@@ -327,15 +491,15 @@ class MypyInferrer:
         One probe function per pair is appended to an in-memory copy of the
         module (see :func:`_subtype_probes`); mypy's error lines give the verdicts.
         """
-        _, build_source, compile_error = _mypy()
         if not pairs:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
         module, root = _module_name_and_root(Path(file_path))
-        try:
-            errors = self._build_errors([build_source(file_path, module, text)], [str(root)])
-        except compile_error:
+        result = self._build_errors([_BuildSource(file_path, module, text)], [str(root)])
+        if isinstance(result, CheckFailure):
+            LOG.warning("mypy subtype check failed: %s", result.reason)
             return [Subtyping.UNKNOWN] * len(pairs)
+        errors = result.messages
         error_lines = [
             int(match.group("line"))
             for match in (_ERROR.match(message) for message in errors)
@@ -343,32 +507,36 @@ class MypyInferrer:
         ]
         return _verdicts_from_error_lines(len(pairs), error_lines, signature_line, return_line)
 
-    def check(self, file_path: str, source: str) -> Sequence[str]:
-        """Error messages mypy reports for ``source`` in place of ``file_path``.
+    def check(self, file_path: str, source: str) -> CheckResult:
+        return self.check_project({file_path: source})
 
-        Positions are stripped so two versions of a file can be compared for
-        new errors regardless of where lines moved.
-        """
-        _, build_source, compile_error = _mypy()
-        module, root = _module_name_and_root(Path(file_path))
-        try:
-            errors = self._build_errors([build_source(file_path, module, source)], [str(root)])
-        except compile_error as error:
-            return [line for line in error.messages if "error:" in line]
-        messages: List[str] = []
-        for message in errors:
-            match = _ERROR.match(message)
-            if match is not None and _same_file(match.group("path"), file_path):
-                messages.append(message[match.end() :].strip())
-        return messages
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        errors: List[TypeDiagnostic] = []
+        for root, replacements in _source_groups(sources, "mypy").items():
+            builds = [
+                _BuildSource(path, _module_name_and_root(Path(path))[0], source)
+                for path, source in replacements.items()
+            ]
+            result = self._build_errors(
+                builds, [str(root)], complete=True, excluded_paths=excluded_paths
+            )
+            if isinstance(result, CheckFailure):
+                return result
+            for message in result.messages:
+                match = _ERROR.match(message)
+                if match is not None:
+                    path = str((root / match.group("path")).resolve())
+                    errors.append(TypeDiagnostic(path, message[match.end() :].strip()))
+        return CheckSuccess(tuple(errors))
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         """Reveal each request through one mypy build per module, probes appended in memory."""
-        _, build_source, compile_error = _mypy()
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
             by_file.setdefault(request.file_path, []).append(request)
-        sources: List[BuildSource] = []
+        sources: List[_BuildSource] = []
         roots: List[str] = []
         probe_lines: Dict[Tuple[str, int], RevealKey] = {}
         for file_path, file_requests in by_file.items():
@@ -398,16 +566,16 @@ class MypyInferrer:
                         index,
                     )
             module, root = _module_name_and_root(Path(file_path))
-            sources.append(build_source(file_path, module, text))
+            sources.append(_BuildSource(file_path, module, text))
             if str(root) not in roots:
                 roots.append(str(root))
         if not sources:
             return {}
-        try:
-            errors = self._build_errors(sources, roots)
-        except compile_error as error:
-            LOG.warning("mypy could not build %s; no types inferred there: %s", roots, error)
+        result = self._build_errors(sources, roots)
+        if isinstance(result, CheckFailure):
+            LOG.warning("mypy inference failed: %s", result.reason)
             return {}
+        errors = result.messages
         revealed: Dict[RevealKey, str] = {}
         for message in errors:
             match = _REVEALED.match(message)
@@ -423,12 +591,7 @@ _PENDING_PROBES: "set[Path]" = set()
 """Probe files not yet removed; an interpreter exit removes them, a kill cannot."""
 
 
-PROBE_PREFIX = "_towel_probe_"
-
-
-def is_probe_file(path: Path) -> bool:
-    """Whether ``path`` is a pyright probe a killed run left behind; never source to analyze."""
-    return path.name.startswith(PROBE_PREFIX)
+MYPY_TIMEOUT_SECONDS = 600.0
 
 
 def _unlink_quietly(path: Path) -> None:
@@ -489,10 +652,16 @@ class _PyrightRange(TypedDict, total=False):
 class _PyrightDiagnostic(TypedDict, total=False):
     """One entry of ``generalDiagnostics`` in ``pyright --outputjson``."""
 
+    file: str
     severity: str
     message: str
     rule: str
     range: _PyrightRange
+
+
+@dataclass(frozen=True)
+class _PyrightDiagnostics:
+    diagnostics: Tuple[_PyrightDiagnostic, ...]
 
 
 class PyrightOracle:
@@ -510,52 +679,86 @@ class PyrightOracle:
             raise ImportError("pyright is not installed")
         self._command: List[str] = command
 
-    def _diagnostics(self, file_path: str, text: str) -> List[_PyrightDiagnostic]:
-        """Pyright's diagnostics for ``text`` standing in for ``file_path``."""
+    def close(self) -> None:
+        """Pyright runs one bounded subprocess per request and owns no persistent state."""
+
+    def _diagnostics(self, file_path: str, text: str) -> _PyrightDiagnostics | CheckFailure:
         original = Path(file_path)
-        with _probe_file(original, text) as probe:
-            # The project's pyright configuration applies (its rules are what
-            # the generated code must satisfy), but its interpreter is never
-            # run: --pythonpath names this process's interpreter, so a venv
-            # setting in that configuration cannot execute the project.
-            try:
-                completed = subprocess.run(
-                    [*self._command, "--outputjson", "--pythonpath", sys.executable, str(probe)],
-                    capture_output=True,
-                    text=True,
-                    cwd=str(original.parent),
-                    check=False,
-                    timeout=PYRIGHT_TIMEOUT_SECONDS,
-                )
-            except subprocess.TimeoutExpired as error:
-                LOG.warning(
-                    "pyright timed out after %s s on %s; no types inferred there",
-                    error.timeout,
-                    file_path,
-                )
-                return []
+        try:
+            with _probe_file(original, text) as probe:
+                return self._run_diagnostics([str(probe)], original.parent)
+        except OSError as error:
+            return CheckFailure(f"Could not create a pyright probe: {error}")
+
+    def _run_diagnostics(
+        self, paths: Sequence[str], directory: Path
+    ) -> _PyrightDiagnostics | CheckFailure:
+        try:
+            completed = subprocess.run(
+                [*self._command, "--outputjson", "--pythonpath", sys.executable, *paths],
+                capture_output=True,
+                text=True,
+                cwd=str(directory),
+                check=False,
+                timeout=PYRIGHT_TIMEOUT_SECONDS,
+                env=python_tool_environment(),
+            )
+        except (subprocess.TimeoutExpired, OSError) as error:
+            reason = (
+                f"pyright timed out after {error.timeout} s"
+                if isinstance(error, subprocess.TimeoutExpired)
+                else f"pyright failed: {error}"
+            )
+            LOG.warning("%s; checker result unavailable", reason)
+            return CheckFailure(reason)
         output = completed.stdout
         start, end = output.find("{"), output.rfind("}")
         if start < 0 or end < 0:
-            LOG.warning(
-                "pyright produced no JSON for %s; no types inferred there: %s",
-                file_path,
-                completed.stderr.strip(),
-            )
-            return []
+            reason = f"pyright produced no JSON: {completed.stderr.strip()}"
+            LOG.warning(reason)
+            return CheckFailure(reason)
         try:
             data = json.loads(output[start : end + 1])
         except json.JSONDecodeError as error:
-            LOG.warning("pyright output for %s is not JSON: %s", file_path, error)
-            return []
+            reason = f"pyright output is not JSON: {error}"
+            LOG.warning(reason)
+            return CheckFailure(reason)
         diagnostics = data.get("generalDiagnostics") if isinstance(data, dict) else None
-        if not isinstance(diagnostics, list):
-            LOG.warning(
-                "pyright output for %s has an unexpected shape; no types inferred", file_path
-            )
-            return []
-        # Each diagnostic is read through .get, so a missing field is harmless.
-        return [cast(_PyrightDiagnostic, d) for d in diagnostics if isinstance(d, dict)]
+        if completed.returncode not in {0, 1} or not isinstance(diagnostics, list):
+            reason = f"pyright failed or returned an unexpected shape (exit {completed.returncode})"
+            LOG.warning(reason)
+            return CheckFailure(reason)
+        validated: List[_PyrightDiagnostic] = []
+        for diagnostic in diagnostics:
+            if not isinstance(diagnostic, dict) or not all(
+                isinstance(diagnostic.get(key), str) for key in ("file", "severity", "message")
+            ):
+                return CheckFailure("pyright returned a malformed diagnostic")
+            severity = diagnostic["severity"]
+            if severity not in {"error", "warning", "information"}:
+                return CheckFailure("pyright returned an invalid diagnostic severity")
+            location = diagnostic.get("range")
+            if severity == "error" and (
+                not isinstance(location, dict)
+                or not isinstance(location.get("start"), dict)
+                or not isinstance(location["start"].get("line"), int)
+                or isinstance(location["start"].get("line"), bool)
+                or location["start"]["line"] < 0
+            ):
+                return CheckFailure("pyright error has no valid source position")
+            if location is not None:
+                if not isinstance(location, dict):
+                    return CheckFailure("pyright returned an invalid diagnostic range")
+                position = location.get("start")
+                if position is not None and (
+                    not isinstance(position, dict) or not isinstance(position.get("line"), int)
+                ):
+                    return CheckFailure("pyright returned an invalid diagnostic position")
+            validated.append(cast(_PyrightDiagnostic, diagnostic))
+        has_errors = any(item.get("severity") == "error" for item in validated)
+        if (completed.returncode == 1) != has_errors:
+            return CheckFailure("pyright exit status disagrees with its diagnostics")
+        return _PyrightDiagnostics(tuple(validated))
 
     @staticmethod
     def _line(diagnostic: _PyrightDiagnostic) -> int:
@@ -584,7 +787,10 @@ class PyrightOracle:
                 for index in range(len(request.expressions)):
                     probe_lines[request.line + shift + index] = (file_path, request.line, index)
                 shift += len(request.expressions)
-            for diagnostic in self._diagnostics(file_path, text):
+            result = self._diagnostics(file_path, text)
+            if isinstance(result, CheckFailure):
+                continue
+            for diagnostic in result.diagnostics:
                 match = _PYRIGHT_REVEALED.match(str(diagnostic.get("message", "")))
                 key = probe_lines.get(self._line(diagnostic))
                 if match is not None and key is not None:
@@ -598,20 +804,46 @@ class PyrightOracle:
         if not pairs:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
+        result = self._diagnostics(file_path, text)
+        if isinstance(result, CheckFailure):
+            return [Subtyping.UNKNOWN] * len(pairs)
         error_lines = [
             self._line(diagnostic)
-            for diagnostic in self._diagnostics(file_path, text)
+            for diagnostic in result.diagnostics
             if diagnostic.get("severity") == "error"
         ]
         return _verdicts_from_error_lines(len(pairs), error_lines, signature_line, return_line)
 
-    def check(self, file_path: str, source: str) -> Sequence[str]:
-        """Pyright's errors for ``source`` standing at ``file_path``, one message each."""
-        return [
-            f"pyright: {diagnostic.get('rule') or ''}: {diagnostic.get('message', '')}"
-            for diagnostic in self._diagnostics(file_path, source)
-            if diagnostic.get("severity") == "error"
-        ]
+    def check(self, file_path: str, source: str) -> CheckResult:
+        return self.check_project({file_path: source})
+
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        errors: List[TypeDiagnostic] = []
+        for root, replacements in _source_groups(sources, "pyright").items():
+            try:
+                with checker_snapshot(
+                    root, replacements, excluded_paths=excluded_paths
+                ) as snapshot:
+                    result = self._run_diagnostics([str(snapshot)], snapshot)
+                    if isinstance(result, CheckFailure):
+                        return result
+                    for diagnostic in result.diagnostics:
+                        if diagnostic.get("severity") != "error":
+                            continue
+                        path = Path(diagnostic["file"])
+                        if path.is_relative_to(snapshot):
+                            path = root / path.relative_to(snapshot)
+                        message = (
+                            f"pyright: {diagnostic.get('rule') or ''}: " f"{diagnostic['message']}"
+                        )
+                        errors.append(
+                            TypeDiagnostic(str(path), message.replace(str(snapshot), str(root)))
+                        )
+            except (OSError, ValueError, UnicodeError) as error:
+                return CheckFailure(f"Could not snapshot the project for pyright: {error}")
+        return CheckSuccess(tuple(errors))
 
 
 PYRIGHT_TIMEOUT_SECONDS = 600.0
@@ -621,16 +853,13 @@ _PYRIGHT_REVEALED = re.compile(r'^Type of ".*" is "(?P<type>.*)"$', re.DOTALL)
 
 
 def _pyright_command() -> Optional[List[str]]:
-    """How to run pyright: this interpreter's copy first, then one on PATH."""
-    try:
-        import pyright  # noqa: F401
-    except ImportError:
+    """Run this interpreter's checker in isolation, else a configured PATH tool."""
+    if importlib.util.find_spec("pyright") is None:
         executable = shutil.which("pyright")
         return [executable] if executable else None
-    # ``-P``: pyright runs from the module's directory, and ``-m`` would put
-    # that directory first on sys.path, where a project package named like a
-    # standard module (sphinx's ``locale``) shadows it and is executed.
-    return [sys.executable, "-P", "-m", "pyright"]
+    # -I also excludes inherited PYTHONPATH and user-site startup hooks. -P
+    # alone only removes cwd and still lets source-owned sitecustomize execute.
+    return [sys.executable, "-I", "-m", "pyright"]
 
 
 class CombinedOracle:
@@ -650,12 +879,128 @@ class CombinedOracle:
         """The primary oracle's verdicts."""
         return self._primary.is_subtype(file_path, source, pairs)
 
-    def check(self, file_path: str, source: str) -> Sequence[str]:
-        """Every oracle's errors, the primary's first, so each configured checker stays green."""
-        messages: List[str] = []
+    def check(self, file_path: str, source: str) -> CheckResult:
+        return self.check_project({file_path: source})
+
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        errors: List[TypeDiagnostic] = []
         for oracle in self._all:
-            messages.extend(oracle.check(file_path, source))
-        return messages
+            result = oracle.check_project(sources, excluded_paths=excluded_paths)
+            if isinstance(result, CheckFailure):
+                return result
+            errors.extend(result.errors)
+        return CheckSuccess(tuple(errors))
+
+    def close(self) -> None:
+        for oracle in self._all:
+            oracle.close()
+
+
+class _RelocatedOracle:
+    """An output copy checked at its original project's logical module locations."""
+
+    def __init__(self, oracle: TypeOracle, source: Path, destination: Path) -> None:
+        self._oracle = oracle
+        self._source = source
+        self._destination = destination
+        self._directory = source.is_dir()
+
+    def _original(self, path: str) -> str:
+        absolute = Path(path).resolve()
+        if absolute == self._destination:
+            return str(self._source)
+        if self._directory and absolute.is_relative_to(self._destination):
+            return str(self._source / absolute.relative_to(self._destination))
+        return str(absolute)
+
+    def _output(self, path: str) -> str:
+        absolute = Path(path)
+        if absolute == self._source:
+            return str(self._destination)
+        if self._directory and absolute.is_relative_to(self._source):
+            return str(self._destination / absolute.relative_to(self._source))
+        return path
+
+    def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        originals = [
+            RevealRequest(
+                self._original(request.file_path),
+                request.source,
+                request.line,
+                request.indent,
+                request.expressions,
+            )
+            for request in requests
+        ]
+        return {
+            (self._output(path), line, index): value
+            for (path, line, index), value in self._oracle.reveal(originals).items()
+        }
+
+    def is_subtype(
+        self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
+    ) -> Sequence[Subtyping]:
+        return self._oracle.is_subtype(self._original(file_path), source, pairs)
+
+    def check(self, file_path: str, source: str) -> CheckResult:
+        return self.check_project({file_path: source})
+
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        try:
+            current: Dict[str, str] = {}
+            if self._directory:
+                for parent, directories, files in os.walk(self._destination):
+                    directory = Path(parent)
+                    directories[:] = [
+                        name
+                        for name in directories
+                        if name
+                        not in {
+                            ".git",
+                            ".hg",
+                            ".svn",
+                            ".mypy_cache",
+                            ".pytest_cache",
+                            ".ruff_cache",
+                            "__pycache__",
+                            "venv",
+                            "env",
+                            "node_modules",
+                        }
+                        and not (directory / name / "pyvenv.cfg").is_file()
+                    ]
+                    for name in files:
+                        path = directory / name
+                        if path.suffix in {".py", ".pyi"} and not is_probe_file(path):
+                            current[self._original(str(path))] = read_source(path)
+            else:
+                current[str(self._source)] = read_source(self._destination)
+            current.update({self._original(path): source for path, source in sources.items()})
+        except (OSError, ValueError, UnicodeError, SyntaxError) as error:
+            return CheckFailure(f"Could not read the complete output copy: {error}")
+        result = self._oracle.check_project(
+            current, excluded_paths=(*excluded_paths, str(self._destination))
+        )
+        if isinstance(result, CheckFailure):
+            return result
+        return CheckSuccess(
+            tuple(
+                TypeDiagnostic(self._output(error.path), error.message) for error in result.errors
+            )
+        )
+
+    def close(self) -> None:
+        self._oracle.close()
+
+
+def relocate_oracle(oracle: TypeOracle, source: Path, destination: Path) -> TypeOracle:
+    """Keep input configuration and consumers while checking a separate output copy."""
+    source, destination = source.resolve(), destination.resolve()
+    return oracle if source == destination else _RelocatedOracle(oracle, source, destination)
 
 
 def project_configures_mypy(root: Path) -> bool:
@@ -674,7 +1019,7 @@ def project_configures_pyright(root: Path) -> bool:
 
 def _has_tool_section(root: Path, name: str) -> bool:
     tool = load_pyproject(root).get("tool", {})
-    return isinstance(tool, dict) and bool(tool.get(name))
+    return isinstance(tool, dict) and isinstance(tool.get(name), dict)
 
 
 def _has_ini_section(path: Path, section: str) -> bool:
@@ -697,9 +1042,8 @@ def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
     gets mypy when installed, else pyright. The note names any configured
     checker that is not installed.
     """
-    root = find_project_root(path)
-    wants_mypy = project_configures_mypy(root)
-    wants_pyright = project_configures_pyright(root)
+    wants_mypy = _configured_root(path, "mypy") is not None
+    wants_pyright = _configured_root(path, "pyright") is not None
     mypy: Optional[TypeOracle] = None
     pyright: Optional[TypeOracle] = None
     notes: List[str] = []

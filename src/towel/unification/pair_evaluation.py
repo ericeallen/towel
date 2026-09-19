@@ -52,7 +52,7 @@ from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
-from .builtins import CALL_ARGUMENT_BUILTINS, is_builtin
+from .builtins import CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
     available_argument_names,
     module_resolved_names,
@@ -273,7 +273,7 @@ def _thunk_uncertain_free_variables(
         return canonical_to_block[index].get(canonical, canonical)
 
     def uncertain(index: int, spelled: str) -> bool:
-        return spelled not in available[index] and not is_builtin(spelled)
+        return spelled not in available[index]
 
     # A parameter whose argument is a bare local name is read eagerly too.
     deferred = set(substitution.function_params) | set(substitution.params_used_as_callee)

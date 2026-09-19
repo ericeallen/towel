@@ -103,12 +103,14 @@ class TestNestedScopesCrossBlockBoundary:
         # A name the call site cannot resolve raises when hoisted out of a branch.
         ("MISSING", False),
         ("(a, MISSING)", False),
-        # Builtins are always available.
-        ("len", True),
+        # A builtin spelling may instead name an unbound local or closure cell.
+        ("len", False),
+        ("(a, len)", False),
+        ("sum", True),
     ],
 )
 def test_is_eagerly_evaluable(source: str, expected: bool) -> None:
-    available = frozenset({"a", "b", "x", "k"})
+    available = frozenset({"a", "b", "x", "k", "sum"})
     assert is_eagerly_evaluable(ast.parse(source, mode="eval").body, available) is expected
 
 

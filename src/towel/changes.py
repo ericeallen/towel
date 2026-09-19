@@ -26,6 +26,10 @@ class ChangeConflict(ValueError):
     """A target changed after planning, or cannot safely be replaced."""
 
 
+class StaleSource(ChangeConflict):
+    """Source bytes or mode changed; a fresh analysis may produce a valid plan."""
+
+
 class RecoveryRequired(OSError):
     """Rollback could not finish; the journal must be retained for recovery."""
 
@@ -120,7 +124,7 @@ def _check(change: FileChange, expected: bytes) -> None:
         change.path.read_bytes() != expected
         or stat.S_IMODE(change.path.stat().st_mode) != change.mode
     ):
-        raise ChangeConflict(f"Target changed since planning: {change.path}")
+        raise StaleSource(f"Target changed since planning: {change.path}")
 
 
 class _ManifestRecord(TypedDict):

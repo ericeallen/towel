@@ -43,6 +43,7 @@ from .annotations import (
 from .exceptions import RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
+from ..type_inference import CheckFailure, CheckResult
 
 from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
@@ -228,32 +229,30 @@ class HelperAnnotationWiring(EngineState):
         variant.required_imports = ()
         return variant
 
-    def _introduces_type_errors(
-        self,
-        modified_files: Dict[str, str],
-        errors_before: Optional[Dict[str, "Counter[str]"]] = None,
-    ) -> bool:
-        """Whether the checker reports an error in a modified file that its original lacks.
-
-        Messages are compared without positions, as multisets, so errors the
-        project already has do not count and moved lines do not confuse it.
-        ``errors_before`` remembers each original's errors across the attempts
-        at one proposal, which all compare against the same files on disk.
-        """
+    def _original_type_errors(self, modified_files: Dict[str, str]) -> CheckResult:
+        """Check the complete original project once for every prospective variant."""
         if self.type_oracle is None:
             raise RefactoringError("Type checking was requested without a type oracle")
-        remembered = {} if errors_before is None else errors_before
-        for path, after_source in modified_files.items():
-            before_source = self._read_source(path)
-            if before_source is None or before_source == after_source:
-                continue
-            before = remembered.get(path)
-            if before is None:
-                before = remembered[path] = Counter(self.type_oracle.check(path, before_source))
-            after = Counter(self.type_oracle.check(path, after_source))
-            new = after - before
-            if new:
-                for message, count in new.items():
-                    TYPES.debug("new error x%d in %s: %s", count, path, message)
-                return True
-        return False
+        originals: Dict[str, str] = {}
+        for path in modified_files:
+            source = self._read_source(path)
+            if source is None:
+                return CheckFailure(f"Cannot read original source: {path}")
+            originals[path] = source
+        return self.type_oracle.check_project(originals)
+
+    def _introduces_type_errors(
+        self, modified_files: Dict[str, str], errors_before: CheckResult
+    ) -> bool:
+        """Compare complete prospective and original projects, including unchanged consumers."""
+        if self.type_oracle is None:
+            raise RefactoringError("Type checking was requested without a type oracle")
+        if isinstance(errors_before, CheckFailure):
+            raise RefactoringError(f"Original project type check failed: {errors_before.reason}")
+        after = self.type_oracle.check_project(modified_files)
+        if isinstance(after, CheckFailure):
+            raise RefactoringError(f"Prospective project type check failed: {after.reason}")
+        new = Counter(after.errors) - Counter(errors_before.errors)
+        for diagnostic, count in new.items():
+            TYPES.debug("new error x%d in %s: %s", count, diagnostic.path, diagnostic.message)
+        return bool(new)

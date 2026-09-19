@@ -40,6 +40,7 @@ from towel.changes import apply_changes, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
+from towel.source_files import python_sources
 from towel.unification.models import GENERATED_HELPER_NAME, ParameterKind
 from towel.unification.defaults import (
     DEFAULT_MAX_CANDIDATE_PAIRS,
@@ -767,21 +768,6 @@ def _run_dry(args: argparse.Namespace) -> None:
                 "Output already exists; choose a new path or explicitly refactor in place"
             )
 
-    engine = UnificationRefactorEngine(
-        max_parameters=options.max_parameters,
-        min_lines=options.min_lines,
-        max_candidate_pairs=options.max_pairs,
-        settings=_settings(),
-        parameterize_constants=True,
-        prefer_absolute_imports=options.prefer_absolute_imports,
-        pep420_namespace_packages=options.pep420,
-        excluded_directories=options.exclude,
-        snippet_formatter=(_generated_code_formatter(Path(input_path)) if options.format else None),
-        file_finisher=(_import_sorter(Path(input_path)) if options.format else None),
-        annotate_helpers=options.types,
-        type_oracle=(_type_oracle(Path(input_path)) if options.types else None),
-    )
-
     print("=" * 70)
     _banner("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
     print("This will apply refactorings one at a time until no more are found.")
@@ -801,45 +787,73 @@ def _run_dry(args: argparse.Namespace) -> None:
         if journal is not None:
             raise ValueError(f"Recover the interrupted transaction first: towel recover {journal}")
 
-    print()
+    oracle = _type_oracle(Path(input_path)) if options.types else None
+    try:
+        if oracle is not None:
+            from towel.type_inference import relocate_oracle
 
-    if is_file:
-        print(f"Refactoring file: {output_path}")
-        final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
-            output_path,
-            max_iterations=options.max_refactorings,
-            progress=options.progress,
+            oracle = relocate_oracle(oracle, source, destination)
+        engine = UnificationRefactorEngine(
+            max_parameters=options.max_parameters,
+            min_lines=options.min_lines,
+            max_candidate_pairs=options.max_pairs,
+            settings=_settings(),
+            parameterize_constants=True,
+            prefer_absolute_imports=options.prefer_absolute_imports,
+            pep420_namespace_packages=options.pep420,
+            excluded_directories=options.exclude,
+            snippet_formatter=(
+                _generated_code_formatter(Path(input_path)) if options.format else None
+            ),
+            file_finisher=(_import_sorter(Path(input_path)) if options.format else None),
+            annotate_helpers=options.types,
+            type_oracle=oracle,
         )
 
-        if num_applied > 0:
-            print(f"\nApplied {num_applied} refactoring(s):")
-            for i, desc in enumerate(descriptions, 1):
-                print(f"  {i}. {desc}")
-        else:
-            print("\nNo refactorings found!")
-    else:
-        print(f"Refactoring directory: {output_path}")
-        results, termination_reason = engine.refactor_directory_to_fixed_point(
-            output_path,
-            output_path,
-            max_iterations=options.max_refactorings,
-            progress=options.progress,
-        )
+        print()
 
-        if results:
-            total_refactorings = sum(count for count, _ in results.values())
-            print(f"\nApplied {total_refactorings} refactoring(s) across {len(results)} file(s)")
-            print(f"  Termination: {termination_reason}")
-            for file_path, (count, descriptions) in sorted(results.items()):
-                print(f"\n  {file_path}: {count} refactoring(s)")
-                for desc in descriptions[:3]:
-                    print(f"    - {desc}")
-                if len(descriptions) > 3:
-                    print(f"    ... and {len(descriptions) - 3} more")
-        else:
-            print("\nNo refactorings found! Termination: fixed_point")
+        if is_file:
+            print(f"Refactoring file: {output_path}")
+            final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
+                output_path,
+                max_iterations=options.max_refactorings,
+                progress=options.progress,
+            )
 
-    _write_change_sidecar(engine, output_path)
+            if num_applied > 0:
+                print(f"\nApplied {num_applied} refactoring(s):")
+                for i, desc in enumerate(descriptions, 1):
+                    print(f"  {i}. {desc}")
+            else:
+                print("\nNo refactorings found!")
+        else:
+            print(f"Refactoring directory: {output_path}")
+            results, termination_reason = engine.refactor_directory_to_fixed_point(
+                output_path,
+                output_path,
+                max_iterations=options.max_refactorings,
+                progress=options.progress,
+            )
+
+            if results:
+                total_refactorings = sum(count for count, _ in results.values())
+                print(
+                    f"\nApplied {total_refactorings} refactoring(s) across {len(results)} file(s)"
+                )
+                print(f"  Termination: {termination_reason}")
+                for file_path, (count, descriptions) in sorted(results.items()):
+                    print(f"\n  {file_path}: {count} refactoring(s)")
+                    for desc in descriptions[:3]:
+                        print(f"    - {desc}")
+                    if len(descriptions) > 3:
+                        print(f"    ... and {len(descriptions) - 3} more")
+            else:
+                print("\nNo refactorings found! Termination: fixed_point")
+
+        _write_change_sidecar(engine, output_path)
+    finally:
+        if oracle is not None:
+            oracle.close()
 
 
 def _print_proposal(
@@ -997,7 +1011,12 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
     if journal is not None:
         LOG.warning("An interrupted transaction is pending; recover it first: %s", journal)
 
-    helpers = _find_extracted_helpers(target, options.files, options.functions)
+    helpers = _find_extracted_helpers(
+        target,
+        options.files,
+        options.functions,
+        include_named=bool(options.rename_file and not options.list),
+    )
 
     if not helpers and not options.rename_file:
         # A mapping may still rename parameters of helpers renamed earlier;
@@ -1025,7 +1044,14 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
         return
 
     if options.rename_file:
-        _apply_rename_file(target, helpers, options.rename_file, options.preview, options.json)
+        _apply_rename_file(
+            target,
+            helpers,
+            options.rename_file,
+            options.preview,
+            options.json,
+            restrict_selection=bool(options.files or options.functions),
+        )
         return
 
     # Interactive LLM mode
@@ -1036,31 +1062,34 @@ def _find_extracted_helpers(
     target: Path,
     file_filters: Optional[List[str]],
     function_filters: Optional[List[str]],
+    *,
+    include_named: bool = False,
 ) -> List[Tuple[Path, str, int, str]]:
-    """Find generated helpers, including unmangled helpers used by classes."""
+    """Find selected helpers, including previously named ones in mapping-file mode.
+
+    Inventory and interactive suggestions use generated names only. A mapping
+    may instead name a helper whose function was already renamed, so filters
+    must also recognize its current name when selecting a parameter mapping.
+    File filters name exact paths relative to the requested target.
+    """
     helpers = []
+    selected_files = {(target / name).resolve() for name in file_filters or ()}
 
     for py_file, (source, tree) in _load_modules(target).items():
-        if file_filters:
-            rel_path = str(py_file.relative_to(target))
-            if not any(f in rel_path for f in file_filters):
-                continue
+        if selected_files and py_file.resolve() not in selected_files:
+            continue
 
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                if GENERATED_HELPER_NAME.fullmatch(node.name):
-                    if function_filters and node.name not in function_filters:
-                        continue
-
-                    lines = source.split("\n")
-                    if hasattr(node, "lineno") and node.lineno <= len(lines):
-                        start = node.lineno - 1
-                        end = min(start + 5, len(lines))
-                        preview = "\n".join(lines[start:end])
-                    else:
-                        preview = ""
-
-                    helpers.append((py_file, node.name, node.lineno, preview))
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not include_named and not GENERATED_HELPER_NAME.fullmatch(node.name):
+                continue
+            if function_filters and node.name not in function_filters:
+                continue
+            lines = source.split("\n")
+            start = node.lineno - 1
+            preview = "\n".join(lines[start : start + 5])
+            helpers.append((py_file, node.name, node.lineno, preview))
 
     return sorted(helpers, key=lambda x: (str(x[0]), x[2]))
 
@@ -1073,9 +1102,7 @@ def _load_modules(target: Path) -> Dict[Path, Tuple[str, ast.Module]]:
     command that reads a refactored tree.
     """
     modules: Dict[Path, Tuple[str, ast.Module]] = {}
-    for path in sorted(target.rglob("*.py")):
-        if path.is_symlink():
-            continue
+    for path in python_sources(target):
         try:
             source = read_source(path)
             modules[path] = (source, ast.parse(source))
@@ -1281,6 +1308,8 @@ def _apply_rename_file(
     rename_file: Path,
     dry_run: bool,
     as_json: bool = False,
+    *,
+    restrict_selection: bool = False,
 ) -> None:
     """Apply renamings from a JSON file, reporting a structured result when asked.
 
@@ -1297,7 +1326,13 @@ def _apply_rename_file(
         raise ValueError("Rename file must contain a JSON object (dict)")
 
     try:
-        total_changes = _apply_rename_mappings(target, renames, dry_run, quiet=as_json)
+        total_changes = _apply_rename_mappings(
+            target,
+            renames,
+            dry_run,
+            quiet=as_json,
+            selected_helpers=helpers if restrict_selection else None,
+        )
     except ValueError as error:
         if as_json:
             print(json.dumps({"applied": False, "dry_run": dry_run, "error": str(error)}))
@@ -1320,7 +1355,12 @@ def _apply_rename_file(
 
 
 def _apply_rename_mappings(
-    target: Path, renames: Mapping[str, object], dry_run: bool, quiet: bool = False
+    target: Path,
+    renames: Mapping[str, object],
+    dry_run: bool,
+    quiet: bool = False,
+    *,
+    selected_helpers: Optional[List[Tuple[Path, str, int, str]]] = None,
 ) -> int:
     """Validate every mapping and stage the entire rename batch before any write."""
     specifications: List[Tuple[str, str, Optional[Path]]] = []
@@ -1336,7 +1376,18 @@ def _apply_rename_mappings(
                 raise ValueError(
                     f"File-qualified rename must name a file within target: {relative}"
                 )
-        specifications.append((name, new_name, file_filter))
+        if selected_helpers is None:
+            specifications.append((name, new_name, file_filter))
+        else:
+            helper_name = name.partition(".")[0]
+            matched = {
+                path.resolve()
+                for path, helper, _, _ in selected_helpers
+                if helper == helper_name and (file_filter is None or path.resolve() == file_filter)
+            }
+            if not matched:
+                raise ValueError(f"Rename is outside the selected helpers: {spec}")
+            specifications.extend((name, new_name, path) for path in sorted(matched))
     count = _rename_batch(target, specifications, dry_run)
     if not quiet:
         for spec, new_name in renames.items():
@@ -1433,7 +1484,7 @@ def _run_interactive_llm_mode(
     print("\n" + "=" * 70)
     _banner("STEP 2: APPLYING RENAMINGS")
 
-    total_changes = _apply_rename_mappings(target, renames, dry_run)
+    total_changes = _apply_rename_mappings(target, renames, dry_run, selected_helpers=helpers)
     print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
 
 

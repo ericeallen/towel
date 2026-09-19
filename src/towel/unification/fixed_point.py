@@ -17,9 +17,9 @@
 The single-file loop re-analyzes one module after each application. The
 directory loop analyzes the whole project, applies the best proposal,
 re-analyzes the files it rewrote for localized follow-ups, and when that
-queue drains re-pairs the project (only the files rewritten since the last
-global pass, which is exact; see docs/ARCHITECTURE.md) until no proposal
-remains or the iteration bound is reached. Before a run, modules that
+queue drains re-pairs changed files and previously declined proposals.
+An unchanged project with only declined proposals is a fixed point.
+The run stops there or when the iteration bound is reached. Before a run, modules that
 inspect their own frames are named in a warning. Progress follows the
 progress mode: ``tqdm`` (a bar when tqdm is installed; without it a warning
 once per process, an inline bar on stderr for the pairing loop and none for
@@ -53,7 +53,7 @@ from .progress import (
     wants_bar,
 )
 from .semantic_safety import frame_sensitivity_markers
-from towel.changes import ChangeConflict, ChangePlan, apply_changes
+from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..diagnostics import LOG, REJECTIONS, debugging
 from ..filesystem import copy_project
 from ..source_text import decode_source, encode_like, read_source
@@ -252,9 +252,9 @@ class FixedPointDrivers(Materialization):
         The first pass analyzes the whole project, so same-file and cross-file
         proposals both apply. After each applied proposal the files it rewrote
         are re-analyzed for localized follow-ups; when that queue drains the
-        project is re-paired, considering only the files rewritten since the
-        previous global pass (which is exact; see docs/ARCHITECTURE.md), until
-        no proposal remains or the iteration bound is reached.
+        project is re-paired, considering rewritten files and proposals
+        declined in the previous project context. The run stops when no
+        proposal applies or the iteration bound is reached.
 
         Args:
             input_dir: The directory to analyze.
@@ -325,9 +325,16 @@ class FixedPointDrivers(Materialization):
             try:
                 proposal_queue = self._apply_and_refresh(proposal, proposal_queue, run, reporter)
             except (RefactoringError, SyntaxError) as error:
+                run.deferred_paths.update(
+                    os.path.abspath(path)
+                    for path in {
+                        proposal.file_path,
+                        *(rep.file_path or proposal.file_path for rep in proposal.replacements),
+                    }
+                )
                 self._report_dropped(proposal, error)
                 continue
-            except ChangeConflict as conflict:
+            except StaleSource as conflict:
                 stale_paths = sorted({path for path, _ in proposal.source_digests})
                 reporter.detail(
                     f"Dropped stale proposal ({conflict}); re-analyzing {len(stale_paths)} file(s)"
@@ -340,6 +347,7 @@ class FixedPointDrivers(Materialization):
                         [rep.file_path or proposal.file_path for rep in proposal.replacements],
                     )
                 self.invalidate_paths(stale_paths)
+                run.changed(stale_paths)
                 proposal_queue = [
                     p
                     for p in proposal_queue
@@ -372,13 +380,16 @@ class FixedPointDrivers(Materialization):
     ) -> Optional[List[RefactoringProposal]]:
         """Analyze the whole directory and queue its non-overlapping proposals; None at the fixed point.
 
-        After the first pass, only functions in files rewritten since the
-        previous pass are re-paired (see ``incremental_global_passes``).
+        After the first pass, re-pair rewritten files and proposals deferred
+        by rendering or checking. A changed project can make a deferred
+        proposal valid, but an unchanged project cannot justify another pass.
         """
+        if run.global_revision == run.revision:
+            return None
         reporter.announce_analysis(output_path)
         restrict = (
-            frozenset(run.changed_since_global)
-            if self.incremental_global_passes and passes_so_far > 0 and run.changed_since_global
+            frozenset(run.changed_since_global | run.deferred_paths)
+            if self.incremental_global_passes and passes_so_far > 0
             else None
         )
         proposals = self.analyze_directory(
@@ -387,6 +398,7 @@ class FixedPointDrivers(Materialization):
             progress=reporter.analysis_mode,
             changed_files=restrict,
         )
+        run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:
             return None
@@ -446,15 +458,25 @@ class _DirectoryRun:
 
     # Per file: how many proposals rewrote it, and their descriptions.
     results: Dict[str, Tuple[int, List[str]]] = field(default_factory=dict)
-    # Files rewritten since the last global pass: the next global pass
-    # re-pairs only functions in these (see ``incremental_global_passes``).
+    # Files changed since the last global pass, by Towel or an external edit.
     changed_since_global: Set[str] = field(default_factory=set)
+    # Rendering/checking can depend on other files, so retry these after any
+    # project change even when their own source has not changed.
+    deferred_paths: Set[str] = field(default_factory=set)
+    revision: int = 0
+    global_revision: Optional[int] = None
     applied: int = 0
 
     def record(self, path: str, description: str) -> None:
         count, descriptions = self.results.get(path, (0, []))
         self.results[path] = (count + 1, descriptions + [description])
-        self.changed_since_global.add(os.path.abspath(str(path)))
+        self.changed([path])
+
+    def changed(self, paths: Sequence[str]) -> None:
+        """Record source changes from an application or stale-source recovery."""
+        if paths:
+            self.changed_since_global.update(map(os.path.abspath, paths))
+            self.revision += 1
 
 
 ProgressPhase = Literal["discovered", "localized", "apply", "applied"]

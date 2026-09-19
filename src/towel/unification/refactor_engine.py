@@ -86,7 +86,8 @@ from .models import (
     AppliedChange,
     FunctionNode,
 )
-from ..type_inference import is_probe_file, TypeOracle
+from ..type_inference import TypeOracle
+from ..source_files import python_sources
 from ..source_text import read_source
 from .pipeline import run_pipeline, AnalysisSession
 
@@ -496,38 +497,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
         Returns:
             List of Python file paths
         """
-        python_files = []
-        directory_path = Path(directory)
-
-        if not directory_path.exists():
-            return []
-
-        if recursive:
-            # A virtual environment is recognized by its marker file, whatever
-            # it is called; the fixed names below are the common spellings that
-            # may lack one.
-            environments = {marker.parent for marker in directory_path.rglob("pyvenv.cfg")}
-            for py_file in directory_path.rglob("*.py"):
-                if any(
-                    part.startswith(".")
-                    or part in ["__pycache__", "venv", "env", "node_modules"]
-                    or part in self.excluded_directories
-                    for part in py_file.relative_to(directory_path).parts[:-1]
-                ):
-                    continue
-                if any(parent in environments for parent in py_file.parents):
-                    continue
-                if is_probe_file(py_file):
-                    continue
-                if py_file.is_file() and not py_file.is_symlink():
-                    python_files.append(str(py_file))
-        else:
-            # Only find .py files in this directory
-            for py_file in directory_path.glob("*.py"):
-                if py_file.is_file() and not py_file.is_symlink() and not is_probe_file(py_file):
-                    python_files.append(str(py_file))
-
-        return sorted(python_files)
+        return [
+            str(path)
+            for path in python_sources(
+                Path(directory), recursive=recursive, excluded=self.excluded_directories
+            )
+        ]
 
     def analyze_files(
         self,

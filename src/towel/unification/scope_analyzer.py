@@ -27,6 +27,24 @@ from .parameters import parameter_names, parameter_nodes
 from .visitors import ScopeVisitor
 
 
+def type_parameter_names(node: ast.AST) -> FrozenSet[str]:
+    """Names bound by a PEP 695 definition's annotation scope.
+
+    These are separate from the function's arguments and a class's attributes.
+    Attribute inspection keeps the analyzer importable on Python 3.11, whose
+    AST has neither ``type_params`` nor the type-parameter node classes.
+    """
+    parameters: object = getattr(node, "type_params", ())
+    if not isinstance(parameters, list):
+        return frozenset()
+    names: Set[str] = set()
+    for parameter in parameters:
+        name: object = getattr(parameter, "name", None)
+        if isinstance(name, str):
+            names.add(name)
+    return frozenset(names)
+
+
 @dataclass(frozen=True)
 class ExternalBindingHazards:
     """Module-wide binding hazards, immutable after lexical analysis completes."""
@@ -595,6 +613,9 @@ class ScopeAnalyzer(ScopeVisitor):
         while scopes:
             scope = scopes.pop()
             bound_names.update(scope.bindings)
+            scope_node = self.scope_nodes.get(scope.scope_id)
+            if scope_node is not None:
+                bound_names.update(type_parameter_names(scope_node))
             scopes.extend(scope.children)
         free_vars = filter_builtins(free_vars) | (free_vars & bound_names)
 

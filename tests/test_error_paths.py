@@ -107,7 +107,7 @@ def test_pyright_output_that_is_not_json_yields_no_diagnostics_and_a_warning(
     monkeypatch.setattr(subprocess, "run", fake_run)
     with caplog.at_level(logging.WARNING, logger="towel"):
         diagnostics = _oracle_without_pyright()._diagnostics(str(module), "x: int = 1\n")
-    assert diagnostics == []
+    assert isinstance(diagnostics, type_inference.CheckFailure)
     assert commands[0][:2] == ["pyright-stand-in", "--outputjson"]
     assert any(warning in r.getMessage() for r in caplog.records), caplog.text
     assert not Path(commands[0][-1]).exists(), "the probe is removed after the run"
