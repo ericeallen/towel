@@ -48,6 +48,8 @@ url = "https://github.com/pyparsing/pyparsing.git"
 rev = "efd56db4e59f36b1673ce0eb0823e3afaa9d1201"
 package = "pyparsing"
 deps = ["railroad-diagrams", "jinja2"]
+expect_broken = "frame-relative: ParseException.explain(depth=1) counts traceback frames, and a raise moved into a helper adds one"
+known_failures = ["::testMiscellaneousExceptionBits"]
 
 [[project]]
 name = "markdown-it-py"
