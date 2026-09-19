@@ -1137,3 +1137,97 @@ def test_retest_cannot_replace_incomplete_or_differently_sized_initial_suites(
         _phase(tmp_path / "initial-before.log", *original),
         _phase(tmp_path / "initial-after.log", 0, "2 passed in 0.01s\n"),
     )
+
+
+@pytest.mark.parametrize("regression", [False, True])
+def test_check_project_requires_full_context_before_accepting_isolated_agreement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, regression: bool
+) -> None:
+    source = _git_fixture(tmp_path)
+    common = "armed = False\n\ndef prepare():\n    global armed\n    armed = True\n\n"
+    original = common + "def result():\n    return 42\n"
+    (source / "package/original.py").write_text(original)
+    (source / "test_state.py").write_text(
+        "from package import original as stateful\n\n"
+        "def test_prepare():\n    stateful.prepare()\n    assert stateful.armed\n\n"
+        "def test_result():\n    assert stateful.result() == 42\n"
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "add", "package/original.py", "test_state.py"],
+        check=True,
+        capture_output=True,
+        timeout=20,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Audit Fixture",
+            "-c",
+            "user.email=audit@example.invalid",
+            "commit",
+            "-qm",
+            "Commit the complete original test context",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=20,
+    )
+    commit = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True, timeout=20
+    ).strip()
+    monkeypatch.setattr(ecosystem, "clone", lambda *_: commit)
+    monkeypatch.setattr(ecosystem, "environment", lambda *_: Path(sys.executable))
+    actual_run = ecosystem.run
+    refactor_calls = 0
+
+    def generate_refactoring_or_run_tests(
+        command: Sequence[str], cwd: Path, env: dict[str, str], timeout: int, log: Path
+    ) -> ecosystem.Phase:
+        nonlocal refactor_calls
+        if "towel.cli" not in command:
+            return actual_run(
+                command, cwd, dict(env, PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"), timeout, log
+            )
+        refactor_calls += 1
+        assert command[3:5] == ["dry", "package/original.py"]
+        assert cwd == tmp_path / "repository-ready"
+        body = "return 0 if armed else 42" if regression else "return 40 + 2"
+        Path(command[5]).write_text(common + f"def result():\n    {body}\n")
+        return _phase(log, 0, "Applied 1 refactoring\n")
+
+    monkeypatch.setattr(ecosystem, "run", generate_refactoring_or_run_tests)
+    project = ecosystem.Project(
+        "repository",
+        "unused",
+        commit,
+        "package/original.py",
+        test=("{python}", "-m", "pytest", "test_state.py", "-q", "-p", "no:cacheprovider"),
+    )
+    result = ecosystem.check_project(project, tmp_path, tmp_path / "unused-towel-src", 20)
+    assert result.verdict == ("BROKEN" if regression else "PASS")
+    assert result.commit == commit and result.changed_files == 1 and refactor_calls == 1
+    assert (source / "package/original.py").read_text() == original
+    assert result.baseline is not None and result.baseline.returncode == 0
+    assert result.after is not None and result.after.returncode == int(regression)
+    for phase in (result.baseline, result.after):
+        outcome = ecosystem._completed_test_run(phase)
+        assert outcome is not None and outcome.collected == 2
+    evidence_path = tmp_path / "logs/repository-retest.json"
+    if not regression:
+        assert not evidence_path.exists()
+        return
+    evidence = json.loads(evidence_path.read_text())
+    for side in ("before", "after"):
+        assert evidence[side]["returncode"] == 0 and evidence[side]["summary"] == "1 passed"
+    full = evidence["full"]
+    assert full["initial_before"]["log"] == result.baseline.log
+    assert full["initial_after"]["log"] == result.after.log
+    assert full["command"] == ecosystem._prepare_test_command(
+        [argument.format(python=sys.executable) for argument in project.test]
+    )
+    assert full["before"]["returncode"] == 0 and full["before"]["summary"] == "2 passed"
+    assert full["after"]["returncode"] == 1 and full["after"]["summary"] == "1 failed, 1 passed"
+    assert ecosystem.failed_tests(full["after"]["log"]) == {"test_state.py::test_result"}
