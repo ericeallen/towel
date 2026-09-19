@@ -16,7 +16,9 @@
 # package (path refactored, relative to the project root), pythonpath (for
 # the test run), deps (test-only requirements installed into a private
 # environment), test (command run from the project root; {python} is the
-# environment interpreter), prepare (optional command run once after cloning,
+# environment interpreter), failure_exit_codes (default [1]; a recorded custom
+# runner contract for completed failing suites only; successful suites always
+# require exit 0), prepare (optional command run once after cloning,
 # split into arguments and run without a shell), expect_broken (why the
 # suite is expected to differ after transformation) with known_failures (test
 # id substrings; the verdict is BROKEN_KNOWN only when every new failure
@@ -429,6 +431,8 @@ url = "https://github.com/coleifer/peewee.git"
 rev = "2866df242d07ee78f715130ad6b9d4c0287e0a71"
 package = "peewee.py"
 test = ["{python}", "runtests.py"]
+# This pinned unittest runner exits 2 for completed suites containing errors.
+failure_exit_codes = [1, 2]
 
 [[project]]
 name = "python-prompt-toolkit"

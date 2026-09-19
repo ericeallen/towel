@@ -47,7 +47,7 @@ import time
 import tomllib
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_TEST = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
@@ -57,6 +57,7 @@ SUMMARY_PATTERNS = (
     re.compile(r"^(OK|FAILED)( \(.*\))?$"),
     re.compile(r"^Ran \d+ tests? in .*$"),
 )
+TypingMode = Literal["default", "no-types"]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -74,6 +75,13 @@ class Project:
     known_failures: Tuple[str, ...] = ()
     timeout: Optional[int] = None
     exclude: Tuple[str, ...] = ()
+    failure_exit_codes: Tuple[int, ...] = (1,)
+
+    def __post_init__(self) -> None:
+        if not self.failure_exit_codes or any(
+            type(code) is not int or not 1 <= code <= 255 for code in self.failure_exit_codes
+        ):
+            raise ValueError("failure_exit_codes must contain positive process exit codes (1-255)")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,6 +90,15 @@ class Phase:
     seconds: float
     summary: str
     log: str
+
+
+@dataclasses.dataclass(frozen=True)
+class RetestEvidence:
+    command: Tuple[str, ...]
+    test_ids: Tuple[str, ...]
+    failure_exit_codes: Tuple[int, ...]
+    before: Phase
+    after: Phase
 
 
 @dataclasses.dataclass
@@ -95,6 +112,7 @@ class Result:
     changed_files: int = 0
     diff_stat: str = ""
     detail: str = ""
+    typing_mode: TypingMode = "default"
 
 
 def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
@@ -115,6 +133,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             known_failures=tuple(entry.get("known_failures", [])),
             timeout=entry.get("timeout"),
             exclude=tuple(entry.get("exclude", [])),
+            failure_exit_codes=tuple(entry.get("failure_exit_codes", (1,))),
         )
         if not only or project.name in only:
             projects.append(project)
@@ -218,19 +237,29 @@ def _test_outcome(output: str) -> Optional[TestOutcome]:
     return None
 
 
-def _completed_test_run(phase: Phase) -> Optional[TestOutcome]:
+def _completed_test_run(
+    phase: Phase, failure_exit_codes: Tuple[int, ...] = (1,)
+) -> Optional[TestOutcome]:
     """An outcome only if the log and process status both describe a completed suite."""
     try:
         output = Path(phase.log).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
     outcome = _test_outcome(output)
-    if outcome is None or phase.returncode != outcome.returncode:
+    if outcome is None:
+        return None
+    if outcome.returncode == 0 and phase.returncode != 0:
+        return None
+    if outcome.returncode != 0 and (
+        phase.returncode <= 0 or phase.returncode not in failure_exit_codes
+    ):
         return None
     # Equal red tallies are not evidence of equal failures without identities.
     if outcome.returncode != 0 and not _failed_test_ids(output):
         return None
-    return outcome
+    # Keep the runner's actual status so a changed failure convention cannot
+    # be mistaken for an identical before/after result.
+    return dataclasses.replace(outcome, returncode=phase.returncode)
 
 
 def summarize(output: str) -> str:
@@ -357,7 +386,7 @@ def _pytest_arguments_start(command: Sequence[str]) -> Optional[int]:
 
 
 def _prepare_test_command(command: Sequence[str]) -> List[str]:
-    """Request pytest outcome identities after project defaults and reporting options.
+    """Request pytest tallies and identities after project reporting defaults.
 
     Keep selections and configuration intact. A literal ``--`` ends option
     parsing, so insert the reporting option immediately before it. Other
@@ -368,19 +397,22 @@ def _prepare_test_command(command: Sequence[str]) -> List[str]:
     if start is None:
         return prepared
     end = prepared.index("--", start) if "--" in prepared[start:] else len(prepared)
-    if end == start or prepared[end - 1] != "-ra":
-        prepared.insert(end, "-ra")
+    reporting = ["--verbosity=0", "-ra"]
+    if prepared[max(start, end - len(reporting)) : end] != reporting:
+        prepared[end:end] = reporting
     return prepared
 
 
-def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -> Result:
+def check_project(
+    project: Project, work: Path, towel_src: Path, timeout: int, no_types: bool = False
+) -> Result:
     # A project may carry its own per-phase budget when it is far larger
     # than the rest of the corpus (networkx: 198k lines with its tests).
     timeout = project.timeout or timeout
     logs = work / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     source = work / project.name
-    result = Result(project.name, "PENDING")
+    result = Result(project.name, "PENDING", typing_mode="no-types" if no_types else "default")
     try:
         result.commit = clone(project, source, logs)
         python = environment(project, work, source)
@@ -395,7 +427,7 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
     test = _prepare_test_command([part.format(python=python) for part in project.test])
     env = base_env(project.pythonpath, python.parent)
     result.baseline = run(test, source, env, timeout, logs / f"{project.name}-before.log")
-    baseline_outcome = _completed_test_run(result.baseline)
+    baseline_outcome = _completed_test_run(result.baseline, project.failure_exit_codes)
     if baseline_outcome is None:
         result.verdict = "BASELINE_ERROR"
         result.detail = (
@@ -435,6 +467,7 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
             "--no-interactive",
             "--progress",
             "none",
+            *(["--no-types"] if no_types else []),
             *(argument for name in project.exclude for argument in ("--exclude", name)),
         ],
         ready,
@@ -448,7 +481,10 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         return result
     if result.refactor.returncode != 0:
         refused = _refusal(logs / f"{project.name}-refactor.log")
-        result.verdict = "UNSUPPORTED" if refused else "CRASH"
+        if refused.startswith("Original project check reported "):
+            result.verdict = "TYPE_BASELINE_ERROR"
+        else:
+            result.verdict = "UNSUPPORTED" if refused else "CRASH"
         result.detail = refused or result.refactor.summary
         return result
     # Adopt: replace the package with the cleaned copy in place. A package
@@ -466,7 +502,7 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         result.verdict = "NO_CHANGE"
         return result
     result.after = run(test, ready, env, timeout, logs / f"{project.name}-after.log")
-    after_outcome = _completed_test_run(result.after)
+    after_outcome = _completed_test_run(result.after, project.failure_exit_codes)
     if after_outcome is None:
         result.verdict = "AFTER_ERROR"
         result.detail = (
@@ -514,7 +550,18 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
     return result
 
 
-_OPTIONS_WITH_VALUES = {"-o", "-p", "-k", "-m", "-c", "-W", "-r", "--tb", "--rootdir"}
+_OPTIONS_WITH_VALUES = {
+    "-o",
+    "-p",
+    "-k",
+    "-m",
+    "-c",
+    "-W",
+    "-r",
+    "--tb",
+    "--rootdir",
+    "--verbosity",
+}
 
 
 def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> List[str]:
@@ -526,7 +573,9 @@ def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> List[str]:
     command = list(test)
     if "--" in command:
         command = command[: command.index("--")]
-    if command and command[-1] == "-ra":
+    if command[-2:] == ["--verbosity=0", "-ra"]:
+        del command[-2:]
+    elif command and command[-1] == "-ra":
         command.pop()
     while command and not command[-1].startswith("-"):
         if len(command) >= 2 and command[-2] in _OPTIONS_WITH_VALUES:
@@ -555,14 +604,24 @@ def _retest_agrees(
     command = _retest_command(test, test_ids)
     before = run(command, source, env, timeout, logs / f"{project.name}-retest-before.log")
     after = run(command, ready, env, timeout, logs / f"{project.name}-retest-after.log")
-    before_outcome = _completed_test_run(before)
-    after_outcome = _completed_test_run(after)
+    evidence = RetestEvidence(
+        tuple(command), tuple(test_ids), project.failure_exit_codes, before, after
+    )
+    (logs / f"{project.name}-retest.json").write_text(
+        json.dumps(dataclasses.asdict(evidence), indent=2) + "\n", encoding="utf-8"
+    )
+    before_outcome = _completed_test_run(before, project.failure_exit_codes)
+    after_outcome = _completed_test_run(after, project.failure_exit_codes)
     if before_outcome is None or before_outcome != after_outcome:
         return False
     return failed_tests(before.log) == failed_tests(after.log)
 
 
-REFUSAL = re.compile(r"^Error: (Unsupported build backend .*|.*cannot infer safe imports.*)$", re.M)
+REFUSAL = re.compile(
+    r"^Error: (Original project check reported [1-9]\d* type error\(s\):|"
+    r"Unsupported build backend .*|.*cannot infer safe imports.*)$",
+    re.M,
+)
 
 
 def _refusal(log_path: Path) -> str:
@@ -688,6 +747,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=1800, help="seconds per phase")
     parser.add_argument("--towel-src", type=Path, default=REPO / "src")
     parser.add_argument(
+        "--no-types",
+        action="store_true",
+        help="explicitly disable Towel type inference/checking for this runtime-test corpus; "
+        "default: retain Towel's type policy, with no automatic fallback",
+    )
+    parser.add_argument(
         OPT_IN_FLAG,
         action="store_true",
         help=f"acknowledge that the manifest's projects run with your privileges "
@@ -700,6 +765,7 @@ def main() -> int:
         "executes nothing",
     )
     args = parser.parse_args()
+    typing_mode: TypingMode = "no-types" if args.no_types else "default"
     if args.print_pins:
         if args.work is None:
             parser.error("--print-pins needs --work, the directory of the run to read")
@@ -723,7 +789,11 @@ def main() -> int:
     towel_commit = subprocess.run(
         ["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
     ).stdout.strip()
-    print(f"ecosystem check: {len(projects)} projects, towel {towel_commit[:12]}", flush=True)
+    print(
+        f"ecosystem check: {len(projects)} projects, towel {towel_commit[:12]}, "
+        f"typing mode: {typing_mode}",
+        flush=True,
+    )
     # Workers import Towel from ``--towel-src`` for the whole run, so an edit or a
     # commit (pre-commit stashes the tree) in that checkout changes the subject
     # mid-run and invalidates the results. Say so up front when the tree is dirty,
@@ -747,7 +817,9 @@ def main() -> int:
         max_workers=args.workers, initializer=_isolate_worker
     ) as pool:
         futures = {
-            pool.submit(check_project, project, args.work, args.towel_src, args.timeout): project
+            pool.submit(
+                check_project, project, args.work, args.towel_src, args.timeout, args.no_types
+            ): project
             for project in projects
         }
         for future in concurrent.futures.as_completed(futures):
@@ -762,6 +834,7 @@ def main() -> int:
                     project.name,
                     "HARNESS_ERROR",
                     detail=f"{error!r}\n{traceback.format_exc()}",
+                    typing_mode=typing_mode,
                 )
             results.append(result)
             seconds = result.refactor.seconds if result.refactor else 0.0
@@ -781,6 +854,9 @@ def main() -> int:
     lines = [
         f"# Ecosystem check — towel `{towel_commit}`",
         "",
+        f"Typing mode: `{typing_mode}`. This records the requested mode; runtime test "
+        "outcomes do not establish type-checking coverage.",
+        "",
         "| Project | Commit | Verdict | Changed files | Refactor s | Before | After |",
         "|---|---|---|---|---|---|---|",
     ]
@@ -797,6 +873,7 @@ def main() -> int:
         json.dumps(
             {
                 "towel": towel_commit,
+                "typing_mode": typing_mode,
                 "counts": counts,
                 "results": [dataclasses.asdict(r) for r in results],
             },

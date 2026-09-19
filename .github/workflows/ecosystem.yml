@@ -26,11 +26,17 @@ jobs:
       # The check clones and executes third-party code (see the script's
       # docstring); a hosted runner is discarded after the job, which is the
       # only setting where that opt-in is appropriate.
-      - run: uv run --frozen python scripts/ecosystem_check.py --work "$RUNNER_TEMP/ecosystem" --workers 2
+      # This manifest provides upstream runtime-test dependencies, not each
+      # project's complete typing environment. Exercise consumer behavior with
+      # explicit --no-types; default refusals and configured typed paths have
+      # separate tests in Towel's suite and installed-extras verification.
+      - run: uv run --frozen python scripts/ecosystem_check.py --no-types --work "$RUNNER_TEMP/ecosystem" --workers 2
         env:
           TOWEL_ECOSYSTEM_RUN_UNTRUSTED: "1"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         if: always()
         with:
           name: ecosystem-report
-          path: ${{ runner.temp }}/ecosystem/report
+          path: |
+            ${{ runner.temp }}/ecosystem/report
+            ${{ runner.temp }}/ecosystem/logs
