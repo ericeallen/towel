@@ -1,6 +1,6 @@
 # Towel
 
-> “A towel, it says, is about the most massively useful thing an interstellar hitchhiker can have.”
+> “A towel ... is about the most massively useful thing an interstellar hitchhiker can have.”
 >
 > [Douglas Adams](https://www.goodreads.com/quotes/24779-a-towel-the-hitchhiker-s-guide-to-the-galaxy-says-is),
 > [*The Hitchhiker's Guide to the Galaxy*](https://en.wikipedia.org/wiki/Towel_Day#Origin)
