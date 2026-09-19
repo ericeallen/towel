@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 from .models import FunctionNode, MethodKind
+from .parameters import parameter_names
 from typing import (
     Callable,
     Iterable,
@@ -388,6 +389,23 @@ class NameCollector(OwnScopeVisitor):
         if n.value is not None:
             self.visit(n.value)
         self.visit(n.target)
+
+
+class FreeNameCollector(NameCollector):
+    """Collect the names a node reads from its own scope.
+
+    A lambda's parameters are bound by the lambda and read inside it, so a
+    forwarding ``lambda *args, **kwargs: f(*args, **kwargs)`` reads ``f``
+    and nothing else; ``NameCollector`` would report ``args`` and ``kwargs``.
+    """
+
+    def _lambda(self, node: ast.Lambda) -> None:
+        for default in [*node.args.defaults, *node.args.kw_defaults]:
+            if default is not None:
+                self.visit(default)
+        inner = FreeNameCollector()
+        inner.visit(node.body)
+        self.used |= inner.used - set(parameter_names(node.args))
 
 
 class AugAssignFinder(OwnScopeVisitor):

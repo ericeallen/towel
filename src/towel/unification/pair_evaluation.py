@@ -38,14 +38,13 @@ import ast
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
+from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
 
 from ..diagnostics import VALIDATION, debugging
 from .definite_assignment import definitely_bound_after
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
-from .builtins import CALL_ARGUMENT_BUILTINS
-from .definite_assignment import definitely_bound_before, locally_bound_names
+from .builtins import CALL_ARGUMENT_BUILTINS, is_builtin
 from .semantic_safety import (
     available_argument_names,
     defer_impure_parameters,
@@ -90,7 +89,7 @@ from .semantic_safety import (
 from .import_graph import import_runs_new_code, layout_is_known, would_create_import_cycle
 from .thunk_inlining import inline_leading_thunks
 from .substitution import Substitution
-from .visitors import body_without_docstring
+from .visitors import FreeNameCollector, body_without_docstring
 
 
 @dataclass(frozen=True)
@@ -201,18 +200,39 @@ class _PairContext:
     block2_id: str
 
 
+def _is_forwarding_lambda(node: ast.AST) -> bool:
+    """Whether ``node`` is the extractor's ``lambda *args, **kwargs: callee(*args, **kwargs)``."""
+    return (
+        isinstance(node, ast.Lambda)
+        and node.args.vararg is not None
+        and node.args.kwarg is not None
+        and isinstance(node.body, ast.Call)
+    )
+
+
+def _call_site_reads(call: ast.stmt) -> Set[str]:
+    """The names the call statement reads at the site; a forwarding lambda's own parameters are not among them."""
+    collector = FreeNameCollector()
+    collector.visit(call)
+    return collector.used
+
+
 def _thunk_uncertain_free_variables(
     substitution: Substitution,
     free_variables: Set[str],
     blocks: Sequence[Tuple[FunctionNode, Sequence[ast.stmt]]],
     renames: Sequence[Dict[str, str]],
+    available: Sequence[AbstractSet[str]],
 ) -> Set[str]:
-    """Pass free variables that may be unbound at the call as thunks.
+    """Pass free variables that the call site may not resolve as thunks.
 
-    A free variable read only on some path inside the block, and bound
-    before the block only on some path, must be read where the block read
-    it. The thunk keeps that timing; the eager argument would raise
-    ``UnboundLocalError`` at the call.
+    A free variable read only on some path inside the block must be read
+    where the block read it unless the call site resolves it on every path
+    (``available``, see ``available_argument_names``): a local bound only on
+    some path before the block, a module name the module binds later or
+    nowhere, or a cell of an enclosing function not yet filled would raise
+    at the eager call where the block raised only on the path that read it.
+    The thunk keeps the timing.
     """
     template_renames = renames[0] if renames else {}
     canonical_to_block = [
@@ -228,10 +248,7 @@ def _thunk_uncertain_free_variables(
         return canonical_to_block[index].get(canonical, canonical)
 
     def uncertain(index: int, spelled: str) -> bool:
-        function, block = blocks[index]
-        if spelled not in locally_bound_names(function):
-            return False  # resolves lexically outside the function; not path-dependent
-        return spelled not in definitely_bound_before(function, block[0])
+        return spelled not in available[index] and not is_builtin(spelled)
 
     # A parameter whose argument is a bare local name is read eagerly too.
     deferred = set(substitution.function_params) | set(substitution.params_used_as_callee)
@@ -742,6 +759,7 @@ class PairEvaluation(
             free_vars,
             ((ctx.func1, pair.block1_nodes), (ctx.func2, pair.block2_nodes)),
             unified.hygienic_renames,
+            available,
         )
         return _FreeVariables(
             free_vars, free_vars1, free_vars2, globals_to_declare, nonlocals_to_declare, available
@@ -910,10 +928,17 @@ class PairEvaluation(
             )
         except UnsupportedExtraction:
             return None
+        if any(_is_forwarding_lambda(node) for node in ast.walk(call_node)):
+            # ``lambda *args, **kwargs: callee(*args, **kwargs)`` keeps the
+            # callee's timing but re-evaluates its expression on every call
+            # and reads worse than the duplication it removes. Declined; a
+            # callee the site resolves is passed as a thunk or inlined.
+            self._debug_reject(RejectReason.FORWARDED_CALLEE, pair, detail=f"block{block_idx+1}")
+            return None
         allowed_before = set(snapshot.bound_before_block) | set(free_here)
         invalid_names = {
             name
-            for name in self._used_names(call_node)
+            for name in _call_site_reads(call_node)
             if name != func_def.name
             and (
                 name.startswith("__param_")

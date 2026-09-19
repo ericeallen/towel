@@ -23,6 +23,7 @@ from towel.unification.pipeline import AnalysisSession
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.semantic_safety import available_argument_names
+from towel.unification.visitors import FreeNameCollector
 
 TWO_ROUNDS = textwrap.dedent("""
     def alpha(items):
@@ -213,3 +214,10 @@ def test_a_helper_import_that_would_run_new_module_code_is_refused(tmp_path: Pat
     assert import_runs_new_code(str(package / "host.py"), str(package / "borrower.py"), cache)
     assert not import_runs_new_code(str(package / "quiet.py"), str(package / "borrower.py"), cache)
     assert not import_runs_new_code(str(package / "host.py"), str(package / "importer.py"), cache)
+
+
+def test_a_forwarding_lambda_reads_only_its_callee() -> None:
+    call = ast.parse("h(lambda *args, **kwargs: f(*args, **kwargs), lambda x=d: x + y, z)")
+    collector = FreeNameCollector()
+    collector.visit(call)
+    assert collector.used == {"h", "f", "d", "y", "z"}

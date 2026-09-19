@@ -134,8 +134,7 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   block defining a closure over a binder rebound after it is declined or
   kept equivalent, no proposal covers an argument-free `dir()`, `locals()`
   or `vars()`, and a name nothing binds under `if limit < 0` is never
-  hoisted into an eager argument. The last is `xfail(strict=True)` until
-  the eager-argument guard lands; the marker comes off at merge.
+  hoisted into an eager argument.
 - **AST visitors** — `test_visitors.py`: each visitor in
   `towel.unification.visitors` (function collection, method-call rewriting,
   loop-return and name collection, assignment targets, class and function

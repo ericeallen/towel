@@ -342,6 +342,21 @@ ecosystem evidence behind each claim. The format follows
   deleted, or bound conditionally in the enclosing function, and at module
   level a name bound by `except ... as`, a `match` capture, a later `def`,
   or a later import.
+- A free variable the two blocks share follows the same rule as a differing
+  argument: it is passed eagerly only when the call site resolves it on
+  every path, and as a thunk otherwise. A name bound nowhere, read only on
+  a branch no run takes, used to be hoisted into an eager argument and raise
+  `NameError` at every call (found by the new property test); a helper
+  defined below its callers, called once at import time before its
+  definition, raised the same way. Both are now thunks, and a helper defined
+  below its callers is passed as `lambda: helper` unless the block reads it
+  first.
+- A call site that would pass a callee as
+  `lambda *args, **kwargs: callee(*args, **kwargs)` is declined by name
+  (`forwarded_callee`). It used to be declined by accident, because the
+  lambda's own parameters were counted as names the site could not resolve;
+  that miscount also declined any thunk containing a lambda, such as
+  `lambda: sorted(items, key=lambda x: x)`, which now extracts.
 - A comprehension variable is no longer thunked.
 - The frame-reading builtins and `eval`/`exec` anywhere in the enclosing
   function decline the block, not only inside it, and aliases of them are

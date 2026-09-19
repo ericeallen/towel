@@ -40,9 +40,7 @@ expected answer is obvious, then checks the engine against it:
   among the leaves, no proposal covers a statement that contains one.
 * **Unbound names on untaken branches.** A name nothing binds, read only
   under ``if limit < 0`` (false for every equivalence case), is never hoisted
-  into an eager argument: the sites still agree. This one is marked
-  ``xfail(strict=True)`` until the eager-argument guard on main lands; the
-  marker is to be removed at merge.
+  into an eager argument: the sites still agree.
 
 All are deterministic (``derandomize=True``) and have no deadline, so they
 cannot flake on a slow machine. The pure properties run more examples than
@@ -59,7 +57,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple, Union
 
-import pytest
 from hypothesis import HealthCheck, event, given, settings
 from hypothesis import strategies as st
 
@@ -1167,7 +1164,6 @@ def unbound_branch_pairs(draw: st.DrawFn) -> Tuple[Tuple[Stmt, ...], Tuple[Stmt,
     )
 
 
-@pytest.mark.xfail(strict=True, reason="eager-argument guard; fixed on main")
 @ENGINE_BOUNDED
 @given(unbound_branch_pairs())
 def test_an_unbound_name_on_an_untaken_branch_is_never_hoisted(

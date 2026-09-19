@@ -17,7 +17,7 @@ rejects, and what remains outside its model. Read it together with
   zero-argument thunk and evaluated inside the helper at the original
   position, so it runs as often, as late, and as conditionally as before.
   Expressions that read names bound inside the block are lambda-lifted with
-  those names as arguments. Expressions in call position are forwarded lazily.
+  those names as arguments.
   A thunk the helper evaluates first, exactly once, and before any other
   effect is passed eagerly after all, because the call site's evaluation is
   then indistinguishable from the in-place one (`thunk_inlining.py`).
@@ -34,11 +34,22 @@ rejects, and what remains outside its model. Read it together with
   outer loop,
   comprehension assignment expressions, `warnings.warn(..., stacklevel=)`,
   or direct frame or stack inspection are rejected.
-- **Unbound locals.** A free variable that is a local of the containing
-  function, bound before the block only on some path, is passed as a thunk
-  so it is read where the block read it. Definite assignment is computed
-  conservatively: loops, `contextlib.suppress`, and non-exhaustive `match`
-  statements never bind definitely.
+- **Names the call site may not resolve.** A free variable is passed eagerly
+  only when the call site resolves it on every path: a local bound on every
+  path before the block, a module name bound on every path before the
+  top-level statement holding the function and never deleted, or a binding
+  of an enclosing function made before the inner function's definition. Any
+  other free variable (a local bound only on some path, a module name bound
+  later or nowhere, a name bound nowhere at all) is passed as a thunk so it
+  is read where the block read it; a helper defined below its callers is
+  therefore passed as `lambda: helper` unless the block reads it first.
+  Definite assignment is computed conservatively: loops,
+  `contextlib.suppress`, and non-exhaustive `match` statements never bind
+  definitely.
+- **Forwarded callees.** A differing expression in call position would be
+  passed as `lambda *args, **kwargs: callee(*args, **kwargs)`; such a call
+  site reads worse than the duplication it removes, so the pair is declined
+  unless the callee can be passed as a value or a plain thunk.
 - **Rendering.** Every generated file compiles, and every generated call binds
   to the generated helper's signature after method conversion. A formatter
   may change only layout: each inserted snippet's syntax tree is compared

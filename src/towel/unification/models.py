@@ -295,6 +295,7 @@ class RejectReason(StrEnum):
     TRIVIAL_FORWARDING_HELPER = "trivial_forwarding_helper"
     TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"
     UNBINDS_EXTERNAL_NAME = "unbinds_external_name"
+    FORWARDED_CALLEE = "forwarded_callee"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
     UNIFICATION_FAILED = "unification_failed"
     UNSAFE_REASSIGNMENT_BLOCK1 = "unsafe_reassignment_block1"

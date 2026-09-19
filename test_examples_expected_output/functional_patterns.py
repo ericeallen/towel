@@ -6,6 +6,12 @@ map/filter/reduce patterns, and functional composition.
 """
 
 
+def __extracted_func_8(__param_0, __param_1, result):
+    if __param_0:
+        return __param_1()
+    return []
+
+
 def __extracted_func_7(__param_0, base_func, modifier, values):
     apply_modifier = lambda x: base_func(x, modifier, __param_0)
     processed = list(map(apply_modifier, values))
@@ -17,18 +23,14 @@ def __extracted_func_6(__param_0, data, multiplier):
     transform = lambda x: x * multiplier + __param_0
     filtered = filter(lambda x: x > 0, data)
     result = list(map(transform, filtered))
-    if len(result) > 0:
-        return sorted(result, key=lambda x: x, reverse=True)
-    return []
+    return __extracted_func_8(len(result) > 0, lambda: sorted(result, key=lambda x: x, reverse=True), result)
 
 
 def __extracted_func_5(transformed):
     filtered = (x for x in transformed if x > 10)
     squared = (x ** 2 for x in filtered)
     result = list(squared)
-    if result:
-        return sorted(result, key=lambda x: -x)[:100]
-    return []
+    return __extracted_func_8(result, lambda: sorted(result, key=lambda x: -x)[:100], result)
 
 
 def __extracted_func_4(__param_0, initial, values):
