@@ -243,7 +243,7 @@ def apply_changes(plan: ChangePlan) -> None:
         _write_new(journal / "complete.pending", b"committed\n")
         os.replace(journal / "complete.pending", journal / "complete")
         _sync_directory(journal)
-    except BaseException:
+    except BaseException as failure:
         if ready:
             try:
                 recover(journal)
@@ -252,7 +252,10 @@ def apply_changes(plan: ChangePlan) -> None:
                     f"Recovery required: towel recover {journal}"
                 ) from recovery_error
         else:
-            _cleanup(journal)
+            try:
+                _cleanup(journal)
+            except RecoveryRequired as cleanup_error:
+                raise RecoveryRequired(f"{cleanup_error} (after: {failure})") from failure
         raise
     try:
         _cleanup(journal)

@@ -33,6 +33,7 @@ from typing import List, Optional, Sequence, Set, Tuple
 from .visitors import ClassLocator, FuncLocator, body_without_docstring
 
 from .engine_state import EngineState
+from .exceptions import RefactoringError
 from .models import FunctionNode
 from ..source_text import read_source, source_lines
 
@@ -241,8 +242,8 @@ class InsertionPoints(EngineState):
         """
         try:
             tree = self._parse_source(source)
-        except SyntaxError:
-            return None
+        except SyntaxError as error:
+            raise RefactoringError(f"Rendered module does not parse: {error}") from error
 
         locator = ClassLocator(source, class_name)
         locator.visit(tree)
@@ -261,8 +262,8 @@ class InsertionPoints(EngineState):
         """
         try:
             tree = self._parse_source(source)
-        except SyntaxError:
-            return None
+        except SyntaxError as error:
+            raise RefactoringError(f"Rendered module does not parse: {error}") from error
 
         locator = FuncLocator(source, function_name)
         locator.visit(tree)

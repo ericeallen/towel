@@ -114,7 +114,8 @@ class ClusterScanKey(NamedTuple):
     template: TemplateKey
     file_path: str
     module_digest: str
-    helper_scope: Optional[Tuple[int, int, str]]
+    # The helper's enclosing function (line, column, structural id), or None at module level.
+    helper_home: Optional[Tuple[int, int, str]]
     min_lines: int
 
 

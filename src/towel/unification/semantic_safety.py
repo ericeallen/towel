@@ -772,7 +772,8 @@ def _statement_within(
     current = node
     while parents.get(current) is not enclosing:
         current = parents[current]
-    assert isinstance(current, ast.stmt)
+    if not isinstance(current, ast.stmt):
+        raise ValueError("a definition is a statement of its enclosing function")
     return current
 
 
@@ -780,7 +781,8 @@ def _top_level_statement(parents: Dict[ast.AST, ast.AST], node: ast.AST) -> ast.
     current = node
     while current in parents:
         current = parents[current]
-    assert isinstance(current, ast.stmt)
+    if not isinstance(current, ast.stmt):
+        raise ValueError("a definition is a statement of its module")
     return current
 
 

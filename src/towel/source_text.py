@@ -26,7 +26,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 import tokenize
-from typing import List, Union
+from typing import List, Optional, Union
 
 
 def source_encoding(data: bytes) -> str:
@@ -43,6 +43,18 @@ def decode_source(data: bytes) -> str:
     """``data`` as text with LF newlines, decoded as the interpreter would."""
     text = data.decode(source_encoding(data))
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def try_read_source(path: Union[str, Path]) -> Optional[str]:
+    """``read_source``, or None when the file cannot be read, decoded, or has no valid cookie.
+
+    The one policy for a file the analysis merely consults: a module that
+    cannot be read contributes nothing, and the caller says so.
+    """
+    try:
+        return read_source(path)
+    except (OSError, UnicodeError, SyntaxError):
+        return None
 
 
 def source_lines(text: str) -> List[str]:

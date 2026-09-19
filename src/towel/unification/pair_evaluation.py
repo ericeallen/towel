@@ -377,9 +377,7 @@ class PairEvaluation(
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
 
         if (
-            func1 is not None
-            and scope_analyzer is not None
-            and self._block_rejected(
+            self._block_rejected(
                 snapshots_rebound_external_names,
                 pair.block1_nodes,
                 func1,
@@ -388,9 +386,7 @@ class PairEvaluation(
                 block_id=ctx.block1_id,
             )
         ) or (
-            func2 is not None
-            and scope_analyzer2 is not None
-            and self._block_rejected(
+            self._block_rejected(
                 snapshots_rebound_external_names,
                 pair.block2_nodes,
                 func2,
@@ -418,8 +414,7 @@ class PairEvaluation(
             (moves_scope_declaration, RejectReason.MOVES_SCOPE_DECLARATION),
         ):
             if (
-                func1 is not None
-                and self._block_rejected(
+                self._block_rejected(
                     guard,
                     pair.block1_nodes,
                     func1,
@@ -427,8 +422,7 @@ class PairEvaluation(
                     block_id=ctx.block1_id,
                 )
             ) or (
-                func2 is not None
-                and self._block_rejected(
+                self._block_rejected(
                     guard,
                     pair.block2_nodes,
                     func2,
@@ -602,9 +596,7 @@ class PairEvaluation(
         hygienic_renames: List[Dict[str, str]] = [{}, {}]
         if debug_enabled:
             VALIDATION.debug("  Attempting unification...")
-        substitution = self._unify_memoized(
-            blocks, hygienic_renames, (pair.file_path, pair.file_path2)
-        )
+        substitution = self._unify_memoized(blocks, hygienic_renames)
         if not substitution:
             self._reject(
                 pair,

@@ -105,7 +105,6 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         subst2 = self._unify_memoized(
             [pair.block1_nodes, candidate.nodes],
             cluster_renames,
-            (pair.file_path, candidate.file_path),
         )
         if not subst2:
             return None
@@ -369,7 +368,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         )[0]:
             return None
         cand_range = self._block_line_span(cand_nodes)
-        assert cand_range is not None
+        if cand_range is None:
+            return None
         snapshot = self._build_block_binding_snapshot(
             fn, cand_nodes, cand_range, reassignments, function_id=fn_id, block_id=cand_id
         )

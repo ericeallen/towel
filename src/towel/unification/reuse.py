@@ -43,7 +43,7 @@ from .models import (
 )
 from .scope_analyzer import ScopeBinding
 from .statement_facts import imported_binding_name
-from .import_graph import would_create_import_cycle
+from .import_graph import import_runs_new_code, would_create_import_cycle
 from .visitors import body_without_docstring
 
 from .engine_state import EngineState
@@ -415,82 +415,103 @@ class ExistingFunctionReuse(EngineState):
                 candidates.append((index, target))
         candidates.sort(key=lambda item: (item[1].file_path, item[1].node.lineno))
         for index, target in candidates:
-            function = target.node
-            call = self._unwrap_helper_call(proposal.replacements[index].node, helper_name)
-            if call is None or not isinstance(function, ast.FunctionDef):
-                continue
-            plan = self._reuse_plan(call, target)
-            if plan is None:
-                continue
-            assigned = self._assigned_names(proposal.replacements[index].node)
-            if assigned is not None:
-                final = body_without_docstring(target.node.body)[-1]
-                plan = dataclasses.replace(
-                    plan, return_positions=self._return_positions(assigned, final) or ()
-                )
-            others = [
-                replacement
-                for position, replacement in enumerate(proposal.replacements)
-                if position != index
-            ]
-            sites = [
-                site
-                for replacement in others
-                if (
-                    site := functions.innermost_at(
-                        replacement.file_path or proposal.file_path, replacement.line_range
-                    )
-                )
-                is not None
-            ]
-            if len(sites) != len(others):
-                continue
-            rewritten = [
-                rewritten_site
-                for replacement, site in zip(others, sites)
-                if (
-                    rewritten_site := self._call_to_existing_function(
-                        replacement, helper_name, target, plan, site
-                    )
-                )
-                is not None
-            ]
-            if len(rewritten) != len(others):
-                continue
-            if not all(
-                self._existing_function_reachable(
-                    target, replacement, proposal.file_path, functions
-                )
-                for replacement in others
-            ):
-                continue
-            participating = {target.file_path} | {
-                replacement.file_path or proposal.file_path for replacement in others
-            }
-            if would_create_import_cycle(target.file_path, participating, self.import_graph):
-                continue
-            callers = sorted({site.node.name for site in sites})
-            location = Path(target.file_path).name
-            return dataclasses.replace(
-                proposal,
-                file_path=target.file_path,
-                extracted_function=copy.deepcopy(function),
-                replacements=rewritten,
-                description=(
-                    f"Reuse {target.node.name} ({location}) for duplicated code in "
-                    + ", ".join(callers)
-                ),
-                insert_into_class=None,
-                insert_into_function=None,
-                method_kind=None,
-                method_param_name=None,
-                reused_function=ReusedFunction(
-                    name=target.node.name,
-                    file_path=target.file_path,
-                    line_range=(target.node.lineno, target.node.end_lineno or target.node.lineno),
-                ),
-            )
+            redirected = self._redirected_through(proposal, index, target, helper_name, functions)
+            if redirected is not None:
+                return redirected
         return None
+
+    def _redirected_through(
+        self,
+        proposal: RefactoringProposal,
+        index: int,
+        target: FunctionArtifact,
+        helper_name: str,
+        functions: FunctionIndex,
+    ) -> Optional[RefactoringProposal]:
+        """The proposal redirected through ``target``, or None when one site cannot follow.
+
+        The site at ``index`` is the whole body of ``target``. Every other site
+        must be a plain call the function's parameters can take, must reach the
+        function by name, and its module must not gain an import that closes a
+        cycle or runs code it did not run before.
+        """
+        function = target.node
+        call = self._unwrap_helper_call(proposal.replacements[index].node, helper_name)
+        if call is None or not isinstance(function, ast.FunctionDef):
+            return None
+        plan = self._reuse_plan(call, target)
+        if plan is None:
+            return None
+        assigned = self._assigned_names(proposal.replacements[index].node)
+        if assigned is not None:
+            final = body_without_docstring(target.node.body)[-1]
+            plan = dataclasses.replace(
+                plan, return_positions=self._return_positions(assigned, final) or ()
+            )
+        others = [
+            replacement
+            for position, replacement in enumerate(proposal.replacements)
+            if position != index
+        ]
+        sites = [
+            site
+            for replacement in others
+            if (
+                site := functions.innermost_at(
+                    replacement.file_path or proposal.file_path, replacement.line_range
+                )
+            )
+            is not None
+        ]
+        if len(sites) != len(others):
+            return None
+        rewritten = [
+            rewritten_site
+            for replacement, site in zip(others, sites)
+            if (
+                rewritten_site := self._call_to_existing_function(
+                    replacement, helper_name, target, plan, site
+                )
+            )
+            is not None
+        ]
+        if len(rewritten) != len(others):
+            return None
+        if not all(
+            self._existing_function_reachable(target, replacement, proposal.file_path, functions)
+            for replacement in others
+        ):
+            return None
+        borrowers = {replacement.file_path or proposal.file_path for replacement in others}
+        participating = {target.file_path} | borrowers
+        if would_create_import_cycle(target.file_path, participating, self.import_graph):
+            return None
+        if any(
+            import_runs_new_code(target.file_path, borrower, self.import_graph)
+            for borrower in borrowers - {target.file_path}
+        ):
+            return None
+        callers = sorted({site.node.name for site in sites})
+        location = Path(target.file_path).name
+        return dataclasses.replace(
+            proposal,
+            file_path=target.file_path,
+            extracted_function=copy.deepcopy(function),
+            replacements=rewritten,
+            description=(
+                f"Reuse {target.node.name} ({location}) for duplicated code in "
+                + ", ".join(callers)
+            ),
+            insert_into_class=None,
+            insert_into_function=None,
+            method_kind=None,
+            method_param_name=None,
+            reused_function=ReusedFunction(
+                name=target.node.name,
+                file_path=target.file_path,
+                line_range=(target.node.lineno, target.node.end_lineno or target.node.lineno),
+            ),
+        )
 
     def _verify_reused_function_calls(
         self,

@@ -275,7 +275,8 @@ class _Edits:
         self.changes[span] = encoded
 
     def node(self, node: ast.expr | ast.alias, replacement: str) -> None:
-        assert node.end_lineno is not None and node.end_col_offset is not None
+        if node.end_lineno is None or node.end_col_offset is None:
+            raise ValueError("a parsed node carries its end position")
         self.add(node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, replacement)
 
     def identifier(self, node: FunctionNode | ast.Global, old: str, new: str) -> None:
@@ -597,7 +598,8 @@ def _plan_method_renames(module: _Module, renames: dict[str, str], edits: _Edits
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in renames:
             edits.identifier(node, node.name, renames[node.name])
         elif isinstance(node, ast.Attribute) and node.attr in renames:
-            assert node.end_lineno is not None and node.end_col_offset is not None
+            if node.end_lineno is None or node.end_col_offset is None:
+                raise ValueError("a parsed node carries its end position")
             edits.add(
                 node.end_lineno,
                 node.end_col_offset - len(node.attr.encode("utf-8")),
@@ -649,7 +651,8 @@ def _plan_parameter_renames(
                         f"Parameter {parameter} is redeclared in a nested scope: {module.path}"
                     )
             for arg in matching:
-                assert arg.end_lineno is not None and arg.end_col_offset is not None
+                if arg.end_lineno is None or arg.end_col_offset is None:
+                    raise ValueError("a parsed node carries its end position")
                 edits.add(
                     arg.lineno,
                     arg.col_offset,
@@ -894,7 +897,8 @@ class _ModulePlanner:
             raise ValueError(
                 f"Mutation of imported helper requires manual rename: {self.module.path}"
             )
-        assert node.end_lineno is not None and node.end_col_offset is not None
+        if node.end_lineno is None or node.end_col_offset is None:
+            raise ValueError("a parsed node carries its end position")
         new = self.selected[(attribute_origin, node.attr)]
         scope = self.scopes.nodes[node]
         if _private_in_class(scope, node.attr) or _private_in_class(scope, new):
@@ -970,7 +974,8 @@ class _ModulePlanner:
             raise ValueError(f"String annotation requires manual rename: {self.module.path}")
 
     def _check_dynamic_lookup(self, node: ast.Call) -> None:
-        assert isinstance(node.func, ast.Name)
+        if not isinstance(node.func, ast.Name):
+            raise ValueError("the caller checked the callee is a bare name")
         if self.local_renames and is_namespace_access_call(node):
             raise ValueError(f"Dynamic namespace access prevents safe rename: {self.module.path}")
         if node.func.id in _DYNAMIC_ATTRIBUTE_CALLS and any(

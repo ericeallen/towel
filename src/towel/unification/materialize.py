@@ -304,7 +304,8 @@ class Materialization(
             self._insert_helper_at_module_level(proposal, lines)
 
     def _insert_helper_into_function(self, proposal: RefactoringProposal, lines: List[str]) -> None:
-        assert proposal.insert_into_function is not None
+        if proposal.insert_into_function is None:
+            raise RefactoringError("A function-hosted helper needs its host's name")
         fn_insert_info = self._find_function_insert_position_before_body_statements(
             "".join(lines), proposal.insert_into_function
         )
@@ -321,7 +322,8 @@ class Materialization(
     def _insert_helper_into_class(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]
     ) -> None:
-        assert proposal.insert_into_class is not None
+        if proposal.insert_into_class is None:
+            raise RefactoringError("A class-hosted helper needs its host's name")
         self._prepare_extracted_method_signature(
             proposal.extracted_function,
             proposal.method_kind or "instance",

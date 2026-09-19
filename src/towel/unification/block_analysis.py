@@ -156,7 +156,6 @@ class BlockAnalysis(EngineState):
         self,
         blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
-        paths: Sequence[Optional[str]] = (),
     ) -> Optional[Substitution]:
         """Unify two blocks, reusing the result for any pair with the same structure."""
         if len(blocks) != 2:

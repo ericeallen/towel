@@ -26,6 +26,9 @@ import io
 from pathlib import Path
 from typing import List, Tuple
 
+import pytest
+
+from towel.unification.exceptions import RefactoringError
 from towel.unification.instantiation import instantiation_mismatch
 from towel.unification.orphan_detector import orphaned_variables
 from towel.unification.pipeline import AnalysisSession
@@ -223,4 +226,5 @@ def test_class_insertion_position_uses_the_engine_parse_memo() -> None:
     source = "class C:\n    def m(self):\n        return 1\n"
     assert engine._find_class_insert_position(source, "C") is not None
     assert source in engine._parse_cache
-    assert engine._find_class_insert_position("class C(:\n", "C") is None
+    with pytest.raises(RefactoringError, match="does not parse"):
+        engine._find_class_insert_position("class C(:\n", "C")

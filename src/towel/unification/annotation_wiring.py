@@ -40,11 +40,12 @@ from .annotations import (
     sites_use_annotations,
     typing_imports_needed,
 )
+from .exceptions import RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
 
 from .engine_state import EngineState
-from ..source_text import read_source, source_lines
+from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
 
 
@@ -163,10 +164,7 @@ class HelperAnnotationWiring(EngineState):
 
     @staticmethod
     def _read_source(file_path: str) -> Optional[str]:
-        try:
-            return read_source(file_path)
-        except (OSError, UnicodeError, SyntaxError):
-            return None
+        return try_read_source(file_path)
 
     @staticmethod
     def _declared_return_at(source: str, line: int) -> Optional[ast.expr]:
@@ -185,11 +183,13 @@ class HelperAnnotationWiring(EngineState):
                 innermost = node
         return innermost.returns if innermost is not None else None
 
-    @staticmethod
-    def _parsed_host(file_path: str) -> Optional[ast.Module]:
+    def _parsed_host(self, file_path: str) -> Optional[ast.Module]:
+        source = try_read_source(file_path)
+        if source is None:
+            return None
         try:
-            return ast.parse(read_source(file_path))
-        except (OSError, SyntaxError, UnicodeError):
+            return self._parse_source(source)
+        except SyntaxError:
             return None
 
     def _checks_generated_types(self, proposal: RefactoringProposal) -> bool:
@@ -201,8 +201,7 @@ class HelperAnnotationWiring(EngineState):
             arg.annotation is not None for arg in helper.args.posonlyargs + helper.args.args
         )
 
-    @staticmethod
-    def _with_every_annotation_any(proposal: RefactoringProposal) -> RefactoringProposal:
+    def _with_every_annotation_any(self, proposal: RefactoringProposal) -> RefactoringProposal:
         """The proposal with every helper annotation replaced by ``Any``.
 
         Only the helper is copied: the replacements are shared with the
@@ -214,7 +213,7 @@ class HelperAnnotationWiring(EngineState):
             arg.annotation = ast.Name(id="Any", ctx=ast.Load())
         helper.returns = ast.Name(id="Any", ctx=ast.Load())
         variant.required_imports = typing_imports_needed(
-            helper, HelperAnnotationWiring._parsed_host(variant.file_path)
+            helper, self._parsed_host(variant.file_path)
         )
         return variant
 
@@ -235,7 +234,8 @@ class HelperAnnotationWiring(EngineState):
         Messages are compared without positions, as multisets, so errors the
         project already has do not count and moved lines do not confuse it.
         """
-        assert self.type_oracle is not None
+        if self.type_oracle is None:
+            raise RefactoringError("Type checking was requested without a type oracle")
         for path, after_source in modified_files.items():
             before_source = self._read_source(path)
             if before_source is None or before_source == after_source:
