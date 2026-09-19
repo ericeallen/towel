@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import copy
+from collections import Counter
 import hashlib
 import os
 import re
@@ -135,13 +136,16 @@ class Materialization(
                 self._without_annotations(proposal),
             ]
         counters = dict(self._helper_name_counters)
+        # Every attempt compares against the same original files on the same
+        # disk, so each original is checked once for all of them.
+        errors_before: Dict[str, Counter[str]] = {}
         for index, variant in enumerate(variants):
             mark = len(self._change_log)
             # Each attempt allocates the helper's name; restore the counters so
             # every attempt gets the same name and none is consumed by a retry.
             self._helper_name_counters = dict(counters)
             files = self._materialize_once(variant)
-            if index == len(variants) - 1 or not self._introduces_type_errors(files):
+            if index == len(variants) - 1 or not self._introduces_type_errors(files, errors_before):
                 return files
             del self._change_log[mark:]
         raise AssertionError("unreachable: the bare variant is always accepted")

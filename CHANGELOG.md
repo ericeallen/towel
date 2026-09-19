@@ -349,6 +349,10 @@ ecosystem evidence behind each claim. The format follows
   helper with 669 sites, peaking at 6.6 GB (8.8 GB before the scan cache
   was bounded); its pair evaluation is what `--max-pairs` bounds. A
   per-candidate memo beneath the scan, which no run ever read, is gone.
+- When a refactoring's annotations introduce a type error and the
+  all-`Any` and bare variants are tried in turn, each original file is
+  type-checked once for all three attempts instead of once per attempt:
+  click and jinja2 run 11 to 14 percent faster with identical output.
 - The verdict of the instantiation check is memoized on the helper, call
   and block, which it repeated many times over across pair and cluster
   evaluation: a file of a hundred similar functions took 31 s instead of

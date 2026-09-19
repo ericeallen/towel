@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Dict
 import textwrap
 
 import pytest
@@ -383,6 +384,43 @@ def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -
     result = engine.apply_refactoring(str(path), proposals[0])
     assert _signature(result) == "def __extracted_func_0(value: Any) -> Any:"
     assert "from typing import Any" in result
+
+
+class _CountingOracle(_Oracle):
+    """``_Oracle``, counting the checks of each distinct source text."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.checks: Dict[str, int] = {}
+
+    def check(self, file_path, source):
+        self.checks[source] = self.checks.get(source, 0) + 1
+        return super().check(file_path, source)
+
+
+def test_each_original_is_checked_once_across_the_fallback_attempts(tmp_path: Path) -> None:
+    """The annotated, all-``Any`` and bare attempts compare against one original."""
+    path = tmp_path / "m.py"
+    source = textwrap.dedent("""
+            def first(value: int) -> int:
+                total = value * 2
+                text = str(total)
+                return len(text.strip()) + 1
+
+            def second(value: int) -> int:
+                total = value * 2
+                text = str(total)
+                return len(text.strip()) + 2
+            """)
+    path.write_text(source)
+    oracle = _CountingOracle()
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+    )
+    proposals = engine.analyze_file(str(path))
+    result = engine.apply_refactoring(str(path), proposals[0])
+    assert "-> Any" in result, "the annotated attempt failed and the all-Any one was kept"
+    assert oracle.checks[source] == 1
 
 
 def test_thunk_arguments_get_callable_annotations(tmp_path: Path) -> None:

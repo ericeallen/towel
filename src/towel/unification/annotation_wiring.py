@@ -228,19 +228,28 @@ class HelperAnnotationWiring(EngineState):
         variant.required_imports = ()
         return variant
 
-    def _introduces_type_errors(self, modified_files: Dict[str, str]) -> bool:
+    def _introduces_type_errors(
+        self,
+        modified_files: Dict[str, str],
+        errors_before: Optional[Dict[str, "Counter[str]"]] = None,
+    ) -> bool:
         """Whether the checker reports an error in a modified file that its original lacks.
 
         Messages are compared without positions, as multisets, so errors the
         project already has do not count and moved lines do not confuse it.
+        ``errors_before`` remembers each original's errors across the attempts
+        at one proposal, which all compare against the same files on disk.
         """
         if self.type_oracle is None:
             raise RefactoringError("Type checking was requested without a type oracle")
+        remembered = {} if errors_before is None else errors_before
         for path, after_source in modified_files.items():
             before_source = self._read_source(path)
             if before_source is None or before_source == after_source:
                 continue
-            before = Counter(self.type_oracle.check(path, before_source))
+            before = remembered.get(path)
+            if before is None:
+                before = remembered[path] = Counter(self.type_oracle.check(path, before_source))
             after = Counter(self.type_oracle.check(path, after_source))
             new = after - before
             if new:
