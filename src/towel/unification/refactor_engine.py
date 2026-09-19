@@ -30,6 +30,7 @@ from dataclasses import dataclass
 import os
 import re
 from typing import (
+    Set,
     Any,
     Callable,
     List,
@@ -63,7 +64,7 @@ from .progress import (
 from .parallel import ParallelEvaluation
 from .bounded_cache import BoundedCache
 from .engine_state import ClusteredSite, ClusterKey, ClusterScanKey, GuardKey
-from .defaults import DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
+from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
 from .import_graph import ImportGraphCache
@@ -100,6 +101,13 @@ class _FunctionBuckets:
     def keys(self) -> FrozenSet[BlockBucketKey]:
         return frozenset(self.by_key)
 
+    def without(self, keys: FrozenSet[BlockBucketKey]) -> "_FunctionBuckets":
+        """These buckets less the given keys; the per-block key list keeps its positions."""
+        return _FunctionBuckets(
+            self.block_keys,
+            {key: members for key, members in self.by_key.items() if key not in keys},
+        )
+
 
 def _bucketed(blocks: Sequence[_SignedBlock]) -> _FunctionBuckets:
     """Group a function's signed blocks by bucket key; each bucket keeps block order."""
@@ -108,6 +116,47 @@ def _bucketed(blocks: Sequence[_SignedBlock]) -> _FunctionBuckets:
     for key, block in zip(block_keys, blocks):
         by_key.setdefault(key, []).append(block)
     return _FunctionBuckets(block_keys, by_key)
+
+
+def _buckets_over_budget(
+    buckets: Sequence[_FunctionBuckets], budget: int
+) -> FrozenSet[BlockBucketKey]:
+    """The bucket keys to leave out so the projected pair count fits the budget.
+
+    A bucket key groups blocks with one statement-type sequence, and only
+    blocks in one bucket pair, so the pairs the loop will form are, per
+    key, the pairs among all its blocks less the pairs within one function.
+    Keys are dropped largest first until the rest fit; each dropped key is
+    named in a warning, since its blocks will not be proposed.
+    """
+    if budget <= 0:
+        return frozenset()
+    across: Dict[BlockBucketKey, int] = {}
+    within: Dict[BlockBucketKey, int] = {}
+    for bucket in buckets:
+        for key, members in bucket.by_key.items():
+            count = len(members)
+            across[key] = across.get(key, 0) + count
+            within[key] = within.get(key, 0) + count * (count - 1) // 2
+    projected = {key: total * (total - 1) // 2 - within[key] for key, total in across.items()}
+    remaining = sum(projected.values())
+    if remaining <= budget:
+        return frozenset()
+    dropped: Set[BlockBucketKey] = set()
+    for key, pairs in sorted(projected.items(), key=lambda item: item[1], reverse=True):
+        if remaining <= budget:
+            break
+        dropped.add(key)
+        remaining -= pairs
+    LOG.warning(
+        "%d candidate pairs exceed the budget of %d; leaving out %d bucket(s) holding %d "
+        "similar blocks (raise --max-pairs or --min-lines to change this)",
+        sum(projected.values()),
+        budget,
+        len(dropped),
+        sum(across[key] for key in dropped),
+    )
+    return frozenset(dropped)
 
 
 class _PairingProgress:
@@ -197,6 +246,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         snippet_formatter: Optional[Callable[[str], str]] = None,
         file_finisher: Optional[Callable[[str, str], str]] = None,
         incremental_global_passes: bool = True,
+        max_candidate_pairs: int = DEFAULT_MAX_CANDIDATE_PAIRS,
         settings: Optional[Settings] = None,
     ):
         """
@@ -207,6 +257,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 candidate needing more is rejected (default: 5).
             min_lines: Minimum number of source lines a duplicated block must span
                 to be considered (default: 3).
+            max_candidate_pairs: Most block pairs one analysis evaluates. Blocks
+                are quadratic in a function's length and pairs quadratic in
+                blocks, so a file of many long, similar functions can propose
+                tens of millions of pairs and exhaust memory; past the budget the
+                largest buckets of similar blocks are left out, with a warning
+                (default: 2,000,000).
             parameterize_constants: Whether differing constants across the matched
                 blocks become helper parameters (default: True).
             prefer_absolute_imports: For a cross-file helper, prefer an absolute
@@ -268,6 +324,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._source_lines_cache: Dict[str, Tuple[Tuple[int, int, int], Tuple[str, ...]]] = {}
         self.max_parameters = max_parameters
         self.min_lines = min_lines
+        self.max_candidate_pairs = max_candidate_pairs
         self.skip_trivial_helpers = skip_trivial_helpers
         self.reuse_existing_functions = reuse_existing_functions
         self.annotate_helpers = annotate_helpers
@@ -670,6 +727,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._record_function_paths(all_functions)
         blocks = [self._signed_blocks(entry.node) for entry in all_functions]
         buckets = [_bucketed(function_blocks) for function_blocks in blocks]
+        excluded = _buckets_over_budget(buckets, self.max_candidate_pairs)
+        if excluded:
+            buckets = [bucket.without(excluded) for bucket in buckets]
         total_funcs = len(all_functions)
         reporter = _PairingProgress(
             progress, (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0

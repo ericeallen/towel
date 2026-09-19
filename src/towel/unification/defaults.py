@@ -22,3 +22,6 @@ DEFAULT_MIN_LINES = 3
 
 DEFAULT_MAX_ITERATIONS = 0
 """Applied refactorings after which a driver stops; zero runs to a fixed point."""
+
+DEFAULT_MAX_CANDIDATE_PAIRS = 2_000_000
+"""Candidate block pairs an analysis evaluates before it starts leaving buckets out."""

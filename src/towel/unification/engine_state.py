@@ -151,6 +151,9 @@ class EngineState:
     min_lines: int
     """Minimum source lines a duplicated block must span."""
 
+    max_candidate_pairs: int
+    """Candidate pairs an analysis evaluates before it leaves the largest buckets out."""
+
     extractor: HygienicExtractor
     """Renders helpers and call sites."""
 

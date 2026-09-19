@@ -41,7 +41,12 @@ from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
 from towel.unification.models import GENERATED_HELPER_NAME, ParameterKind
-from towel.unification.defaults import DEFAULT_MAX_ITERATIONS
+from towel.unification.defaults import (
+    DEFAULT_MAX_CANDIDATE_PAIRS,
+    DEFAULT_MAX_ITERATIONS,
+    DEFAULT_MAX_PARAMETERS,
+    DEFAULT_MIN_LINES,
+)
 from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
 
 
@@ -256,6 +261,7 @@ Examples:
         metavar="N",
         help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
     )
+    _add_tuning_flags(parser)
 
     parser.add_argument(
         "--types",
@@ -281,6 +287,34 @@ Examples:
     _add_progress_flag(parser)
 
 
+def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
+    """The engine knobs the dry and preview commands share."""
+    parser.add_argument(
+        "--min-lines",
+        type=_count,
+        default=DEFAULT_MIN_LINES,
+        metavar="N",
+        help=f"Fewest source lines a duplicated block may span (default: {DEFAULT_MIN_LINES})",
+    )
+    parser.add_argument(
+        "--max-parameters",
+        type=_count,
+        default=DEFAULT_MAX_PARAMETERS,
+        metavar="N",
+        help=f"Most parameters an extracted helper may take (default: {DEFAULT_MAX_PARAMETERS})",
+    )
+    parser.add_argument(
+        "--max-pairs",
+        type=_count,
+        default=DEFAULT_MAX_CANDIDATE_PAIRS,
+        metavar="N",
+        help=(
+            "Most candidate block pairs one analysis evaluates; past it the largest groups of "
+            f"similar blocks are left out with a warning (default: {DEFAULT_MAX_CANDIDATE_PAIRS})"
+        ),
+    )
+
+
 def _add_progress_flag(parser: argparse.ArgumentParser) -> None:
     """Add ``--progress``, shared by the commands that analyze a project."""
     parser.add_argument(
@@ -301,6 +335,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     )
 
     parser.add_argument("target", help="File or directory to analyze")
+    _add_tuning_flags(parser)
     _add_progress_flag(parser)
 
     _add_import_layout_flags(parser)
@@ -605,6 +640,9 @@ class DryOptions:
     output: str
     interactive: bool
     max_refactorings: int
+    min_lines: int
+    max_parameters: int
+    max_pairs: int
     progress: ProgressMode
     types: bool
     format: bool
@@ -619,6 +657,9 @@ class DryOptions:
             output=str(args.output),
             interactive=bool(args.interactive),
             max_refactorings=int(args.max_refactorings),
+            min_lines=int(args.min_lines),
+            max_parameters=int(args.max_parameters),
+            max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
             types=bool(args.types),
             format=bool(args.format),
@@ -633,6 +674,9 @@ class PreviewOptions:
     """What ``towel preview`` was asked to do."""
 
     target: str
+    min_lines: int
+    max_parameters: int
+    max_pairs: int
     progress: ProgressMode
     prefer_absolute_imports: Optional[bool]
     pep420: Optional[bool]
@@ -641,6 +685,9 @@ class PreviewOptions:
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
         return cls(
             target=str(args.target),
+            min_lines=int(args.min_lines),
+            max_parameters=int(args.max_parameters),
+            max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
             prefer_absolute_imports=args.prefer_absolute_imports,
             pep420=args.pep420,
@@ -703,8 +750,9 @@ def _run_dry(args: argparse.Namespace) -> None:
             )
 
     engine = UnificationRefactorEngine(
-        max_parameters=5,
-        min_lines=3,
+        max_parameters=options.max_parameters,
+        min_lines=options.min_lines,
+        max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,
         prefer_absolute_imports=options.prefer_absolute_imports,
@@ -862,8 +910,9 @@ def _run_preview(args: argparse.Namespace) -> None:
         LOG.warning("An interrupted transaction is pending; recover it first: %s", journal)
 
     engine = UnificationRefactorEngine(
-        max_parameters=5,
-        min_lines=3,
+        max_parameters=options.max_parameters,
+        min_lines=options.min_lines,
+        max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,
         prefer_absolute_imports=options.prefer_absolute_imports,

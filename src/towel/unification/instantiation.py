@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import ast
 import copy
-from typing import Dict, List, Mapping, Optional, Sequence, Set, cast
+from weakref import WeakKeyDictionary
+from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple, cast
 
 from .bounded_cache import BoundedCache
 from .semantic_safety import bound_names, walk_own_scope
@@ -54,6 +55,72 @@ def instantiation_mismatch(
     declarations at the start of the body and ``returns_variables`` states
     whether the extractor appended a return of the block's live variables.
     """
+    key = (
+        _helper_dump(helper),
+        ast.dump(call_statement, include_attributes=False),
+        structural_id(block),
+        tuple(sorted(template_renames.items())),
+        tuple(sorted(block_renames.items())),
+        preamble_length,
+        returns_variables,
+    )
+    known = _VERDICTS.get(key)
+    if known is not None:
+        return known.verdict
+    verdict = _instantiation_mismatch(
+        helper,
+        call_statement,
+        block,
+        template_renames,
+        block_renames,
+        preamble_length=preamble_length,
+        returns_variables=returns_variables,
+    )
+    _VERDICTS.put(key, _Verdict(verdict))
+    return verdict
+
+
+class _Verdict(NamedTuple):
+    """A memoized verdict; the wrapper lets ``None`` (no mismatch) be a cache hit."""
+
+    verdict: Optional[str]
+
+
+_VERDICTS: BoundedCache[
+    Tuple[str, str, str, Tuple[Tuple[str, str], ...], Tuple[Tuple[str, str], ...], int, bool],
+    _Verdict,
+] = BoundedCache(65_536)
+"""Verdicts by everything the check depends on.
+
+Every pair renders a helper and checks it against each of its blocks, and
+the same helper meets the same block through every pair the block forms;
+on fifty near-identical functions the check ran 12,200 times for 101
+distinct inputs. The helper's dump is memoized per node below, the block's
+form by structure, so a re-parse hits too.
+"""
+
+_HELPER_DUMPS: "WeakKeyDictionary[ast.FunctionDef, str]" = WeakKeyDictionary()
+
+
+def _helper_dump(helper: ast.FunctionDef) -> str:
+    known = _HELPER_DUMPS.get(helper)
+    if known is None:
+        known = ast.dump(helper, include_attributes=False)
+        _HELPER_DUMPS[helper] = known
+    return known
+
+
+def _instantiation_mismatch(
+    helper: ast.FunctionDef,
+    call_statement: ast.stmt,
+    block: Sequence[ast.stmt],
+    template_renames: Mapping[str, str],
+    block_renames: Mapping[str, str],
+    *,
+    preamble_length: int,
+    returns_variables: bool,
+) -> Optional[str]:
+    """See ``instantiation_mismatch``; this computes it."""
     call = _extract_call(call_statement, helper.name)
     if call is None:
         return "call shape"
