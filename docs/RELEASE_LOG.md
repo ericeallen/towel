@@ -1,8 +1,38 @@
 # Release Log
 
-This log records notable repository states with all tests passing, to make it easy to revert or audit changes.
+This log records notable repository states and the scope of their validation.
+A historical passing result applies to its recorded commit and test environment.
 
-## 2026-09-19 (release candidate)
+## 2026-09-19 (current 1.732 release candidate)
+
+- Version: 1.732, beta; not tagged or published.
+- Runtime: `1d246075`; validated source: `d4c9001`. The intervening changes
+  affect tests and the ecosystem harness; the runtime remains unchanged.
+- Audit fixes: generic binding scopes, builtin shadowing, import order,
+  renaming safety, checker ownership and whole-project verification, and
+  progress after rendering or verification refusals. See the
+  [changelog](../CHANGELOG.md#1732---unreleased) for the full release summary.
+- Type policy: an available checker must accept the complete original project
+  before output copying. Existing errors require repair or explicit
+  `--no-types`; infrastructure failure remains a distinct error. Clean
+  projects retain verification of prospective changes and unchanged consumers.
+- Validation at `d4c9001`: 2,526/2,537/2,537 passing tests on Python
+  3.11/3.12/3.13, 34 subtests each, 11 PEP 695 skips on 3.11, and 93% coverage;
+  no warnings. Black, Flake8, strict mypy, Bandit and lockfile checks passed.
+- Consumer evidence: 119 `PASS`, 19 `NO_CHANGE`, and three `BROKEN_KNOWN`
+  across 141 entries in explicit `--no-types` mode. This combines the complete
+  r6 run with three corrected-environment runs for Cheroot, PLY, and SimPy;
+  the original failed baselines remain preserved. Matching outcomes can retain
+  upstream failures. The default typed path has separate integration coverage.
+  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)
+  distinguishes this evidence from older corpus runs.
+- Exact artifact hashes and wheel/source installation-check results are
+  retained in the accompanying September 19 audit evidence archive.
+  Publication remains a separate maintainer decision.
+
+---
+
+## 2026-09-19 (historical 1.732 candidate checkpoints)
 
 - Version: 1.732 (in preparation; not tagged or published)
 - Development status: Beta (PyPI classifier `4 - Beta`)

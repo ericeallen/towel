@@ -50,6 +50,12 @@ installed; `--no-format` and `--no-types` turn either off. A duplicate that is
 the whole body of an existing function is not extracted: the other copies
 call that function.
 
+When a type checker is available, Towel checks the complete original project
+before creating output. If it reports existing errors, fix them or rerun the
+same command with `--no-types`. That option preserves existing source
+annotations and leaves new helpers unannotated. See
+[How helpers get their types](../README.md#how-helpers-get-their-types).
+
 ## 3. Give the helpers real names (optional, LLM-assisted)
 
 ```bash

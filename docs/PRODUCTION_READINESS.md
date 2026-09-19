@@ -1,23 +1,98 @@
 # Production readiness
 
-**The ecosystem results below describe earlier candidate `347d62b`.**
-Subsequent pre-release audit fixes change semantics, renaming and checker
-verification; the earlier corpus result is not validation of those changes.
-The current candidate requires its own release gates before publication.
+**1.732 remains a beta release candidate, not a published release.** The
+runtime is frozen at `1d246075`; validated source `d4c9001` adds test and
+ecosystem-harness corrections after that runtime. The runtime remains unchanged.
+The current evidence below is separate from the historical 1.732 and 1.414
+runs retained later in this report. Passing the sampled tests does not
+establish equivalence for arbitrary Python programs; review generated changes
+and the [known limitations](KNOWN_LIMITATIONS.md).
 
-**Historical disposition: ready for production use as a reviewed refactoring tool.**
-Every accepted proposal is checked by a syntactic instantiation invariant,
-arguments with possible effects are evaluated inside the helper at their
-original position, and a standing 141-project ecosystem check compares each
-project's own test suite before and after transformation. Outcomes match,
-including any pre-existing failures, apart from 4 documented frame-, line-,
-or source-sensitive cases. This supersedes
-the alpha disposition in [OPEN_SOURCE_AUDIT.md](OPEN_SOURCE_AUDIT.md). The
-first section below records the 1.732 release-candidate run; the next
-records how the corpus grew to 141 projects and what that run found; the
-sections after it are the 1.414 report.
+## Current 1.732 validation (September 19, 2026)
 
-## The 1.732 candidate run (September 19, 2026)
+The completed source matrix at `d4c9001` recorded:
+
+| Python | Passed | Skipped | Subtests passed | Coverage |
+|---|---:|---:|---:|---:|
+| 3.11 | 2,526 | 11 | 34 | 93% |
+| 3.12 | 2,537 | 0 | 34 | 93% |
+| 3.13 | 2,537 | 0 | 34 | 93% |
+
+The 3.11 skips exercise PEP 695 syntax that requires Python 3.12 or later.
+All three runs completed without warnings. Black, Flake8, strict mypy, Bandit,
+and the lockfile check also passed. Commands, tool versions and full logs are
+retained in the accompanying September 19 audit evidence archive.
+
+The audit fixes cover generic binding scopes and builtin shadowing, ordered
+imports, helper renaming, checker isolation and cleanup, coherent project
+verification, and termination after permanent application refusals. The
+[1.732 changelog](../CHANGELOG.md#1732---unreleased) records the changes and
+their regressions; type-parameter inference remains deferred.
+
+The 141-project consumer evidence requests `--no-types` explicitly. Its
+manifest installs runtime test dependencies, not each project's complete
+configured typing environment. It measures consumer behavior in that mode;
+it does not establish that these projects pass Towel's default typed path.
+
+The complete **r6** run recorded 117 `PASS`, 19 `NO_CHANGE`, three
+`BROKEN_KNOWN`, and two `BASELINE_ERROR` outcomes, and correctly exited with
+failure. Cheroot lacked declared test plugins; PLY's test command changed
+directories and invalidated its relative import path. A third environment
+correction supplies SimPy's declared benchmark fixture, allowing ten test
+bodies that previously errored to run. Separate complete before/refactor/after
+runs of these three projects used the same Towel runtime and upstream pins.
+The combined coverage is **119 `PASS`, 19 `NO_CHANGE`, and three
+`BROKEN_KNOWN`**, covering all 141 entries. This is the initial full run plus
+three corrected-environment runs, not a replacement of the original records.
+
+PLY passes all 73 tests on both sides. Cheroot retains the same 30 failures
+among 216 tests; SimPy retains the same two benchmark assertion failures among
+151 tests. These `PASS` comparisons mean matching outcomes, not clean upstream
+suites. Bottle's initial differing outcome was independently checked with three
+paired complete-suite reruns, all 363 tests passing on both sides each time.
+The three documented known limitations concern glom, Lark, and pyparsing's
+frame, traceback, or generated-source observations. A `NO_CHANGE` result does
+not validate a transformation.
+
+The frozen r6 producer predates the final harness corrections. Independent
+adjudication checks complete outcomes, exact failure identities, conserved test
+counts, full-suite confirmation after isolated agreement, and actual changed
+source files. The audit archive retains original and supplemental reports,
+source hashes, commands, exit statuses, and complete logs separately.
+
+The typed path has separate integration coverage. With an available checker,
+Towel checks the complete original project before inference or output copying.
+Existing errors abort with diagnostics and a request to fix them or explicitly
+use `--no-types`; checker crashes and timeouts remain distinct failures.
+A clean baseline stays active while all prospective changes are checked with
+unchanged consumers, including copied outputs and calls to existing functions.
+Reused signatures are preserved. The harness never silently retries a typed
+refusal with checking disabled.
+
+A separate positive typed-consumer check used Tomli at
+`5a77b12a7a9f052ce5a20c335d2825658f6aea52`, Python 3.13.7, and its declared
+mypy 1.19.1 in an isolated environment. Towel accepted the complete original
+baseline; independent configured mypy checks passed before and after two
+actual extractions. Both helpers have concrete annotations without `Any`,
+and all 36 existing parser signatures are unchanged. Tomli's full unittest
+command passed before and after: 18 methods with one Python 3.15-only skip,
+including 228 valid and 505 invalid TOML parsing cases. This was a bounded
+two-extraction run, not a full fixed point; optional formatters were absent.
+The accompanying audit evidence retains the environment, source comparison,
+fixture inventory, and complete logs. This supplements the typed integration
+tests without extending the r6 corpus's typing claims.
+
+Exact wheel and source-distribution hashes and their installation-check
+results are retained in the accompanying audit evidence, separately from
+these source-gate results. Publication remains a separate maintainer decision.
+
+## Historical 1.732 candidate run (September 19, 2026)
+
+The reported totals below belong to `347d62b`, before the later audit fixes.
+They are preserved as historical evidence, not as results for the current
+candidate. The older harness could accept incomplete or unrecognized test
+runs; its recorded verdicts have not been retroactively reclassified under
+the stricter current gate.
 
 The release gate for 1.732 ran on commit `347d62b` from a detached
 worktree snapshot, macOS, Python 3.13.7 for the harness, the refactoring
@@ -86,10 +161,10 @@ one core, the defaults).
 
 The subsequent timing-only changes, through the reviewed `83f4d8a` checkpoint,
 left the exactness baselines byte-identical, and click and jinja2 produced
-identical output with and without the last of them. The later audit fixes
-require fresh behavioral validation, as noted above.
+identical output with and without the last of them. The current validation
+above records the later audit fixes separately from these historical timing checks.
 
-## The 141-project corpus (September 17–18, 2026)
+## Historical 141-project corpus (September 17–18, 2026)
 
 On September 17, 2026 the corpus grew from 91 to 141 projects: 47 more
 libraries (mistune, blinker, pycparser, invoke, python-fire, bottle,
@@ -593,7 +668,7 @@ projects found no defect and the stopping rule is met.
 - Performance with the defaults: the 5,000-line `more.py` reaches a fixed
   point in 23 s. See KNOWN_LIMITATIONS.md for package-level timings.
 
-## Not done here
+## Historical 1.414 limitations and outstanding work
 
 - Hosted Linux CI has not run; the workflow is unchanged and local runs are
   macOS. Run it against the published commit before citing it.

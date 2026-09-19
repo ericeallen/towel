@@ -102,7 +102,7 @@ Start with fresh module-level helpers, fixed positional parameters, and a single
 returned value. Infer at most one new constrained type parameter, with at most
 four concrete alternatives, in the first implementation. Keep these limits
 explicit and deterministic; extend them only with evidence from useful examples.
-Keep a concrete signature when it already verifies. Otherwise try the bounded
+Keep a concrete signature when it already verifies. Otherwise try the constrained
 generic candidate before the existing `Any` or bare-helper fallback variants.
 
 1. Preserve the existing syntactic and semantic extraction checks. Type inference

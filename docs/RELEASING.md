@@ -1,10 +1,25 @@
 # Preparing a release
 
-The latest release is `1.618`, published to PyPI on September 17, 2026; `1.414` preceded it on September 15 (the first release after the production-readiness pass recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)). The next release is `1.732` (not yet tagged; `pyproject.toml` already carries the number). It carries everything under `[1.732]` in [CHANGELOG.md](../CHANGELOG.md): reuse of an existing function for whole-body duplicates, formatting of generated code with the project's formatter, type annotations on helpers verified by the project's type checker, the `format` and `types` extras, the paired command-line options, the candidate-pair budget and the block-size and parameter-limit options on the command line, the once-read settings, per-batch transaction journals, orderly SIGTERM and Ctrl-C handling, the rebuilt eager-argument rule and the module-name rule (a same-module helper reads module-level names bare), the restructured engine with its performance work, the exact incremental global passes, and the fixes the 141-project ecosystem run found. The ecosystem gate was rerun on the candidate (`347d62b`, September 19, 2026: 118 PASS, 19 NO_CHANGE, 4 BROKEN_KNOWN, 0 BROKEN); rerun it again if the engine changes before tagging. Preparing artifacts does not authorize uploading them, changing repository visibility, creating remote tags, or contacting users. Publication is a separate maintainer decision.
+The recorded latest release is `1.618` (September 17, 2026). Version `1.732`
+is in preparation and is not tagged or published. Its
+[changelog](../CHANGELOG.md#1732---unreleased) summarizes reuse of existing
+functions, optional formatting and typing, larger-project controls, and the
+pre-release audit fixes. Runtime `1d246075` and validated source
+`d4c9001` are distinguished from earlier candidates in the
+[readiness report](PRODUCTION_READINESS.md).
+
+The `347d62b` report of 118 PASS, 19 NO_CHANGE and 4 BROKEN_KNOWN among
+141 projects is historical. Current coverage combines the complete r6 run
+with corrected-environment runs for Cheroot, PLY, and SimPy: 119 `PASS`,
+19 `NO_CHANGE`, and three `BROKEN_KNOWN`. Its explicit `--no-types` mode and
+composite scope must accompany every summary; matching upstream failures are
+retained in the evidence. Preparing artifacts does not authorize uploading
+them, changing repository visibility, creating remote tags, or contacting users.
+Publication is a separate maintainer decision.
 
 ## Recorded release history
 
-Checked on September 12, 2026:
+Recorded during September 2026; verify current remote state before publication:
 
 - [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026) and `1.618` (September 17, 2026) are published and not yanked; neither may be rebuilt or replaced. Publish the next release as a new version.
 - The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
@@ -14,7 +29,41 @@ Recheck live version availability immediately before publishing. The proposed ve
 
 ## Local evidence required
 
-Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`. Run the commands documented in the README (`just ci` runs the same set): formatting, lint, typing, Bandit, the dependency audit (`just audit-dependencies`, described below), the full tests, the unconditional 85% coverage gate (`coverage combine` before the report), and a wheel/source build. Repeat the full tests and coverage on every supported interpreter, currently Python 3.11–3.13. If dependencies or the `format`/`types`/`dev` extras changed, refresh `uv.lock` (`uv lock`) and commit it before the `--frozen` runs. Run the ecosystem check from a committed snapshot of the candidate (`--towel-src` pointing at a detached worktree), since the harness imports Towel's source live for the whole run; it executes the manifest's projects with your privileges, so run `just ecosystem --run-untrusted-code` only on a disposable machine or container, and refresh the manifest's pinned commits (`--print-pins`) only after reviewing them.
+Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`.
+Run `just ci`: formatting, lint, typing, Bandit, the dependency audit, full tests,
+coverage with the unconditional 85% gate, and a wheel/source build. Repeat the
+full tests and coverage on Python 3.11–3.13, combining coverage before each
+report. If dependencies or extras changed, review and commit the refreshed
+`uv.lock` before the frozen runs. Record the candidate commit, commands,
+interpreter/tool versions, exit statuses, and retained evidence paths.
+
+### Consumer and typing evidence
+
+Run the ecosystem harness from a committed snapshot (`--towel-src` names that
+snapshot's `src` directory). The harness imports it throughout the run, so do
+not change that source while it executes. It runs third-party setup and tests
+with your privileges; use a disposable machine or container and the explicit
+`--run-untrusted-code` opt-in. Refresh upstream pins only after reviewing them.
+
+The manifest provides runtime test environments. For the behavioral release
+corpus, explicitly pass `--no-types` to the harness and record its `typing_mode`
+alongside the verdict counts. A completed consumer run in that mode is not
+evidence that the same projects have clean default typing baselines. Do not
+reinterpret a typed refusal as NO_CHANGE or silently rerun it without types.
+
+Verify the default policy separately: dirty original projects abort before
+copying, checker failure is distinct, explicit `--no-types` preserves existing
+source annotations, and clean originals retain prospective project checks,
+including unchanged consumers, copied outputs, and existing-function reuse.
+
+Only completed, nonempty test runs qualify for an accepted corpus verdict.
+Preserve baseline failures and failing-test identities; investigate setup,
+collection, typing-precondition, timeout, and unrecognized-run failures.
+Matching isolated retests also require full-suite confirmation with the
+original test count. Known failures cannot justify missing tests. Retain the
+pinned manifest, requested typing mode, per-phase exit statuses, complete before/after
+and retest logs, changed-file records, and the final machine-readable report.
+A no-change project provides no evidence about transformed behavior.
 
 ### Dependency audit
 

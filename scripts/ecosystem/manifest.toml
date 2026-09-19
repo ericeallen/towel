@@ -939,7 +939,7 @@ rev = "9d7c40099e23ff78f9d86ef69a26c1e8a83e706a"
 package = "src/ply"
 pythonpath = "src"
 # The test modules call unittest.main() at import time, so run them as scripts.
-test = ["sh", "-c", "cd tests && {python} testlex.py && {python} testyacc.py"]
+test = ["sh", "-c", "{python} tests/testlex.py && {python} tests/testyacc.py"]
 
 [[project]]
 name = "inflect"
@@ -1056,6 +1056,7 @@ url = "https://gitlab.com/team-simpy/simpy.git"
 rev = "f43816490c6f76f336ad6e457d3cab9f386894af"
 package = "src/simpy"
 pythonpath = "src"
+deps = ["pytest-benchmark"]
 install = true
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
 
@@ -1080,7 +1081,7 @@ name = "cheroot"
 url = "https://github.com/cherrypy/cheroot.git"
 rev = "edef8ff8629022408a9dc7a77484c3c4ea295829"
 package = "cheroot"
-deps = ["jaraco.functools", "more-itertools", "jaraco.text", "jaraco.context", "pytest-mock", "requests", "requests-toolbelt", "requests-unixsocket", "portend", "pypytools", "jaraco.functools", "pyopenssl", "trustme"]
+deps = ["jaraco.functools", "more-itertools", "jaraco.text", "jaraco.context", "pytest-mock", "requests", "requests-toolbelt", "requests-unixsocket", "portend", "pypytools", "jaraco.functools", "pyopenssl", "trustme", "pytest-cov", "pytest-xdist", "pytest-rerunfailures", "chardet"]
 exclude = ["test"]
 timeout = 3600
 

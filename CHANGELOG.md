@@ -405,6 +405,9 @@ Changes since 1.618. This release is still in preparation.
   Git observations cannot become `NO_CHANGE`, and added, deleted, or renamed
   paths count as changes. Source provenance names the checkout actually used;
   archives explicitly require a separately retained source manifest.
+  The corpus manifest supplies Cheroot's declared test plugins and SimPy's
+  benchmark fixture, and runs PLY's test scripts from the project root so each
+  suite imports the source tree under test.
   The harness records its requested typing mode. Its explicit `--no-types`
   option supports behavioral validation of projects without a complete typing
   environment; it never retries a failed typed run by silently opting out.
