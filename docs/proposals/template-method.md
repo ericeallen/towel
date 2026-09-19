@@ -85,8 +85,10 @@ does not need, and each must be decided, not assumed:
 
 ## Why it is worth doing
 
-The self-run is the evidence: of the eighteen proposals Towel makes on its
-own source after the audit, at least ten are visitor pairs of this kind.
+The self-run is the evidence: of the eighteen proposals Towel made on its
+own source of 2026-09-18, after the audit (a fixed-point `towel dry
+src/towel` applies fifteen at `5ff2458`, September 19, 2026), at least ten
+were visitor pairs of this kind.
 Real projects are full of visitor, handler, and strategy hierarchies where
 the shape repeats across sibling classes. Today those duplications are
 either left (the trivial-helper filter and the reviewer's judgment decline

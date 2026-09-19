@@ -5,7 +5,9 @@ on arrow (10k lines); item 1 applied the same day, items 2 to 5 in the days
 after (see *Done since*, at the end). The Rust question is answered by the
 recorded decision rule, not by this document. Function names below are as
 they were when measured; `_find_block_pairs_multi_file` is now
-`find_block_pairs` and `has_orphaned_variables` is `orphaned_variables`.
+`find_block_pairs`, `has_orphaned_variables` is `orphaned_variables`,
+`get_bound_variables_in_context` is `bound_variables_in_context`, and
+`is_value_producing` is the engine's memoized `_is_value_producing`.
 
 ## Where the time goes
 
@@ -115,10 +117,12 @@ editor-latency becomes a goal. A compiled tree walker removes the traversal
 share, but most of that traversal is the repeated work items 2 to 4
 eliminate exactly, so the Rust figure must be re-measured after them.
 The baseline for the rule when this was written: 16k lines in 6 s forked
-(15 s serial); by 2026-09-18 the serial figure is 5.6 s without the type
-checker and formatter and 9.0 s with them (docs/KNOWN_LIMITATIONS.md);
-corpus worst cases networkx about 6 min and Sphinx about 340 s of serial
-initial analysis.
+(15 s serial); at `5ff2458` (September 19, 2026, Apple M5 Max,
+`TOWEL_WORKERS=1`, Python 3.12) the serial `towel dry` figure on that
+day's 22,690-line source, 15 applied, is 8.4 s without the type checker
+and formatter and 11.9 s with them (docs/KNOWN_LIMITATIONS.md); corpus
+worst cases networkx about 6 min and Sphinx about 340 s of serial initial
+analysis.
 
 ## Done since (2026-09-18)
 
@@ -127,4 +131,14 @@ statement rather than once per block (`statement_facts.py`,
 `structural_memo.py`, the weak per-node memos), keys every id-keyed cache
 through one `BoundedCache`, re-pairs only changed files in later global
 passes, and clusters returning helpers as well as non-returning ones. The
-CHANGELOG's `[Unreleased]` section records each step with its measurement.
+clustering scan of a file runs once per distinct template rather than once
+per pair. Pair evaluation keeps one proposal per identity (helper body,
+home and sites) and declines the rest as `duplicate_proposal`: sixty
+near-identical 38-line functions under `--max-pairs 200000` peaked at
+33.6 GB before and 0.74 GB after (`1db56a1`). The candidate-pair budget
+(`--max-pairs`, 2,000,000 by default) leaves out the largest groups of
+similar blocks with a warning when the projected pair count exceeds it,
+and the verdict of the instantiation check is memoized on the helper, the
+call and the block's structure. The CHANGELOG's `[Unreleased]` section
+records each step with its measurement; the current end-to-end figures are
+in docs/KNOWN_LIMITATIONS.md.

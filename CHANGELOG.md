@@ -7,7 +7,7 @@ ecosystem evidence behind each claim. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.732] - Unreleased
 
 ### Added
 - A duplicate that is the whole body of a plain module-level function now
@@ -32,8 +32,9 @@ ecosystem evidence behind each claim. The format follows
   declined instead (part of `skip_trivial_helpers`).
 - `towel dry` formats the code it inserts with the formatter the project
   configures (`pip install "code-towel[format]"`): `ruff format` when
-  `[tool.ruff]` (or `ruff.toml`) is present and ruff is installed, otherwise
-  Black with the project's own line length and string quoting. Only the
+  `[tool.ruff]`, `ruff.toml` or `.ruff.toml` is present and ruff is
+  installed, otherwise Black with the project's own line length and string
+  quoting. Only the
   generated helper and the rewritten call statements are formatted, never
   the surrounding file, and each snippet is checked to have the same syntax
   tree before and after. Inserted imports are sorted the way the project
@@ -60,8 +61,9 @@ ecosystem evidence behind each claim. The format follows
 - When a type checker is installed (`pip install "code-towel[types]"`), the
   argument expressions and return values those copied annotations could not
   name are typed by it. The checker is the one the project configures: mypy
-  for a project with `[tool.mypy]` or `mypy.ini`, pyright for one with
-  `[tool.pyright]` or `pyrightconfig.json`; for a project configuring both,
+  for a project with `[tool.mypy]`, `mypy.ini`, `.mypy.ini` or a `[mypy]`
+  section in `setup.cfg`, pyright for one with `[tool.pyright]` or
+  `pyrightconfig.json`; for a project configuring both,
   mypy infers while both verify the generated code, so the project's own
   check stays green. Pyright runs as a command on a temporary sibling copy
   of the module; mypy reveals each expression in an in-memory copy of the
@@ -130,6 +132,11 @@ ecosystem evidence behind each claim. The format follows
 - CI runs `pip-audit --strict` against the locked dependency set, and
   Dependabot proposes weekly, grouped minor/patch updates for the workflow
   actions and the `uv`-managed Python dependencies.
+- The candidate pairs an analysis evaluates are bounded by a configurable
+  candidate-pair budget (`--max-pairs`, default 2,000,000; past it the
+  largest groups of similar blocks are left out with a warning), and the
+  minimum block length (`--min-lines`) and helper parameter limit
+  (`--max-parameters`) are exposed on the command line.
 
 ### Changed
 - Boolean options come in `--x/--no-x` pairs with the default on:
@@ -175,8 +182,8 @@ ecosystem evidence behind each claim. The format follows
   to 1,400 and the 871-line pair decision is eleven typed stages. The
   outputs are byte-identical on the exactness baselines.
 - A second pass over the same seams: the per-block analyses are a
-  `BlockAnalysis` mixin of their own and the engine core is 700 lines; the
-  unifier is split the same way (`UnifierState` under constant consistency,
+  `BlockAnalysis` mixin of their own and the engine core is about 800 lines;
+  the unifier is split the same way (`UnifierState` under constant consistency,
   parameterization and literal promotion, with `Substitution` and the
   binding-context finder in leaf modules); every state stub names the class
   that implements it. The functions of an analysis are indexed once
@@ -248,17 +255,18 @@ ecosystem evidence behind each claim. The format follows
   once per distinct helper template instead of once per pair, and the
   reuse redirect finds a function whose body starts at a site through an
   index instead of scanning the file per replacement: 50 identical
-  functions took 17 s and 100 took 134 s before; re-measured with
-  `scripts/bench_similar_blocks.py` on September 18, 2026, one core of a
-  machine shared with other work, 50 take 6.8 s and 100 take 36 s, with
-  identical output. Orphan detection, the
-  instantiation check's normalized block and the class-private-name scan
-  are memoized on structure, so the re-parse after each applied proposal
-  hits too. The analysis session grows to the number of files an analysis
-  covers, so a project above 128 files no longer re-parses everything on
-  every pass (trio's second pass: 144 parses and 7.2 s, now none and
-  5.0 s). Both insertion-position parses go through the engine's parse
-  memo.
+  functions took 17 s and 100 took 134 s at 1.618, and 6.8 s and 36 s at
+  commit a0596f0 (September 18, 2026, one core of a machine shared with
+  other work); measured with `scripts/bench_similar_blocks.py` at commit
+  5ff2458 (September 19, 2026, one core), 50 take 4.0 s and 100 take
+  15.9 s, with identical output. Orphan detection, the instantiation
+  check's normalized block and the class-private-name scan are memoized
+  on structure, so the re-parse after each applied proposal hits too. The
+  analysis session grows to the number of files and the source bytes an
+  analysis covers, so a project above 128 files or 8 MiB of source no
+  longer re-parses everything on every pass (trio's second pass: 144
+  parses and 7.2 s, now none and 5.0 s). Both insertion-position parses
+  go through the engine's parse memo.
 - The AST visitors are built on three Template Method bases in
   `visitors.py`: `OwnScopeVisitor` for collectors that read one scope's own
   code, `DefinitionDepthVisitor` for those that track how deeply a
@@ -271,7 +279,8 @@ ecosystem evidence behind each claim. The format follows
   `is_cross_file`; `RefactoringProposal.replacements` holds `Replacement`
   values only, the tuple coercion is gone; the unused exception classes are
   gone and `UnsupportedLayoutError` joins `RefactoringError` under
-  `TowelError`; `towel.project_layout` is a top-level module (the old path
+  `TowelError` (and is still a `ValueError`); `towel.project_layout` is a
+  top-level module (the old path
   re-exports it); `is_package_dir` takes only the path, since whether a
   bare directory is a namespace package is the layout's decision.
 - Progress modes are a `ProgressMode` literal (`normalize_progress`,
@@ -319,11 +328,6 @@ ecosystem evidence behind each claim. The format follows
   narrowed or removed; the nine copies of `try/except/pass` around
   progress-bar calls are one `quietly`; four unjustified `type: ignore`
   comments and three `pragma: no cover` exclusions are gone.
-- The candidate pairs an analysis evaluates are bounded by a configurable
-  candidate-pair budget (`--max-pairs`, default 2,000,000; past it the
-  largest groups of similar blocks are left out with a warning), and the
-  minimum block length (`--min-lines`) and helper parameter limit
-  (`--max-parameters`) are exposed on the command line.
 - Pair evaluation keeps one proposal per distinct refactoring (the same
   helper over the same clustered sites, whichever pair found it first)
   instead of every pair's copy. A file of sixty near-identical functions
@@ -335,25 +339,41 @@ ecosystem evidence behind each claim. The format follows
   filter and annotation run on it; the clustering scan's key no longer
   carries names the template block never reads, which made it differ per
   function position; and the function lookup every clustered site makes is
-  memoized. A file of hundreds of near-identical functions that all read
-  one module global, which the module-name rule now admits, runs several
-  times faster than it otherwise would; its pair evaluation is still what
-  `--max-pairs` bounds.
+  memoized. The clustering scan cache is bounded by the sites it holds
+  (200,000) as well as by its entry count, since a scan of a file of a
+  thousand near-identical functions holds a thousand sites. Such a file,
+  which the module-name rule now admits where the module-data rule used to
+  decline every pair in seconds, is evaluated in full: a thousand
+  near-identical five-line functions reading one module global take 33
+  minutes on one core (commit `5ff2458`, September 19, 2026) and yield one
+  helper with 669 sites; its pair evaluation is what `--max-pairs` bounds.
 - The verdict of the instantiation check is memoized on the helper, call
   and block, which it repeated many times over across pair and cluster
-  evaluation: a file of a hundred similar functions takes 31 s instead of
-  43 s.
+  evaluation: a file of a hundred similar functions took 31 s instead of
+  43 s when the memo landed (commit 77d18a8); the current figure is in the
+  clustering entry above.
+- The `format` extra's Black floor is the version the goldens were
+  generated with (`black>=26.3.1`, the same floor as the `dev` extra); it
+  was two majors lower, so a user at the extra's floor could get output the
+  goldens do not show. The sdist no longer ships the `.templates` scratch
+  directory or two debugging scripts.
+- The help says what the commands do: usage lines read `towel`, each
+  boolean option's help names its default, the retired spellings are left
+  out, and `preview` no longer promises per-phase summaries under
+  `--progress detail`, which only the fixed-point driver emits.
 - The structural memo is keyed on a block's structure, so equal blocks share
   one entry wherever they appear.
 
 ### Deprecated
-- The `--max-iterations` and `rename-helpers --dry-run` spellings still
-  parse but are left out of the help; use `--max-refactorings` and
-  `--preview`.
+- The `--max-iterations`, `--non-interactive` and `rename-helpers
+  --dry-run` spellings still parse but are left out of the help; use
+  `--max-refactorings`, `--no-interactive` and `--preview`.
 
 ### Removed
 - `nominal_unifier.py`, which nothing imported, and the TOML backport for
   Python 3.10, below the supported floor, with its `tomli` dev dependency.
+- `ImportGraphCache.clear`, which nothing called: the cache is built per run
+  and dropped with the engine.
 
 ### Fixed
 - The eager-argument guard is rebuilt on control flow. Twelve shapes that
@@ -391,7 +411,9 @@ ecosystem evidence behind each claim. The format follows
   lambda's own parameters were counted as names the site could not resolve;
   that miscount also declined any thunk containing a lambda, such as
   `lambda: sorted(items, key=lambda x: x)`, which now extracts.
-- A comprehension variable is no longer thunked.
+- A comprehension's target shadows only its own expressions: `[i for i in
+  xs]` used to become `[__param_0() for i in xs]` while a free read of `i`
+  after the comprehension stayed literal.
 - The frame-reading builtins, `eval`/`exec`, `sys._getframe` and
   `inspect.currentframe` anywhere in the enclosing function decline the
   block, not only inside it, and their aliases, imported or assigned
@@ -407,7 +429,10 @@ ecosystem evidence behind each claim. The format follows
 - A helper import goes after the module's last leading import, before its
   first definition (after the docstring when there are no imports), so a
   script that runs a statement before its imports keeps that statement
-  first.
+  first. A host for a cross-file helper is accepted only when the borrower
+  already imports it or every module the new import would load is
+  definition-only, so a helper import cannot run a module that prints at
+  import time (`xf13_import_time_effects` is declined).
 - A form feed or a Unicode line separator in a source no longer crashes the
   splice: lines are counted the way the tokenizer counts them.
 - Async comprehensions are declined.
@@ -433,8 +458,7 @@ ecosystem evidence behind each claim. The format follows
   was passed eagerly on the assumption that a name has no failure mode,
   so a global the module never binds raised `NameError` at the call site
   where the original read it only in a branch it did not take. The first
-  two are declined; a bare name is hoisted only when the call site can
-  resolve it, and passed as a thunk otherwise.
+  two are declined; the third follows the shared-free-variable rule above.
 - Single-file `dry` on a file it cannot decode copied it and then stopped
   with a codec message naming nothing, and on a file with a syntax error
   reported success over an unchanged copy; both are an error naming the
@@ -474,8 +498,8 @@ ecosystem evidence behind each claim. The format follows
 - An isort skip setting, a failing or hung ruff, a hung pyright, and pyright
   output of an unexpected shape each degrade with a warning naming the file
   instead of aborting or being swallowed.
-- A non-integer `TOWEL_WORKERS` is reported, and a configured worker count
-  never reaches a platform without `fork`.
+- A non-integer or non-positive `TOWEL_WORKERS` is reported, and a
+  configured worker count never reaches a platform without `fork`.
 - A corrupt transaction manifest and a concurrent transaction are reported
   as the journal's own errors.
 - The engine forgets a rewritten file's cached lines when it invalidates
@@ -519,6 +543,48 @@ ecosystem evidence behind each claim. The format follows
   its target on that path. The returned-variable check relies on this; without
   it a helper could return a handler's name and raise `UnboundLocalError`
   where the original code did not.
+- With mypy, a union whose members the checker could not all order (some
+  verdicts unanswerable: A under B, B under C, C under A) let every member
+  absorb every other, emptied the union, and the join raised `IndexError`
+  (sphinx, after eighteen minutes of refactoring). A member now absorbs
+  another only on a definite `YES`, a normalization that would keep nothing
+  keeps the union as it was, and a join with no members writes no
+  annotation.
+- A function preceded by `@overload` stubs is a valid reuse target: the
+  reuse check verifies the last module-level definition of the name, which
+  is the runtime binding the calls resolve to, instead of refusing a name
+  defined more than once (rfc3986's `normalize_query`).
+- A type mypy reveals with the path of an out-of-place output directory
+  that is not an identifier (`h2-dbg.stream.H2Stream`, which parsed as a
+  subtraction and was written as `self: h2 - H2Stream`) is rewritten with a
+  placeholder for that component, and a revealed type is accepted only when
+  its tree is made of names, attributes, subscripts, tuples, constants and
+  unions.
+- `rename-helpers` with a rename file it cannot open or parse exits 1 with
+  `Error: ...` on stderr like every other command failure; it used to print
+  the failure to stdout without the prefix.
+- Invariants the engine enforced with `assert`, which `python -O` removes
+  (a helper without a host name, a node without an end position), are
+  exceptions that survive `-O`; a rendered module that does not parse
+  raises `RefactoringError` naming the parse error instead of being dropped
+  as "no insertion point"; and when applying a change fails, the cleanup's
+  own error no longer hides the failure that triggered it. The cross-file
+  reuse redirect follows the same import-time rule as cross-file helpers: a
+  site is not redirected to a function in another module when the import
+  would make the site's module load one that runs code at import time.
+- Ctrl-C prints one line instead of a traceback, and a reader that closes
+  the pipe ends the run quietly; `preview` and `rename-helpers` warn about
+  a pending journal and an in-place `dry` refuses before analysing; two
+  source paths that differ only by case are refused before an out-of-place
+  copy would merge them on a case-insensitive volume; a virtual environment
+  inside the input is recognized by its `pyvenv.cfg` whatever it is named;
+  the inline progress bar goes to stderr like tqdm's, so redirected output
+  stays clean, and a run that asked for tqdm without it installed says so
+  once.
+- A single-file run prints the frame-sensitivity warning that directory
+  runs already printed when a file reads `locals()`, `eval` or the frame.
+- A `pyproject.toml` that does not parse is reported (and no layout
+  information is taken from it) instead of being read as empty.
 
 ### Security
 - Pyright runs with Towel's interpreter (`--pythonpath`), so a `venv`
@@ -611,6 +677,6 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[Unreleased]: https://github.com/ericeallen/towel/compare/v1.618...HEAD
+[1.732]: https://github.com/ericeallen/towel/compare/v1.618...HEAD
 [1.618]: https://github.com/ericeallen/towel/compare/v1.414...v1.618
 [1.414]: https://github.com/ericeallen/towel/releases/tag/v1.414

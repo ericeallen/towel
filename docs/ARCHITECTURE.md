@@ -44,20 +44,32 @@ fixed-point loop (below).
    never enumerated (see *Enumeration filter*).
 4. **Pair.** `block_signature.py` computes a cheap structural signature per
    block; `find_block_pairs` buckets blocks on their statement-type sequence
-   and rejects incompatible pairs before the expensive step.
+   and rejects incompatible pairs before the expensive step, and, when the
+   projected pair count exceeds `--max-pairs` (2,000,000 by default), leaves
+   out the largest buckets of similar blocks with a warning naming them
+   (`_buckets_over_budget`).
 5. **Decide each pair.** `pair_evaluation.py` runs eleven stages, each
    returning a typed result or a traced rejection:
-   1. guards on the blocks themselves (`semantic_safety.py`: frames, async
-      comprehensions, rebound externals, closures, moved declarations; see
-      *Guards*);
+   1. guards on the blocks themselves (`semantic_safety.py`: frame use in
+      the block or elsewhere in its function, async comprehensions, loop
+      transfers, closures over a rebound name, moved `global`/`nonlocal`
+      declarations; see *Guards*);
    2. binding analysis of each block within its function, and the variables
-      later code reads that the helper must return;
+      later code reads that the helper must return; a block that reassigns,
+      deletes or `except ... as`-binds a name bound before it is declined
+      here;
    3. the shape check: both blocks value-producing or neither, complete
       return coverage, not a trivial `return name`, structurally similar;
    4. unification (`unifier.py`, below) and alignment of the returned
       variables across the blocks;
    5. where the helper will be visible from, for hygienic naming;
-   6. the helper's free variables and their lifetimes, declarations, thunks;
+   6. the helper's free variables: a returned variable must be definitely
+      bound at the block's exit; a free name bound after the block declines;
+      the shared names both sites resolve at module scope are read bare
+      (same-module helpers only) and exempt from the module-data and
+      rebinding-hazard guards, which decline the rest; `global`/`nonlocal`
+      declarations; and any name the call site may not resolve becomes a
+      thunk;
    7. rendering the helper (`extractor.py`), and dropping one whose body
       only forwards: a lone `raise`, a `return` of one call, a bare call, a
       call whose result is bound and returned, or a body that only binds
@@ -68,12 +80,23 @@ fixed-point loop (below).
    9. the call sites, each verified by instantiating the helper with its
       arguments and comparing the result with the block it replaces, up to
       renamed binders (see *The soundness invariant*), plus the further
-      same-file sites that can share the helper (`clustering.py`);
+      same-file sites that can share the helper (`clustering.py`); a call
+      that would pass a callee as `lambda *args, **kwargs: callee(*args,
+      **kwargs)`, or that names something the site cannot resolve, declines
+      the pair (`forwarded_callee`, `undefined_names_in_call`);
    10. placement: function, class, or module, and a host module that closes
-       no import cycle (see *Helper placement* and *Cross-file*);
-   11. the proposal, redirected to an existing function when a site is one
-       (see *Reusing an existing function*) and declined when it would
-       reduce a helper from an earlier pass to a forwarder, then annotated.
+       no import cycle and whose import runs no module code the borrower's
+       imports do not already run (a module-level helper may move to
+       another participating module); a cross-module helper is refused when
+       a participating module declares a `global` or the layout is unknown
+       (`_safe_home_across_modules`; see *Helper placement* and
+       *Cross-file*);
+   11. the proposal: one whose helper, home and sites repeat an earlier
+       pair's is declined (`duplicate_proposal`, the engine's
+       `_seen_proposals`) before anything further is computed for it; the
+       rest is redirected to an existing function when a site is one (see
+       *Reusing an existing function*), declined when it would reduce a
+       helper from an earlier pass to a forwarder, then annotated.
 6. **Filter overlaps.** `overlap.py` keeps a non-overlapping set of the
    accepted proposals, largest first.
 7. **Annotate, format, verify.** `annotations.py` gives the helper the
@@ -108,15 +131,18 @@ than turned into parameters.
 
 Each parameter is passed in the way that preserves the original evaluation:
 
-- **Value.** A literal, a name the call site resolves on every path, or a
-  tuple of those is passed eagerly. It has no observable effect and no fresh
-  identity, so evaluating it at the call site is indistinguishable from
-  evaluating it in place. A name the site may not resolve (a local bound only
-  on some path before the block, a module name bound later or nowhere, a
-  cell of an enclosing function not yet filled) is a thunk instead, so it is
-  read where the block read it; this applies to the free variables the
-  blocks share as much as to a differing argument
-  (`available_argument_names` in `semantic_safety.py`).
+- **Value.** A literal, a signed or negated literal (`-1`, `not True`), a
+  name the call site resolves on every path, or a tuple of those is passed
+  eagerly. It has no observable effect and no fresh identity, so evaluating
+  it at the call site is indistinguishable from evaluating it in place. A
+  name the site may not resolve (a local bound only on some path before the
+  block, a module name bound later or nowhere, a cell of an enclosing
+  function not yet filled) is a thunk instead, so it is read where the block
+  read it; this applies to a differing argument, and to a shared free
+  variable that is a local or an enclosing function's cell, or, for a
+  cross-file helper, a module name (`available_argument_names` in
+  `semantic_safety.py`). A shared module name of a same-module helper is
+  read bare instead (next bullet).
 - **Module name.** A free name that both sites resolve at module scope, or
   nowhere, is not a parameter of a same-module helper: the helper reads it
   bare, which is the same lookup the block made, at the same moment
@@ -178,6 +204,14 @@ treated as orphaned and the block is rejected. `extractor.py`'s
 return on every path before it may be called as `return helper(...)`, using
 both the rendered shape and the all-paths-exit property.
 
+A name the block binds to a class instantiation (a capitalized callee) or to
+one of a short list of resource factories (`open`, `connect`, `socket`,
+`mkdtemp`, `Popen`, `urlopen`, ...) is returned from the helper and rebound
+at the site whether or not later code reads it, so the object is not
+finalized when the helper's frame ends: a temporary file read after the
+block, a weak reference, a `__del__` (`lifetime_bound_names` in
+`block_analysis.py`). A factory outside that list is not detected.
+
 ### The visitors
 
 Every AST visitor in the package is built on one of three bases in
@@ -211,15 +245,17 @@ a helper could change behavior even if the shapes match:
   would observe. The frame-reading builtins and `eval`/`exec` decline the
   block when they appear anywhere in the enclosing function, not only
   inside the block: a `locals()` after the block sees the names the block
-  bound, which a helper would bind in its own frame. A name that reaches
-  one of these through a binding (`look = locals`, `from warnings import
-  warn as w`) is resolved through the enclosing scopes' bindings, so the
-  alias is caught as the builtin would be. A `break` or `continue` whose
-  loop lies outside the block would leave the helper instead of the loop.
-- **Lifetimes.** An object the block binds and a later statement observes
-  through its lifetime rather than its value (a temporary file read after
-  the block, a weak reference) is returned from the helper, so it is not
-  finalized when the helper's frame ends.
+  bound, which a helper would bind in its own frame; a `sys._getframe()` or
+  `inspect.currentframe()` outside the block is a handle to those locals
+  and declines the same way (`frame_read_outside_block`). A name that
+  reaches one of these through a binding is resolved through the module's
+  bindings, so the alias is caught as the builtin would be: aliases include
+  imports (`import builtins as bi`, `from warnings import warn as w`) and
+  assignments (`e = eval`, `warn = warnings.warn`, `gf = sys._getframe`),
+  followed to a fixed point over the module, so an alias of an alias is
+  one; any call with a `stacklevel=` keyword counts as a warning. A
+  `break` or `continue` whose loop lies outside the block would leave the
+  helper instead of the loop.
 - **Binding discipline.** A block that deletes, rebinds, or `except ... as`
   binds a name the caller keeps using; a moved `global`/`nonlocal`
   declaration; a comprehension assignment expression that would bind in the
@@ -421,8 +457,12 @@ live variables map into that tuple (`align_return_variables`); the site's
 call assigns them under its own spelling. The scan of a file for a template's
 sites runs once per distinct template and file content and is shared by
 every pair that renders that template (each pair then drops its own two
-blocks and any overlap, in scan order); the per-candidate pipeline is
-memoized on the template, the candidate, and the helper. The analysis
+blocks and any overlap, in scan order); the template's key
+(`TemplateKey`, built by `_template_key`) carries, of the site's available
+names, only those the template block reads, plus the module names the
+helper reads bare, so the key does not differ per function position; the
+per-candidate pipeline is memoized on the template, the candidate, and the
+helper. The analysis
 session holds at least as many files as an analysis covers, so a
 directory run above the old 128-file limit keeps every parse and every
 weak per-node memo between passes.
@@ -530,6 +570,23 @@ measure is exact and changes no proposal.
 
 - **Enumeration filter.** A block that returns on some path but not all, or a
   lone expression statement, can never be accepted and is never enumerated.
+- **One proposal per refactoring.** Pair evaluation keeps the first proposal
+  of each identity (helper body, home, and call sites, ignoring the helper's
+  minted name; `proposal_identity` in `models.py`) and declines the rest as
+  `duplicate_proposal` before reuse, the forwarder filter and annotation run
+  on them; the pairs are still evaluated, so the search remains cubic in N,
+  but the memory is not: sixty near-identical 38-line functions under
+  `--max-pairs 200000` peaked at 33.6 GB holding every pair's copy and at
+  0.74 GB with one (`1db56a1`, September 18, 2026, before the module-name
+  rule). The candidate-pair budget itself (`max_candidate_pairs`, the CLI's
+  `--max-pairs`, 2,000,000 by default) bounds what one analysis evaluates by
+  leaving out the largest statement-sequence buckets with a warning.
+- **Instantiation memo.** The verdict of the instantiation check is memoized
+  on the helper's dump, the call, and the block's structure, since the same
+  helper meets the same block through every pair the block forms
+  (`_VERDICTS` in `instantiation.py`); the function lookup every clustered
+  site and the reuse redirect make, `FunctionIndex.innermost_at`, is
+  memoized per file and span.
 - **Structural identity.** `_sid` is the SHA-256 over each statement's
   digest of `ast.dump(statement)` without positions; the per-statement
   digests are memoized per node. All the engine's id-keyed caches — guard
@@ -549,10 +606,10 @@ measure is exact and changes no proposal.
   ([`pipeline.py`](../src/towel/unification/pipeline.py)) that parses and
   analyzes each module once and returns the *same* graph on every access,
   keyed by path and current content. The session is an LRU bounded two
-  ways: its entry limit starts at 128 and is raised to the file count of
-  each directory analysis, so the session holds at least the files an
-  analysis covers; its 8 MiB source budget does not grow, so a file larger
-  than the budget is analyzed but not kept. The
+  ways: both its entry limit (128) and its 8 MiB source budget are raised
+  to the file count and total bytes of each directory analysis
+  (`hold_at_least`), and never lowered, so the session holds every file an
+  analysis covers. The
   graph is shared by reference, not copied, because the analysis treats it as
   read-only; `TOWEL_CHECK_AST_IMMUTABLE=1` verifies that on every reuse by
   comparing an AST digest and raising if the tree changed. A session is owned
@@ -621,20 +678,21 @@ measure is exact and changes no proposal.
   [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#resources-and-platform) for
   measured memory and time.
 
-Measured on the 1.618 snapshot of Towel's own source that the exactness
-baselines use (16,000 annotated lines, 45 applied, fixed point, one core,
-September 2026): 47.8 s under 1.618, 33.9 s after the per-function
-facts with `--no-types --no-format`, 41.8 s with the defaults, the
+Measured figures, each with its input and commit. On the 1.618 snapshot of
+Towel's own source that the exactness baselines use (16,000 annotated
+lines, 45 applied, fixed point, one core), the per-function-facts commit
+`177691d`, measured September 18, 2026, took 33.9 s with `--no-types
+--no-format` and 41.8 s with the defaults against 47.8 s under 1.618, the
 difference being the type check of each applied refactoring; Sphinx in the
-ecosystem check went from 2513 s to 2058 s. Function calls on Towel's
-source fell from 464 million to 246 million. The per-statement facts then
-took the same run (`towel dry src/towel`, `TOWEL_WORKERS=1`) from 10.9 s to
-6.4 s of wall time with `--no-types --no-format` and from 15.0 s to 10.4 s
-with the defaults, peak resident memory from 186 MB to 179 MB and from
-1.11 GB to 1.06 GB, and the profiled run from 32.7 s and 293 million calls
-to 20.3 s and 154 million, with byte-identical output on every exactness
-baseline. The tables in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance)
-give the per-project figures.
+ecosystem check at `938d351` went from 2513 s to 2058 s, and function calls
+on Towel's source fell from 464 million to 246 million (September 18,
+2026). The current figure is at `5ff2458`, September 19, 2026 (Apple M5
+Max, `TOWEL_WORKERS=1`, Python 3.12, one other single-core job running):
+`towel dry src/towel` on that day's source (22,690 lines, 15 applied) takes
+8.4 s with a peak resident size of 174 MB under `--no-types --no-format`,
+and 11.9 s and 894 MB with the defaults. The tables in
+[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance) give the
+per-project figures.
 
 ## Diagnostics and settings
 
@@ -661,17 +719,26 @@ construction and passes what the analysis session needs
 (`TOWEL_CHECK_AST_IMMUTABLE`) along, so a session reads the environment
 only when built on its own. No other module consults `os.environ`. The engine never changes logger levels
 itself, so a library caller who wants the switches honoured calls
-`Settings.from_environ().enable_debug_logging()` once.
+`Settings.from_environ().enable_debug_logging()` once. The analysis limits
+are not environment settings: `--max-pairs`, `--min-lines` and
+`--max-parameters` are the engine constructor's `max_candidate_pairs`,
+`min_lines` and `max_parameters`, which the command line passes through.
 
 ## Application and recovery
 
 `changes.py` applies an immutable byte plan. It stages every backup and
 replacement byte before touching a target, checks each file's current contents
 against what the plan was built on, replaces each file atomically, and rolls
-back caught failures. A durable journal under `.towel-transaction-active`
-records the original bytes so `towel recover` can restore an interrupted batch;
-recovery refuses detected conflicting edits and keeps the journal for
-resolution. Out-of-place refactoring stages the initial copy separately so a
+back caught failures. A durable journal, `.towel-transaction-<id>` at the
+common parent of the batch's files with a name unique per run, records the
+original bytes so `towel recover` can restore an interrupted batch; a pending
+journal blocks only a run that would change a file its manifest names (a
+journal without a readable manifest blocks everything beneath it); recovery
+refuses detected conflicting edits and keeps the journal for resolution.
+Sources are decoded to LF text and split on LF alone
+(`source_text.source_lines`), so a form feed or U+2028 inside a comment or
+string does not shift a splice. Out-of-place refactoring stages the initial
+copy separately so a
 copy error leaves no partial output. A batch is atomic per file, not globally
 atomic to a concurrent reader, and apply/recover need exclusive write access:
 snapshot checks detect a racing writer but cannot prevent one. See
@@ -697,8 +764,10 @@ The evidence that the engine holds up on real code is layered:
   and real CLI runs, under strict AST snapshots.
 - **Hostile batteries** (`tests/hostile_cases`, `tests/hostile_crossfile`)
   execute adversarial fixtures before and after fixed-point refactoring and
-  assert identical program output; each fixed engine defect is a fixture and a
-  row in [ADVERSARIAL_REVIEW.md](ADVERSARIAL_REVIEW.md).
+  assert identical program output; each fixed engine defect is a fixture;
+  the defects through the September 17–19, 2026 review are rows in
+  [ADVERSARIAL_REVIEW.md](ADVERSARIAL_REVIEW.md), and later ones are
+  recorded in CHANGELOG.md and PRODUCTION_READINESS.md.
 - **The standing ecosystem check** (`scripts/ecosystem_check.py`, `just
   ecosystem --run-untrusted-code`, weekly in CI) clones 141 public projects
   at pinned commits, among them Towel's own releases and current `main`,

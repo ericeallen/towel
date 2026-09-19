@@ -8,7 +8,7 @@ Comprehensive unit tests for Towel, the DRY (Don't Repeat Yourself) code refacto
 # Run all unit tests
 just test
 
-# Run the fast smoke subset (signature gate, pairing, unifier, extractor, regressions)
+# Run the fast smoke subset (signature gate, pairing, unifier, extractor, engine, regressions)
 just test-smoke
 
 # Run a single test file
@@ -31,16 +31,17 @@ error code.
 
 ### Unit Tests (`tests/`)
 
-The suite is 129 `test_*.py` files holding 2,007 tests and 34 subtests (about
-100 s; counts as of this writing). Rather than list them all (they change
-often), here is how they group by concern, with a representative file for
-each. Small helpers the tests share (parsing a dedented block, fixing
-synthesized positions, taking a module's functions by name, writing a module
-into `tmp_path`, running the engine to a fixed point with its output
-silenced, the `EngineOptions` a test may forward, and `TemporaryModuleTestCase`
-for `unittest` classes that write modules) live in `test_helpers.py`, which is
-strictly typed; `conftest.py` only keeps pytest from collecting the example
-corpora and scratch output directories.
+The suite is 133 `test_*.py` files holding 2,182 tests and 34 subtests (about
+100 s; counts as of this writing, commit 5ff2458, September 19, 2026). Rather
+than list them all (they change often), here is how they group by concern,
+with a representative file for each. Small helpers the tests share (parsing a
+dedented block, fixing synthesized positions, taking a module's functions by
+name, writing a module into `tmp_path`, locating and copying `test_examples`
+files, asserting a file was left unmodified, running the engine to a fixed
+point with its output silenced, the `EngineOptions` a test may forward, and
+`TemporaryModuleTestCase` for `unittest` classes that write modules) live in
+`test_helpers.py`, which is strictly typed; `conftest.py` only keeps pytest
+from collecting the example corpora and scratch output directories.
 
 A test that writes a module the engine will refactor puts it in a directory
 of its own: pytest's `tmp_path`, or `TemporaryModuleTestCase._write_temp` in
@@ -50,8 +51,11 @@ changes, so a module refactored directly in `$TMPDIR` leaves the journal
 there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
 
 - **Binding & scope** — `test_bindings.py`, `test_binding_detector.py`,
-  `test_definite_assignment.py`: alpha-renaming, comprehension and loop
-  variables, `global`/`nonlocal`, orphan detection, builtins left untouched.
+  `test_definite_assignment.py`, `test_module_names_stay_free.py`:
+  alpha-renaming, comprehension and loop variables, `global`/`nonlocal`,
+  orphan detection, builtins left untouched, and the module-level names a
+  same-module helper reads bare (a cross-file helper still takes them as
+  parameters).
 - **Return propagation** — `test_return_values.py`,
   `test_extractor_return_statements.py`: early, nested, and multi-path returns
   wired back into the replacement call.
@@ -97,8 +101,10 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   `test_structural_memo.py`, `test_cache_lifetimes.py`,
   `test_binding_context_memo.py`, `test_substitution_keys.py`,
   `test_thunk_inlining.py`, `test_perf_memos.py` (each memo against the
-  uncached computation and across a re-parse) and `test_analysis_sessions.py`
-  (the bounded session and its sizing).
+  uncached computation and across a re-parse), `test_analysis_sessions.py`
+  (the bounded session and its sizing), `test_pair_budget.py` (the
+  candidate-pair budget and its flags) and `test_distinct_proposals.py` (one
+  proposal per distinct refactoring).
 - **Repeated extraction and input errors** — `test_forwarder_chains.py`
   (repeated extraction never stacks helpers into a chain) and
   `test_cli_input_errors.py` (a single file that cannot be refactored is
@@ -111,23 +117,29 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   the JSON helper listing, a run that finds nothing, and the confirmation an
   input without a `.py` suffix requires.
 - **Hostile batteries** — `test_hostile_battery.py` executes every fixture
-  in `hostile_cases/` (numbered `h*` and `r*`) before and after fixed-point
-  refactoring and asserts identical output; its `TRANSFORMED` set names the
-  fixtures that must change, so a lost extraction fails as loudly as a wrong
-  one. `test_hostile_crossfile_battery.py` does the same for the packages in
-  `hostile_crossfile/` (`xf*`), with its own `TRANSFORMED` set: every
-  package is in exactly one state, and today all of them are transformed.
-  When the engine gains or loses a cross-file extraction, move the package
-  and say why in the commit. A fixture that came from a repaired ecosystem
-  defect (`xf9_same_named_base_class`) is cited in
+  in `hostile_cases/` (129 fixtures as of this writing, numbered `h*` and
+  `r01` to `r145`) before and after fixed-point refactoring and asserts
+  identical output; its `TRANSFORMED` set names the fixtures that must
+  change (87 today), so a lost extraction fails as loudly as a wrong one.
+  Four of the fixtures (`r142` to `r145`) pin that a same-module helper reads
+  a module-level name bare, that `__class__` stays a parameter, and that an
+  assigned alias of `sys._getframe` declines.
+  `test_hostile_crossfile_battery.py` does the same for the packages in
+  `hostile_crossfile/` (`xf*`), with its own `TRANSFORMED` and `REJECTED`
+  sets: every package is in exactly one state. Today eleven are transformed
+  and one is rejected (`xf13_import_time_effects`, whose helper import would
+  load a module that prints at import time). When the engine gains or loses
+  a cross-file extraction, move the package and say why in the commit. A
+  fixture that came from a repaired ecosystem defect
+  (`xf9_same_named_base_class`) is cited in
   `docs/ADVERSARIAL_REVIEW.md`; the others pin behaviour the engine must keep.
 - **Property-based tests** — `test_properties.py` generates programs from
   small grammars with Hypothesis (300 deterministic examples for the pure
   properties, 60 for each engine property, no deadline). The pure properties:
   consistently renamed binders unify with no parameters, and
   `definitely_bound_after` is sound against a path-enumerating reference
-  whose grammar includes `del` and `except ... as` (containment, since the
-  analysis treats both path-insensitively). The engine properties, on two
+  whose grammar includes `with`, `del` and `except ... as` (containment,
+  since the analysis treats both path-insensitively). The engine properties, on two
   blocks that differ in one leaf: every proposal passes the public
   instantiation check, a directory run's output is a fixed point, byte
   conventions survive, both call sites stay observationally equivalent, a
@@ -146,11 +158,14 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   copy, the lazy engine import, the per-analysis function index,
   byte-convention preservation, a layout Towel cannot model, and a symlinked
   input directory (followed, while links inside it are copied as links and
-  never analyzed or rewritten). `test_analysis_edge_paths.py` holds the
-  smaller analysis branches driven one at a time: the `nonlocal` scan without
-  a scope analyzer, differing f-string format specs, `try` blocks of imports
-  ahead of a helper, attribute reflection, keyword-passed callables, the
-  validation trace, and mypy configuration in `setup.cfg`.
+  never analyzed or rewritten); `test_environment_independence.py` (the
+  result does not depend on the working directory, path spelling or line
+  endings) and `test_import_cycle_package_init.py` (`from . import name` is
+  an edge through the package initializer). `test_analysis_edge_paths.py`
+  holds the smaller analysis branches driven one at a time: the `nonlocal`
+  scan without a scope analyzer, differing f-string format specs, `try`
+  blocks of imports ahead of a helper, attribute reflection, keyword-passed
+  callables, the validation trace, and mypy configuration in `setup.cfg`.
 - **Error paths and recovery** — `test_robustness_paths.py`,
   `test_error_paths.py`, `test_recovery_journal.py`,
   `test_stale_proposal_recovery.py`, `test_parallel_evaluation.py`,
@@ -232,7 +247,8 @@ The test suite covers:
 ## Current Status
 
 The full suite passes; `just coverage` reproduces the enforced 85% gate
-(93% of `src/towel` as of this writing). Coverage traces the forked pair
-workers and their watchdog threads, so `src/towel/unification/parallel.py`
+(94% of `src/towel` at commit 5ff2458, September 19, 2026). Coverage traces
+the forked pair workers and their watchdog threads, so
+`src/towel/unification/parallel.py`
 is measured like any other module; each process writes its own data file and
 `coverage combine` runs before the report.

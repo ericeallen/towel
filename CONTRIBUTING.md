@@ -33,7 +33,7 @@ This project follows its [Code of Conduct](CODE_OF_CONDUCT.md). Please be respec
 
 ### Reporting Bugs
 
-For security-sensitive reports, first read [SECURITY.md](SECURITY.md); no confidential reporting channel is currently verified. Before creating ordinary bug reports, please check existing issues to avoid duplicates. When you create a bug report, include as many details as possible:
+For security-sensitive reports, use the private channel described in [SECURITY.md](SECURITY.md); do not open a public issue. Before creating ordinary bug reports, please check existing issues to avoid duplicates. When you create a bug report, include as many details as possible:
 
 - **Use a clear and descriptive title**
 - **Describe the exact steps to reproduce the problem**
@@ -96,7 +96,7 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
    ```
 
    The hooks check Black formatting, run flake8 linting and strict mypy over the
-   whole tree (`src/towel` and `tests`), Bandit, and other checks before each commit. They call `python` from
+   whole tree (`src/towel` and `tests`), Bandit on `src/towel` (CI also scans `scripts`), and other checks before each commit. They call `python` from
    the environment, so activate it or prefix commits with
    `PATH="$PWD/.venv/bin:$PATH"`; a file in progress must already type-check
    for a commit to go through. Never bypass the hooks.
@@ -204,6 +204,6 @@ If you have questions, feel free to:
 
 Thank you for contributing to Towel!
 
-For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md. CI runs the full tests and an unconditional 85% coverage gate for each supported Python version. `just release VERSION` prepares local distributions only; publication requires maintainer review of the current audit and policy decisions.
+For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md (`just ci` runs the same set locally). CI runs the full tests and an unconditional 85% coverage gate for each supported Python version, and on Python 3.13 also Black, flake8, mypy, Bandit, `pip-audit --strict`, and a wheel and source build; a separate weekly and on-demand workflow runs the 141-project ecosystem check on a discarded runner, and Dependabot proposes grouped dependency updates weekly. `just release VERSION` prepares local distributions only; publication requires maintainer review of the current audit and policy decisions.
 
 Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).

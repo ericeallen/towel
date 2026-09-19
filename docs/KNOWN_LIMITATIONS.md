@@ -12,8 +12,9 @@ rejects, and what remains outside its model. Read it together with
   block it replaces up to the renaming of names the block itself binds. A
   proposal whose unification, substitution, or renaming disagree is rejected
   before it is offered. (`src/towel/unification/instantiation.py`)
-- **Argument evaluation.** Only names, literals, and tuples of those are
-  passed eagerly. Every other differing expression is passed as a
+- **Argument evaluation.** Only names, literals, a unary operator on a
+  literal (`-1`, `not True`), and tuples of those are passed eagerly. Every
+  other differing expression is passed as a
   zero-argument thunk and evaluated inside the helper at the original
   position, so it runs as often, as late, and as conditionally as before.
   Expressions that read names bound inside the block are lambda-lifted with
@@ -26,14 +27,22 @@ rejects, and what remains outside its model. Read it together with
   caller still uses; may not rebind a name a closure outside the block reads;
   and may not define a closure over a name the caller rebinds after the block.
   Names bound in the block and read afterwards are returned, including targets
-  of annotated assignments and assignment expressions; a returned name must be
-  definitely bound where the block ends or have entered as a parameter.
+  of annotated assignments and assignment expressions, as is a name bound to
+  a class instantiation or to a known resource factory (`open`, `connect`,
+  `socket`, `mkdtemp`, `Popen`, `urlopen`, ...), whose lifetime a later
+  statement could observe; a factory outside that list is not detected. A
+  returned name must be definitely bound where the block ends or have
+  entered as a parameter.
 - **Frame and control flow.** Blocks containing `yield`, `await`, `async`
-  loops or context managers, `locals()`, `globals()`, `vars()`, `eval`,
-  `exec`, zero-argument `super()` or `dir()`, `break`/`continue` targeting an
-  outer loop,
-  comprehension assignment expressions, `warnings.warn(..., stacklevel=)`,
-  or direct frame or stack inspection are rejected.
+  loops, context managers or comprehensions, `locals()`, `globals()`,
+  `eval`, `exec`, zero-argument `vars()`, `dir()` or `super()`,
+  `break`/`continue` targeting an outer loop, comprehension assignment
+  expressions, `warnings.warn` in any spelling with or without
+  `stacklevel`, any call with a `stacklevel=` keyword, or direct frame or
+  stack inspection are rejected; aliases of these bound by import or
+  assignment are resolved. A block is also rejected when its enclosing
+  function reads its own frame (`locals()`, `dir()`, `eval`,
+  `sys._getframe()`, ...) anywhere outside the block.
 - **Names the call site may not resolve.** A free variable is passed eagerly
   only when the call site resolves it on every path: a local bound on every
   path before the block, a module name bound on every path before the
@@ -87,8 +96,12 @@ about where each one stops.
   suspension, `locals()`/`globals()`/`vars()`/`dir()`/`super()` with no
   arguments,
   `eval`/`exec`, direct frame or stack inspection (`sys._getframe`,
-  `inspect.stack`, and the like), or `warnings.warn(..., stacklevel=...)` is
-  never extracted. This is exact for constructs written directly in the block.
+  `inspect.stack`, and the like), or `warnings.warn` is never extracted:
+  with a `stacklevel`, because the helper's frame shifts the attribution,
+  and without one, because the warnings registry deduplicates per call
+  site and two sites that warn would become one. This is exact for
+  constructs written in the block or its enclosing function, directly or
+  through an alias the module binds.
 - **Warned before the run.** Directory mode scans every module first and prints
   a stderr warning naming the files that inspect frames or tracebacks,
   attribute warnings by `stacklevel`, or read source through
@@ -106,14 +119,19 @@ about where each one stops.
   frames or text of a traceback the refactored code raises normally (glom and
   rich assert on rendered tracebacks); a test that asserts the exact line
   number a warning is issued from inside its own module, which a helper
-  inserted above it shifts (trio's `test_deprecate`); and a plain
-  `warnings.warn` with no `stacklevel`, whose once-per-location deduplication
-  is keyed on the line number, so moving code can change how many warnings a
-  run reports without changing any test result. None of these can be
-  distinguished statically from safe code that does the same thing (a linter
-  also opens `.py` files; every library raises exceptions; every module has
-  line numbers), so Towel does not warn on them to avoid a flood of false
-  positives. Review the diff and run the tests, as with any refactoring.
+  inserted above it shifts (trio's `test_deprecate`); and a *callee* that
+  reads its caller's frame, which the block-level guard cannot see through
+  a call: `inspect.stack()` or `sys._getframe(1)` inside a function the
+  block calls, the shape of a traceback that now includes the helper's
+  frame, and logging's `%(funcName)s`, which names the function whose frame
+  issued the record and so names the helper (the four differences the
+  fifth audit's battery still shows at `5ff2458`, September 19, 2026, are
+  all of this kind). None of these
+  can be distinguished statically from safe code that does the same thing
+  (a linter also opens `.py` files; every library raises exceptions; every
+  module has line numbers; every logging call may carry any format), so
+  Towel does not warn on them to avoid a flood of false positives. Review
+  the diff and run the tests, as with any refactoring.
 
 The remaining entries are other kinds of dynamic behavior that no scan
 addresses:
@@ -121,8 +139,9 @@ addresses:
 - **Reflection and dynamic rebinding.** Code that rebinds module globals or
   closure cells through `globals()[...]`, `setattr(module, ...)`, `exec`, or
   from another thread between two reads inside a block is outside the model.
-  Direct calls to the reflection builtins are rejected; aliased or external
-  rebinding is not detected.
+  Calls to the reflection builtins, direct or through an alias the module
+  binds by import or assignment, are rejected; rebinding through
+  `globals()[...]`, `setattr`, another thread, or a callee is not detected.
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
   usual descriptor protocol. Methods decorated with anything other than the
   recognized receiver-preserving decorators receive a module-level helper with
@@ -133,10 +152,12 @@ addresses:
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
   names can be written bare, when no statement before that point could run
-  code at import time. Cross-file helpers add a module import; static local
-  import cycles are rejected (including cycles through a package's
-  `__init__`, which `from . import name` runs), dynamic ones are not
-  detected.
+  code at import time. Cross-file helpers add a module import; a helper
+  import goes after the module's last leading import (after the docstring
+  when there are none), so a script that runs a statement before its
+  imports keeps it first. Static local import cycles are rejected
+  (including cycles through a package's `__init__`, which `from . import
+  name` runs), dynamic ones are not detected.
 - **Concurrency of application.** Files are replaced atomically one at a time;
   a batch is not atomic across files. Application requires exclusive write
   access; a concurrent editor writing in the check/replace interval is not
@@ -151,8 +172,12 @@ import edge. Towel does not know whether importing that module has
 requirements of its own: gunicorn's `workers/gtornado.py` raises at import
 time unless tornado is installed, and a helper hosted there made
 `workers/sync.py` import it, so environments without tornado could no longer
-import the sync worker. Review new cross-module imports in the diff with that
-in mind, and host such helpers in a neutral module by hand when it matters.
+import the sync worker. Towel now refuses a host whose import would run
+module-level statements beyond definitions, imports and literal assignments
+that the borrower's own imports do not already run (`import_time_effects`);
+it still does not know which imports a module needs. Review new
+cross-module imports in the diff with that in mind, and host such helpers
+in a neutral module by hand when it matters.
 
 ## Method insertion
 
@@ -218,39 +243,115 @@ where the evidence comes from:
 ## Conservative rejections
 
 Towel prefers to leave code unchanged rather than transform it under
-uncertainty. Common reasons a real duplicate is not extracted:
+uncertainty. Every declined pair is traced under one of the reasons of
+`RejectReason` (`src/towel/unification/models.py`), listed here in the order
+the pair decision raises them, grouped by stage:
 
-- A differing sub-expression is a slice, a starred item, or a whole f-string;
-  these are container syntax rather than values.
-- The extracted helper body would be a single forwarding statement — a lone
-  `raise`, a `return` of one call, or a bare call — or a forwarding
-  statement whose result is bound and returned (`x = f(...)` then `return
-  x`, or the tuple form), or a body that only binds parameters and literals
-  to names and returns them. Such a helper shares no logic, only a name, so
-  it is skipped by default; construct the engine with
-  `skip_trivial_helpers=False` to keep it.
+- Frame use. `frame_sensitive_block`: the block contains a suspension,
+  a namespace read, a frame or stack read, a warning, a loop transfer
+  out of the block, or a comprehension assignment expression (the list
+  under *Frame and control flow* above). `frame_read_in_function`: the
+  enclosing function reads its own frame (`locals()`, `dir()`, `eval`,
+  `sys._getframe()`, ...) somewhere outside the block.
+- Bindings crossing the block boundary. `nested_binding_escapes`: a block
+  nested inside a loop or branch binds a name the rest of the function
+  reads. `closure_crosses_block_boundary`: a nested function or lambda
+  outside the block reads a name the block rebinds, or one inside the
+  block reads a name the caller rebinds after it. `moves_scope_declaration`:
+  a `global`/`nonlocal` declaration in the block names something the
+  caller still uses.
+- Reassignment and deletion. `unsafe_reassignment_block1`/`_block2`: the
+  block reassigns a name it did not bind (`result = result + 10` with
+  `result` bound before it). `unbinds_external_name`: the block deletes,
+  explicitly or through `except ... as`, a name bound before it or
+  declared `global`/`nonlocal`.
+- Shape. `value_producing_mismatch`: one block returns a value and the
+  other does not. `incomplete_return_coverage_block1`/`_block2`: a
+  value-producing block does not leave by `return`, `raise`, `break` or
+  `continue` on every path. `trivial_return_blocks`: both blocks are a
+  one-line `return name` of a name bound before them.
+  `not_structurally_similar`: the blocks' per-statement node counts or
+  type histograms differ by more than the similarity threshold.
+- Unification. `unification_failed`: the blocks do not anti-unify, which
+  includes a differing sub-expression that is a slice, a starred item, or
+  a whole f-string (container syntax rather than values), a lambda with
+  positional-only, keyword-only, or variadic parameters, an expression
+  containing an assignment expression, and a substitution that would need
+  more than the configured maximum parameters (`--max-parameters`).
+  `return_variables_not_aligned`: a variable one block must return has no
+  binding in the other. `mixed_return_and_variables`: a block both returns
+  early and binds variables read afterwards, which one call statement
+  cannot render.
+- Free variables and lifetimes. `conditionally_bound_return`: a returned
+  variable is not definitely bound at the block's exit and did not enter
+  as a parameter. `incomplete_lifetime_block1`/`_block2`: the block reads a
+  name that is bound only after it. `module_data_lookup`: the helper would
+  receive module data (a module-level assignment) as an argument,
+  snapshotting it. `rebound_external_binding`: the helper would receive a
+  name another function rebinds through `global` or `nonlocal`, or a name
+  the module's reflection makes unreliable. The names both sites resolve
+  at module scope are read bare by a same-module helper and are exempt
+  from both, so these two decline cross-file pairs and pairs where only
+  one site resolves the name at module scope.
+- Rendering. `impure_eager_parameter`: an argument that would be passed
+  eagerly is not a literal, a resolvable name, or a tuple of those.
+  `trivial_forwarding_helper`: the helper body would be a single
+  forwarding statement (a lone `raise`, a `return` of one call, or a bare
+  call), a forwarding statement whose result is bound and returned
+  (`x = f(...)` then `return x`, or the tuple form), or a body that only
+  binds parameters and literals to names and returns them; such a helper
+  shares no logic, only a name, and is skipped by default
+  (`skip_trivial_helpers=False` keeps it).
+- Orphans. `orphaned_variables`: a name the block binds is read afterwards
+  on a path that does not rebind it first, and the helper does not return
+  it. A read after only a *conditional* rebinding is treated as orphaned
+  even where the helper would return it (the annotated-assignment fixture
+  r86 is rejected for this reason); returning such names was found unsafe
+  in three fixtures, and a path-aware return analysis would recover the
+  case. A match capture, `with` target, or exception name that would have
+  to cross the block boundary in a way the return analysis does not
+  represent is declined here or under the alignment reason above.
+- Call sites. `forwarded_callee`: a differing expression in call position
+  would be passed as `lambda *args, **kwargs: callee(*args, **kwargs)`,
+  which reads worse than the duplication it removes. `undefined_names_in_call`:
+  the generated call names something the site cannot resolve (a leaked
+  placeholder, a name bound only inside the block).
+  `instantiation_mismatch`: the helper applied to the call's arguments does
+  not reproduce the block up to renamed binders.
+- Placement. `nonlocal_safety_skip`: either block's function declares
+  `nonlocal`. `private_name_lexical_class`: a site's method uses a
+  `__private` name and the helper would live in another class, which
+  changes name mangling. `cross_module_global_declaration`: a cross-file
+  helper's participating modules include one whose functions declare
+  `global`. `unknown_layout`: the project's packaging layout cannot be
+  modeled, so no import can be written. `import_cycle`: every candidate
+  host closes a static import cycle. `import_time_effects`: a cross-file
+  helper's host module, which the borrower does not already import, would
+  run module code beyond definitions, imports and literal assignments at
+  import (a module that prints, registers or connects at import time); a
+  module-level helper may move to a participating module that hosts it
+  without that, and the pair is declined only when none does.
+- The proposal. `duplicate_proposal`: the helper, home and sites repeat an
+  earlier pair's, found through another pair of the same family.
+  `existing_helper_becomes_forwarder`: a site is the whole body of a helper
+  an earlier pass inserted, which would keep only the new call.
+
+Other behaviors that leave a duplicate in place are not rejections of a
+formed pair:
+
 - A duplicate that is the whole body of an existing function is redirected
   to that function rather than extracted, but only when the function is a
   plain module-level `def`: a decorated, async, variadic, shadowed, or
   rebound function, or one whose call across files would close an import
   cycle, falls back to ordinary extraction (which the trivial-helper filter
   then usually declines, since the helper would restate the function).
-- The block deletes, rebinds, or declares a name the caller keeps using.
-- A nested function or lambda shares a rebound name with the block.
-- The helper would need more than the configured maximum parameters.
-- A match capture, `with` target, or exception name would have to cross the
-  block boundary in a way the return analysis does not represent.
-- Lambda expressions with positional-only, keyword-only, or variadic
-  parameters are not unified.
-- A name the block binds that later code reads after only a *conditional*
-  rebinding is treated as orphaned and the block is rejected, even where the
-  helper would return it (the annotated-assignment fixture r86 is now
-  rejected for this reason). Returning such names was found unsafe in three
-  fixtures; a path-aware return analysis would recover the case.
 - A block that begins at an `elif` is never extracted, because its call
   would have to be rendered inside the preceding branch's `else`; the
   `elif`'s own body and further branches remain candidates. This gives up a
   valid extraction when the preceding branch always exits (tabulate).
+- Past the candidate-pair budget (`--max-pairs`, 2,000,000 by default) the
+  largest groups of similar blocks are left out of pairing, with a warning
+  naming them.
 - setuptools, Hatch, Flit, Poetry, and pdm layouts are read from their own
   configuration. Any other build backend (for example ``flit_scm``) falls back
   to conventional inference: a package or module named after the distribution,
@@ -277,14 +378,30 @@ it tractable, all exact: they change no proposal.
 - The clustering pass scans a file for the sites that can share a helper
   once per distinct helper template, not once per pair (every pair of N
   near-identical blocks renders the same template; 50 identical functions
-  took 17 s and 100 took 134 s before this pass and the reuse index below;
-  re-measured with `scripts/bench_similar_blocks.py` on September 18, 2026,
-  one core of a machine shared with other work, 50 take 6.8 s and 100 take
-  36 s), memoizes its per-candidate pipeline on the
-  template, the candidate, and the pair's helper, and applies its
-  constant-time filters before the semantic guards. The remaining growth is
-  cubic: every one of the N²/2 pairs legitimately proposes the same N-site
-  extraction until the first application collapses them.
+  took 17 s and 100 took 134 s under 1.618, before this pass and the reuse
+  index below; at `5ff2458` on September 19, 2026,
+  `scripts/bench_similar_blocks.py` on one core of an Apple M5 Max with one
+  other single-core job running takes 4.0 s for 50 and 15.9 s for 100, a
+  factor of 4.0 for twice the functions), memoizes its per-candidate
+  pipeline on the template, the candidate, and the pair's helper, and
+  applies its constant-time filters before the semantic guards. The
+  remaining growth is cubic: every one of the N²/2 pairs legitimately
+  proposes the same N-site extraction until the first application collapses
+  them. Pair evaluation therefore keeps the first proposal of each identity
+  (helper body, home and sites) and declines the rest, so the pairs are
+  still evaluated but their copies are not held: sixty near-identical
+  38-line functions under `--max-pairs 200000` peaked at 33.6 GB before and
+  0.74 GB after (`1db56a1`, September 18, 2026, before the module-name
+  rule). The clustering scan cache is likewise bounded by the sites it
+  holds, not only by its entry count. `--max-pairs` (2,000,000 by default)
+  bounds the candidate pairs one analysis evaluates by leaving out the
+  largest groups of similar blocks with a warning naming them. What it does
+  not bound is a file below the budget whose every pair is admissible: a
+  thousand near-identical five-line functions that all read one module
+  global, which the module-name rule admits where the module-data rule used
+  to decline every pair in seconds, take 33 minutes on one core (commit
+  `5ff2458`, September 19, 2026) and yield one helper with 669 call sites.
+  Lower `--max-pairs` or raise `--min-lines` to trade that result for time.
 - The reuse redirect finds a function whose body starts where a site does
   through an index, instead of scanning every function of the file for
   every replacement of every proposal.
@@ -329,7 +446,7 @@ it tractable, all exact: they change no proposal.
 Measured in September 2026 with the CLI defaults (macOS, Python 3.13,
 single core unless stated): the wall time of a whole `towel dry` run on the
 ecosystem check's clone of each project, before and after the measures
-above, with identical output in every case. This is the one measured table
+above, with identical output in every case. These are the measured tables
 of package timings; the README refers here rather than repeating figures.
 
 | Target | Before | After, one core | After, forking |
@@ -339,12 +456,13 @@ of package timings; the README refers here rather than repeating figures.
 | pygments, fixed point | 170 s | 107 s | 60 s |
 | pyflakes, fixed point | 300 s | 224 s | 54 s |
 
-A later pass (September 2026) added the per-function facts, the
-statement-sequence buckets, and the exact incremental global passes, and
-turned on formatting and typing by default. Measured the same way, one
-core, identical output between the on and off settings of each:
+A later pass (the per-function-facts commit `177691d`, measured September
+18, 2026) added the per-function facts, the statement-sequence buckets, and
+the exact incremental global passes, and turned on formatting and typing by
+default. Measured the same way, one core, identical output between the on
+and off settings of each:
 
-| Target | 1.618 | Now, `--no-types --no-format` | Now, defaults |
+| Target | 1.618 | `177691d`, `--no-types --no-format` | `177691d`, defaults |
 |---|---|---|---|
 | Towel's own source, the 1.618 snapshot the exactness baselines use (16,000 lines, 45 applied), fixed point | 47.8 s | 33.9 s | 41.8 s |
 | h2 (hyper-h2), fixed point | 5.2 s | 7.0 s | 11.9 s |
@@ -353,19 +471,24 @@ core, identical output between the on and off settings of each:
 The bare-engine speedup is what the caches and buckets buy; the defaults
 then spend part of it type-checking each applied refactoring, a cost
 proportional to the number of applied changes rather than to project size.
-The current engine also applies more refactorings than 1.618 did on the
-same input (h2: 20 against 14; Towel's source: 45 against 41), so the
-times compare a larger amount of work. The times depend on the input as
-much as on the engine: today's Towel source, after the later audits'
-removals, has 12 duplicates to apply and runs in 4.7 s without the type
-checker and formatter and 9.5 s with them (one core, September 18, 2026,
-on a machine shared with other work).
+The engine at the per-function-facts commit (`177691d`) also applied more
+refactorings than 1.618 did on the same input (h2: 20 against 14; Towel's
+source: 45 against 41), so the times compare a larger amount of work. The
+times depend on the input as much as on the engine: at `5ff2458`
+(September 19, 2026, Apple M5 Max, `TOWEL_WORKERS=1`, Python 3.12, one
+other single-core job running), that day's Towel source, 22,690 lines
+after the later audits' removals, has 15 duplicates to apply and `towel
+dry src/towel` runs in 8.4 s without the type checker and formatter and
+11.9 s with them.
 
 The remaining cost is the pairwise evaluation of structurally distinct
 candidates, which no cache can share; large test modules with hundreds of
 similar methods remain the worst case. Progress is reported per phase.
-There is no time budget; interrupt with Ctrl-C, which leaves files
-unchanged. The ecosystem check applies a 30-minute limit per phase by
+There is no time budget, but `--max-pairs` (2,000,000 by default) bounds
+the candidate pairs one analysis evaluates by leaving out the largest
+groups of similar blocks with a warning; interrupt with Ctrl-C, which
+leaves files unchanged. The ecosystem check applies a 30-minute limit per
+phase by
 default, longer for named projects, and reports `TIMEOUT`. It executes
 the manifest's projects with the caller's privileges and refuses to run
 without `--run-untrusted-code`; use a disposable machine or container.
@@ -384,7 +507,9 @@ boltons (24,000 lines), 103 MB for Click (29,000 lines), and 247 MB for
 pygments (137,000 lines), measured as peak resident size with
 `TOWEL_WORKERS=1` and `--no-types`. With the type checker on (the default
 when mypy is installed) mypy runs in-process and its own footprint is added:
-Towel's source peaks at about 160 MB without it and about 900 MB with it. Forking multiplies that: each worker is a copy-on-write fork
+Towel's source (22,690 lines, 15 applied) peaks at 174 MB without it and
+894 MB with it (`5ff2458`, September 19, 2026, Apple M5 Max,
+`TOWEL_WORKERS=1`, Python 3.12). Forking multiplies that: each worker is a copy-on-write fork
 whose caches then diverge, so peak memory scales with the worker count.
 networkx (200,000 lines, tests excluded) peaked at about 1 GB in one process
 with `TOWEL_WORKERS=1`, and near 7.4 GB across twenty processes when forking

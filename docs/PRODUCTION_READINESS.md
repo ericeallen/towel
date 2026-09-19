@@ -11,6 +11,13 @@ first section below records the current corpus and run; the sections after
 it are the 1.414 report, kept as the record of how the corpus was built and
 what it found.
 
+The run predates the fifth audit's engine changes (everything after
+`938d351`); those are covered by the hostile batteries, the property tests,
+and per-project spot checks (hyper-h2's own 1,662 tests pass on the current
+output, bare and with the defaults, and Towel's own suite passes on Towel
+refactored by the current engine, at `5ff2458`, September 19, 2026), but
+the corpus has not been re-run.
+
 ## The 141-project corpus (September 17–18, 2026)
 
 On September 17, 2026 the corpus grew from 91 to 141 projects: 47 more
@@ -55,7 +62,7 @@ regression test:
   on a definite `True` (`c3ddf01`).
 - trio's `test_deprecate` asserts the exact line a warning is issued from
   inside the test module, which a helper inserted above it shifts. This is
-  the fourth silent kind in KNOWN_LIMITATIONS and is marked
+  one of the silent kinds in KNOWN_LIMITATIONS and is marked
   `BROKEN_KNOWN` (`13d7eb2`). trio then crashed on the import sorter, which
   had reordered imports under `if TYPE_CHECKING:`: the guard now allows
   nested reordering and keeps the file as assembled when a sorter does
@@ -239,7 +246,8 @@ The `BROKEN_KNOWN` verdicts are pluggy and glom (frame-relative), lark
 failing test to match a failure the manifest names. Towel's own three
 revisions pass their suites after being refactored by the candidate, with
 annotated helpers inserted into an annotated, strictly type-checked
-codebase.
+codebase. The suite at `938d351` was 1,181 tests; at `5ff2458` (September
+19, 2026) it collects 2,182.
 
 ## The 1.414 report (September 12–15, 2026)
 Publication remains a separate maintainer decision; see
@@ -495,7 +503,7 @@ Cerberus, croniter, PrettyTable, parsimonious, inflection, pyrsistent,
 jsonpatch) was also clean, so two consecutive batches of previously unseen
 projects found no defect and the stopping rule is met.
 
-## Verification gates on the final tree
+## Verification gates on the 1.414 tree
 
 - Python 3.11, 3.12, and 3.13: 1,257 tests passed on each, plus 34 subtests.
   Coverage is 89% against the unconditional 85% gate.
@@ -506,8 +514,11 @@ projects found no defect and the stopping rule is met.
   arguments became thunks), reviewed by hand and executed. 3 cross-file
   goldens were stale relative to their inputs and the committed insertion
   policy and were regenerated.
-- Hostile batteries: 84 single-file fixtures, of which 43 are transformed and
-  41 rejected, and 6 cross-file fixtures; all preserve program output.
+- Hostile batteries at 1.414: 84 single-file fixtures, of which 43 were
+  transformed and 41 rejected, and 6 cross-file fixtures; all preserve
+  program output. (At `5ff2458`, September 19, 2026: 129 single-file
+  fixtures, 87 transformed and 42 rejected, and 12 cross-file fixtures, 11
+  transformed.)
 - Performance with the defaults: the 5,000-line `more.py` reaches a fixed
   point in 23 s. See KNOWN_LIMITATIONS.md for package-level timings.
 

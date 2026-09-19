@@ -1,8 +1,9 @@
 # Dethunking: where the remaining `lambda` arguments come from
 
-Status: evidence gathered 2026-09-17; no engine change made. The exact, (still accurate on 2026-09-18)
-meaning-preserving improvements left are small; the large buckets need an
-assumption the engine does not make today.
+Status: evidence gathered 2026-09-17 on the 1.618 outputs; item 2 was
+resolved differently on 2026-09-18 (see below); items 1, 3 and 4 remain
+open. The exact, meaning-preserving improvements left are small; the large
+buckets need an assumption the engine does not make today.
 
 ## What a thunk is for
 
@@ -51,14 +52,17 @@ helpers):
 
 ## Exact improvements still available (small)
 
-1. **Parameter order equals evaluation order.** The extractor lists unified
-   parameters in discovery order, then free variables alphabetically. When two
-   leading thunks are evaluated in the opposite order, inlining stops (11
-   parameters). The helper's parameter order is Towel's to choose, so ordering
-   parameters by first evaluation in the template would remove this case.
-2. **Plain-name callees need no forwarding lambda.** A parameter used as a
-   callee is passed as `lambda *a, **k: f(*a, **k)` even when `f` is a bare
-   name, which is eagerly evaluable by the engine's own rule (12 lambdas).
+1. **Parameter order equals evaluation order** (open). The extractor lists
+   unified parameters in discovery order, then free variables alphabetically.
+   When two leading thunks are evaluated in the opposite order, inlining
+   stops (11 parameters). The helper's parameter order is Towel's to choose,
+   so ordering parameters by first evaluation in the template would remove
+   this case.
+2. **Plain-name callees need no forwarding lambda.** Resolved 2026-09-18 by
+   declining the pair by name (`forwarded_callee`) rather than by inlining a
+   bare-name callee; the 16 forwarded-callee lambdas in the census are now
+   16 declined pairs. Passing a bare-name callee as a value remains a
+   possible refinement.
 3. **Constants and tuples that share a parameter with an impure site** (42 +
    13) cannot be dethunked at that site alone: the helper is shared, so the
    parameter is a thunk at every site.
@@ -66,7 +70,11 @@ helpers):
    (`_thunk_uncertain_free_variables`): a local bound on only some path before
    the block is read as a thunk so an `UnboundLocalError` is raised where the
    original raised it. Each is worth inspecting; some may be definite bindings
-   the analysis does not yet recognize.
+   the analysis does not yet recognize. Since the module-name rule of
+   2026-09-18, a shared name both sites resolve at module scope is read bare
+   by a same-module helper and is no longer in this bucket; the remaining
+   bare-name thunks are locals bound on some path, enclosing-function cells,
+   and cross-file module names.
 
 Together the exact items are on the order of 2% of the lambdas emitted.
 

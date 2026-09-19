@@ -17,7 +17,9 @@ proposal is rewritten: the function is left as it is, the fresh helper is
 dropped, and every other site calls the function with its arguments in the
 function's parameter order. Ambient arguments are dropped only when the site
 binds the same name to the same module-level definition, or to an identical
-absolute import in another module. Candidates are tried in source order; one
+absolute import in another module. Since 2026-09-18 a same-module helper
+reads such names bare, so the ambient mapping matters only across files.
+Candidates are tried in source order; one
 that a site cannot reach by name (shadowed, or mangled inside a class), or
 whose import would close a cycle, is skipped, and with no viable candidate the
 ordinary extraction stands. Decorated, async, variadic, conditionally defined,

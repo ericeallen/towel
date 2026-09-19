@@ -2,6 +2,23 @@
 
 This log records notable repository states with all tests passing, to make it easy to revert or audit changes.
 
+## 2026-09-19 (release candidate)
+
+- Version: 1.732 (in preparation; not tagged or published)
+- Development status: Beta (PyPI classifier `4 - Beta`)
+- Commit: `5ff2458` and the documentation commits that follow it; the tag `v1.732` is created at publication
+- Summary:
+  - Reuse: a duplicate that is the whole body of a plain module-level function calls that function instead of a new helper.
+  - Formatting and typing: generated code is formatted with the project's formatter and import sorter (`format` extra); helpers are annotated from the call sites and the project's type checker, mypy or pyright (`types` extra).
+  - Command line: paired `--x/--no-x` options, `--max-refactorings`, `--min-lines`, `--max-parameters`, `--max-pairs`, `rename-helpers --preview`; retired spellings still parse.
+  - Soundness: the eager-argument rule is rebuilt on control flow; a same-module helper reads module-level names bare instead of taking them as parameters; forwarding-callee calls are declined; frame reads, `warnings.warn` and their imported or assigned aliases decline a block anywhere in its function; resource lifetimes are returned; encodings, line endings and unusual line separators round-trip; unsupported layouts decline only the cross-file pair.
+  - Environment: the result does not depend on the working directory or path spelling; journals are per batch and scoped to the files they name; SIGTERM, Ctrl-C and a closed pipe end a run cleanly; progress is on stderr.
+  - Performance: the engine is a chain of typed mixins; per-function and per-statement facts, statement-sequence buckets, exact incremental global passes, one proposal per identity, the instantiation memo and the candidate-pair budget; a hundred similar functions take 16 s (September 19, 2026, one core).
+  - Security and packaging: pyright runs with the project's interpreter, the ecosystem check is opt-in with pinned commits, dependency audit and Dependabot in CI, the `format` extra's Black floor matches the goldens, a slimmer sdist.
+- Status: All tests green (2,182 tests and 34 subtests on Python 3.12 at `5ff2458`; hyper-h2's own 1,662 tests and Towel's own suite pass on their refactored outputs). Ecosystem check: 117 PASS, 20 NO_CHANGE, 4 BROKEN_KNOWN of 141 on commit `938d351` ([PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)), 154 commits before this candidate; not yet rerun.
+
+---
+
 ## 2026-09-17
 
 - Version: 1.618
@@ -13,7 +30,8 @@ This log records notable repository states with all tests passing, to make it ea
   - Placement: a cross-file helper is hosted in a module that closes no import cycle, preferring one the borrowers already import; the extraction is declined only when no placement is safe.
   - Renaming: the rename tool no longer refuses a module merely for a local variable named `vars`, `globals`, `locals`, `eval`, or `exec`.
   - Documentation: the README shipped still reading 1.414 in its release-status line, which PyPI froze; RELEASING.md now requires a version sweep before building.
-- Status: All tests green; ecosystem check unchanged from 1.414 (75 PASS, 13 NO_CHANGE, 3 BROKEN_KNOWN of 91)
+  - Unit/integration tests: 1,181 passed plus 34 subtests (Towel's own suite at `v1.618`, as the ecosystem check runs it).
+- Status: All tests green; ecosystem check unchanged from 1.414 (75 PASS, 13 NO_CHANGE, 3 BROKEN_KNOWN of 91; the 1.414 section of [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md))
 
 ---
 

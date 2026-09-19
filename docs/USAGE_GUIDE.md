@@ -79,9 +79,7 @@ The default is `tqdm`; the CLI's `--progress` option accepts the same values.
 Call signature returns `(results_dict, termination_reason)` where `termination_reason` is:
 
 * `fixed_point` – No further proposals remain.
-* `iteration_cap` – Stopped because `max_iterations` limit was reached.
-
-Set `max_iterations=0` for unlimited iterations until a fixed point.
+* `iteration_cap` – Stopped after `max_iterations` applied refactorings (the CLI's `--max-refactorings`). The default, 0, runs to a fixed point.
 
 ### Example (detail mode)
 
@@ -125,6 +123,8 @@ engine = UnificationRefactorEngine(
 )
 ```
 
+Both are `--max-parameters` and `--min-lines` on the command line.
+
 The remaining parameters (keyword-only after `parameterize_constants`), all defaulting to what the CLI does:
 
 | Parameter | Default | Effect |
@@ -133,6 +133,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `prefer_absolute_imports` | `None` | Cross-file helper import style; `None` lets the discovered layout decide (`--prefer-absolute-imports/--no-prefer-absolute-imports`). |
 | `pep420_namespace_packages` | `None` | Treat directories without `__init__.py` as packages; `None` infers it (`--pep420/--no-pep420`). |
 | `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`). |
+| `max_candidate_pairs` | `2_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
 | `skip_trivial_helpers` | `True` | Do not propose a helper that only forwards, renames, or unpacks. |
 | `reuse_existing_functions` | `True` | A duplicate that is the whole body of a plain module-level function calls that function instead of a new helper. |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
@@ -179,8 +180,9 @@ proposals = engine.analyze_directory("src/", recursive=False)
 The scanner automatically skips:
 - Hidden directories (starting with `.`)
 - `__pycache__`
-- `venv`, `env`
-- `node_modules`
+- `venv`, `env`, `node_modules`, and any directory holding a `pyvenv.cfg`
+- The names in `excluded_directories` (`--exclude`)
+- Symlinked files, and Towel's own `_towel_probe_*.py` type-checker probes
 
 ## Understanding Proposals
 
@@ -197,6 +199,12 @@ proposal.file_path            # Canonical location for the extracted function
 proposal.reused_function      # ReusedFunction(name, file_path, line_range) when the
                               # sites call an existing function; None for a helper
 proposal.required_imports     # Imports the host needs for the helper's annotations
+proposal.return_variables     # Names the helper returns, in the call's unpacking order
+proposal.insert_into_class    # The class the helper becomes a method of, if any;
+proposal.method_kind          # instance, class, or static, with insert_into_function
+                              # for a helper nested in a common enclosing function
+proposal.source_digests       # The file digests the proposal was computed from; applying
+                              # a stale proposal raises ChangeConflict("Stale proposal")
 ```
 
 ### Cross-File vs Same-File
