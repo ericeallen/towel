@@ -19,9 +19,12 @@ directory loop analyzes the whole project, applies the best proposal,
 re-analyzes the files it rewrote for localized follow-ups, and when that
 queue drains re-pairs the project (only the files rewritten since the last
 global pass, which is exact; see docs/ARCHITECTURE.md) until no proposal
-remains or the iteration bound is reached. Before a directory run, modules
-that inspect their own frames are named in a warning. Progress is shown
-through tqdm when available, else an inline bar, else nothing.
+remains or the iteration bound is reached. Before a run, modules that
+inspect their own frames are named in a warning. Progress follows the
+progress mode: ``tqdm`` (a bar when tqdm is installed; without it a warning
+once per process, an inline bar on stderr for the pairing loop and none for
+the apply phase), ``auto`` (the tqdm bar, or an inline bar on stderr for
+both), ``detail`` (a line per phase), or ``none``.
 """
 
 from __future__ import annotations
@@ -65,7 +68,9 @@ def _note_missing_tqdm() -> None:
     global _TQDM_NOTED
     if not _TQDM_NOTED:
         _TQDM_NOTED = True
-        LOG.warning("tqdm is not installed; showing an inline progress bar on stderr")
+        LOG.warning(
+            "tqdm is not installed; the pairing phase shows an inline bar on stderr, the others none"
+        )
 
 
 class FixedPointDrivers(Materialization):

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Iterator, MutableMapping, TypeVar
+from typing import Callable, Iterator, MutableMapping, Optional, TypeVar
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -28,11 +28,25 @@ class BoundedCache(MutableMapping[K, V]):
 
     Reading or writing an entry makes it the most recent. It is a
     ``MutableMapping``, so callers that register entries for eviction by
-    path can ``pop`` them like any other table.
+    path can ``pop`` them like any other table. With ``weight`` and
+    ``weight_limit`` the table also drops the least recently used entries
+    while the weights of those it holds sum to more than the limit, for
+    values whose size varies by orders of magnitude (a clustering scan holds
+    one site per similar block in the file).
     """
 
-    def __init__(self, limit: int) -> None:
+    def __init__(
+        self,
+        limit: int,
+        *,
+        weight: Optional[Callable[[V], int]] = None,
+        weight_limit: Optional[int] = None,
+    ) -> None:
         self._limit = limit
+        self._weight = weight
+        self._weight_limit = weight_limit
+        self._weights: "OrderedDict[K, int]" = OrderedDict()
+        self._total_weight = 0
         self._table: "OrderedDict[K, V]" = OrderedDict()
 
     def __getitem__(self, key: K) -> V:
@@ -41,13 +55,28 @@ class BoundedCache(MutableMapping[K, V]):
         return value
 
     def __setitem__(self, key: K, value: V) -> None:
+        if key in self._table:
+            self._forget_weight(key)
         self._table[key] = value
         self._table.move_to_end(key)
-        while len(self._table) > self._limit:
-            self._table.popitem(last=False)
+        if self._weight is not None:
+            self._weights[key] = self._weight(value)
+            self._total_weight += self._weights[key]
+        while len(self._table) > self._limit or (
+            self._weight_limit is not None
+            and self._total_weight > self._weight_limit
+            and len(self._table) > 1
+        ):
+            oldest, _ = self._table.popitem(last=False)
+            self._forget_weight(oldest)
 
     def __delitem__(self, key: K) -> None:
         del self._table[key]
+        self._forget_weight(key)
+
+    def _forget_weight(self, key: K) -> None:
+        if self._weight is not None:
+            self._total_weight -= self._weights.pop(key, 0)
 
     def __iter__(self) -> Iterator[K]:
         return iter(self._table)

@@ -67,3 +67,22 @@ def test_a_file_of_similar_functions_yields_each_helper_once(tmp_path: Path) -> 
     proposals = engine.analyze_file(str(path))
     identities = [proposal_identity(proposal) for proposal in proposals]
     assert len(identities) == len(set(identities))
+
+
+def test_a_weighted_cache_drops_the_oldest_entries_past_its_weight() -> None:
+    from towel.unification.bounded_cache import BoundedCache
+
+    cache: BoundedCache[str, tuple[int, ...]] = BoundedCache(10, weight=len, weight_limit=5)
+    cache["a"] = (1, 2, 3)
+    cache["b"] = (4, 5)
+    assert list(cache) == ["a", "b"]
+    cache["c"] = (6,)
+    assert list(cache) == ["b", "c"], "the oldest goes when the sites held exceed the limit"
+    cache["d"] = tuple(range(9))
+    assert list(cache) == ["d"], "one entry may exceed the limit alone"
+    cache["d"] = (1,)
+    cache["e"] = (2, 3)
+    assert list(cache) == ["d", "e"], "rewriting a key replaces its weight"
+    del cache["e"]
+    cache["f"] = (1, 2, 3, 4)
+    assert list(cache) == ["d", "f"]

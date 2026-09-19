@@ -17,8 +17,9 @@
 When every block passes the same literal to a call whose result is later
 used as a callable or a value, the literal may still be worth a parameter,
 so a helper can serve a family of factories. This is a feature behind
-``promote_equal_hof_literals``, off by default, and it is rolled back whole
-if it fails.
+``promote_equal_hof_literals``, off by default; a promotion is applied only
+after every block has been checked, so one that cannot apply changes
+nothing.
 """
 
 from __future__ import annotations

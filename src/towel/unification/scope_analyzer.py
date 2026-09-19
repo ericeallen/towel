@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Analyze identifier bindings and scopes in Python code.
+"""Lexical scopes of a module: each binding's scope, each name node's
+resolution, and the external-binding hazards (``global``/``nonlocal``
+rebinding, namespace reflection) later guards consult.
 """
 
 import ast

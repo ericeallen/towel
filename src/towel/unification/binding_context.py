@@ -18,6 +18,7 @@
 walks the block that contains it, tracking loop, comprehension, lambda, and
 function binders, so ``bound_variables_in_context`` can say which of those
 names the block itself binds at the point of the expression.
+``bound_variables_in_block`` memoizes that answer per block and target text.
 """
 
 from __future__ import annotations

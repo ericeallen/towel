@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Data models for the unification-based refactoring system.
-
-This module defines the core data structures used throughout the refactoring engine:
-- Code block pairs for comparison
-- Method information for class context
-- Refactoring proposals
-- Function context for analysis
+"""Data models for the unification-based refactoring system: parsed and
+analyzed modules, functions and classes with their context, candidate block
+pairs, the helper template and clustered-site records, replacements and
+proposals (including a redirect to an existing function), applied changes,
+and the typed reasons a pair is declined.
 """
 
 from __future__ import annotations

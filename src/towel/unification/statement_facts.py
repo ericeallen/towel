@@ -16,11 +16,13 @@
 
 Block enumeration forms every contiguous sub-block of a body and asks each
 for its signature and whether it returns; walking every block in full made
-that cubic in the body's length. Every fact here is a count or a truth
-value over one statement's subtree, so a block's answer is the sum or the
-disjunction over its statements. The memo is weak: a fact vanishes with its
-statement. Analysis never mutates a parsed tree, which is what keys the
-engine's other node-identity caches too.
+that cubic in the body's length. The counts and truth values in
+``StatementFacts`` sum or disjoin over a block's statements; the module also
+holds each statement's name sets (what it binds, reads, or mentions), its
+import and match-capture names, and its node-type shape, the shape and the
+mentioned names memoized the same way. The memo is weak: a fact vanishes
+with its statement. Analysis never mutates a parsed tree, which is what keys
+the engine's other node-identity caches too.
 """
 
 from __future__ import annotations

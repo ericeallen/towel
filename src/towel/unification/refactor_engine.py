@@ -21,7 +21,9 @@ evaluation, the fixed-point drivers) over ``EngineState``. This module
 keeps what every mixin builds on: the constructor and its caches, the
 entry points that analyze a file, a set of files or a directory, the
 enumeration of candidate blocks in every function and method (nested ones
-included), and the pairing of blocks that share a signature bucket.
+included), and the pairing of blocks that share a signature bucket, leaving
+the largest buckets out when the projected pair count exceeds
+``max_candidate_pairs``.
 """
 
 import ast
@@ -382,7 +384,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # sites are shared (the pair's own blocks are filtered out on the way
         # out). Keyed by content digest, so never evicted by path.
         self._cluster_scan_cache: BoundedCache[ClusterScanKey, Tuple[ClusteredSite, ...]] = (
-            BoundedCache(self.CLUSTER_SCAN_CACHE_LIMIT)
+            BoundedCache(
+                self.CLUSTER_SCAN_CACHE_LIMIT,
+                weight=len,
+                weight_limit=self.CLUSTER_SCAN_SITE_LIMIT,
+            )
         )
         # Structural ids per block, keyed weakly by the block's first node and
         # then by its length, so an entry vanishes with its tree instead of
@@ -567,6 +573,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
     STRUCTURAL_CACHE_LIMIT = 250_000
     #: Whole-file clustering scans kept; each holds every site of one template.
     CLUSTER_SCAN_CACHE_LIMIT = 4096
+    #: Sites held across those scans: a thousand near-identical functions give
+    #: every scan a thousand sites, and 4096 such scans held 8 GB.
+    CLUSTER_SCAN_SITE_LIMIT = 200_000
     #: When a file's eviction-index list grows past this, drop entries the caches no longer hold.
     _EVICTION_INDEX_PRUNE_AT = 4096
 

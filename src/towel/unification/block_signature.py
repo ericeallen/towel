@@ -14,10 +14,11 @@
 
 """Conservative block signature utilities used for cheap pre-filtering.
 
-Signatures retain the structural and count gates used by quick_filter. Exact
-statement-count and try/with gates also provide a conservative candidate index;
-name/call count tolerances and optional endpoint checks remain in quick_filter.
-Indexing therefore changes comparison cost, not the set of accepted candidates.
+Signatures retain the structural and count gates used by quick_filter. The
+exact gates (statement count, try/with presence, and the statement-type
+sequence) form the candidate-index key, ``signature_bucket_key``; name/call
+count tolerances stay in quick_filter. Indexing therefore changes comparison
+cost, not the set of accepted candidates.
 """
 
 from __future__ import annotations
