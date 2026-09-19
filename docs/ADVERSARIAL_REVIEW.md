@@ -120,7 +120,7 @@ The 141-project corpus run of September 17 (the first rows, with the
 repairing commit) and the fifth audit's executable counterexamples, property
 tests and harness of crafted inputs (the rest) found the defects below. Each
 is repaired and covered by a fixture in `tests/hostile_cases` (r102 to r145)
-or `tests/hostile_crossfile` (xf11 to xf14); a fixture marked *rejected* is
+or `tests/hostile_crossfile` (xf11 to xf15); a fixture marked *rejected* is
 one the engine must now leave unchanged, the rest are transformed with
 identical program output.
 
@@ -152,3 +152,4 @@ identical program output.
 | `gf = s._getframe` then `gf().f_code.co_name` inside the block named the helper | A name assigned a frame- or stack-reading function is an alias of it; every block calling one is declined, like the direct spellings. r145 (rejected). |
 | Two modules that neither import each other and both print at import time: hosting the helper in either makes importing one run the other's print | A host whose import would run module code the borrower's imports do not already run is refused (`import_time_effects`); a module-level helper may move to a participating module without that. xf13 (rejected). |
 | A script whose `print("loading app")` precedes its imports received the helper import above it | A helper import goes after the module's last leading import (after the docstring when there are none), so the leading statement keeps its place. xf14. |
+| oauthlib (1.732 candidate ecosystem run): a same-file pair's helper hosted in a shared ancestor class defined in `introspect.py` read `BearerToken` bare, a name only `pre_configured.py` imports, and 55 tests raised NameError | When placement puts a helper that reads module names bare into another module, the pair is decided again with every name a parameter. xf15. |

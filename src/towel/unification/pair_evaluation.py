@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
@@ -178,6 +179,18 @@ class _Placement:
 
     home: HelperHome
     replacements: List[Replacement]
+
+
+@dataclass(frozen=True)
+class _Placed:
+    """Stages 4 to 10: the unified pair, its rendered helper, and where it goes."""
+
+    unified: _Unified
+    rendered: _RenderedHelper
+    placement: _Placement
+    # The helper reads module names bare (stage 6) but placement put it in a
+    # module other than the one both sites resolved them in.
+    reads_bare_elsewhere: bool
 
 
 def _is_trivial_return_of_bound_name(
@@ -343,11 +356,50 @@ class PairEvaluation(
         value_producing = self._check_shape(pair, analysis)
         if value_producing is None:
             return None
+        placed = self._unify_and_place(
+            pair, setup, analysis, value_producing, functions, class_infos, keep_module_names=True
+        )
+        if placed is not None and placed.reads_bare_elsewhere:
+            # The names are the same lookup only from the sites' own module;
+            # a helper hosted in an ancestor class defined elsewhere would
+            # resolve them in that module. Decide the pair again with every
+            # name a parameter. Unification runs again because the later
+            # stages rewrite the substitution in place.
+            placed = self._unify_and_place(
+                pair,
+                setup,
+                analysis,
+                value_producing,
+                functions,
+                class_infos,
+                keep_module_names=False,
+            )
+        if placed is None:
+            return None
+        return self._finish_proposal(
+            pair, placed.unified, placed.rendered, placed.placement, functions
+        )
+
+    def _unify_and_place(
+        self,
+        pair: CodeBlockPair,
+        setup: _PairSetup,
+        analysis: _BindingAnalysis,
+        value_producing: bool,
+        functions: FunctionIndex,
+        class_infos: List[ClassInfo],
+        *,
+        keep_module_names: bool,
+    ) -> Optional[_Placed]:
+        """Stages 4 to 10, with or without reading shared module names bare."""
+        ctx = setup.ctx
         unified = self._unify_pair(pair, analysis)
         if unified is None:
             return None
         scope = self._helper_scope(pair, ctx, functions)
-        free = self._free_variables(pair, ctx, analysis, unified)
+        free = self._free_variables(
+            pair, ctx, analysis, unified, keep_module_names=keep_module_names
+        )
         if free is None:
             return None
         rendered = self._render_helper(pair, ctx, unified, scope, free, value_producing)
@@ -363,7 +415,10 @@ class PairEvaluation(
         placement = self._place_helper(pair, setup, scope, sites, functions, class_infos)
         if placement is None:
             return None
-        return self._finish_proposal(pair, unified, rendered, placement, functions)
+        elsewhere = bool(free.module_names) and os.path.abspath(
+            placement.home.file_path
+        ) != os.path.abspath(pair.file_path)
+        return _Placed(unified, rendered, placement, elsewhere)
 
     # -- 1 ---------------------------------------------------------------------
 
@@ -686,8 +741,14 @@ class PairEvaluation(
         ctx: "_PairContext",
         analysis: _BindingAnalysis,
         unified: _Unified,
+        *,
+        keep_module_names: bool = True,
     ) -> Optional[_FreeVariables]:
-        """The helper's free variables, checked for lifetime, declared, and thunked as needed."""
+        """The helper's free variables, checked for lifetime, declared, and thunked as needed.
+
+        With ``keep_module_names`` false every shared free name is a parameter,
+        as for a helper whose module is not the sites' own.
+        """
         debug_enabled = debugging(VALIDATION)
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
         free_vars1 = scope_analyzer.free_variables(pair.block1_nodes) if scope_analyzer else set()
@@ -737,7 +798,9 @@ class PairEvaluation(
         globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
             pair, scope_analyzer, free_vars
         )
-        module_names = self._names_kept_free(pair, ctx, free_vars)
+        module_names = (
+            self._names_kept_free(pair, ctx, free_vars) if keep_module_names else frozenset()
+        )
         free_vars -= module_names
         if self._rejects_module_data_lookup(
             pair, pair.scope_analyzer1, pair.scope_analyzer2, deferred=module_names

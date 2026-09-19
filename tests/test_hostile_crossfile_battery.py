@@ -39,6 +39,7 @@ TRANSFORMED = {
     "xf11_package_init_reaches_back",
     "xf12_cycle_through_package_init",
     "xf14_script_with_leading_statement",
+    "xf15_ancestor_in_another_module",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.

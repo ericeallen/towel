@@ -150,7 +150,10 @@ Each parameter is passed in the way that preserves the original evaluation:
   classes, imports, and module data that another function rebinds through
   `global`. A clustered occurrence joins only where every such name resolves
   the same way. A cross-file helper keeps them as parameters, since the
-  other module's same-named binding may differ.
+  other module's same-named binding may differ, and so does a helper that
+  placement (stage 10) hosts in an ancestor class defined in another
+  module: the driver notices the move and decides the pair again from
+  unification with every name a parameter (`_unify_and_place`).
 - **Thunk.** Any other expression is passed as a zero-argument lambda (a *thunk*
   [Ingerman 1961]) and called inside the helper exactly where the original
   expression stood. This

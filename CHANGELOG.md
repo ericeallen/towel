@@ -404,7 +404,12 @@ ecosystem evidence behind each claim. The format follows
   gains three extractions, and its own 1,662 tests pass on the output. A
   clustered occurrence whose same-spelled name is a local does not join;
   cross-file helpers still take the name as a parameter, and module data
-  a callback may rebind still declines a cross-file pair. `__class__`, the
+  a callback may rebind still declines a cross-file pair. So does a
+  same-file pair whose helper is hosted in a shared ancestor class defined
+  in another module: the pair is decided again with every name a
+  parameter, since the ancestor's module need not import them (the
+  release-candidate ecosystem run found oauthlib's `BearerToken` read bare
+  in `introspect.py`, which raised NameError in 55 tests). `__class__`, the
   cell zero-argument `super()` reads, names the defining class and stays a
   parameter of a method helper.
 - A call site that would pass a callee as

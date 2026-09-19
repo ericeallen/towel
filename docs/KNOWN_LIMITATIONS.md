@@ -63,6 +63,10 @@ rejects, and what remains outside its model. Read it together with
   other module's same-named binding may differ, so the name stays a
   parameter there, and module data that a callback may rebind still
   declines the pair (`module_data_lookup`, `rebound_external_binding`).
+  The same holds when a same-file pair's helper becomes a method of a
+  shared ancestor class defined in another module: the pair is decided
+  again with every name a parameter (oauthlib's `BearerToken`, fixture
+  `xf15`).
 - **Forwarded callees.** A differing expression in call position would be
   passed as `lambda *args, **kwargs: callee(*args, **kwargs)`; such a call
   site reads worse than the duplication it removes, so the pair is declined

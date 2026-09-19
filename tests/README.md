@@ -126,7 +126,7 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   assigned alias of `sys._getframe` declines.
   `test_hostile_crossfile_battery.py` does the same for the packages in
   `hostile_crossfile/` (`xf*`), with its own `TRANSFORMED` and `REJECTED`
-  sets: every package is in exactly one state. Today eleven are transformed
+  sets: every package is in exactly one state. Today twelve are transformed
   and one is rejected (`xf13_import_time_effects`, whose helper import would
   load a module that prints at import time). When the engine gains or loses
   a cross-file extraction, move the package and say why in the commit. A
