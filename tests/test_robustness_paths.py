@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import logging
 import multiprocessing
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -166,6 +167,12 @@ def test_invalidating_a_path_forgets_its_cached_lines(tmp_path: Path) -> None:
     module.write_text("x = 1\n")
     engine = UnificationRefactorEngine()
     assert engine._source_lines(str(module)) == ("x = 1\n",)
-    assert str(module) in engine._source_lines_cache
+    # Rewrite the file with the same size and modification time, which the
+    # memo's stat check cannot tell from the original: the stale lines are
+    # served until the path is invalidated, and the new ones after.
+    stat = module.stat()
+    module.write_text("x = 2\n")
+    os.utime(module, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert engine._source_lines(str(module)) == ("x = 1\n",)
     engine.invalidate_paths([str(module)])
-    assert str(module) not in engine._source_lines_cache
+    assert engine._source_lines(str(module)) == ("x = 2\n",)

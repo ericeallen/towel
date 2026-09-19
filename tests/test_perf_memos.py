@@ -85,6 +85,11 @@ def test_clustered_proposals_are_the_same_cold_and_warm(tmp_path: Path) -> None:
     fresh = _sites(_analyze(UnificationRefactorEngine(annotate_helpers=False), [path]))
     assert cold, "the similar functions must pair"
     assert warm == cold == fresh
+    # The count below pins the memo's contract rather than any behaviour the
+    # output shows: the fixed-point loop re-analyzes every file per iteration,
+    # and the clustering scan of an unchanged file is meant to be reused, not
+    # repeated. If the memo is restructured, drop this line; the equality
+    # above is the observable requirement.
     assert scans_after_warmup == 0, "an unchanged file is not scanned again"
 
 
@@ -222,5 +227,7 @@ def test_class_insertion_position_uses_the_engine_parse_memo() -> None:
     engine = UnificationRefactorEngine()
     source = "class C:\n    def m(self):\n        return 1\n"
     assert engine._find_class_insert_position(source, "C") is not None
-    assert source in engine._parse_cache
+    # The memo has no file to mutate; what it promises is one tree per
+    # source text, observable as the same object on every parse of it.
+    assert engine._parse_source(source) is engine._parse_source(source)
     assert engine._find_class_insert_position("class C(:\n", "C") is None
