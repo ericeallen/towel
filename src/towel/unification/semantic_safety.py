@@ -11,6 +11,8 @@ may read bare.
 
 from __future__ import annotations
 
+import dataclasses
+
 import ast
 from typing import (
     Dict,
@@ -294,6 +296,11 @@ class FrameAliases:
     warn_functions: FrozenSet[str] = frozenset()
     # ``gf = sys._getframe``: names bound to a frame- or stack-reading function.
     frame_functions: FrozenSet[str] = frozenset()
+    # Functions and methods of the module whose own body reads a frame
+    # relative to its caller (``sys._getframe(n)``, ``inspect.stack()``, a
+    # ``stacklevel=``), directly or by calling another such function: a call
+    # to one from inside a helper would see the helper instead.
+    frame_readers: FrozenSet[str] = frozenset()
 
 
 NO_ALIASES = FrameAliases()
@@ -367,13 +374,14 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
             if frame_reader and aliased not in frame_functions:
                 frame_functions.add(aliased)
                 grew = True
-    result = FrameAliases(
+    aliases = FrameAliases(
         frozenset(builtins_modules),
         frozenset(namespace_functions),
         frozenset(warnings_modules),
         frozenset(warn_functions),
         frozenset(frame_functions),
     )
+    result = dataclasses.replace(aliases, frame_readers=_frame_readers(module, aliases))
     _FRAME_ALIASES[module] = result
     return result
 
@@ -489,6 +497,55 @@ def frame_read_outside_block(
     return False
 
 
+def _frame_readers(module: ast.AST, aliases: FrameAliases) -> FrozenSet[str]:
+    """Names of the module's functions and methods that read a caller-relative frame.
+
+    A function qualifies when its own scope makes a frame-relative call, or
+    calls, by bare name or as an attribute, a function that qualifies; the
+    closure is taken to a fixed point. Resolution is by name, so a same-named
+    function elsewhere is over-approximated as a reader, which only declines.
+    """
+    definitions = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    calls = {
+        id(node): [
+            item
+            for statement in node.body
+            for item in walk_own_scope(statement)
+            if isinstance(item, ast.Call)
+        ]
+        for node in definitions
+    }
+    readers: Set[str] = {
+        node.name
+        for node in definitions
+        if any(_is_frame_relative_call(call, aliases) for call in calls[id(node)])
+    }
+    grew = bool(readers)
+    while grew:
+        grew = False
+        for node in definitions:
+            if node.name in readers:
+                continue
+            if any(_called_name(call) in readers for call in calls[id(node)]):
+                readers.add(node.name)
+                grew = True
+    return frozenset(readers)
+
+
+def _called_name(call: ast.Call) -> Optional[str]:
+    """The name a call reaches: ``f(...)`` gives ``f``, ``obj.f(...)`` gives ``f``."""
+    callee = call.func
+    if isinstance(callee, ast.Name):
+        return callee.id
+    if isinstance(callee, ast.Attribute):
+        return callee.attr
+    return None
+
+
 def _reads_own_frame(call: ast.Call, aliases: FrameAliases) -> bool:
     """``sys._getframe()`` or ``inspect.currentframe()``: a handle to this frame's locals.
 
@@ -528,6 +585,8 @@ def _statement_requires_original_frame(statement: ast.AST, aliases: FrameAliases
             ):
                 return True
             if _is_frame_relative_call(node, aliases) or _is_warning_call(node, aliases):
+                return True
+            if _called_name(node) in aliases.frame_readers:
                 return True
     return False
 

@@ -51,6 +51,7 @@ TRANSFORMED = {
     "h10_short_circuit",
     "r66_conditional_callee",
     "r60_local_import",
+    "r146_module_function_reads_caller_frame",
     "r144_class_cell_in_a_method_helper",
     "r142_module_data_rebound_by_callback",
     "r143_module_name_shadowed_by_a_local_elsewhere",

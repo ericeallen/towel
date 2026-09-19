@@ -105,13 +105,20 @@ about where each one stops.
   and without one, because the warnings registry deduplicates per call
   site and two sites that warn would become one. This is exact for
   constructs written in the block or its enclosing function, directly or
-  through an alias the module binds.
+  through an alias the module binds. A call to a function or method of the
+  same module whose own body reads a frame relative to its caller
+  (`sys._getframe(n)`, `inspect.stack()`, a `stacklevel=`), directly or
+  through other such functions of the module, counts as a frame read too:
+  typing_extensions' `_caller`, which finds a `TypeAliasType`'s defining
+  module that way, would otherwise see the helper (fixture r146). The
+  functions are matched by name, which over-approximates and only declines.
 - **Warned before the run.** Directory mode scans every module first and prints
   a stderr warning naming the files that inspect frames or tracebacks,
   attribute warnings by `stacklevel`, or read source through
-  `inspect.getsource`. This catches frame sensitivity that a call chain hides
-  from the block-level guard, such as pluggy's argument validation, where the
-  extracted block calls a function that warns with `stacklevel`. The warning
+  `inspect.getsource`. This catches frame sensitivity that a call chain
+  through another module hides from the block-level guard, such as pluggy's
+  argument validation, where the extracted block calls a function that warns
+  with `stacklevel`. The warning
   tells you which diffs to review or `--exclude`; it is a pointer, not a proof
   of breakage.
 - **Not detected, and therefore silent.** Four kinds of frame, line, or

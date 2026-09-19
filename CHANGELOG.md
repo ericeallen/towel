@@ -412,6 +412,14 @@ ecosystem evidence behind each claim. The format follows
   in `introspect.py`, which raised NameError in 55 tests). `__class__`, the
   cell zero-argument `super()` reads, names the defining class and stays a
   parameter of a method helper.
+- A call to a function or method of the same module whose body reads a
+  frame relative to its caller (`sys._getframe(n)`, `inspect.stack()`, a
+  `stacklevel=`), directly or through other such functions, is a frame read
+  at its call site, and the block stays where it is. The module-name rule
+  had admitted blocks that typing_extensions' `_caller()` reads through,
+  which a reflection guard had declined only by accident, and six
+  `TypeAliasType` pickling tests failed in the release-candidate ecosystem
+  run.
 - A call site that would pass a callee as
   `lambda *args, **kwargs: callee(*args, **kwargs)` is declined by name
   (`forwarded_callee`). It used to be declined by accident, because the
