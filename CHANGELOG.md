@@ -375,11 +375,15 @@ ecosystem evidence behind each claim. The format follows
   resolved through bindings.
 - `warnings.warn` without `stacklevel`, and a `stacklevel` reached through
   an alias, decline the block.
-- An object bound in the block whose lifetime a later read observes (a
-  temporary file, a weak reference) is returned from the helper rather
-  than dropped when the helper's frame ends.
-- A cross-file helper import goes after the host's leading executable
-  statements.
+- An object a class instantiation or a resource factory (`open`,
+  `connect`, `socket`, `mkdtemp`, `Popen`, `urlopen`, ...) binds in the
+  block is returned from the helper rather than dropped when the helper's
+  frame ends, since a later read may observe its lifetime (a temporary
+  file, a weak reference).
+- A helper import goes after the module's last leading import, before its
+  first definition (after the docstring when there are no imports), so a
+  script that runs a statement before its imports keeps that statement
+  first.
 - A form feed or a Unicode line separator in a source no longer crashes the
   splice: lines are counted the way the tokenizer counts them.
 - Async comprehensions are declined.
@@ -387,8 +391,10 @@ ecosystem evidence behind each claim. The format follows
 - A relative output path no longer ends the fixed point early.
 - Type inference no longer switches off when the working directory is
   above the output.
-- The transaction journal lives under the project root, and only that root
-  is checked for one.
+- A pending transaction journal blocks a run only when its manifest names
+  a file the run would change (a journal without a readable manifest
+  blocks everything beneath it), and journals of concurrent runs never
+  share a name.
 - A killed run's pyright probe cannot be mistaken for source.
 - The mypy cache and partial-copy directories are cleaned on SIGTERM.
 - An ASCII locale no longer breaks a run.
