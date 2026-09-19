@@ -316,6 +316,8 @@ def test_unittest_differences_never_use_a_pytest_retest_command(
         10,
         tmp_path,
         ecosystem.Project("fixture", "unused", "pinned", "package.py"),
+        _phase(tmp_path / "initial-before.log", 0, "1 passed in 0.01s\n"),
+        _phase(tmp_path / "initial-after.log", 0, "1 passed in 0.01s\n"),
     )
 
 
@@ -350,7 +352,7 @@ def test_retest_requires_matching_recognized_outcomes(
     after: tuple[int, str],
     expected: bool,
 ) -> None:
-    phases = iter([before, after])
+    phases = iter([before, after, before, after])
 
     def run(
         command: Sequence[str], cwd: Path, env: dict[str, str], timeout: int, log: Path
@@ -371,6 +373,8 @@ def test_retest_requires_matching_recognized_outcomes(
             10,
             tmp_path,
             project,
+            _phase(tmp_path / "initial-before.log", 0, "1 passed in 0.01s\n"),
+            _phase(tmp_path / "initial-after.log", 0, "1 passed in 0.01s\n"),
         )
         is expected
     )
@@ -533,6 +537,8 @@ def test_unrecognized_custom_runner_never_receives_pytest_retest_arguments(
         10,
         tmp_path,
         ecosystem.Project("fixture", "unused", "pinned", "package.py"),
+        _phase(tmp_path / "initial-before.log", 0, "1 passed in 0.01s\n"),
+        _phase(tmp_path / "initial-after.log", 0, "1 passed in 0.01s\n"),
     )
 
 
@@ -666,6 +672,8 @@ def test_retests_apply_the_contract_and_persist_independently_checkable_statuses
             10,
             tmp_path,
             project,
+            _phase(tmp_path / "initial-before.log", 0, "1 passed in 0.01s\n"),
+            _phase(tmp_path / "initial-after.log", 0, "1 passed in 0.01s\n"),
         )
         is expected
     )
@@ -982,3 +990,150 @@ def test_actual_retest_does_not_run_the_original_selector_before_an_option(tmp_p
     outcome = ecosystem._completed_test_run(phase)
     assert outcome is not None and outcome.returncode == 0 and outcome.collected == 1
     assert "test_unrelated" not in Path(phase.log).read_text()
+
+
+@pytest.mark.parametrize("regression", [False, True])
+def test_actual_order_dependent_regression_cannot_hide_in_isolated_retests(
+    tmp_path: Path, regression: bool
+) -> None:
+    source, ready, logs = (tmp_path / name for name in ("before", "after", "logs"))
+    common = "armed = False\n\ndef prepare():\n    global armed\n    armed = True\n\n"
+    tests = (
+        "import stateful\n\n"
+        "def test_prepare():\n    stateful.prepare()\n    assert stateful.armed\n\n"
+        "def test_result():\n    assert stateful.result() == 42\n"
+    )
+    for tree in (source, ready, logs):
+        tree.mkdir()
+    for tree in (source, ready):
+        body = "return 0 if armed else 42" if regression and tree == ready else "return 42"
+        (tree / "stateful.py").write_text(common + f"def result():\n    {body}\n")
+        (tree / "test_state.py").write_text(tests)
+    env = {"PYTHONPATH": ".", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+    command = ecosystem._prepare_test_command(
+        [sys.executable, "-m", "pytest", "test_state.py", "-q"]
+    )
+    initial_before = ecosystem.run(command, source, env, 20, logs / "initial-before.log")
+    initial_after = ecosystem.run(command, ready, env, 20, logs / "initial-after.log")
+    assert initial_before.returncode == 0 and initial_after.returncode == int(regression)
+    assert (
+        ecosystem._retest_agrees(
+            command,
+            ["test_state.py::test_result"],
+            source,
+            ready,
+            env,
+            20,
+            logs,
+            ecosystem.Project("stateful", "unused", "pinned", "stateful.py"),
+            initial_before,
+            initial_after,
+        )
+        is not regression
+    )
+    evidence = json.loads((logs / "stateful-retest.json").read_text())
+    assert evidence["before"]["returncode"] == evidence["after"]["returncode"] == 0
+    assert evidence["before"]["summary"] == evidence["after"]["summary"] == "1 passed"
+    full = evidence["full"]
+    assert full["command"] == command
+    assert full["initial_before"]["log"] == initial_before.log
+    assert full["initial_after"]["log"] == initial_after.log
+    assert full["before"]["returncode"] == 0
+    assert full["after"]["returncode"] == int(regression)
+    for side in ("before", "after"):
+        outcome = ecosystem._completed_test_run(ecosystem.Phase(**full[side]))
+        assert outcome is not None and outcome.collected == 2
+
+
+@pytest.mark.parametrize(
+    "before,after,expected",
+    [
+        ((0, "2 passed in 0.01s\n"), (0, "2 passed in 0.01s\n"), True),
+        (
+            (0, "2 passed in 0.01s\n"),
+            (1, "FAILED test_case.py::test_a\n1 failed, 1 passed in 0.01s\n"),
+            False,
+        ),
+        (
+            (1, "FAILED test_case.py::test_a\n1 failed, 1 passed in 0.01s\n"),
+            (1, "FAILED test_case.py::test_b\n1 failed, 1 passed in 0.01s\n"),
+            False,
+        ),
+        ((0, "1 passed in 0.01s\n"), (0, "1 passed in 0.01s\n"), False),
+        ((0, "3 passed in 0.01s\n"), (0, "3 passed in 0.01s\n"), False),
+        ((1, "2 passed in 0.01s\n"), (1, "2 passed in 0.01s\n"), False),
+        ((1, "internal error\n"), (1, "internal error\n"), False),
+        ((-9, "TIMEOUT\n"), (0, "2 passed in 0.01s\n"), False),
+        (
+            (1, "FAILED test_case.py::test_a\n1 failed, 1 passed in 0.01s\n"),
+            (1, "FAILED test_case.py::test_a\n1 failed, 1 passed in 0.01s\n"),
+            True,
+        ),
+    ],
+)
+def test_full_context_confirmation_requires_complete_equal_counted_outcomes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    before: tuple[int, str],
+    after: tuple[int, str],
+    expected: bool,
+) -> None:
+    phases = iter([(0, "1 passed in 0.01s\n"), (0, "1 passed in 0.01s\n"), before, after])
+    command = ecosystem._prepare_test_command([sys.executable, "-m", "pytest", "tests", "-q"])
+    calls: list[Sequence[str]] = []
+
+    def run(
+        arguments: Sequence[str], cwd: Path, env: dict[str, str], timeout: int, log: Path
+    ) -> ecosystem.Phase:
+        calls.append(arguments)
+        return _phase(log, *next(phases))
+
+    monkeypatch.setattr(ecosystem, "run", run)
+    assert (
+        ecosystem._retest_agrees(
+            command,
+            ["test_case.py::test_a"],
+            tmp_path,
+            tmp_path,
+            {},
+            10,
+            tmp_path,
+            ecosystem.Project("fixture", "unused", "pinned", "package.py"),
+            _phase(tmp_path / "initial-before.log", 0, "2 passed in 0.01s\n"),
+            _phase(
+                tmp_path / "initial-after.log",
+                1,
+                "FAILED test_case.py::test_a\n1 failed, 1 passed in 0.01s\n",
+            ),
+        )
+        is expected
+    )
+    assert calls[2:] == [command, command]
+    evidence = json.loads((tmp_path / "fixture-retest.json").read_text())
+    assert evidence["full"]["command"] == command
+    assert evidence["full"]["before"]["returncode"] == before[0]
+    assert evidence["full"]["after"]["returncode"] == after[0]
+
+
+@pytest.mark.parametrize(
+    "original", [(0, "1 passed in 0.01s\n"), (0, ""), (2, "2 errors in 0.01s\n")]
+)
+def test_retest_cannot_replace_incomplete_or_differently_sized_initial_suites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, original: tuple[int, str]
+) -> None:
+    def unexpected_run(*arguments: object) -> ecosystem.Phase:
+        raise AssertionError("Retesting cannot repair an invalid initial comparison")
+
+    monkeypatch.setattr(ecosystem, "run", unexpected_run)
+    assert not ecosystem._retest_agrees(
+        [sys.executable, "-m", "pytest"],
+        ["test_case.py::test_a"],
+        tmp_path,
+        tmp_path,
+        {},
+        10,
+        tmp_path,
+        ecosystem.Project("fixture", "unused", "pinned", "package.py"),
+        _phase(tmp_path / "initial-before.log", *original),
+        _phase(tmp_path / "initial-after.log", 0, "2 passed in 0.01s\n"),
+    )

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run public projects' own test suites before and after Towel refactors them.
 
-For every project in the manifest: clone at the pinned revision, install its
+For every project in the manifest: clone at its requested revision, install its
 test dependencies into a private environment, run its suite as a baseline,
-copy it, refactor the package out of place with the CLI defaults, adopt the
+copy it, refactor the package out of place with the requested typing mode, adopt the
 cleaned copy back over the package (the documented workflow, which exercises
 import paths that survive relocation), run the suite again, and compare. A
 project qualifies when both runs have recognized, nonempty pytest or unittest
@@ -11,6 +11,9 @@ outcomes that agree in exit status and normalized summary. Matching pre-existing
 test failures are allowed. Progress is printed as each phase completes; only
 PASS, NO_CHANGE and explicitly matched BROKEN_KNOWN verdicts satisfy the gate.
 Setup failures, incomplete test runs and unknown verdicts make it fail.
+An isolated retest match requires matching full-suite confirmations with the
+original test count before it can qualify. Types stay enabled unless the caller
+explicitly requests ``--no-types``; a type refusal never triggers a fallback.
 
 Trust boundary: this script executes code it does not review. It clones
 public repositories, runs each manifest entry's ``prepare`` command, installs
@@ -19,7 +22,8 @@ invoking user's privileges. That is remote code execution by design, so the
 script refuses to run unless the caller opts in with ``--run-untrusted-code``
 or ``TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1``, and it belongs on a disposable
 machine, a container, or an ephemeral CI runner, never on a workstation
-holding credentials. The manifest pins every project to a reviewed commit;
+holding credentials. The manifest pins projects to reviewed commits except the
+intentional ``towel-main`` HEAD compatibility entry;
 ``--print-pins`` lists the commits the last run tested so the pins can be
 refreshed after review.
 
@@ -93,12 +97,22 @@ class Phase:
 
 
 @dataclasses.dataclass(frozen=True)
+class FullRetestEvidence:
+    command: Tuple[str, ...]
+    initial_before: Phase
+    initial_after: Phase
+    before: Phase
+    after: Phase
+
+
+@dataclasses.dataclass(frozen=True)
 class RetestEvidence:
     command: Tuple[str, ...]
     test_ids: Tuple[str, ...]
     failure_exit_codes: Tuple[int, ...]
     before: Phase
     after: Phase
+    full: Optional[FullRetestEvidence] = None
 
 
 @dataclasses.dataclass
@@ -561,13 +575,13 @@ def check_project(
         )
         return result
     differing = sorted(before_failed ^ after_failed)
-    if differing and _retest_agrees(test, differing, source, ready, env, timeout, logs, project):
-        # A test that fails on one tree and passes on the other, then behaves
-        # the same on both when rerun alone, is timing-dependent (anyio's
-        # socket cancellation, rich's terminal rendering), not a difference
-        # the transformation made.
+    if differing and _retest_agrees(
+        test, differing, source, ready, env, timeout, logs, project, result.baseline, result.after
+    ):
+        # Removing earlier tests can hide a deterministic stateful regression.
+        # Both isolated and full-suite confirmations must agree.
         result.verdict = "PASS"
-        result.detail = f"flaky, same on retest: {' '.join(differing)[:200]}"
+        result.detail = f"same full-suite outcome on rerun: {' '.join(differing)[:200]}"
         return result
     unexpected = [
         test for test in differing if not any(pattern in test for pattern in project.known_failures)
@@ -681,8 +695,10 @@ def _retest_agrees(
     timeout: int,
     logs: Path,
     project: Project,
+    initial_before: Phase,
+    initial_after: Phase,
 ) -> bool:
-    """Whether the tests that differed fail identically on both trees when rerun alone."""
+    """Confirm a difference disappears both alone and in its original suite."""
     if _pytest_arguments_start(test) is None or any(
         test_id.startswith("unittest:") for test_id in test_ids
     ):
@@ -691,6 +707,14 @@ def _retest_agrees(
         return False
     command = _retest_command(test, test_ids)
     if command is None:
+        return False
+    initial_before_outcome = _completed_test_run(initial_before, project.failure_exit_codes)
+    initial_after_outcome = _completed_test_run(initial_after, project.failure_exit_codes)
+    if (
+        initial_before_outcome is None
+        or initial_after_outcome is None
+        or initial_before_outcome.collected != initial_after_outcome.collected
+    ):
         return False
     before = run(command, source, env, timeout, logs / f"{project.name}-retest-before.log")
     after = run(command, ready, env, timeout, logs / f"{project.name}-retest-after.log")
@@ -709,7 +733,32 @@ def _retest_agrees(
     ):
         return False
     before_failed = failed_tests(before.log)
-    return before_failed == failed_tests(after.log) and before_failed <= set(test_ids)
+    if before_failed != failed_tests(after.log) or not before_failed <= set(test_ids):
+        return False
+    full_command = _prepare_test_command(test)
+    full_before = run(
+        full_command, source, env, timeout, logs / f"{project.name}-retest-full-before.log"
+    )
+    full_after = run(
+        full_command, ready, env, timeout, logs / f"{project.name}-retest-full-after.log"
+    )
+    evidence = dataclasses.replace(
+        evidence,
+        full=FullRetestEvidence(
+            tuple(full_command), initial_before, initial_after, full_before, full_after
+        ),
+    )
+    (logs / f"{project.name}-retest.json").write_text(
+        json.dumps(dataclasses.asdict(evidence), indent=2) + "\n", encoding="utf-8"
+    )
+    full_before_outcome = _completed_test_run(full_before, project.failure_exit_codes)
+    full_after_outcome = _completed_test_run(full_after, project.failure_exit_codes)
+    return (
+        full_before_outcome is not None
+        and full_before_outcome == full_after_outcome
+        and full_before_outcome.collected == initial_before_outcome.collected
+        and failed_tests(full_before.log) == failed_tests(full_after.log)
+    )
 
 
 REFUSAL = re.compile(
