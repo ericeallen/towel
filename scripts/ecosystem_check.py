@@ -6,9 +6,11 @@ test dependencies into a private environment, run its suite as a baseline,
 copy it, refactor the package out of place with the CLI defaults, adopt the
 cleaned copy back over the package (the documented workflow, which exercises
 import paths that survive relocation), run the suite again, and compare. A
-project qualifies when both runs are identical in exit status and summary line.
-Progress is printed as each phase completes; the exit status is nonzero when
-any project breaks or the refactoring crashes.
+project qualifies when both runs have recognized, nonempty pytest or unittest
+outcomes that agree in exit status and normalized summary. Matching pre-existing
+test failures are allowed. Progress is printed as each phase completes; only
+PASS, NO_CHANGE and explicitly matched BROKEN_KNOWN verdicts satisfy the gate.
+Setup failures, incomplete test runs and unknown verdicts make it fail.
 
 Trust boundary: this script executes code it does not review. It clones
 public repositories, runs each manifest entry's ``prepare`` command, installs
@@ -138,21 +140,108 @@ def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, lo
 
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+PYTEST_TALLY = re.compile(
+    r"(\d+) (passed|failed|errors?|skipped|xfailed|xpassed|deselected|warnings?|"
+    r"subtests passed|subtests failed)"
+)
+UNITTEST_COUNT = re.compile(r"^Ran (\d+) tests? in .+$")
+UNITTEST_RESULT = re.compile(r"^(OK|FAILED)( \(.*\))?$")
+
+
+@dataclasses.dataclass(frozen=True)
+class TestOutcome:
+    """A recognized completed suite and the exit status its result requires."""
+
+    summary: str
+    returncode: int
+    collected: int
+
+
+def _plain_lines(output: str) -> List[str]:
+    plain = ANSI.sub("", output.replace("\r", "\n"))
+    return [line.strip() for line in plain.splitlines() if line.strip()]
+
+
+def _normalize_summary(line: str) -> str:
+    without_time = re.sub(r" in [\d.]+s(?: \(\d+:\d+:\d+\))?", "", line).strip("= ")
+    # Moving a warning changes pytest's grouping but not the test outcome.
+    return re.sub(r",? \d+ warnings?\b", "", without_time).strip(", ")
+
+
+def _test_outcome(output: str) -> Optional[TestOutcome]:
+    """Recognize actual tallies; arbitrary command output is not a test result.
+
+    All-skipped or expected-failure suites still have collected tests. A
+    unittest run needs both its positive count and its closing OK/FAILED;
+    include every completed run for commands that chain multiple suites.
+    """
+    lines = _plain_lines(output)
+    for line in reversed(lines):
+        summary = _normalize_summary(line)
+        counts: Dict[str, int] = {}
+        for item in summary.split(", "):
+            match = PYTEST_TALLY.fullmatch(item)
+            if match is None:
+                break
+            counts[match[2]] = counts.get(match[2], 0) + int(match[1])
+        else:
+            tests = sum(
+                count
+                for label, count in counts.items()
+                if label in {"passed", "failed", "error", "errors", "skipped", "xfailed", "xpassed"}
+            )
+            if tests:
+                failed = any(
+                    counts.get(label, 0)
+                    for label in ("failed", "error", "errors", "subtests failed")
+                )
+                return TestOutcome(summary, int(failed), tests)
+    pending: Optional[int] = None
+    completed: List[str] = []
+    failed = False
+    collected = 0
+    for line in lines:
+        count = UNITTEST_COUNT.fullmatch(line)
+        if count is not None:
+            if pending is not None or int(count[1]) == 0:
+                return None
+            pending = int(count[1])
+        elif UNITTEST_RESULT.fullmatch(line):
+            if pending is None:
+                return None
+            completed.append(f"Ran {pending} tests; {line}")
+            collected += pending
+            failed = failed or line.startswith("FAILED")
+            pending = None
+    if completed and pending is None:
+        return TestOutcome(" | ".join(completed), int(failed), collected)
+    return None
+
+
+def _completed_test_run(phase: Phase) -> Optional[TestOutcome]:
+    """An outcome only if the log and process status both describe a completed suite."""
+    try:
+        output = Path(phase.log).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    outcome = _test_outcome(output)
+    if outcome is None or phase.returncode != outcome.returncode:
+        return None
+    # Equal red tallies are not evidence of equal failures without identities.
+    if outcome.returncode != 0 and not _failed_test_ids(output):
+        return None
+    return outcome
 
 
 def summarize(output: str) -> str:
     """The suite's final tally, without color codes or elapsed time."""
-    plain = ANSI.sub("", output.replace("\r", "\n"))
-    lines = [line.strip() for line in plain.splitlines() if line.strip()]
+    outcome = _test_outcome(output)
+    if outcome is not None:
+        return outcome.summary
+    lines = _plain_lines(output)
     for line in reversed(lines):
         if any(pattern.match(line) for pattern in SUMMARY_PATTERNS):
-            without_time = re.sub(r" in [\d.]+s(?: \(\d+:\d+:\d+\))?", "", line).strip("= ")
-            # The warning tally is not a test outcome, and pytest groups
-            # warnings by the source line that raised them, so moving code
-            # changes the count even when every test's result is unchanged
-            # (jmespath's deprecation warning). Drop it from the comparison.
-            without_warnings = re.sub(r",? \d+ warnings?\b", "", without_time).strip(", ")
-            return without_warnings
+            return _normalize_summary(line)
     return lines[-1] if lines else ""
 
 
@@ -273,9 +362,12 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
     test = [part.format(python=python) for part in project.test]
     env = base_env(project.pythonpath, python.parent)
     result.baseline = run(test, source, env, timeout, logs / f"{project.name}-before.log")
-    if result.baseline.returncode not in (0, 1):
+    baseline_outcome = _completed_test_run(result.baseline)
+    if baseline_outcome is None:
         result.verdict = "BASELINE_ERROR"
-        result.detail = result.baseline.summary
+        result.detail = (
+            f"incomplete test run (exit {result.baseline.returncode}): {result.baseline.summary}"
+        )
         return result
     ready = work / f"{project.name}-ready"
     if ready.exists():
@@ -341,15 +433,27 @@ def check_project(project: Project, work: Path, towel_src: Path, timeout: int) -
         result.verdict = "NO_CHANGE"
         return result
     result.after = run(test, ready, env, timeout, logs / f"{project.name}-after.log")
-    same = (result.after.returncode, result.after.summary) == (
-        result.baseline.returncode,
-        result.baseline.summary,
-    )
-    if same:
-        result.verdict = "PASS"
+    after_outcome = _completed_test_run(result.after)
+    if after_outcome is None:
+        result.verdict = "AFTER_ERROR"
+        result.detail = (
+            f"incomplete test run (exit {result.after.returncode}): {result.after.summary}"
+        )
         return result
     before_failed = failed_tests(result.baseline.log)
     after_failed = failed_tests(result.after.log)
+    if after_outcome == baseline_outcome and before_failed == after_failed:
+        result.verdict = "PASS"
+        return result
+    if after_outcome.collected != baseline_outcome.collected:
+        # Retesting a few differing failures cannot account for tests missing
+        # from the full run, nor can a named frame/source limitation.
+        result.verdict = "BROKEN"
+        result.detail = (
+            f"test count changed from {baseline_outcome.collected} to {after_outcome.collected}: "
+            f"before: {result.baseline.summary} | after: {result.after.summary}"
+        )
+        return result
     differing = sorted(before_failed ^ after_failed)
     if differing and _retest_agrees(test, differing, source, ready, env, timeout, logs, project):
         # A test that fails on one tree and passes on the other, then behaves
@@ -405,10 +509,16 @@ def _retest_agrees(
     project: Project,
 ) -> bool:
     """Whether the tests that differed fail identically on both trees when rerun alone."""
+    if any(test_id.startswith("unittest:") for test_id in test_ids):
+        # unittest (including custom runners) does not accept pytest node ids
+        # or options. Preserve the observed difference instead of guessing.
+        return False
     command = _retest_command(test, test_ids)
     before = run(command, source, env, timeout, logs / f"{project.name}-retest-before.log")
     after = run(command, ready, env, timeout, logs / f"{project.name}-retest-after.log")
-    if before.returncode == -9 or after.returncode == -9:
+    before_outcome = _completed_test_run(before)
+    after_outcome = _completed_test_run(after)
+    if before_outcome is None or before_outcome != after_outcome:
         return False
     return failed_tests(before.log) == failed_tests(after.log)
 
@@ -426,16 +536,30 @@ def _refusal(log_path: Path) -> str:
     return match.group(1) if match else ""
 
 
-FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.M)
+FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) ([^(].*)$")
+UNITTEST_FAILED_LINE = re.compile(r"^(?:FAIL|ERROR|UNEXPECTED SUCCESS): (.+)$")
+
+
+def _failed_test_ids(output: str) -> Set[str]:
+    """Full pytest node ids and unittest failure headers, without diagnostic suffixes."""
+    identities: Set[str] = set()
+    for line in _plain_lines(output):
+        pytest_failure = FAILED_LINE.fullmatch(line)
+        if pytest_failure is not None:
+            identities.add(pytest_failure[1].split(" - ", 1)[0].strip())
+        unittest_failure = UNITTEST_FAILED_LINE.fullmatch(line)
+        if unittest_failure is not None:
+            identities.add(f"unittest:{unittest_failure[1]}")
+    return identities
 
 
 def failed_tests(log_path: str) -> Set[str]:
-    """Test ids reported as failed or errored in a pytest log."""
+    """Test ids reported as failed or errored by pytest or unittest."""
     try:
         text = Path(log_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return set()
-    return set(FAILED_LINE.findall(text))
+    return _failed_test_ids(text)
 
 
 def _isolate_worker() -> None:
@@ -545,6 +669,9 @@ def main() -> int:
         print(REFUSAL_MESSAGE, file=sys.stderr, end="")
         return 2
     projects = load_manifest(args.manifest, args.only)
+    missing = set(args.only) - {project.name for project in projects}
+    if missing:
+        parser.error(f"unknown projects: {', '.join(sorted(missing))}")
     if args.work is None:
         # A shared /tmp path could be pre-created by another local user, who
         # would then own the tree this run clones into and executes from.
@@ -639,8 +766,8 @@ def main() -> int:
         encoding="utf-8",
     )
     print("\n".join(lines[-1:]), flush=True)
-    failing = {"BROKEN", "CRASH", "TIMEOUT", "HARNESS_ERROR"}
-    return 1 if any(result.verdict in failing for result in results) else 0
+    accepted = {"PASS", "NO_CHANGE", "BROKEN_KNOWN"}
+    return 0 if results and all(result.verdict in accepted for result in results) else 1
 
 
 if __name__ == "__main__":
