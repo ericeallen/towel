@@ -149,6 +149,15 @@ class HelperAnnotationWiring(EngineState):
             wants_type_inference=sites_use_annotations(sites),
         )
 
+    @staticmethod
+    def _receiver_name(proposal: RefactoringProposal) -> Optional[str]:
+        """The parameter a method dispatches on, whose type its class already fixes."""
+        if proposal.insert_into_class is None or proposal.method_kind == "staticmethod":
+            return None
+        return proposal.method_param_name or (
+            "cls" if proposal.method_kind == "classmethod" else "self"
+        )
+
     def _infer_helper_annotations(self, proposal: RefactoringProposal) -> None:
         """Finish the helper's annotations in place when the proposal is applied.
 
@@ -165,10 +174,11 @@ class HelperAnnotationWiring(EngineState):
         host_source = self._read_source(proposal.file_path)
         bare_ok = self.placeable_after(host_source) if module_level and host_source else set()
         host = self._parsed_host(proposal.file_path)
+        receiver = self._receiver_name(proposal)
         oracle = self._active_type_oracle()
         if oracle is None:
             respelled = respell_bare(proposal.extracted_function, host, bare_ok)
-            completed = complete_with_any(respelled, host)
+            completed = complete_with_any(respelled, host, receiver)
             proposal.extracted_function = completed.helper
             proposal.required_imports = completed.required_imports
             return
@@ -182,8 +192,9 @@ class HelperAnnotationWiring(EngineState):
             proposal.return_variables,
             oracle,
             bare_ok,
+            receiver,
         )
-        completed = complete_with_any(respell_bare(inferred.helper, host, bare_ok), host)
+        completed = complete_with_any(respell_bare(inferred.helper, host, bare_ok), host, receiver)
         proposal.extracted_function = completed.helper
         proposal.required_imports = tuple(
             dict.fromkeys(inferred.required_imports + completed.required_imports)

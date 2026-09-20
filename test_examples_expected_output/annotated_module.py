@@ -99,7 +99,7 @@ class Ledger:
         lowest, running = self._extracted_func_1(opening)
         return lowest < 0
 
-    def _extracted_func_1(self: Any, opening: int) -> tuple[int, int]:
+    def _extracted_func_1(self, opening: int) -> tuple[int, int]:
         running: int = opening
         lowest: int = opening
         for entry in self.entries:

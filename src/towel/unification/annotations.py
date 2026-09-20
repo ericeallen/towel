@@ -711,20 +711,26 @@ def respell_bare(
     return respelled
 
 
-def complete_with_any(helper: ast.FunctionDef, host: Optional[ast.Module]) -> _InferredHelper:
+def complete_with_any(
+    helper: ast.FunctionDef, host: Optional[ast.Module], receiver: Optional[str] = None
+) -> _InferredHelper:
     """Give every still-bare parameter, and a bare return, the annotation ``Any``.
 
     Applied only to a helper that already carries some annotation: a partly
     annotated signature reads as an omission and is an error under mypy's
     ``disallow-incomplete-defs``, while ``Any`` states the type is unknown.
     A helper with no annotation at all is left as it is, so unannotated code
-    stays unannotated.
+    stays unannotated. A method's receiver is not completed: no checker asks
+    for its annotation, and ``Any`` there would only discard what the class
+    already states.
     """
     annotated = copy.deepcopy(helper)
     parameters = annotated.args.posonlyargs + annotated.args.args
     if annotated.returns is None and all(p.annotation is None for p in parameters):
         return _InferredHelper(annotated, ())
     for parameter in parameters:
+        if parameter.arg == receiver:
+            continue
         if parameter.annotation is None:
             parameter.annotation = ast.Name(id="Any", ctx=ast.Load())
     if annotated.returns is None:
@@ -739,6 +745,7 @@ def infer_missing_annotations(
     return_variables: Sequence[str],
     inferrer: TypeOracle,
     bare_ok: Optional[Set[str]] = None,
+    receiver: Optional[str] = None,
 ) -> _InferredHelper:
     """A copy of ``helper`` with its annotations completed and normalized by a type checker.
 
@@ -747,6 +754,14 @@ def infer_missing_annotations(
     left alone); the annotation is the join of the revealed types, a union
     normalized by the checker's subtype relation, and unions the sites'
     declarations already supplied are normalized the same way.
+
+    A method's receiver, named by ``receiver``, is not among them. Its type is
+    fixed by the class the method is defined on, not by the callers that happen
+    to exist: a helper on a base class is inherited by every subclass, so
+    joining the two observed callers into ``A | B`` both understates its domain
+    and, where the two are siblings, is a type no checker will accept, because
+    an explicit receiver annotation must be a supertype of its own class.
+    Neither mypy nor pyright asks for one, so it is left bare.
 
     Return: the helper's own return type is revealed from the block's
     ``return`` expressions, or from the returned variables just after the
@@ -761,7 +776,9 @@ def infer_missing_annotations(
     bare = [
         index
         for index, parameter in enumerate(parameters)
-        if parameter.annotation is None and all(index < len(site.call.args) for site in sites)
+        if parameter.annotation is None
+        and parameter.arg != receiver
+        and all(index < len(site.call.args) for site in sites)
     ]
     allowed = set(_TYPING_NAMES) | (bare_ok or set())
     host_site = next((site for site in sites if site.file_path == host_file), None)
