@@ -23,6 +23,7 @@ never change an analysis outcome, so every call into a bar goes through
 
 import sys
 import importlib
+import threading
 from typing import Callable, Literal, Mapping, Optional, Protocol, cast
 
 ProgressMode = Literal["auto", "tqdm", "none", "detail"]
@@ -105,6 +106,43 @@ def quietly(action: Callable[[], object]) -> None:
         action()
     except Exception:
         pass
+
+
+class Heartbeat:
+    """Redraws a display on a timer, so a long silent step still shows it is alive.
+
+    A tqdm bar redraws only when something advances it, its elapsed clock
+    included, so a step that takes minutes looks exactly like a hung process.
+    Verification makes such steps ordinary: a proposal the project rejects
+    costs several whole-project checks and never advances the bar. tqdm runs a
+    thread over its own bars for the same reason, so redrawing from one here is
+    the sanctioned shape; the caller serializes it against its own drawing.
+
+    ``stop`` is idempotent, and a redraw that fails is dropped rather than
+    ending a run for the sake of its display.
+    """
+
+    def __init__(self, redraw: Callable[[], object], period: float = 1.0) -> None:
+        self._redraw = redraw
+        self._period = period
+        self._stopped = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._beat, name="towel-progress", daemon=True)
+        self._thread.start()
+
+    def _beat(self) -> None:
+        while not self._stopped.wait(self._period):
+            quietly(self._redraw)
+
+    def stop(self) -> None:
+        self._stopped.set()
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(timeout=2)
 
 
 def render_inline_bar(pct: int, bar_len: int = 24) -> str:

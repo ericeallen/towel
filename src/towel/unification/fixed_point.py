@@ -32,6 +32,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 import textwrap
+import threading
+import time
 
 from pathlib import Path
 import ast
@@ -43,6 +45,7 @@ from .models import RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
+    Heartbeat,
     ProgressBar,
     ProgressBarFactory,
     ProgressMode,
@@ -327,11 +330,28 @@ class FixedPointDrivers(Materialization):
         self._warn_about_frame_sensitive_files(output_dir)
 
         run = _DirectoryRun()
+        termination_reason: TerminationReason = "fixed_point"
+
+        try:
+            return self._apply_until_fixed_point(
+                output_path, run, reporter, max_iterations, termination_reason
+            )
+        finally:
+            # A display thread must not outlive the run, however it ended.
+            reporter.close()
+
+    def _apply_until_fixed_point(
+        self,
+        output_path: Path,
+        run: "_DirectoryRun",
+        reporter: "_ApplyProgress",
+        max_iterations: int,
+        termination_reason: TerminationReason,
+    ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
+        """Apply queued proposals, re-pairing the project, until none applies."""
         proposal_queue: List[RefactoringProposal] = []
         global_passes = 0
         iterations = 0
-        termination_reason: TerminationReason = "fixed_point"
-
         # Main loop -------------------------------------------------------
         while True:
             if not proposal_queue:
@@ -587,6 +607,12 @@ class _ApplyProgress:
         self._mode = mode
         self._factory = factory
         self._bar: Optional[ProgressBar] = None
+        # What the run is doing now, for a redraw that no progress prompted.
+        self._doing = ""
+        self._counts = (0, 0)
+        self._drawing = threading.Lock()
+        self._started = time.monotonic()
+        self._heartbeat = Heartbeat(self._redraw)
 
     @property
     def _use_tqdm(self) -> bool:
@@ -612,11 +638,12 @@ class _ApplyProgress:
         denom = max(applied + queued, 1)
         pct = int((applied / denom) * 100)
         bar = render_inline_bar(pct, bar_len=32)
-        short = desc if len(desc) <= 48 else desc[:45] + "..."
+        short = desc if len(desc) <= 40 else desc[:37] + "..."
+        elapsed = time.monotonic() - self._started
         quietly(
             lambda: print(
                 f"\r[towel] {phase:<10} [{bar}] {pct:3d}% "
-                f"| applied={applied} queued={queued} | {short}",
+                f"| applied={applied} queued={queued} | {elapsed / 60:5.1f}m | {short}",
                 end="",
                 flush=True,
                 file=sys.stderr,
@@ -661,32 +688,58 @@ class _ApplyProgress:
             except Exception:
                 # A bar that cannot be created costs only its display.
                 self._bar = None
+        if wants_bar(self._mode) and queue:
+            self._heartbeat.start()
 
     def applying(self, applied: int, queued: int, iteration: int, desc: str) -> None:
-        """About to apply the ``iteration``-th proposal; the tqdm bar already says so."""
-        if self._active_bar() is None:
-            self.inline(applied, queued, "apply", f"#{iteration}: {desc}")
+        """About to weigh the ``iteration``-th proposal, which may take a while.
+
+        Verifying one proposal costs a whole-project check per candidate
+        signature and advances nothing, so this is where a run looks stalled.
+        The bar says which proposal is being weighed and the heartbeat keeps
+        its clock moving until the answer comes back.
+        """
+        self._doing, self._counts = f"#{iteration}: {desc}", (applied, queued)
+        bar = self._active_bar()
+        if bar is None:
+            self.inline(applied, queued, "apply", self._doing)
+            return
+        self._redraw()
+
+    def _redraw(self) -> None:
+        """Show what is happening now; called by the heartbeat as well as by the run."""
+        applied, queued = self._counts
+        with self._drawing:
+            bar = self._active_bar()
+            if bar is None:
+                if self._doing:
+                    self.inline(applied, queued, "apply", self._doing)
+                return
+            short = self._doing if len(self._doing) <= 44 else self._doing[:41] + "..."
+            quietly(lambda: bar.set_postfix({"A": applied, "Q": queued, "on": short}, refresh=True))
 
     def applied(self, applied: int, queued: int, iteration: int, desc: str) -> None:
         """The ``iteration``-th proposal was applied."""
+        self._doing, self._counts = f"#{iteration}: {desc}", (applied, queued)
         bar = self._active_bar()
         if bar is None:
-            self.inline(applied, queued, "applied", f"#{iteration}: {desc}")
+            self.inline(applied, queued, "applied", self._doing)
             return
-
-        def advance() -> None:
-            bar.update(1)
-            self._postfix(applied, queued)
-
-        quietly(advance)
+        with self._drawing:
+            quietly(lambda: bar.update(1))
+        self._redraw()
 
     def _postfix(self, applied: int, queued: int) -> None:
-        bar = self._active_bar()
-        if bar is not None:
-            quietly(lambda: bar.set_postfix({"A": applied, "Q": queued}, refresh=True))
+        self._counts = (applied, queued)
+        self._redraw()
+
+    def close(self) -> None:
+        """Stop the heartbeat; safe to call more than once and after a failure."""
+        self._heartbeat.stop()
 
     def finish_at_fixed_point(self) -> None:
         """No proposals remain: close the bar, or end the inline bar's line."""
+        self._heartbeat.stop()
         bar = self._active_bar()
         if bar is not None:
 
@@ -700,6 +753,7 @@ class _ApplyProgress:
 
     def finish_at_cap(self) -> None:
         """The iteration cap was reached: close the bar, or end the inline bar's line."""
+        self._heartbeat.stop()
         bar = self._active_bar()
         if bar is not None:
             bar.close()

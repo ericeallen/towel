@@ -20,16 +20,17 @@ import textwrap
 from importlib.metadata import version
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Callable,
     Dict,
     List,
-    Tuple,
-    Optional,
-    Mapping,
-    TypedDict,
     Literal,
+    Mapping,
+    Optional,
+    Sequence,
     Set,
+    TYPE_CHECKING,
+    Tuple,
+    TypedDict,
 )
 
 if TYPE_CHECKING:
@@ -591,6 +592,74 @@ def _pending_journal(target: Path) -> Optional[Path]:
     return next(target.rglob(".towel-transaction-*"), None) if target.is_dir() else None
 
 
+_COST_NOTE_FILES = 25
+"""Below this many files the note is noise: there are few pairs, so few proposals."""
+
+
+def _import_breadth(files: "Sequence[Path]", root: "Path") -> int:
+    """How many third-party packages the project imports.
+
+    A check costs what the import graph costs, not what the file count does:
+    about 0.02 s over a hundred modules that import nothing, against about a
+    second over Sphinx, whose 243 modules pull in eighteen third-party
+    packages and their stubs. Every check re-reads that graph, so its breadth
+    is the honest thing to report.
+    """
+    local = {path.stem for path in files} | {path.parent.name for path in files} | {root.name}
+    imported: set[str] = set()
+    for path in files:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except (OSError, SyntaxError, ValueError):
+            continue  # Only for a message; analysis reports a file it cannot read.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                imported.add(node.module.split(".")[0])
+    outside = imported - local - sys.stdlib_module_names - {"__future__"}
+    return len(outside)
+
+
+def _verification_cost(project_path: "Path", types: bool) -> List[str]:
+    """What a typed run over this project involves, in facts rather than a forecast.
+
+    How long a run takes is governed by how many proposals the project rejects,
+    and that is not known until it has rejected them: on Sphinx the rejections
+    outnumbered the refactorings about twenty-five to one late in the run. A
+    figure derived from anything available here would be confident and wrong,
+    so this states what is known and leaves the judgement to the reader.
+    """
+    from towel.type_inference import _configured_root
+
+    if not types or not project_path.is_dir():
+        return []
+    try:
+        files = list(project_path.rglob("*.py"))
+    except OSError:
+        # Only for a message; a real I/O problem resurfaces in the analysis.
+        return []
+    if len(files) < _COST_NOTE_FILES:
+        return []
+    packages = _import_breadth(files, project_path)
+    checkers = [
+        name for name in ("mypy", "pyright") if _configured_root(project_path, name) is not None
+    ]
+    named = " and ".join(checkers) if checkers else "the installed checker"
+    return [
+        f"Type checking is on ({named}), and this is where the time goes. Every",
+        "candidate signature is verified against the whole project: " f"{len(files)} Python files",
+        f"here, importing {packages} third-party packages, and a proposal can take several",
+        "such checks. A check costs what that import graph costs, not what the file",
+        "count does, and how many checks a run needs depends on how many proposals the",
+        "project rejects, which is not known in advance. For scale: Sphinx, 243 files",
+        "over 18 such packages, checks in about a second, and a full fixed point there",
+        "ran over an hour. --max-refactorings N stops after N applied; --no-types skips",
+        "verification altogether.",
+        "",
+    ]
+
+
 def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
     """The checker the project configures (mypy, pyright, or both), or None with a note."""
     from towel.type_inference import type_oracle_for_project
@@ -775,6 +844,8 @@ def _run_dry(args: argparse.Namespace) -> None:
     print()
 
     if options.interactive:
+        for line in _verification_cost(Path(input_path), options.types):
+            print(line)
         if not _confirm("Proceed? (y/N): "):
             print("Aborted.")
             return
