@@ -3,17 +3,28 @@
 The line-delimited protocol contains source text and checker diagnostics only.
 Project plugins and configured executables are never loaded. This file is
 launched by its absolute installed path with ``python -I``.
+
+Each request builds in a forked child that exits when it has answered. Nothing
+a build allocates outlives it, so the thousandth request costs what the first
+did. Successive ``build.build`` calls in one process do not have that property:
+mypy 1.19 keeps every rechecked module's tree alive after the result is dropped
+(about 250,000 objects per build of ``sphinx.application``, unreachable from any
+module and never collected), and each build begins with a full collection that
+walks all of it. Requests slowed linearly and a run quadratically: 117 recorded
+Sphinx requests took 855 s in one process and 88 s forked, with identical
+diagnostics. What persists between requests is the owned cache directory and
+this process's imports, which is all an incremental build reuses anyway.
 """
 
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
-import gc
 import io
 import json
 import os
 import re
 from pathlib import Path
+import signal
 import sys
 from typing import Mapping, Sequence
 
@@ -22,6 +33,7 @@ from mypy.build import BuildSource
 from mypy.find_sources import create_source_list
 from mypy.main import process_options
 from mypy.options import BuildType, Options
+from mypy.util import decode_python_encoding
 
 
 def _options(root: Path, config: str | None, cache: str, roots: Sequence[str]) -> Options:
@@ -98,8 +110,52 @@ def _sources(value: object) -> dict[str, str]:
     return result
 
 
+_SUPPLIED_TEXT_RECORD = "towel-supplied-text.jsonl"
+
+
+def _holds(path: str, text: str) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            return decode_python_encoding(handle.read()) == text
+    except (OSError, ValueError):
+        return False
+
+
+def _text_mypy_must_be_given(replacements: Mapping[str, str], cache: str) -> dict[str, str]:
+    """The replacements mypy cannot be left to read from their files.
+
+    mypy consults a module's cache entry only when it reads the module itself;
+    supplied text is always parsed and checked again. A complete request
+    supplies every analyzed module, nearly all unchanged, so text its file
+    already holds is withheld and that module is answered from the cache.
+
+    An entry written from supplied text is the exception. It records the
+    *file's* mtime and size beside the *text's* hash, and mypy trusts a matching
+    mtime and size without hashing, so it would answer for the file with what it
+    concluded about the text. A path once supplied with differing text is
+    therefore supplied for the rest of the cache's life. The record is written
+    before the build, in the cache it describes, so neither a killed build nor a
+    replaced worker can separate them.
+    """
+    record = Path(cache) / _SUPPLIED_TEXT_RECORD
+    try:
+        recorded = {json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()}
+    except FileNotFoundError:
+        recorded = set()
+    added = [
+        path
+        for path, text in replacements.items()
+        if path not in recorded and not _holds(path, text)
+    ]
+    if added:
+        with record.open("a", encoding="utf-8") as handle:
+            handle.writelines(json.dumps(path) + "\n" for path in added)
+    return {path: text for path, text in replacements.items() if path in recorded.union(added)}
+
+
 def _build_sources(
     replacements: Mapping[str, str],
+    given: Mapping[str, str],
     options: Options,
     root: Path,
     complete: bool,
@@ -108,7 +164,7 @@ def _build_sources(
     # SourceFinder handles namespace packages and .pyi precedence with mypy's
     # own rules. Explicit replacements are included even if config excludes them.
     if not complete:
-        return [BuildSource(path, modules[path], text) for path, text in replacements.items()]
+        return [BuildSource(path, modules[path], given.get(path)) for path in replacements]
     selected = create_source_list(list(replacements), options)
     if complete:
         targets = options.files or [str(root)]
@@ -117,7 +173,7 @@ def _build_sources(
         os.path.abspath(source.path): source for source in selected if source.path is not None
     }
     return [
-        BuildSource(path, source.module, replacements.get(path), source.base_dir)
+        BuildSource(path, source.module, given.get(path), source.base_dir)
         for path, source in by_path.items()
         if not Path(path).name.startswith("_towel_probe_")
     ]
@@ -142,6 +198,7 @@ def _request(request: object, cache: str) -> list[str]:
     replacements = _sources(request.get("sources"))
     sources = _build_sources(
         replacements,
+        _text_mypy_must_be_given(replacements, cache),
         options,
         root,
         request.get("complete") is True,
@@ -150,27 +207,52 @@ def _request(request: object, cache: str) -> list[str]:
     return list(build.build(sources=sources, options=options).errors)
 
 
+def _answer(line: str, cache: str) -> str:
+    messages: list[str] = []
+    failure: str | None = None
+    captured = io.StringIO()
+    try:
+        with redirect_stdout(captured), redirect_stderr(captured):
+            messages = _request(json.loads(line), cache)
+    except (Exception, SystemExit) as error:
+        failure = f"{type(error).__name__}: {error}"
+    return json.dumps({"messages": messages, "failure": failure}) + "\n"
+
+
+def _serve_in_child(line: str, cache: str) -> None:
+    """Answer one request from a forked child; report a child that died without answering."""
+    output = sys.stdout
+    child = os.fork()
+    if child == 0:
+        status = 1
+        try:
+            output.write(_answer(line, cache))
+            output.flush()
+            status = 0
+        finally:
+            os._exit(status)  # Never return into the parent's loop or run its cleanup.
+
+    def stop_child(signum: int, frame: object) -> None:
+        os.kill(child, signal.SIGKILL)
+        os._exit(1)
+
+    previous = signal.signal(signal.SIGTERM, stop_child)
+    try:
+        _, status = os.waitpid(child, 0)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    if status != 0:
+        failure = f"mypy build process ended with wait status {status}"
+        output.write(json.dumps({"messages": [], "failure": failure}) + "\n")
+        output.flush()
+
+
 def main() -> None:
     """Serve serialized builds until the parent closes its pipe."""
     if len(sys.argv) != 2:
         raise SystemExit("Expected the owned cache directory")
-    cache = sys.argv[1]
-    output = sys.stdout
-    for number, line in enumerate(sys.stdin, 1):
-        messages: list[str] = []
-        failure: str | None = None
-        captured = io.StringIO()
-        try:
-            with redirect_stdout(captured), redirect_stderr(captured):
-                messages = _request(json.loads(line), cache)
-        except (Exception, SystemExit) as error:
-            failure = f"{type(error).__name__}: {error}"
-        # Only this worker's heap is collected. No freeze spans work in the
-        # calling application, and terminating the worker releases all graphs.
-        if number % 10 == 0:
-            gc.collect()
-        output.write(json.dumps({"messages": messages, "failure": failure}) + "\n")
-        output.flush()
+    for line in sys.stdin:
+        _serve_in_child(line, sys.argv[1])
 
 
 if __name__ == "__main__":
