@@ -339,7 +339,7 @@ wheels = [
 
 [[package]]
 name = "code-towel"
-version = "1.732.post1"
+version = "1.772"
 source = { editable = "." }
 
 [package.optional-dependencies]

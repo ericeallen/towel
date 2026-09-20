@@ -1,13 +1,17 @@
 # Preparing a release
 
-The `1.732.post1` beta release is dated September 19, 2026. It corrects PyPI
-documentation links without changing the Python implementation in `1.732`. The
-[post-release changelog](../CHANGELOG.md#1732post1---2026-09-19) records that fix;
-the
-[changelog](../CHANGELOG.md#1732---2026-09-19) summarizes reuse of existing
-functions, optional formatting and typing, larger-project controls, and the
-pre-release audit fixes. Runtime `1d246075` and validated source
-`2e4ebe6` are distinguished from earlier candidates in the
+The `1.772` beta release is dated September 19, 2026. Its
+[changelog](../CHANGELOG.md#1772---2026-09-19) summarizes the one user-visible
+change: an extracted helper can now keep the relationships among its argument
+and return types through type anti-unification, instead of widening each column
+independently to a union or to `Any`. Generic instance, class, and static
+helper methods are included. The preceding `1.732.post1` release corrected PyPI
+documentation links without changing the Python implementation in `1.732`; its
+[post-release changelog](../CHANGELOG.md#1732post1---2026-09-19) records that
+fix, and the [1.732 changelog](../CHANGELOG.md#1732---2026-09-19) summarizes
+reuse of existing functions, optional formatting and typing, larger-project
+controls, and that release's audit fixes. The candidate commit and the evidence
+behind each claim are recorded in the
 [readiness report](PRODUCTION_READINESS.md). No subsequent release version has
 been chosen.
 
@@ -149,7 +153,7 @@ Once the version is chosen and the evidence is in:
 1. Convert the `[Unreleased]` heading of [CHANGELOG.md](../CHANGELOG.md) to `## [X.Y] - YYYY-MM-DD` and open a new, empty `[Unreleased]` above it.
 2. Add an entry at the top of [RELEASE_LOG.md](RELEASE_LOG.md): version, the commit or tag, a summary, and the test and ecosystem status.
 3. Update the first paragraph of this document (the latest release, its date, and what the next one carries).
-4. Tag the release commit `vX.Y` (`git tag` lists the existing ones: `v0.5.0`, `v0.5.1`, `v0.5.3`, `v0.5.4`, `v0.6.6`, `v1.414`, `v1.618`); the tag is created locally and pushed only as part of the maintainer's publication decision.
+4. Tag the release commit `vX.Y` (`git tag` lists the existing ones: `v0.5.0`, `v0.5.1`, `v0.5.3`, `v0.5.4`, `v0.6.6`, `v1.414`, `v1.618`, `v1.732`, `v1.732.post1`); the tag is created locally and pushed only as part of the maintainer's publication decision.
 
 ## Maintainer decisions before publication
 

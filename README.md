@@ -11,21 +11,21 @@ Towel finds repeated Python code and proposes helper function extractions.
 > `pip install code-towel`
 > Do **not** install `towel`: `pip install towel` and `uvx towel` fetch a different, unrelated project.
 
-**Release status: 1.732.post1 (beta).** Since 1.618, Towel can reuse
-existing functions instead of creating new helpers. With the optional tools
-installed, it formats generated code to match your project and checks helper
-type annotations with mypy or Pyright. This release also strengthens refactoring
-and renaming safety and adds controls for large projects. See the
-[1.732 changelog](https://github.com/ericeallen/towel/blob/v1.732.post1/CHANGELOG.md#1732---2026-09-19) for details. The `.post1` update fixes PyPI documentation links; the Python code is unchanged.
+**Release status: 1.772 (beta).** Since 1.732, an extracted helper can keep the
+relationships among its argument and return types instead of losing them to
+`Any`: anti-unifying the types alongside the code gives `list[T] -> T` where the
+call sites use `list[int] -> int` and `list[str] -> str`. Generic methods keep
+the type parameters their host class already binds. See the
+[1.772 changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md#1772---2026-09-19) for details.
 
-**New here?** The [Quick start](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
+**New here?** The [Quick start](https://github.com/ericeallen/towel/blob/v1.772/docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
 
 ## What it does
 
 Towel finds code that is repeated across your functions and pulls each group of
 duplicates into one shared helper, rewriting the copies as calls to it. It works
 by *anti-unification*, following the work of
-[Reynolds and Plotkin](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/ARCHITECTURE.md#references): it computes the
+[Reynolds and Plotkin](https://github.com/ericeallen/towel/blob/v1.772/docs/ARCHITECTURE.md#references): it computes the
 least-general generalization of the matching blocks, so the parts that are the
 same become the helper's body and the parts that differ become its parameters.
 
@@ -87,8 +87,8 @@ evaluated eagerly in zero-argument `lambda`s (see
 [below](#why-some-arguments-are-wrapped-in-lambda)), and leaves naming to you.
 Nothing is written without your say-so: the workflow is preview, refactor into a
 copy, review the diff, and run your tests.
-The [known limitations](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/KNOWN_LIMITATIONS.md) describe behavior outside
-these checks; the [readiness report](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/PRODUCTION_READINESS.md) records the
+The [known limitations](https://github.com/ericeallen/towel/blob/v1.772/docs/KNOWN_LIMITATIONS.md) describe behavior outside
+these checks; the [readiness report](https://github.com/ericeallen/towel/blob/v1.772/docs/PRODUCTION_READINESS.md) records the
 validation evidence.
 
 ## Install
@@ -137,13 +137,13 @@ point in 11.9 s, or 8.4 s without the type checker and formatter (commit
 `5ff2458`, September 19, 2026); a package the size of boltons (24,000 lines) or Click (29,000
 lines) takes tens of seconds, and pygments (137,000 lines) about two
 minutes, by the dated measurements in the
-[performance section of Known limitations](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/KNOWN_LIMITATIONS.md#performance),
+[performance section of Known limitations](https://github.com/ericeallen/towel/blob/v1.772/docs/KNOWN_LIMITATIONS.md#performance),
 which is the one table of package timings and says what each figure
 measured; the largest projects in the ecosystem check, networkx and Sphinx
 (150,000 to 200,000 lines), take several minutes to over half an hour
 (Sphinx: 2058 s with the defaults in the ecosystem check, September 2026).
 
-The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (15 applied, commit `5ff2458`, September 19, 2026) takes 8.4 s with `--no-types --no-format` and 11.9 s with the defaults, one core; that historical implementation held mypy in-process and raised peak memory from about 174 MB to about 894 MB there. The current checker uses an owned worker process and verifies the complete prospective project; those timings do not measure the current implementation.
+The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](https://github.com/ericeallen/towel/blob/v1.772/docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (15 applied, commit `5ff2458`, September 19, 2026) takes 8.4 s with `--no-types --no-format` and 11.9 s with the defaults, one core; that historical implementation held mypy in-process and raised peak memory from about 174 MB to about 894 MB there. The current checker uses an owned worker process and verifies the complete prospective project; those timings do not measure the current implementation.
 
 ## Use
 
@@ -230,9 +230,9 @@ Towel annotates a helper only in code that already uses annotations, from what t
 
 A parameter whose every argument is an annotated, never-rebound parameter of the enclosing function takes that annotation. For other expressions, Towel asks the checker for their types at the call. When sites disagree, the parameter takes the union of their types, normalized by the checker's subtype relation, so `int | bool` is written `int` and a subclass disappears under its base. The return type must satisfy every site: Towel uses the narrower declared return type, or a revealed type that the checker confirms is a subtype of every declaration. Thunks are `Callable[[], T]`. Once a helper has one annotation, the rest are completed with `Any`, so no signature is partial.
 
-Development builds also preserve relationships through type anti-unification. For example, helpers shared by `list[int] -> int` and `list[str] -> str` can use `list[T] -> T`; integer and string addition can use one constrained type parameter for both operands and the result. Existing generic callers receive fresh helper type parameters with supported bounds or constraints preserved. Instance and class helper methods retain type parameters already bound by their host class; static helpers infer their parameters from the explicit arguments. This feature is unreleased; the published 1.732.post1 retains the ordinary annotation rules above.
+Towel also preserves relationships through type anti-unification, rather than widening a disagreement to `Any`. For example, helpers shared by `list[int] -> int` and `list[str] -> str` can use `list[T] -> T`; integer and string addition can use one constrained type parameter for both operands and the result. Existing generic callers receive fresh helper type parameters with supported bounds or constraints preserved. Instance and class helper methods retain type parameters already bound by their host class; static helpers infer their parameters from the explicit arguments. [The type-parameter design](https://github.com/ericeallen/towel/blob/v1.772/docs/proposals/type-parameters.md) records the inference order and the cases it declines.
 
-When verification is enabled, all prospective changed modules are checked together with unchanged consumers. Development builds try generic signatures before losing annotations to `Any`, then retain the existing `Any` and unannotated fallbacks; each variant must pass. Checker failure or remaining errors decline the proposal. Without a checker, Towel copies and does not reason: unions are unreduced and disagreeing declarations leave the return bare. [The architecture document](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/ARCHITECTURE.md#helper-annotations) describes the published annotation rules; the source tree's type-parameter design records the new inference and its limits.
+When verification is enabled, all prospective changed modules are checked together with unchanged consumers. Towel tries a precise ordinary signature first, then generic signatures, then the existing `Any` and unannotated fallbacks; each variant must pass. Checker failure or remaining errors decline the proposal. Without a checker, Towel copies and does not reason: unions are unreduced and disagreeing declarations leave the return bare. [The architecture document](https://github.com/ericeallen/towel/blob/v1.772/docs/ARCHITECTURE.md#helper-annotations) describes the published annotation rules; the type-parameter design records the generic inference and its limits.
 
 ## Naming the helpers with an LLM
 
@@ -299,7 +299,7 @@ project's outcome. A complete gate accepts only `PASS`, `NO_CHANGE`, and
 specifically documented `BROKEN_KNOWN` outcomes; setup, typing, timeout, and
 incomplete test-run failures fail the gate. A no-change result does not validate
 a transformation. Default typing has separate integration coverage, described
-with the corpus results in [Production readiness](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/PRODUCTION_READINESS.md).
+with the corpus results in [Production readiness](https://github.com/ericeallen/towel/blob/v1.772/docs/PRODUCTION_READINESS.md).
 
 The check executes third-party code with your privileges, so it requires
 `--run-untrusted-code` (or `TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1`) and belongs on a
@@ -314,22 +314,22 @@ Behavioral tests compare sampled return values and types, exceptions, output, an
 
 Start here:
 
-- [Quick start](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/QUICKSTART.md) — install and refactor in four steps
-- [Known limitations](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/KNOWN_LIMITATIONS.md) — what is verified, what is rejected, and what is outside the model
-- [Python API guide](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/USAGE_GUIDE.md) — using `UnificationRefactorEngine` directly
+- [Quick start](https://github.com/ericeallen/towel/blob/v1.772/docs/QUICKSTART.md) — install and refactor in four steps
+- [Known limitations](https://github.com/ericeallen/towel/blob/v1.772/docs/KNOWN_LIMITATIONS.md) — what is verified, what is rejected, and what is outside the model
+- [Python API guide](https://github.com/ericeallen/towel/blob/v1.772/docs/USAGE_GUIDE.md) — using `UnificationRefactorEngine` directly
 
 How it works and why to trust it:
 
-- [Architecture](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/ARCHITECTURE.md) — the pipeline, the algorithms, and their references
-- [Production readiness](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/PRODUCTION_READINESS.md) — the ecosystem evidence behind the claims
-- [Adversarial review](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/ADVERSARIAL_REVIEW.md) — defects found and repaired
+- [Architecture](https://github.com/ericeallen/towel/blob/v1.772/docs/ARCHITECTURE.md) — the pipeline, the algorithms, and their references
+- [Production readiness](https://github.com/ericeallen/towel/blob/v1.772/docs/PRODUCTION_READINESS.md) — the ecosystem evidence behind the claims
+- [Adversarial review](https://github.com/ericeallen/towel/blob/v1.772/docs/ADVERSARIAL_REVIEW.md) — defects found and repaired
 
 Project:
 
-- [Changelog](https://github.com/ericeallen/towel/blob/v1.732.post1/CHANGELOG.md) — changes by release, including 1.732
-- [Release log](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/RELEASE_LOG.md) — engineering checkpoints and validation history
-- [Contributing](https://github.com/ericeallen/towel/blob/v1.732.post1/CONTRIBUTING.md) · [Security policy](https://github.com/ericeallen/towel/blob/v1.732.post1/SECURITY.md) · [Releasing](https://github.com/ericeallen/towel/blob/v1.732.post1/docs/RELEASING.md)
+- [Changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md) — changes by release, including 1.772
+- [Release log](https://github.com/ericeallen/towel/blob/v1.772/docs/RELEASE_LOG.md) — engineering checkpoints and validation history
+- [Contributing](https://github.com/ericeallen/towel/blob/v1.772/CONTRIBUTING.md) · [Security policy](https://github.com/ericeallen/towel/blob/v1.772/SECURITY.md) · [Releasing](https://github.com/ericeallen/towel/blob/v1.772/docs/RELEASING.md)
 
 ## License
 
-The repository declares the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.732.post1/LICENSE), with Eric Allen copyright headers. The audit preserves that declaration. No release or remote publication is performed by the audit workflow.
+The repository declares the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.772/LICENSE), with Eric Allen copyright headers. The audit preserves that declaration. No release or remote publication is performed by the audit workflow.

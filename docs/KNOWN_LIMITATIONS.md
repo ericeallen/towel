@@ -242,6 +242,14 @@ where the evidence comes from:
   `Any` inside a composite (`list[Any]`) is written as the checker revealed
   it. A helper with any annotation has every parameter and its return
   annotated, so the checker's incomplete-definition rule is never tripped.
+- A precise ordinary signature is preferred to a generic one. Towel tries the
+  signature copied and inferred from the call sites first, and reaches for
+  anti-unification only when that signature contains `Any` or when the whole
+  project rejects it. So where sites disagree on a column and the resulting
+  union happens to type-check everywhere, the union is what ships, even though
+  a type parameter would have carried the correlation between that column and
+  the result. A generic signature is an alternative to losing the annotation,
+  not a systematic replacement for an imprecise one.
 - Fresh module-level helpers and helper methods can use generic signatures
   obtained by anti-unifying complete argument/result rows, including nested constructors.
   Type-variable identity includes its original binding scope. Existing free
@@ -279,6 +287,23 @@ where the evidence comes from:
   string. Generic inference can also retain a foreign site's imported type when
   the helper's host binds the same canonical import; matching spellings alone
   are insufficient. Its annotations and TypeVar domains are quoted.
+- The typing guarantee is exactly as strong as the checker the project
+  configures. Towel verifies every prospective change with the configured
+  checker or checkers and declines whatever they reject; it makes no claim
+  about a checker the project does not configure, even one that happens to be
+  installed. A project that configures mypy alone can therefore accept output
+  that Pyright would reject, and the reverse. Configure both to be checked by
+  both.
+
+  A type guard shows how this bites. Moving `if not isinstance(x, list): raise
+  ...` into a helper leaves the caller's `x` at its declared type, so a
+  following `for item in x` no longer sees a `list`. A configured checker
+  reports that and the proposal is declined. But the evidence the checker
+  itself supplies can hide it: mypy narrows `Mapping[str, object]` through
+  `isinstance(_, dict)` to `dict[Any, Any]`, and once a helper's return carries
+  that `Any`, the caller's loop is unremarkable to mypy while Pyright still
+  objects. Towel wrote the type the checker revealed and accepted the answer
+  the checker gave; the limit is the checker's, not the transformation's.
 - The degradation on a type error is per proposal, not per parameter: one
   annotation the checker rejects costs the helper all of them.
 - Verification first requires a clean original project, then checks complete
@@ -469,6 +494,22 @@ it tractable, all exact: they change no proposal.
   to 6.7 GB, and what holds the rest has not been established. Lower
   `--max-pairs` or raise `--min-lines` to trade that result for time and
   memory.
+- Verification, not analysis, dominates an annotated project. Every candidate
+  signature is checked against the complete prospective project, and a proposal
+  can try several. Mypy absorbs this: it runs incrementally in an owned worker
+  against a cache that lives as long as the run, so it re-checks the changed
+  modules and their dependents rather than the project. On Sphinx's 432 files
+  that is 0.22 s per check against 4.8 s cold. Pyright does not: each
+  consultation is a fresh `pyright --outputjson` process with no reusable state,
+  and costs the same 5 s every time on that project. A project that configures
+  both therefore pays about five seconds per candidate signature, which is what
+  makes a full fixed point over a large annotated project expensive; a
+  bounded `--max-refactorings` run is the practical form there. Nothing about
+  the result depends on this: the checkers are consulted identically either way.
+- Because the variants are generated lazily, a signature that verifies costs
+  nothing further. A precise ordinary signature that passes means no generic
+  candidate is ever built or checked, which is the cheapest order as well as
+  the documented one.
 - The reuse redirect finds a function whose body starts where a site does
   through an index, instead of scanning every function of the file for
   every replacement of every proposal.

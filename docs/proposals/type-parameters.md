@@ -1,6 +1,8 @@
 # Proposal: preserve type relationships in extracted helpers
 
-Status: implemented in development after 1.732.post1; not yet released.
+Status: implemented and released in 1.772. This document records the shipped
+behavior, its inference order, and the cases it declines; it is no longer a
+proposal, and the path is retained so existing links keep resolving.
 Author: design note from the 2026-09 release audit
 
 ## Problem
@@ -326,9 +328,9 @@ transactional declarations, and subsequent inventory/renaming. Independent
 checker experiments cover both accepted patterns and dependent-bound failures.
 
 Explicit receiver contracts, function-hosted generic helpers, more expressive
-source domains, and optional PEP 695 output remain later work. A pinned ecosystem
-run is also needed before assigning this feature a release performance claim; existing
-1.732 corpus measurements do not measure the new inference.
+source domains, and optional PEP 695 output remain later work. No release
+performance claim is made for this feature: the 141-project behavioral corpus
+runs with `--no-types`, so its measurements do not exercise this inference.
 
 One checker-evidence boundary remains: mypy specializes constrained functions and
 can emit several types for the same unannotated local. The oracle refuses such

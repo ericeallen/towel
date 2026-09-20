@@ -1,19 +1,146 @@
 # Production readiness
 
-**1.732.post1 is a documentation-only update to the 1.732 beta release.**
-It fixes README links on PyPI and adds documentation-link regression checks.
-The Python implementation and dependency pins are unchanged.
+**1.772 adds type anti-unification to helper extraction.** An extracted
+helper can keep the relationships among its argument and return types instead
+of widening each column independently. Dependency pins and the build
+configuration are unchanged from 1.732.
 
-The runtime is frozen at `1d246075`; validated
-source `2e4ebe6` adds test and ecosystem-harness corrections after that runtime.
-The original 1.732 release commit adds documentation updates only; runtime, tests, harness,
-dependencies, and build configuration remain unchanged from `2e4ebe6`.
-The current evidence below is separate from the historical 1.732 and 1.414
-runs retained later in this report. Passing the sampled tests does not
+The validated runtime is `ba539d4`. The release commit leaves `src/towel`
+unchanged from it, and adds documentation, a release-harness fix, and that fix's
+regression tests. Dependencies and build configuration are unchanged. Evidence for 1.732 and 1.414 is retained later in this report and
+belongs to those runtimes, not to this one. Passing the sampled tests does not
 establish equivalence for arbitrary Python programs; review generated changes
 and the [known limitations](KNOWN_LIMITATIONS.md).
 
-## Current 1.732 validation (September 19, 2026)
+## Current 1.772 validation (September 19, 2026)
+
+The completed source matrix on the release candidate recorded (`src/towel`
+unchanged from `ba539d4`; the added tests cover the release harness):
+
+| Python | Passed | Skipped | Subtests passed | Coverage |
+|---|---:|---:|---:|---:|
+| 3.11 | 2,756 | 45 | 34 | 93% |
+| 3.12 | 2,800 | 1 | 34 | 93% |
+| 3.13 | 2,801 | 0 | 34 | 93% |
+
+The 3.11 skips exercise PEP 695 syntax that requires Python 3.12 or later. All
+three runs completed without warnings, each under `TOWEL_WORKERS=1` with its own
+coverage data file, combined before reporting against the unconditional 85%
+gate. On Python 3.13, Black, Flake8, strict mypy over 228 source files, and
+Bandit all passed. The dependency audit exported 64 installed third-party
+distributions from the frozen environment and found no known vulnerabilities
+(`pip-audit` 2.10.1, `--strict --no-deps --disable-pip`).
+
+A credential-shape scan covered the tracked working tree and every blob in all
+432 tracked commits, and reported no matches. Its instrument was checked in both
+directions: the history traversal finds known strings in old commits, and the
+pattern matches planted sample credentials. A shape-based scan cannot establish
+the absence of secrets.
+
+### Consumer evidence for the generic path
+
+Towel on its own source at `ba539d4`, with types and formatting enabled, applied
+13 refactorings across 8 files. The transformed tree passed Towel's complete
+suite: 2,796 passed, 1 skipped, 34 subtests passed, matching the untransformed
+baseline exactly. Strict mypy reported no issues in 228 source files.
+
+The same run under the released 1.732 produces a **byte-identical** transformed
+tree, so this project exercises no behavior new in 1.772 and establishes only
+that the release changes nothing here.
+
+Towel configures mypy for its own source and does not configure Pyright. Run
+anyway, Pyright reports one diagnostic on the transformed tree that it does not
+report on the original: an extracted type guard leaves its argument unnarrowed
+for the code that followed the block. The diagnostic is identical under 1.732.
+This is the documented scope of the guarantee rather than a defect: Towel
+verified with the checker this project configures, and that checker accepted
+the change, in part because its own narrowing of `Mapping[str, object]` through
+`isinstance(_, dict)` yields `dict[Any, Any]`. Projects wanting both checkers
+to hold should configure both. See [known limitations](KNOWN_LIMITATIONS.md).
+
+Sphinx at `e44a40eb2f` supplies the typed evidence. It configures both mypy and
+Pyright in strict mode, and its complete original baseline is clean: mypy
+reports no issues across 432 source files once its declared type stubs are
+installed. Towel accepted that baseline and produced a generic instance method
+in `sphinx/transforms/i18n.py`, where three sites in `Locale.apply` differ only
+in the docutils node class they match:
+
+```python
+_TowelT0 = TypeVar('_TowelT0', 'docutils.nodes.footnote_reference',
+                   'docutils.nodes.reference', 'docutils.nodes.citation_reference')
+
+def _extracted_func_1(self, __param_0: 'NodeMatcher[_TowelT0]', __param_1: 'str'
+                     ) -> 'tuple[list[_TowelT0], list[_TowelT0]]':
+```
+
+The binder occurs in three positions. An independent union over the three node
+classes would not record that the matcher's element type is the element type of
+both returned lists. Both checkers verified the complete prospective project
+before the change was committed, because the project configures both.
+
+Independently checked afterwards, the transformed project is clean under both:
+mypy reports no issues in 432 source files and Pyright reports no errors and no
+warnings across 432 files. Sphinx's own suite run serially is unchanged by the
+transformation, at 2,385 passed and 34 skipped on both sides, with the same six
+pre-existing upstream failures and no difference in their identities. Run under
+`pytest -n 8`, three further tests failed on the transformed side; each passes
+in isolation on both sides, and the serial full-suite confirmation above shows
+the difference is that project's parallel-execution interference rather than an
+effect of the change. The run was a bounded fixed point stopped after 3 h 21 min
+with 20 helpers applied across four modules, not a complete one: each candidate
+re-verifies the whole project with two checkers. It was interrupted cleanly,
+leaving no recovery journal behind.
+
+### 141-project behavioral corpus
+
+A complete run of all 141 pinned projects on this candidate, explicitly
+`--no-types`, in a container with only the frozen source and a work directory
+mounted. Two entries needed an isolated rerun, and both are recorded here rather
+than folded silently into the totals:
+
+| Verdict | Count |
+|---|---:|
+| PASS | 119 |
+| NO_CHANGE | 19 |
+| BROKEN_KNOWN | 3 |
+
+The first run reported 117 PASS with one CRASH and one HARNESS_ERROR. Neither
+was a property of the project under test:
+
+- **astroid** crashed because Towel refused to begin a transaction while another
+  was pending at an ancestor of its targets. A one-module project's output file
+  sat directly in the shared work directory, so peewee's journal covered every
+  other project running beside it at `--workers 4`. The refusal was correct;
+  the harness has been fixed to give each project its own output directory, with
+  regressions in `tests/test_ecosystem_work_isolation.py`. Rerun alone, astroid
+  is `PASS` over 12 changed files.
+- **sphinx** failed while copying its source: `copytree` reported `ENOENT` for
+  `sphinx/locale/zh_TW.Big5`, a directory that exists. The work directory was a
+  macOS bind mount into a Linux container, and that mount's metadata is not
+  coherent under four concurrent workers; the Sphinx tree contains no
+  case-colliding paths. Rerun with the work directory on a container-native
+  volume, sphinx is `PASS` over 108 changed files. Such an artifact can only
+  manufacture a spurious failure, never a spurious pass.
+
+`BROKEN_KNOWN` remains the documented glom, Lark and pyparsing frame, traceback
+and generated-source observations. A `NO_CHANGE` result validates no
+transformation, and matching outcomes mean agreement with the baseline rather
+than clean upstream suites.
+
+### What this evidence does not cover
+
+The 141-project behavioral corpus runs with `--no-types`, so it measures runtime
+equivalence and not this release's inference. No release performance claim is
+made for the generic path. Across the two typed projects examined, no extracted
+helper ended up carrying the same multi-alternative union in two or more
+signature positions, so the preference for an ordinary signature over a generic
+one cost no measurable precision here; that preference is recorded in
+[known limitations](KNOWN_LIMITATIONS.md) and is not a general result.
+
+## Historical 1.732 validation (September 19, 2026)
+
+The results in this section belong to the 1.732 runtime `1d246075` and its
+validated source `2e4ebe6`. They are retained as that release's evidence.
 
 The completed source matrix at `2e4ebe6` recorded:
 

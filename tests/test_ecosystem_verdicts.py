@@ -128,7 +128,11 @@ def _check(
                 refactor_calls == 1
             ), "A failed transformation must not trigger an automatic retry"
             assert command.count("--no-types") == int(no_types)
-            (root / "fixture-cleaned").write_text("value = 2\n" if changed else "value = 1\n")
+            # Write where the command says, so the layout stays the harness's
+            # business and this stub cannot drift from it.
+            cleaned = Path(command[command.index("dry") + 2])
+            cleaned.parent.mkdir(parents=True, exist_ok=True)
+            cleaned.write_text("value = 2\n" if changed else "value = 1\n")
             return _phase(log, *refactor)
         if ecosystem._pytest_arguments_start(command) is not None:
             assert command[-2:] == ["--verbosity=0", "-ra"]

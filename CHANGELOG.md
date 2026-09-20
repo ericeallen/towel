@@ -9,6 +9,17 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+## [1.772] - 2026-09-19
+
+Changes since 1.732.
+
+An extracted helper used to lose the relationships among its types. Where two
+call sites passed `int` and `str`, the shared parameter became `int | str` and
+so did the return, which says nothing about the two travelling together: the
+helper could be read as taking an `int` and returning a `str`. Towel now
+anti-unifies the types alongside the code, so the helper's signature carries
+the correlation the call sites had.
+
 ### Added
 - Extracted module-level helpers can preserve relationships among argument and
   return types through type anti-unification. Nested containers, multiple type
@@ -29,6 +40,31 @@ ecosystem evidence behind each claim. The format follows
 - Type probes at adjacent extraction sites retain their lexical scope even when
   they share a source line. Conflicting mypy specialization notes for one probe
   are treated as ambiguous evidence instead of silently retaining the last type.
+
+### Fixed (release harness)
+- The ecosystem check gives each corpus project its own output directory.
+  Towel writes its recovery journal to the common parent of the files a
+  transaction changes and refuses to start beneath a pending journal that may
+  cover its targets. A one-module project's single output file put that journal
+  directly in the shared work directory, an ancestor of every other project, so
+  concurrent projects refused each other at `--workers 4`. The runtime is
+  unchanged; its refusal was correct.
+
+### Notes
+- Towel keeps a precise ordinary signature when one verifies against the whole
+  project, and reaches for a generic signature only when that ordinary
+  signature does not. A generic candidate is therefore an alternative to losing
+  the annotation, not a replacement for an exact one.
+- Declined by design, with no weakening of the annotations that do ship: a
+  helper hosted inside a function, variadic type parameters, a source method
+  whose `self` or `cls` carries an explicit annotation, and evidence that
+  resolves to `Any` or an unknown name.
+- A fresh parameter whose bound mentions another helper parameter (`U` bounded
+  by `list[T]`) is declined; an ordinary module `TypeVar` bound cannot depend on
+  another function's binder. Where a constrained generic function makes mypy
+  report several specializations for one probe, the evidence is treated as
+  ambiguous rather than resolved arbitrarily. Both are recorded in
+  [the type-parameter design](docs/proposals/type-parameters.md).
 
 ## [1.732.post1] - 2026-09-19
 
@@ -795,7 +831,8 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[Unreleased]: https://github.com/ericeallen/towel/compare/v1.732.post1...HEAD
+[Unreleased]: https://github.com/ericeallen/towel/compare/v1.772...HEAD
+[1.772]: https://github.com/ericeallen/towel/compare/v1.732.post1...v1.772
 [1.732.post1]: https://github.com/ericeallen/towel/compare/v1.732...v1.732.post1
 [1.732]: https://github.com/ericeallen/towel/compare/v1.618...v1.732
 [1.618]: https://github.com/ericeallen/towel/compare/v1.414...v1.618

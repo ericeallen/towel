@@ -3,6 +3,59 @@
 This log records notable repository states and the scope of their validation.
 A historical passing result applies to its recorded commit and test environment.
 
+## 2026-09-19 (1.772)
+
+- Version: 1.772, beta; release tag: `v1.772`.
+- Validated runtime: `ba539d4`; `src/towel` is unchanged from it. The release
+  commit adds documentation, one release-harness fix, and its regression tests.
+  Dependencies and build configuration are unchanged.
+- Harness fix: `scripts/ecosystem_check.py` gives each corpus project its own
+  output directory. Towel writes its recovery journal to the common parent of a
+  transaction's files and refuses to start beneath a pending journal that may
+  cover its targets; a one-module project's single output file put that journal
+  directly in `--work`, an ancestor of every other project, so concurrent
+  projects refused each other. Observed at `--workers 4`, where peewee's journal
+  crashed astroid. `tests/test_ecosystem_work_isolation.py` pins the layout and
+  the transaction rule behind it; both layout cases fail against the old layout.
+  The runtime is not involved: `src/towel/changes.py` is unchanged since before
+  1.732 and its conservative refusal is correct.
+- Feature: an extracted helper can preserve the relationships among its
+  argument and return types by anti-unifying complete argument/result rows,
+  rather than widening each column independently to a union or to `Any`.
+  Generic instance, class, and static helper methods are included; fresh
+  declarations are emitted at module scope before the host class and roll back
+  with a failed candidate. See the
+  [changelog](../CHANGELOG.md#1772---2026-09-19) and the
+  [type-parameter design](proposals/type-parameters.md).
+- Inference order: a precise ordinary signature is preferred, and a generic
+  candidate is tried when that signature contains `Any` or the whole project
+  rejects it. At most two generic contracts are attempted. This ordering is
+  recorded in [known limitations](KNOWN_LIMITATIONS.md); it is a deliberate
+  preference, not a claim that anti-unification is applied wherever it would
+  help.
+- Validation at the release candidate: 2,756/2,800/2,801 passing tests on Python
+  3.11/3.12/3.13, 34 subtests each, 45 skips on 3.11 for PEP 695 syntax, and
+  93% coverage against the unconditional 85% gate; no warnings. Black, Flake8,
+  strict mypy over 228 files, and Bandit passed on Python 3.13. The dependency
+  audit covered 64 installed third-party distributions with no known
+  vulnerabilities. A credential-shape scan of the working tree and all 432
+  tracked commits reported no matches, with its instrument verified in both
+  directions.
+- Consumer evidence: Towel on its own source applied 13 refactorings across 8
+  files and the transformed tree passed the complete suite unchanged, with
+  strict mypy clean; that output is byte-identical to the one 1.732 produces,
+  so it demonstrates no regression rather than new behavior. Sphinx at
+  `e44a40eb2f`, which configures both mypy and Pyright in strict mode and whose
+  original baseline is clean across 432 files, produced a generic instance
+  method carrying a constrained type parameter over three docutils node
+  classes. The transformed project is clean under both checkers, and Sphinx's
+  suite run serially is identical before and after: 2,385 passed, 34 skipped,
+  and the same six pre-existing upstream failures. That was a bounded fixed
+  point of 20 helpers over four modules, stopped after 3 h 21 min. The 141-project behavioral corpus runs with `--no-types` and does
+  not measure this inference.
+
+---
+
 ## 2026-09-19 (1.732.post1)
 
 - Version: 1.732.post1, beta; release tag: `v1.732.post1`.

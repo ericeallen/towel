@@ -498,15 +498,20 @@ def check_project(
     # cleaned copy back over the package. This mirrors the documented workflow
     # ("write to a new directory, diff, then adopt") and exercises import paths
     # that survive relocation, which an in-place refactor cannot check.
-    cleaned = work / f"{project.name}-cleaned"
-    # ``cleaned`` is a directory for a package but a single file for a
-    # one-module project (six, xmltodict, pycodestyle, ...). A leftover from a
-    # previous run in a reused work directory may therefore be either, and
-    # ``rmtree`` raises NotADirectoryError on a file, so remove it by kind.
-    if cleaned.is_dir():
-        shutil.rmtree(cleaned)
-    elif cleaned.exists():
-        cleaned.unlink()
+    # The output goes in a directory of its own, never directly under ``work``.
+    # Towel writes its recovery journal to the common parent of the files a
+    # transaction changes, and refuses to start while a journal that may cover
+    # its targets is pending. For a one-module project the single output file
+    # sits directly in its parent, so a shared parent would put that journal at
+    # an ancestor of every other project's files and make concurrent projects
+    # refuse each other (peewee's journal once stopped astroid at --workers 4).
+    # One directory per project means no project's output shares a parent with
+    # another's, whatever its shape.
+    cleaned_root = work / f"{project.name}-out"
+    if cleaned_root.exists():
+        shutil.rmtree(cleaned_root)
+    cleaned_root.mkdir(parents=True)
+    cleaned = cleaned_root / f"{project.name}-cleaned"
     result.refactor = run(
         [
             sys.executable,
