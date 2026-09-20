@@ -288,6 +288,7 @@ class RejectReason(StrEnum):
     MIXED_RETURN_AND_VARIABLES = "mixed_return_and_variables"
     MODULE_DATA_LOOKUP = "module_data_lookup"
     MOVES_SCOPE_DECLARATION = "moves_scope_declaration"
+    NARROWING_LOST_AT_CALL_SITE = "narrowing_lost_at_call_site"
     NESTED_BINDING_ESCAPES = "nested_binding_escapes"
     NONLOCAL_SAFETY_SKIP = "nonlocal_safety_skip"
     NOT_STRUCTURALLY_SIMILAR = "not_structurally_similar"

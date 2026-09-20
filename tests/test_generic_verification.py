@@ -248,9 +248,43 @@ def test_real_checkers_validate_even_an_unused_constraint_body(
     assert path.read_text() == original
 
 
-def test_real_checkers_reject_lambdas_that_escape_the_original_narrowing(
+def test_a_lambda_that_escapes_the_original_narrowing_is_never_proposed(
     tmp_path: Path, checker: TypeOracle
 ) -> None:
+    """The extraction is declined where proposals are built, before any checker is asked."""
+    path = _project(
+        tmp_path,
+        """
+        class Named:
+            names: list[str]
+
+        class Flagged:
+            flags: list[int]
+
+        def first(other: object) -> bool:
+            if not isinstance(other, Named):
+                return False
+            return other.names == ["a"]
+
+        def second(other: object) -> bool:
+            if not isinstance(other, Flagged):
+                return False
+            return other.flags == [1]
+        """,
+    )
+    original = path.read_text()
+    oracle = _RecordingOracle(checker)
+    assert _engine(oracle).analyze_file(str(path)) == []
+    assert path.read_text() == original
+
+
+def test_real_checkers_reject_lambdas_that_escape_the_original_narrowing(
+    tmp_path: Path, checker: TypeOracle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The checker is the last line, and must still catch this if the refusal is ever weakened."""
+    monkeypatch.setattr(
+        "towel.unification.pair_evaluation.narrowing_lost_at_call_site", lambda *_: None
+    )
     path = _project(
         tmp_path,
         """

@@ -76,8 +76,19 @@ def _helper_signatures(sources: Sequence[str]) -> List[str]:
 
 
 @requires_mypy
-def test_a_call_site_error_under_every_any_ends_the_ladder(tmp_path: Path) -> None:
-    """Moving ``isinstance`` into the helper leaves ``other`` an ``object`` in the caller's thunk."""
+def test_a_call_site_error_under_every_any_ends_the_ladder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Moving ``isinstance`` into the helper leaves ``other`` an ``object`` in the caller's thunk.
+
+    Towel now declines this extraction where the proposal is built, so reaching
+    the ladder at all means setting that refusal aside. The ladder rule is the
+    second line and is worth keeping tested: an error no helper signature can
+    reach ends the ladder rather than costing two more project checks.
+    """
+    monkeypatch.setattr(
+        "towel.unification.pair_evaluation.narrowing_lost_at_call_site", lambda *_: None
+    )
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
     path = tmp_path / "shapes.py"
     path.write_text(textwrap.dedent("""

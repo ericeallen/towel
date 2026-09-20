@@ -67,6 +67,7 @@ from .block_analysis import BlockAnalysis
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
+from .narrowing import narrowing_lost_at_call_site
 from .models import (
     HelperHome,
     proposal_identity,
@@ -1277,6 +1278,13 @@ class PairEvaluation(
                 )
             ),
         )
+        separated = narrowing_lost_at_call_site(rendered.func_def, placement.replacements)
+        if separated is not None:
+            # Both halves are well typed where they were written and the pair
+            # is not; no signature on the helper can repair it. Refusing here
+            # spares a whole-project check per candidate signature.
+            self._debug_reject(RejectReason.NARROWING_LOST_AT_CALL_SITE, pair, detail=separated)
+            return None
         identity = proposal_identity(proposal)
         if identity in self._seen_proposals:
             # The same helper over the same sites, found through another pair:
