@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import configparser
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import json
 import atexit
 import hashlib
@@ -128,10 +128,15 @@ class Subtyping(Enum):
 
 @dataclass(frozen=True)
 class TypeDiagnostic:
-    """A position-independent error at its original, absolute project path."""
+    """A position-independent error at its original, absolute project path.
+
+    ``line`` (one-based, when the checker gave one) locates the error in the
+    checked text. It takes no part in equality, which stays position-independent.
+    """
 
     path: str
     message: str
+    line: Optional[int] = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -537,7 +542,11 @@ class MypyInferrer:
                 match = _ERROR.match(message)
                 if match is not None:
                     path = str((root / match.group("path")).resolve())
-                    errors.append(TypeDiagnostic(path, message[match.end() :].strip()))
+                    errors.append(
+                        TypeDiagnostic(
+                            path, message[match.end() :].strip(), int(match.group("line"))
+                        )
+                    )
         return CheckSuccess(tuple(errors))
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
@@ -937,8 +946,13 @@ class PyrightOracle:
                         message = (
                             f"pyright: {diagnostic.get('rule') or ''}: " f"{diagnostic['message']}"
                         )
+                        start = diagnostic.get("range", {}).get("start", {}).get("line")
                         errors.append(
-                            TypeDiagnostic(str(path), message.replace(str(snapshot), str(root)))
+                            TypeDiagnostic(
+                                str(path),
+                                message.replace(str(snapshot), str(root)),
+                                None if start is None else start + 1,
+                            )
                         )
             except (OSError, ValueError, UnicodeError) as error:
                 return CheckFailure(f"Could not snapshot the project for pyright: {error}")
@@ -957,7 +971,7 @@ class PyrightOracle:
             self._abandon_sessions(error)
             return None
         errors = [
-            TypeDiagnostic(path, f"pyright: {entry.rule}: {entry.message}")
+            TypeDiagnostic(path, f"pyright: {entry.rule}: {entry.message}", entry.line + 1)
             for path, entries in published.items()
             for entry in entries
             if entry.severity == "error"
@@ -1187,7 +1201,8 @@ class _RelocatedOracle:
             return result
         return CheckSuccess(
             tuple(
-                TypeDiagnostic(self._output(error.path), error.message) for error in result.errors
+                TypeDiagnostic(self._output(error.path), error.message, error.line)
+                for error in result.errors
             )
         )
 

@@ -30,7 +30,7 @@ from collections import Counter
 import copy
 import dataclasses
 
-from typing import Dict, Iterator, List, Optional, Sequence, Set
+from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from .annotations import (
     ApplySite,
     CallSite,
@@ -45,7 +45,7 @@ from .annotations import (
 from .exceptions import RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
-from ..type_inference import CheckFailure, TypeOracle
+from ..type_inference import CheckFailure, TypeDiagnostic, TypeOracle
 
 from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
@@ -367,15 +367,14 @@ class HelperAnnotationWiring(EngineState):
         variant.required_imports = ()
         return variant
 
-    def _introduces_type_errors(self, modified_files: Dict[str, str]) -> bool:
-        """Preserve this run's clean project, including unchanged consumers."""
+    def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:
+        """What the run's clean project, unchanged consumers included, would now report."""
         oracle = self._active_type_oracle()
         if oracle is None:
             raise RefactoringError("Type checking was requested without a type oracle")
         after = oracle.check_project(modified_files)
         if isinstance(after, CheckFailure):
             raise RefactoringError(f"Prospective project type check failed: {after.reason}")
-        new = Counter(after.errors)
-        for diagnostic, count in new.items():
+        for diagnostic, count in Counter(after.errors).items():
             TYPES.debug("new error x%d in %s: %s", count, diagnostic.path, diagnostic.message)
-        return bool(new)
+        return after.errors

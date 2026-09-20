@@ -39,13 +39,14 @@ import textwrap
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Set
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 from .exceptions import RefactoringError
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
 from ..project_layout import ProjectLayout, is_package_dir
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
+from ..type_inference import TypeDiagnostic
 
 from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring
@@ -62,6 +63,41 @@ class _HelperNaming:
     final_name: str
     receiver_parameter_index: Optional[int]
     parameter_count: int
+
+
+@dataclass(frozen=True)
+class _Rejection:
+    """The errors a checked variant introduced, and where its helper was rendered."""
+
+    errors: Tuple[TypeDiagnostic, ...]
+    helper_path: str
+    helper_name: str
+    helper_module: str
+
+    def confined_to_helper(self) -> bool:
+        """Whether every error lies within the helper's own definition.
+
+        Asked of the all-``Any`` helper, this decides whether the unannotated one
+        is worth a project check. To a caller the two are the same function: every
+        parameter accepts anything and the result constrains nothing. They differ
+        only on the helper's own lines, where a project may forbid explicit
+        ``Any`` or leave an unannotated body unchecked. An error anywhere else
+        survives the change, so the project would reject that helper too. An
+        error the checker did not locate is taken to lie inside, which costs a
+        check rather than a refactoring.
+        """
+        spans = [
+            (node.lineno - len(node.decorator_list), node.end_lineno or node.lineno)
+            for node in ast.walk(ast.parse(self.helper_module))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == self.helper_name
+        ]
+        return all(
+            error.line is None
+            or os.path.realpath(error.path) == os.path.realpath(self.helper_path)
+            and any(first <= error.line <= last for first, last in spans)
+            for error in self.errors
+        )
 
 
 def _padded(lines: List[str], insert_at: int, block: List[str]) -> List[str]:
@@ -147,25 +183,50 @@ class Materialization(
         self._infer_helper_annotations(proposal)
         check_types = self._active_type_oracle() is not None
         counters = dict(self._helper_name_counters)
+        rejection: Optional[_Rejection] = None
         for variant in self._annotation_variants(proposal, check_types):
-            mark = len(self._change_log)
-            # Each attempt allocates the helper's name; restore the counters so
-            # every attempt gets the same name and none is consumed by a retry.
-            self._helper_name_counters = dict(counters)
-            try:
-                # Naming mutates the rendered helper. Keep the lazy generator's
-                # source proposal intact so later variants still retarget calls
-                # from the original helper name.
-                files = self._materialize_once(copy.deepcopy(variant))
-                if not check_types or not self._introduces_type_errors(files):
-                    return files
-            except Exception:
-                del self._change_log[mark:]
-                raise
-            del self._change_log[mark:]
+            outcome = self._attempt(variant, counters, check_types)
+            if not isinstance(outcome, _Rejection):
+                return outcome
+            rejection = outcome
+        if (
+            rejection is not None
+            and rejection.confined_to_helper()
+            and check_types
+            and proposal.reused_function is None
+            and self._helper_has_annotations(proposal)
+        ):
+            outcome = self._attempt(self._without_annotations(proposal), counters, check_types)
+            if not isinstance(outcome, _Rejection):
+                return outcome
         if proposal.reused_function is not None:
             raise RefactoringError("Reusing the existing function introduces project type errors")
         raise RefactoringError("Every helper annotation variant introduces project type errors")
+
+    def _attempt(
+        self, variant: RefactoringProposal, counters: Dict[str, int], check_types: bool
+    ) -> "Dict[str, str] | _Rejection":
+        """The files with ``variant`` applied, or why the project rejects them."""
+        mark = len(self._change_log)
+        # Each attempt allocates the helper's name; restore the counters so
+        # every attempt gets the same name and none is consumed by a retry.
+        self._helper_name_counters = dict(counters)
+        # Naming mutates the rendered helper. Keep the lazy generator's
+        # source proposal intact so later variants still retarget calls
+        # from the original helper name.
+        rendered = copy.deepcopy(variant)
+        try:
+            files = self._materialize_once(rendered)
+            errors = self._new_type_errors(files) if check_types else ()
+        except Exception:
+            del self._change_log[mark:]
+            raise
+        if not errors:
+            return files
+        del self._change_log[mark:]
+        return _Rejection(
+            errors, rendered.file_path, rendered.extracted_function.name, files[rendered.file_path]
+        )
 
     def _annotation_variants(
         self, proposal: RefactoringProposal, check_types: bool
@@ -186,8 +247,8 @@ class Materialization(
         if not lossy:
             yield from self._generic_helper_variants(proposal)
         if self._helper_has_annotations(proposal):
+            # The unannotated helper follows only when it could help; see ``_Rejection``.
             yield self._with_every_annotation_any(proposal)
-            yield self._without_annotations(proposal)
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
