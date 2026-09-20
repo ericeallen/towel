@@ -58,6 +58,7 @@ import tempfile
 from enum import Enum
 from typing import (
     Dict,
+    Final,
     Iterable,
     Iterator,
     List,
@@ -74,7 +75,7 @@ from .diagnostics import LOG
 from .project_tools import ToolChoice, python_tool_environment
 from .checker_project import CheckerSnapshot, checker_snapshot
 from .unification.bounded_cache import BoundedCache
-from .pyright_session import Diagnostic, PyrightSession, SessionFailure
+from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
 
@@ -992,10 +993,11 @@ VERDICT_CACHE_ENTRIES = 256
 class _WarmProject:
     """A private copy of a project and the live checker watching it.
 
-    The copy is a fixed base, so the answer depends on the candidate alone and
-    the same candidate asked twice has the same answer. A fixed point re-pairs
-    the project after every applied change and so reconsiders proposals it has
-    already weighed; remembering the verdicts spares the checker that work.
+    A fixed point re-pairs the project after every applied change and so
+    reconsiders proposals it has already weighed; remembering the verdicts
+    spares the checker that work. A verdict is about a candidate over the project
+    as it stood, so it is remembered under both: an in-place run changes the
+    project with every refactoring it applies, and the copy follows it.
     """
 
     def __init__(self, snapshot: CheckerSnapshot, session: PyrightSession) -> None:
@@ -1011,12 +1013,15 @@ class _WarmProject:
         Paths come back as the project's own, not the copy's, so a caller never
         sees where the check happened.
         """
-        key = _candidate_key(replacements)
+        followed = self._snapshot.follow_project()
+        key = f"{self._snapshot.revision}:{_candidate_key(replacements)}"
         remembered = self._verdicts.get(key)
         if remembered is not None:
             return {path: list(entries) for path, entries in remembered.items()}
-        changed = self._snapshot.apply(replacements)
-        published = self._session.diagnostics_after(changed)
+        changed = self._snapshot.show(replacements, after=followed)
+        published = self._session.diagnostics_after(
+            {change.path: _FILE_CHANGES[change.kind] for change in changed}
+        )
         restored: Dict[str, List[Diagnostic]] = {}
         for path, entries in published.items():
             original = self._snapshot.original_of(path)
@@ -1027,6 +1032,13 @@ class _WarmProject:
     def close(self) -> None:
         self._session.close()
         self._snapshot.close()
+
+
+_FILE_CHANGES: Final[Mapping[str, FileChange]] = {
+    "created": FileChange.CREATED,
+    "changed": FileChange.CHANGED,
+    "deleted": FileChange.DELETED,
+}
 
 
 def _candidate_key(replacements: Mapping[str, str]) -> str:

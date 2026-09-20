@@ -14,16 +14,44 @@ be pointed at it repeatedly; ``checker_snapshot`` is the one-shot form.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import json
 import os
 import tomllib
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Dict, Iterator, Mapping, Sequence, Tuple
+from typing import Dict, Iterator, Literal, Mapping, Sequence, Tuple
 
 from .source_files import is_probe_file
 from .source_text import encode_like
+
+ChangeKind = Literal["created", "changed", "deleted"]
+
+
+@dataclass(frozen=True)
+class CopyChange:
+    """One file of the copy that a call to ``apply`` created, rewrote or removed."""
+
+    path: Path
+    kind: ChangeKind
+
+
+_Stamp = Tuple[int, int, int]
+"""A source file's ``(st_mtime_ns, st_size, st_ino)`` when it was last copied.
+
+Towel replaces a file atomically, so an applied change shows in the inode even
+when the new text happens to keep the old size within the same clock tick.
+"""
+
+
+def _as_changes(changes: Mapping[Path, ChangeKind]) -> Tuple[CopyChange, ...]:
+    return tuple(CopyChange(path, kind) for path, kind in sorted(changes.items()))
+
+
+def _stamp(source: Path) -> _Stamp:
+    status = source.stat()
+    return (status.st_mtime_ns, status.st_size, status.st_ino)
 
 
 class CheckerSnapshot:
@@ -35,23 +63,34 @@ class CheckerSnapshot:
     Non-code checker configuration and typing markers are preserved. Large data,
     VCS metadata, caches and virtual environments are not checker inputs.
 
-    ``apply`` writes a candidate's prospective sources and returns the copies it
-    actually changed, so a caller can tell a watching checker exactly what moved.
-    Sources equal to what the copy already holds are not rewritten, which keeps a
-    candidate that restates the whole project down to the few files it alters.
+    The copy follows the project. A candidate is a question about the project as
+    it now stands, and an in-place run changes the project with every
+    refactoring it applies while supplying only the files the next candidate
+    alters. So each ``apply`` first brings the copy up to date with whatever
+    changed on disk, and only then shows the candidate. ``revision`` counts the
+    times that found something, so a caller that remembers verdicts can tell
+    when the project they were reached against is gone.
+
+    ``apply`` returns the copies it actually touched, so a caller can tell a
+    watching checker exactly what moved. Sources equal to what the copy already
+    holds are not rewritten, which keeps a candidate that restates the whole
+    project down to the few files it alters.
     """
 
     def __init__(self, root: Path, *, excluded_paths: Sequence[str] = ()) -> None:
         self._root = root
+        self._excluded = frozenset(Path(path).resolve() for path in excluded_paths)
         self._temporary = tempfile.TemporaryDirectory(prefix="towel-check-")
+        # Copies that show a candidate's text rather than the project's.
         self._dirty: set[Path] = set()
-        # What each replaced file held before the first candidate touched it.
-        # Restoring from here rather than from the project keeps the copy a
-        # fixed base, so a candidate's verdict depends on the candidate alone,
-        # even when the project is being refactored in place.
-        self._pristine: Dict[Path, bytes] = {}
+        # For every copy made from a project file: that file, and its stamp then.
+        self._sources: Dict[Path, Path] = {}
+        self._stamps: Dict[Path, _Stamp] = {}
+        self.revision = 0
         try:
-            self._tree, self._target = _populate(Path(self._temporary.name), root, excluded_paths)
+            self._layout = _layout(Path(self._temporary.name), root)
+            self.follow_project()
+            self.revision = 0
         except BaseException:
             self._temporary.cleanup()
             raise
@@ -59,80 +98,149 @@ class CheckerSnapshot:
     @property
     def tree(self) -> Path:
         """The copied project root, where the checker is pointed."""
-        return self._target
+        return self._layout.target
 
     def path_of(self, original: str) -> Path:
         """Where ``original`` lives inside the copy."""
-        return self._target / Path(original).relative_to(self._root)
+        return self._layout.target / Path(original).relative_to(self._root)
 
     def original_of(self, copied: str) -> str:
         """The project path a copied path stands for, or itself when outside."""
         path = Path(copied)
-        if path.is_relative_to(self._target):
-            return str(self._root / path.relative_to(self._target))
+        if path.is_relative_to(self._layout.target):
+            return str(self._root / path.relative_to(self._layout.target))
         return copied
 
-    def apply(self, replacements: Mapping[str, str]) -> Tuple[Path, ...]:
-        """Make the copy show ``replacements``, and nothing from a previous call."""
+    def apply(self, replacements: Mapping[str, str]) -> Tuple[CopyChange, ...]:
+        """Make the copy show the project as it stands with ``replacements`` over it."""
+        return self.show(replacements, after=self.follow_project())
+
+    def follow_project(self) -> Tuple[CopyChange, ...]:
+        """Copy what the project gained or changed since last asked, and drop what it lost."""
+        changes: Dict[Path, ChangeKind] = {}
+        current = _planned_copies(self._layout, self._excluded)
+        for destination, source in current.items():
+            stamp = _stamp(source)
+            if self._stamps.get(destination) == stamp:
+                continue
+            changes[destination] = "changed" if destination in self._stamps else "created"
+            _copy_input(source, destination, self._layout)
+            self._sources[destination], self._stamps[destination] = source, stamp
+            self._dirty.discard(destination)
+        for destination in sorted(set(self._stamps) - set(current)):
+            destination.unlink(missing_ok=True)
+            changes[destination] = "deleted"
+            del self._stamps[destination], self._sources[destination]
+            self._dirty.discard(destination)
+        if changes:
+            self.revision += 1
+        return _as_changes(changes)
+
+    def show(
+        self, replacements: Mapping[str, str], *, after: Sequence[CopyChange] = ()
+    ) -> Tuple[CopyChange, ...]:
+        """Put ``replacements`` over the copy, and nothing from a previous call.
+
+        ``after`` is what ``follow_project`` just reported; the result accounts
+        for both, so a file the project created and the candidate then rewrote is
+        still reported as created.
+        """
+        changes: Dict[Path, ChangeKind] = {change.path: change.kind for change in after}
         wanted = {self.path_of(name): source for name, source in replacements.items()}
-        changed: list[Path] = []
         for stale in sorted(self._dirty - set(wanted)):
-            if self._restore(stale):
-                changed.append(stale)
-        self._dirty -= set(changed)
-        for output, source in sorted(wanted.items()):
-            if output not in self._pristine:
-                self._pristine[output] = output.read_bytes() if output.is_file() else b""
-            content = encode_like(self._pristine[output], source)
-            if output.is_file() and output.read_bytes() == content:
+            # The previous candidate's text; the project's own comes back, or
+            # nothing does when that candidate invented the file.
+            source = self._sources.get(stale)
+            if source is None:
+                stale.unlink(missing_ok=True)
+                changes[stale] = "deleted"
+            else:
+                _copy_input(source, stale, self._layout)
+                changes.setdefault(stale, "changed")
+            self._dirty.discard(stale)
+        for output, text in sorted(wanted.items()):
+            source = self._sources.get(output)
+            content = encode_like(source.read_bytes() if source is not None else b"", text)
+            existed = output.is_file()
+            if existed and output.read_bytes() == content:
                 continue
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(content)
             self._dirty.add(output)
-            changed.append(output)
-        return tuple(changed)
-
-    def _restore(self, copied: Path) -> bool:
-        """Put one copied file back to the base the copy was made from."""
-        data = self._pristine.get(copied)
-        if data is None:
-            return False
-        if not data and not (self._root / copied.relative_to(self._target)).is_file():
-            copied.unlink(missing_ok=True)
-            return True
-        if copied.is_file() and copied.read_bytes() == data:
-            return False
-        copied.write_bytes(data)
-        return True
+            if existed or changes.get(output) == "deleted":
+                changes.setdefault(output, "changed")
+                if changes[output] == "deleted":
+                    changes[output] = "changed"
+            else:
+                changes[output] = "created"
+        return _as_changes(changes)
 
     def close(self) -> None:
         self._temporary.cleanup()
 
 
-def _populate(temporary: Path, root: Path, excluded_paths: Sequence[str]) -> Tuple[Path, Path]:
-    """Copy ``root``'s checker inputs under ``temporary``; return the tree and project."""
+@dataclass(frozen=True)
+class _Layout:
+    """Where a project and the configuration it extends sit inside its copy."""
+
+    root: Path
+    target: Path
+    tree: Path
+    common: Path
+    configs: Tuple[Path, ...]
+
+    def copy_of(self, config: Path) -> Path:
+        return self.tree / config.relative_to(self.common)
+
+
+def _layout(temporary: Path, root: Path) -> _Layout:
+    """An empty copy of ``root`` under ``temporary``, placed so its extends chain resolves.
+
+    Shared monorepo base configs retain their relative locations, so the chain
+    resolves in the copy exactly as it does in the original project.
+    """
     configs = _pyright_config_inputs(root)
     common = Path(os.path.commonpath([str(root), *(str(path.parent) for path in configs)]))
     tree = temporary / "project"
     target = tree / root.relative_to(common)
     target.mkdir(parents=True)
-    _copy_inputs(
-        root, target, root, frozenset(), frozenset(Path(p).resolve() for p in excluded_paths)
-    )
-    # Shared monorepo base configs retain their relative locations, so an
-    # extends chain resolves exactly as it does in the original project.
-    rebased = {str(root): str(target)}
-    rebased.update({str(path): str(tree / path.relative_to(common)) for path in configs})
-    for config in configs:
-        destination = tree / config.relative_to(common)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        text = config.read_text(encoding="utf-8-sig")
+    return _Layout(root, target, tree, common, configs)
+
+
+def _planned_copies(layout: _Layout, excluded: frozenset[Path]) -> Dict[Path, Path]:
+    """Every copy the project calls for right now, mapped to the file it copies."""
+    plan = {
+        destination: source
+        for source, destination in _inputs(
+            layout.root, layout.target, layout.root, frozenset(), excluded
+        )
+    }
+    plan.update({layout.copy_of(config): config for config in layout.configs})
+    return plan
+
+
+def _copy_input(source: Path, destination: Path, layout: _Layout) -> None:
+    """Copy one checker input, pointing any absolute project path it holds into the copy."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source in layout.configs:
+        rebased = {str(layout.root): str(layout.target)}
+        rebased.update({str(config): str(layout.copy_of(config)) for config in layout.configs})
+        text = source.read_text(encoding="utf-8-sig")
         for original_prefix, replacement_prefix in sorted(
             rebased.items(), key=lambda item: -len(item[0])
         ):
             text = text.replace(original_prefix, replacement_prefix)
         destination.write_text(text, encoding="utf-8")
-    return tree, target
+        return
+    shutil.copyfile(source, destination)
+    if source.suffix in {".toml", ".json", ".ini", ".cfg"}:
+        # Absolute project search paths must resolve inside this same
+        # prospective graph, just like relative paths already do.
+        try:
+            text = destination.read_text(encoding="utf-8")
+        except UnicodeError:
+            return
+        destination.write_text(text.replace(str(layout.root), str(layout.target)), encoding="utf-8")
 
 
 @contextmanager
@@ -148,9 +256,10 @@ def checker_snapshot(
         snapshot.close()
 
 
-def _copy_inputs(
+def _inputs(
     root: Path, target: Path, project: Path, ancestors: frozenset[Path], excluded: frozenset[Path]
-) -> None:
+) -> Iterator[Tuple[Path, Path]]:
+    """Each checker input under ``root`` with the place its copy belongs."""
     resolved = root.resolve()
     if resolved in ancestors or not resolved.is_relative_to(project):
         raise ValueError(f"Cannot snapshot cyclic or external source directory: {root}")
@@ -179,28 +288,14 @@ def _copy_inputs(
                 or (entry / "pyvenv.cfg").is_file()
             ):
                 continue
-            destination.mkdir()
-            _copy_inputs(entry, destination, project, ancestry, excluded)
+            yield from _inputs(entry, destination, project, ancestry, excluded)
         elif entry.is_file() and (
             entry.suffix in {".py", ".pyi", ".toml", ".json", ".ini", ".cfg"}
             or entry.name in {"py.typed", ".gitignore"}
         ):
             if entry.is_symlink() and not entry.resolve().is_relative_to(project):
                 raise ValueError(f"Cannot snapshot an external source link: {entry}")
-            shutil.copyfile(entry, destination)
-            if entry.suffix in {".toml", ".json", ".ini", ".cfg"}:
-                # Absolute project search paths must resolve inside this same
-                # prospective graph, just like relative paths already do.
-                try:
-                    text = destination.read_text(encoding="utf-8")
-                except UnicodeError:
-                    continue
-                snapshot_root = target
-                for _ in root.relative_to(project).parts:
-                    snapshot_root = snapshot_root.parent
-                destination.write_text(
-                    text.replace(str(project), str(snapshot_root)), encoding="utf-8"
-                )
+            yield entry, destination
 
 
 def _json_config(text: str) -> dict[str, object]:

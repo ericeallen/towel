@@ -133,3 +133,41 @@ def test_a_session_that_cannot_start_still_yields_a_verdict(
         oracle.close()
     assert isinstance(result, CheckSuccess)
     assert _consumer_errors(result.errors) == 0
+
+
+@pytest.mark.parametrize("language_server", [True, False], ids=["session", "command-line"])
+def test_a_candidate_is_judged_against_the_project_as_it_now_stands(
+    tmp_path: Path, language_server: bool
+) -> None:
+    """An in-place run changes the project and supplies only what the next candidate alters.
+
+    The warm copy once restored every unsupplied file to the bytes it first saw,
+    so a valid follow-up was rejected and a breaking candidate accepted.
+    """
+    provider = _project(tmp_path)
+    consumer = provider.with_name("consumer_0.py")
+    oracle = PyrightOracle(language_server=language_server)
+    try:
+        baseline = oracle.check_project({str(consumer): consumer.read_text(encoding="utf-8")})
+        # An applied refactoring gives the provider a helper, on disk.
+        provider.write_text(
+            "def make() -> int:\n    return extra()\n\n\ndef extra() -> int:\n    return 1\n",
+            encoding="utf-8",
+        )
+        uses_the_helper = oracle.check_project(
+            {
+                str(consumer): "from pkg.provider import extra\n\n\n"
+                "def use_0() -> int:\n    value: int = extra()\n    return value\n"
+            }
+        )
+        # The provider's result type then changes on disk under an unchanged consumer.
+        provider.write_text('def make() -> str:\n    return "x"\n', encoding="utf-8")
+        now_broken = oracle.check_project({str(consumer): consumer.read_text(encoding="utf-8")})
+    finally:
+        oracle.close()
+    assert isinstance(baseline, CheckSuccess)
+    assert isinstance(uses_the_helper, CheckSuccess)
+    assert isinstance(now_broken, CheckSuccess)
+    assert baseline.errors == ()
+    assert uses_the_helper.errors == (), uses_the_helper.errors
+    assert _consumer_errors(now_broken.errors) == 3, now_broken.errors

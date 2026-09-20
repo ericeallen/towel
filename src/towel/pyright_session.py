@@ -39,6 +39,7 @@ evidence that code is valid.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
 import json
 import os
 from pathlib import Path
@@ -76,6 +77,14 @@ class Diagnostic:
     severity: str
     message: str
     rule: str = ""
+
+
+class FileChange(IntEnum):
+    """What happened to a watched file, in the protocol's own numbering."""
+
+    CREATED = 1
+    CHANGED = 2
+    DELETED = 3
 
 
 class SessionFailure(RuntimeError):
@@ -312,7 +321,7 @@ class PyrightSession:
                 elif kind == "end":
                     analyzing = False
 
-    def diagnostics_after(self, changed: Sequence[Path]) -> Dict[str, List[Diagnostic]]:
+    def diagnostics_after(self, changed: Mapping[Path, FileChange]) -> Dict[str, List[Diagnostic]]:
         """Diagnostics once the server has taken ``changed`` into account.
 
         The caller has already written those paths inside the copied project.
@@ -325,7 +334,11 @@ class PyrightSession:
         if changed:
             self._notify(
                 "workspace/didChangeWatchedFiles",
-                {"changes": [{"uri": _uri(path), "type": 2} for path in changed]},
+                {
+                    "changes": [
+                        {"uri": _uri(path), "type": int(kind)} for path, kind in changed.items()
+                    ]
+                },
             )
         return self._settle(ANALYSIS_TIMEOUT_SECONDS)
 
