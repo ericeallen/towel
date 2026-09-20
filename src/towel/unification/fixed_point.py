@@ -145,6 +145,8 @@ class FixedPointDrivers(Materialization):
         self._warn_about_frame_sensitive_files(file_path)
         num_applied = 0
         descriptions = []
+        rejected = _RejectedProposals()
+        changed_since_hearing = False
 
         iteration = 0
         while True:
@@ -160,8 +162,13 @@ class FixedPointDrivers(Materialization):
 
             applied_one = False
             for proposal in proposals:
+                if proposal in rejected:
+                    continue
                 rendered = self._rendered_or_none(file_path, proposal)
-                if rendered is None or rendered == current_code:
+                if rendered is None:
+                    rejected.add(proposal)
+                    continue
+                if rendered == current_code:
                     continue
                 new_code = rendered
                 apply_changes(
@@ -170,8 +177,14 @@ class FixedPointDrivers(Materialization):
                 applied_one = True
                 break
             if not applied_one:
+                if rejected and changed_since_hearing:
+                    # The file has changed since these were rejected; hear them once more.
+                    rejected.clear()
+                    changed_since_hearing = False
+                    continue
                 # Every proposal failed to render or changed nothing: a fixed point.
                 break
+            changed_since_hearing = True
             current_code = new_code
             current_bytes = encode_like(current_bytes, new_code)
             num_applied += 1
@@ -336,6 +349,10 @@ class FixedPointDrivers(Materialization):
             proposal = self._pop_next_proposal(proposal_queue)
             if proposal is None:
                 break
+            if proposal in run.rejected:
+                if debugging(REJECTIONS):
+                    REJECTIONS.debug("ALREADY REJECTED THIS PASS: %s", proposal.description)
+                continue
             last_desc = proposal.description
             reporter.applying(run.applied, len(proposal_queue), iterations + 1, last_desc)
 
@@ -352,6 +369,7 @@ class FixedPointDrivers(Materialization):
                         *(rep.file_path or proposal.file_path for rep in proposal.replacements),
                     }
                 )
+                run.rejected.add(proposal)
                 self._report_dropped(proposal, error)
                 continue
             except StaleSource as conflict:
@@ -403,9 +421,13 @@ class FixedPointDrivers(Materialization):
         After the first pass, re-pair rewritten files and proposals deferred
         by rendering or checking. A changed project can make a deferred
         proposal valid, but an unchanged project cannot justify another pass.
+        This pass is where a rejected proposal is heard again; until it, the
+        localized re-analysis that follows each application finds the same
+        proposal and is not allowed to retry it.
         """
         if run.global_revision == run.revision:
             return None
+        run.rejected.clear()
         reporter.announce_analysis(output_path)
         restrict = (
             frozenset(run.changed_since_global | run.deferred_paths)
@@ -472,6 +494,53 @@ class FixedPointDrivers(Materialization):
         return queue
 
 
+class _RejectedProposals:
+    """Proposals rejected since the project was last analyzed as a whole.
+
+    Re-analyzing a rewritten file finds again every proposal in it that was
+    rejected before, and a rejection costs a project check per annotation
+    variant: on a capped Sphinx run 204 of 287 checks retried four proposals,
+    and no proposal was ever accepted after being rejected. Nothing is lost by
+    declining those retries, because the run does not end here: a changed
+    project gets another whole analysis, which empties this and hears each
+    proposal once more.
+
+    A proposal is known by what it extracts and where it puts it, not by line
+    numbers, which every earlier application shifts.
+    """
+
+    def __init__(self) -> None:
+        self._identities: Set[str] = set()
+
+    @staticmethod
+    def _identity(proposal: RefactoringProposal) -> str:
+        return repr(
+            (
+                proposal.file_path,
+                proposal.insert_into_class,
+                proposal.insert_into_function,
+                None if proposal.reused_function is None else proposal.reused_function.name,
+                ast.dump(proposal.extracted_function),
+                sorted(
+                    repr((rep.file_path or proposal.file_path, rep.class_name, ast.dump(rep.node)))
+                    for rep in proposal.replacements
+                ),
+            )
+        )
+
+    def add(self, proposal: RefactoringProposal) -> None:
+        self._identities.add(self._identity(proposal))
+
+    def __contains__(self, proposal: RefactoringProposal) -> bool:
+        return self._identity(proposal) in self._identities
+
+    def __bool__(self) -> bool:
+        return bool(self._identities)
+
+    def clear(self) -> None:
+        self._identities.clear()
+
+
 @dataclass
 class _DirectoryRun:
     """What one directory run has done so far."""
@@ -483,6 +552,7 @@ class _DirectoryRun:
     # Rendering/checking can depend on other files, so retry these after any
     # project change even when their own source has not changed.
     deferred_paths: Set[str] = field(default_factory=set)
+    rejected: "_RejectedProposals" = field(default_factory=lambda: _RejectedProposals())
     revision: int = 0
     global_revision: Optional[int] = None
     applied: int = 0
