@@ -121,6 +121,48 @@ def _holds(path: str, text: str) -> bool:
         return False
 
 
+def _recorded_paths(record: Path) -> set[str]:
+    """The paths in ``record``, forgiving a last line that was cut short.
+
+    A path is recorded before the build that supplies its text, so a process
+    killed while appending never reached that build: the cache holds nothing
+    written from the missing path's text, and dropping the fragment is sound.
+    A damaged line anywhere else cannot be explained that way and is an error.
+    """
+    try:
+        lines = record.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return set()
+    paths: set[str] = set()
+    for number, line in enumerate(lines, 1):
+        try:
+            path = json.loads(line)
+        except ValueError:
+            if number == len(lines):
+                break
+            raise ValueError(f"Damaged supplied-text record at line {number}") from None
+        if not isinstance(path, str):
+            raise ValueError(f"Damaged supplied-text record at line {number}")
+        paths.add(path)
+    return paths
+
+
+def _record_paths(record: Path, paths: Sequence[str]) -> None:
+    """Append ``paths``, first removing a fragment an interrupted append left behind.
+
+    Appending after a fragment would join it to the first new path, and the
+    damage would then sit in the middle of the record, where it is an error.
+    """
+    try:
+        existing = record.read_bytes()
+    except FileNotFoundError:
+        existing = b""
+    if existing and not existing.endswith(b"\n"):
+        record.write_bytes(existing[: existing.rfind(b"\n") + 1])
+    with record.open("a", encoding="utf-8") as handle:
+        handle.write("".join(json.dumps(path) + "\n" for path in paths))
+
+
 def _text_mypy_must_be_given(replacements: Mapping[str, str], cache: str) -> dict[str, str]:
     """The replacements mypy cannot be left to read from their files.
 
@@ -138,18 +180,14 @@ def _text_mypy_must_be_given(replacements: Mapping[str, str], cache: str) -> dic
     replaced worker can separate them.
     """
     record = Path(cache) / _SUPPLIED_TEXT_RECORD
-    try:
-        recorded = {json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()}
-    except FileNotFoundError:
-        recorded = set()
+    recorded = _recorded_paths(record)
     added = [
         path
         for path, text in replacements.items()
         if path not in recorded and not _holds(path, text)
     ]
     if added:
-        with record.open("a", encoding="utf-8") as handle:
-            handle.writelines(json.dumps(path) + "\n" for path in added)
+        _record_paths(record, added)
     return {path: text for path, text in replacements.items() if path in recorded.union(added)}
 
 

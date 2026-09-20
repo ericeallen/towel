@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
+import time
 from types import ModuleType
 
 import pytest
@@ -118,3 +121,85 @@ def test_a_verdict_follows_the_supplied_text_and_never_a_cache_entry_written_fro
             assert len(result.errors) == expected_errors, result.errors
     finally:
         checker.close()
+
+
+def test_a_record_cut_short_by_an_interrupted_append_is_forgiven_and_repaired(
+    tmp_path: Path,
+) -> None:
+    """The path is recorded before its build, so a cut append means that build never ran."""
+    worker = _worker_module()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    first, second = str(tmp_path / "first.py"), str(tmp_path / "second.py")
+    assert worker._text_mypy_must_be_given({first: "x = 1\n"}, str(cache)) == {first: "x = 1\n"}
+    record = cache / worker._SUPPLIED_TEXT_RECORD
+    record.write_bytes(record.read_bytes() + b'"/cut/sho')
+    assert worker._recorded_paths(record) == {first}
+    assert worker._text_mypy_must_be_given({second: "y = 1\n"}, str(cache)) == {second: "y = 1\n"}
+    assert worker._recorded_paths(record) == {first, second}
+    assert b"/cut/sho" not in record.read_bytes()
+
+
+def test_damage_inside_the_record_is_an_error_not_a_guess(tmp_path: Path) -> None:
+    worker = _worker_module()
+    record = tmp_path / worker._SUPPLIED_TEXT_RECORD
+    record.write_text('"/a.py"\nnot json\n"/b.py"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="line 2"):
+        worker._recorded_paths(record)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_stopping_the_worker_stops_the_build_it_was_waiting_for(tmp_path: Path) -> None:
+    """A timed-out request terminates the worker; its build must not run on unowned.
+
+    A forgotten build once held a core and 7 GB for 25 minutes and confounded a
+    measurement. The owner terminates the worker exactly as ``_stop_worker`` does.
+    """
+    started = tmp_path / "build.pid"
+    driver = f"""import importlib.util, os, sys, time
+spec = importlib.util.spec_from_file_location("worker", {str(WORKER)!r})
+worker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(worker)
+
+def build(request, cache):
+    with open({str(started)!r}, "w") as handle:
+        handle.write(str(os.getpid()))
+    time.sleep(120)
+    return []
+
+worker._request = build
+sys.argv = ["worker", {str(tmp_path)!r}]
+worker.main()
+"""
+    server = subprocess.Popen(
+        [sys.executable, "-c", driver], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+    )
+    try:
+        assert server.stdin is not None
+        server.stdin.write(b'"a request"\n')
+        server.stdin.flush()
+        deadline = time.monotonic() + 30
+        while not (started.is_file() and started.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        build = int(started.read_text())
+        assert build != server.pid and _alive(build)
+        server.send_signal(signal.SIGTERM)
+        server.wait(timeout=10)
+        deadline = time.monotonic() + 10
+        while _alive(build) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _alive(build), "the build outlived the worker that was told to stop"
+    finally:
+        if server.poll() is None:
+            server.kill()
+            server.wait()
+        for stream in (server.stdin, server.stdout):
+            if stream is not None:
+                stream.close()

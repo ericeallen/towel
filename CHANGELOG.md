@@ -9,6 +9,58 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+A typed run over a large project did not finish. Sphinx, 243 modules with mypy
+and Pyright both strict, ran 3 h 21 min without reaching a fixed point where
+the same run without types takes 11 minutes. Nearly all of that was the mypy
+worker getting slower with every request it served, and most of the rest was
+asking the checkers questions whose answers were already known.
+
+### Fixed
+- The mypy worker's cost per request no longer grows over a run. Successive
+  `build.build` calls in one process keep every rechecked module's tree alive
+  (mypy 1.19; about 250,000 objects per build of `sphinx.application`), and
+  each build opens with a full collection over all of it, so requests slowed
+  linearly and a run quadratically: 14 s per request and a 14 GB worker after
+  80 minutes. Each build now runs in a forked child that exits when it has
+  answered. The same 117 recorded requests take 86.5 s instead of 855 s, at a
+  flat 0.75 s and 60 MB, with identical diagnostics.
+- A complete project check no longer makes mypy recheck every analyzed module.
+  mypy consults its cache only for a module it reads itself, and every module
+  was supplied as text. Text a file already holds is now withheld. A path that
+  has once been supplied with differing text stays supplied for the life of
+  the cache, because mypy records the file's mtime and size beside the text's
+  hash and would otherwise answer for the file with its verdict on the text.
+- The Pyright language server's silence is taken as a verdict only after it
+  has answered for the change. A server slow to begin is as silent as one that
+  has finished, and a candidate that broke three consumers read as clean when
+  the server was delayed past the 0.35 s quiet period. Each check now carries a
+  marker the server must publish first.
+- A candidate is checked against the project as it now stands. The language
+  server's private copy restored every file a candidate did not supply to the
+  bytes it first saw, so in-place, single-file and library runs lost every
+  refactoring already applied: a valid follow-up was rejected and a breaking
+  candidate accepted. The copy now follows the project and tells the server
+  exactly which files were created, changed or deleted.
+- A supplied-text record cut short by an interrupted append is repaired instead
+  of failing every later request, and stopping the mypy worker stops the build
+  it was waiting for.
+
+### Changed
+- Pyright is consulted through one long-lived language server per project and
+  a persistent private copy, instead of a fresh `pyright --outputjson` and a
+  fresh copy per check. The command line remains the fallback and reaches the
+  same verdicts.
+- Every configured checker must accept a candidate, so the first rejection is
+  the verdict and the remaining checkers are not asked. Verdicts are remembered
+  per candidate and project state.
+- An unannotated helper is checked only when every error of the all-`Any`
+  rejection lies inside the helper's own definition. To a caller the two are
+  the same function, so an error anywhere else survives the change.
+- A rejected proposal is heard once per whole-project analysis rather than
+  after every applied refactoring. The analysis that follows a changed project
+  hears it again, so nothing is lost; the single-file driver gained the same
+  re-hearing before it stops.
+
 ## [1.772] - 2026-09-19
 
 Changes since 1.732.

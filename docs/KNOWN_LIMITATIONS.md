@@ -496,16 +496,27 @@ it tractable, all exact: they change no proposal.
   memory.
 - Verification, not analysis, dominates an annotated project. Every candidate
   signature is checked against the complete prospective project, and a proposal
-  can try several. Mypy absorbs this: it runs incrementally in an owned worker
-  against a cache that lives as long as the run, so it re-checks the changed
-  modules and their dependents rather than the project. On Sphinx's 432 files
-  that is 0.22 s per check against 4.8 s cold. Pyright does not: each
-  consultation is a fresh `pyright --outputjson` process with no reusable state,
-  and costs the same 5 s every time on that project. A project that configures
-  both therefore pays about five seconds per candidate signature, which is what
-  makes a full fixed point over a large annotated project expensive; a
-  bounded `--max-refactorings` run is the practical form there. Nothing about
-  the result depends on this: the checkers are consulted identically either way.
+  can try several. Both checkers are kept warm for the run. Mypy builds in a
+  forked child of an owned worker against a cache that lives as long as the
+  run, so a check re-checks the changed modules and their import cycle rather
+  than the project, and its cost does not grow as the run goes on: on Sphinx's
+  432 files a check of all 243 analyzed modules is about 1.1 s and an inference
+  probe about 0.5 s, the same at the two-thousandth request as at the first.
+  Pyright is one language server over a private copy that follows the project:
+  about 0.5 s per check once warm, against 5 s for a fresh `pyright
+  --outputjson`, which remains the fallback. The first rejection settles a
+  candidate, so a project that configures both pays for both only when the
+  first accepts. A capped run on Sphinx (`--max-refactorings 45`, 52
+  refactorings across 8 files) takes about 8 minutes, of which mypy is about 3.
+- A full typed fixed point over a large project is still long. Sphinx had
+  applied 276 refactorings across 101 files after 57 minutes and had not
+  finished; the same run without types changes 108 files in 11 minutes. The
+  tail is the cost: a rejected proposal is heard again at each whole-project
+  analysis, and families of near-identical methods (dozens of `__eq__` in
+  Sphinx's C and C++ domains) pair many ways and are rejected every time, about
+  25 rejections for each refactoring accepted late in the run. A bounded
+  `--max-refactorings` run is the practical form there. Nothing about the
+  result depends on any of this: the checkers are consulted identically.
 - Because the variants are generated lazily, a signature that verifies costs
   nothing further. A precise ordinary signature that passes means no generic
   candidate is ever built or checked, which is the cheapest order as well as

@@ -296,6 +296,9 @@ class PyrightSession:
         try:
             self._write({"jsonrpc": "2.0", "id": message["id"], "result": result})
         except SessionFailure:
+            # A server that has gone cannot be answered. The caller's own next
+            # write or settle meets the same dead process and reports it there,
+            # on the thread that can act on it.
             pass
 
     def _setting(self, item: object) -> object:
