@@ -75,8 +75,11 @@ def test_rename_file_json_contract_on_success_and_rejection(tmp_path: Path) -> N
 
 
 def _oracle_without_pyright() -> type_inference.PyrightOracle:
+    """An oracle pinned to the command line, which is what these cases exercise."""
     oracle = type_inference.PyrightOracle.__new__(type_inference.PyrightOracle)
     oracle._command = ["pyright-stand-in"]
+    oracle._server = None
+    oracle._warmed = {}
     return oracle
 
 

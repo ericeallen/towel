@@ -40,9 +40,10 @@ from __future__ import annotations
 
 import configparser
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import atexit
+import hashlib
 import importlib.util
 import select
 import threading
@@ -71,7 +72,9 @@ from typing import (
 
 from .diagnostics import LOG
 from .project_tools import ToolChoice, python_tool_environment
-from .checker_project import checker_snapshot
+from .checker_project import CheckerSnapshot, checker_snapshot
+from .unification.bounded_cache import BoundedCache
+from .pyright_session import Diagnostic, PyrightSession, SessionFailure
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
 
@@ -687,17 +690,83 @@ class PyrightOracle:
     installed; it is part of the ``types`` extra.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, language_server: bool = True) -> None:
         command = _pyright_command()
         if command is None:
             raise ImportError("pyright is not installed")
         self._command: List[str] = command
+        # The command line is the fallback and reaches the same verdicts, so it
+        # stays available: a caller that must not keep a checker process alive,
+        # and the tests covering that path, ask for it here.
+        self._server: Optional[List[str]] = (
+            _pyright_langserver_command() if language_server else None
+        )
+        self._warmed: Dict[Tuple[Path, Tuple[str, ...]], _WarmProject] = {}
 
     def close(self) -> None:
-        """Pyright runs one bounded subprocess per request and owns no persistent state."""
+        """Stop every language server this oracle started and drop its copies."""
+        for warm in self._warmed.values():
+            warm.close()
+        self._warmed.clear()
+
+    def _warm(self, root: Path, excluded_paths: Sequence[str]) -> Optional[_WarmProject]:
+        """The copy and live server for ``root``, made on first use.
+
+        A server that cannot be started or that fails mid-run disables the whole
+        fast path for this oracle: the command line reaches the same verdict,
+        and silently checking some candidates one way and some the other would
+        make a refusal impossible to reason about. Exclusions belong to the copy,
+        so a call that excludes different paths gets a copy of its own.
+        """
+        if self._server is None:
+            return None
+        key = (root, tuple(sorted(excluded_paths)))
+        existing = self._warmed.get(key)
+        if existing is not None:
+            return existing
+        try:
+            snapshot = CheckerSnapshot(root, excluded_paths=excluded_paths)
+        except (OSError, ValueError, UnicodeError) as error:
+            LOG.warning("could not copy %s for pyright (%s); using the command line", root, error)
+            return None
+        try:
+            session = PyrightSession(
+                self._server,
+                snapshot.tree,
+                sys.executable,
+                environment=python_tool_environment(),
+            )
+        except SessionFailure as error:
+            snapshot.close()
+            LOG.warning("pyright language server unavailable (%s); using the command line", error)
+            self._server = None
+            return None
+        warm = _WarmProject(snapshot, session)
+        self._warmed[key] = warm
+        return warm
+
+    def _abandon_sessions(self, error: SessionFailure) -> None:
+        LOG.warning("pyright language server failed (%s); using the command line", error)
+        self._server = None
+        for warm in self._warmed.values():
+            warm.close()
+        self._warmed.clear()
 
     def _diagnostics(self, file_path: str, text: str) -> _PyrightDiagnostics | CheckFailure:
-        original = Path(file_path)
+        original = Path(file_path).resolve()
+        root = _configured_root(original, "pyright") or _checker_root(original)
+        warm = self._warm(root, ())
+        if warm is not None:
+            try:
+                published = warm.diagnostics({str(original): text})
+            except SessionFailure as error:
+                self._abandon_sessions(error)
+            else:
+                # Only this module's diagnostics: a probe's answer is read from
+                # the line it landed on, and the command line saw this file alone.
+                return _PyrightDiagnostics(
+                    tuple(_as_entry(entry) for entry in published.get(str(original), ()))
+                )
         try:
             with _probe_file(original, text) as probe:
                 return self._run_diagnostics([str(probe)], original.parent)
@@ -844,6 +913,12 @@ class PyrightOracle:
     ) -> CheckResult:
         errors: List[TypeDiagnostic] = []
         for root, replacements in _source_groups(sources, "pyright").items():
+            served = self._check_with_session(root, replacements, excluded_paths)
+            if served is not None:
+                if isinstance(served, CheckFailure):
+                    return served
+                errors.extend(served.errors)
+                continue
             try:
                 with checker_snapshot(
                     root, replacements, excluded_paths=excluded_paths
@@ -869,11 +944,104 @@ class PyrightOracle:
                 return CheckFailure(f"Could not snapshot the project for pyright: {error}")
         return CheckSuccess(tuple(errors))
 
+    def _check_with_session(
+        self, root: Path, replacements: Mapping[str, str], excluded_paths: Sequence[str]
+    ) -> Optional[CheckResult]:
+        """The project checked through its warm copy, or ``None`` to check it cold."""
+        warm = self._warm(root, tuple(excluded_paths))
+        if warm is None:
+            return None
+        try:
+            published = warm.diagnostics(replacements)
+        except SessionFailure as error:
+            self._abandon_sessions(error)
+            return None
+        errors = [
+            TypeDiagnostic(path, f"pyright: {entry.rule}: {entry.message}")
+            for path, entries in published.items()
+            for entry in entries
+            if entry.severity == "error"
+        ]
+        return CheckSuccess(tuple(errors))
+
 
 PYRIGHT_TIMEOUT_SECONDS = 600.0
 """How long one pyright run may take before Towel proceeds without its answer."""
 
 _PYRIGHT_REVEALED = re.compile(r'^Type of ".*" is "(?P<type>.*)"$', re.DOTALL)
+
+
+VERDICT_CACHE_ENTRIES = 256
+"""How many distinct candidates a warm project remembers the verdict for."""
+
+
+class _WarmProject:
+    """A private copy of a project and the live checker watching it.
+
+    The copy is a fixed base, so the answer depends on the candidate alone and
+    the same candidate asked twice has the same answer. A fixed point re-pairs
+    the project after every applied change and so reconsiders proposals it has
+    already weighed; remembering the verdicts spares the checker that work.
+    """
+
+    def __init__(self, snapshot: CheckerSnapshot, session: PyrightSession) -> None:
+        self._snapshot = snapshot
+        self._session = session
+        self._verdicts: BoundedCache[str, Dict[str, List[Diagnostic]]] = BoundedCache(
+            VERDICT_CACHE_ENTRIES
+        )
+
+    def diagnostics(self, replacements: Mapping[str, str]) -> Dict[str, List[Diagnostic]]:
+        """Diagnostics for the project as ``replacements`` would leave it.
+
+        Paths come back as the project's own, not the copy's, so a caller never
+        sees where the check happened.
+        """
+        key = _candidate_key(replacements)
+        remembered = self._verdicts.get(key)
+        if remembered is not None:
+            return {path: list(entries) for path, entries in remembered.items()}
+        changed = self._snapshot.apply(replacements)
+        published = self._session.diagnostics_after(changed)
+        restored: Dict[str, List[Diagnostic]] = {}
+        for path, entries in published.items():
+            original = self._snapshot.original_of(path)
+            restored[original] = [replace(entry, path=original) for entry in entries]
+        self._verdicts[key] = restored
+        return {path: list(entries) for path, entries in restored.items()}
+
+    def close(self) -> None:
+        self._session.close()
+        self._snapshot.close()
+
+
+def _candidate_key(replacements: Mapping[str, str]) -> str:
+    """A digest of exactly what a candidate proposes, and of nothing else."""
+    digest = hashlib.sha256()
+    for path in sorted(replacements):
+        digest.update(path.encode("utf-8", "surrogatepass"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(replacements[path].encode("utf-8", "surrogatepass")).digest())
+    return digest.hexdigest()
+
+
+def _as_entry(diagnostic: Diagnostic) -> _PyrightDiagnostic:
+    """One server diagnostic in the shape the command line's JSON produces."""
+    return _PyrightDiagnostic(
+        file=diagnostic.path,
+        severity=diagnostic.severity,
+        message=diagnostic.message,
+        rule=diagnostic.rule,
+        range=_PyrightRange(start=_PyrightPosition(line=diagnostic.line)),
+    )
+
+
+def _pyright_langserver_command() -> Optional[List[str]]:
+    """The language server for this interpreter's pyright, or a PATH one."""
+    if importlib.util.find_spec("pyright") is not None:
+        return [sys.executable, "-I", "-m", "pyright.langserver"]
+    executable = shutil.which("pyright-langserver")
+    return [executable] if executable else None
 
 
 def _pyright_command() -> Optional[List[str]]:
@@ -915,6 +1083,12 @@ class CombinedOracle:
             if isinstance(result, CheckFailure):
                 return result
             errors.extend(result.errors)
+            if errors:
+                # Every configured checker must accept, so the first rejection
+                # settles it. Asking the rest costs a whole-project check each
+                # to reach a verdict already known, and a candidate nothing will
+                # accept is exactly where a run spends its time.
+                break
         return CheckSuccess(tuple(errors))
 
     def close(self) -> None:

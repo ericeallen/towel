@@ -341,7 +341,7 @@ def test_timeout_is_unknown_and_never_certifies_generated_types(
         "def first(x: int) -> str:\n    out = str(x)\n    print(out)\n    return out\n\n"
         "def second(x: str) -> str:\n    out = str(x)\n    print(out)\n    return out\n"
     )
-    checker = PyrightOracle()
+    checker = PyrightOracle(language_server=False)
     assert checker.is_subtype(str(path), path.read_text(), [("str", "int")]) == [Subtyping.NO]
     monkeypatch.setattr(type_inference, "PYRIGHT_TIMEOUT_SECONDS", 0.000001)
     assert checker.is_subtype(str(path), path.read_text(), [("str", "int")]) == [Subtyping.UNKNOWN]
@@ -474,6 +474,8 @@ def test_invalid_pyright_results_do_not_certify_subtypes(
 
     checker = PyrightOracle.__new__(PyrightOracle)
     checker._command = ["unused"]
+    checker._server = None
+    checker._warmed = {}
     path = tmp_path / "m.py"
     path.write_text("x = 1\n")
     payload = json.dumps({"generalDiagnostics": [] if diagnostic is None else [diagnostic]})
