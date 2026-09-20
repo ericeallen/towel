@@ -44,12 +44,15 @@ import json
 import os
 from pathlib import Path
 import queue
+import secrets
+import select
 import subprocess
 import threading
 import time
 from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from .diagnostics import LOG
+from .source_files import PROBE_PREFIX
 
 START_TIMEOUT_SECONDS = 120.0
 """How long the server may take to accept the workspace before we give up."""
@@ -58,14 +61,27 @@ ANALYSIS_TIMEOUT_SECONDS = 600.0
 """How long one settle may take; past this the session is unusable."""
 
 _QUIET_SECONDS = 0.35
-"""Silence that ends a settle when the server reports no progress of its own.
+"""Silence that ends a settle, once the server has answered for this change.
 
 Pyright brackets a substantial reanalysis with work-done progress, but answers
 a small edit without any progress at all. Waiting only for progress would hang
 on the small edits; waiting only for silence would read a large reanalysis half
 finished. A settle therefore ends on whichever arrives: the end of a progress
 run that began after the edit, or this much silence.
+
+Silence alone is not evidence. A server that has not started on the change is
+as silent as one that has finished, and a machine under load makes that
+moment long: a candidate that broke its consumer read as clean whenever the
+server took longer than this to begin. So silence counts only after the
+server has published the marker written with the change (see ``_Marker``),
+and only while nothing is waiting in its pipe or half read.
 """
+
+UNSEEN_MARKER_TIMEOUT_SECONDS = 60.0
+"""How long a directory's first marker may go unanswered before the server is
+taken not to analyze that directory at all, which no later wait would cure."""
+
+_MARKER_NAME = f"{PROBE_PREFIX}settled.py"
 
 
 @dataclass(frozen=True)
@@ -107,6 +123,38 @@ def _path_of(uri: str) -> Optional[str]:
     return unquote(parsed.path) or None
 
 
+class _Marker:
+    """A private module whose only diagnostic names the change it was written with.
+
+    The server learns of changes from one notification and from nothing else (it
+    does not watch the copy itself), so every file named in that notification is
+    invalidated together. The marker is named in it too, and its text reveals a
+    literal that is new each time. Its diagnostic can therefore only come from
+    an analysis that began after the server took the whole change in. Revealing
+    a type is reported whatever rules the project turns off.
+    """
+
+    def __init__(self) -> None:
+        self.token = ""
+        self.directory: Optional[Path] = None
+        self._placed: set[Path] = set()
+
+    def place(self, directory: Path) -> Tuple[Path, FileChange, bool]:
+        """Write a fresh marker in ``directory``; its path, how to report it, and if new there."""
+        self.token = f"towel-{secrets.token_hex(8)}"
+        self.directory = directory
+        path = directory / _MARKER_NAME
+        path.write_text(f'reveal_type("{self.token}")\n', encoding="utf-8")
+        first = path not in self._placed
+        self._placed.add(path)
+        return path, (FileChange.CREATED if first else FileChange.CHANGED), first
+
+    def answered_by(self, path: str, entries: Sequence[Diagnostic]) -> bool:
+        return Path(path).name == _MARKER_NAME and any(
+            self.token and self.token in entry.message for entry in entries
+        )
+
+
 class PyrightSession:
     """A running language server over one project root.
 
@@ -141,6 +189,9 @@ class PyrightSession:
                 stderr=subprocess.DEVNULL,
                 cwd=str(root),
                 env=dict(environment) if environment is not None else None,
+                # Unbuffered, so what the server has said is either still in the
+                # pipe or in the reader's hands, and a settle can ask about both.
+                bufsize=0,
             )
         except OSError as error:
             raise SessionFailure(f"could not start pyright: {error}") from error
@@ -152,6 +203,9 @@ class PyrightSession:
         # settle that returned only what was said during it would forget every
         # error found before the first candidate was ever checked.
         self._state: Dict[str, List[Diagnostic]] = {}
+        self._marker = _Marker()
+        self._marker_answered = False
+        self._reading = False
         self._closed = False
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
@@ -170,14 +224,24 @@ class PyrightSession:
         except (BrokenPipeError, OSError) as error:
             raise SessionFailure(f"pyright stopped reading: {error}") from error
 
-    def _read_message(self) -> Optional[Mapping[str, object]]:
+    def _read_exactly(self, count: int) -> Optional[bytes]:
         stream = self._process.stdout
         if stream is None:
             return None
+        data = b""
+        while len(data) < count:
+            chunk = stream.read(count - len(data))
+            if not chunk:
+                return None
+            data += chunk
+            self._reading = True
+        return data
+
+    def _read_message(self) -> Optional[Mapping[str, object]]:
         header = b""
         while not header.endswith(b"\r\n\r\n"):
-            chunk = stream.read(1)
-            if not chunk:
+            chunk = self._read_exactly(1)
+            if chunk is None:
                 return None
             header += chunk
             if len(header) > 8192:
@@ -191,8 +255,8 @@ class PyrightSession:
                     return None
         if length <= 0 or length > 64 * 1024 * 1024:
             return None
-        body = stream.read(length)
-        if body is None or len(body) != length:
+        body = self._read_exactly(length)
+        if body is None:
             return None
         try:
             message = json.loads(body)
@@ -215,6 +279,8 @@ class PyrightSession:
                     self._replies.put((ident, message))
             elif isinstance(method, str):
                 self._events.put((method, message.get("params")))
+            # Only now is the message out of this thread's hands; see ``_is_silent``.
+            self._reading = False
 
     def _answer(self, message: Mapping[str, object], method: str) -> None:
         """Reply to a server-to-client request.
@@ -292,20 +358,46 @@ class PyrightSession:
 
     # -- analysis ---------------------------------------------------------
 
-    def _settle(self, timeout: float) -> Dict[str, List[Diagnostic]]:
-        """Absorb diagnostics until the server goes quiet; return the whole picture."""
+    def _is_silent(self) -> bool:
+        """Whether nothing the server has said is still on its way to ``_events``.
+
+        Asked in the order a message travels (pipe, reader, queue), so one that
+        moves on between the questions is met again further along.
+        """
+        stream = self._process.stdout
+        if stream is None:
+            return True
+        waiting, _, _ = select.select([stream], [], [], 0)
+        return not waiting and not self._reading and self._events.empty()
+
+    def _settle(
+        self, timeout: float, *, marker_timeout: Optional[float] = None
+    ) -> Dict[str, List[Diagnostic]]:
+        """Absorb diagnostics until the server has answered and gone quiet.
+
+        With ``marker_timeout``, quiet counts only once the marker written with
+        the change has been published, which must happen within that long:
+        before it, silence says nothing.
+        """
         analyzing = False
-        deadline = time.monotonic() + timeout
-        last = time.monotonic()
+        self._marker_answered = marker_timeout is None
+        started = time.monotonic()
+        deadline = started + timeout
+        last = started
         while True:
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if not self._marker_answered and now > started + (marker_timeout or 0.0):
+                raise SessionFailure(f"pyright did not answer for a change in {marker_timeout:g}s")
+            if now > deadline:
                 raise SessionFailure(f"pyright did not settle in {timeout:g}s")
             try:
                 method, params = self._events.get(timeout=0.05)
             except queue.Empty:
                 if self._process.poll() is not None:
                     raise SessionFailure("pyright exited") from None
-                if not analyzing and time.monotonic() - last > _QUIET_SECONDS:
+                if not self._is_silent() or not self._marker_answered:
+                    last = time.monotonic()
+                elif not analyzing and time.monotonic() - last > _QUIET_SECONDS:
                     return dict(self._state)
                 continue
             last = time.monotonic()
@@ -321,26 +413,44 @@ class PyrightSession:
                 elif kind == "end":
                     analyzing = False
 
-    def diagnostics_after(self, changed: Mapping[Path, FileChange]) -> Dict[str, List[Diagnostic]]:
+    def diagnostics_after(
+        self, changed: Mapping[Path, FileChange], *, beside: Sequence[Path] = ()
+    ) -> Dict[str, List[Diagnostic]]:
         """Diagnostics once the server has taken ``changed`` into account.
 
-        The caller has already written those paths inside the copied project.
-        Passing no paths simply settles and reports what the server has to say
-        about the project as it stands.
+        The caller has already made those changes inside the copied project.
+        ``beside`` names files the question is about; the marker goes next to the
+        first, so the server analyzes it if it analyzes them. Even with nothing
+        changed the marker is rewritten, so the answer never rests on a settle
+        that ended before the server had begun.
         """
         if self._closed:
             raise SessionFailure("session is closed")
         self._drain()
-        if changed:
-            self._notify(
-                "workspace/didChangeWatchedFiles",
-                {
-                    "changes": [
-                        {"uri": _uri(path), "type": int(kind)} for path, kind in changed.items()
-                    ]
-                },
+        # With nothing to stand beside, where the server last answered is the
+        # best place known; the root may lie outside what the project includes.
+        directory = next((path.parent for path in beside), self._marker.directory or self._root)
+        marker, how, first = self._marker.place(directory)
+        self._notify(
+            "workspace/didChangeWatchedFiles",
+            {
+                "changes": [
+                    {"uri": _uri(path), "type": int(kind)}
+                    for path, kind in {**changed, marker: how}.items()
+                ]
+            },
+        )
+        try:
+            return self._settle(
+                ANALYSIS_TIMEOUT_SECONDS,
+                marker_timeout=(
+                    UNSEEN_MARKER_TIMEOUT_SECONDS if first else ANALYSIS_TIMEOUT_SECONDS
+                ),
             )
-        return self._settle(ANALYSIS_TIMEOUT_SECONDS)
+        except SessionFailure:
+            if first and not self._marker_answered:
+                LOG.warning("pyright gave no sign of analyzing %s", directory)
+            raise
 
     def _drain(self) -> None:
         """Absorb anything the server said while nobody was listening."""
@@ -358,6 +468,10 @@ class PyrightSession:
         if path is None:
             return
         entries = list(_diagnostics_of(path, params))
+        if Path(path).name == _MARKER_NAME:
+            # The marker is this session's own and no part of the project's picture.
+            self._marker_answered |= self._marker.answered_by(path, entries)
+            return
         if entries:
             self._state[path] = entries
         else:

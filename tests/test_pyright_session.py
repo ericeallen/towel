@@ -17,10 +17,18 @@ never was.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+import os
+import shutil
+import signal
+import subprocess
+import threading
+from typing import Dict, List, Mapping, Sequence
 
 import pytest
 
+from towel import pyright_session, type_inference
+from towel.pyright_session import Diagnostic
+from towel.source_files import PROBE_PREFIX
 from towel.type_inference import CheckSuccess, PyrightOracle
 
 
@@ -171,3 +179,99 @@ def test_a_candidate_is_judged_against_the_project_as_it_now_stands(
     assert baseline.errors == ()
     assert uses_the_helper.errors == (), uses_the_helper.errors
     assert _consumer_errors(now_broken.errors) == 3, now_broken.errors
+
+
+def _process_tree(root_pid: int) -> list[int]:
+    found, frontier = [root_pid], [root_pid]
+    while frontier:
+        listed = subprocess.run(
+            ["pgrep", "-P", str(frontier.pop())], capture_output=True, text=True, check=False
+        )
+        children = [int(pid) for pid in listed.stdout.split()]
+        found += children
+        frontier += children
+    return found
+
+
+@pytest.mark.skipif(shutil.which("pgrep") is None, reason="needs pgrep to find the server's tree")
+def test_a_server_slow_to_begin_is_waited_for_not_read_as_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Silence before the server has started on a change is not a verdict.
+
+    The server is stopped just before the candidate is shown and resumed well
+    after the quiet period, which is what a loaded machine looks like from here.
+    A settle that ended on silence alone reported this breaking candidate clean.
+    """
+    provider = _project(tmp_path)
+    oracle = PyrightOracle()
+    original = type_inference._WarmProject.diagnostics
+    stalled: list[int] = []
+
+    def stall_then_ask(
+        warm: type_inference._WarmProject, replacements: Mapping[str, str]
+    ) -> Dict[str, List[Diagnostic]]:
+        if stalled:
+            return original(warm, replacements)
+        stalled.extend(_process_tree(warm._session._process.pid))
+        for pid in stalled:
+            os.kill(pid, signal.SIGSTOP)
+
+        def resume_server() -> None:
+            for pid in stalled:
+                os.kill(pid, signal.SIGCONT)
+
+        resume = threading.Timer(1.5, resume_server)
+        resume.start()
+        try:
+            return original(warm, replacements)
+        finally:
+            resume.join()
+
+    try:
+        clean = oracle.check_project({str(provider): provider.read_text(encoding="utf-8")})
+        assert isinstance(clean, CheckSuccess) and clean.errors == ()
+        monkeypatch.setattr(type_inference._WarmProject, "diagnostics", stall_then_ask)
+        broken = oracle.check_project({str(provider): 'def make() -> str:\n    return "x"\n'})
+    finally:
+        for pid in stalled:
+            try:
+                os.kill(pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+        oracle.close()
+    assert stalled, "the server was never stalled, so this proved nothing"
+    assert isinstance(broken, CheckSuccess)
+    assert _consumer_errors(broken.errors) == 3, broken.errors
+
+
+def test_the_marker_is_no_part_of_the_verdict_or_the_project(tmp_path: Path) -> None:
+    provider = _project(tmp_path)
+    oracle = PyrightOracle()
+    try:
+        broken = oracle.check_project({str(provider): 'def make() -> str:\n    return "x"\n'})
+    finally:
+        oracle.close()
+    assert isinstance(broken, CheckSuccess)
+    assert not [error for error in broken.errors if PROBE_PREFIX in error.path]
+    assert not list(tmp_path.rglob(f"{PROBE_PREFIX}*"))
+
+
+def test_a_directory_the_server_does_not_analyze_falls_back_to_the_command_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No marker will ever be answered there; waiting longer would not change that."""
+    _project(tmp_path)
+    outside = tmp_path / "scripts"
+    outside.mkdir()
+    script = outside / "tool.py"
+    script.write_text("VALUE: int = 1\n", encoding="utf-8")
+    monkeypatch.setattr(pyright_session, "UNSEEN_MARKER_TIMEOUT_SECONDS", 2.0)
+    oracle = PyrightOracle()
+    try:
+        result = oracle.check_project({str(script): "VALUE: int = 2\n"})
+        assert oracle._server is None, "the session should have been abandoned"
+    finally:
+        oracle.close()
+    assert isinstance(result, CheckSuccess)
+    assert result.errors == ()

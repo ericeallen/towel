@@ -1020,7 +1020,8 @@ class _WarmProject:
             return {path: list(entries) for path, entries in remembered.items()}
         changed = self._snapshot.show(replacements, after=followed)
         published = self._session.diagnostics_after(
-            {change.path: _FILE_CHANGES[change.kind] for change in changed}
+            {change.path: _FILE_CHANGES[change.kind] for change in changed},
+            beside=[self._snapshot.path_of(name) for name in sorted(replacements)],
         )
         restored: Dict[str, List[Diagnostic]] = {}
         for path, entries in published.items():
