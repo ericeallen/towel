@@ -105,6 +105,7 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
    ```bash
    just test        # or: uv run --frozen pytest -q
    just check       # formatting, lint, typing, Bandit
+   just check-diagrams   # parses the documentation's mermaid diagrams (needs Node)
    ```
 
 ## Coding Standards

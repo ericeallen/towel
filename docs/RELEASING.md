@@ -36,7 +36,7 @@ Recheck live version availability immediately before publishing. The proposed ve
 
 ## Local evidence required
 
-Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`.
+Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`. Run `just check-diagrams` as well: GitHub renders the documentation's mermaid diagrams and no Python check looks at them, so a syntax error would otherwise appear only once the page is published. It needs Node and installs mermaid and jsdom on first use.
 Run `just ci`: formatting, lint, typing, Bandit, the dependency audit, full tests,
 coverage with the unconditional 85% gate, and a wheel/source build. Repeat the
 full tests and coverage on Python 3.11–3.13, combining coverage before each

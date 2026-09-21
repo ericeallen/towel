@@ -131,6 +131,22 @@ audit-dependencies:
 check: format-check lint typecheck security
     @echo "Quality checks passed."
 
+# Parse every mermaid diagram in the documentation with mermaid's own parser.
+# Needs Node; installs mermaid and jsdom into an ignored node_modules.
+# GitHub renders these and no Python check looks at them, so a syntax error
+# would otherwise be found only after publication.
+check-diagrams:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v npm >/dev/null; then
+        echo "npm is not installed; skipping diagram check." >&2
+        exit 0
+    fi
+    # ESM ignores NODE_PATH and resolves by walking up from the script, so the
+    # packages go beside it; --no-save leaves no package.json behind.
+    [ -d node_modules/mermaid ] || npm install --no-save --no-audit --no-fund --silent mermaid jsdom
+    node scripts/check_mermaid.mjs docs/*.md *.md
+
 # === Release ===
 
 # Set the version in pyproject.toml and refresh the lockfile

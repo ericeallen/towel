@@ -120,3 +120,6 @@ mytmp
 .towel-transaction-*
 _towel_probe_*.py
 .coverage.*
+
+# Installed on demand by `just check-diagrams`
+node_modules/
