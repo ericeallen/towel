@@ -46,6 +46,20 @@ describe belong to that version.
 A single analysis runs these phases; the directory driver wraps them in a
 fixed-point loop (below).
 
+```mermaid
+flowchart TD
+    src["source"] --> parse["1. parse to an AST, unchanged"]
+    parse --> scope["2. scope and binding analysis"]
+    scope --> blocks["3. enumerate candidate blocks"]
+    blocks --> pairs["4. pair on a structural signature"]
+    pairs --> decide["5. decide each pair<br/>eleven stages"]
+    decide --> filter["6. filter overlaps"]
+    filter --> verify["7. annotate, format, verify"]
+    verify --> apply["8. apply as one byte plan"]
+    apply --> result["rewritten source"]
+```
+
+
 1. **Parse.** Read source and parse it to an AST, unchanged. Operators and
    assignment forms are preserved; no normalization runs on the analyzed tree.
 2. **Scope and binding analysis.** `scope_analyzer.py`, `binding_detector.py`,
@@ -387,6 +401,32 @@ others are not asked; only an accepted candidate is seen by all of them. When
 a run that was checked through a language server has applied something, the
 finished project is confirmed once more by a pyright started from nothing.
 
+A typed run holds more than the one process it started in:
+
+```mermaid
+flowchart LR
+    subgraph proc["processes"]
+        direction TB
+        towel["towel"]
+        worker["owned mypy worker<br/>python -I _mypy_worker.py"]
+        build["forked build<br/>one per request, exits on answer"]
+        server["pyright-langserver<br/>one per project root"]
+        towel --> worker
+        worker --> build
+        towel --> server
+    end
+
+    subgraph disk["on disk, for the life of the run"]
+        direction TB
+        cache["mypy cache directory<br/>towel-mypy-*"]
+        copy["private project copy<br/>towel-check-*<br/>kept in step with the project"]
+    end
+
+    build --- cache
+    server --- copy
+    towel -. "closing the oracle ends<br/>the processes and removes both" .-> disk
+```
+
 Before using the oracle, the engine checks the complete original project.
 If that completed check reports type errors, it aborts with an instruction to
 fix the errors or explicitly rerun with `--no-types`. That option disables
@@ -480,7 +520,66 @@ the replacements as in-memory build sources, except where the text is what the
 file already holds: that is withheld so mypy consults its incremental cache,
 which it does only for a module it reads itself. Pyright receives a private
 project copy under the original module names, kept in step with the project
-and told which files were created, changed or deleted. A proposal introducing
+and told which files were created, changed or deleted.
+
+Four things can decline a proposal, and they are asked in the order of what
+they cost. The first two are decided from the proposal alone, so they run
+whether or not type checking is on and cost nothing; the third is where a
+run's time goes.
+
+```mermaid
+flowchart TD
+    pair["a candidate pair"]
+    rules{"refused by a rule of the language<br/>or of the transformation?"}
+    render{"can it be placed and compiled?"}
+    ladder["try the candidate signatures in turn"]
+    accept{"do all configured checkers<br/>accept one of them?"}
+    applied["applied"]
+    cold["when the run ends:<br/>the finished project, checked<br/>by a pyright started cold"]
+    declined["declined"]
+
+    pair --> rules
+    rules -- "yes: free" --> declined
+    rules -- "no" --> render
+    render -- "no: free" --> declined
+    render -- "yes" --> ladder
+    ladder --> accept
+    accept -- "no: one project check per signature" --> declined
+    accept -- "yes" --> applied
+    applied --> cold
+```
+
+The first tier is the structural refusals of the `RejectReason` vocabulary
+together with an extraction that would separate a narrowing test from an
+expression it leaves at the call site (`unification/narrowing.py`). Within one
+check every configured checker must accept, so the first to reject settles the
+candidate and the others are not asked.
+
+The signatures are tried in this order, and generation is lazy, so one that
+verifies costs nothing further:
+
+```mermaid
+flowchart TD
+    q{"does the ordinary signature<br/>hold Any?"}
+    g1["generic candidates"]
+    plain1["the ordinary signature"]
+    plain2["the ordinary signature"]
+    g2["generic candidates"]
+    anyv["every annotation Any"]
+    conf{"do all of its errors lie<br/>inside the helper itself?"}
+    bare["no annotations at all"]
+    stop["declined"]
+
+    q -- "yes" --> g1 --> plain1 --> anyv
+    q -- "no" --> plain2 --> g2 --> anyv
+    anyv --> conf
+    conf -- "no: nothing a signature can reach" --> stop
+    conf -- "yes" --> bare --> stop
+```
+
+
+
+A proposal introducing
 an error tries the generic candidates where supported, then retries with every
 annotation `Any`, and then with none, that last only when every error of the
 all-`Any` refusal lies inside the helper's own definition, since an error
@@ -596,7 +695,26 @@ catch.
 
 `refactor_directory_to_fixed_point` performs whole-project analysis, applies
 one proposal, re-analyzes the affected source, and repeats until no proposal
-remains or an iteration bound is reached. Applying one change at a time keeps
+remains or an iteration bound is reached.
+
+```mermaid
+flowchart TD
+    start["whole-project analysis"] --> queue{"anything queued?"}
+    queue -- "yes" --> pop["take the next proposal"]
+    pop --> known{"declined earlier<br/>in this run?"}
+    known -- "yes" --> pop
+    known -- "no" --> try{"does it apply?"}
+    try -- "no" --> remember["remember it as declined"] --> pop
+    try -- "yes" --> local["apply, then re-analyse<br/>only the files it rewrote"]
+    local --> queue
+    queue -- "no" --> global["global pass:<br/>re-pair the files changed<br/>since the last one"]
+    global -- "found something" --> queue
+    global -- "found nothing" --> pending{"anything declined, and<br/>something applied since<br/>the last rehearing?"}
+    pending -- "yes" --> rehear["rehearing: forget every<br/>declined proposal and<br/>re-pair the whole project"]
+    rehear --> queue
+    pending -- "no" --> done["fixed point"]
+```
+ Applying one change at a time keeps
 each step verifiable and lets a later iteration extract a helper that a newly
 introduced call site now shares. The single-file `refactor_to_fixed_point` is
 the same loop over one module.
