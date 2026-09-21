@@ -9,11 +9,25 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+## [1.772] - 2026-09-21
+
+Changes since 1.732.
+
 A typed run over a large project did not finish. Sphinx, 243 modules with mypy
 and Pyright both strict, ran 3 h 21 min without reaching a fixed point where
 the same run without types takes 11 minutes. Nearly all of that was the mypy
 worker getting slower with every request it served, and most of the rest was
-asking the checkers questions whose answers were already known.
+asking the checkers questions whose answers were already known. It now reaches
+a fixed point in 46 minutes, applying 380 refactorings across 105 files, after
+which Sphinx's own test suite reports exactly what it reported before: 2385
+passed, 34 skipped, and the same six failures that checkout already had.
+
+Every figure in this entry was measured on an Apple M5 Max (18 cores, 128 GiB)
+running macOS 26.5.1, with the machine otherwise idle. Towel ran on Python
+3.12.13. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
+mypy and Pyright both strict, checked by that project's own venv: **mypy
+1.19.1 and pyright 1.1.407**. The mypy behaviour described below belongs to
+that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
 - The mypy worker's cost per request no longer grows over a run. Successive
@@ -94,14 +108,26 @@ asking the checkers questions whose answers were already known.
 - An unannotated helper is checked only when every error of the all-`Any`
   rejection lies inside the helper's own definition. To a caller the two are
   the same function, so an error anywhere else survives the change.
-- A rejected proposal is heard once per whole-project analysis rather than
-  after every applied refactoring. The analysis that follows a changed project
-  hears it again, so nothing is lost; the single-file driver gained the same
-  re-hearing before it stops.
+- A proposal the project declines is remembered for the whole run instead of
+  until the next analysis. When nothing more applies and something was
+  declined that the project has changed under since, the run holds a
+  rehearing: the memory is cleared and the whole project analysed once more,
+  so every declined proposal is heard against the project as it now stands.
+  Only a rehearing that applies nothing ends the run, which is a stronger
+  guarantee than before, when the terminating analysis was restricted to the
+  files that had changed. Of the 382 extractions an uncapped Sphinx run
+  considers, 24 had every annotation variant refused and not one of those was
+  ever accepted at a later analysis.
+- A typed run that was checked through a language server is confirmed once
+  more at the end by a pyright started from nothing, sharing none of the
+  session's state. A language server answers when it has gone quiet, and
+  while a marker it must publish first keeps silence from being read as a
+  verdict before it has begun, one cold check over the finished project turns
+  any residue of that kind from a silent wrong answer into a loud one. About
+  ten seconds on Sphinx, and no flag: a guarantee that holds only when asked
+  for is not one.
 
-## [1.772] - 2026-09-19
-
-Changes since 1.732.
+### Preserving type relationships
 
 An extracted helper used to lose the relationships among its types. Where two
 call sites passed `int` and `str`, the shared parameter became `int | str` and

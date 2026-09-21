@@ -52,6 +52,11 @@ Towel configures mypy for its own source and does not configure Pyright. Run
 anyway, Pyright reports one diagnostic on the transformed tree that it does not
 report on the original: an extracted type guard leaves its argument unnarrowed
 for the code that followed the block. The diagnostic is identical under 1.732.
+Since the verification work later in 1.772, an extraction that separates a
+narrowing test from an expression it leaves at the call site is refused where
+the proposal is built, with or without type checking, so the transformation
+this diagnostic describes is one Towel no longer proposes; the entry is kept
+because the evidence was gathered before that change.
 This is the documented scope of the guarantee rather than a defect: Towel
 verified with the checker this project configures, and that checker accepted
 the change, in part because its own narrowing of `Mapping[str, object]` through
@@ -268,9 +273,12 @@ this run, with a regression test:
   pytest, structlog, sphinx, trio and werkzeug; it now runs with
   `python -P` (`0bb2075`).
 - mypy's finished builds piled up as uncollected reference cycles, and
-  sphinx's refactor reached 40 GB in one process; the oracle now collects
-  them every ten builds, and the same refactor, run alone, peaks at 1.76 GB
-  and takes 1,140 s (`e42ed4f` and its follow-up).
+  sphinx's refactor reached 40 GB in one process; collecting them every ten
+  builds brought the same refactor, run alone, to 1.76 GB and 1,140 s
+  (`e42ed4f` and its follow-up). That collection no longer exists: in 1.772
+  each mypy build runs in a forked child of the worker which exits when it
+  has answered, so nothing it allocates outlives it and the worker stays near
+  60 MB however many builds it serves.
 - The candidate-pair budget's default of 2,000,000 cut networkx (9.25
   million pairs) and sphinx (8.45 million) on every pass, and their changed
   files fell from 105 to 73 and from 101 to 87; the default is now

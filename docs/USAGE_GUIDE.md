@@ -69,7 +69,7 @@ When using the fixed-point directory refactoring loop (`refactor_directory_to_fi
 
 | Mode    | Behavior |
 |---------|----------|
-| `tqdm`  | Rich progress bar showing applied count & queue length. |
+| `tqdm`  | Rich progress bar showing applied count, queue length and the proposal being weighed, redrawn on a heartbeat so a long verification does not look like a hung run. |
 | `auto`  | Attempts `tqdm`, falls back to a textual single-line bar. |
 | `none`  | Suppresses all progress output (quiet for CI). |
 | `detail`| Lists the discovered proposals (first 25) and the localized follow-ups after each application, on the `towel` logger at INFO. |
@@ -78,7 +78,7 @@ The default is `tqdm`; the CLI's `--progress` option accepts the same values.
 
 Call signature returns `(results_dict, termination_reason)` where `termination_reason` is:
 
-* `fixed_point` – No further proposals remain.
+* `fixed_point` – A rehearing, which clears the memory of declined proposals and re-pairs the whole project, applied nothing.
 * `iteration_cap` – Stopped after `max_iterations` applied refactorings (the CLI's `--max-refactorings`). The default, 0, runs to a fixed point.
 
 ### Example (detail mode)
@@ -189,7 +189,11 @@ generic contracts. See the [design and supported boundaries](proposals/type-para
 Each fixed-point call starts a new run and checks the original before creating
 an output copy. Direct `apply_refactoring` calls share an implicit run; call
 `engine.begin_refactoring_run(paths)` when starting a separate run on the same
-engine. The caller owns the oracle and should call `oracle.tool.close()` in a
+engine. Closing it matters more than it used to: an oracle that verifies with
+pyright holds a long-lived language server process and a private copy of the
+project on disk for as long as it lives, and one that infers with mypy holds a
+worker process and its cache directory. The caller owns the oracle and should
+call `oracle.tool.close()` in a
 `finally` block when `oracle.tool` is not `None`.
 
 ### Directory Scanning

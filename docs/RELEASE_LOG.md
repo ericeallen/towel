@@ -51,7 +51,7 @@ A historical passing result applies to its recorded commit and test environment.
   classes. The transformed project is clean under both checkers, and Sphinx's
   suite run serially is identical before and after: 2,385 passed, 34 skipped,
   and the same six pre-existing upstream failures. That was a bounded fixed
-  point of 20 helpers over four modules, stopped after 3 h 21 min. The 141-project behavioral corpus runs with `--no-types` and does
+  point of 20 helpers over four modules, stopped after 3 h 21 min. That figure predates the verification work later in 1.772, after which the same project reaches a fixed point in 46 minutes. The 141-project behavioral corpus runs with `--no-types` and does
   not measure this inference.
 
 ---

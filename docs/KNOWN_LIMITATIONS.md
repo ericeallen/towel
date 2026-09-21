@@ -280,8 +280,10 @@ where the evidence comes from:
 - Placement for bare names in ordinary inferred signatures holds only within one module. For a helper
   whose sites are in other modules, an annotation may name only builtins
   and the `typing` names Towel imports itself (`Any`, `Callable`), since a
-  site's imports are not the host's; a type that names a class is then not
-  written and the parameter is completed with `Any`. Any subscripted
+  site's imports are not the host's. A class the module cannot reach is
+  imported under `TYPE_CHECKING` and named directly; only where no module of
+  the project owns it, or its short name is already taken, is the type left
+  unwritten and the parameter completed with `Any`. Any subscripted
   annotation that would not evaluate at definition time (`memoryview[int]`
   on an interpreter where `memoryview` is not generic) is written as a
   string. Generic inference can also retain a foreign site's imported type when
@@ -297,8 +299,12 @@ where the evidence comes from:
 
   A type guard shows how this bites. Moving `if not isinstance(x, list): raise
   ...` into a helper leaves the caller's `x` at its declared type, so a
-  following `for item in x` no longer sees a `list`. A configured checker
-  reports that and the proposal is declined. But the evidence the checker
+  following `for item in x` no longer sees a `list`. An extraction that
+  separates a narrowing test from an expression it leaves at the call site is
+  now declined where the proposal is built, before any checker is asked, and
+  so identically with `--no-types`; what follows is the case that survives,
+  where the test and its use stay together and the loss is in the helper's
+  revealed type. But the evidence the checker
   itself supplies can hide it: mypy narrows `Mapping[str, object]` through
   `isinstance(_, dict)` to `dict[Any, Any]`, and once a helper's return carries
   that `Any`, the caller's loop is unremarkable to mypy while Pyright still
@@ -312,11 +318,12 @@ where the evidence comes from:
   Safe project checking rules are honored; project
   plugins, configured executables and report destinations are not executed.
 - Pyright verification uses a private copy of Python sources, stubs, typing
-  markers and checker configuration. Cyclic or external source symlinks and
+  markers and checker configuration, made once per run, kept in step with the
+  project as it is refactored, and watched by one long-lived language server. Cyclic or external source symlinks and
   configured source or stub search roots outside the project cannot be
   represented safely and cause verification to decline the proposal.
   Project include/exclude settings still determine the checker's coverage.
-- Mypy runs in an owned worker process and never freezes the caller's garbage
+- Mypy runs in an owned worker process, each build in a forked child of it that exits once it has answered, and never freezes the caller's garbage
   collector. Library users should call the oracle's `close()` when finished;
   `CombinedOracle.close()` closes both checkers. The CLI closes its oracle on
   both success and failure.
@@ -491,7 +498,7 @@ it tractable, all exact: they change no proposal.
   to decline every pair in seconds, take 33 minutes on one core (commit
   `5ff2458`, September 19, 2026) and yield one helper with 669 call sites.
   Its peak memory was 8.8 GB; bounding the scan cache by sites brought it
-  to 6.7 GB, and what holds the rest has not been established. Lower
+  to 6.6 GB, and what holds the rest has not been established. Lower
   `--max-pairs` or raise `--min-lines` to trade that result for time and
   memory.
 - Verification, not analysis, dominates an annotated project. Every candidate
@@ -506,17 +513,28 @@ it tractable, all exact: they change no proposal.
   about 0.5 s per check once warm, against 5 s for a fresh `pyright
   --outputjson`, which remains the fallback. The first rejection settles a
   candidate, so a project that configures both pays for both only when the
-  first accepts. A capped run on Sphinx (`--max-refactorings 45`, 52
+  first accepts.
+  Every figure in this entry was measured on an Apple M5 Max (18 cores,
+  128 GiB) running macOS 26.5.1, with the machine otherwise idle, Towel on
+  Python 3.12.13. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243
+  modules with mypy and Pyright both strict, checked through that project's
+  own venv: mypy 1.19.1 and pyright 1.1.407. The mypy costs below belong to
+  that version.
+ A capped run on Sphinx (`--max-refactorings 45`, 52
   refactorings across 8 files) takes about 7 minutes, of which mypy is about
   3, over 52 whole-project checks for 43 extractions: 30 verified on the first
   candidate signature, 13 on a second, and none dropped.
 - A full typed fixed point over a large project is still long. Sphinx had
   applied 276 refactorings across 101 files after 57 minutes and had not
-  finished, measured before the extractions that cannot be typed were declined
-  at construction; the same run without types changes 108 files in 11 minutes.
-  The tail is the cost: a proposal the project rejects is heard again at each
-  whole-project analysis, and families of near-identical methods pair many
-  ways. A bounded `--max-refactorings` run is the practical form there.
+  finished. That was measured before the verification work of 1.772: the same
+  run now reaches a fixed point in 46 minutes, applying 380 refactorings
+  across 105 files, where the same project without types changes 108 files in
+  11 minutes. Sphinx's own test suite, run serially, reports the same 2385
+  passed, 34 skipped and six pre-existing failures before and after.
+  The tail was the cost: a proposal the project rejected used to be heard
+  again at every whole-project analysis, and families of near-identical
+  methods pair many ways. A declined proposal is now remembered for the whole
+  run and heard once more only at the rehearing that ends it. A bounded `--max-refactorings` run is the practical form there.
   Nothing about the result depends on any of this: the checkers are consulted
   identically.
 - What a checker still rejects is, on Sphinx, one thing and one family. The

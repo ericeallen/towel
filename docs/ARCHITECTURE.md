@@ -357,15 +357,22 @@ questions: what type an expression has at a point in a module
 whether a prospective project type-checks (`check_project`). Results distinguish
 `CheckFailure` from `CheckSuccess`, whose diagnostics carry project paths.
 `MypyInferrer` builds a copy of the
-site's module in an owned worker process with `reveal_type(...)` probes inserted where the
+site's module in an owned worker process, each build in a forked child of it
+that exits once it has answered, with `reveal_type(...)` probes inserted where the
 call will stand, so names resolve as they do at the call, and asks
 subtyping through probe functions `def _probe(v: narrow) -> wide: return v`
 appended to the module, so the relation is mypy's own. `PyrightOracle`
-does the same through the pyright command on a temporary sibling file.
+does the same through one long-lived `pyright-langserver` per project,
+watching a private copy that follows the project; the pyright command line is
+the fallback when no server can be started.
 `type_oracle_for_project` picks the checker the project configures: mypy
 for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
 `pyrightconfig.json`, and for a project configuring both, mypy infers
-while both verify, so the project's own check stays green.
+and both verify, so the project's own check stays green. Every configured
+checker must accept, so the first to reject settles the candidate and the
+others are not asked; only an accepted candidate is seen by all of them. When
+a run that was checked through a language server has applied something, the
+finished project is confirmed once more by a pyright started from nothing.
 
 Before using the oracle, the engine checks the complete original project.
 If that completed check reports type errors, it aborts with an instruction to
@@ -456,10 +463,15 @@ nor imports behind. Existing functions reused as helpers keep their signatures.
 When verification is enabled, all modified files are overlaid together for
 each prospective variant, including
 unchanged consumers under the project's checker configuration. Mypy receives
-all replacements as in-memory build sources; pyright receives a private project
-snapshot with the original module names. A proposal introducing
+the replacements as in-memory build sources, except where the text is what the
+file already holds: that is withheld so mypy consults its incremental cache,
+which it does only for a module it reads itself. Pyright receives a private
+project copy under the original module names, kept in step with the project
+and told which files were created, changed or deleted. A proposal introducing
 an error tries the generic candidates where supported, then retries with every
-annotation `Any`, and then with none. Each
+annotation `Any`, and then with none, that last only when every error of the
+all-`Any` refusal lies inside the helper's own definition, since an error
+anywhere else survives the change. Each
 variant must pass; checker failure or a remaining new error declines the
 proposal. `close()` releases checker resources, and the CLI calls it in a
 `finally` block. Without an
@@ -583,8 +595,13 @@ refactoring a *localized* pass re-analyzes only the files it rewrote and
 queues the follow-ups found inside them. When the queue drains, a *global*
 pass re-pairs the whole project, because a change in one file can create a
 cross-file duplicate with a file the localized pass never looked at. The
-loop ends when a global pass proposes nothing or every proposal in the
-unchanged project has been declined during rendering or verification.
+loop ends after a rehearing: when nothing more applies and something was
+declined that the project has changed under since, the memory of declined
+proposals is cleared and the whole project analysed once more, so each is
+heard against the project as it now stands. Only a rehearing that applies
+nothing ends the run, and one needs an application since the previous
+rehearing, so a proposal the project keeps refusing cannot make the run
+circle.
 
 A global pass after the first re-pairs only functions in files rewritten
 since the previous global pass, together with files of proposals deferred by
@@ -629,8 +646,11 @@ previous pass produced from them has since been consumed:
    filtering yields the same result again. In every case, a pair whose
    proposal could still be pending involves a rewritten file. A proposal
    declined during rendering or verification is the additional case: its
-   files are explicitly retained as deferred paths for the next changed
-   project revision. No further global pass runs on an unchanged revision.
+   files are explicitly retained as deferred paths, and the proposal itself is
+   remembered for the rest of the run, so no later analysis retries it. One
+   further global pass does run on an unchanged revision: the rehearing, which
+   clears that memory and reconsiders the whole project rather than only the
+   files that changed.
 6. *Rejections stand.* A pair rejected by the previous pass is rejected by
    the same guards on the same inputs (1 to 3), except for the cycle guard,
    whose input grew monotonically (4).
@@ -932,6 +952,10 @@ but the ideas and their names are from the literature.
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
 | Helper annotations | `annotations.py` |
 | Type oracle (mypy, pyright) | `type_inference.py` (at `src/towel/`) |
+| Owned mypy worker, one forked build per request | `_mypy_worker.py` |
+| Long-lived pyright language server | `pyright_session.py` |
+| The checker's private project copy | `checker_project.py` |
+| Extractions separating a narrowing test from its use | `unification/narrowing.py` |
 | Formatter and import-sorter selection | `formatting.py` (at `src/towel/`) |
 | Parameter enumeration | `parameters.py` |
 | Progress reporting | `progress.py` |
