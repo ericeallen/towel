@@ -163,3 +163,108 @@ def test_the_guarded_import_does_not_run(tmp_path: Path) -> None:
     )
     assert ran.returncode == 0, ran.stderr
     assert ran.stdout.strip().endswith("B")
+
+
+def _cross_module_project(root: Path) -> Path:
+    """A host that needs another module's class in a signature, deferring nothing.
+
+    Python 3.11 evaluates an annotation at definition time unless the module
+    says otherwise, and the import that makes this name reachable is one only a
+    checker reads.
+    """
+    (root / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n", encoding="utf-8")
+    package = root / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "other.py").write_text(
+        "class Thing:\n"
+        "    def __init__(self, name: str) -> None:\n"
+        "        self.name = name\n",
+        encoding="utf-8",
+    )
+    (package / "host.py").write_text(
+        textwrap.dedent("""
+            import pkg.other
+
+
+            def make_a() -> 'pkg.other.Thing':
+                return pkg.other.Thing('a')
+
+
+            def make_b() -> 'pkg.other.Thing':
+                return pkg.other.Thing('b')
+
+
+            def first() -> str:
+                t = make_a()
+                s = str(t.name).strip()
+                u = s.upper()
+                return u + '!'
+
+
+            def second() -> str:
+                t = make_b()
+                s = str(t.name).strip()
+                u = s.upper()
+                return u + '!'
+            """).lstrip(),
+        encoding="utf-8",
+    )
+    return package
+
+
+@requires_mypy
+def test_a_guarded_name_is_quoted_where_the_module_evaluates_its_annotations(
+    tmp_path: Path,
+) -> None:
+    """Type-checking and importing are different questions and both must be answered."""
+    package = _cross_module_project(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "towel.cli",
+            "dry",
+            str(package),
+            str(package),
+            "--no-interactive",
+            "--progress",
+            "none",
+            "--min-lines",
+            "3",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=600,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    host = (package / "host.py").read_text(encoding="utf-8")
+    assert "from pkg.other import Thing" in host, host
+    helper = next(
+        node
+        for node in ast.walk(ast.parse(host))
+        if isinstance(node, ast.FunctionDef) and "extracted" in node.name
+    )
+    written = helper.args.args[0].annotation
+    assert isinstance(written, ast.Constant), f"the guarded name must be quoted: {host}"
+
+    checked = subprocess.run(
+        [sys.executable, "-m", "mypy", "--strict", str(package)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=600,
+    )
+    assert "Success" in checked.stdout, checked.stdout
+
+    imported = subprocess.run(
+        [sys.executable, "-c", "import pkg.host; print(pkg.host.first())"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=120,
+    )
+    assert imported.returncode == 0, imported.stderr
+    assert imported.stdout.strip() == "A!"

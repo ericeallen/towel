@@ -44,6 +44,7 @@ from .annotations import (
     typing_imports_needed,
     qualified_names_in_annotations,
     shorten_qualified_names,
+    defers_annotations,
     _import_bound_names,
     _defined_names,
 )
@@ -212,7 +213,9 @@ class HelperAnnotationWiring(EngineState):
             shortened[dotted] = name
             imports.append((module_name, name))
         if shortened:
-            shorten_qualified_names(proposal.extracted_function, shortened)
+            shorten_qualified_names(
+                proposal.extracted_function, shortened, quote=not defers_annotations(host)
+            )
         return tuple(imports)
 
     @staticmethod

@@ -169,3 +169,43 @@ def test_a_helper_with_no_test_at_all_is_never_objected_to() -> None:
         _verdict("def _extracted(get_one, other):\n    return get_one()\n", "_extracted(x, y)")
         is None
     )
+
+
+BOUND = """
+    def _extracted(self, cls, get_one, other):
+        if not isinstance(other, cls):
+            return NotImplemented
+        return get_one()
+    """
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "self._extracted(Klass, lambda: other.final, other)",
+        "self._extracted(Klass, lambda: other.final, other=other)",
+        "self._extracted(Klass, other=other, get_one=lambda: other.final)",
+    ],
+    ids=["positional", "mixed", "keywords"],
+)
+def test_however_the_call_is_written_the_narrowed_name_is_found(call: str) -> None:
+    """A receiver is bound by the call's form, which is one fewer argument than
+    parameters however the rest are passed; counting only positions mislaid it."""
+    assert _verdict(BOUND, call) is not None, call
+
+
+def test_a_free_function_call_maps_its_arguments_from_the_first() -> None:
+    free = """
+        def _extracted(cls, get_one, other):
+            if not isinstance(other, cls):
+                return NotImplemented
+            return get_one()
+        """
+    assert _verdict(free, "_extracted(Klass, lambda: other.final, other)") is not None
+    assert _verdict(free, "_extracted(Klass, lambda: self.final, other)") is None
+
+
+def test_a_name_a_nested_scope_binds_is_hidden_only_inside_it() -> None:
+    """``(other.final, lambda other: other)`` reads the caller's ``other`` once."""
+    assert _verdict(BOUND, "self._extracted(K, (other.final, lambda other: other), other)")
+    assert _verdict(BOUND, "self._extracted(K, lambda *other: other, other)") is None

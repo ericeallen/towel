@@ -718,8 +718,22 @@ def _written_annotations(helper: ast.FunctionDef) -> List[ast.expr]:
     return written
 
 
-def shorten_qualified_names(helper: ast.FunctionDef, replacements: Mapping[str, str]) -> None:
-    """Rewrite each fully qualified name in place to the shorter spelling given for it."""
+def defers_annotations(module: Optional[ast.Module]) -> bool:
+    """Whether the module's annotations are strings at run time rather than values."""
+    return module is not None and _defers_annotations(module)
+
+
+def shorten_qualified_names(
+    helper: ast.FunctionDef, replacements: Mapping[str, str], *, quote: bool = False
+) -> None:
+    """Rewrite each fully qualified name in place to the shorter spelling given for it.
+
+    ``quote`` writes any annotation this touches as a string. The short name is
+    reachable only through an import a checker sees and the interpreter does
+    not, so unless the module defers its annotations the name would be looked
+    up at definition time and not be there. A checker reads the string and is
+    satisfied either way; the quotation is what keeps the module importable.
+    """
 
     class _Shorten(ast.NodeTransformer):
         def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
@@ -729,12 +743,19 @@ def shorten_qualified_names(helper: ast.FunctionDef, replacements: Mapping[str, 
                 return cast(ast.expr, self.generic_visit(node))
             return ast.copy_location(ast.Name(id=shortened, ctx=ast.Load()), node)
 
-    parameters = helper.args.posonlyargs + helper.args.args
-    for parameter in parameters:
+    def rewritten(annotation: ast.expr) -> ast.expr:
+        shortened = cast(ast.expr, _Shorten().visit(annotation))
+        if not quote or shortened is annotation:
+            return shortened
+        if isinstance(shortened, ast.Constant) and isinstance(shortened.value, str):
+            return shortened
+        return ast.copy_location(ast.Constant(value=ast.unparse(shortened)), annotation)
+
+    for parameter in helper.args.posonlyargs + helper.args.args:
         if parameter.annotation is not None:
-            parameter.annotation = _Shorten().visit(parameter.annotation)
+            parameter.annotation = rewritten(parameter.annotation)
     if helper.returns is not None:
-        helper.returns = _Shorten().visit(helper.returns)
+        helper.returns = rewritten(helper.returns)
 
 
 def typing_imports_needed(

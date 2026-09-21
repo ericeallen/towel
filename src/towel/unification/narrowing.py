@@ -52,7 +52,7 @@ still legal, only wider, and the complaint arrives somewhere else entirely.
 from __future__ import annotations
 
 import ast
-from typing import Dict, Iterable, List, Optional, Sequence, Set
+from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set
 
 from .models import Replacement
 
@@ -96,8 +96,15 @@ def narrowed_names(body: Iterable[ast.stmt]) -> Set[str]:
 
 
 def _parameters(helper: ast.FunctionDef) -> List[str]:
+    """The parameters a call can fill, positionally then by name."""
     arguments = helper.args
     return [argument.arg for argument in (*arguments.posonlyargs, *arguments.args)]
+
+
+def _nameable(helper: ast.FunctionDef) -> List[str]:
+    """Every parameter a keyword can name, the keyword-only ones included."""
+    arguments = helper.args
+    return [argument.arg for argument in (*arguments.args, *arguments.kwonlyargs)]
 
 
 def _call_in(node: ast.stmt, helper_name: str) -> Optional[ast.Call]:
@@ -112,7 +119,9 @@ def _call_in(node: ast.stmt, helper_name: str) -> Optional[ast.Call]:
     return None
 
 
-def _arguments_by_parameter(call: ast.Call, parameters: Sequence[str]) -> Dict[str, ast.expr]:
+def _arguments_by_parameter(
+    call: ast.Call, parameters: Sequence[str], function: ast.FunctionDef
+) -> Dict[str, ast.expr]:
     """Which expression each parameter receives, as far as position and keyword say.
 
     A receiver is bound by the call's own form rather than passed, and a
@@ -123,36 +132,67 @@ def _arguments_by_parameter(call: ast.Call, parameters: Sequence[str]) -> Dict[s
         positional: Sequence[ast.expr] = ()
     else:
         positional = call.args
-    offset = len(parameters) - len(positional) if isinstance(call.func, ast.Attribute) else 0
+    # A bound method receives its receiver from the call's own form rather than
+    # in the argument list, which shows as the call supplying one parameter
+    # fewer than the helper declares. Counting the keywords as well as the
+    # positions is what makes that true of a call that mixes the two.
+    supplied = len(positional) + len(call.keywords)
+    offset = 1 if supplied == len(parameters) - 1 else 0
     mapped = {
         parameters[index + offset]: argument
         for index, argument in enumerate(positional)
         if 0 <= index + offset < len(parameters)
     }
+    nameable = _nameable(function)
     for keyword in call.keywords:
-        if keyword.arg is not None and keyword.arg in parameters:
+        if keyword.arg is not None and keyword.arg in nameable:
             mapped[keyword.arg] = keyword.value
     return mapped
 
 
-def _names_read(expression: ast.expr) -> Set[str]:
-    """Names ``expression`` reads from its enclosing scope, ignoring what it binds."""
-    bound: Set[str] = set()
-    for node in ast.walk(expression):
-        if isinstance(node, ast.Lambda):
-            arguments = node.args
-            bound |= {
-                argument.arg
-                for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+def _bound_by(node: ast.expr) -> Set[str]:
+    """Names this expression binds for its own body."""
+    if isinstance(node, ast.Lambda):
+        arguments = node.args
+        named = {
+            argument.arg
+            for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+        }
+        for extra in (arguments.vararg, arguments.kwarg):
+            if extra is not None:
+                named.add(extra.arg)
+        return named
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+        return {
+            target.id
+            for generator in node.generators
+            for target in ast.walk(generator.target)
+            if isinstance(target, ast.Name)
+        }
+    return set()
+
+
+def _names_read(expression: ast.expr, shadowed: FrozenSet[str] = frozenset()) -> Set[str]:
+    """Names ``expression`` reads from its enclosing scope, ignoring what it binds.
+
+    A name a nested scope binds is hidden only inside that scope. Subtracting
+    every such name from the whole expression would lose a genuine reading
+    beside it, as in ``(other.final, lambda other: other)``.
+    """
+    if isinstance(expression, ast.Name):
+        return set() if expression.id in shadowed else {expression.id}
+    inner = shadowed | frozenset(_bound_by(expression))
+    names: Set[str] = set()
+    for child in ast.iter_child_nodes(expression):
+        if isinstance(child, ast.expr):
+            names |= _names_read(child, inner)
+        else:
+            names |= {
+                node.id
+                for node in ast.walk(child)
+                if isinstance(node, ast.Name) and node.id not in inner
             }
-        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
-            for generator in node.generators:
-                bound |= {
-                    target.id
-                    for target in ast.walk(generator.target)
-                    if isinstance(target, ast.Name)
-                }
-    return {node.id for node in ast.walk(expression) if isinstance(node, ast.Name)} - bound
+    return names
 
 
 def narrowing_lost_at_call_site(
@@ -176,7 +216,7 @@ def narrowing_lost_at_call_site(
         call = _call_in(replacement.node, helper.name)
         if call is None:
             continue
-        arguments = _arguments_by_parameter(call, parameters)
+        arguments = _arguments_by_parameter(call, parameters, helper)
         # What the call site calls each narrowed parameter.
         subjects = {
             argument.id
