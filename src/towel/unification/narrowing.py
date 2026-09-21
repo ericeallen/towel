@@ -69,14 +69,35 @@ def _narrowed_by_test(test: ast.expr) -> Set[str]:
                 first = node.args[0]
                 if isinstance(first, ast.Name):
                     narrowed.add(first.id)
-        elif isinstance(node, ast.Compare) and isinstance(node.left, ast.Name):
-            # ``x is None`` and ``x == None`` narrow in both directions.
-            comparisons = zip(node.ops, node.comparators)
-            for operator, other in comparisons:
-                if isinstance(operator, (ast.Is, ast.IsNot, ast.Eq, ast.NotEq)) and (
-                    isinstance(other, ast.Constant) and other.value is None
-                ):
-                    narrowed.add(node.left.id)
+        elif isinstance(node, ast.Compare):
+            narrowed |= _narrowed_by_comparison(node)
+    return narrowed
+
+
+def _narrowed_by_comparison(node: ast.Compare) -> Set[str]:
+    """Names a comparison narrows: ``x is None`` and ``type(x) is C``."""
+    narrowed: Set[str] = set()
+    subject: Optional[str] = None
+    if isinstance(node.left, ast.Name):
+        subject = node.left.id
+        wants_none = True
+    elif (
+        isinstance(node.left, ast.Call)
+        and isinstance(node.left.func, ast.Name)
+        and node.left.func.id == "type"
+        and len(node.left.args) == 1
+        and isinstance(node.left.args[0], ast.Name)
+    ):
+        # ``type(x) is C`` narrows x to exactly C, which both checkers honour.
+        subject = node.left.args[0].id
+        wants_none = False
+    if subject is None:
+        return narrowed
+    for operator, other in zip(node.ops, node.comparators):
+        if not isinstance(operator, (ast.Is, ast.IsNot, ast.Eq, ast.NotEq)):
+            continue
+        if not wants_none or (isinstance(other, ast.Constant) and other.value is None):
+            narrowed.add(subject)
     return narrowed
 
 
@@ -92,6 +113,13 @@ def narrowed_names(body: Iterable[ast.stmt]) -> Set[str]:
             elif isinstance(node, ast.comprehension):
                 for condition in node.ifs:
                     narrowed |= _narrowed_by_test(condition)
+            elif isinstance(node, ast.Match) and isinstance(node.subject, ast.Name):
+                # Every pattern but a bare capture narrows the subject.
+                if any(
+                    not isinstance(case.pattern, ast.MatchAs) or case.pattern.pattern is not None
+                    for case in node.cases
+                ):
+                    narrowed.add(node.subject.id)
     return narrowed
 
 

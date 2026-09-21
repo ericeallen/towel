@@ -157,6 +157,13 @@ def test_a_none_test_narrows_too() -> None:
         ("value is not None", {"value"}),
         ("len(items) > 0", set()),
         ("other.field == 1", set()),
+        # A checker narrows to exactly this class, so the move loses it too.
+        ("type(value) is str", {"value"}),
+        ("type(value) is not str", {"value"}),
+        # Not narrowing: the subject is an attribute, or the test is a call.
+        ("type(other.field) is str", set()),
+        ("kind == 'a'", set()),
+        ("value", set()),
     ],
 )
 def test_what_counts_as_narrowing(test: str, narrowed: set[str]) -> None:
@@ -209,3 +216,34 @@ def test_a_name_a_nested_scope_binds_is_hidden_only_inside_it() -> None:
     """``(other.final, lambda other: other)`` reads the caller's ``other`` once."""
     assert _verdict(BOUND, "self._extracted(K, (other.final, lambda other: other), other)")
     assert _verdict(BOUND, "self._extracted(K, lambda *other: other, other)") is None
+
+
+@pytest.mark.parametrize(
+    "pattern, narrowed",
+    [
+        ("case str():", {"value"}),
+        ("case [first, second]:", {"value"}),
+        ("case {'k': v}:", {"value"}),
+        ("case 1:", {"value"}),
+        # A bare capture matches anything, so it tells a checker nothing.
+        ("case other:", set()),
+        ("case _:", set()),
+    ],
+)
+def test_a_match_narrows_its_subject_unless_every_pattern_captures(
+    pattern: str, narrowed: set[str]
+) -> None:
+    body = ast.parse(f"match value:\n    {pattern}\n        pass\n").body
+    assert narrowed_names(body) == narrowed
+
+
+def test_an_extraction_that_moves_a_match_away_from_its_use_is_refused() -> None:
+    helper = """
+        def _extracted(get_one, value):
+            match value:
+                case str():
+                    return get_one()
+            return None
+        """
+    assert _verdict(helper, "_extracted(lambda: value.upper(), value)") is not None
+    assert _verdict(helper, "_extracted(lambda: other.upper(), value)") is None
