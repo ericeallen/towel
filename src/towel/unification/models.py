@@ -192,6 +192,10 @@ class RefactoringProposal:
     # ``(module, name)`` pairs an inferred annotation needs imported into the
     # helper's module, such as ``typing.Any``; filled when the proposal is applied.
     required_imports: Tuple[Tuple[str, str], ...] = ()
+    # ``(module, name)`` pairs an annotation needs that must not run at import
+    # time: the helper's module may not import them without closing a cycle,
+    # and a name wanted only by an annotation never needs to exist at runtime.
+    type_checking_imports: Tuple[Tuple[str, str], ...] = ()
     # Imports and type-variable declarations belonging to this annotation
     # variant. Rendered before a fresh module helper or the host of a method;
     # annotation fallbacks must drop this preamble along with its annotations.

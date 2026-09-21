@@ -29,6 +29,7 @@ import ast
 from collections import Counter
 import copy
 import dataclasses
+from pathlib import Path
 
 from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from .annotations import (
@@ -41,6 +42,10 @@ from .annotations import (
     respell_bare,
     sites_use_annotations,
     typing_imports_needed,
+    qualified_names_in_annotations,
+    shorten_qualified_names,
+    _import_bound_names,
+    _defined_names,
 )
 from .exceptions import RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
@@ -51,6 +56,7 @@ from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
 from .generic_annotations import MethodContext, generic_helpers
+from .import_graph import module_and_qualname
 
 
 class HelperAnnotationWiring(EngineState):
@@ -68,6 +74,7 @@ class HelperAnnotationWiring(EngineState):
         self._type_run_oracle = self.type_oracle
         self._type_run_baseline = None
         self._analysis_paths = tuple(file_paths)
+        self._output_origin = None
         self._ensure_type_checking(file_paths)
 
     def _ensure_type_checking(self, file_paths: Sequence[str]) -> None:
@@ -149,6 +156,59 @@ class HelperAnnotationWiring(EngineState):
             wants_type_inference=sites_use_annotations(sites),
         )
 
+    def _origin_of(self, path: str) -> str:
+        """``path`` as it stood in the project whose names the checker answers with.
+
+        A driver writing into an output directory checks the copy under the
+        input project's module names, so a name it answers with is resolved
+        against the input's layout rather than the copy's, where the top
+        package is the output directory and nothing would be found.
+        """
+        origin = self._output_origin
+        if origin is None:
+            return path
+        source, destination = (root.resolve() for root in origin)
+        absolute = Path(path).resolve()
+        if absolute == destination:
+            return str(source)
+        if absolute.is_relative_to(destination):
+            return str(source / absolute.relative_to(destination))
+        return path
+
+    def _shorten_unreachable_names(
+        self, proposal: RefactoringProposal, host: Optional[ast.Module]
+    ) -> Tuple[Tuple[str, str], ...]:
+        """Give each qualified name the host cannot reach a spelling it can, and an import.
+
+        A checker answers with a whole path. Written into a module that never
+        imports that submodule it is not a name at all, however plainly its
+        head is bound: the package object carries no such attribute. Whether a
+        path is reachable is not decidable from the syntax, so the test is
+        whether the short name is free here. When it is, the short name is used
+        and the import stated under ``TYPE_CHECKING``; when it is taken, the
+        path is left as the checker wrote it and the project check decides.
+        """
+        imports: List[Tuple[str, str]] = []
+        shortened: Dict[str, str] = {}
+        bound = (_import_bound_names(host) | _defined_names(host)) if host is not None else set()
+        for dotted in qualified_names_in_annotations(proposal.extracted_function):
+            name = dotted.rsplit(".", 1)[-1]
+            if name in bound or name in shortened.values():
+                continue
+            split = module_and_qualname(
+                self._origin_of(proposal.file_path), dotted, self.import_graph
+            )
+            if split is None:
+                continue  # No module of this project owns it; leave it written out.
+            module_name, qualname = split
+            if qualname != name:
+                continue  # A nested name needs its owner in scope, not just itself.
+            shortened[dotted] = name
+            imports.append((module_name, name))
+        if shortened:
+            shorten_qualified_names(proposal.extracted_function, shortened)
+        return tuple(imports)
+
     @staticmethod
     def _receiver_name(proposal: RefactoringProposal) -> Optional[str]:
         """The parameter a method dispatches on, whose type its class already fixes."""
@@ -199,6 +259,7 @@ class HelperAnnotationWiring(EngineState):
         proposal.required_imports = tuple(
             dict.fromkeys(inferred.required_imports + completed.required_imports)
         )
+        proposal.type_checking_imports = self._shorten_unreachable_names(proposal, host)
 
     def _annotation_sites(self, proposal: RefactoringProposal) -> List[ApplySite]:
         """Keep the current source and return context of each replacement together."""

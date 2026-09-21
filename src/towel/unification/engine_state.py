@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from pathlib import Path
 from typing import (
     NamedTuple,
     Any,
@@ -196,6 +197,10 @@ class EngineState:
     """Original complete-project result; None means the run has not checked its baseline."""
     _analysis_paths: Tuple[str, ...]
     """Paths from the latest analysis, used to seed a direct application's initial check."""
+    _output_origin: Optional[Tuple[Path, Path]]
+    """(input, output) when the driver copied its input. A checker answers in
+    the input project's module names, since that is what it checks the copy
+    under, so such a name resolves against the input's layout, not the copy's."""
     # The unifier every pair is matched with; its options are fixed at
     # construction.
     unifier: Unifier

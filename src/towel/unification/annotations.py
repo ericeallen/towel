@@ -52,7 +52,7 @@ import copy
 import textwrap
 from dataclasses import dataclass
 import re
-from typing import Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, cast
 
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, Subtyping, TypeOracle
@@ -666,6 +666,75 @@ class _InferredHelper:
 
     helper: ast.FunctionDef
     required_imports: Tuple[Tuple[str, str], ...]
+
+
+def qualified_names_in_annotations(helper: ast.FunctionDef) -> List[str]:
+    """Every dotted path the helper's annotations name, longest form first.
+
+    A checker answers with a whole path, ``sphinx.builders.texinfo.TexinfoBuilder``.
+    Written into a module that never imports that submodule it is not a name at
+    all: the package object carries no such attribute, and the annotation reads
+    as undefined even though the head of the path is bound. Which of these the
+    host can actually reach is not decidable here, so they are all reported and
+    the caller keeps the ones it can give a spelling that works.
+    """
+    found: List[str] = []
+
+    def collect(node: ast.AST) -> None:
+        # A chain's own prefixes are not names the annotation uses, so a chain
+        # is taken whole and not descended into.
+        if isinstance(node, ast.Attribute):
+            dotted = _dotted_name(node)
+            if dotted is not None:
+                if dotted not in found:
+                    found.append(dotted)
+                return
+        for child in ast.iter_child_nodes(node):
+            collect(child)
+
+    for annotation in _written_annotations(helper):
+        collect(_unquoted(annotation))
+    return found
+
+
+def _dotted_name(node: ast.expr) -> Optional[str]:
+    """``a.b.C`` for an attribute chain rooted at a plain name, else None."""
+    parts: List[str] = []
+    cursor: ast.expr = node
+    while isinstance(cursor, ast.Attribute):
+        parts.append(cursor.attr)
+        cursor = cursor.value
+    if not isinstance(cursor, ast.Name):
+        return None
+    parts.append(cursor.id)
+    return ".".join(reversed(parts))
+
+
+def _written_annotations(helper: ast.FunctionDef) -> List[ast.expr]:
+    parameters = helper.args.posonlyargs + helper.args.args
+    written = [p.annotation for p in parameters if p.annotation is not None]
+    if helper.returns is not None:
+        written.append(helper.returns)
+    return written
+
+
+def shorten_qualified_names(helper: ast.FunctionDef, replacements: Mapping[str, str]) -> None:
+    """Rewrite each fully qualified name in place to the shorter spelling given for it."""
+
+    class _Shorten(ast.NodeTransformer):
+        def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+            dotted = _dotted_name(node)
+            shortened = replacements.get(dotted) if dotted is not None else None
+            if shortened is None:
+                return cast(ast.expr, self.generic_visit(node))
+            return ast.copy_location(ast.Name(id=shortened, ctx=ast.Load()), node)
+
+    parameters = helper.args.posonlyargs + helper.args.args
+    for parameter in parameters:
+        if parameter.annotation is not None:
+            parameter.annotation = _Shorten().visit(parameter.annotation)
+    if helper.returns is not None:
+        helper.returns = _Shorten().visit(helper.returns)
 
 
 def typing_imports_needed(

@@ -411,6 +411,8 @@ class Materialization(
         # Names an inferred annotation needs that the module does not bind.
         for module_name, name in proposal.required_imports:
             self._ensure_import(lines, module_name, name)
+        for module_name, name in proposal.type_checking_imports:
+            self._ensure_type_checking_import(lines, module_name, name)
         if proposal.insert_into_function:
             self._insert_helper_into_function(proposal, lines)
         elif proposal.insert_into_class:
@@ -582,6 +584,27 @@ class Materialization(
         import_line = f"from {module_name} import {name}\n"
         if not any(import_line.strip() == ln.strip() for ln in lines):
             lines.insert(self._find_import_position(lines), import_line)
+
+    def _ensure_type_checking_import(self, lines: List[str], module_name: str, name: str) -> None:
+        """State ``from module_name import name`` where only a checker will read it.
+
+        The name is wanted by an annotation and never at run time, so importing
+        it under ``TYPE_CHECKING`` keeps the module's runtime imports as they
+        were and cannot close an import cycle -- which matters here, because
+        the extraction has often just made that module import this one. An
+        existing guard is extended rather than a second one written.
+        """
+        wanted = f"from {module_name} import {name}"
+        if any(wanted == line.strip() for line in lines):
+            return
+        self._ensure_import(lines, "typing", "TYPE_CHECKING")
+        for index, line in enumerate(lines):
+            if line.strip() in {"if TYPE_CHECKING:", "if typing.TYPE_CHECKING:"}:
+                indent = line[: len(line) - len(line.lstrip())]
+                lines.insert(index + 1, f"{indent}    {wanted}\n")
+                return
+        at = self._find_import_position(lines)
+        lines[at:at] = ["\n", "if TYPE_CHECKING:\n", f"    {wanted}\n"]
 
     def _verify_helper_call_arity(
         self,

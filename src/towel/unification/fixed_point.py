@@ -143,6 +143,7 @@ class FixedPointDrivers(Materialization):
             copy_project(source, destination)
             if self._type_run_oracle is not None:
                 self._type_run_oracle = relocate_oracle(self._type_run_oracle, source, destination)
+            self._output_origin = (source, destination)
             file_path = output_path
             self._analysis_paths = (file_path,)
         self._warn_about_frame_sensitive_files(file_path)
@@ -325,6 +326,7 @@ class FixedPointDrivers(Materialization):
                 self._type_run_oracle = relocate_oracle(
                     self._type_run_oracle, input_path, output_path
                 )
+            self._output_origin = (input_path, output_path)
             self._analysis_paths = tuple(self._find_python_files(output_dir))
 
         self._warn_about_frame_sensitive_files(output_dir)

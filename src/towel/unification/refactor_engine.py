@@ -427,6 +427,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # Every file of the current analysis: helper names must be unique
         # across all of them, because any module may import from any other.
         self._analysis_paths: Tuple[str, ...] = ()
+        self._output_origin: Optional[Tuple[Path, Path]] = None
         self._signed_block_cache: WeakKeyDictionary[
             FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
         ] = WeakKeyDictionary()

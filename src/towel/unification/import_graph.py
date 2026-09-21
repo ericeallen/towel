@@ -314,6 +314,29 @@ def _dotted_path_files(current: Path, roots: Iterable[Path], parts: Tuple[str, .
     return {file for file in files if file is not None}
 
 
+def module_and_qualname(
+    current_file: str, dotted: str, cache: ImportGraphCache
+) -> Optional[Tuple[str, str]]:
+    """Split a fully qualified name into the module that defines it and the rest.
+
+    A checker names a type by its whole path, ``pkg.mod.Outer.Inner``, and
+    writing that down needs to know where the module ends and the class begins.
+    Splitting at the last dot is wrong for a nested class, so the longest
+    prefix that is a module file in this project wins. None when the layout
+    gives no roots or no prefix names a module.
+    """
+    parts = tuple(dotted.split("."))
+    if len(parts) < 2:
+        return None
+    roots = _source_roots(Path(current_file).resolve(), cache)
+    if not roots:
+        return None
+    for end in range(len(parts) - 1, 0, -1):
+        if any(_module_definition_file(root, parts[:end]) is not None for root in roots):
+            return ".".join(parts[:end]), ".".join(parts[end:])
+    return None
+
+
 def imported_definition_sites(
     current_file: str, dotted_name: str, cache: ImportGraphCache
 ) -> Optional[FrozenSet[Tuple[Path, str]]]:
