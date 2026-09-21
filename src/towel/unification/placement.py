@@ -406,8 +406,13 @@ class HelperPlacement(EngineState):
         self, class_info: ClassInfo, class_infos: List[ClassInfo]
     ) -> List[ClassInfo]:
         """Return ancestors starting from the nearest base class."""
+        return [info for info, _depth in self._ancestor_depths(class_info, class_infos)]
 
-        ancestors: List[Tuple[int, ClassInfo]] = []
+    def _ancestor_depths(
+        self, class_info: ClassInfo, class_infos: List[ClassInfo]
+    ) -> List[Tuple[ClassInfo, int]]:
+        """Each ancestor with how many base-class steps away it is, nearest first."""
+        found: List[Tuple[ClassInfo, int]] = []
         visited: Set[Tuple[str, str]] = set()
         queue: deque[Tuple[ClassInfo, int]] = deque([(class_info, 0)])
 
@@ -423,11 +428,11 @@ class HelperPlacement(EngineState):
                 if key in visited:
                     continue
                 visited.add(key)
-                ancestors.append((depth + 1, base_info))
+                found.append((base_info, depth + 1))
                 queue.append((base_info, depth + 1))
 
-        ancestors.sort(key=lambda item: item[0])
-        return [info for _depth, info in ancestors]
+        found.sort(key=lambda item: item[1])
+        return found
 
     def _find_common_ancestor(
         self,
@@ -435,8 +440,20 @@ class HelperPlacement(EngineState):
         class2: Tuple[str, str],
         class_infos: List[ClassInfo],
     ) -> Optional[ClassInfo]:
-        """Return the nearest shared ancestor class for two class definitions."""
+        """The shared ancestor nearest to both classes, or None when they share none.
 
+        Several classes can be ancestors of both. Taking the first found from
+        one side made the answer depend on which class the pair happened to
+        present first: two classes whose common ancestors are ``Mid`` and its
+        own base ``Root`` were given ``Mid`` in one order and ``Root`` in the
+        other. Runtime dispatch is indifferent, since every common ancestor is
+        on both classes' method resolution orders, but the choice decides what
+        the helper's receiver is, and a nearer ancestor states a narrower type
+        that exposes more of what the body may use. So the candidates are
+        ranked by their greatest distance from either class, then by their
+        total distance, then by where they are defined, which is an order both
+        sides agree on.
+        """
         file1, name1 = class1
         file2, name2 = class2
 
@@ -447,19 +464,20 @@ class HelperPlacement(EngineState):
 
         key1 = self._class_info_key(info1)
         key2 = self._class_info_key(info2)
-
-        chain1 = [info1] + self._collect_class_ancestors(info1, class_infos)
-        chain2 = [info2] + self._collect_class_ancestors(info2, class_infos)
-        lookup2 = {self._class_info_key(info): info for info in chain2}
-
-        for info in chain1:
+        reachable1 = {
+            self._class_info_key(info): depth
+            for info, depth in [(info1, 0), *self._ancestor_depths(info1, class_infos)]
+        }
+        shared: List[Tuple[int, int, Tuple[str, str], ClassInfo]] = []
+        for info, depth2 in [(info2, 0), *self._ancestor_depths(info2, class_infos)]:
             key = self._class_info_key(info)
-            if key in lookup2:
-                if key == key1 and key == key2:
-                    # Identical class; handled elsewhere.
-                    continue
-                return lookup2[key]
-        return None
+            depth1 = reachable1.get(key)
+            if depth1 is None or (key == key1 and key == key2):
+                continue  # Identical class; handled elsewhere.
+            shared.append((max(depth1, depth2), depth1 + depth2, key, info))
+        if not shared:
+            return None
+        return min(shared, key=lambda candidate: candidate[:3])[3]
 
     def _choose_class_insertion(
         self,

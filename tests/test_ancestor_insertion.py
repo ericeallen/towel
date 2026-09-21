@@ -74,3 +74,38 @@ class TestAncestorInsertion(TemporaryModuleTestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class TestAmbiguousCommonAncestor(TemporaryModuleTestCase):
+    """Two classes can share several ancestors; the choice must not depend on their order.
+
+    Runtime dispatch is indifferent, since every common ancestor is on both
+    method resolution orders. The receiver's type is not: a helper lands in
+    the chosen class, and a nearer ancestor exposes more of what the body may
+    use, so a farther one can be refused where a nearer one type-checks.
+    """
+
+    BODY = (
+        "        total = value + 1\n"
+        "        doubled = total * 2\n"
+        "        answer = doubled - 3\n"
+        "        return answer\n"
+    )
+
+    def _placed_in(self, order: str) -> list[Any]:
+        classes = {
+            "X": "class X(Mid):\n    def go(self, value: int) -> int:\n" + self.BODY,
+            "Y": "class Y(Root, Mid):\n    def go(self, value: int) -> int:\n" + self.BODY,
+        }
+        code = "class Root:\n    pass\n\n\nclass Mid(Root):\n    pass\n\n\n"
+        code += "\n\n".join(classes[name] for name in order)
+        path = self._write_temp(code)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        return [p.insert_into_class for p in engine.analyze_file(path)]
+
+    def test_the_same_classes_give_the_same_home_in_either_order(self):
+        self.assertEqual(self._placed_in("XY"), self._placed_in("YX"))
+
+    def test_the_nearest_shared_ancestor_is_preferred(self):
+        # Root is an ancestor of both too, but Mid is nearer to both.
+        self.assertEqual(self._placed_in("XY"), ["Mid"])
