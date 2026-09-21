@@ -554,13 +554,23 @@ class Materialization(
         """Import the module-level helper into a file whose call sites need it."""
         from_path = Path(proposal.file_path)
         to_path = Path(file_path)
-        common_dir = Path(os.path.commonpath([str(from_path), str(to_path)]))
+        # An absolute name is read from the project the code belongs to, not
+        # from wherever a run happens to be writing it. An output directory is
+        # a staging area: naming a module after it states a fact about the
+        # scratch path, which is wrong for the checker, since it checks the
+        # copy under the original project's names, and wrong again for the
+        # reader, whose import breaks as soon as the output is adopted into
+        # the place it was meant for. A relative import says only that the two
+        # modules share a package, which is true in either tree.
+        origin_from = Path(self._origin_of(str(from_path)))
+        origin_to = Path(self._origin_of(str(to_path)))
+        common_dir = Path(os.path.commonpath([str(origin_from), str(origin_to)]))
         layout = ProjectLayout.discover(
             common_dir,
             prefer_absolute_imports=self.prefer_absolute_imports,
             pep420_namespace_packages=self.pep420_namespace_packages,
         )
-        abs_mod = layout.module_name_for(from_path)
+        abs_mod = layout.module_name_for(origin_from)
         relative = relative_import_module(from_path, to_path)
         # A relative import only resolves inside a classic package; flat
         # modules on sys.path (no __init__.py) must use an absolute name.
