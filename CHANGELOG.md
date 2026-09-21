@@ -45,7 +45,45 @@ asking the checkers questions whose answers were already known.
   of failing every later request, and stopping the mypy worker stops the build
   it was waiting for.
 
+- An extraction never separates a narrowing test from code that depends on it.
+  A checker narrows a variable along a control-flow region, so moving the test
+  into a helper while an expression that needs it stays at the call site left
+  each half well typed and the pair not. Declined where the proposal is built,
+  before any checker is asked, so the same extractions happen whether or not
+  type checking is on.
+- A method's receiver is no longer annotated from its call sites. It was the
+  union of the classes that happened to call it, which a checker rejects,
+  since an explicit receiver must be a supertype of its own class, and which
+  understated the method's domain in any case: a helper on a base class is
+  inherited by every subclass. One such annotation was enough to send a whole
+  helper down to the all-`Any` rung, so signatures that had lost every type
+  recover them.
+- The shared ancestor a helper is lifted into is the one both classes agree
+  on. It was the nearest from whichever class the pair presented first, so
+  declaration order decided the home.
+- A class passed to a helper is typed `type[C]`. A checker shows a reference
+  to a class as its constructor's signature, which reads as something merely
+  callable and is rejected where a type is wanted, by `isinstance` among
+  others.
+- An inferred annotation that names a class the module cannot reach imports it
+  under `TYPE_CHECKING`. An ordinary import would often close a cycle, the
+  extraction having just made the other module import this one, and a name
+  wanted only by an annotation need not exist at run time.
+- An imported helper is named after the project it belongs to, not after the
+  directory a run is staging its output in. A module named after a scratch
+  path cannot be resolved by the checker and breaks as soon as the reviewed
+  output is adopted into the place it was written for.
+
 ### Changed
+- A long run says what it is doing. Verifying a proposal the project rejects
+  advances no counter, so the progress bar could stand still for minutes,
+  which is indistinguishable from a hung run; the display is now redrawn while
+  a proposal is being weighed and names the proposal it is weighing.
+- `towel dry` reports what a typed run involves before asking to proceed: how
+  many files a candidate is verified against, how many third-party packages
+  their import graph pulls in, and that the number of checks depends on how
+  many proposals the project rejects. It states no duration, that being
+  governed by the rejections and so unknown in advance.
 - Pyright is consulted through one long-lived language server per project and
   a persistent private copy, instead of a fresh `pyright --outputjson` and a
   fresh copy per check. The command line remains the fallback and reaches the

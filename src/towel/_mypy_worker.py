@@ -26,6 +26,8 @@ import re
 from pathlib import Path
 import signal
 import sys
+import threading
+import time
 from typing import Mapping, Sequence
 
 from mypy import build
@@ -109,6 +111,9 @@ def _sources(value: object) -> dict[str, str]:
         result[path] = text
     return result
 
+
+_ORPHAN_CHECK_SECONDS = 1.0
+"""How often a build looks to see whether the worker that wanted it is gone."""
 
 _SUPPLIED_TEXT_RECORD = "towel-supplied-text.jsonl"
 
@@ -257,13 +262,29 @@ def _answer(line: str, cache: str) -> str:
     return json.dumps({"messages": messages, "failure": failure}) + "\n"
 
 
+def _exit_with_parent(owner: int) -> None:
+    """End this process once ``owner`` is gone.
+
+    A build holds a core and gigabytes, and a worker killed outright cannot
+    stop it: the signal that would have been passed on is never delivered.
+    The child is reparented when its parent dies, which is what this watches
+    for, so an unanswerable build does not outlive the run that wanted it.
+    """
+    while os.getppid() == owner:
+        time.sleep(_ORPHAN_CHECK_SECONDS)
+    os._exit(1)
+
+
 def _serve_in_child(line: str, cache: str) -> None:
     """Answer one request from a forked child; report a child that died without answering."""
     output = sys.stdout
+    owner = os.getpid()
     child = os.fork()
     if child == 0:
         status = 1
         try:
+            watcher = threading.Thread(target=_exit_with_parent, args=(owner,), daemon=True)
+            watcher.start()
             output.write(_answer(line, cache))
             output.flush()
             status = 0

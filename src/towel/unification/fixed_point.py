@@ -198,6 +198,8 @@ class FixedPointDrivers(Materialization):
             if max_iterations > 0 and iteration >= max_iterations:
                 break
 
+        if num_applied:
+            self.confirm_run_with_a_cold_checker([file_path])
         return current_code, num_applied, descriptions
 
     def _rendered_or_none(self, file_path: str, proposal: RefactoringProposal) -> Optional[str]:
@@ -341,6 +343,8 @@ class FixedPointDrivers(Materialization):
         finally:
             # A display thread must not outlive the run, however it ended.
             reporter.close()
+            if run.applied:
+                self.confirm_run_with_a_cold_checker(self._find_python_files(str(output_path)))
 
     def _apply_until_fixed_point(
         self,

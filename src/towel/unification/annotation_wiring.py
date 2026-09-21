@@ -50,7 +50,13 @@ from .annotations import (
 from .exceptions import RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
-from ..type_inference import CheckFailure, TypeDiagnostic, TypeOracle
+from ..type_inference import (
+    CheckFailure,
+    TypeDiagnostic,
+    TypeOracle,
+    served_by_a_language_server,
+    stop_language_servers,
+)
 
 from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
@@ -438,6 +444,44 @@ class HelperAnnotationWiring(EngineState):
         helper.returns = None
         variant.required_imports = ()
         return variant
+
+    def confirm_run_with_a_cold_checker(self, file_paths: Sequence[str]) -> None:
+        """Check the finished project once more, without the warm session.
+
+        A language server is asked about a candidate and answers when it has
+        gone quiet. Each answer is guarded by a marker it must publish first,
+        so silence alone is never read as a verdict, but that guards the
+        server's start and not every instant of its reply. The command line
+        reanalyses from nothing and shares none of those assumptions, so one
+        run of it over the finished project turns any residue of that kind
+        from a silent wrong answer into a loud one. It costs a single check
+        per run and is done whenever a run annotated anything, since that is
+        exactly when the promise being kept is that the project still checks.
+        """
+        oracle = self._type_run_oracle
+        if oracle is None or not served_by_a_language_server(oracle):
+            return
+        sources: Dict[str, str] = {}
+        for path in dict.fromkeys(file_paths):
+            source = self._read_source(path)
+            if source is None:
+                return  # A file that cannot be read is reported by the run itself.
+            sources[path] = source
+        # The same oracle, so the run's own relocation and exclusions still
+        # apply; only the warm sessions go.
+        stop_language_servers(oracle)
+        result = oracle.check_project(sources)
+        if isinstance(result, CheckFailure):
+            TYPES.debug("cold confirmation could not run: %s", result.reason)
+            return
+        if result.errors:
+            details = "\n".join(f"  {error.path}: {error.message}" for error in result.errors[:3])
+            raise RefactoringError(
+                f"The finished project reports {len(result.errors)} type error(s) that the "
+                f"checker did not report while the run was in progress:\n{details}\n"
+                "This is a defect in Towel's verification, not in the project. "
+                "Please report it; the refactorings that were applied are listed above."
+            )
 
     def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:
         """What the run's clean project, unchanged consumers included, would now report."""

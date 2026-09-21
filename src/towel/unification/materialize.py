@@ -66,6 +66,13 @@ class _HelperNaming:
 
 
 @dataclass(frozen=True)
+class _Verified:
+    """A variant the project accepted, with the files it would write."""
+
+    files: Dict[str, str]
+
+
+@dataclass(frozen=True)
 class _Rejection:
     """The errors a checked variant introduced, and where its helper was rendered."""
 
@@ -186,8 +193,8 @@ class Materialization(
         rejection: Optional[_Rejection] = None
         for variant in self._annotation_variants(proposal, check_types):
             outcome = self._attempt(variant, counters, check_types)
-            if not isinstance(outcome, _Rejection):
-                return outcome
+            if isinstance(outcome, _Verified):
+                return outcome.files
             rejection = outcome
         if (
             rejection is not None
@@ -197,15 +204,15 @@ class Materialization(
             and self._helper_has_annotations(proposal)
         ):
             outcome = self._attempt(self._without_annotations(proposal), counters, check_types)
-            if not isinstance(outcome, _Rejection):
-                return outcome
+            if isinstance(outcome, _Verified):
+                return outcome.files
         if proposal.reused_function is not None:
             raise RefactoringError("Reusing the existing function introduces project type errors")
         raise RefactoringError("Every helper annotation variant introduces project type errors")
 
     def _attempt(
         self, variant: RefactoringProposal, counters: Dict[str, int], check_types: bool
-    ) -> "Dict[str, str] | _Rejection":
+    ) -> "_Verified | _Rejection":
         """The files with ``variant`` applied, or why the project rejects them."""
         mark = len(self._change_log)
         # Each attempt allocates the helper's name; restore the counters so
@@ -222,7 +229,7 @@ class Materialization(
             del self._change_log[mark:]
             raise
         if not errors:
-            return files
+            return _Verified(files)
         del self._change_log[mark:]
         return _Rejection(
             errors, rendered.file_path, rendered.extracted_function.name, files[rendered.file_path]

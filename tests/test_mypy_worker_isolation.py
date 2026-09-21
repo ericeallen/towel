@@ -203,3 +203,49 @@ worker.main()
         for stream in (server.stdin, server.stdout):
             if stream is not None:
                 stream.close()
+
+
+def test_a_build_does_not_outlive_a_worker_that_was_killed_outright(tmp_path: Path) -> None:
+    """SIGKILL cannot be passed on, so the build has to notice for itself."""
+    started = tmp_path / "build.pid"
+    driver = f"""import importlib.util, os, sys, time
+spec = importlib.util.spec_from_file_location("worker", {str(WORKER)!r})
+worker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(worker)
+worker._ORPHAN_CHECK_SECONDS = 0.05
+
+def build(request, cache):
+    with open({str(started)!r}, "w") as handle:
+        handle.write(str(os.getpid()))
+    time.sleep(120)
+    return []
+
+worker._request = build
+sys.argv = ["worker", {str(tmp_path)!r}]
+worker.main()
+"""
+    server = subprocess.Popen(
+        [sys.executable, "-c", driver], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+    )
+    try:
+        assert server.stdin is not None
+        server.stdin.write(b'"a request"\n')
+        server.stdin.flush()
+        deadline = time.monotonic() + 30
+        while not (started.is_file() and started.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        build = int(started.read_text())
+        assert _alive(build)
+        server.kill()
+        server.wait(timeout=10)
+        deadline = time.monotonic() + 15
+        while _alive(build) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _alive(build), "the build outlived the worker that was killed"
+    finally:
+        if server.poll() is None:
+            server.kill()
+            server.wait()
+        for stream in (server.stdin, server.stdout):
+            if stream is not None:
+                stream.close()

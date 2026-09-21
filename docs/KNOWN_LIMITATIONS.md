@@ -507,16 +507,23 @@ it tractable, all exact: they change no proposal.
   --outputjson`, which remains the fallback. The first rejection settles a
   candidate, so a project that configures both pays for both only when the
   first accepts. A capped run on Sphinx (`--max-refactorings 45`, 52
-  refactorings across 8 files) takes about 8 minutes, of which mypy is about 3.
+  refactorings across 8 files) takes about 7 minutes, of which mypy is about
+  3, over 52 whole-project checks for 43 extractions: 30 verified on the first
+  candidate signature, 13 on a second, and none dropped.
 - A full typed fixed point over a large project is still long. Sphinx had
   applied 276 refactorings across 101 files after 57 minutes and had not
-  finished; the same run without types changes 108 files in 11 minutes. The
-  tail is the cost: a rejected proposal is heard again at each whole-project
-  analysis, and families of near-identical methods (dozens of `__eq__` in
-  Sphinx's C and C++ domains) pair many ways and are rejected every time, about
-  25 rejections for each refactoring accepted late in the run. A bounded
-  `--max-refactorings` run is the practical form there. Nothing about the
-  result depends on any of this: the checkers are consulted identically.
+  finished, measured before the extractions that cannot be typed were declined
+  at construction; the same run without types changes 108 files in 11 minutes.
+  The tail is the cost: a proposal the project rejects is heard again at each
+  whole-project analysis, and families of near-identical methods pair many
+  ways. A bounded `--max-refactorings` run is the practical form there.
+  Nothing about the result depends on any of this: the checkers are consulted
+  identically.
+- What a checker still rejects is, on Sphinx, one thing and one family. The
+  thing is a helper lifted into a base class whose body reads a member only
+  its subclasses have, so the precise signature is refused and the helper
+  keeps `Any`; the family is a generic helper whose inferred type parameter
+  wants a bound. Neither loses the refactoring.
 - Because the variants are generated lazily, a signature that verifies costs
   nothing further. A precise ordinary signature that passes means no generic
   candidate is ever built or checked, which is the cheapest order as well as

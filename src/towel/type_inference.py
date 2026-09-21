@@ -755,6 +755,13 @@ class PyrightOracle:
         self._warmed[key] = warm
         return warm
 
+    def stop_language_servers(self) -> None:
+        """Close every warm project; this oracle answers from the command line after."""
+        self._server = None
+        for warm in self._warmed.values():
+            warm.close()
+        self._warmed.clear()
+
     def _abandon_sessions(self, error: SessionFailure) -> None:
         LOG.warning("pyright language server failed (%s); using the command line", error)
         self._server = None
@@ -1081,12 +1088,42 @@ def _pyright_command() -> Optional[List[str]]:
     return [sys.executable, "-I", "-m", "pyright"]
 
 
+def stop_language_servers(oracle: object) -> None:
+    """Drop every warm session behind ``oracle``; later checks take the command line.
+
+    The oracle keeps whatever else a run gave it -- where its output stands for
+    its input, what it must not look at -- so a check made after this is the
+    same question asked of a checker that starts from nothing.
+    """
+    if isinstance(oracle, CombinedOracle):
+        for one in oracle.checkers:
+            stop_language_servers(one)
+    elif isinstance(oracle, _RelocatedOracle):
+        stop_language_servers(oracle.inner)
+    elif isinstance(oracle, PyrightOracle):
+        oracle.stop_language_servers()
+
+
+def served_by_a_language_server(oracle: object) -> bool:
+    """Whether any checker behind ``oracle`` answered from a warm session."""
+    if isinstance(oracle, CombinedOracle):
+        return any(served_by_a_language_server(one) for one in oracle.checkers)
+    if isinstance(oracle, _RelocatedOracle):
+        return served_by_a_language_server(oracle.inner)
+    return isinstance(oracle, PyrightOracle) and bool(oracle._warmed)
+
+
 class CombinedOracle:
     """Infers with one checker and verifies with every configured one."""
 
     def __init__(self, primary: TypeOracle, others: Sequence[TypeOracle]) -> None:
         self._primary = primary
         self._all = [primary, *others]
+
+    @property
+    def checkers(self) -> Sequence[TypeOracle]:
+        """Every checker a candidate must satisfy."""
+        return tuple(self._all)
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         """The primary oracle's revelations."""
@@ -1125,6 +1162,11 @@ class CombinedOracle:
 
 class _RelocatedOracle:
     """An output copy checked at its original project's logical module locations."""
+
+    @property
+    def inner(self) -> TypeOracle:
+        """The checker this one relocates."""
+        return self._oracle
 
     def __init__(self, oracle: TypeOracle, source: Path, destination: Path) -> None:
         self._oracle = oracle
