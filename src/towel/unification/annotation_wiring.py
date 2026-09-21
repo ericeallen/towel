@@ -475,8 +475,14 @@ class HelperAnnotationWiring(EngineState):
         stop_language_servers(oracle)
         result = oracle.check_project(sources)
         if isinstance(result, CheckFailure):
-            TYPES.debug("cold confirmation could not run: %s", result.reason)
-            return
+            # This check exists to make a wrong answer loud; a check that could
+            # not run has not confirmed anything, and saying so quietly would
+            # be the same silence it was built to remove.
+            raise RefactoringError(
+                "The finished project could not be confirmed by a checker started from "
+                f"nothing: {result.reason}. The refactorings that were applied are listed "
+                "above; check the project yourself before relying on them."
+            )
         if result.errors:
             details = "\n".join(f"  {error.path}: {error.message}" for error in result.errors[:3])
             raise RefactoringError(

@@ -209,7 +209,14 @@ class PyrightSession:
         self._closed = False
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
-        self._initialize()
+        try:
+            self._initialize()
+        except BaseException:
+            # No object is bound when a constructor raises, so nobody can be
+            # asked to close this one. A server left running would go on
+            # analysing a directory its caller is about to delete.
+            self.close()
+            raise
 
     # -- protocol ---------------------------------------------------------
 

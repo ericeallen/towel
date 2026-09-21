@@ -712,6 +712,8 @@ class PyrightOracle:
             _pyright_langserver_command() if language_server else None
         )
         self._warmed: Dict[Tuple[Path, Tuple[str, ...]], _WarmProject] = {}
+        # Whether a session ever answered, which abandoning one does not undo.
+        self.answered_from_a_session = False
 
     def close(self) -> None:
         """Stop every language server this oracle started and drop its copies."""
@@ -753,6 +755,7 @@ class PyrightOracle:
             return None
         warm = _WarmProject(snapshot, session)
         self._warmed[key] = warm
+        self.answered_from_a_session = True
         return warm
 
     def stop_language_servers(self) -> None:
@@ -1105,12 +1108,17 @@ def stop_language_servers(oracle: object) -> None:
 
 
 def served_by_a_language_server(oracle: object) -> bool:
-    """Whether any checker behind ``oracle`` answered from a warm session."""
+    """Whether any checker behind ``oracle`` has ever answered from a warm session.
+
+    Ever, not currently. A session that fails part way through a run is
+    abandoned and the rest of the run is checked from the command line, which
+    is exactly when the verdicts it already gave are most worth confirming.
+    """
     if isinstance(oracle, CombinedOracle):
         return any(served_by_a_language_server(one) for one in oracle.checkers)
     if isinstance(oracle, _RelocatedOracle):
         return served_by_a_language_server(oracle.inner)
-    return isinstance(oracle, PyrightOracle) and bool(oracle._warmed)
+    return isinstance(oracle, PyrightOracle) and oracle.answered_from_a_session
 
 
 class CombinedOracle:

@@ -18,6 +18,7 @@ from typing import Mapping, Sequence
 import pytest
 
 from towel.type_inference import (
+    CheckFailure,
     CheckResult,
     CheckSuccess,
     MypyInferrer,
@@ -135,3 +136,54 @@ def test_a_run_without_a_warm_session_is_not_checked_again(tmp_path: Path) -> No
     finally:
         oracle.close()
     assert applied >= 1
+
+
+class _WarmThenUncheckable(PyrightOracle):
+    """A session that answers, then a command line that cannot run at all."""
+
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        # Warm checks answer; the cold confirmation at the end cannot run.
+        if self._warmed or not self.answered_from_a_session:
+            return super().check_project(sources, excluded_paths=excluded_paths)
+        return CheckFailure("pyright timed out")
+
+
+@requires_pyright
+def test_a_confirmation_that_could_not_run_is_not_silence(tmp_path: Path) -> None:
+    """A check that did not happen has confirmed nothing, and must say so."""
+    path = _project(tmp_path)
+    oracle = _WarmThenUncheckable()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+        )
+        with pytest.raises(RefactoringError, match="could not be confirmed"):
+            engine.refactor_to_fixed_point(str(path), progress="none")
+    finally:
+        oracle.close()
+
+
+class _SessionThatDiesMidRun(PyrightOracle):
+    """A session answers once, then is abandoned; the run finishes cold."""
+
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        result = super().check_project(sources, excluded_paths=excluded_paths)
+        self.stop_language_servers()
+        return result
+
+
+@requires_pyright
+def test_a_run_whose_session_died_is_still_confirmed(tmp_path: Path) -> None:
+    """Abandoning a session is exactly when its verdicts most want confirming."""
+    path = _project(tmp_path)
+    oracle = _SessionThatDiesMidRun()
+    try:
+        oracle.check_project({str(path): path.read_text(encoding="utf-8")})
+        assert not oracle._warmed, "the session was abandoned"
+        assert served_by_a_language_server(oracle), "but it did answer, so confirm the run"
+    finally:
+        oracle.close()

@@ -21,8 +21,9 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
-from typing import Dict, List, Mapping, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 import pytest
 
@@ -275,3 +276,27 @@ def test_a_directory_the_server_does_not_analyze_falls_back_to_the_command_line(
         oracle.close()
     assert isinstance(result, CheckSuccess)
     assert result.errors == ()
+
+
+def test_a_session_that_cannot_start_leaves_no_process_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A constructor that raises binds no object, so it must clean up itself."""
+    started: List[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    def remember(*args: Any, **kwargs: Any) -> "subprocess.Popen[bytes]":
+        process = real_popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr("towel.pyright_session.subprocess.Popen", remember)
+    monkeypatch.setattr(pyright_session, "START_TIMEOUT_SECONDS", 0.05)
+    command = type_inference._pyright_langserver_command()
+    if command is None:
+        pytest.skip("pyright is absent")
+    with pytest.raises(pyright_session.SessionFailure):
+        pyright_session.PyrightSession(command, tmp_path, sys.executable)
+    assert started, "no server was started, so this proved nothing"
+    for process in started:
+        assert process.poll() is not None, "the server outlived the failed constructor"
