@@ -606,6 +606,8 @@ Changes since 1.618.
   output under its original module identities, and closes the checker on
   success and failure. Project type rules are honored while plugins,
   configured executables and report destinations remain disabled.
+  (1.772 replaced that periodic collection: each build now runs in a forked
+  child of the worker which exits when it has answered.)
 - Mypy diagnostic presentation is normalized for in-memory sources. A
   project's `pretty = true` setting no longer crashes when a subtype probe
   or prospective helper extends beyond the on-disk file; project type rules

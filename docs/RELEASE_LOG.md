@@ -38,7 +38,7 @@ describe belong to that version.
   Generic instance, class, and static helper methods are included; fresh
   declarations are emitted at module scope before the host class and roll back
   with a failed candidate. See the
-  [changelog](../CHANGELOG.md#1772---2026-09-19) and the
+  [changelog](../CHANGELOG.md#1772---2026-09-21) and the
   [type-parameter design](proposals/type-parameters.md).
 - Inference order: a precise ordinary signature is preferred, and a generic
   candidate is tried when that signature contains `Any` or the whole project

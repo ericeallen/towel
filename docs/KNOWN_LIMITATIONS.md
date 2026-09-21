@@ -366,6 +366,11 @@ the pair decision raises them, grouped by stage:
   block reads a name the caller rebinds after it. `moves_scope_declaration`:
   a `global`/`nonlocal` declaration in the block names something the
   caller still uses.
+- Type information the move would destroy. `narrowing_lost_at_call_site`: a
+  test in the block narrows a name, and an expression the two sites differ in
+  reads that name, so extraction would leave the reading outside the region
+  the test governs. Decided from the proposal alone, so it applies whether or
+  not type checking is on.
 - Reassignment and deletion. `unsafe_reassignment_block1`/`_block2`: the
   block reassigns a name it did not bind (`result = result + 10` with
   `result` bound before it). `unbinds_external_name`: the block deletes,

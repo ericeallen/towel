@@ -38,6 +38,14 @@ towel dry path/to/project path/to/cleaned --no-interactive
 diff -ru path/to/project path/to/cleaned | less   # or redirect to a file outside a terminal
 ```
 
+`--no-interactive` skips the confirmation `towel dry` would otherwise ask for.
+Without it, and with a type checker installed, it first reports what
+verification will involve on this project — how many files each candidate
+signature is checked against and how many third-party packages their imports
+pull in — and then asks before doing any of it. On a large annotated project
+that is worth reading: a full run can take a while, and `--max-refactorings N`
+stops after N.
+
 The diff also shows one file that is not code: `.towel-helpers.json`, which
 `dry` writes into the output for the naming step below. It is safe to delete.
 

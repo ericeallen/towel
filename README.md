@@ -15,8 +15,17 @@ Towel finds repeated Python code and proposes helper function extractions.
 relationships among its argument and return types instead of losing them to
 `Any`: anti-unifying the types alongside the code gives `list[T] -> T` where the
 call sites use `list[int] -> int` and `list[str] -> str`. Generic methods keep
-the type parameters their host class already binds. See the
-[1.772 changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md#1772---2026-09-19) for details.
+the type parameters their host class already binds.
+
+The same release made the typed path usable on a large project. Verification,
+not analysis, is what a run with type checking spends its time in, and Sphinx's
+243 modules with mypy and Pyright both strict used to run for hours without
+finishing; it now reaches a fixed point in well under one, after which Sphinx's
+own test suite reports exactly what it reported before. An extraction that
+would separate a narrowing test from code depending on it is declined outright,
+with or without type checking. See the
+[1.772 changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md#1772---2026-09-21)
+for details.
 
 **New here?** The [Quick start](https://github.com/ericeallen/towel/blob/v1.772/docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
 
@@ -109,7 +118,7 @@ Install `code-towel`, not `towel`: the name `towel` on PyPI is a different, unre
 uvx --from code-towel towel --help
 ```
 
-The runtime uses only the standard library; optional `tqdm` provides progress bars. Two extras install the tools Towel uses when they are present: `code-towel[format]` (Black, ruff, isort) formats the code it inserts and sorts inserted imports the way the project does, and `code-towel[types]` (mypy, pyright) annotates generated helpers and type-checks the result. Both behaviors are on by default whenever the tool is installed, and `--no-format` and `--no-types` turn them off:
+The runtime uses only the standard library; optional `tqdm` provides progress bars, which name the proposal being weighed and are redrawn on a heartbeat so a long verification does not look like a stalled run. Two extras install the tools Towel uses when they are present: `code-towel[format]` (Black, ruff, isort) formats the code it inserts and sorts inserted imports the way the project does, and `code-towel[types]` (mypy, pyright) annotates generated helpers and type-checks the result. Both behaviors are on by default whenever the tool is installed, and `--no-format` and `--no-types` turn them off:
 
 ```bash
 pip install "code-towel[format,types]"
@@ -125,7 +134,7 @@ Platform, CPU, memory, and disk requirements are in [Requirements](#requirements
 
 **Memory.** Every figure here was measured on an Apple M5 Max (18 cores, 128 GiB); [the known limitations](https://github.com/ericeallen/towel/blob/v1.772/docs/KNOWN_LIMITATIONS.md#measurement-environment) record the rest of the environment. Measured in September 2026: a single analysis process holds the parsed modules and its caches: tens of megabytes for one file, about 250 MB for a 140,000-line project. Forking multiplies that by the worker count, because each worker starts as a copy-on-write fork whose caches then diverge; a 200,000-line project on an 18-core machine peaked near 7.4 GB across 20 processes. The tool estimates the parent's size against physical memory at fork time and caps the workers at roughly a third of RAM, but the estimate is not a guarantee. On a memory-constrained machine, or when running several large refactorings at once, set `TOWEL_WORKERS` low; at `TOWEL_WORKERS=1` the footprint stays at the single-process figure.
 
-**Disk.** Both in-place and out-of-place refactoring need temporary space for staged changes and recovery journals. Out-of-place refactoring also copies the whole project to the output directory, and optional type checking can create project snapshots and caches. Recovery journals, `.towel-transaction-<id>` directories at the common root of a batch, hold the original source bytes until you resolve them; a pending journal blocks a later run only when its manifest names a file that run would change.
+**Disk.** Both in-place and out-of-place refactoring need temporary space for staged changes and recovery journals. Out-of-place refactoring also copies the whole project to the output directory. Optional type checking adds, for the life of the run, a second copy of the project's checker inputs for pyright and a mypy cache directory; both are removed when the oracle is closed. Recovery journals, `.towel-transaction-<id>` directories at the common root of a batch, hold the original source bytes until you resolve them; a pending journal blocks a later run only when its manifest names a file that run would change.
 
 ## How long it takes
 
@@ -143,7 +152,7 @@ measured; the largest projects in the ecosystem check, networkx and Sphinx
 (150,000 to 200,000 lines), take several minutes to over half an hour
 (Sphinx: 2058 s with the defaults in the ecosystem check, September 2026).
 
-The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](https://github.com/ericeallen/towel/blob/v1.772/docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (15 applied, commit `5ff2458`, September 19, 2026) takes 8.4 s with `--no-types --no-format` and 11.9 s with the defaults, one core; that historical implementation held mypy in-process and raised peak memory from about 174 MB to about 894 MB there. The current checker uses an owned worker process and verifies the complete prospective project; those timings do not measure the current implementation.
+The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](https://github.com/ericeallen/towel/blob/v1.772/docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (15 applied, commit `5ff2458`, September 19, 2026) takes 8.4 s with `--no-types --no-format` and 11.9 s with the defaults, one core; that historical implementation held mypy in-process and raised peak memory from about 174 MB to about 894 MB there. The current checker verifies the complete prospective project through an owned mypy worker that forks a child per build, and a long-lived pyright language server over a private copy of the project; those timings do not measure it.
 
 ## Use
 

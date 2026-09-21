@@ -93,6 +93,8 @@ print("Termination:", reason)
 
 ### Localized Follow-Ups
 
+An extraction that would separate a narrowing test, such as an `isinstance` check, from an expression it leaves at the call site is never proposed, with or without type checking.
+
 After each applied proposal, the engine re-analyzes only the changed files to enqueue *localized* follow-up proposals immediately. This accelerates chained extractions without rescanning the entire project every iteration. When that queue drains, a *global* pass re-pairs the project for cross-file duplicates; after the first, a global pass re-pairs only the functions in files rewritten since the previous global pass, which is exact (the argument is in [ARCHITECTURE.md](ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)). Construct the engine with `incremental_global_passes=False` to re-pair everything each time; the output is byte-identical.
 
 ## Command-Line Usage
@@ -140,7 +142,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `type_oracle` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one nothing is inferred or verified (`--types/--no-types`). |
 | `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
 | `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports. |
-| `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). |
+| `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). The rehearing that ends a run re-pairs everything regardless. |
 | `promote_equal_hof_literals` | `False` | Expose literal arguments of higher-order factory calls as helper parameters even when they are equal in every block. |
 | `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). When omitted, the engine reads the environment once at construction; the command line and the analysis session each read it once as well (see *Diagnostics and settings* in [ARCHITECTURE.md](ARCHITECTURE.md)). |
 

@@ -255,7 +255,8 @@ a `pyvenv.cfg`, and macOS's daily cleanup of `/tmp` had deleted `HEAD`,
 `config` and `index` from 39 of its clones.) Three projects ran at a time
 with Towel's default forked workers, and the defaults were on: formatting
 through Black, isort and ruff, annotations inferred through mypy and
-verified by every checker the project configures, mypy or pyright or both.
+verified by every checker the project configures, mypy or pyright or both,
+the first to reject settling a candidate so the others are not asked.
 An external sampler recorded the memory of every refactor's process tree
 every two seconds.
 
@@ -306,7 +307,7 @@ workers share their pages copy-on-write, so those sums overstate what the
 machine held.
 
 **Time.** The run took 77 minutes, 61 of them sphinx, whose refactor now
-checks every change with pyright as well as mypy (its configuration asks
+checks every accepted change with pyright as well as mypy (its configuration asks
 for both) and is no longer cut by the budget. Per-project refactor times in
 this run are not a clean comparison with `938d351`: other refactors ran on
 the same machine during it while the defects above were being measured.

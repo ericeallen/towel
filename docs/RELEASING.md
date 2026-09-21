@@ -1,7 +1,7 @@
 # Preparing a release
 
 The `1.772` beta release is dated September 19, 2026. Its
-[changelog](../CHANGELOG.md#1772---2026-09-19) summarizes the one user-visible
+[changelog](../CHANGELOG.md#1772---2026-09-21) summarizes the one user-visible
 change: an extracted helper can now keep the relationships among its argument
 and return types through type anti-unification, instead of widening each column
 independently to a union or to `Any`. Generic instance, class, and static

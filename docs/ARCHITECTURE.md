@@ -123,7 +123,10 @@ flowchart TD
        `_seen_proposals`) before anything further is computed for it; the
        rest is redirected to an existing function when a site is one (see
        *Reusing an existing function*), declined when it would reduce a
-       helper from an earlier pass to a forwarder, then annotated.
+       helper from an earlier pass to a forwarder, then annotated. A proposal that survives those stages is declined once more if it would
+   separate a narrowing test from an expression it leaves at the call site
+   (`unification/narrowing.py`), which is a property of the transformation
+   rather than of the project's types and so holds with checking off.
 6. **Filter overlaps.** `overlap.py` keeps a non-overlapping set of the
    accepted proposals, largest first.
 7. **Annotate, format, verify.** `annotations.py` gives the helper the
@@ -795,6 +798,17 @@ argument is byte-identical `dry` output with the restriction on and off
 reference behavior.
 
 ## Performance architecture
+
+Analysis and verification are separate cost centres, and on an annotated
+project the second dominates. What keeps it bounded is described under *Helper
+annotations* and summarised here: both checkers are kept warm for the run, so
+a check costs a re-check of the changed modules and their import cycle rather
+than of the project; text identical to what a file already holds is withheld
+from mypy so its incremental cache applies; each mypy build runs in a forked
+child that exits when it has answered, so the thousandth request costs what the
+first did; the first checker to reject settles a candidate; and a declined
+proposal is remembered for the whole run rather than retried at every analysis.
+The measures below concern analysis.
 
 Pairing is quadratic in candidate blocks per file, and with N near-identical
 blocks in one file every pair proposes the same N-site extraction, so
