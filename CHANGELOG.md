@@ -22,9 +22,9 @@ a fixed point in 46 minutes, applying 380 refactorings across 105 files, after
 which Sphinx's own test suite reports exactly what it reported before: 2385
 passed, 34 skipped, and the same six failures that checkout already had.
 
-Every figure in this entry was measured on an Apple M5 Max (18 cores, 128 GiB)
-running macOS 26.5.1, with the machine otherwise idle. Towel ran on Python
-3.12.13. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
+Every figure in this file was measured on an Apple M5 Max with 18 cores and
+128 GiB. This entry's were taken on macOS 26.5.1 with Python 3.12.13, the
+machine otherwise idle. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
 mypy and Pyright both strict, checked by that project's own venv: **mypy
 1.19.1 and pyright 1.1.407**. The mypy behaviour described below belongs to
 that version; Towel's own checks run against a newer mypy and do not show it.

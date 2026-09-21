@@ -5,6 +5,19 @@ rejects, and what remains outside its model. Read it together with
 [the production readiness report](PRODUCTION_READINESS.md) and
 [the adversarial review](ADVERSARIAL_REVIEW.md).
 
+## Measurement environment
+
+Every time, memory and disk figure in this document was measured on an Apple
+M5 Max with 18 cores and 128 GiB of memory, writing to an APFS internal
+volume. Unless a figure says otherwise it was taken with the machine
+otherwise idle and with Towel's CLI defaults, and a figure that names a
+commit was taken at it.
+
+Where a figure concerns a project Towel was checking, the checker is that
+project's own rather than Towel's: the Sphinx measurements run mypy 1.19.1
+and pyright 1.1.407 from Sphinx 9.1.1 at `e44a40e`, and the mypy costs they
+describe belong to that version.
+
 ## What is verified for every accepted proposal
 
 - **Instantiation.** The helper body, with each call site's actual arguments
@@ -514,12 +527,9 @@ it tractable, all exact: they change no proposal.
   --outputjson`, which remains the fallback. The first rejection settles a
   candidate, so a project that configures both pays for both only when the
   first accepts.
-  Every figure in this entry was measured on an Apple M5 Max (18 cores,
-  128 GiB) running macOS 26.5.1, with the machine otherwise idle, Towel on
-  Python 3.12.13. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243
-  modules with mypy and Pyright both strict, checked through that project's
-  own venv: mypy 1.19.1 and pyright 1.1.407. The mypy costs below belong to
-  that version.
+  These figures were taken on macOS 26.5.1 with Python 3.12.13, against
+  Sphinx 9.1.1 at `e44a40e`: 243 modules with mypy and Pyright both strict,
+  checked through that project's own mypy 1.19.1 and pyright 1.1.407.
  A capped run on Sphinx (`--max-refactorings 45`, 52
   refactorings across 8 files) takes about 7 minutes, of which mypy is about
   3, over 52 whole-project checks for 43 extractions: 30 verified on the first
@@ -587,7 +597,8 @@ it tractable, all exact: they change no proposal.
   fork time, an estimate rather than a guarantee: several simultaneous
   large runs on one machine should still set `TOWEL_WORKERS` low.
 
-Measured in September 2026 with the CLI defaults (macOS, Python 3.13,
+Measured in September 2026 with the CLI defaults on the hardware described
+above (macOS, Python 3.13,
 single core unless stated): the wall time of a whole `towel dry` run on the
 ecosystem check's clone of each project, before and after the measures
 above, with identical output in every case. These are the measured tables

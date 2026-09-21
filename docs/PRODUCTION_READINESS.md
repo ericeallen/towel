@@ -12,6 +12,19 @@ belongs to those runtimes, not to this one. Passing the sampled tests does not
 establish equivalence for arbitrary Python programs; review generated changes
 and the [known limitations](KNOWN_LIMITATIONS.md).
 
+## Measurement environment
+
+Every time, memory and disk figure in this document was measured on an Apple
+M5 Max with 18 cores and 128 GiB of memory, writing to an APFS internal
+volume. Unless a figure says otherwise it was taken with the machine
+otherwise idle and with Towel's CLI defaults, and a figure that names a
+commit was taken at it.
+
+Where a figure concerns a project Towel was checking, the checker is that
+project's own rather than Towel's: the Sphinx measurements run mypy 1.19.1
+and pyright 1.1.407 from Sphinx 9.1.1 at `e44a40e`, and the mypy costs they
+describe belong to that version.
+
 ## Current 1.772 validation (September 19, 2026)
 
 The completed source matrix on the release candidate recorded (`src/towel`

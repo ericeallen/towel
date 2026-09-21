@@ -28,6 +28,19 @@ cache index, the analysis entry points), so mypy checks the seams. The
 core module keeps the constructor, the caches, the analysis entry points,
 block enumeration, and pairing.
 
+## Measurement environment
+
+Every time, memory and disk figure in this document was measured on an Apple
+M5 Max with 18 cores and 128 GiB of memory, writing to an APFS internal
+volume. Unless a figure says otherwise it was taken with the machine
+otherwise idle and with Towel's CLI defaults, and a figure that names a
+commit was taken at it.
+
+Where a figure concerns a project Towel was checking, the checker is that
+project's own rather than Towel's: the Sphinx measurements run mypy 1.19.1
+and pyright 1.1.407 from Sphinx 9.1.1 at `e44a40e`, and the mypy costs they
+describe belong to that version.
+
 ## The pipeline
 
 A single analysis runs these phases; the directory driver wraps them in a
