@@ -616,9 +616,11 @@ class Materialization(
             return
         self._ensure_import(lines, "typing", "TYPE_CHECKING")
         for index, line in enumerate(lines):
-            if line.strip() in {"if TYPE_CHECKING:", "if typing.TYPE_CHECKING:"}:
-                indent = line[: len(line) - len(line.lstrip())]
-                lines.insert(index + 1, f"{indent}    {wanted}\n")
+            # Only a guard at module level: one indented inside a function or
+            # class would take the import out of the scope the annotation
+            # reads it in.
+            if line.rstrip("\n") in {"if TYPE_CHECKING:", "if typing.TYPE_CHECKING:"}:
+                lines.insert(index + 1, f"    {wanted}\n")
                 return
         at = self._find_import_position(lines)
         lines[at:at] = ["\n", "if TYPE_CHECKING:\n", f"    {wanted}\n"]

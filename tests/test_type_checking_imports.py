@@ -268,3 +268,36 @@ def test_a_guarded_name_is_quoted_where_the_module_evaluates_its_annotations(
     )
     assert imported.returncode == 0, imported.stderr
     assert imported.stdout.strip() == "A!"
+
+
+def test_the_import_joins_a_guard_at_module_level_and_not_one_inside_a_function(
+    tmp_path: Path,
+) -> None:
+    """A guard indented in a function body would put the name out of scope."""
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    engine = UnificationRefactorEngine()
+    nested = [
+        "import os\n",
+        "from typing import TYPE_CHECKING\n",
+        "\n",
+        "def loader() -> None:\n",
+        "    if TYPE_CHECKING:\n",
+        "        import collections\n",
+        "    return None\n",
+    ]
+    engine._ensure_type_checking_import(nested, "pkg.other", "Thing")
+    written = "".join(nested)
+    assert "        from pkg.other import Thing" not in written, written
+    assert "if TYPE_CHECKING:\n    from pkg.other import Thing\n" in written, written
+
+    at_top = [
+        "from typing import TYPE_CHECKING\n",
+        "\n",
+        "if TYPE_CHECKING:\n",
+        "    from pkg.first import One\n",
+    ]
+    engine._ensure_type_checking_import(at_top, "pkg.other", "Thing")
+    joined = "".join(at_top)
+    assert joined.count("if TYPE_CHECKING:") == 1, joined
+    assert "    from pkg.other import Thing\n" in joined
