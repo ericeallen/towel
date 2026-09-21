@@ -818,7 +818,10 @@ def infer_missing_annotations(
     host = next((ast.parse(site.source) for site in sites if site.file_path == host_file), None)
     same_module = all(site.file_path == host_file for site in sites)
     for position, index in enumerate(bare):
-        texts = [revealed.get((site.file_path, site.start_line, position)) for site in sites]
+        texts = [
+            _as_class_object(site, index, revealed.get((site.file_path, site.start_line, position)))
+            for site in sites
+        ]
         parameters[index].annotation = _joined_revealed(texts, host, same_module, subtypes, allowed)
     for index, parameter in enumerate(parameters):
         if index not in bare and parameter.annotation is not None:
@@ -939,6 +942,45 @@ def _return_probes(
             indent = lines[line - 1][: len(lines[line - 1]) - len(lines[line - 1].lstrip())]
             probes.append((line, indent, (ast.unparse(node.value),)))
     return probes
+
+
+_DOTTED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
+
+
+def class_object_revealed(expression: str, revealed: str) -> str:
+    """``revealed``, spelled ``type[C]`` where it is the class ``expression`` names.
+
+    A checker shows a reference to a class as the signature of its constructor:
+    ``reveal_type(ASTClass)`` answers ``def (name: str, ...) -> ASTClass``, the
+    same shape it uses for an ordinary function. Written down, that says the
+    parameter takes something callable, and a class passed to ``isinstance`` or
+    to a ``type[T]`` parameter is then rejected. A value whose declared type is
+    ``type[C]`` is shown as ``type[C]``, so only a literal reference misleads.
+
+    Nothing in the revealed text distinguishes the two, but the expression that
+    was probed does: a class is named by the class, so its last component is
+    the constructed type's own name. A function whose name happens to match its
+    return type's would be rewritten wrongly, and the project check that
+    follows rejects it, leaving the signature as it was.
+    """
+    if not revealed.startswith("def (") or not _DOTTED.match(expression):
+        return revealed
+    arrow = revealed.rfind(" -> ")
+    if arrow < 0:
+        return revealed
+    constructed = revealed[arrow + 4 :]
+    if not _DOTTED.match(constructed):
+        return revealed
+    if constructed.rsplit(".", 1)[-1] != expression.rsplit(".", 1)[-1]:
+        return revealed
+    return f"type[{constructed}]"
+
+
+def _as_class_object(site: ApplySite, index: int, revealed: Optional[str]) -> Optional[str]:
+    """``revealed`` for the argument at ``index``, respelled when it names a class."""
+    if revealed is None:
+        return None
+    return class_object_revealed(ast.unparse(site.call.args[index]), revealed)
 
 
 def _joined_revealed(
