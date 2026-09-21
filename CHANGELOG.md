@@ -49,7 +49,10 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   has finished, and a candidate that broke three consumers read as clean when
   the server was delayed past the 0.35 s quiet period. Each check now carries a
   marker the server must publish first.
-- A candidate is checked against the project as it now stands. The language
+- A candidate is checked against the project as it now stands, which is
+  decided by the content of each checker input rather than by its size and
+  timestamp, so an edit by something other than Towel cannot leave a verdict
+  standing against a project the copy no longer matches. The language
   server's private copy restored every file a candidate did not supply to the
   bytes it first saw, so in-place, single-file and library runs lost every
   refactoring already applied: a valid follow-up was rejected and a breaking
@@ -120,7 +123,10 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   ever accepted at a later analysis.
 - A typed run that was checked through a language server is confirmed once
   more at the end by a pyright started from nothing, sharing none of the
-  session's state. A language server answers when it has gone quiet, and
+  session's state. A session that fails part way through a run still earns
+  that confirmation, being exactly when the verdicts already given are worth a
+  second opinion, and a confirmation that cannot run refuses the run rather
+  than reporting success. A language server answers when it has gone quiet, and
   while a marker it must publish first keeps silence from being read as a
   verdict before it has begun, one cold check over the finished project turns
   any residue of that kind from a silent wrong answer into a loud one. About

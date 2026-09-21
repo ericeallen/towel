@@ -332,7 +332,12 @@ where the evidence comes from:
   plugins, configured executables and report destinations are not executed.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration, made once per run, kept in step with the
-  project as it is refactored, and watched by one long-lived language server. Cyclic or external source symlinks and
+  project as it is refactored, and watched by one long-lived language server.
+  A file is recopied when its content differs, not merely when its size or
+  timestamp does, so an edit by something other than Towel cannot leave a
+  verdict standing against a project the copy no longer matches. A checker
+  configuration whose bytes are not UTF-8 is refused rather than copied
+  without rewriting the absolute paths in it. Cyclic or external source symlinks and
   configured source or stub search roots outside the project cannot be
   represented safely and cause verification to decline the proposal.
   Project include/exclude settings still determine the checker's coverage.
@@ -370,7 +375,14 @@ the pair decision raises them, grouped by stage:
   test in the block narrows a name, and an expression the two sites differ in
   reads that name, so extraction would leave the reading outside the region
   the test governs. Decided from the proposal alone, so it applies whether or
-  not type checking is on.
+  not type checking is on. The tests read as narrowing are `isinstance`,
+  `issubclass`, `hasattr` and `callable`; a comparison of a name with `None`;
+  `type(x) is C`; and a `match` whose patterns are not all bare captures. A
+  test inside a nested function speaks about that scope's own names and is not
+  counted. Truthiness, a `TypeGuard` function and equality with a literal do
+  narrow and are not read here: a rule over bare names in a test refuses
+  several sound extractions for each unsound one it catches, and what is not
+  declined here is declined by the checker.
 - Reassignment and deletion. `unsafe_reassignment_block1`/`_block2`: the
   block reassigns a name it did not bind (`result = result + 10` with
   `result` bound before it). `unbinds_external_name`: the block deletes,

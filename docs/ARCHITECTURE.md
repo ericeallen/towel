@@ -401,8 +401,10 @@ for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
 and both verify, so the project's own check stays green. Every configured
 checker must accept, so the first to reject settles the candidate and the
 others are not asked; only an accepted candidate is seen by all of them. When
-a run that was checked through a language server has applied something, the
-finished project is confirmed once more by a pyright started from nothing.
+a run that was checked through a language server has applied something -- ever,
+not only if one is still warm -- the finished project is confirmed once more by
+a pyright started from nothing. A confirmation that cannot itself run has
+confirmed nothing and refuses the run rather than passing quietly.
 
 A typed run holds more than the one process it started in:
 
@@ -522,8 +524,9 @@ unchanged consumers under the project's checker configuration. Mypy receives
 the replacements as in-memory build sources, except where the text is what the
 file already holds: that is withheld so mypy consults its incremental cache,
 which it does only for a module it reads itself. Pyright receives a private
-project copy under the original module names, kept in step with the project
-and told which files were created, changed or deleted.
+project copy under the original module names, kept in step with the project by
+content rather than by timestamp, and told which files were created, changed
+or deleted.
 
 Four things can decline a proposal, and they are asked in the order of what
 they cost. The first two are decided from the proposal alone, so they run
