@@ -78,7 +78,10 @@ def test_other_proposals_continue_and_changed_context_retries_a_refusal(
         changed_files: Optional[FrozenSet[str]],
     ) -> list[RefactoringProposal]:
         restrictions.append(changed_files)
-        assert len(restrictions) <= 3, "An unchanged project was reanalyzed"
+        # Three passes find work; the fourth is the rehearing, which looks at
+        # an unchanged project on purpose to hear what was declined earlier.
+        # Any more than that and the run is circling.
+        assert len(restrictions) <= 4, "An unchanged project was reanalyzed more than once"
         return [
             proposal
             for proposal in proposals
@@ -109,6 +112,9 @@ def test_other_proposals_continue_and_changed_context_retries_a_refusal(
     assert first.read_text() == ("VALUE = 1\n" if eventually_succeeds else "VALUE = 0\n")
     if incremental:
         assert restrictions[1] == frozenset({str(first), str(second)})
+        # An ordinary pass looks only at what changed; the rehearing looks at
+        # the whole project, so that a proposal declined anywhere is heard.
+        assert None in restrictions[1:], restrictions
 
 
 def test_real_checker_failure_terminates_directory_run(tmp_path: Path) -> None:

@@ -166,3 +166,32 @@ def test_single_file_run_applies_a_rejected_proposal_the_changed_file_accepts(
     _assert_applied_once_the_project_allows_it(
         *_applied_and_hearings(tmp_path, directory=False, relents_beside=3)
     )
+
+
+def test_a_declined_proposal_is_heard_once_more_before_the_run_calls_itself_finished(
+    tmp_path: Path,
+) -> None:
+    """The memory now spans whole-project analyses, so the rehearing is what ends the run."""
+    applied, hearings, final = _applied_and_hearings(tmp_path, directory=True)
+    assert applied == 3
+    assert final.count(POISON) == 2
+    # Once when first found, and once at the rehearing. Never in between,
+    # however many analyses the applications caused.
+    assert hearings == 2, hearings
+
+
+def test_the_run_does_not_circle_on_a_proposal_the_project_keeps_refusing(
+    tmp_path: Path,
+) -> None:
+    """A rehearing needs an application since the last one, so the run terminates."""
+    _, hearings, _ = _applied_and_hearings(tmp_path, directory=True)
+    assert hearings == 2, "a rehearing that applies nothing must not earn another"
+
+
+def test_a_proposal_the_changed_project_accepts_is_applied_at_the_rehearing(
+    tmp_path: Path,
+) -> None:
+    applied, hearings, final = _applied_and_hearings(tmp_path, directory=True, relents_beside=3)
+    assert applied == 4, "the rejected pair was extracted once the project allowed it"
+    assert final.count(POISON) == 1
+    assert hearings == 2, hearings

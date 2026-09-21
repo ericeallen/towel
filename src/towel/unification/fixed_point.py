@@ -363,6 +363,19 @@ class FixedPointDrivers(Materialization):
             if not proposal_queue:
                 found = self._global_pass(output_path, run, global_passes, reporter)
                 global_passes += 1
+                if found is None and run.owes_a_rehearing():
+                    # Nothing more applies, but proposals were declined along
+                    # the way and the project has changed since. They are heard
+                    # once more, against it as it now stands, before the run
+                    # calls itself finished. A rehearing needs an application
+                    # since the last one, so the run cannot circle on proposals
+                    # the project keeps refusing.
+                    run.begin_rehearing()
+                    reporter.detail("Rehearing proposals declined earlier")
+                    found = self._global_pass(
+                        output_path, run, global_passes, reporter, rehearing=True
+                    )
+                    global_passes += 1
                 if found is None:
                     reporter.finish_at_fixed_point()
                     break
@@ -441,23 +454,23 @@ class FixedPointDrivers(Materialization):
         run: "_DirectoryRun",
         passes_so_far: int,
         reporter: "_ApplyProgress",
+        rehearing: bool = False,
     ) -> Optional[List[RefactoringProposal]]:
         """Analyze the whole directory and queue its non-overlapping proposals; None at the fixed point.
 
         After the first pass, re-pair rewritten files and proposals deferred
         by rendering or checking. A changed project can make a deferred
         proposal valid, but an unchanged project cannot justify another pass.
-        This pass is where a rejected proposal is heard again; until it, the
-        localized re-analysis that follows each application finds the same
-        proposal and is not allowed to retry it.
+        A proposal the project declined is heard again only at a rehearing,
+        which is what the run does instead of stopping; until then every
+        analysis finds it and is not allowed to retry it.
         """
-        if run.global_revision == run.revision:
+        if run.global_revision == run.revision and not rehearing:
             return None
-        run.rejected.clear()
         reporter.announce_analysis(output_path)
         restrict = (
             frozenset(run.changed_since_global | run.deferred_paths)
-            if self.incremental_global_passes and passes_so_far > 0
+            if self.incremental_global_passes and passes_so_far > 0 and not rehearing
             else None
         )
         proposals = self.analyze_directory(
@@ -579,9 +592,22 @@ class _DirectoryRun:
     # project change even when their own source has not changed.
     deferred_paths: Set[str] = field(default_factory=set)
     rejected: "_RejectedProposals" = field(default_factory=lambda: _RejectedProposals())
+    # How many refactorings had been applied when the declined proposals were
+    # last heard again. Starting at zero is what makes a rehearing worth having:
+    # nothing applied means nothing has changed for a declined proposal to be
+    # reconsidered against.
+    reheard_after: int = 0
     revision: int = 0
     global_revision: Optional[int] = None
     applied: int = 0
+
+    def owes_a_rehearing(self) -> bool:
+        """Whether anything was declined that the project has changed under since."""
+        return bool(self.rejected) and self.applied != self.reheard_after
+
+    def begin_rehearing(self) -> None:
+        self.reheard_after = self.applied
+        self.rejected.clear()
 
     def record(self, path: str, description: str) -> None:
         count, descriptions = self.results.get(path, (0, []))
