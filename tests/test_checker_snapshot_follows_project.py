@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from towel.checker_project import CheckerSnapshot, CopyChange
 
@@ -96,3 +99,44 @@ def test_restating_the_project_rewrites_nothing(tmp_path: Path) -> None:
         assert snapshot.apply({str(root / "a.py"): "A = 1\n", str(root / "b.py"): "B = 1\n"}) == ()
     finally:
         snapshot.close()
+
+
+def test_an_in_place_rewrite_that_keeps_size_and_timestamp_is_still_seen(
+    tmp_path: Path,
+) -> None:
+    """A verdict is worth no more than the project it was reached against.
+
+    Towel replaces files, so its own writes always move the inode. Something
+    else editing in place and restoring the timestamp defeats every part of
+    the stat, which is why the content decides.
+    """
+    root = _project(tmp_path / "p")
+    edited = root / "a.py"
+    snapshot = CheckerSnapshot(root)
+    try:
+        before = edited.stat()
+        with edited.open("r+", encoding="utf-8") as handle:
+            handle.seek(0)
+            handle.write("A = 2\n")
+        os.utime(edited, ns=(before.st_atime_ns, before.st_mtime_ns))
+        after = edited.stat()
+        assert (after.st_mtime_ns, after.st_size, after.st_ino) == (
+            before.st_mtime_ns,
+            before.st_size,
+            before.st_ino,
+        ), "the stat must be indistinguishable or this proves nothing"
+        assert _kinds(snapshot.follow_project(), snapshot) == {"a.py": "changed"}
+        assert (snapshot.tree / "a.py").read_text(encoding="utf-8") == "A = 2\n"
+        assert snapshot.revision == 1
+    finally:
+        snapshot.close()
+
+
+def test_a_checker_configuration_that_cannot_be_rebased_is_refused(tmp_path: Path) -> None:
+    """Copied without rebasing, its absolute paths would point at the real tree."""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "a.py").write_text("A = 1\n", encoding="utf-8")
+    (root / "setup.cfg").write_bytes(b"[x]\nname = caf\xe9\n")
+    with pytest.raises(ValueError, match="not UTF-8"):
+        CheckerSnapshot(root).close()

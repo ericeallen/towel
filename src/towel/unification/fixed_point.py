@@ -752,7 +752,8 @@ class _ApplyProgress:
         The bar says which proposal is being weighed and the heartbeat keeps
         its clock moving until the answer comes back.
         """
-        self._doing, self._counts = f"#{iteration}: {desc}", (applied, queued)
+        with self._drawing:
+            self._doing, self._counts = f"#{iteration}: {desc}", (applied, queued)
         bar = self._active_bar()
         if bar is None:
             self.inline(applied, queued, "apply", self._doing)
@@ -761,8 +762,8 @@ class _ApplyProgress:
 
     def _redraw(self) -> None:
         """Show what is happening now; called by the heartbeat as well as by the run."""
-        applied, queued = self._counts
         with self._drawing:
+            applied, queued = self._counts
             bar = self._active_bar()
             if bar is None:
                 if self._doing:
@@ -773,7 +774,8 @@ class _ApplyProgress:
 
     def applied(self, applied: int, queued: int, iteration: int, desc: str) -> None:
         """The ``iteration``-th proposal was applied."""
-        self._doing, self._counts = f"#{iteration}: {desc}", (applied, queued)
+        with self._drawing:
+            self._doing, self._counts = f"#{iteration}: {desc}", (applied, queued)
         bar = self._active_bar()
         if bar is None:
             self.inline(applied, queued, "applied", self._doing)
@@ -787,14 +789,22 @@ class _ApplyProgress:
         self._redraw()
 
     def close(self) -> None:
-        """Stop the heartbeat; safe to call more than once and after a failure."""
+        """Release the display; safe to call more than once and after a failure.
+
+        A run that ends by raising never reaches ``finish_at_fixed_point``, and
+        a tqdm bar left open writes over whatever the terminal prints next.
+        """
         self._heartbeat.stop()
+        bar, self._bar = self._bar, None
+        if bar is not None:
+            quietly(bar.close)
 
     def finish_at_fixed_point(self) -> None:
         """No proposals remain: close the bar, or end the inline bar's line."""
         self._heartbeat.stop()
         bar = self._active_bar()
         if bar is not None:
+            self._bar = None  # Closed here, so ``close`` has nothing left to do.
 
             def finish() -> None:
                 bar.refresh()
@@ -809,6 +819,7 @@ class _ApplyProgress:
         self._heartbeat.stop()
         bar = self._active_bar()
         if bar is not None:
-            bar.close()
+            self._bar = None
+            quietly(bar.close)
         elif wants_bar(self._mode) and not self._use_tqdm:
             print(file=sys.stderr)

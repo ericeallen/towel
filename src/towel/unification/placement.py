@@ -413,7 +413,10 @@ class HelperPlacement(EngineState):
     ) -> List[Tuple[ClassInfo, int]]:
         """Each ancestor with how many base-class steps away it is, nearest first."""
         found: List[Tuple[ClassInfo, int]] = []
-        visited: Set[Tuple[str, str]] = set()
+        # The starting class is seeded: bases are resolved by name through
+        # imports, so a chain can appear to return to where it began, and it
+        # would otherwise be recorded as its own ancestor at depth two.
+        visited: Set[Tuple[str, str]] = {self._class_info_key(class_info)}
         queue: deque[Tuple[ClassInfo, int]] = deque([(class_info, 0)])
 
         while queue:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 import tomllib
@@ -37,11 +38,18 @@ class CopyChange:
     kind: ChangeKind
 
 
-_Stamp = Tuple[int, int, int]
-"""A source file's ``(st_mtime_ns, st_size, st_ino)`` when it was last copied.
+_Stamp = Tuple[int, int, int, bytes]
+"""What a source file looked like when it was last copied.
 
-Towel replaces a file atomically, so an applied change shows in the inode even
-when the new text happens to keep the old size within the same clock tick.
+``(st_mtime_ns, st_size, st_ino)`` catches everything Towel itself does, since
+it replaces a file atomically and the inode moves even where the new text
+keeps the old size within one clock tick. It does not catch an in-place
+rewrite of the same length by something else -- an editor, a formatter, a
+commit hook -- inside that tick, and on a filesystem with coarse timestamps
+the tick is a whole second. A verdict is worth no more than the project it was
+reached against, so the digest decides and the rest is a cheap way to skip it:
+hashing every checker input of Sphinx costs about four milliseconds, against a
+check that costs a second.
 """
 
 
@@ -51,7 +59,12 @@ def _as_changes(changes: Mapping[Path, ChangeKind]) -> Tuple[CopyChange, ...]:
 
 def _stamp(source: Path) -> _Stamp:
     status = source.stat()
-    return (status.st_mtime_ns, status.st_size, status.st_ino)
+    return (
+        status.st_mtime_ns,
+        status.st_size,
+        status.st_ino,
+        hashlib.blake2b(source.read_bytes(), digest_size=16).digest(),
+    )
 
 
 class CheckerSnapshot:
@@ -119,6 +132,17 @@ class CheckerSnapshot:
         """Copy what the project gained or changed since last asked, and drop what it lost."""
         changes: Dict[Path, ChangeKind] = {}
         current = _planned_copies(self._layout, self._excluded)
+        # A copy that fails part way through has still changed, so the
+        # revision advances whatever happens; a remembered verdict about the
+        # copy as it was must not survive it.
+        try:
+            self._follow(current, changes)
+        finally:
+            if changes:
+                self.revision += 1
+        return _as_changes(changes)
+
+    def _follow(self, current: Dict[Path, Path], changes: Dict[Path, ChangeKind]) -> None:
         for destination, source in current.items():
             stamp = _stamp(source)
             if self._stamps.get(destination) == stamp:
@@ -132,9 +156,6 @@ class CheckerSnapshot:
             changes[destination] = "deleted"
             del self._stamps[destination], self._sources[destination]
             self._dirty.discard(destination)
-        if changes:
-            self.revision += 1
-        return _as_changes(changes)
 
     def show(
         self, replacements: Mapping[str, str], *, after: Sequence[CopyChange] = ()
@@ -239,7 +260,10 @@ def _copy_input(source: Path, destination: Path, layout: _Layout) -> None:
         try:
             text = destination.read_text(encoding="utf-8")
         except UnicodeError:
-            return
+            # Its absolute paths cannot be rewritten, so they would point out
+            # of the copy at the real tree. Better no configuration than one
+            # that sends the checker somewhere else.
+            raise ValueError(f"Cannot rebase a checker configuration that is not UTF-8: {source}")
         destination.write_text(text.replace(str(layout.root), str(layout.target)), encoding="utf-8")
 
 

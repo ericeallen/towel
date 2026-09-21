@@ -933,7 +933,18 @@ class PyrightOracle:
     ) -> CheckResult:
         errors: List[TypeDiagnostic] = []
         for root, replacements in _source_groups(sources, "pyright").items():
-            served = self._check_with_session(root, replacements, excluded_paths)
+            try:
+                served = self._check_with_session(root, replacements, excluded_paths)
+            except (OSError, ValueError, UnicodeError) as error:
+                # The project is being read while it is being refactored, so a
+                # file can go between listing it and reading it. The cold path
+                # below has always reported that as a failed check rather than
+                # letting it end the run; the warm one now does too.
+                LOG.warning(
+                    "pyright session could not read %s (%s); using the command line", root, error
+                )
+                self._abandon_sessions(SessionFailure(str(error)))
+                served = None
             if served is not None:
                 if isinstance(served, CheckFailure):
                     return served

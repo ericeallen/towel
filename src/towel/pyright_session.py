@@ -49,7 +49,7 @@ import select
 import subprocess
 import threading
 import time
-from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .diagnostics import LOG
 from .source_files import PROBE_PREFIX
@@ -196,6 +196,7 @@ class PyrightSession:
         except OSError as error:
             raise SessionFailure(f"could not start pyright: {error}") from error
         self._next_id = 0
+        self._writing = threading.Lock()
         self._replies: "queue.Queue[Tuple[int, object]]" = queue.Queue()
         self._events: "queue.Queue[Tuple[str, object]]" = queue.Queue()
         # The server states a file's diagnostics once and stays silent about it
@@ -221,15 +222,31 @@ class PyrightSession:
     # -- protocol ---------------------------------------------------------
 
     def _write(self, payload: Mapping[str, object]) -> None:
-        stream = self._process.stdin
-        if stream is None or self._process.poll() is not None:
-            raise SessionFailure("pyright exited")
+        """Send one message whole.
+
+        The reader thread answers the server's own requests, so two threads
+        write here. A frame longer than a pipe's atomic unit can interleave
+        with another and leave the protocol unreadable, and a raw stream may
+        write fewer bytes than it was given, which strands the server waiting
+        for a body that never arrives. The lock keeps frames apart and the
+        loop finishes one before returning.
+        """
         raw = json.dumps(payload).encode("utf-8")
-        try:
-            stream.write(b"Content-Length: %d\r\n\r\n%s" % (len(raw), raw))
-            stream.flush()
-        except (BrokenPipeError, OSError) as error:
-            raise SessionFailure(f"pyright stopped reading: {error}") from error
+        frame = b"Content-Length: %d\r\n\r\n%s" % (len(raw), raw)
+        with self._writing:
+            stream = self._process.stdin
+            if stream is None or self._process.poll() is not None:
+                raise SessionFailure("pyright exited")
+            try:
+                sent = 0
+                while sent < len(frame):
+                    written = stream.write(frame[sent:])
+                    if not written:
+                        raise SessionFailure("pyright accepted none of a message")
+                    sent += written
+                stream.flush()
+            except (BrokenPipeError, OSError) as error:
+                raise SessionFailure(f"pyright stopped reading: {error}") from error
 
     def _read_exactly(self, count: int) -> Optional[bytes]:
         stream = self._process.stdout
@@ -390,6 +407,7 @@ class PyrightSession:
         before it, silence says nothing.
         """
         analyzing = False
+        running: Set[str] = set()
         self._marker_answered = marker_timeout is None
         started = time.monotonic()
         deadline = started + timeout
@@ -418,10 +436,16 @@ class PyrightSession:
             elif method == "$/progress" and isinstance(params, dict):
                 value = params.get("value")
                 kind = value.get("kind") if isinstance(value, dict) else None
+                token = repr(params.get("token"))
+                # The server runs more than one progress at a time, indexing
+                # beside analysis. Ending whichever finishes first would say
+                # the work was over while the rest was still queued, so a
+                # settle waits for every run it saw begin.
                 if kind == "begin":
-                    analyzing = True
+                    running.add(token)
                 elif kind == "end":
-                    analyzing = False
+                    running.discard(token)
+                analyzing = bool(running)
 
     def diagnostics_after(
         self, changed: Mapping[Path, FileChange], *, beside: Sequence[Path] = ()

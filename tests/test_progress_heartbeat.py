@@ -60,6 +60,7 @@ class _RecordingBar:
         self.postfixes: List[Mapping[str, object]] = []
         self.updates = 0
         self.closed = False
+        self.closes = 0
 
     def update(self, n: int = 1) -> None:
         self.updates += n
@@ -72,6 +73,7 @@ class _RecordingBar:
 
     def close(self) -> None:
         self.closed = True
+        self.closes += 1
 
 
 def _reporter_showing(bar: _RecordingBar, period: float) -> _ApplyProgress:
@@ -145,3 +147,34 @@ def test_the_inline_display_reports_elapsed_time(capsys: object) -> None:
     reporter.applying(1, 2, 3, "Extract common code from first and second")
     captured = capsys.readouterr()  # type: ignore[attr-defined]
     assert "2.1m" in captured.err, captured.err
+
+
+def test_a_run_that_raises_still_closes_the_bar() -> None:
+    """A bar left open writes over whatever the terminal prints next."""
+    bar = _RecordingBar()
+    reporter = _reporter_showing(bar, period=60.0)
+    reporter.discovered([_proposal()], applied=0, max_iterations=0)
+    reporter.close()
+    assert bar.closed
+
+
+def test_the_bar_is_closed_once_when_the_run_ends_normally() -> None:
+    bar = _RecordingBar()
+    reporter = _reporter_showing(bar, period=60.0)
+    reporter.discovered([_proposal()], applied=0, max_iterations=0)
+    reporter.finish_at_fixed_point()
+    reporter.close()
+    assert bar.closes == 1, "the finisher closed it, so close must not repeat that"
+
+
+def test_a_heartbeat_can_be_started_again_after_it_was_stopped() -> None:
+    beats = threading.Semaphore(0)
+    heartbeat = Heartbeat(beats.release, period=0.01)
+    heartbeat.start()
+    assert beats.acquire(timeout=5)
+    heartbeat.stop()
+    heartbeat.start()
+    try:
+        assert beats.acquire(timeout=5), "a restarted heartbeat did not beat"
+    finally:
+        heartbeat.stop()

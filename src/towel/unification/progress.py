@@ -131,6 +131,7 @@ class Heartbeat:
     def start(self) -> None:
         if self._thread is not None:
             return
+        self._stopped.clear()
         self._thread = threading.Thread(target=self._beat, name="towel-progress", daemon=True)
         self._thread.start()
 

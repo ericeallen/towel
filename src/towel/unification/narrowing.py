@@ -52,7 +52,7 @@ still legal, only wider, and the complaint arrives somewhere else entirely.
 from __future__ import annotations
 
 import ast
-from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set
+from typing import Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set
 
 from .models import Replacement
 
@@ -102,10 +102,15 @@ def _narrowed_by_comparison(node: ast.Compare) -> Set[str]:
 
 
 def narrowed_names(body: Iterable[ast.stmt]) -> Set[str]:
-    """Every name some test in ``body`` narrows for the code that test guards."""
+    """Every name some test in ``body`` narrows for the code that test guards.
+
+    A nested function or lambda is not looked into: a test there speaks about
+    that scope's own names, and a parameter of the same name outside it is a
+    different name, which was being read as guarded.
+    """
     narrowed: Set[str] = set()
     for statement in body:
-        for node in ast.walk(statement):
+        for node in _own_scope(statement):
             if isinstance(node, (ast.If, ast.While, ast.IfExp)):
                 narrowed |= _narrowed_by_test(node.test)
             elif isinstance(node, ast.Assert):
@@ -121,6 +126,15 @@ def narrowed_names(body: Iterable[ast.stmt]) -> Set[str]:
                 ):
                     narrowed.add(node.subject.id)
     return narrowed
+
+
+def _own_scope(node: ast.AST) -> Iterator[ast.AST]:
+    """``node`` and its descendants, stopping at anything that opens a scope."""
+    yield node
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        yield from _own_scope(child)
 
 
 def _parameters(helper: ast.FunctionDef) -> List[str]:

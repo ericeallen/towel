@@ -94,7 +94,10 @@ class _Rejection:
         check rather than a refactoring.
         """
         spans = [
-            (node.lineno - len(node.decorator_list), node.end_lineno or node.lineno)
+            (
+                min([node.lineno] + [decorator.lineno for decorator in node.decorator_list]),
+                node.end_lineno or node.lineno,
+            )
             for node in ast.walk(ast.parse(self.helper_module))
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name == self.helper_name
