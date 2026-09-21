@@ -399,7 +399,12 @@ class FixedPointDrivers(Materialization):
             # changed one of its files is stale: drop it and re-analyze those
             # files so a fresh proposal can take its place.
             try:
-                proposal_queue = self._apply_and_refresh(proposal, proposal_queue, run, reporter)
+                refreshed = self._apply_and_refresh(proposal, proposal_queue, run, reporter)
+                if refreshed is None:
+                    # Nothing was written, so nothing was applied: counting it
+                    # would earn a rehearing the project has not changed for.
+                    continue
+                proposal_queue = refreshed
             except (RefactoringError, SyntaxError) as error:
                 run.deferred_paths.update(
                     os.path.abspath(path)
@@ -491,8 +496,11 @@ class FixedPointDrivers(Materialization):
         queue: List[RefactoringProposal],
         run: "_DirectoryRun",
         reporter: "_ApplyProgress",
-    ) -> List[RefactoringProposal]:
+    ) -> Optional[List[RefactoringProposal]]:
         """Apply ``proposal``, invalidate what it touched, and refresh ``queue``.
+
+        None when the proposal rendered the bytes the files already held, so
+        nothing was written and nothing was applied.
 
         Queued proposals that were computed against a rewritten file are
         dropped; the rewritten files are re-analyzed at once and any follow-up
@@ -506,12 +514,25 @@ class FixedPointDrivers(Materialization):
             }
         }
         modified_files = self.apply_refactoring_multi_file(proposal)
+        plan = ChangePlan.from_sources(before, modified_files)
+        # A plan is empty when every file renders the bytes it already holds.
+        # Counting that as applied would advance the run's revision without
+        # changing the project, so the next analysis would find the proposal
+        # again, render the same bytes, and the run would never end. It is
+        # remembered as declined instead: the same input renders the same
+        # output, so hearing it again before the project changes is pointless.
+        if not plan.changes:
+            run.rejected.add(proposal)
+            reporter.detail(f"Proposal changed nothing: {proposal.description}")
+            return None
+        # Every file the proposal rendered is re-analysed and recorded, not
+        # only those whose bytes moved: a file rendered identically is still
+        # one the proposal reached, and the localized pass that follows must
+        # look at all of them.
         changed_paths = list(modified_files.keys())
-        apply_changes(ChangePlan.from_sources(before, modified_files))
+        apply_changes(plan)
         for fpath in modified_files:
             run.record(fpath, proposal.description)
-        if not changed_paths:
-            return queue
         self.invalidate_paths(changed_paths)
         changed_set = set(map(str, changed_paths))
         queue = [p for p in queue if not ({path for path, _ in p.source_digests} & changed_set)]
