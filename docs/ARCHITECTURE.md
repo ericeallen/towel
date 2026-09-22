@@ -315,7 +315,12 @@ decides:
   or of classes with a unique module-level common ancestor, every decorator is
   known to preserve the receiver, and the first parameter is `self` (or the
   method is a `classmethod`), the helper becomes a method and the receiver is
-  passed explicitly.
+  passed explicitly. A source method that never reads an attribute of its
+  receiver gets a `staticmethod` instead, reached through the class: such a
+  method runs when it is called through its class with anything in the
+  receiver's place, and a helper reached through `self` would take that away
+  while no checker said so. Where one method of a pair dispatches and the other
+  does not, the static form serves both.
 - **Common ancestor by the binding in effect.** A base-class name is resolved
   the way the referencing module resolves it *at the point the class statement
   runs*: the name must be bound there by an unconditional class statement of

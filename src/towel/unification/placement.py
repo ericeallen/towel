@@ -89,6 +89,49 @@ _IMPLICIT_RECEIVER_SPECIAL_METHODS = frozenset(
 )
 
 
+def _dispatches_on(func: FunctionNode, implicit_param: str) -> bool:
+    """Whether the method ever asks anything of its own receiver.
+
+    Python binds no receiver when a method is reached through its class, so
+    ``Formatter.as_dollars(None, 1.5)`` is an ordinary call with ``self`` set
+    to ``None``, and it works for as long as the body never reads an attribute
+    of ``self``. Code does this to reuse a method's logic without building an
+    instance, most often in tests.
+
+    A helper reached as ``self._extracted_func_0(...)`` would end that: the
+    rewritten body demands a receiver the body it replaced did not, and the
+    call raises ``AttributeError`` while every genuine instance goes on
+    returning what it always did. A checker reports nothing, because the
+    signature always said ``self`` was a ``Formatter``.
+
+    So a method that never dispatches gets a static helper reached through the
+    class, which asks for no receiver at all and is what the source method's
+    own contract already was. Reading an attribute is the condition, not
+    mentioning the name: a body that merely passes ``self`` on still works with
+    ``None``, and a static helper still receives it as an ordinary argument.
+    """
+    return any(
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == implicit_param
+        for node in ast.walk(func)
+    )
+
+
+def _implicit_param_for(kind: MethodKind, first: MethodInfo, second: MethodInfo) -> Optional[str]:
+    """The name the helper dispatches on, or ``None`` when it dispatches on nothing.
+
+    A static helper has no receiver, whatever the methods it was taken from
+    called theirs; carrying one of their names here would strip that argument
+    from the helper and rewrite the call into method form again.
+    """
+    if kind == "staticmethod":
+        return None
+    return (
+        first.implicit_param or second.implicit_param or ("self" if kind == "instance" else "cls")
+    )
+
+
 def _preserves_receiver(decorator: ast.expr) -> bool:
     """Whether a decorator is known to pass the receiver through unchanged."""
     target = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -599,6 +642,15 @@ class HelperPlacement(EngineState):
             # parameter would call a method on an arbitrary object.
             if kind == "instance" and implicit_param != "self":
                 receiver_known = False
+            if (
+                kind == "instance"
+                and implicit_param is not None
+                and not _dispatches_on(func, implicit_param)
+            ):
+                # The method never asks anything of its receiver, so the helper
+                # must not either: it becomes a static method reached through
+                # the class. See :func:`_dispatches_on`.
+                kind, implicit_param = "staticmethod", None
 
         return MethodInfo(kind=kind, implicit_param=implicit_param, receiver_known=receiver_known)
 
@@ -803,8 +855,17 @@ class HelperPlacement(EngineState):
         # A block with no method context (a function nested inside a method, or
         # one outside any class) has no receiver to dispatch on; its helper
         # stays at module level even when the block lexically sits in a class.
-        if k1 is None or k2 is None or k1 != k2:
+        if k1 is None or k2 is None:
             return None
+        if k1 != k2:
+            # One method dispatches on its receiver and the other never does,
+            # so only one of them has been given a static helper. The static
+            # form serves both: it asks for no receiver, and a block that uses
+            # one takes it as an ordinary argument. Demanding the same kind
+            # here sent the helper to module level instead.
+            if {k1, k2} != {"instance", "staticmethod"}:
+                return None
+            k1 = k2 = "staticmethod"
         if pair.class1_name is None or pair.class2_name is None:
             return None
 
@@ -814,11 +875,7 @@ class HelperPlacement(EngineState):
         # At this point we know effective_kind is valid because we've already validated k1/k2
         effective_kind: MethodKind = k1
         if file1 == file2 and pair.class1_name == pair.class2_name:
-            implicit_param = method_info1.implicit_param or method_info2.implicit_param
-            if effective_kind == "instance" and not implicit_param:
-                implicit_param = "self"
-            if effective_kind == "classmethod" and not implicit_param:
-                implicit_param = "cls"
+            implicit_param = _implicit_param_for(effective_kind, method_info1, method_info2)
             return ClassInsertionPlan(
                 class_name=pair.class1_name,
                 file_path=file1,
@@ -840,11 +897,7 @@ class HelperPlacement(EngineState):
         ):
             return None
 
-        implicit_param = method_info1.implicit_param or method_info2.implicit_param
-        if effective_kind == "instance" and not implicit_param:
-            implicit_param = "self"
-        if effective_kind == "classmethod" and not implicit_param:
-            implicit_param = "cls"
+        implicit_param = _implicit_param_for(effective_kind, method_info1, method_info2)
 
         return ClassInsertionPlan(
             class_name=ancestor.name,

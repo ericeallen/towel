@@ -128,10 +128,15 @@ def test_explicit_source_receiver_contract_is_not_silently_erased(
         methods += (
             decorate
             + f'    def {name}({receiver}: "{receiver_type}", items: list[{kind}]) -> {kind}:\n'
-            + "        result = items[0]\n        return result\n"
+            + f"        result = items[{receiver}.index]\n        return result\n"
         )
+    # The methods read the receiver, so the helper stays a method of Box and the
+    # contract this test is about is live. A block that never touches the
+    # receiver gets a static helper instead, which has no receiver to contract
+    # and may freshen the class variable (see `test_receiver_dependency.py`).
     source = (
-        'from typing import Generic, TypeVar\nT = TypeVar("T")\nclass Box(Generic[T]):\n' + methods
+        'from typing import Generic, TypeVar\nT = TypeVar("T")\nclass Box(Generic[T]):\n'
+        "    index: int = 0\n" + methods
     )
     path = _project(tmp_path, source)
     assert checker.check(str(path), source) == CheckSuccess()

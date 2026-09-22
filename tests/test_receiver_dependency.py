@@ -12,36 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A method helper is reached through the receiver, which its method may not have needed.
+"""A method that never uses its receiver must not be given a need for one.
 
-Python lets a method be called through its class with anything in the
-receiver's place, and such a call works whenever the body never reads ``self``:
-``A.a(None, 3)`` is legal, and code does it to reuse a method's logic without
-an instance. Extracting a block those methods share gives them a helper reached
-as ``self._extracted_func_0(...)``, and that call becomes an ``AttributeError``.
-The answer is unchanged for every genuine instance, and no checker reports it,
-because the signature always said ``self`` was an ``A``.
+Python binds no receiver when a method is reached through its class, so
+``Formatter.as_dollars(None, 1.5)`` is an ordinary call with ``self`` set to
+``None``, and it works for as long as the body never reads an attribute of
+``self``. Code does this to reuse a method's logic without building an
+instance, most often in tests.
 
-**This is a documented limitation, and these tests pin it rather than forbid
-it.** Declining method placement whenever the body never reads an attribute of
-its receiver does remove the breakage, and it was measured: across fourteen
-installed packages (Towel, Black, Click, Bandit, coverage, Hypothesis, urllib3,
-requests, Pygments, Rich, mypy, packaging, virtualenv, pip) it cost 57 of 305
-class-homed proposals, a fifth of them, which fall back to module-level
-helpers. That is a loss every user sees, traded against a call pattern almost
-none writes, so the rule was not kept.
+Extracting a block such methods share used to route it through
+``self._extracted_func_0(...)``. Every genuine instance went on returning what
+it always did, and that call became an ``AttributeError``: the transformation
+added a dependency on the receiver that the method it rewrote did not have. No
+checker reports it, because the signature always said ``self`` was a
+``Formatter`` and a caller passing ``None`` was already outside that promise --
+which is what makes it Towel's problem rather than the checker's.
 
-The repair that costs nothing is a different one: a method that ignores its
-receiver has no dispatch to preserve, so its helper could be a ``staticmethod``
-reached through the class rather than through ``self``. That is new machinery
-and is not in this release.
-
-If a change makes these tests fail, the limitation has been fixed --
-delete them and say so in `docs/KNOWN_LIMITATIONS.md`.
+The helper is now a ``staticmethod`` reached through the class. A method that
+ignores its receiver has no dispatch to preserve, so nothing is lost by not
+dispatching: across fourteen installed packages the fix moved no helper out of
+its class (306 class-homed proposals against 305 before it, the one gained
+where two methods disagreed about needing a receiver and the pair had been
+refused for it). A block that does use the receiver takes it as an ordinary
+argument instead.
 """
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -90,17 +88,43 @@ def _refactored(tmp_path: Path, source: str) -> Tuple[str, Any]:
     return written, _outcome(written)
 
 
-def test_an_unbound_call_with_no_receiver_stops_working_and_this_is_known(
-    tmp_path: Path,
-) -> None:
-    """The limitation itself, executable, so that fixing it cannot pass unnoticed."""
+def test_a_method_reached_through_its_class_keeps_working(tmp_path: Path) -> None:
+    """The defect itself: the answer must be the one the original program gave."""
     assert _outcome(UNBOUND) == (14, 17), "the fixture must work before the transformation"
     written, after = _refactored(tmp_path, UNBOUND)
-    assert isinstance(after, str) and after.startswith("AttributeError"), written
+    assert after == (14, 17), written
 
 
-def test_every_genuine_instance_still_gets_the_same_answer(tmp_path: Path) -> None:
-    """The limitation's boundary: nothing called on an actual instance is affected."""
+def test_the_helper_is_static_and_reached_through_the_class(tmp_path: Path) -> None:
+    """Why it works: no receiver is asked for, and the helper stays where it belongs."""
+    written, _ = _refactored(tmp_path, UNBOUND)
+    helper = next(
+        statement
+        for node in ast.parse(written).body
+        if isinstance(node, ast.ClassDef) and node.name == "A"
+        for statement in node.body
+        if isinstance(statement, ast.FunctionDef) and "extracted_func" in statement.name
+    )
+    decorators = [
+        decorator.id for decorator in helper.decorator_list if isinstance(decorator, ast.Name)
+    ]
+    assert decorators == ["staticmethod"], written
+    assert "self" not in [argument.arg for argument in helper.args.args], written
+    assert f"A.{helper.name}(" in written and f"self.{helper.name}(" not in written, written
+
+
+def test_a_method_that_uses_its_receiver_still_gets_an_instance_helper(tmp_path: Path) -> None:
+    """The other side: a fix that made every helper static would pass the tests above."""
     assert _outcome(USES_RECEIVER) == (23, 26)
     written, after = _refactored(tmp_path, USES_RECEIVER)
     assert after == (23, 26), written
+    helper = next(
+        statement
+        for node in ast.parse(written).body
+        if isinstance(node, ast.ClassDef) and node.name == "A"
+        for statement in node.body
+        if isinstance(statement, ast.FunctionDef) and "extracted_func" in statement.name
+    )
+    assert not helper.decorator_list, written
+    assert helper.args.args[0].arg == "self", written
+    assert f"self.{helper.name}(" in written, written

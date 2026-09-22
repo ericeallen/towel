@@ -168,12 +168,12 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         code = """
         class C:
             def a(self, x):
-                y = x + 1
+                y = x + self.offset
                 z = y * 2
                 return z
 
             def b(self, x):
-                y = x + 1
+                y = x + self.offset
                 z = y * 2
                 return z
         """
@@ -381,7 +381,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
                     class First(Shared):
                         def alpha(self, value):
-                            tmp = value + 1
+                            tmp = value + self.offset
                             return tmp * 2
                     """).strip() + "\n",
                 encoding="utf-8",
@@ -392,7 +392,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
                     class Second(Shared):
                         def beta(self, value):
-                            tmp = value + 1
+                            tmp = value + self.offset
                             return tmp * 2
                     """).strip() + "\n",
                 encoding="utf-8",

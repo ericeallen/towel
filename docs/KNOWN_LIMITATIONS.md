@@ -214,22 +214,17 @@ in a neutral module by hand when it matters.
 
 ## Method insertion
 
-A method helper is reached through the receiver, and the method it was taken
-from may never have needed one. Python allows a method to be called through
-its class with anything in the receiver's place, and such a call works as long
-as the body does not read `self`: `A.a(None, 3)` is legal, and code does it to
-reuse a method's logic without an instance. Once a block those methods share
-becomes `self._extracted_func_0(...)`, that call raises `AttributeError`. Every
-call on a genuine instance is unaffected, and no type checker reports it,
-because the signature always said `self` was an `A`.
+A helper shared by methods that never read an attribute of their receiver is a
+`staticmethod`, reached through the class rather than through `self`. Such a
+method works when it is called through its class with anything in the
+receiver's place -- `Formatter.as_dollars(None, 1.5)` -- and a helper reached
+through `self` would end that. A method that ignores its receiver has no
+dispatch to preserve, so nothing is given up: the helper stays in the class,
+and a block that does use the receiver takes it as an ordinary argument.
 
-Declining method placement whenever a body never reads an attribute of its
-receiver removes this, and was measured against it: across fourteen installed
-packages it cost 57 of 305 class-homed helpers, a fifth, which fall back to
-module level. That is a loss in every project against a call pattern in almost
-none, so the rule is not applied. The repair that costs nothing -- a
-`staticmethod` reached through the class, since a method ignoring its receiver
-has no dispatch to preserve -- is not in this release.
+The class is named at the call site by the name the referencing module uses for
+it, so the same caveat applies as to any module-level helper: rebinding that
+name at run time, after the class is defined, is not something Towel can see.
 
 A base-class name is resolved as the binding in effect where the class
 statement runs, never by name across the project. It must be bound there by an

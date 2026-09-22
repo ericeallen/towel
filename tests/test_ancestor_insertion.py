@@ -17,7 +17,7 @@ class TestAncestorInsertion(TemporaryModuleTestCase):
 
             class EmailProcessor(BaseProcessor):
                 def validate(self, value):
-                    if not value:
+                    if not value or not self._initialized:
                         raise ValueError("required")
                     if len(value) < 3:
                         raise ValueError("too short")
@@ -27,7 +27,7 @@ class TestAncestorInsertion(TemporaryModuleTestCase):
 
             class SMSProcessor(BaseProcessor):
                 def validate(self, value):
-                    if not value:
+                    if not value or not self._initialized:
                         raise ValueError("required")
                     if len(value) < 3:
                         raise ValueError("too short")

@@ -40,9 +40,18 @@ _SHARED_BLOCK = (
 
 
 def _subclass(name: str, base: str, tail: int) -> str:
+    """A subclass whose method reads its receiver, so the helper is an instance method.
+
+    A method that never touches ``self`` gets a static helper reached through
+    the class instead (see `test_receiver_dependency.py`), which would make
+    these tests silent about the base they were written to be about.
+    """
     return (
         f"class {name}({base}):\n"
-        "    def compute(self, value):\n" + _SHARED_BLOCK + f"        return third + {tail}\n\n\n"
+        "    offset = 0\n\n"
+        "    def compute(self, value):\n"
+        + _SHARED_BLOCK
+        + f"        return third + {tail} + self.offset\n\n\n"
     )
 
 

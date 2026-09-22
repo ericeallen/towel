@@ -135,11 +135,11 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
         result = self._analyze_and_apply("""
             class Example:
                 def alpha(self, value):
-                    tmp = value + 1
+                    tmp = value + self.offset
                     return tmp * 2
 
                 def beta(self, value):
-                    tmp = value + 1
+                    tmp = value + self.offset
                     return tmp * 2
             """)
 
@@ -268,12 +268,12 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
 
             class First(Base):
                 def alpha(self, value):
-                    tmp = value + 1
+                    tmp = value + self.offset
                     return tmp * 2
 
             class Second(Base):
                 def beta(self, value):
-                    tmp = value + 1
+                    tmp = value + self.offset
                     return tmp * 2
             """)
 
