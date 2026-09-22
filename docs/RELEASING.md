@@ -52,11 +52,61 @@ not change that source while it executes. It runs third-party setup and tests
 with your privileges; use a disposable machine or container and the explicit
 `--run-untrusted-code` opt-in. Refresh upstream pins only after reviewing them.
 
-The manifest provides runtime test environments. For the behavioral release
-corpus, explicitly pass `--no-types` to the harness and record its `typing_mode`
-alongside the verdict counts. A completed consumer run in that mode is not
-evidence that the same projects have clean default typing baselines. Do not
-reinterpret a typed refusal as NO_CHANGE or silently rerun it without types.
+The manifest provides runtime test environments. Run the corpus with the
+default type policy, which is what a user gets, and record the reported
+`typing_mode` alongside the verdict counts. A project whose own sources do not
+type-check under the checker it configures is reported as a typed baseline
+refusal rather than being refactored, which is the documented behaviour and not
+a harness failure; do not reinterpret such a refusal as NO_CHANGE or silently
+rerun it with `--no-types`.
+
+`--no-types` remains available and answers a narrower question: whether the
+transformation preserves behaviour with verification out of the picture. It
+exercises none of the type inference or checking, so a release whose changes
+are in that path needs the default run as well, and a run in one mode is not
+evidence about the other.
+
+#### Running the corpus in a container
+
+The harness clones and executes third-party code, so it belongs in a container.
+Five details will each stop the run, and none of them is obvious from the
+failure it produces:
+
+- **Install `uv` in the image.** The harness builds a per-project environment
+  with it, and its absence surfaces as `FileNotFoundError` on every project.
+- **Install the candidate distribution system-wide, not into a user
+  directory.** `cli.py` reads its own version through `importlib.metadata`, and
+  the harness hands each subprocess a scratch `HOME`, so a `--user` install is
+  invisible to the refactor even though the parent process can see it. Build
+  the wheel first and install it with `--no-deps`; installing from the mounted
+  source instead fails, because the build backend writes `egg-info` into the
+  source tree and that mount is read-only.
+- **Give the harness a standalone clone detached at the release commit**, not a
+  git worktree. A worktree's `.git` is a file pointing outside the mount, so
+  the harness cannot read the revision and aborts. With a real clone it records
+  the commit, which is what makes the evidence attributable.
+- **Put the work directory on a container-native volume**, never a bind mount
+  from the host: `copytree` reports `ENOENT` for directories that exist when
+  several workers share one. Give that volume to the container's own user, or
+  the harness cannot take its lock.
+- **Mount the source read-only** so the run cannot change the code it is
+  testing, and pass `--towel-src` the mounted path.
+
+`scripts/ecosystem/Dockerfile` builds an image with those pieces in place. A
+working shape:
+
+```sh
+python -m build && cp dist/code_towel-*.whl scripts/ecosystem/
+docker build -t "$IMAGE" scripts/ecosystem
+
+git clone --no-hardlinks . "$CLONE" && git -C "$CLONE" checkout --detach "$COMMIT"
+docker volume create towel-eco-work
+docker run --rm --user root -v towel-eco-work:/work "$IMAGE" chown -R runner:runner /work
+docker run -d --name towel-eco -e TOWEL_WORKERS=1 \
+    -v "$CLONE":/snapshot:ro -v towel-eco-work:/work -w /snapshot "$IMAGE" \
+    python scripts/ecosystem_check.py --run-untrusted-code \
+        --towel-src /snapshot/src --work /work --workers 4
+```
 
 Verify the default policy separately: dirty original projects abort before
 copying, checker failure is distinct, explicit `--no-types` preserves existing
