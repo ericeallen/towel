@@ -28,7 +28,7 @@ import signal
 import sys
 import threading
 import time
-from typing import Mapping, Sequence
+from typing import Mapping, Optional, Sequence
 
 from mypy import build
 from mypy.build import BuildSource
@@ -168,8 +168,16 @@ def _record_paths(record: Path, paths: Sequence[str]) -> None:
         handle.write("".join(json.dumps(path) + "\n" for path in paths))
 
 
+def _disk_text(path: str) -> Optional[str]:
+    try:
+        with open(path, "rb") as handle:
+            return decode_python_encoding(handle.read())
+    except (OSError, ValueError):
+        return None
+
+
 def _text_mypy_must_be_given(replacements: Mapping[str, str], cache: str) -> dict[str, str]:
-    """The replacements mypy cannot be left to read from their files.
+    """The text mypy cannot be left to read from the files, replacement or not.
 
     mypy consults a module's cache entry only when it reads the module itself;
     supplied text is always parsed and checked again. A complete request
@@ -180,9 +188,18 @@ def _text_mypy_must_be_given(replacements: Mapping[str, str], cache: str) -> dic
     *file's* mtime and size beside the *text's* hash, and mypy trusts a matching
     mtime and size without hashing, so it would answer for the file with what it
     concluded about the text. A path once supplied with differing text is
-    therefore supplied for the rest of the cache's life. The record is written
+    therefore given text for the rest of the cache's life. The record is written
     before the build, in the cache it describes, so neither a killed build nor a
     replaced worker can separate them.
+
+    The text such a path is given is whatever its file holds now, which is the
+    point: a candidate is usually rejected and nothing reaches disk, and the
+    next request is sparse and names only the few modules it is about. Giving
+    text back only to the paths that request happens to name leaves every other
+    poisoned entry answering for its file, so a provider left speculatively
+    returning ``str`` was still answering ``str`` while the file on disk
+    returned ``int``, and the check came back clean against a project that did
+    not exist.
     """
     record = Path(cache) / _SUPPLIED_TEXT_RECORD
     recorded = _recorded_paths(record)
@@ -193,7 +210,14 @@ def _text_mypy_must_be_given(replacements: Mapping[str, str], cache: str) -> dic
     ]
     if added:
         _record_paths(record, added)
-    return {path: text for path, text in replacements.items() if path in recorded.union(added)}
+    given = {path: text for path, text in replacements.items() if path in recorded.union(added)}
+    for path in recorded - set(replacements):
+        # A file that has since been deleted cannot be restored, and mypy
+        # reports its absence, which is the truth about the project.
+        text = _disk_text(path)
+        if text is not None:
+            given[path] = text
+    return given
 
 
 def _is_package(directory: Path) -> bool:
@@ -215,7 +239,9 @@ def _walked_for(path: Path) -> Path:
     return directory
 
 
-def _complete_targets(replacements: Mapping[str, str], options: Options, root: Path) -> list[str]:
+def _complete_targets(
+    replacements: Mapping[str, str], options: Options, root: Path, consumers: Sequence[str]
+) -> list[str]:
     """What a complete build walks beyond the files being changed.
 
     A complete build exists to check the modules around the changed ones, whose
@@ -238,34 +264,62 @@ def _complete_targets(replacements: Mapping[str, str], options: Options, root: P
     if options.files:
         return list(options.files)
     walked = {str(_walked_for(Path(path))) for path in replacements}
+    # The caller scans once per project for what imports into those packages,
+    # which following imports out of them cannot reach. See ``towel.consumers``.
+    walked.update(consumer for consumer in consumers if os.path.exists(consumer))
     return sorted(walked) or [str(root)]
 
 
-def _one_source_per_module(
-    selected: Sequence[BuildSource], replacements: Mapping[str, str]
-) -> list[BuildSource]:
-    """The build sources with each module named once, an analyzed file preferred.
+def _implementation_of_stub(paths: Sequence[str]) -> Optional[str]:
+    """The implementation of a stub-and-implementation pair, or ``None`` for anything else.
 
-    A module can be reached twice: as a walked target and as an explicit
-    replacement, or as both a stub and the implementation beside it
-    (``attr/__init__.pyi`` and ``attr/__init__.py``). mypy refuses a build that
-    names one module twice, so a package shipping stubs for itself was refused
-    outright. The file Towel is changing is the one that has to be checked, so
-    it wins; the choice is the same before and after the change.
+    The only two files that may answer to one module name without a loss: a
+    ``.pyi`` and the ``.py`` beside it, same directory and same stem. That is a
+    package shipping stubs for itself, which attrs and more-itertools both do.
+    Two unrelated files that merely infer the same module name are not this, and
+    collapsing them would drop one file's errors and report the project clean.
     """
-    explicit = {os.path.abspath(path) for path in replacements}
-    chosen: dict[str, BuildSource] = {}
+    if len(paths) != 2:
+        return None
+    ordered = sorted(paths, key=lambda path: path.endswith(".pyi"))
+    implementation, stub = ordered
+    if not stub.endswith(".pyi") or not implementation.endswith(".py"):
+        return None
+    if Path(stub).with_suffix(".py") != Path(implementation):
+        return None
+    return implementation
+
+
+def _one_source_per_module(selected: Sequence[BuildSource]) -> list[BuildSource]:
+    """The build sources with each module named once where naming it twice is a duplicate.
+
+    A module is reached twice whenever it is both a walked target and a file
+    being changed; those are one file and collapse to it. A stub and the
+    implementation beside it are two files, and mypy refuses a build naming one
+    module twice, so a package shipping stubs for itself was refused outright.
+    That pair collapses to the implementation, because that is the file Towel is
+    changing and the one that has to be checked; the choice is the same before
+    and after the change, which is what the invariant needs.
+
+    Anything else keeps every file. Two unrelated modules can infer one name --
+    ``a/module.py`` and ``b/module.py``, neither directory a package -- and
+    collapsing those silently drops the second file's errors and calls the
+    project clean. mypy's own refusal is the right answer there: it is loud, it
+    names both files, and Towel turns it into a refusal that says what to do.
+    """
+    by_module: dict[str, list[BuildSource]] = {}
     for source in selected:
-        if source.path is None:
-            continue
-        held = chosen.get(source.module)
-        if held is None or (
-            os.path.abspath(source.path) in explicit
-            and held.path is not None
-            and os.path.abspath(held.path) not in explicit
-        ):
-            chosen[source.module] = source
-    return list(chosen.values())
+        if source.path is not None:
+            by_module.setdefault(source.module, []).append(source)
+    kept: list[BuildSource] = []
+    for sources in by_module.values():
+        by_path = {os.path.abspath(source.path or ""): source for source in sources}
+        if len(by_path) > 1:
+            implementation = _implementation_of_stub(sorted(by_path))
+            if implementation is not None:
+                by_path = {implementation: by_path[implementation]}
+        kept.extend(by_path.values())
+    return kept
 
 
 def _build_sources(
@@ -275,17 +329,29 @@ def _build_sources(
     root: Path,
     complete: bool,
     modules: Mapping[str, str],
+    consumers: Sequence[str],
 ) -> list[BuildSource]:
+    # Text is given for the replacements and for every path an earlier request
+    # once overlaid, whose cache entry would otherwise answer for its file. The
+    # second kind has to be a source of this build as well, or the text has
+    # nowhere to be given: a sparse request names a handful of modules, and the
+    # poisoned entries are all the others.
+    restored = sorted(set(given) - set(replacements))
     # SourceFinder handles namespace packages and .pyi precedence with mypy's
     # own rules. Explicit replacements are included even if config excludes them.
     if not complete:
-        return [BuildSource(path, modules[path], given.get(path)) for path in replacements]
-    selected = create_source_list(list(replacements), options)
-    targets = _complete_targets(replacements, options, root)
+        named = [BuildSource(path, modules[path], given.get(path)) for path in replacements]
+        return named + [
+            BuildSource(source.path, source.module, given.get(source.path or ""), source.base_dir)
+            for source in create_source_list(restored, options)
+            if source.path is not None and source.path not in replacements
+        ]
+    selected = create_source_list(list(replacements) + restored, options)
+    targets = _complete_targets(replacements, options, root, consumers)
     selected = create_source_list(targets, options, allow_empty_dir=True) + selected
     by_path = {
         os.path.abspath(source.path): source
-        for source in _one_source_per_module(selected, replacements)
+        for source in _one_source_per_module(selected)
         if source.path is not None
     }
     return [
@@ -319,6 +385,7 @@ def _request(request: object, cache: str) -> list[str]:
         root,
         request.get("complete") is True,
         _sources(request.get("modules")),
+        _strings(request.get("consumers") or []),
     )
     return list(build.build(sources=sources, options=options).errors)
 

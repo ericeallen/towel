@@ -59,6 +59,7 @@ from enum import Enum
 from typing import (
     Dict,
     Final,
+    FrozenSet,
     Iterable,
     Iterator,
     List,
@@ -78,6 +79,7 @@ from .unification.bounded_cache import BoundedCache
 from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
+from .consumers import consumers_of, module_prefixes, walked_package
 
 from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_probe_file
 
@@ -367,6 +369,7 @@ class MypyInferrer:
             self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
             cache_dir = Path(self._cache.name)
         self._cache_dir = cache_dir.resolve()
+        self._consumer_cache: Dict[Path, Tuple[FrozenSet[str], Sequence[str]]] = {}
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
@@ -406,6 +409,37 @@ class MypyInferrer:
     def __del__(self) -> None:
         self.close()
 
+    def _consumers(self, root: Path, replacements: Mapping[str, str]) -> Sequence[str]:
+        """The unchanged modules that import this change, found once and kept.
+
+        A complete build walks the packages under refactoring, and mypy follows
+        imports out of them. What imports *into* them is reached by neither, so
+        it is scanned for here: a subclass in another package whose own method
+        the new helper collides with is unchanged, unimported and broken by the
+        change, and the check that never looked at it reported clean.
+
+        The scan is one ``ast`` pass over the project and the answer holds for
+        the whole run, so it is done once per project rather than per candidate:
+        a prospective check happens hundreds of times and must stay cheap.
+        """
+        analyzed = frozenset(replacements)
+        remembered = self._consumer_cache.get(root)
+        if remembered is not None and remembered[0] == analyzed:
+            return remembered[1]
+
+        def namer(path: Path) -> str:
+            return _module_name_and_root(path)[0]
+
+        packages = {walked_package(Path(path)) or Path(path).resolve() for path in analyzed}
+        found = consumers_of(
+            root,
+            module_prefixes(analyzed, namer),
+            module_name=namer,
+            exclude=[package for package in packages if package.is_dir()],
+        )
+        self._consumer_cache[root] = (analyzed, found)
+        return found
+
     def _build_errors(
         self,
         sources: Sequence[_BuildSource],
@@ -413,6 +447,7 @@ class MypyInferrer:
         *,
         complete: bool = False,
         excluded_paths: Sequence[str] = (),
+        consumers: Sequence[str] = (),
     ) -> _BuildMessages | CheckFailure:
         if self._owner_pid != os.getpid():
             return CheckFailure("Create a new mypy oracle after fork")
@@ -431,6 +466,7 @@ class MypyInferrer:
                 "sources": {str(Path(source.path).resolve()): source.text for source in sources},
                 "complete": complete,
                 "excluded_paths": list(excluded_paths),
+                "consumers": list(consumers),
                 "modules": {str(Path(source.path).resolve()): source.module for source in sources},
             }
             try:
@@ -535,7 +571,11 @@ class MypyInferrer:
                 for path, source in replacements.items()
             ]
             result = self._build_errors(
-                builds, [str(root)], complete=True, excluded_paths=excluded_paths
+                builds,
+                [str(root)],
+                complete=True,
+                excluded_paths=excluded_paths,
+                consumers=self._consumers(root, replacements),
             )
             if isinstance(result, CheckFailure):
                 return result

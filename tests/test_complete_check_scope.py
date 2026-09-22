@@ -169,3 +169,111 @@ def test_a_config_naming_its_own_files_is_obeyed(tmp_path: Path) -> None:
     result = _check(tmp_path, "pkg/m.py")
     assert isinstance(result, CheckSuccess), result
     assert [error.path for error in result.errors] == [str(tmp_path / "extra" / "wrong.py")]
+
+
+@requires_mypy
+def test_an_unchanged_consumer_outside_the_package_is_checked(tmp_path: Path) -> None:
+    """The consumer can only be reached by looking for what imports the change.
+
+    A subclass in another package, unchanged and never imported by the package
+    it extends, is broken by a helper whose name it already uses. Following
+    imports out of the package never reaches it, so a check scoped to the
+    package alone called the project clean while the program's answer changed.
+    """
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "lib/__init__.py": "",
+            "lib/base.py": "class Base:\n    def first(self, value: int) -> int:\n        return value\n",
+            "consumer.py": (
+                "from lib.base import Base\n\n\n"
+                "class Child(Base):\n"
+                "    def _extracted_func_0(self, value: int) -> str:\n"
+                "        return 'surprise'\n"
+            ),
+        },
+    )
+    collides = (
+        "class Base:\n"
+        "    def first(self, value: int) -> int:\n"
+        "        return self._extracted_func_0(value)\n\n"
+        "    def _extracted_func_0(self, value: int) -> int:\n"
+        "        return value\n"
+    )
+    oracle = MypyInferrer()
+    try:
+        result = oracle.check_project({str(tmp_path / "lib" / "base.py"): collides})
+    finally:
+        oracle.close()
+    assert isinstance(result, CheckSuccess), result
+    assert [error.path for error in result.errors] == [str(tmp_path / "consumer.py")], result
+
+
+@requires_mypy
+def test_a_consumer_of_a_consumer_is_reached_too(tmp_path: Path) -> None:
+    """A test helper imports the package and the tests import the helper."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "lib/__init__.py": "",
+            "lib/base.py": "VALUE: int = 1\n",
+            "helper.py": "from lib.base import VALUE\n\nSHARED: int = VALUE\n",
+            "uses_helper.py": "from helper import SHARED\n\nWRONG: str = SHARED\n",
+        },
+    )
+    oracle = MypyInferrer()
+    try:
+        result = oracle.check_project({str(tmp_path / "lib" / "base.py"): "VALUE: int = 1\n"})
+    finally:
+        oracle.close()
+    assert isinstance(result, CheckSuccess), result
+    assert [error.path for error in result.errors] == [str(tmp_path / "uses_helper.py")], result
+
+
+@requires_mypy
+def test_an_unparseable_file_is_not_a_consumer_and_does_not_refuse_the_project(
+    tmp_path: Path,
+) -> None:
+    """It imports nothing, so it can be neither reached by a change nor built."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "lib/__init__.py": "",
+            "lib/base.py": "VALUE: int = 1\n",
+            "tests/data/broken.py": "import lib\nprint 'never Python 3'\n",
+        },
+    )
+    oracle = MypyInferrer()
+    try:
+        result = oracle.check_project({str(tmp_path / "lib" / "base.py"): "VALUE: int = 1\n"})
+    finally:
+        oracle.close()
+    assert isinstance(result, CheckSuccess), result
+    assert result.errors == ()
+
+
+@requires_mypy
+def test_two_unrelated_files_claiming_one_module_are_refused_not_collapsed(
+    tmp_path: Path,
+) -> None:
+    """Collapsing them would drop the second file's errors and report clean.
+
+    A stub and the implementation beside it are one module's two faces and do
+    collapse. Two directories that are not packages, each holding ``module.py``,
+    are two modules with one inferred name, and mypy refuses that build. The
+    refusal is the right answer: it is loud and it names both files.
+    """
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "a/module.py": "x: int = 1\n",
+            "b/module.py": "x: int = 'wrong'\n",
+        },
+    )
+    result = _check(tmp_path, "a/module.py", "b/module.py")
+    assert isinstance(result, CheckFailure), result
+    assert "Duplicate module" in result.reason
