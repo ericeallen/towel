@@ -196,6 +196,78 @@ def _text_mypy_must_be_given(replacements: Mapping[str, str], cache: str) -> dic
     return {path: text for path, text in replacements.items() if path in recorded.union(added)}
 
 
+def _is_package(directory: Path) -> bool:
+    return (directory / "__init__.py").exists() or (directory / "__init__.pyi").exists()
+
+
+def _walked_for(path: Path) -> Path:
+    """What a complete build walks on behalf of an analyzed file.
+
+    The top package the file belongs to, or the file alone when it belongs to
+    none. Walking upwards stops where ``__init__`` does, which is where mypy
+    stops when it names the module.
+    """
+    directory = path.parent
+    if not _is_package(directory):
+        return path
+    while directory.parent != directory and _is_package(directory.parent):
+        directory = directory.parent
+    return directory
+
+
+def _complete_targets(replacements: Mapping[str, str], options: Options, root: Path) -> list[str]:
+    """What a complete build walks beyond the files being changed.
+
+    A complete build exists to check the modules around the changed ones, whose
+    own text is unchanged: a caller of a method whose signature moved, a
+    subclass of a host class. Those live in the package under refactoring, and
+    mypy follows imports out of it for the rest.
+
+    Walking the project root instead, as this did, checks a repository's every
+    other file as well, and a single one that mypy cannot build fails the whole
+    request and refuses the project. Repositories are full of them by design:
+    test data written to be invalid (``tests/data/cases/comments6.py`` in
+    Black, ``testing/data/E11.py`` in pycodestyle), demo and example scripts
+    sharing a module name with each other (``setup.py`` twice under pluggy's
+    docs), a stub directory beside the package it describes (``src/wrapt-stubs``).
+    Seventeen of the first fifty-two projects of the release corpus were refused
+    for such a file, none of which any project's own mypy run looks at, and none
+    of which can be affected by a change Towel makes. A config that names its
+    own ``files`` is still obeyed: there the project has said what it checks.
+    """
+    if options.files:
+        return list(options.files)
+    walked = {str(_walked_for(Path(path))) for path in replacements}
+    return sorted(walked) or [str(root)]
+
+
+def _one_source_per_module(
+    selected: Sequence[BuildSource], replacements: Mapping[str, str]
+) -> list[BuildSource]:
+    """The build sources with each module named once, an analyzed file preferred.
+
+    A module can be reached twice: as a walked target and as an explicit
+    replacement, or as both a stub and the implementation beside it
+    (``attr/__init__.pyi`` and ``attr/__init__.py``). mypy refuses a build that
+    names one module twice, so a package shipping stubs for itself was refused
+    outright. The file Towel is changing is the one that has to be checked, so
+    it wins; the choice is the same before and after the change.
+    """
+    explicit = {os.path.abspath(path) for path in replacements}
+    chosen: dict[str, BuildSource] = {}
+    for source in selected:
+        if source.path is None:
+            continue
+        held = chosen.get(source.module)
+        if held is None or (
+            os.path.abspath(source.path) in explicit
+            and held.path is not None
+            and os.path.abspath(held.path) not in explicit
+        ):
+            chosen[source.module] = source
+    return list(chosen.values())
+
+
 def _build_sources(
     replacements: Mapping[str, str],
     given: Mapping[str, str],
@@ -209,11 +281,12 @@ def _build_sources(
     if not complete:
         return [BuildSource(path, modules[path], given.get(path)) for path in replacements]
     selected = create_source_list(list(replacements), options)
-    if complete:
-        targets = options.files or [str(root)]
-        selected = create_source_list(targets, options, allow_empty_dir=True) + selected
+    targets = _complete_targets(replacements, options, root)
+    selected = create_source_list(targets, options, allow_empty_dir=True) + selected
     by_path = {
-        os.path.abspath(source.path): source for source in selected if source.path is not None
+        os.path.abspath(source.path): source
+        for source in _one_source_per_module(selected, replacements)
+        if source.path is not None
     }
     return [
         BuildSource(path, source.module, given.get(path), source.base_dir)

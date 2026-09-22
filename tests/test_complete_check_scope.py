@@ -1,0 +1,171 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""What a complete project check walks, and what it must not.
+
+The check exists to see the modules around the changed ones. Walking the
+repository root in their place reaches everything else a repository holds, and
+one file mypy cannot build fails the request and refuses the project. Seventeen
+of the first fifty-two projects of the release corpus were refused that way:
+for test data written to be invalid, for a demo script sharing a module name
+with another, for a stub beside the module it describes.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import textwrap
+from typing import Mapping
+
+import pytest
+
+from towel._mypy_worker import _walked_for
+from towel.type_inference import CheckFailure, CheckSuccess, MypyInferrer
+
+requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
+
+
+def _write(root: Path, files: Mapping[str, str]) -> None:
+    for name, text in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
+
+
+def _check(root: Path, *analyzed: str) -> CheckSuccess | CheckFailure:
+    oracle = MypyInferrer()
+    try:
+        return oracle.check_project(
+            {str(root / name): (root / name).read_text(encoding="utf-8") for name in analyzed}
+        )
+    finally:
+        oracle.close()
+
+
+def test_a_file_in_a_package_is_walked_as_its_top_package(tmp_path: Path) -> None:
+    _write(tmp_path, {"pkg/__init__.py": "", "pkg/inner/__init__.py": "", "pkg/inner/m.py": ""})
+    assert _walked_for(tmp_path / "pkg" / "inner" / "m.py") == tmp_path / "pkg"
+    assert _walked_for(tmp_path / "pkg" / "__init__.py") == tmp_path / "pkg"
+
+
+def test_a_module_belonging_to_no_package_is_walked_alone(tmp_path: Path) -> None:
+    _write(tmp_path, {"lonely.py": ""})
+    assert _walked_for(tmp_path / "lonely.py") == tmp_path / "lonely.py"
+
+
+def test_a_stub_marks_a_package_too(tmp_path: Path) -> None:
+    _write(tmp_path, {"pkg/__init__.pyi": "", "pkg/m.py": ""})
+    assert _walked_for(tmp_path / "pkg" / "m.py") == tmp_path / "pkg"
+
+
+@requires_mypy
+def test_invalid_test_data_outside_the_package_does_not_refuse_the_project(tmp_path: Path) -> None:
+    """pycodestyle, Pygments, Black and Django all ship a file like this."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "pkg/__init__.py": "",
+            "pkg/m.py": "def tag(name: str) -> str:\n    return name.upper()\n",
+            "tests/data/broken.py": "print 'this was never Python 3'\n",
+            "tests/data/tabs.py": "def f():\n\tif True:\n        return 1\n",
+        },
+    )
+    result = _check(tmp_path, "pkg/m.py")
+    assert isinstance(result, CheckSuccess), result
+    assert result.errors == ()
+
+
+@requires_mypy
+def test_two_scripts_sharing_a_module_name_do_not_refuse_the_project(tmp_path: Path) -> None:
+    """pluggy has ``setup.py`` twice under its docs; Tornado has two demos."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "pkg/__init__.py": "",
+            "pkg/m.py": "def tag(name: str) -> str:\n    return name.upper()\n",
+            "demos/one/demo.py": "",
+            "demos/two/demo.py": "",
+        },
+    )
+    assert isinstance(_check(tmp_path, "pkg/m.py"), CheckSuccess)
+
+
+@requires_mypy
+def test_a_package_shipping_its_own_stub_is_checked_not_refused(tmp_path: Path) -> None:
+    """attrs and more-itertools both ship ``__init__.pyi`` beside ``__init__.py``."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "pkg/__init__.pyi": "def tag(name: str) -> str: ...\n",
+            "pkg/__init__.py": "def tag(name: str) -> str:\n    return name.upper()\n",
+        },
+    )
+    result = _check(tmp_path, "pkg/__init__.py")
+    assert isinstance(result, CheckSuccess), result
+
+
+@requires_mypy
+def test_the_file_being_changed_is_the_one_checked_even_under_a_stub(tmp_path: Path) -> None:
+    """Dropping the implementation for its stub would check nothing Towel changes."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "pkg/__init__.pyi": "def tag(name: str) -> str: ...\n",
+            "pkg/__init__.py": "def tag(name: str) -> str:\n    return name.bogus_attribute\n",
+        },
+    )
+    result = _check(tmp_path, "pkg/__init__.py")
+    assert isinstance(result, CheckSuccess), result
+    assert result.errors, "the stub answered for the module and nothing was checked"
+    assert {error.path for error in result.errors} == {str(tmp_path / "pkg" / "__init__.py")}
+
+
+@requires_mypy
+def test_a_consumer_inside_the_package_is_still_checked(tmp_path: Path) -> None:
+    """The walk must not shrink to the analyzed files: that is what it is for."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "pkg/__init__.py": "",
+            "pkg/m.py": "def tag(name: str) -> str:\n    return name.upper()\n",
+            "pkg/consumer.py": "from .m import tag\n\nBAD: int = tag('x')\n",
+        },
+    )
+    result = _check(tmp_path, "pkg/m.py")
+    assert isinstance(result, CheckSuccess), result
+    assert [error.path for error in result.errors] == [str(tmp_path / "pkg" / "consumer.py")]
+
+
+@requires_mypy
+def test_a_config_naming_its_own_files_is_obeyed(tmp_path: Path) -> None:
+    """Where the project has said what it checks, that is what is checked."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[tool.mypy]\nstrict = true\nfiles = ["pkg", "extra"]\n',
+            "pkg/__init__.py": "",
+            "pkg/m.py": "def tag(name: str) -> str:\n    return name.upper()\n",
+            "extra/__init__.py": "",
+            "extra/wrong.py": "BAD: int = 'not an int'\n",
+        },
+    )
+    result = _check(tmp_path, "pkg/m.py")
+    assert isinstance(result, CheckSuccess), result
+    assert [error.path for error in result.errors] == [str(tmp_path / "extra" / "wrong.py")]
