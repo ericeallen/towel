@@ -33,12 +33,21 @@ and unions are written unreduced.
 An annotation is written unquoted only when it evaluates where the helper is
 defined: every name is a builtin, a ``typing`` name the caller imports, a
 definition the helper is placed after (:func:`respell_bare`), or, in the
-same module, a name bound by a module-level import; and a subscripted
-annotation only when the subscript evaluates at definition time
-(:func:`_evaluates_at_runtime`). Otherwise it is a string, which never
-evaluates and which type checkers resolve in the module. Across modules only
-builtin names and the caller's ``typing`` names are used, since a site's
-imports are not the host's.
+same module, a name bound by a module-level import; and only when evaluating
+it is both safe and inert (:func:`_evaluates_at_runtime`, :func:`_is_inert`).
+Otherwise it is a string, which never evaluates and which type checkers
+resolve in the module. Across modules only builtin names and the caller's
+``typing`` names are used, since a site's imports are not the host's.
+
+Inertness is what keeps a refactoring from changing the program. A copied
+annotation is a second copy of the site's expression, evaluated once more
+than the original evaluated it, at the helper's own definition. An annotation
+holding a call -- ``Annotated[int, mark('a')]``, a pydantic ``Field(...)``,
+a ``Depends(...)`` -- would therefore run that call one extra time at import,
+and an annotation the source had explicitly quoted would run it for the first
+time. Neither is visible to a type checker, which reads a string annotation
+and the expression it spells as the same type, so the quotation costs nothing
+a checker can see and is the whole of the guarantee at run time.
 
 Helpers are annotated only in code that already uses annotations somewhere
 among the sites, so an unannotated project stays that way.
@@ -419,18 +428,68 @@ def _spelled_for_host(
 _RUNTIME_GENERICS = frozenset({"list", "dict", "set", "frozenset", "tuple", "type"})
 _TYPING_MODULES = frozenset({"typing", "typing_extensions", "collections.abc"})
 
+_INERT_OPERATORS = (ast.BitOr, ast.USub, ast.UAdd, ast.Invert)
+"""The only operators an annotation may apply bare: union, and a negated literal."""
+
+_INERT_NODES = (
+    ast.Name,
+    ast.Attribute,
+    ast.Subscript,
+    ast.Slice,
+    ast.Tuple,
+    ast.List,
+    ast.Starred,
+    ast.Constant,
+    ast.Load,
+) + _INERT_OPERATORS
+"""Node kinds whose evaluation cannot reach a statement of the project's own."""
+
+
+def _is_inert(expression: ast.expr) -> bool:
+    """Whether evaluating the annotation runs none of the program's own code.
+
+    Copying an annotation copies an expression, and the copy is evaluated
+    where the helper is defined: once more than the program evaluated it, or,
+    where the source quoted the annotation, once where the program never
+    evaluated it at all. ``Annotated[int, mark('a')]`` calls ``mark`` again;
+    so do ``Field(...)``, ``Depends(...)`` and every other annotation whose
+    metadata is built by a call. The extra call is an observable change in
+    behaviour that no type checker reports, because a checker reads the
+    annotation for its type and never runs it.
+
+    Only a shape that resolves names and asks the type system to subscript,
+    union or spell them is inert: anything else -- a call, a lambda, a
+    comprehension, a conditional, an f-string, a walrus -- is written as a
+    string instead, which a checker resolves identically and the interpreter
+    never evaluates.
+    """
+    for node in ast.walk(expression):
+        if isinstance(node, (ast.BinOp, ast.UnaryOp)):
+            if not isinstance(node.op, _INERT_OPERATORS):
+                return False
+        elif not isinstance(node, _INERT_NODES):
+            return False
+    return True
+
 
 def _evaluates_at_runtime(expression: ast.expr, host: Optional[ast.Module]) -> bool:
-    """Whether the annotation can be evaluated where the helper is defined.
+    """Whether the annotation can be written bare where the helper is defined.
 
-    Every name resolving is not enough: ``memoryview[int]`` resolves and
-    raises ``TypeError`` at definition time on interpreters where
-    ``memoryview`` is not generic (tornado). A subscript is trusted only on a
-    PEP 585 builtin generic, on a name imported from ``typing`` or
-    ``collections.abc``, or on ``typing.X`` with ``typing`` imported; every
-    other subscripted annotation is written as a string, which is never
-    evaluated and which checkers resolve the same way.
+    Two things have to hold, and a failure of either is written as a string.
+
+    Evaluating it must be inert (:func:`_is_inert`): a copied annotation is
+    evaluated one more time than the program evaluated the original, so an
+    annotation carrying a call would run that call again at import.
+
+    And it must not raise. Every name resolving is not enough:
+    ``memoryview[int]`` resolves and raises ``TypeError`` at definition time
+    on interpreters where ``memoryview`` is not generic (tornado). A
+    subscript is trusted only on a PEP 585 builtin generic, on a name
+    imported from ``typing`` or ``collections.abc``, or on ``typing.X`` with
+    ``typing`` imported.
     """
+    if not _is_inert(expression):
+        return False
     generic_names = set(_RUNTIME_GENERICS) | {"Any", "Callable"}
     typing_modules: Set[str] = set()
     if host is not None:
@@ -779,6 +838,13 @@ def respell_bare(
     """A copy with quoted annotations unquoted where every name is now resolvable.
 
     Names in ``bare_ok`` are definitions the helper will be placed after.
+
+    Resolvable is not sufficient. Unquoting makes an expression the
+    interpreter evaluates, and the quotation may be the program's own: an
+    annotation written ``"Annotated[int, mark('a')]"`` in the source calls
+    nothing, and unquoting it here would call ``mark`` at import where the
+    program never did. So an annotation is unquoted only when evaluating it
+    is inert as well as safe (:func:`_evaluates_at_runtime`).
     """
     respelled = copy.deepcopy(helper)
     resolved = _BUILTIN_NAMES | _TYPING_NAMES | bare_ok
