@@ -128,6 +128,44 @@ def _setuptools_default_src_root(project_root: Path, data: Mapping[str, object])
     return None
 
 
+def _setuptools_find_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Path]:
+    """The directories ``[tool.setuptools.packages.find]`` searches.
+
+    This is how a setuptools project most often declares a src layout, and it
+    was the one setuptools spelling nothing read. Its presence also stopped the
+    conventional ``src`` inference, which steps aside for explicit
+    configuration, so a project saying ``where = ["src"]`` was left with the
+    project root as its source root and every module named an extra component
+    deep: waitress' ``src/waitress/task.py`` became ``src.waitress.task``. A
+    cross-module helper imported under that name is a module that does not
+    exist, and adopting the output made the package unimportable.
+
+    ``where`` defaults to the project root, which is what a flat layout wants
+    and what was already being used for it.
+    """
+    packages = _table(data.get("tool", {}), "setuptools").get("packages")
+    if not isinstance(packages, dict):
+        return []
+    find = packages.get("find")
+    if not isinstance(find, dict):
+        return []
+    where = find.get("where", ["."])
+    if isinstance(where, str):
+        where = [where]
+    if not isinstance(where, list):
+        return []
+    roots: List[Path] = []
+    for entry in where:
+        # setuptools does not glob ``where``; anything that looks like a
+        # pattern is not something to guess at.
+        if not isinstance(entry, str) or any(char in entry for char in "*?[]"):
+            continue
+        candidate = (project_root / entry).resolve()
+        if candidate.is_dir() and candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
 def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[Path]:
     """Recognize Hatch wheel package selection without guessing custom rewrites."""
     build_system = data.get("build-system", {})
@@ -144,11 +182,16 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
     wheel = _table(targets, "wheel")
     if not isinstance(build, dict) or not isinstance(wheel, dict):
         raise UnsupportedLayoutError("Invalid Hatch wheel configuration")
-    for key in ("include", "force-include"):
-        if key in wheel or key in build:
-            raise UnsupportedLayoutError(
-                f"Unsupported Hatch {key} layout; cannot infer safe imports"
-            )
+    # ``force-include`` maps a source path to a different path in the wheel,
+    # which can rename a module, so there is nothing safe to infer from it.
+    # ``include`` only selects which files are shipped and leaves their paths
+    # alone: soupsieve's ``include = ["/soupsieve"]`` builds a wheel holding
+    # ``soupsieve/css_parser.py``, the same name the project root gives it.
+    # Refusing it declined two of the corpus's projects outright.
+    if "force-include" in wheel or "force-include" in build:
+        raise UnsupportedLayoutError(
+            "Unsupported Hatch force-include layout; cannot infer safe imports"
+        )
     sources = wheel.get("sources", build.get("sources"))
     if sources is not None:
         # ``sources = ["src"]`` strips the prefix from every file under it, so
@@ -412,9 +455,9 @@ def _declared_source_roots(
 ) -> Tuple[List[Path], Dict[Path, str]]:
     """The source roots the project's packaging declares, with any package prefixes.
 
-    ``[tool.setuptools.package-dir]`` is read only under setuptools (or no
-    declared backend, which defaults to it): a foreign backend's incidental
-    setuptools table is not trusted. Then the flit, poetry, pdm and hatch
+    ``[tool.setuptools.package-dir]`` and ``[tool.setuptools.packages.find]``
+    are read only under setuptools (or no declared backend, which defaults to
+    it): a foreign backend's incidental setuptools table is not trusted. Then the flit, poetry, pdm and hatch
     tables in turn; an unrecognized backend gets conventional, name-based
     inference and is refused only when that finds nothing; a setuptools
     project that leaves discovery implicit gets its ``src`` layout.
@@ -431,6 +474,8 @@ def _declared_source_roots(
                 source_roots.append(root)
                 if prefix:
                     package_prefixes[root] = prefix
+    if not source_roots and backend in _SETUPTOOLS_BACKENDS:
+        source_roots = _setuptools_find_source_roots(project_root, data)
     if not source_roots and backend == "flit_core.buildapi":
         source_roots = _flit_source_roots(project_root, data)
     if not source_roots and backend == "poetry.core.masonry.api":

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from towel.project_layout import ProjectLayout
+from towel.unification.exceptions import UnsupportedLayoutError
 
 
 def package(root: Path, relative: str) -> Path:
@@ -377,3 +378,99 @@ def test_unrecognized_backend_without_conventional_layout_is_refused(tmp_path: P
     module = package(tmp_path, "somewhere_else")
     with pytest.raises(ValueError, match="Unsupported build backend"):
         ProjectLayout.discover(module)
+
+
+def setuptools_find(root: Path, find: str, name: str = "my-project") -> None:
+    (root / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="setuptools.build_meta"\n'
+        f'[project]\nname="{name}"\nversion="0.0.0"\n'
+        f"[tool.setuptools.packages.find]\n{find}"
+    )
+
+
+def test_packages_find_where_names_the_source_root(tmp_path: Path) -> None:
+    """The commonest way a setuptools project declares a src layout.
+
+    Nothing read it, and its presence also stopped the conventional ``src``
+    inference, which steps aside for explicit configuration. The project root
+    was left as the source root and every module gained a component: waitress'
+    ``src/waitress/task.py`` became ``src.waitress.task``. A cross-module
+    helper imported under that name names a module that does not exist, and
+    adopting the reviewed output made the package unimportable -- which is how
+    the release corpus found it, waitress being the one project of thirteen
+    with this layout that had a cross-module helper to get wrong.
+    """
+    setuptools_find(tmp_path, 'where = ["src"]\n')
+    module = package(tmp_path, "src/my_project")
+    assert ProjectLayout.discover(module).module_name_for(module) == "my_project.tools"
+
+
+def test_a_find_table_without_where_still_means_the_project_root(tmp_path: Path) -> None:
+    """``where`` defaults to ``.``, which is what a flat layout wants."""
+    setuptools_find(tmp_path, "namespaces = false\n")
+    module = package(tmp_path, "my_project")
+    assert ProjectLayout.discover(module).module_name_for(module) == "my_project.tools"
+
+
+def test_several_search_directories_each_name_their_own_modules(tmp_path: Path) -> None:
+    """yapf searches ``.`` and ``third_party``; a module is named by the one holding it.
+
+    A layout is discovered for a starting point and keeps the roots that
+    contain it, so each module is asked of the layout discovered where it
+    lives -- which is what the engine does, discovering from the directory the
+    files of one proposal share.
+    """
+    setuptools_find(tmp_path, 'where = [".", "third_party"]\n')
+    own = package(tmp_path, "my_project")
+    vendored = package(tmp_path, "third_party/vendored")
+    assert ProjectLayout.discover(own).module_name_for(own) == "my_project.tools"
+    assert ProjectLayout.discover(vendored).module_name_for(vendored) == "vendored.tools"
+
+
+def test_a_where_entry_that_is_not_a_plain_directory_is_not_guessed_at(tmp_path: Path) -> None:
+    """setuptools does not glob ``where``; a pattern is not a directory to trust."""
+    setuptools_find(tmp_path, 'where = ["src*"]\n')
+    module = package(tmp_path, "src/my_project")
+    assert ProjectLayout.discover(module).module_name_for(module) == "src.my_project.tools"
+
+
+def test_a_foreign_backend_incidental_setuptools_table_is_not_read(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="hatchling.build"\n'
+        '[project]\nname="my-project"\nversion="0.0.0"\n'
+        '[tool.hatch.build.targets.wheel]\npackages = ["src/my_project"]\n'
+        '[tool.setuptools.packages.find]\nwhere = ["elsewhere"]\n'
+    )
+    (tmp_path / "elsewhere").mkdir()
+    module = package(tmp_path, "src/my_project")
+    assert ProjectLayout.discover(module).module_name_for(module) == "my_project.tools"
+
+
+def test_hatch_include_selects_files_without_renaming_their_modules(tmp_path: Path) -> None:
+    """Corroborated against a built wheel: soupsieve 2.10 at its own pinned commit.
+
+    ``include = ["/soupsieve"]`` produces a wheel holding
+    ``soupsieve/css_parser.py`` -- the same path the source tree has, and the
+    same module name the project root gives it. ``include`` says which files
+    are shipped, not where they land, so refusing it declined two of the
+    release corpus's projects for a layout that changes nothing.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="hatchling.build"\n'
+        '[project]\nname="my-project"\nversion="0.0.0"\n'
+        '[tool.hatch.build.targets.wheel]\ninclude = ["/my_project"]\n'
+    )
+    module = package(tmp_path, "my_project")
+    assert ProjectLayout.discover(module).module_name_for(module) == "my_project.tools"
+
+
+def test_hatch_force_include_is_still_refused(tmp_path: Path) -> None:
+    """It maps a source path to a different one in the wheel, which can rename a module."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="hatchling.build"\n'
+        '[project]\nname="my-project"\nversion="0.0.0"\n'
+        '[tool.hatch.build.targets.wheel]\nforce-include = { "vendor" = "my_project/vendor" }\n'
+    )
+    module = package(tmp_path, "my_project")
+    with pytest.raises(UnsupportedLayoutError, match="force-include"):
+        ProjectLayout.discover(module).module_name_for(module)
