@@ -27,11 +27,12 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import textwrap
-from typing import Mapping
+from typing import List, Mapping
 
 import pytest
 
 from towel._mypy_worker import _walked_for
+from towel import type_inference
 from towel.type_inference import CheckFailure, CheckSuccess, MypyInferrer
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
@@ -277,3 +278,47 @@ def test_two_unrelated_files_claiming_one_module_are_refused_not_collapsed(
     result = _check(tmp_path, "a/module.py", "b/module.py")
     assert isinstance(result, CheckFailure), result
     assert "Duplicate module" in result.reason
+
+
+@requires_mypy
+def test_the_consumer_scan_is_paid_for_once_however_many_checks_follow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prospective check names a few modules; it must not rescan the project.
+
+    Verification checks the project once per candidate signature, hundreds of
+    times in a run, and each of those requests names only the modules it is
+    about. Keeping the scan against the set of one request would have missed on
+    every one of them and walked the whole tree again: 0.31 s on Sphinx, where
+    a capped run makes 54 such checks.
+    """
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "pkg/__init__.py": "",
+            "pkg/one.py": "VALUE: int = 1\n",
+            "pkg/two.py": "OTHER: int = 2\n",
+            "consumer.py": "from pkg.one import VALUE\n\nUSED: int = VALUE\n",
+        },
+    )
+    scans = 0
+    original = type_inference.consumers_of
+
+    def counting(*arguments: object, **keywords: object) -> List[str]:
+        nonlocal scans
+        scans += 1
+        return original(*arguments, **keywords)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(type_inference, "consumers_of", counting)
+    one, two = str(tmp_path / "pkg" / "one.py"), str(tmp_path / "pkg" / "two.py")
+    oracle = MypyInferrer()
+    try:
+        oracle.check_project({one: "VALUE: int = 1\n", two: "OTHER: int = 2\n"})
+        assert scans == 1, "the first complete check pays for the scan"
+        oracle.check_project({one: "VALUE: int = 3\n"})
+        oracle.check_project({two: "OTHER: int = 4\n"})
+        oracle.check_project({one: "VALUE: int = 5\n"})
+    finally:
+        oracle.close()
+    assert scans == 1, f"a sparse check rescanned the project ({scans} scans)"

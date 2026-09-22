@@ -30,6 +30,54 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- An extraction no longer gives a method a receiver it never needed. A method
+  reached through its class is an ordinary call with nothing bound, so
+  `Formatter.as_dollars(None, 1.5)` runs for as long as the body reads no
+  attribute of `self`, and routing the block it shares through
+  `self._extracted_func_0(...)` made that an `AttributeError` while every
+  genuine instance kept its answer and no checker said a word. Such a helper is
+  now a `staticmethod` reached through the class. It costs nothing: over
+  fourteen installed packages no helper leaves its class (306 class-homed
+  proposals against 305), the one gained where two methods disagreed about
+  needing a receiver and the pair was refused over the mismatch.
+- A base-class name is resolved as the binding in effect where the class
+  statement runs, not by finding a class of that qualname anywhere in the file.
+  Python binds globals as a module executes, so `Base = object` written between
+  two subclasses gives them different bases, and the helper hoisted into the
+  class the first one sees is not a method of the second: the program Towel
+  wrote raised `AttributeError` where the program it was given returned an
+  answer. A binding that cannot be established there yields no ancestor and a
+  module-level helper. Over 21 packages the proposals are unchanged; of 4,706
+  same-module resolutions 148 are declined, 96 for a qualname never unique.
+- A copied annotation is no longer evaluated a second time. An annotation is an
+  expression, and the copy runs at the helper's own `def`:
+  `Annotated[int, mark('a')]` called `mark` again at import, and an annotation
+  the source had quoted was unquoted into one that called it for the first
+  time. An annotation is written bare only when evaluating it runs none of the
+  program's own code; anything holding a call, a lambda, a comprehension, a
+  conditional or an f-string is written as a string, which a checker reads
+  identically and the interpreter never evaluates.
+- A complete project check covers the modules that import the change. mypy
+  follows imports out of the files it is given and reaches no caller, so a
+  subclass in another package, unchanged and never imported by the package it
+  extends, was broken by a helper whose name it already used while the check
+  reported clean. Those modules are found by one `ast` pass per project. The
+  project root is not walked in its place: repositories hold files no checker
+  can build, and one of them fails the build and refuses the project.
+- A rejected candidate no longer answers for the project that follows it.
+  Its text was checked, so mypy cached each of its modules against the real
+  file's mtime and size, which mypy trusts without hashing. Those paths were
+  given text again only when the next request named them, and the next request
+  is sparse, so a provider left speculatively returning `str` went on answering
+  `str` while its file returned `int`. Such a path is now given what its file
+  holds, named or not. On Sphinx this costs 3.5% and changes no output.
+- Two unrelated files that infer one module name are no longer collapsed into
+  one, which dropped the second file's errors and reported the project clean.
+  Only a stub and the implementation beside it collapse; anything else keeps
+  mypy's duplicate-module refusal.
+- A project whose checker cannot start at all -- a config naming a Python
+  version mypy has dropped -- is told how to proceed, as a project with
+  pre-existing errors already was.
 - The mypy worker's cost per request no longer grows over a run. Successive
   `build.build` calls in one process keep every rechecked module's tree alive
   (mypy 1.19; about 250,000 objects per build of `sphinx.application`), and
@@ -164,6 +212,24 @@ the correlation the call sites had.
   are treated as ambiguous evidence instead of silently retaining the last type.
 
 ### Fixed (release harness)
+- Two runs that failed *different* tests can no longer both count as a PASS. A
+  failure line is `FAILED <node id> - <message>`, and the id was taken by
+  splitting at the first `" - "` -- which a parametrized id may contain, so
+  `test_case[same - before]` and `test_case[same - after]` both truncated to
+  `test_case[same`. The harness compares those sets to award PASS, so a failure
+  Towel introduced could hide behind a pre-existing failure in the same
+  parametrized test. Only a separator outside brackets ends the id now.
+- A phase that times out takes its descendants with it. Killing the immediate
+  process left a suite's own workers, a server it started or a build it spawned
+  running, writing into the scratch tree that the project's later phases read.
+  Each phase leads a process group ended with it, and the worker watchdog ends
+  those groups too.
+- The corpus runs the default type policy and reruns without types only the
+  projects Towel declines to verify, naming them and their reason in the
+  report; their verdicts are evidence about the untyped path alone. The refusal
+  is first held to its wording -- the count, a diagnostic naming its file, and
+  the way forward -- and one that fails that is a verdict of its own rather
+  than a project quietly skipped.
 - The ecosystem check gives each corpus project its own output directory.
   Towel writes its recovery journal to the common parent of the files a
   transaction changes and refuses to start beneath a pending journal that may

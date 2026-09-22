@@ -79,7 +79,7 @@ from .unification.bounded_cache import BoundedCache
 from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
-from .consumers import consumers_of, module_prefixes, walked_package
+from .consumers import consumers_of as consumers_of, module_prefixes, walked_package
 
 from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_probe_file
 
@@ -418,26 +418,32 @@ class MypyInferrer:
         the new helper collides with is unchanged, unimported and broken by the
         change, and the check that never looked at it reported clean.
 
-        The scan is one ``ast`` pass over the project and the answer holds for
-        the whole run, so it is done once per project rather than per candidate:
-        a prospective check happens hundreds of times and must stay cheap.
+        The scan is one ``ast`` pass over the project, and it must stay one: a
+        prospective check happens hundreds of times in a run, and each names
+        only the few modules it is about. The answer is therefore kept against
+        the *modules asked about so far*, not against the set of a single
+        request, so those sparse checks reuse the scan the first complete one
+        paid for. A request naming a module never seen before -- a second
+        project under one oracle -- widens the set and scans once more.
         """
-        analyzed = frozenset(replacements)
-        remembered = self._consumer_cache.get(root)
-        if remembered is not None and remembered[0] == analyzed:
-            return remembered[1]
 
         def namer(path: Path) -> str:
             return _module_name_and_root(path)[0]
 
-        packages = {walked_package(Path(path)) or Path(path).resolve() for path in analyzed}
+        wanted = module_prefixes(replacements, namer)
+        remembered = self._consumer_cache.get(root)
+        if remembered is not None and wanted <= remembered[0]:
+            return remembered[1]
+        if remembered is not None:
+            wanted |= remembered[0]
+        packages = {walked_package(Path(path)) or Path(path).resolve() for path in replacements}
         found = consumers_of(
             root,
-            module_prefixes(analyzed, namer),
+            wanted,
             module_name=namer,
             exclude=[package for package in packages if package.is_dir()],
         )
-        self._consumer_cache[root] = (analyzed, found)
+        self._consumer_cache[root] = (frozenset(wanted), found)
         return found
 
     def _build_errors(
