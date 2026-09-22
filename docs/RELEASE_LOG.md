@@ -19,9 +19,11 @@ describe belong to that version.
 ## 2026-09-19 (1.772)
 
 - Version: 1.772, beta; release tag: `v1.772`.
-- Validated runtime: `ba539d4`; `src/towel` is unchanged from it. The release
-  commit adds documentation, one release-harness fix, and its regression tests.
-  Dependencies and build configuration are unchanged.
+- Runtime: `src/towel` is **not** unchanged from `ba539d4`. That claim was
+  written for an earlier candidate and is withdrawn. The type-checking path was
+  rewritten for this release; dependencies and build configuration are
+  unchanged. Each entry below names the runtime its evidence was taken against,
+  and evidence from one candidate is not carried to another.
 - Harness fix: `scripts/ecosystem_check.py` gives each corpus project its own
   output directory. Towel writes its recovery journal to the common parent of a
   transaction's files and refuses to start beneath a pending journal that may

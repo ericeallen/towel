@@ -5,12 +5,22 @@ helper can keep the relationships among its argument and return types instead
 of widening each column independently. Dependency pins and the build
 configuration are unchanged from 1.732.
 
-The validated runtime is `ba539d4`. The release commit leaves `src/towel`
-unchanged from it, and adds documentation, a release-harness fix, and that fix's
-regression tests. Dependencies and build configuration are unchanged. Evidence for 1.732 and 1.414 is retained later in this report and
-belongs to those runtimes, not to this one. Passing the sampled tests does not
-establish equivalence for arbitrary Python programs; review generated changes
-and the [known limitations](KNOWN_LIMITATIONS.md).
+`src/towel` is **not** unchanged from `ba539d4`; the claim that it was belonged
+to an earlier candidate and is withdrawn. The type-checking path was rewritten
+for this release — the checker runs in forked builds and a persistent language
+server, the project copy tracks the project, an extraction that would separate a
+narrowing test from its use is refused, and a complete check reaches the
+modules that import the change. Every figure and verdict in this report names
+the runtime it was measured against. Evidence for 1.732 and 1.414 is retained
+later and belongs to those runtimes, not to this one.
+
+Release evidence is valid only for the exact source it was taken from. Before
+publishing, rebuild both distributions from the frozen release commit, compare
+their contents against each other and against `src/towel`, and record the
+resulting hashes here: an earlier candidate's wheel and sdist disagreed with the
+checkout and with each other. Passing the sampled tests does not establish
+equivalence for arbitrary Python programs; review generated changes and the
+[known limitations](KNOWN_LIMITATIONS.md).
 
 ## Measurement environment
 

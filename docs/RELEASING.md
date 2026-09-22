@@ -54,11 +54,23 @@ with your privileges; use a disposable machine or container and the explicit
 
 The manifest provides runtime test environments. Run the corpus with the
 default type policy, which is what a user gets, and record the reported
-`typing_mode` alongside the verdict counts. A project whose own sources do not
-type-check under the checker it configures is reported as a typed baseline
-refusal rather than being refactored, which is the documented behaviour and not
-a harness failure; do not reinterpret such a refusal as NO_CHANGE or silently
-rerun it with `--no-types`.
+`typing_mode` alongside the verdict counts.
+
+A project whose own sources do not type-check under the checker it configures
+is declined rather than refactored unverified, which is the documented
+behaviour and not a harness failure. The answer Towel gives such a user is to
+rerun without types, so that is what the corpus does, and it holds the refusal
+to its promise first: the count, a diagnostic naming its file, and the way
+forward. A refusal missing any of those is the verdict `REFUSAL_MALFORMED` and
+fails the gate — the refusal is the only thing that user ever sees, and the
+corpus is the only place its wording meets a real project. The report names
+every project that took the untyped path and why, and those verdicts are
+evidence about the untyped path only. Read the counts with that split in view:
+a corpus where most projects were declined has said little about the typed one.
+
+`REFUSAL_MALFORMED` found two projects on its first run, Lark and Voluptuous,
+whose mypy configs name a Python version mypy 1.19 has dropped. The checker
+could not start, and that refusal named no way out.
 
 `--no-types` remains available and answers a narrower question: whether the
 transformation preserves behaviour with verification out of the picture. It

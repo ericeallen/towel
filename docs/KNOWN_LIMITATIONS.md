@@ -214,11 +214,39 @@ in a neutral module by hand when it matters.
 
 ## Method insertion
 
+A method helper is reached through the receiver, and the method it was taken
+from may never have needed one. Python allows a method to be called through
+its class with anything in the receiver's place, and such a call works as long
+as the body does not read `self`: `A.a(None, 3)` is legal, and code does it to
+reuse a method's logic without an instance. Once a block those methods share
+becomes `self._extracted_func_0(...)`, that call raises `AttributeError`. Every
+call on a genuine instance is unaffected, and no type checker reports it,
+because the signature always said `self` was an `A`.
+
+Declining method placement whenever a body never reads an attribute of its
+receiver removes this, and was measured against it: across fourteen installed
+packages it cost 57 of 305 class-homed helpers, a fifth, which fall back to
+module level. That is a loss in every project against a call pattern in almost
+none, so the rule is not applied. The repair that costs nothing -- a
+`staticmethod` reached through the class, since a method ignoring its receiver
+has no dispatch to preserve -- is not in this release.
+
+A base-class name is resolved as the binding in effect where the class
+statement runs, never by name across the project. It must be bound there by an
+unconditional class statement of that module or by one of its unconditional
+module-level imports. A base bound conditionally, declared `global` by some
+function, reachable through a star import, or bound in the same top-level
+statement as the class that uses it contributes no ancestor, and the helper is
+placed at module level instead. Rebinding the name between two subclasses --
+`Base = object` on a line of its own -- is therefore respected rather than
+overlooked, but a *decorated* base class is still trusted to be the class it
+wraps: `@register class Base:` may bind something else, and Towel does not
+evaluate the decorator to find out. `exec`, `globals()[name] = ...` and other
+reflection remain outside what any static rule here can see.
+
 A helper becomes a method only when both blocks belong to functions defined
 directly in one unique module-level class, or in classes with a unique
-module-level common ancestor (a base name resolves through the referencing
-module's own unconditional imports, never by name across the project, so a
-base bound by a conditional or star import contributes no ancestor), every
+module-level common ancestor, every
 decorator on the source methods is known
 to preserve the receiver, and the methods have a first parameter named
 `self` (or the method is a `classmethod`). Local classes, duplicated class names, unknown

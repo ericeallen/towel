@@ -164,20 +164,58 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
     return projects
 
 
+_PHASE_GROUPS: Set[int] = set()
+"""Process groups of the phases this worker is running, for the watchdog to end."""
+_PHASE_GROUPS_LOCK = threading.Lock()
+
+
+def _end_group(pgid: int) -> None:
+    """Terminate every process in ``pgid``, then make sure of it."""
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, signal_number)
+        except (ProcessLookupError, PermissionError):
+            return
+        if signal_number is signal.SIGTERM:
+            time.sleep(0.2)
+
+
 def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, log: Path) -> Phase:
-    """Run one phase, streaming its output to ``log`` so progress is visible while it runs."""
+    """Run one phase, streaming its output to ``log`` so progress is visible while it runs.
+
+    The phase leads its own process group, and the group is ended when the
+    phase is. Killing the immediate process alone left its descendants running:
+    a test suite's own workers, a server it started, a build it spawned. They
+    survived a timeout and went on consuming the machine and writing into the
+    scratch tree while later phases of the same project read it. The worker's
+    watchdog ends these groups too, so a killed harness still takes them with
+    it (see ``_isolate_worker``).
+    """
     start = time.monotonic()
     with log.open("w", encoding="utf-8") as handle:
         process = subprocess.Popen(
-            list(command), cwd=cwd, env=env, stdout=handle, stderr=subprocess.STDOUT, text=True
+            list(command),
+            cwd=cwd,
+            env=env,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
         )
+        with _PHASE_GROUPS_LOCK:
+            _PHASE_GROUPS.add(process.pid)
         try:
             returncode = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
             handle.write("\nTIMEOUT\n")
             returncode = -9
+        finally:
+            # On a timeout this is the kill; otherwise it reaps whatever the
+            # phase left behind, which is equally not allowed to outlive it.
+            _end_group(process.pid)
+            process.wait()
+            with _PHASE_GROUPS_LOCK:
+                _PHASE_GROUPS.discard(process.pid)
     output = log.read_text(encoding="utf-8", errors="replace")
     return Phase(returncode, time.monotonic() - start, summarize(output), str(log))
 
@@ -867,13 +905,38 @@ FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) ([^(].*)$")
 UNITTEST_FAILED_LINE = re.compile(r"^(?:FAIL|ERROR|UNEXPECTED SUCCESS): (.+)$")
 
 
+def _node_id(reported: str) -> str:
+    """The node id at the head of a ``FAILED <id> - <message>`` line.
+
+    Splitting at the first " - " is wrong, because a parametrized id can
+    contain one: ``test_case[same - before]`` and ``test_case[same - after]``
+    both truncate to ``test_case[same``, and two runs failing *different*
+    tests then present identical failure sets. The harness compares those sets
+    to decide PASS, so a failure Towel introduced could be hidden by a
+    pre-existing failure in the same parametrized test.
+
+    A separator inside brackets belongs to the id, so only one outside them
+    ends it. pytest writes the id first and the message after, never the
+    reverse, so the first such separator is the right one.
+    """
+    depth = 0
+    for index, character in enumerate(reported):
+        if character in "[(":
+            depth += 1
+        elif character in "])":
+            depth = max(0, depth - 1)
+        elif depth == 0 and reported.startswith(" - ", index):
+            return reported[:index].strip()
+    return reported.strip()
+
+
 def _failed_test_ids(output: str) -> Set[str]:
     """Full pytest node ids and unittest failure headers, without diagnostic suffixes."""
     identities: Set[str] = set()
     for line in _plain_lines(output):
         pytest_failure = FAILED_LINE.fullmatch(line)
         if pytest_failure is not None:
-            identities.add(pytest_failure[1].split(" - ", 1)[0].strip())
+            identities.add(_node_id(pytest_failure[1]))
         unittest_failure = UNITTEST_FAILED_LINE.fullmatch(line)
         if unittest_failure is not None:
             identities.add(f"unittest:{unittest_failure[1]}")
@@ -904,6 +967,15 @@ def _isolate_worker() -> None:
     def watch() -> None:
         while os.getppid() == parent:
             time.sleep(1)
+        with _PHASE_GROUPS_LOCK:
+            groups = list(_PHASE_GROUPS)
+        for pgid in groups:
+            # Each phase leads its own group, so the worker's group no longer
+            # contains them and killing it alone would leave them running.
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
         os.killpg(os.getpgrp(), signal.SIGKILL)
 
     threading.Thread(target=watch, name="harness-parent-watchdog", daemon=True).start()
@@ -978,8 +1050,9 @@ def main() -> int:
     parser.add_argument(
         "--no-types",
         action="store_true",
-        help="explicitly disable Towel type inference/checking for this runtime-test corpus; "
-        "default: retain Towel's type policy, with no automatic fallback",
+        help="disable Towel type inference/checking for every project in this corpus; "
+        "default: retain Towel's type policy, and rerun without types only those "
+        "projects Towel declines to verify, which the report names",
     )
     parser.add_argument(
         OPT_IN_FLAG,

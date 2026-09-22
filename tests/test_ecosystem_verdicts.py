@@ -6,6 +6,7 @@ import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import time
 from pathlib import Path
 import shlex
 import shutil
@@ -1318,3 +1319,70 @@ def test_check_project_requires_full_context_before_accepting_isolated_agreement
     assert full["before"]["returncode"] == 0 and full["before"]["summary"] == "2 passed"
     assert full["after"]["returncode"] == 1 and full["after"]["summary"] == "1 failed, 1 passed"
     assert ecosystem.failed_tests(full["after"]["log"]) == {"test_state.py::test_result"}
+
+
+@pytest.mark.parametrize(
+    "reported,node",
+    [
+        # The separator pytest puts between the id and the message.
+        ("test_flip.py::test_case - assert 1 != 1", "test_flip.py::test_case"),
+        # The same separator inside a parameter id, which belongs to the id.
+        (
+            "test_flip.py::test_case[same - before] - assert 1 != 1",
+            "test_flip.py::test_case[same - before]",
+        ),
+        (
+            "test_flip.py::test_case[same - after] - assert 2 != 2",
+            "test_flip.py::test_case[same - after]",
+        ),
+        # No message at all.
+        ("test_flip.py::test_case[a - b]", "test_flip.py::test_case[a - b]"),
+        # Nested brackets, and a message that itself contains the separator.
+        ("t.py::test[x[1 - 2]] - E - detail", "t.py::test[x[1 - 2]]"),
+    ],
+)
+def test_a_parameter_containing_the_separator_stays_part_of_the_node_id(
+    reported: str, node: str
+) -> None:
+    """Truncating at the first " - " made different failures look like one.
+
+    ``test_case[same - before]`` and ``test_case[same - after]`` both became
+    ``test_case[same``, so a run failing one and a run failing the other
+    presented identical failure sets. The harness compares those sets to award
+    PASS, which is how a failure Towel introduced could hide behind a
+    pre-existing failure in the same parametrized test.
+    """
+    assert ecosystem._node_id(reported) == node
+
+
+def test_two_runs_failing_different_parameters_are_not_the_same_failure() -> None:
+    before = "FAILED test_flip.py::test_case[same - before] - assert 1 != 1\n1 failed, 1 passed\n"
+    after = "FAILED test_flip.py::test_case[same - after] - assert 2 != 2\n1 failed, 1 passed\n"
+    assert ecosystem._failed_test_ids(before) != ecosystem._failed_test_ids(after)
+
+
+def test_a_phase_that_times_out_takes_its_descendants_with_it(tmp_path: Path) -> None:
+    """Killing the immediate process left its children running.
+
+    A test suite's own workers, a server it started, a build it spawned: they
+    survived the phase and went on writing into the scratch tree that later
+    phases of the same project read. The phase now leads a process group, and
+    the group ends when the phase does.
+    """
+    marker = tmp_path / "survived"
+    script = tmp_path / "parent.py"
+    script.write_text(
+        "import subprocess, sys, time\n"
+        f"subprocess.Popen([sys.executable, '-c', \"import time; time.sleep(3);\"\n"
+        f"    \"open({str(marker)!r}, 'w').write('survived')\"])\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    phase = ecosystem.run(
+        [sys.executable, str(script)], tmp_path, dict(os.environ), 1, tmp_path / "phase.log"
+    )
+    assert phase.returncode == -9, phase
+    deadline = time.monotonic() + 6
+    while time.monotonic() < deadline:
+        assert not marker.exists(), "a descendant outlived the phase that timed out"
+        time.sleep(0.25)

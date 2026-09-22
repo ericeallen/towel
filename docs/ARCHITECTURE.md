@@ -316,11 +316,20 @@ decides:
   known to preserve the receiver, and the first parameter is `self` (or the
   method is a `classmethod`), the helper becomes a method and the receiver is
   passed explicitly.
-- **Common ancestor by import resolution.** A base-class name is resolved the
-  way the referencing module resolves it: a class of that qualname in the same
-  module, else the class in the module named by one of that module's own
-  unconditional imports (relative, absolute, aliased, or dotted). A name is
-  never matched across the project, so a project with several same-named base
+- **Common ancestor by the binding in effect.** A base-class name is resolved
+  the way the referencing module resolves it *at the point the class statement
+  runs*: the name must be bound there by an unconditional class statement of
+  that module, or by one of that module's own unconditional module-level
+  imports (relative, absolute, aliased, or dotted). Position is the whole of
+  it, because Python binds globals as the module executes: with `Base = object`
+  written between two subclasses, the name denotes one thing where the first
+  is defined and another where the second is, and a helper hoisted into the
+  class the first sees is not a method of the second at all. A binding that
+  cannot be established there -- conditional, declared `global` by some
+  function, possibly replaced by a star import, or made in the same top-level
+  statement as the reference -- yields no ancestor, and the helper goes to
+  module level. A name is never matched across the project, so a project with
+  several same-named base
   classes (a `BaseEndpoint` per protocol) does not misattribute the ancestor.
 - **Module level otherwise.** When the blocks are in local classes, nested
   functions, or functions whose common enclosing function name is not unique in
@@ -437,9 +446,34 @@ If that completed check reports type errors, it aborts with an instruction to
 fix the errors or explicitly rerun with `--no-types`. That option disables
 helper annotation generation, inference and verification while preserving
 existing source annotations. A checker crash, timeout or incomplete result is
-a distinct `CheckFailure` and does not permit unchecked application. A clean
-baseline keeps verification enabled, so errors introduced by a transformation
-cannot subsequently be treated as pre-existing errors that disable checking.
+a distinct `CheckFailure` and does not permit unchecked application, and says
+the same thing about how to proceed. A clean baseline keeps verification
+enabled, so errors introduced by a transformation cannot subsequently be
+treated as pre-existing errors that disable checking.
+
+*What "complete" covers.* A checker config that names its own `files` settles
+it: the project has said what it checks. mypy takes its targets on the command
+line, so most configs name none, and the check then covers the packages the
+analyzed files belong to, everything mypy reaches by following imports out of
+them, and the modules that import *into* them. That last set is found by
+`towel.consumers`, one `ast` pass over the project per run, because following
+imports forward never reaches a consumer and a change can break one: a subclass
+in another package, unchanged and never imported by the package it extends, is
+broken by a helper whose name it already uses. The project root is deliberately
+not walked in place of this. Repositories hold files no checker can build —
+test data written to be invalid, two demo scripts sharing a module name, a stub
+directory beside the package it describes — and one of them fails the build and
+refuses the project. None of them imports the package, so none is a consumer,
+and none is selected.
+
+*Speculative text.* Nearly every candidate is rejected and nothing it proposed
+reaches disk, but its text was checked, and mypy wrote a cache entry for each
+module from that text stamped with the file's mtime and size. mypy trusts a
+matching mtime and size without hashing, so such an entry would answer for the
+file afterwards. Every path ever given text is therefore recorded, in the cache
+it describes and before the build that writes it, and given text again — from
+what its file holds now — for the rest of that cache's life, whether or not the
+current request mentions it.
 
 With an oracle, `infer_missing_annotations` types each parameter the copy
 left bare from the revealed types of its arguments. The rules are the
