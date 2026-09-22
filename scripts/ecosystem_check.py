@@ -12,8 +12,16 @@ test failures are allowed. Progress is printed as each phase completes; only
 PASS, NO_CHANGE and explicitly matched BROKEN_KNOWN verdicts satisfy the gate.
 Setup failures, incomplete test runs and unknown verdicts make it fail.
 An isolated retest match requires matching full-suite confirmations with the
-original test count before it can qualify. Types stay enabled unless the caller
-explicitly requests ``--no-types``; a type refusal never triggers a fallback.
+original test count before it can qualify.
+
+Types stay enabled unless the caller explicitly requests ``--no-types``. A
+project whose own sources do not type-check is declined by Towel rather than
+refactored unverified, which is its documented behaviour and the answer it
+gives such a user is to rerun without types. The corpus does exactly that: it
+holds the refusal to its promised wording -- the count, a diagnostic naming its
+file, and the way forward -- and then reruns that project with ``--no-types``
+so its behaviour is still covered. The report says which projects that was, and
+their verdicts are evidence about the untyped path only.
 
 Trust boundary: this script executes code it does not review. It clones
 public repositories, runs each manifest entry's ``prepare`` command, installs
@@ -127,6 +135,8 @@ class Result:
     diff_stat: str = ""
     detail: str = ""
     typing_mode: TypingMode = "default"
+    fallback: str = ""
+    """Why the typed attempt was declined, when the verdict came from a retry without types."""
 
 
 def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
@@ -512,35 +522,61 @@ def check_project(
         shutil.rmtree(cleaned_root)
     cleaned_root.mkdir(parents=True)
     cleaned = cleaned_root / f"{project.name}-cleaned"
-    result.refactor = run(
-        [
-            sys.executable,
-            "-m",
-            "towel.cli",
-            "dry",
-            project.package,
-            str(cleaned),
-            "--no-interactive",
-            "--progress",
-            "none",
-            *(["--no-types"] if no_types else []),
-            *(argument for name in project.exclude for argument in ("--exclude", name)),
-        ],
-        ready,
-        towel_env,
-        timeout,
-        logs / f"{project.name}-refactor.log",
-    )
+
+    def refactor(without_types: bool, log_name: str) -> Phase:
+        if cleaned_root.exists():
+            shutil.rmtree(cleaned_root)
+        cleaned_root.mkdir(parents=True)
+        return run(
+            [
+                sys.executable,
+                "-m",
+                "towel.cli",
+                "dry",
+                project.package,
+                str(cleaned),
+                "--no-interactive",
+                "--progress",
+                "none",
+                *(["--no-types"] if without_types else []),
+                *(argument for name in project.exclude for argument in ("--exclude", name)),
+            ],
+            ready,
+            towel_env,
+            timeout,
+            logs / log_name,
+        )
+
+    log_name = f"{project.name}-refactor.log"
+    result.refactor = refactor(no_types, log_name)
+    if result.refactor.returncode != 0 and result.refactor.returncode != -9 and not no_types:
+        # A project whose own sources do not check is one Towel declines to
+        # verify, which is the documented behaviour and not a defect. The
+        # answer it gives its user is to rerun without types, so that is what
+        # the corpus does: the refusal is held to its promised wording, and the
+        # project then goes through the rest of the run on the untyped path, so
+        # its behaviour is still covered by evidence. Both attempts keep their
+        # logs; the run's typing mode records which one produced the verdict.
+        refused = _refusal(logs / log_name)
+        declined = _baseline_refusal(refused)
+        if declined is not None:
+            malformed = _malformed_refusal(declined, logs / log_name)
+            if malformed is not None:
+                result.verdict = "REFUSAL_MALFORMED"
+                result.detail = malformed
+                return result
+            result.fallback = declined.kind
+            result.detail = declined.summary
+            result.typing_mode = "no-types"
+            log_name = f"{project.name}-refactor-no-types.log"
+            result.refactor = refactor(True, log_name)
     if result.refactor.returncode == -9:
         result.verdict = "TIMEOUT"
         result.detail = f"refactor exceeded {timeout}s"
         return result
     if result.refactor.returncode != 0:
-        refused = _refusal(logs / f"{project.name}-refactor.log")
-        if refused.startswith("Original project check reported "):
-            result.verdict = "TYPE_BASELINE_ERROR"
-        else:
-            result.verdict = "UNSUPPORTED" if refused else "CRASH"
+        refused = _refusal(logs / log_name)
+        result.verdict = "UNSUPPORTED" if refused else "CRASH"
         result.detail = refused or result.refactor.summary
         return result
     # Adopt: replace the package with the cleaned copy in place. A package
@@ -768,9 +804,15 @@ def _retest_agrees(
 
 REFUSAL = re.compile(
     r"^Error: (Original project check reported [1-9]\d* type error\(s\):|"
+    r"Original project type check failed: .*|"
     r"Unsupported build backend .*|.*cannot infer safe imports.*)$",
     re.M,
 )
+
+PRE_EXISTING_ERRORS = re.compile(r"^Original project check reported ([1-9]\d*) type error\(s\):$")
+CHECKER_FAILED = re.compile(r"^Original project type check failed: (.+)$")
+DIAGNOSTIC_LINE = re.compile(r"^  (?P<path>[^:]+.*?): (?P<message>.+)$", re.M)
+REMEDY = "rerun with --no-types"
 
 
 def _refusal(log_path: Path) -> str:
@@ -781,6 +823,44 @@ def _refusal(log_path: Path) -> str:
         return ""
     match = REFUSAL.search(text)
     return match.group(1) if match else ""
+
+
+@dataclasses.dataclass(frozen=True)
+class BaselineRefusal:
+    """A refusal to verify, because the project's own sources do not check."""
+
+    kind: str
+    summary: str
+
+
+def _baseline_refusal(refused: str) -> Optional[BaselineRefusal]:
+    """Whether this refusal is about the project's own type baseline, and which kind."""
+    errors = PRE_EXISTING_ERRORS.match(refused)
+    if errors is not None:
+        return BaselineRefusal("pre-existing-errors", f"{errors.group(1)} pre-existing type errors")
+    failed = CHECKER_FAILED.match(refused)
+    if failed is not None:
+        return BaselineRefusal("checker-failed", failed.group(1)[:200])
+    return None
+
+
+def _malformed_refusal(declined: BaselineRefusal, log_path: Path) -> Optional[str]:
+    """What the refusal failed to tell its reader, or ``None`` when it told them everything.
+
+    A refusal is the only thing a user of an unchecked project ever sees, so the
+    corpus holds it to its promise: say how many errors there are, show some of
+    them with the file they are in, and name the way forward. Asserting it here
+    means every project in the corpus that trips it is a test of the wording.
+    """
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    if REMEDY not in text:
+        return f"refusal did not name the way forward ({REMEDY!r} absent)"
+    if declined.kind != "pre-existing-errors":
+        return None
+    shown = DIAGNOSTIC_LINE.findall(text)
+    if not shown:
+        return "refusal reported a count but showed no diagnostic with its file"
+    return None
 
 
 FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) ([^(].*)$")
@@ -987,9 +1067,10 @@ def main() -> int:
             results.append(result)
             seconds = result.refactor.seconds if result.refactor else 0.0
             detail_line = result.detail.splitlines()[0] if result.detail else ""
+            mode = f"[{result.typing_mode}]" if result.fallback else ""
             print(
                 f"{result.verdict:15} {result.name:18} files={result.changed_files:<3} "
-                f"refactor={seconds:6.1f}s {detail_line[:80]}",
+                f"refactor={seconds:6.1f}s {mode}{detail_line[:80]}",
                 flush=True,
             )
             (report_dir / f"{result.name}.json").write_text(
@@ -999,23 +1080,37 @@ def main() -> int:
     counts: Dict[str, int] = {}
     for result in results:
         counts[result.verdict] = counts.get(result.verdict, 0) + 1
+    fallbacks: Dict[str, int] = {}
+    for result in results:
+        if result.fallback:
+            fallbacks[result.fallback] = fallbacks.get(result.fallback, 0) + 1
     lines = [
         f"# Ecosystem check — towel `{towel_commit or 'unavailable (source archive)'}`",
         "",
-        f"Typing mode: `{typing_mode}`. This records the requested mode; runtime test "
-        "outcomes do not establish type-checking coverage.",
+        f"Typing mode requested: `{typing_mode}`. A project whose own sources do not "
+        "check is declined by Towel and rerun here without types; its row says so, and "
+        "its verdict is evidence about the untyped path only. Runtime test outcomes do "
+        "not establish type-checking coverage either way.",
         "",
-        "| Project | Commit | Verdict | Changed files | Refactor s | Before | After |",
-        "|---|---|---|---|---|---|---|",
+        "| Project | Commit | Verdict | Typing | Changed files | Refactor s | Before | After |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for result in results:
+        typing = result.typing_mode + (f" (declined: {result.fallback})" if result.fallback else "")
         lines.append(
-            f"| {result.name} | `{result.commit[:10]}` | {result.verdict} | {result.changed_files} | "
+            f"| {result.name} | `{result.commit[:10]}` | {result.verdict} | {typing} | "
+            f"{result.changed_files} | "
             f"{result.refactor.seconds if result.refactor else 0:.0f} | "
             f"{result.baseline.summary if result.baseline else ''} | "
             f"{result.after.summary if result.after else ''} |"
         )
     lines += ["", "Totals: " + ", ".join(f"{key} {value}" for key, value in sorted(counts.items()))]
+    if fallbacks:
+        lines += [
+            "",
+            "Declined the typed path and rerun without types: "
+            + ", ".join(f"{key} {value}" for key, value in sorted(fallbacks.items())),
+        ]
     (report_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (report_dir / "summary.json").write_text(
         json.dumps(
@@ -1023,13 +1118,19 @@ def main() -> int:
                 "towel": towel_commit,
                 "typing_mode": typing_mode,
                 "counts": counts,
+                "declined_typed_path": fallbacks,
                 "results": [dataclasses.asdict(r) for r in results],
             },
             indent=2,
         ),
         encoding="utf-8",
     )
-    print("\n".join(lines[-1:]), flush=True)
+    print(
+        "\n".join(
+            line for line in lines if line.startswith("Totals:") or line.startswith("Declined")
+        ),
+        flush=True,
+    )
     accepted = {"PASS", "NO_CHANGE", "BROKEN_KNOWN"}
     return 0 if results and all(result.verdict in accepted for result in results) else 1
 

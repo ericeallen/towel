@@ -11,7 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
 
 import pytest
 
@@ -32,7 +32,7 @@ def _phase(path: Path, code: int, output: str) -> ecosystem.Phase:
         ("BROKEN_KNOWN", 0),
         ("SETUP_ERROR", 1),
         ("BASELINE_ERROR", 1),
-        ("TYPE_BASELINE_ERROR", 1),
+        ("REFUSAL_MALFORMED", 1),
         ("AFTER_ERROR", 1),
         ("UNSUPPORTED", 1),
         ("PENDING", 1),
@@ -107,6 +107,7 @@ def _check(
     test: tuple[str, ...] = tuple(ecosystem.DEFAULT_TEST),
     no_types: bool = False,
     refactor: tuple[int, str] = (0, "Applied 1 refactoring\n"),
+    refactor_retry: Optional[tuple[int, str]] = None,
 ) -> ecosystem.Result:
     source = root / "fixture"
     source.mkdir()
@@ -124,16 +125,22 @@ def _check(
         nonlocal refactor_calls
         if "towel.cli" in command:
             refactor_calls += 1
-            assert (
-                refactor_calls == 1
-            ), "A failed transformation must not trigger an automatic retry"
-            assert command.count("--no-types") == int(no_types)
+            outcome = refactor
+            if refactor_calls == 1:
+                assert command.count("--no-types") == int(no_types)
+            else:
+                # The only retry there is: a project Towel declined to verify,
+                # rerun on the untyped path so its behaviour is still covered.
+                assert refactor_retry is not None, "an unexpected second attempt"
+                assert refactor_calls == 2, "at most one retry"
+                assert command.count("--no-types") == 1
+                outcome = refactor_retry
             # Write where the command says, so the layout stays the harness's
             # business and this stub cannot drift from it.
             cleaned = Path(command[command.index("dry") + 2])
             cleaned.parent.mkdir(parents=True, exist_ok=True)
             cleaned.write_text("value = 2\n" if changed else "value = 1\n")
-            return _phase(log, *refactor)
+            return _phase(log, *outcome)
         if ecosystem._pytest_arguments_start(command) is not None:
             assert command[-2:] == ["--verbosity=0", "-ra"]
         code, output = next(phases)
@@ -809,25 +816,32 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
     summary = json.loads((tmp_path / "report/summary.json").read_text())
     assert result["typing_mode"] == summary["typing_mode"] == mode
     assert summary["results"][0]["typing_mode"] == mode
-    assert f"Typing mode: `{mode}`" in (tmp_path / "report/summary.md").read_text()
+    assert f"Typing mode requested: `{mode}`" in (tmp_path / "report/summary.md").read_text()
+
+
+PRE_EXISTING_ERRORS = (
+    "Error: Original project check reported 2 type error(s):\n"
+    "  module.py: incompatible type\n"
+    "Fix the existing errors or rerun with --no-types "
+    "(library: type_oracle=None, annotate_helpers=False).\n"
+)
+CHECKER_FAILED = (
+    "Error: Original project type check failed: timed out\n"
+    "rerun with --no-types (library: type_oracle=None, annotate_helpers=False).\n"
+)
 
 
 @pytest.mark.parametrize(
     "diagnostic,expected",
     [
-        (
-            "Error: Original project check reported 2 type error(s):\n"
-            "  module.py: incompatible type\nFix the existing errors or rerun with --no-types\n",
-            "TYPE_BASELINE_ERROR",
-        ),
-        ("Error: Original project type check failed: timed out\n", "CRASH"),
         ("Traceback (most recent call last):\nRuntimeError: fixture\n", "CRASH"),
         ("Error: Unsupported build backend fixture\n", "UNSUPPORTED"),
     ],
 )
-def test_type_baseline_refusal_is_distinct_and_never_retried_without_types(
+def test_a_failed_transformation_is_never_retried_without_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diagnostic: str, expected: str
 ) -> None:
+    """Only a refusal to verify earns a retry; a crash is a crash on either path."""
     result = _check(
         tmp_path,
         monkeypatch,
@@ -836,8 +850,77 @@ def test_type_baseline_refusal_is_distinct_and_never_retried_without_types(
         refactor=(1, diagnostic),
     )
     assert result.verdict == expected and result.typing_mode == "default"
-    assert result.after is None
+    assert result.fallback == "" and result.after is None
     assert result.refactor is not None and result.refactor.returncode == 1
+
+
+@pytest.mark.parametrize(
+    "diagnostic,kind",
+    [(PRE_EXISTING_ERRORS, "pre-existing-errors"), (CHECKER_FAILED, "checker-failed")],
+)
+def test_a_project_towel_declines_to_verify_is_rerun_without_types(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diagnostic: str, kind: str
+) -> None:
+    """The verdict then comes from the untyped path, and the row says so."""
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(1, diagnostic),
+        refactor_retry=(0, "Applied 1 refactoring\n"),
+    )
+    assert result.verdict == "PASS"
+    assert result.fallback == kind and result.typing_mode == "no-types"
+    assert result.after is not None
+
+
+def test_a_rerun_without_types_that_still_fails_keeps_its_own_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(1, PRE_EXISTING_ERRORS),
+        refactor_retry=(1, "Traceback (most recent call last):\nRuntimeError: fixture\n"),
+    )
+    assert result.verdict == "CRASH" and result.fallback == "pre-existing-errors"
+
+
+@pytest.mark.parametrize(
+    "diagnostic,missing",
+    [
+        (
+            "Error: Original project check reported 2 type error(s):\n"
+            "  module.py: incompatible type\n",
+            "way forward",
+        ),
+        (
+            "Error: Original project check reported 2 type error(s):\n" "rerun with --no-types\n",
+            "showed no diagnostic",
+        ),
+        ("Error: Original project type check failed: timed out\n", "way forward"),
+    ],
+)
+def test_a_refusal_that_does_not_say_what_to_do_fails_the_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diagnostic: str, missing: str
+) -> None:
+    """The refusal is all such a user ever sees, so the corpus is where it is tested.
+
+    Lark and Voluptuous, whose mypy configs name a Python version mypy 1.19 has
+    dropped, are the reason: the refusal they produced named no way out.
+    """
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(1, diagnostic),
+    )
+    assert result.verdict == "REFUSAL_MALFORMED"
+    assert missing in result.detail
 
 
 def _git_fixture(root: Path) -> Path:

@@ -65,6 +65,9 @@ from .function_index import FunctionIndex
 from .generic_annotations import MethodContext, generic_helpers
 from .import_graph import module_and_qualname
 
+UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
+"""The way out of every refusal to verify: the one thing such a user can act on."""
+
 
 class HelperAnnotationWiring(EngineState):
     """Helper AnnotationWiring methods of the engine; see the module docstring."""
@@ -102,8 +105,14 @@ class HelperAnnotationWiring(EngineState):
                     for diagnostic in self._type_run_baseline.errors:
                         TYPES.debug("original error in %s: %s", diagnostic.path, diagnostic.message)
         if isinstance(self._type_run_baseline, CheckFailure):
+            # A checker that cannot run at all -- a config naming a Python
+            # version it has dropped, a tree it cannot build -- leaves the same
+            # user in the same place as one reporting errors, and said nothing
+            # about how to get out of it. Voluptuous and Lark, whose configs
+            # ask mypy 1.19 for Python 3.9 and 3.8, are both this.
             raise RefactoringError(
-                f"Original project type check failed: {self._type_run_baseline.reason}"
+                f"Original project type check failed: {self._type_run_baseline.reason}\n"
+                f"{UNTYPED_REMEDY}"
             )
         if self._type_run_baseline is not None and self._type_run_baseline.errors:
             errors = self._type_run_baseline.errors
@@ -115,8 +124,7 @@ class HelperAnnotationWiring(EngineState):
                 )
             raise RefactoringError(
                 f"Original project check reported {len(errors)} type error(s):\n{details}\n"
-                "Fix the existing errors or rerun with --no-types "
-                "(library: type_oracle=None, annotate_helpers=False)."
+                f"Fix the existing errors or {UNTYPED_REMEDY}"
             )
 
     def _active_type_oracle(self) -> Optional[TypeOracle]:
