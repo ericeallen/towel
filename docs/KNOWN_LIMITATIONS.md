@@ -623,6 +623,22 @@ the proposals it built and did not apply, by reason:
   block reads a name the caller rebinds after it. `moves_scope_declaration`:
   a `global`/`nonlocal` declaration in the block names something the
   caller still uses.
+- Objects created by moved code. `created_object_escapes`: a function,
+  lambda, generator or class the block creates could be observed other than
+  by calling it. Created inside a helper it would carry the helper's
+  `__qualname__` (`f1.<locals>.<lambda>` would become
+  `__extracted_func_0.<locals>.<lambda>`), which reaches output through
+  `repr`, logging and registries, and a unified lambda would carry the
+  template's parameter names. Such an object may still be called in the
+  block with arguments it accepts, be the `key=` of `sorted`, `min` or `max`,
+  or be the function of a `map` or `filter` consumed in the block; anything
+  else, and any class defined in the block, is declined. Lambdas passed to
+  methods, to `functools.reduce`, or joined by a non-literal separator are
+  declined by this rule although many are harmless.
+  `thunk_of_possibly_unbound_local`: a lambda the helper call would carry
+  reads a local of the calling function that may be unbound there. The
+  original raises `UnboundLocalError` at that read; a thunk can only raise
+  `NameError`, so an `except UnboundLocalError` would stop matching.
 - Type information the move would destroy. `narrowing_lost_at_call_site`: a
   test in the block narrows a name, and an expression the two sites differ in
   reads that name, so extraction would leave the reading outside the region
@@ -728,6 +744,24 @@ the proposals it built and did not apply, by reason:
 Other behaviors that leave a duplicate in place are not rejections of a
 formed pair:
 
+- A literal that a tool reads without running the program is never a
+  parameter, so blocks that differ only in one are not duplicates. That
+  covers the message and context arguments of translation markers (Babel's,
+  Django's and Flask-Babel's keywords, and keywords a project configures for
+  extraction), which message extraction reads from the source, and the
+  names, fields and types of the functional typing forms (`TypeVar`,
+  `NewType`, `NamedTuple`, `TypedDict`, `Enum`, ...), `Literal[...]`, and a
+  type spelled as a string in `cast` or `assert_type`, which no annotation
+  lets a checker accept as a parameter.
+- In a `match` pattern only a class pattern's class, or the root of a dotted
+  value, may become a parameter; a differing literal or capture in a pattern
+  makes the blocks different code.
+- An integer literal wider than 640 decimal digits declines its block,
+  because generated code would spell it in decimal.
+- A block whose only computation is a call of a helper this run generated,
+  unpacking and repacking what it returns, is never extracted: it shares no
+  code the user wrote. With it excluded, every extraction moves some of the
+  user's code into a helper, which is what makes the fixed point end.
 - A duplicate that is the whole body of an existing function is extracted
   like any other, and the function becomes a call of the new helper; it is
   never rewritten to call another existing function that restates it. Such
