@@ -345,7 +345,10 @@ def _toml_keywords(path: Path, *, in_pyproject: bool) -> List[str]:
             data = tomllib.load(handle)
     except (OSError, tomllib.TOMLDecodeError):
         return []
-    babel = data.get("tool", {}).get("babel", {}) if in_pyproject else data
+    babel: object = data
+    if in_pyproject:
+        tool = data.get("tool")
+        babel = tool.get("babel") if isinstance(tool, dict) else None
     mappings = babel.get("mappings", []) if isinstance(babel, dict) else []
     specs: List[str] = []
     for mapping in mappings if isinstance(mappings, list) else []:

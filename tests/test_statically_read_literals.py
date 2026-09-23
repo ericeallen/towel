@@ -28,6 +28,10 @@ from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tupl
 import pytest
 
 from tests.test_helpers import parse_block, refactor_to_fixed_point_silently, write_module
+from towel.unification.static_positions import (
+    DEFAULT_TRANSLATION_KEYWORDS,
+    configured_translation_keywords,
+)
 from towel.unification.unifier import Unifier
 
 # Each keyword's arguments, and the 1-based ones extraction reads (messages and
@@ -300,6 +304,25 @@ def test_a_keyword_the_project_configures_for_extraction_is_read_too(
     keywords = {marker: frozenset({1})}
     assert _message_ids(final, keywords) == _message_ids(textwrap.dedent(source), keywords)
     assert len(_message_ids(final, keywords)) == 2
+
+
+@pytest.mark.parametrize(
+    "pyproject",
+    [
+        "tool = 1\n",
+        '[tool]\nbabel = "python"\n',
+        "[tool.babel]\nmappings = 3\n",
+        "[tool.babel]\nmappings = [1, {keywords = 5}]\n",
+        "[tool.babel\n",
+    ],
+)
+def test_a_configuration_pybabel_could_not_read_configures_nothing(
+    tmp_path: Path, pyproject: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(pyproject)
+    (tmp_path / "setup.cfg").write_text("[extract_messages\nkeywords = _l\n")
+    module = write_module(tmp_path, "value = 1\n")
+    assert configured_translation_keywords([module]) == DEFAULT_TRANSLATION_KEYWORDS
 
 
 def test_an_unconfigured_name_is_an_ordinary_call(tmp_path: Path) -> None:
