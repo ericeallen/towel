@@ -102,6 +102,7 @@ from .semantic_safety import (
 )
 from .import_graph import (
     ImportChange,
+    host_has_stub,
     import_change,
     layout_is_known,
     relative_import_levels,
@@ -1425,6 +1426,11 @@ class PairEvaluation(
         refusal: Optional[RejectReason] = None
         for candidate in candidates:
             if would_create_import_cycle(candidate, participating, self.import_graph):
+                continue
+            # The other modules would import the helper through the host's
+            # stub, which a type checker reads in its place and lacks it.
+            if host_has_stub(candidate, self.import_graph):
+                refusal = refusal or RejectReason.HOST_HAS_STUB
                 continue
             # The new import must not change what importing a borrower does: a
             # host that prints or registers at import time would do so wherever

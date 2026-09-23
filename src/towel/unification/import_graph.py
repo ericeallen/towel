@@ -1250,6 +1250,57 @@ def import_change(
     return None
 
 
+def host_has_stub(host_file: str, cache: ImportGraphCache) -> bool:
+    """Whether a type checker may read a stub in place of ``host_file`` when another module imports it.
+
+    A checker resolves ``alpha.a`` to ``alpha/a.pyi`` when there is one, so a
+    helper added to ``alpha/a.py`` is not there for it: ``from alpha.a import
+    __extracted_func_0`` elsewhere is an unknown symbol to pyright and a
+    missing attribute to mypy (audit k30). A ``.pyi`` beside the module
+    counts, and so do a stub-only ``<package>-stubs`` directory beside its
+    top-level package or at the project root, which a checker reads in
+    place of the package once installed, and the module's stub under the
+    project's ``typings`` directory, pyright's default stub path. A module
+    whose layout is unknown counts as stubbed.
+    """
+    module = Path(host_file).resolve()
+    if module.with_suffix(".pyi").is_file():
+        return True
+    source_roots = _source_roots(module, cache)
+    root = _holding_root(module, source_roots or ())
+    if root is None:
+        return True
+    parts = module.relative_to(root).with_suffix("").parts
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    if not parts:
+        return False
+    project = find_project_root(module)
+    for base in dict.fromkeys((root, project)):
+        package = base / f"{parts[0]}-stubs"
+        if package.is_dir():
+            # A partial stub package leaves the modules it omits to the
+            # runtime package; any other hides them from the checker.
+            if not _is_partial_stub_package(package) or _stub_file(package, parts[1:]):
+                return True
+    return _stub_file(project / "typings", parts)
+
+
+def _is_partial_stub_package(package: Path) -> bool:
+    """Whether a ``<package>-stubs`` directory declares itself partial in its ``py.typed`` (PEP 561)."""
+    try:
+        marker = (package / "py.typed").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return "partial" in marker.split()
+
+
+def _stub_file(base: Path, parts: Sequence[str]) -> bool:
+    """Whether ``base`` holds the stub of the module ``parts`` names, as a file or a package."""
+    stub = base.joinpath(*parts)
+    return (bool(parts) and stub.with_suffix(".pyi").is_file()) or (stub / "__init__.pyi").is_file()
+
+
 def runs_as_script(tree: ast.Module, path: Path) -> bool:
     """Whether the module is written to run as a program: ``__main__.py``, or one with a main guard."""
     return path.name == "__main__.py" or any(

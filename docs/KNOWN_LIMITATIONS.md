@@ -303,6 +303,15 @@ imports is relative, so a run by path already fails there. The import it
 gains must then be absolute, and a relative one is declined when it is
 written (`r08`; `tests/test_run_by_path.py`).
 
+A type checker reads a module's stub in its place, so a host is refused as
+well when it has one (`host_has_stub`): a `.pyi` beside it, its stub under
+the project's `typings` directory, or a `<package>-stubs` directory for its
+top-level package that holds its stub, or that is not partial and so hides
+every module it omits. `from alpha.a import __extracted_func_0` against
+`alpha/a.pyi` was an unknown symbol to pyright and a missing attribute to
+mypy (audit `k30`). Stub directories named only in a checker's
+configuration (`mypy_path`, pyright's `stubPath`) are not read.
+
 ## Method insertion
 
 A helper shared by methods that never read an attribute of their receiver, or
@@ -592,7 +601,8 @@ the pair decision raises them, grouped by stage:
   the declared dependencies; `new_top_level_package`: it would load a
   top-level package of the project the borrower's import does not;
   `run_by_path_import`: the borrower runs as a program, and run by its path
-  it could not resolve the import. In each
+  it could not resolve the import; `host_has_stub`: a type checker would
+  read the host's stub, which lacks the helper, in its place. In each
   case a module-level helper may move to a participating module that hosts
   it without the change, and the pair is declined only when none does.
   `relative_import_across_packages`: the block runs a relative import that
