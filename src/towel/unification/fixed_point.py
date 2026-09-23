@@ -29,6 +29,9 @@ both), ``detail`` (a line per phase), or ``none``.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import dataclasses
+import logging
 import os
 from dataclasses import dataclass, field
 import textwrap
@@ -38,7 +41,18 @@ import time
 from pathlib import Path
 import ast
 import sys
-from typing import Literal, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Callable,
+    Iterator,
+    Literal,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import RefactoringError
 from .models import RefactoringProposal, TerminationReason
@@ -57,8 +71,10 @@ from .progress import (
 )
 from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangePlan, StaleSource, apply_changes
-from ..diagnostics import LOG, REJECTIONS, debugging
-from ..filesystem import copy_project
+from ..consumers import MAXIMUM_FILES
+from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
+from ..filesystem import StagedProject, copy_project, refuse_unusable_output, staged_project
+from ..project_layout import find_project_root
 from ..source_text import decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
 
@@ -119,9 +135,10 @@ class FixedPointDrivers(Materialization):
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
                 installed), ``auto`` (that, or an inline bar), ``detail``
                 (a line per proposal), or ``none``.
-            output_path: An optional new copy to refactor. The original project
-                is checked before the output is created, and subsequent checks
-                retain its configuration and unchanged consumers.
+            output_path: An optional new file to write the result to. The
+                file is refactored inside a private copy of its whole project,
+                exactly as it would be in place, and written here only when
+                the run succeeds; the original is only read.
 
         Returns:
             The final source, the number of refactorings applied, and their
@@ -137,15 +154,30 @@ class FixedPointDrivers(Materialization):
             raise ValueError(f"{file_path}: {error}") from error
         except SyntaxError as error:
             raise ValueError(f"{file_path}: line {error.lineno}: {error.msg}") from error
+        in_place = output_path is None or Path(output_path).resolve() == Path(file_path).resolve()
+        if not in_place:
+            refuse_unusable_output(Path(file_path), Path(str(output_path)))
         self.begin_refactoring_run([file_path])
-        if output_path is not None and Path(output_path).resolve() != Path(file_path).resolve():
-            source, destination = Path(file_path), Path(output_path)
-            copy_project(source, destination)
-            if self._type_run_oracle is not None:
-                self._type_run_oracle = relocate_oracle(self._type_run_oracle, source, destination)
-            self._output_origin = (source, destination)
-            file_path = output_path
-            self._analysis_paths = (file_path,)
+        if output_path is None or in_place:
+            return self._refactor_file_in_place(
+                file_path, current_bytes, current_code, max_iterations, analysis_progress
+            )
+        with self._staged_output(Path(file_path), Path(output_path)) as stage:
+            refactored = self._refactor_file_in_place(
+                str(stage.target), current_bytes, current_code, max_iterations, analysis_progress
+            )
+            copy_project(stage.target, stage.output)
+            return refactored
+
+    def _refactor_file_in_place(
+        self,
+        file_path: str,
+        current_bytes: bytes,
+        current_code: str,
+        max_iterations: int,
+        analysis_progress: ProgressMode,
+    ) -> Tuple[str, int, List[str]]:
+        """The single-file loop over ``file_path``, which holds ``current_bytes``."""
         self._warn_about_frame_sensitive_files(file_path)
         num_applied = 0
         descriptions = []
@@ -292,7 +324,11 @@ class FixedPointDrivers(Materialization):
         Args:
             input_dir: The directory to analyze.
             output_dir: The directory to write into (the same as ``input_dir``
-                to refactor in place).
+                to refactor in place). Otherwise ``input_dir`` is refactored
+                inside a private copy of its whole project, exactly as it would
+                be in place, and only its refactored counterpart is written
+                here, all at once, when the run succeeds; the returned paths
+                name files here.
             max_iterations: Stop after this many applied refactorings; 0 or
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
@@ -321,30 +357,89 @@ class FixedPointDrivers(Materialization):
 
         if not input_path.is_dir():
             raise ValueError("Input directory does not exist")
-        self.begin_refactoring_run(self._find_python_files(input_dir))
         if resolved_input != resolved_output:
-            copy_project(input_path, output_path, allow_empty=True)
-            if self._type_run_oracle is not None:
-                self._type_run_oracle = relocate_oracle(
-                    self._type_run_oracle, input_path, output_path
-                )
-            self._output_origin = (input_path, output_path)
-            self._analysis_paths = tuple(self._find_python_files(output_dir))
+            refuse_unusable_output(input_path, output_path, allow_empty=True)
+        self.begin_refactoring_run(self._find_python_files(input_dir))
+        if resolved_input == resolved_output:
+            return self._refactor_directory_in_place(output_path, reporter, max_iterations)
+        with self._staged_output(input_path, output_path) as stage:
+            self._analysis_paths = tuple(self._find_python_files(str(stage.target)))
+            results, termination_reason = self._refactor_directory_in_place(
+                stage.target, reporter, max_iterations
+            )
+            copy_project(stage.target, stage.output, allow_empty=True)
+            return {stage.public(path): result for path, result in results.items()}, (
+                termination_reason
+            )
 
-        self._warn_about_frame_sensitive_files(output_dir)
+    def _refactor_directory_in_place(
+        self, directory: Path, reporter: "_ApplyProgress", max_iterations: int
+    ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
+        """The directory loop over ``directory``, then the cold confirmation of what it did."""
+        self._warn_about_frame_sensitive_files(str(directory))
 
         run = _DirectoryRun()
         termination_reason: TerminationReason = "fixed_point"
 
         try:
             return self._apply_until_fixed_point(
-                output_path, run, reporter, max_iterations, termination_reason
+                directory, run, reporter, max_iterations, termination_reason
             )
         finally:
             # A display thread must not outlive the run, however it ended.
             reporter.close()
             if run.applied:
-                self.confirm_run_with_a_cold_checker(self._find_python_files(str(output_path)))
+                self.confirm_run_with_a_cold_checker(self._find_python_files(str(directory)))
+
+    @contextmanager
+    def _staged_output(self, origin: Path, output: Path) -> Iterator[StagedProject]:
+        """Refactor ``origin``'s counterpart in a private copy of its whole project.
+
+        An in-place run reads the rest of the project as it refactors: the
+        import graph that the cycle and import-time-effect guards walk, the
+        packaging that names modules, the configuration. A copy of the target
+        alone has none of it, so a cycle through a module outside the target
+        went unseen and the adopted output could not be imported, while the
+        same run in place was right. Staging the whole project makes the two
+        runs one run: the target's counterpart is refactored in place in the
+        stage, with the checker reading the stage under the original's names,
+        and the caller publishes it to ``output`` only once the run succeeds,
+        so a failed run leaves nothing behind. Every path the run reports
+        names the output (or, outside the target, the original), not the
+        stage, which is removed however the block ends.
+        """
+        inner_oracle = self._type_run_oracle
+        root = find_project_root(origin)
+        with staged_project(root, origin, output, limit=MAXIMUM_FILES) as stage:
+            if inner_oracle is not None:
+                # Only the target: the rest of the stage is the original, byte
+                # for byte, and restating it to the checker would make it
+                # check modules the project's configuration leaves out, whose
+                # errors the original check never saw.
+                self._type_run_oracle = relocate_oracle(
+                    inner_oracle, stage.origin_target, stage.target
+                )
+            self._output_origin = (stage.origin_root, stage.root)
+            self._analysis_paths = (str(stage.target),)
+            rewrite = _StagePathsInLogs(stage.public_text)
+            loggers = (LOG, REJECTIONS, VALIDATION, OVERLAP, TYPES, UNIFIER)
+            for logger in loggers:
+                logger.addFilter(rewrite)
+            try:
+                yield stage
+                self._change_log = [
+                    dataclasses.replace(change, path=stage.public(change.path))
+                    for change in self._change_log
+                ]
+            except (OSError, ValueError, RefactoringError) as error:
+                _name_public_paths(error, stage.public_text)
+                raise
+            finally:
+                for logger in loggers:
+                    logger.removeFilter(rewrite)
+                # The stage is about to go; nothing may keep checking against it.
+                self._type_run_oracle = inner_oracle
+                self._output_origin = None
 
     def _apply_until_fixed_point(
         self,
@@ -552,6 +647,32 @@ class FixedPointDrivers(Materialization):
             reporter.detail(f"Localized +{len(localized)} follow-up(s)")
             reporter.inline(run.applied, len(queue), "localized", f"+{len(localized)} follow-ups")
         return queue
+
+
+class _StagePathsInLogs(logging.Filter):
+    """Rewrite a record's stage paths to the ones the user knows, before any handler sees it."""
+
+    def __init__(self, rewrite: Callable[[str], str]) -> None:
+        super().__init__()
+        self._rewrite = rewrite
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        rewritten = self._rewrite(message)
+        if rewritten != message:
+            record.msg, record.args = rewritten, None
+        return True
+
+
+def _name_public_paths(error: BaseException, rewrite: Callable[[str], str]) -> None:
+    """Point a failure's message at the paths the user knows; the stage it names is gone."""
+    if isinstance(error, OSError):
+        for attribute in ("filename", "filename2"):
+            value = getattr(error, attribute)
+            if isinstance(value, str):
+                setattr(error, attribute, rewrite(value))
+    elif len(error.args) == 1 and isinstance(error.args[0], str):
+        error.args = (rewrite(error.args[0]),)
 
 
 class _RejectedProposals:

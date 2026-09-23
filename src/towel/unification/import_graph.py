@@ -114,8 +114,9 @@ def _module_files_relocated(
 ) -> Set[Path]:
     """Files an absolute import resolves to across ``roots``, tolerating relocation.
 
-    Out-of-place refactoring writes a package's modules into a flat output
-    directory while they keep their original absolute imports, so the leading
+    A package analyzed as a copy outside its project (a library caller's
+    fixture, a copied checkout; ``towel dry`` itself stages the whole project,
+    so it never does this) keeps its original absolute imports, so the leading
     package components (``starlette`` in ``starlette.websockets``) have no
     directory to match and the full path resolves to nothing. Only then do we
     retry against progressively shorter trailing suffixes, so

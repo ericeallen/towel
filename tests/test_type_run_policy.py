@@ -343,7 +343,11 @@ def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
                 )
                 assert sum(count for count, _ in results.values()) == 1
                 assert "return first(value)" in (output / "program.py").read_text()
-                assert str(output) in check.call_args_list[1].kwargs["excluded_paths"]
+                # The checker reads the run's stage under the original's names,
+                # and the stage itself is excluded from the project it checks.
+                excluded = check.call_args_list[1].kwargs["excluded_paths"]
+                assert any("towel-stage-" in path for path in excluded)
+                assert not any(Path(path).exists() for path in excluded)
         assert check.call_count == (1 if dirty else 2)
         assert str(path) in check.call_args_list[0].args[0]
         assert path.read_text() == _source()
