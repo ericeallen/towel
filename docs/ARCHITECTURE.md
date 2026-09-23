@@ -86,7 +86,7 @@ flowchart TD
       deletes or `except ... as`-binds a name bound before it is declined
       here;
    3. the shape check: both blocks value-producing or neither, complete
-      return coverage, not a trivial `return name`, structurally similar;
+      return coverage, structurally similar;
    4. unification (`unifier.py`, below) and alignment of the returned
       variables across the blocks;
    5. where the helper will be visible from, for hygienic naming;
@@ -97,11 +97,14 @@ flowchart TD
       rebinding-hazard guards, which decline the rest; `global`/`nonlocal`
       declarations; and any name the call site may not resolve becomes a
       thunk;
-   7. rendering the helper (`extractor.py`), and dropping one whose body
-      only forwards: a lone `raise`, a `return` of one call, a bare call, a
-      call whose result is bound and returned, or a body that only binds
-      parameters and literals to names and returns them
-      (`skip_trivial_helpers=False` keeps such helpers);
+   7. rendering the helper (`extractor.py`), and dropping one too trivial
+      to share, decided in one place (`_trivial_helper_reason`): one that
+      computes nothing, only handing back its parameters, literals, tuples of
+      them or its sites' thunks, and one that only calls generated helpers,
+      in every configuration; and one whose body only forwards: a lone
+      `raise`, a `return` of one call, a bare call, a call whose result is
+      bound and returned, or a body that only binds parameters and literals
+      to names and returns them (`skip_trivial_helpers=False` keeps these);
    8. the orphan check (`orphan_detector.py`, `definite_assignment.py`) on
       what the blocks leave behind;
    9. the call sites, each verified by instantiating the helper with its

@@ -603,10 +603,9 @@ the proposals it built and did not apply, by reason:
 - Shape. `value_producing_mismatch`: one block returns a value and the
   other does not. `incomplete_return_coverage_block1`/`_block2`: a
   value-producing block does not leave by `return`, `raise`, `break` or
-  `continue` on every path. `trivial_return_blocks`: both blocks are a
-  one-line `return name` of a name bound before them.
-  `not_structurally_similar`: the blocks' per-statement node counts or
-  type histograms differ by more than the similarity threshold.
+  `continue` on every path. `not_structurally_similar`: the blocks'
+  per-statement node counts or type histograms differ by more than the
+  similarity threshold.
 - Unification. `unification_failed`: the blocks do not anti-unify, which
   includes a differing sub-expression that is a slice, a starred item, or
   a whole f-string (container syntax rather than values), a lambda with
@@ -640,13 +639,21 @@ the proposals it built and did not apply, by reason:
   one site resolves the name at module scope.
 - Rendering. `impure_eager_parameter`: an argument that would be passed
   eagerly is not a literal, a resolvable name, or a tuple of those.
-  `trivial_forwarding_helper`: the helper body would be a single
-  forwarding statement (a lone `raise`, a `return` of one call, or a bare
-  call), a forwarding statement whose result is bound and returned
-  (`x = f(...)` then `return x`, or the tuple form), or a body that only
-  binds parameters and literals to names and returns them; such a helper
-  shares no logic, only a name, and is skipped by default
-  (`skip_trivial_helpers=False` keeps it).
+  `trivial_return_blocks`: the helper would compute nothing. Its one
+  statement returns nothing, or returns or evaluates only names, literals,
+  tuples of them and the thunks its sites pass, so each site would hand its
+  own expression to a helper that hands it back: two unrelated `return`
+  statements, such as rich's `Tag.markup` and `MofNCompleteColumn.render`,
+  unify that way, and so do two `return name` blocks. Declined whatever
+  `skip_trivial_helpers` says. `trivial_forwarding_helper`: the helper
+  body would be a single forwarding statement (a lone `raise`, a `return`
+  of one call, or a bare call), a forwarding statement whose result is
+  bound and returned (`x = f(...)` then `return x`, or the tuple form), or
+  a body that only binds parameters and literals to names and returns
+  them; such a helper shares no logic, only a name, and is skipped by
+  default (`skip_trivial_helpers=False` keeps it). One whose only
+  computation is calling helpers Towel generated is declined under this
+  reason whatever the setting.
 - Orphans. `orphaned_variables`: a name the block binds is read afterwards
   on a path that does not rebind it first, and the helper does not return
   it. A read after only a *conditional* rebinding is treated as orphaned

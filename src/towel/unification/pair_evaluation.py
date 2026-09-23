@@ -23,14 +23,14 @@ None for a rejection that was already traced through ``_debug_reject``:
 2. binding analysis of each block within its function, and the variables
    later code reads that the helper must return;
 3. the shape check: both blocks value-producing or neither, complete return
-   coverage, not a trivial ``return name``, structurally similar;
+   coverage, structurally similar;
 4. unification, and alignment of the returned variables across the blocks;
 5. where the helper will be visible from, for hygienic naming;
 6. the helper's free variables: the shared names a same-file helper reads
    bare because both sites resolve them at module scope, the module-data
    and rebound-external guards on the rest, lifetimes, declarations, thunks;
 7. rendering the helper, inlining leading thunks, and declining impure eager
-   parameters and helpers that only forward;
+   parameters and helpers too trivial to share (``_trivial_helper_reason``);
 8. the orphan check on what the blocks leave behind;
 9. the call sites, each verified by instantiation, plus clustered sites;
 10. placement: function, class, or module, and a host that closes no cycle;
@@ -275,21 +275,6 @@ def _analyzed_module(analyzer: Optional[ScopeAnalyzer]) -> Optional[ast.Module]:
     """The module ``analyzer`` analyzed, when it analyzed a whole module."""
     tree = analyzer.analyzed_tree if analyzer is not None else None
     return tree if isinstance(tree, ast.Module) else None
-
-
-def _is_trivial_return_of_bound_name(
-    block_nodes: Sequence[ast.stmt], bound_before_block: Set[str], bound_in_block: Set[str]
-) -> bool:
-    """A one-statement block that only returns a name bound before it."""
-    if len(block_nodes) != 1:
-        return False
-    stmt = block_nodes[0]
-    return (
-        isinstance(stmt, ast.Return)
-        and isinstance(stmt.value, ast.Name)
-        and stmt.value.id in bound_before_block
-        and stmt.value.id not in bound_in_block
-    )
 
 
 @dataclass(frozen=True)
@@ -815,21 +800,6 @@ class PairEvaluation(
                     trace="  REJECTED: Block2 missing complete return coverage",
                 )
                 return None
-        if _is_trivial_return_of_bound_name(
-            pair.block1_nodes,
-            analysis.snapshot1.bound_before_block,
-            analysis.snapshot1.bound_in_block,
-        ) and _is_trivial_return_of_bound_name(
-            pair.block2_nodes,
-            analysis.snapshot2.bound_before_block,
-            analysis.snapshot2.bound_in_block,
-        ):
-            self._reject(
-                pair,
-                RejectReason.TRIVIAL_RETURN_BLOCKS,
-                trace="  REJECTED: Trivial single-line return blocks (prefer extracting computation)",
-            )
-            return None
         if not self._are_structurally_similar(pair.block1_nodes, pair.block2_nodes):
             self._reject(
                 pair,
@@ -1108,16 +1078,13 @@ class PairEvaluation(
         if has_impure_eager_parameters(unified.substitution, free.available_names):
             self._debug_reject(RejectReason.IMPURE_EAGER_PARAMETER, pair)
             return None
-        # A helper that only forwards (a lone raise, a return of one call, a
-        # bare call, or an assignment returned as is) adds indirection and
-        # shares no logic; decline it here, before the call sites, clustering
-        # and placement are worked out for a helper that will be dropped. One
-        # that only calls generated helpers is declined whatever the setting:
-        # admitting it is what let the fixed point extract one per pass.
-        if self._helper_only_calls_generated_helpers(func_def) or (
-            self.skip_trivial_helpers and self._helper_is_trivial_forwarding(func_def)
-        ):
-            self._debug_reject(RejectReason.TRIVIAL_FORWARDING_HELPER, pair)
+        # A helper that computes nothing, only forwards, or only calls
+        # generated helpers shares no logic; decline it here, before the call
+        # sites, clustering and placement are worked out for a helper that
+        # will be dropped.
+        trivial = self._trivial_helper_reason(func_def)
+        if trivial is not None:
+            self._debug_reject(trivial, pair)
             return None
         preamble_length = int(bool(free.globals_to_declare)) + int(bool(free.nonlocals_to_declare))
         return _RenderedHelper(func_def, param_order, preamble_length)
