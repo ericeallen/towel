@@ -81,13 +81,26 @@ MAXIMUM_FILES = 20_000
 """Beyond this the tree is not a project, and the scan stops rather than crawl."""
 
 
-def _imported_modules(tree: ast.Module, module: str) -> Set[str]:
+class ScanLimitExceeded(RuntimeError):
+    """The tree holds more files than the scan reads, so its consumers are unknown.
+
+    A partial list would make the complete check silently incomplete: a
+    consumer beyond the limit could be broken by the change and never checked.
+    """
+
+
+def _imported_modules(tree: ast.Module, module: str, *, is_package: bool) -> Set[str]:
     """Every module name this file imports, relative imports resolved.
 
     A submodule import implies its parents: ``import a.b.c`` reads ``a`` and
     ``a.b`` too, and either of them may be the package under refactoring.
+
+    A relative import is resolved against the file's package, which for a
+    package's ``__init__`` is the module itself: ``from .sub import y`` in
+    ``app/__init__.py`` names ``app.sub``, not ``sub``. Taking the parent there
+    missed every consumer that reaches a change through a re-export.
     """
-    package = module.rsplit(".", 1)[0] if "." in module else ""
+    package = module if is_package else module.rpartition(".")[0]
     names: Set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -118,8 +131,11 @@ def _python_files(root: Path) -> List[Path]:
         for name in files:
             if name.endswith((".py", ".pyi")):
                 found.append(Path(parent) / name)
-                if len(found) >= MAXIMUM_FILES:
-                    return found
+                if len(found) > MAXIMUM_FILES:
+                    raise ScanLimitExceeded(
+                        f"{root} holds more than {MAXIMUM_FILES} Python files, so what imports"
+                        " the change cannot be established"
+                    )
     return found
 
 
@@ -153,7 +169,7 @@ def consumers_of(
             continue
         name = module_name(path)
         defines[resolved] = name
-        candidates[resolved] = _imported_modules(tree, name)
+        candidates[resolved] = _imported_modules(tree, name, is_package=path.stem == "__init__")
     reached: Set[Path] = set()
     # A consumer of a consumer is reached through it, so the set grows until it
     # stops: a test helper importing the package, and the tests importing that.

@@ -31,7 +31,9 @@ from typing import List, Mapping
 
 import pytest
 
+from towel import consumers
 from towel._mypy_worker import _walked_for
+from towel.consumers import consumers_of
 from towel import type_inference
 from towel.type_inference import CheckFailure, CheckSuccess, MypyInferrer
 
@@ -322,3 +324,65 @@ def test_the_consumer_scan_is_paid_for_once_however_many_checks_follow(
     finally:
         oracle.close()
     assert scans == 1, f"a sparse check rescanned the project ({scans} scans)"
+
+
+@requires_mypy
+def test_a_consumer_reached_through_a_package_reexport_is_checked(tmp_path: Path) -> None:
+    """``from .sub import SHARED`` in ``app/__init__.py`` names ``app.sub``.
+
+    The relative import was resolved against the parent of the ``__init__``
+    module, reading ``sub``, so a file importing only the re-exporting package
+    was never reached, and the complete check never looked at it.
+    """
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "lib/__init__.py": "",
+            "lib/base.py": "VALUE: int = 1\n",
+            "app/__init__.py": "from .sub import SHARED as SHARED\n",
+            "app/sub.py": "from lib.base import VALUE\n\nSHARED: int = VALUE\n",
+            "uses_app.py": "from app import SHARED\n\nWRONG: str = SHARED\n",
+        },
+    )
+    oracle = MypyInferrer()
+    try:
+        result = oracle.check_project({str(tmp_path / "lib" / "base.py"): "VALUE: int = 1\n"})
+    finally:
+        oracle.close()
+    assert isinstance(result, CheckSuccess), result
+    assert [error.path for error in result.errors] == [str(tmp_path / "uses_app.py")], result
+
+
+def test_a_relative_import_in_an_init_resolves_against_the_package_itself(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path,
+        {
+            "lib/__init__.py": "",
+            "lib/core.py": "X = 1\n",
+            "app/__init__.py": "from .sub import y as y\n",
+            "app/sub.py": "from lib.core import X\n\ny = X\n",
+            "tests/test_x.py": "from app import y\n",
+        },
+    )
+    found = consumers_of(
+        tmp_path,
+        {"lib", "lib.core"},
+        module_name=lambda path: type_inference._module_name_and_root(path)[0],
+        exclude=[tmp_path / "lib"],
+    )
+    assert found == sorted(
+        str(tmp_path / name) for name in ("app/__init__.py", "app/sub.py", "tests/test_x.py")
+    )
+
+
+def test_a_tree_beyond_the_scan_limit_is_refused_not_scanned_in_part(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partial consumer list would make the complete check silently incomplete."""
+    monkeypatch.setattr(consumers, "MAXIMUM_FILES", 2)
+    _write(tmp_path, {"lib/__init__.py": "", "a.py": "import lib\n", "b.py": "", "c.py": ""})
+    with pytest.raises(consumers.ScanLimitExceeded):
+        consumers_of(tmp_path, {"lib"}, module_name=lambda path: path.stem)

@@ -79,7 +79,12 @@ from .unification.bounded_cache import BoundedCache
 from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
-from .consumers import consumers_of as consumers_of, module_prefixes, walked_package
+from .consumers import (
+    ScanLimitExceeded,
+    consumers_of as consumers_of,
+    module_prefixes,
+    walked_package,
+)
 
 from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_probe_file
 
@@ -222,7 +227,7 @@ def _module_name_and_root(path: Path) -> Tuple[str, Path]:
     parts = [path.stem] + [
         package.name if package.name.isidentifier() else "_towel_package" for package in packages
     ]
-    if path.name == "__init__.py":
+    if path.name in ("__init__.py", "__init__.pyi"):
         parts = parts[1:]
     root = packages[-1].parent if packages else path.parent
     return ".".join(reversed(parts)), root
@@ -576,12 +581,16 @@ class MypyInferrer:
                 _BuildSource(path, _module_name_and_root(Path(path))[0], source)
                 for path, source in replacements.items()
             ]
+            try:
+                consumers = self._consumers(root, replacements)
+            except ScanLimitExceeded as error:
+                return CheckFailure(str(error))
             result = self._build_errors(
                 builds,
                 [str(root)],
                 complete=True,
                 excluded_paths=excluded_paths,
-                consumers=self._consumers(root, replacements),
+                consumers=consumers,
             )
             if isinstance(result, CheckFailure):
                 return result
