@@ -130,6 +130,10 @@ TRANSFORMED = {
     "p07_static_methods_called_while_class_body_runs",
     "p08_classmethod_never_using_cls",
     "p09_static_helper_metaclass_hides_attribute",
+    # Classes that cannot take a helper into their body: it goes to module level.
+    "p10_one_line_exception_base",
+    "p11_one_line_base_docstring_and_assignment",
+    "p12_one_line_body_after_a_split_header",
 }
 # Every other fixture must come back byte-identical. One of them once changed:
 # r86_annotated_assignment_live left the set when the trivial-helper filter

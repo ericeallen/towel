@@ -57,8 +57,8 @@ from .models import (
 from .scope_analyzer import ScopeAnalyzer
 from .import_graph import imported_definition_sites
 from .statement_facts import import_binding_names
-from .visitors import MethodCallRewriter, visit_as
-from ..source_text import read_source
+from .visitors import MethodCallRewriter, body_shares_header_line, visit_as
+from ..source_text import read_source, source_lines
 
 from .engine_state import EngineState
 
@@ -166,6 +166,14 @@ class _GlobalBinding:
 
 
 @dataclass(frozen=True)
+class _ClassHost:
+    """What a module-level class statement shows about taking a helper into its body."""
+
+    body_on_header_line: bool
+    """The body is written after the header's colon, where no statement can follow it."""
+
+
+@dataclass(frozen=True)
 class _ModuleBindings:
     """How one module binds its global names, in the order it binds them.
 
@@ -183,6 +191,7 @@ class _ModuleBindings:
     class_orders: Mapping[str, int]
     rebound_by_global: FrozenSet[str]
     star_imports: Tuple[int, ...]
+    class_hosts: Mapping[str, _ClassHost]
 
     def in_effect(self, name: str, order: int) -> Optional[_GlobalBinding]:
         """The binding ``name`` holds where top-level statement ``order`` runs.
@@ -207,6 +216,19 @@ class _ModuleBindings:
         if any(binding.order <= star <= order for star in self.star_imports):
             return None
         return binding
+
+    def refuses_helper(self, qualname: str) -> Optional[str]:
+        """Why the module-level class ``qualname`` cannot take a helper into its body, if it cannot.
+
+        A body on the header's line takes no statement after it.
+        """
+        host = self.class_hosts.get(qualname)
+        order = self.class_orders.get(qualname)
+        if host is None or order is None:
+            return "unknown class"
+        if host.body_on_header_line:
+            return "body on the header line"
+        return None
 
 
 # Suites: the fields whose statements a compound statement may or may not run.
@@ -241,7 +263,9 @@ class _GlobalBindingCollector:
     ``try`` holds is recorded as a binding that may or may not have happened.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, lines: Sequence[str]) -> None:
+        self._lines = lines
+        self._class_hosts: Dict[str, _ClassHost] = {}
         self._bindings: Dict[str, List[_GlobalBinding]] = {}
         self._class_orders: Dict[str, int] = {}
         self._class_counts: Dict[str, int] = {}
@@ -264,6 +288,11 @@ class _GlobalBindingCollector:
             },
             rebound_by_global=frozenset(self._rebound_by_global),
             star_imports=tuple(self._star_imports),
+            class_hosts={
+                qualname: host
+                for qualname, host in self._class_hosts.items()
+                if self._class_counts[qualname] == 1
+            },
         )
 
     def _bind(
@@ -292,6 +321,10 @@ class _GlobalBindingCollector:
         if isinstance(stmt, ast.ClassDef):
             qualname = ".".join((*class_stack, stmt.name))
             self._note_class(qualname)
+            if not class_stack:
+                self._class_hosts[qualname] = _ClassHost(
+                    body_on_header_line=body_shares_header_line(self._lines, stmt),
+                )
             for expr in (*stmt.decorator_list, *stmt.bases, *(kw.value for kw in stmt.keywords)):
                 self._expression(expr, certain)
             self._nested_scope(stmt.body, (*class_stack, stmt.name))
@@ -389,7 +422,7 @@ def _global_bindings(source: str) -> Optional[_ModuleBindings]:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return _MODULE_BINDINGS.put(source, None)
-    return _MODULE_BINDINGS.put(source, _GlobalBindingCollector().collect(tree))
+    return _MODULE_BINDINGS.put(source, _GlobalBindingCollector(source_lines(source)).collect(tree))
 
 
 class _CallRenamer(ast.NodeTransformer):
@@ -748,6 +781,14 @@ class HelperPlacement(EngineState):
         ]
         return matches[0] if len(matches) == 1 else None
 
+    def _can_host(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
+        """Whether a helper placed in ``info``'s body stays a plain member of the class.
+
+        See :meth:`_ModuleBindings.refuses_helper` for what rules a class out.
+        """
+        table = self._module_bindings(info.file_path, sources)
+        return table is not None and table.refuses_helper(info.qualname) is None
+
     def _ancestor_depths(
         self,
         class_info: ClassInfo,
@@ -825,6 +866,9 @@ class HelperPlacement(EngineState):
             depth1 = reachable1.get(key)
             if depth1 is None or (key == key1 and key == key2):
                 continue  # Identical class; handled elsewhere.
+            if not self._can_host(info, sources):
+                # A farther ancestor is on both method resolution orders too.
+                continue
             shared.append((max(depth1, depth2), depth1 + depth2, key, info))
         if not shared:
             return None
@@ -880,7 +924,11 @@ class HelperPlacement(EngineState):
 
         # At this point we know effective_kind is valid because we've already validated k1/k2
         effective_kind: MethodKind = k1
+        sources = {file1: pair.source1, file2: pair.source2}
         if file1 == file2 and pair.class1_name == pair.class2_name:
+            own = self._find_class_info_by_name(class_infos, file1, pair.class1_name)
+            if own is None or not self._can_host(own, sources):
+                return None
             implicit_param = _implicit_param_for(effective_kind, method_info1, method_info2)
             return ClassInsertionPlan(
                 class_name=pair.class1_name,
@@ -893,10 +941,7 @@ class HelperPlacement(EngineState):
         # without being read again, and answer for the text the class index
         # describes rather than for whatever is on disk now.
         ancestor = self._find_common_ancestor(
-            (file1, pair.class1_name),
-            (file2, pair.class2_name),
-            class_infos,
-            {file1: pair.source1, file2: pair.source2},
+            (file1, pair.class1_name), (file2, pair.class2_name), class_infos, sources
         )
         if ancestor is None or not _unique_module_level_class(
             class_infos, ancestor.file_path, ancestor.name

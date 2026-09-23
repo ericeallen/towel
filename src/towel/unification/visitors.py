@@ -28,6 +28,7 @@ than one module needs.
 from __future__ import annotations
 
 import ast
+from ..source_text import source_lines
 from .models import FunctionNode, MethodKind
 from .parameters import parameter_names
 from typing import (
@@ -476,7 +477,16 @@ class ClassLocator(DefinitionDepthVisitor):
             # Only a unique module-level class is an unambiguous target. A
             # class nested in a function is a fresh object per call, and two
             # classes sharing a name cannot be told apart by name.
-            if self._depth == 0 and self.matches == 1 and node.body:
+            # A body written on the header's line (``class Base: pass``) takes
+            # no further statement: a line appended after it is either an
+            # unexpected indent or, at the header's own indentation, a
+            # statement outside the class.
+            if (
+                self._depth == 0
+                and self.matches == 1
+                and node.body
+                and not body_shares_header_line(source_lines(self.source), node)
+            ):
                 indent = _compute_indent(self.source, node.body[0].lineno)
                 self.result = ((node.end_lineno or node.lineno) - 1, indent)
             else:
@@ -569,8 +579,22 @@ def body_without_docstring(body: Sequence[ast.stmt]) -> List[ast.stmt]:
     return body_list
 
 
+def body_shares_header_line(lines: Sequence[str], node: ast.ClassDef) -> bool:
+    """Whether the class's first statement is written after its header's colon.
+
+    ``class Base: pass`` and a header split over several lines whose last one
+    carries the body alike: the text before the first statement on its line is
+    more than indentation. ``col_offset`` counts UTF-8 bytes, so the line is
+    compared as bytes.
+    """
+    if not node.body or not 0 < node.body[0].lineno <= len(lines):
+        return False
+    first = node.body[0]
+    return bool(lines[first.lineno - 1].encode("utf-8")[: first.col_offset].strip())
+
+
 def _compute_indent(source: str, lineno: int) -> str:
-    lines = source.splitlines()
+    lines = source_lines(source)
     index = max(0, min(len(lines) - 1, lineno - 1))
     line = lines[index] if lines else ""
     return line[: len(line) - len(line.lstrip())]
