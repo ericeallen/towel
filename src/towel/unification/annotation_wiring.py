@@ -55,8 +55,8 @@ from ..type_inference import (
     CheckFailure,
     TypeDiagnostic,
     TypeOracle,
-    served_by_a_language_server,
-    stop_language_servers,
+    holds_warm_state,
+    start_cold,
 )
 
 from .engine_state import EngineState
@@ -457,20 +457,27 @@ class HelperAnnotationWiring(EngineState):
         return variant
 
     def confirm_run_with_a_cold_checker(self, file_paths: Sequence[str]) -> None:
-        """Check the finished project once more, without the warm session.
+        """Check the finished project once more, with no state the run kept.
 
         A language server is asked about a candidate and answers when it has
         gone quiet. Each answer is guarded by a marker it must publish first,
         so silence alone is never read as a verdict, but that guards the
-        server's start and not every instant of its reply. The command line
-        reanalyses from nothing and shares none of those assumptions, so one
-        run of it over the finished project turns any residue of that kind
-        from a silent wrong answer into a loud one. It costs a single check
-        per run and is done whenever a run annotated anything, since that is
-        exactly when the promise being kept is that the project still checks.
+        server's start and not every instant of its reply. mypy keeps state as
+        well: an incremental cache some of whose entries were written from text
+        that never reached disk, and a scan of what imports the change that has
+        to follow every file the run rewrites. Either, wrong at one instant,
+        calls a broken candidate clean, and nothing later in the run would ask
+        again.
+
+        A checker started from nothing shares none of those assumptions, so
+        one run of it over the finished project turns any residue of that kind
+        from a silent wrong answer into a loud one. It costs a single cold
+        check per run, about what the run's own baseline cost, and is done
+        whenever a run applied anything, since that is exactly when the promise
+        being kept is that the project still checks.
         """
         oracle = self._type_run_oracle
-        if oracle is None or not served_by_a_language_server(oracle):
+        if oracle is None or not holds_warm_state(oracle):
             return
         sources: Dict[str, str] = {}
         for path in dict.fromkeys(file_paths):
@@ -479,8 +486,8 @@ class HelperAnnotationWiring(EngineState):
                 return  # A file that cannot be read is reported by the run itself.
             sources[path] = source
         # The same oracle, so the run's own relocation and exclusions still
-        # apply; only the warm sessions go.
-        stop_language_servers(oracle)
+        # apply; only the warm state goes.
+        start_cold(oracle)
         result = oracle.check_project(sources)
         if isinstance(result, CheckFailure):
             # This check exists to make a wrong answer loud; a check that could

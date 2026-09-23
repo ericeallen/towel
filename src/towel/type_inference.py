@@ -412,6 +412,8 @@ class MypyInferrer:
             cache_dir = Path(self._cache.name)
         self._cache_dir = cache_dir.resolve()
         self._import_scans: Dict[Path, ImportScan] = {}
+        # Whether a build has answered since the cache and scans were empty.
+        self.answered_from_warm_state = False
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
@@ -429,6 +431,25 @@ class MypyInferrer:
             if self._cache is not None:
                 self._cache.cleanup()
                 self._cache = None
+
+    def forget_warm_state(self) -> None:
+        """Start again from nothing: no worker, no incremental cache, no consumer scan.
+
+        Each is kept across a run because each makes a check cheaper, and each
+        is a way to answer for a project that is no longer there: a cache entry
+        written from supplied text, a scan that missed a change on disk. A check
+        made after this shares none of them with the checks made before it.
+        A cache directory the caller supplied is left alone; a new owned one
+        replaces it.
+        """
+        with self._lock:
+            self._stop_worker()
+            if self._cache is not None:
+                self._cache.cleanup()
+            self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
+            self._cache_dir = Path(self._cache.name).resolve()
+            self._import_scans = {}
+            self.answered_from_warm_state = False
 
     def _stop_worker(self) -> None:
         process, self._process = self._process, None
@@ -514,6 +535,7 @@ class MypyInferrer:
             result = self._exchange(process, request)
             if isinstance(result, CheckFailure):
                 return _with_stderr(result, self._stderr_since(said_before))
+            self.answered_from_warm_state = True
             return result
 
     def _running_worker(self) -> subprocess.Popen[bytes]:
@@ -1242,6 +1264,40 @@ def served_by_a_language_server(oracle: object) -> bool:
     if isinstance(oracle, _RelocatedOracle):
         return served_by_a_language_server(oracle.inner)
     return isinstance(oracle, PyrightOracle) and oracle.answered_from_a_session
+
+
+def holds_warm_state(oracle: object) -> bool:
+    """Whether any checker behind ``oracle`` has answered from state it kept.
+
+    A language server's session, or mypy's incremental cache and consumer scan:
+    each is kept across a run to make a check cheap, and each could answer for
+    a project that is no longer there. The pyright command line keeps nothing.
+    """
+    if isinstance(oracle, CombinedOracle):
+        return any(holds_warm_state(one) for one in oracle.checkers)
+    if isinstance(oracle, _RelocatedOracle):
+        return holds_warm_state(oracle.inner)
+    if isinstance(oracle, MypyInferrer):
+        return oracle.answered_from_warm_state
+    return served_by_a_language_server(oracle)
+
+
+def start_cold(oracle: object) -> None:
+    """Drop every piece of state kept behind ``oracle``; the next check starts from nothing.
+
+    As with :func:`stop_language_servers`, what the run gave the oracle -- its
+    relocation, its exclusions -- stays, so the next check is the same question
+    asked of checkers that have never seen the project.
+    """
+    if isinstance(oracle, CombinedOracle):
+        for one in oracle.checkers:
+            start_cold(one)
+    elif isinstance(oracle, _RelocatedOracle):
+        start_cold(oracle.inner)
+    elif isinstance(oracle, MypyInferrer):
+        oracle.forget_warm_state()
+    else:
+        stop_language_servers(oracle)
 
 
 class CombinedOracle:
