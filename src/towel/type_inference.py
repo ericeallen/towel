@@ -74,6 +74,7 @@ from typing import (
 
 from .diagnostics import LOG
 from .project_tools import ToolChoice, python_tool_environment
+from .unification.exceptions import TowelError
 from .checker_project import CheckerSnapshot, checker_snapshot
 from .unification.bounded_cache import BoundedCache
 from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
@@ -90,6 +91,7 @@ from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_prob
 
 __all__ = [
     "CheckFailure",
+    "CheckerNotInstalled",
     "CheckResult",
     "CheckSuccess",
     "CombinedOracle",
@@ -1488,39 +1490,77 @@ def _has_ini_section(path: Path, section: str) -> bool:
     return parser.has_section(section)
 
 
+class CheckerNotInstalled(TowelError):
+    """A checker the project configures cannot be run where Towel runs.
+
+    A typed run promises that the project's own check still passes, and only
+    the configured checker can keep that promise. Another checker in its place
+    answers a question the project never asked, and none at all is silence,
+    so the run is refused, naming the checker and the two ways on: install it,
+    or ask for an unverified run explicitly.
+    """
+
+
+def _configuration_file(root: Path, checker: str) -> Path:
+    """The file at ``root`` that configures ``checker``, for naming it to the user."""
+    if checker == "mypy":
+        return Path(_mypy_config(root) or root)
+    configured = root / "pyrightconfig.json"
+    return configured if configured.is_file() else root / "pyproject.toml"
+
+
+def _refuse_missing_checkers(missing: Sequence[Tuple[str, Path]]) -> CheckerNotInstalled:
+    names = " and ".join(name for name, _ in missing)
+    where = ", ".join(str(_configuration_file(root, name)) for name, root in missing)
+    return CheckerNotInstalled(
+        f"{names} {'is' if len(missing) == 1 else 'are'} configured ({where}) but not "
+        f"installed where Towel runs ({sys.executable}), so the project's own type check "
+        "cannot run and nothing Towel writes could be verified by it. Install "
+        f"{'it' if len(missing) == 1 else 'them'} into that environment "
+        '(pip install "code-towel[types]" installs mypy and pyright), or rerun with '
+        "--no-types to refactor without type verification."
+    )
+
+
 def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
     """The checker the project configures, and a note on what was chosen.
 
     A project that configures mypy gets mypy; one that configures pyright
     gets pyright; one that configures both infers with mypy and verifies
     with both, so its own check stays green; one that configures neither
-    gets mypy when installed, else pyright. The note names any configured
-    checker that is not installed.
+    gets mypy when installed, else pyright, else no checker and a note saying
+    so. A configured checker that is not installed raises
+    :class:`CheckerNotInstalled`: substituting another, or none, would verify
+    against a check the project does not run.
     """
-    wants_mypy = _configured_root(path, "mypy") is not None
-    wants_pyright = _configured_root(path, "pyright") is not None
+    mypy_root = _configured_root(path, "mypy")
+    pyright_root = _configured_root(path, "pyright")
     mypy: Optional[TypeOracle] = None
     pyright: Optional[TypeOracle] = None
-    notes: List[str] = []
-    if wants_mypy or not wants_pyright:
+    missing: List[Tuple[str, Path]] = []
+    if mypy_root is not None or pyright_root is None:
         try:
             mypy = MypyInferrer()
         except ImportError:
-            if wants_mypy:
-                notes.append("mypy is configured but not installed")
-    if wants_pyright or mypy is None:
+            if mypy_root is not None:
+                missing.append(("mypy", mypy_root))
+    if pyright_root is not None or mypy is None:
         try:
             pyright = PyrightOracle()
         except ImportError:
-            if wants_pyright:
-                notes.append("pyright is configured but not installed")
+            if pyright_root is not None:
+                missing.append(("pyright", pyright_root))
+    if missing:
+        for started in (mypy, pyright):
+            if started is not None:
+                started.close()
+        raise _refuse_missing_checkers(missing)
     if mypy is not None and pyright is not None:
         return ToolChoice(
-            CombinedOracle(mypy, [pyright]),
-            "; ".join(["mypy for inference, mypy and pyright for verification", *notes]),
+            CombinedOracle(mypy, [pyright]), "mypy for inference, mypy and pyright for verification"
         )
     if mypy is not None:
-        return ToolChoice(mypy, "; ".join(["mypy", *notes]))
+        return ToolChoice(mypy, "mypy")
     if pyright is not None:
-        return ToolChoice(pyright, "; ".join(["pyright", *notes]))
-    return ToolChoice(None, "; ".join(notes) if notes else "neither mypy nor pyright is installed")
+        return ToolChoice(pyright, "pyright")
+    return ToolChoice(None, "neither mypy nor pyright is installed")

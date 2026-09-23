@@ -170,7 +170,11 @@ engine = UnificationRefactorEngine(
 
 Each result is a `ToolChoice`: its `tool` is None when nothing suitable is
 installed, and its `note` says what was chosen and names a configured tool
-that is not installed. Without a formatter the rendering is `ast.unparse`'s: one
+that is not installed. The checker is the exception: a project that configures
+mypy or pyright is checked by that checker or not at all, so
+`type_oracle_for_project` raises `CheckerNotInstalled` when a configured one is
+not installed, rather than substitute another checker or none (pass
+`type_oracle=None` and `annotate_helpers=False` for an unverified run). Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
 
 The engine checks the original project before using its type oracle. If that

@@ -661,7 +661,11 @@ def _verification_cost(project_path: "Path", types: bool) -> List[str]:
 
 
 def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
-    """The checker the project configures (mypy, pyright, or both), or None with a note."""
+    """The checker the project configures (mypy, pyright, or both), or None with a note.
+
+    A configured checker that is not installed is refused by the selection
+    itself (``CheckerNotInstalled``), before anything is written.
+    """
     from towel.type_inference import type_oracle_for_project
 
     choice = type_oracle_for_project(project_path)
@@ -670,8 +674,6 @@ def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
             f"Note: {choice.note}, so helper annotations are copied from the call sites but not "
             'inferred or verified. Install the types extra (pip install "code-towel[types]").'
         )
-    elif "not installed" in choice.note:
-        print(f"Note: {choice.note}.")
     return choice.tool
 
 

@@ -376,7 +376,9 @@ where the evidence comes from:
   about a checker the project does not configure, even one that happens to be
   installed. A project that configures mypy alone can therefore accept output
   that Pyright would reject, and the reverse. Configure both to be checked by
-  both.
+  both. A configured checker that is not installed where Towel runs refuses the
+  typed run before anything is written; it is never replaced by the other
+  checker or by none, so `--no-types` is the only way to proceed without it.
 
   A type guard shows how this bites. Moving `if not isinstance(x, list): raise
   ...` into a helper leaves the caller's `x` at its declared type, so a
