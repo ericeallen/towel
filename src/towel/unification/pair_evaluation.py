@@ -264,6 +264,7 @@ _IMPORT_CHANGE_REASONS = {
     ImportChange.RUNS_CODE: RejectReason.IMPORT_TIME_EFFECTS,
     ImportChange.NEW_REQUIREMENT: RejectReason.NEW_IMPORT_REQUIREMENT,
     ImportChange.NEW_TOP_LEVEL_PACKAGE: RejectReason.NEW_TOP_LEVEL_PACKAGE,
+    ImportChange.RUN_BY_PATH: RejectReason.RUN_BY_PATH_IMPORT,
 }
 
 

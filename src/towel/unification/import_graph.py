@@ -1200,6 +1200,7 @@ class ImportChange(Enum):
     NEW_TOP_LEVEL_PACKAGE = (
         "a module the new import loads is in a package the borrower never imports"
     )
+    RUN_BY_PATH = "the borrower runs as a script, where the new import would not resolve"
 
 
 def import_runs_new_code(host_file: str, borrower_file: str, cache: ImportGraphCache) -> bool:
@@ -1232,19 +1233,92 @@ def import_change(
     already = _reachable_modules(borrower, roots, cache, "unconditionally")
     if already is None:
         return ImportChange.UNKNOWN
-    if host in already:
-        return None
-    loaded = _reachable_modules(host, roots, cache, "at_import")
-    if loaded is None:
-        return ImportChange.UNKNOWN
-    added = loaded - already
-    if any(_has_import_time_effects(module, cache) for module in added):
-        return ImportChange.RUNS_CODE
-    if _new_requirements(added, already, roots, host, cache):
-        return ImportChange.NEW_REQUIREMENT
-    if _new_top_level_packages(added, already, source_roots):
-        return ImportChange.NEW_TOP_LEVEL_PACKAGE
+    added: Set[Path] = set()
+    if host not in already:
+        loaded = _reachable_modules(host, roots, cache, "at_import")
+        if loaded is None:
+            return ImportChange.UNKNOWN
+        added = loaded - already
+        if any(_has_import_time_effects(module, cache) for module in added):
+            return ImportChange.RUNS_CODE
+        if _new_requirements(added, already, roots, host, cache):
+            return ImportChange.NEW_REQUIREMENT
+        if _new_top_level_packages(added, already, source_roots):
+            return ImportChange.NEW_TOP_LEVEL_PACKAGE
+    if _breaks_run_by_path(borrower, added | {host}, source_roots):
+        return ImportChange.RUN_BY_PATH
     return None
+
+
+def runs_as_script(tree: ast.Module, path: Path) -> bool:
+    """Whether the module is written to run as a program: ``__main__.py``, or one with a main guard."""
+    return path.name == "__main__.py" or any(
+        isinstance(statement, ast.If) and _is_main_guard(statement.test) for statement in tree.body
+    )
+
+
+def leading_imports(tree: ast.Module) -> List[Union[ast.Import, ast.ImportFrom]]:
+    """The imports the module's top level runs on every path before its first definition.
+
+    A helper's import goes after the last of them (``_find_import_position``),
+    so they are the imports that run before it wherever the module runs.
+    """
+    found: List[Union[ast.Import, ast.ImportFrom]] = []
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            break
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            found.append(statement)
+    return found
+
+
+def fails_run_by_path(tree: ast.Module) -> bool:
+    """Whether running the module by its path already fails before a helper's import would run.
+
+    Run by path, a module has no package, so a relative import among its
+    leading imports raises ``ImportError`` there, as it always did.
+    """
+    return any(isinstance(node, ast.ImportFrom) and node.level for node in leading_imports(tree))
+
+
+def _breaks_run_by_path(borrower: Path, loaded: Set[Path], source_roots: Sequence[Path]) -> bool:
+    """Whether ``python borrower.py`` could no longer import once the borrower imports the host.
+
+    Run by its path, a module has its own directory on ``sys.path``, not the
+    source root above it: ``python pkg/tool_b.py`` finds ``pkg`` only where
+    something else put it on the path, so ``from pkg.tool_a import helper``
+    raises ``ModuleNotFoundError`` there while ``python -m pkg.tool_b`` still
+    works. A module written to run as a program therefore imports a module
+    the new import loads only when its top-level package is one its leading
+    imports already import absolutely, which a run by path already needs,
+    or one that its own directory holds; a module whose leading imports
+    include a relative one fails by path already, at that import. The new
+    import must then be absolute too, which materialization checks.
+    """
+    try:
+        tree = ast.parse(read_source(borrower))
+    except (OSError, UnicodeError, SyntaxError, ValueError):
+        return True
+    if not runs_as_script(tree, borrower) or fails_run_by_path(tree):
+        return False
+    required = {
+        alias.name.split(".")[0]
+        for node in leading_imports(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        node.module.split(".")[0]
+        for node in leading_imports(tree)
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level
+    }
+    for module in loaded:
+        top = _top_level_name(module, source_roots)
+        if top is None:
+            return True
+        if top in required or _holding_root(module, source_roots) == borrower.parent:
+            continue
+        return True
+    return False
 
 
 def _new_top_level_packages(
@@ -1278,12 +1352,17 @@ def _importable_top_levels(present: Set[Path], source_roots: Sequence[Path]) -> 
 
 def _top_level_name(module: Path, source_roots: Sequence[Path]) -> Optional[str]:
     """The first component of ``module``'s import name, from the deepest source root holding it."""
-    holding = [root for root in source_roots if module.is_relative_to(root.resolve())]
-    if not holding:
+    root = _holding_root(module, source_roots)
+    if root is None:
         return None
-    root = max(holding, key=lambda candidate: len(candidate.resolve().parts)).resolve()
     parts = module.relative_to(root).parts
     return Path(parts[0]).stem if len(parts) == 1 else parts[0]
+
+
+def _holding_root(module: Path, source_roots: Sequence[Path]) -> Optional[Path]:
+    """The deepest source root ``module`` lies under, resolved; None when it lies under none."""
+    holding = [root.resolve() for root in source_roots if module.is_relative_to(root.resolve())]
+    return max(holding, key=lambda root: len(root.parts)) if holding else None
 
 
 # Standard-library modules whose import does something visible.

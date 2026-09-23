@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
 from .exceptions import ProjectScanLimitError, RefactoringError
-from .import_graph import ImportTimeCode
+from .import_graph import ImportTimeCode, fails_run_by_path, runs_as_script
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
@@ -374,7 +374,11 @@ class Materialization(
         elif file_path == proposal.file_path:
             self._insert_helper(proposal, file_path, lines)
         elif not proposal.insert_into_class:
+            before = self._parse_source("".join(lines))
             self._insert_helper_import(proposal, file_path, lines)
+            self._refuse_relative_import_in_a_script(
+                before, "".join(lines), file_path, proposal.extracted_function.name
+            )
         assembled = "".join(lines)
         if self.file_finisher is not None:
             assembled = self.file_finisher(file_path, assembled)
@@ -618,6 +622,30 @@ class Materialization(
                 )
             insert_line = max(insert_line, statement.end_lineno or statement.lineno)
         return insert_line
+
+    def _refuse_relative_import_in_a_script(
+        self, before: ast.Module, after: str, file_path: str, helper_name: str
+    ) -> None:
+        """Refuse a relative helper import in a module that still runs as a script by path.
+
+        Run by its path, a module has no package, so ``from .host import
+        helper`` raises there; pair evaluation admitted the borrower only for an
+        absolute import its leading imports already make resolvable
+        (``import_graph._breaks_run_by_path``). One whose leading imports are
+        already relative fails by path anyway, at that import.
+        """
+        if not runs_as_script(before, Path(file_path)) or fails_run_by_path(before):
+            return
+        if any(
+            isinstance(node, ast.ImportFrom)
+            and node.level
+            and any(alias.name == helper_name for alias in node.names)
+            for node in self._parse_source(after).body
+        ):
+            raise RefactoringError(
+                f"{file_path} runs as a script by its path, where the relative import of"
+                f" {helper_name} could not resolve"
+            )
 
     def _insert_helper_import(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]

@@ -304,6 +304,7 @@ class RejectReason(StrEnum):
     REBOUND_EXTERNAL_BINDING = "rebound_external_binding"
     RELATIVE_IMPORT_ACROSS_PACKAGES = "relative_import_across_packages"
     RETURN_VARIABLES_NOT_ALIGNED = "return_variables_not_aligned"
+    RUN_BY_PATH_IMPORT = "run_by_path_import"
     TRIVIAL_FORWARDING_HELPER = "trivial_forwarding_helper"
     TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"
     UNBINDS_EXTERNAL_NAME = "unbinds_external_name"

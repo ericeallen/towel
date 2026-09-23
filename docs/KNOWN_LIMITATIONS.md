@@ -291,6 +291,18 @@ runs: an import in a function body, a branch or a `try` makes nothing
 present, and a borrower whose function imports the host lazily no longer
 counts as running the host's import-time code already.
 
+A module written to run as a program, `__main__.py` or one with an `if
+__name__ == "__main__":` guard, may be run by its path, and then its own
+directory is on `sys.path` in place of the source root above it: `python
+pkg/tool_b.py` finds `pkg` only where something else put it on the path.
+Such a borrower gains an import only when a run by path already needed
+what it needs (`run_by_path_import`): when the imports it runs before its
+first definition already import that top-level package absolutely, or its
+own directory holds the host's package; or when one of those leading
+imports is relative, so a run by path already fails there. The import it
+gains must then be absolute, and a relative one is declined when it is
+written (`r08`; `tests/test_run_by_path.py`).
+
 ## Method insertion
 
 A helper shared by methods that never read an attribute of their receiver, or
@@ -578,7 +590,9 @@ the pair decision raises them, grouped by stage:
   prints, registers or connects at import time); `new_import_requirement`:
   it would require a package outside the project, the standard library and
   the declared dependencies; `new_top_level_package`: it would load a
-  top-level package of the project the borrower's import does not. In each
+  top-level package of the project the borrower's import does not;
+  `run_by_path_import`: the borrower runs as a program, and run by its path
+  it could not resolve the import. In each
   case a module-level helper may move to a participating module that hosts
   it without the change, and the pair is declined only when none does.
   `relative_import_across_packages`: the block runs a relative import that
