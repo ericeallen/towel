@@ -143,6 +143,9 @@ TRANSFORMED = {
     # The helper is placed before the assignment that calls it, its annotations
     # quoted, rather than after the class they name.
     "p21_helper_placed_after_an_assignment_that_calls_it",
+    # The blocks holding a literal generated code cannot spell stay; the run
+    # goes on and extracts the ordinary duplicate beside them.
+    "r147_wide_int_literal",
 }
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise

@@ -188,3 +188,17 @@ def test_enumerated_blocks_always_have_a_statement(tmp_path):
     assert isinstance(function, ast.FunctionDef)
     for _span, nodes, signature in engine._signed_blocks(function):
         assert nodes and signature.stmt_seq
+
+
+def test_a_block_holding_an_int_generated_code_could_not_spell_is_no_candidate():
+    # Generated code spells ints in decimal, which an interpreter may read only
+    # up to 640 digits; the 640-digit literal still takes part.
+    widest = 10**640 - 1
+    engine = UnificationRefactorEngine(min_lines=1)
+    for value, candidate in ((widest, True), (widest + 1, False), (-(widest + 1), False)):
+        source = f"def f(a):\n    x = a\n    y = {value:#x}\n    return x + y\n"
+        function = ast.parse(source).body[0]
+        assert isinstance(function, ast.FunctionDef)
+        spans = [span for span, _ in engine._extract_code_blocks(function)]
+        assert ((3, 3) in spans) is candidate
+        assert ((2, 2) in spans) and ((4, 4) in spans)

@@ -17,13 +17,45 @@
 from __future__ import annotations
 
 import ast
+import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from weakref import WeakKeyDictionary
 
 
-def _dump_without_positions(node: ast.AST) -> str:
-    return ast.dump(node, include_attributes=False)
+class _HexInt(int):
+    """An int constant as a structural key spells it: in hexadecimal.
+
+    ``ast.dump`` writes a constant with ``repr``, and CPython refuses to
+    write an int in decimal once it has more digits than
+    ``sys.get_int_max_str_digits()`` allows (4,300 unless configured), so a
+    key for a node holding a wider literal raised ``ValueError`` and ended
+    the run. Only decimal conversion is limited; hexadecimal is linear in
+    the value's size and has no limit. ``repr`` never yields this spelling
+    for a real constant, so such a key cannot equal an ordinary dump.
+    """
+
+    def __repr__(self) -> str:
+        return f"int({self:#x})"
+
+
+def dump_without_positions(node: ast.AST) -> str:
+    """``ast.dump`` of ``node`` without positions, whatever ints it holds.
+
+    A node whose ints all fit the decimal limit dumps exactly as ``ast.dump``
+    does. One holding a wider int is dumped from a copy with every int
+    spelled in hexadecimal; whether the plain dump fails depends only on the
+    structure, so equal structures always take the same spelling.
+    """
+    try:
+        return ast.dump(node, include_attributes=False)
+    except ValueError:
+        pass
+    spelled = copy.deepcopy(node)
+    for child in ast.walk(spelled):
+        if isinstance(child, ast.Constant) and type(child.value) is int:
+            child.value = _HexInt(child.value)
+    return ast.dump(spelled, include_attributes=False)
 
 
 _STRUCTURAL_TEXT: "WeakKeyDictionary[ast.AST, str]" = WeakKeyDictionary()
@@ -41,7 +73,7 @@ def structural_text(node: ast.AST) -> str:
     """
     cached = _STRUCTURAL_TEXT.get(node)
     if cached is None:
-        cached = _dump_without_positions(node)
+        cached = dump_without_positions(node)
         try:
             _STRUCTURAL_TEXT[node] = cached
         except TypeError:  # a node type that cannot be weakly referenced
