@@ -149,6 +149,9 @@ TRANSFORMED = {
     # Equal constants of different types (0 and 0.0, True and 1) are passed as
     # arguments; a False elsewhere in a block no longer counts as its 0.
     "r148_equal_constants_of_different_types",
+    # The names a pattern evaluates (a class, a dotted value, a mapping key)
+    # are the helper's arguments.
+    "r149_match_pattern_reads_caller_names",
 }
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise

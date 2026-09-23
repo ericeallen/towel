@@ -18,7 +18,7 @@ rebinding, namespace reflection) later guards consult.
 """
 
 import ast
-from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple, Union
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 from .models import FunctionNode
@@ -43,6 +43,22 @@ def type_parameter_names(node: ast.AST) -> FrozenSet[str]:
         if isinstance(name, str):
             names.add(name)
     return frozenset(names)
+
+
+def pattern_expressions(pattern: ast.AST) -> Iterator[ast.expr]:
+    """The expressions a match pattern evaluates as it matches, at any depth.
+
+    A value pattern evaluates its literal or dotted name, a class pattern its
+    class, and a mapping pattern its keys; ``case kind():`` reads ``kind``
+    as surely as ``kind()`` would. Captures bind names and read none.
+    """
+    for node in ast.walk(pattern):
+        if isinstance(node, ast.MatchValue):
+            yield node.value
+        elif isinstance(node, ast.MatchClass):
+            yield node.cls
+        elif isinstance(node, ast.MatchMapping):
+            yield from node.keys
 
 
 @dataclass(frozen=True)
@@ -253,12 +269,12 @@ class _ScopeRespectingWalker(ScopeVisitor):
             self.assigned_so_far.add(node.target.id)
 
     def visit_Match(self, node: ast.Match) -> None:
-        # Capture patterns bind in the enclosing function scope
+        # What a pattern evaluates is read before its captures bind, in the
+        # enclosing function scope, where the captures bind too.
         self.visit(node.subject)
         for case in node.cases:
-            for child in ast.walk(case.pattern):
-                if isinstance(child, ast.MatchValue):
-                    self.visit(child.value)
+            for expression in pattern_expressions(case.pattern):
+                self.visit(expression)
             self._add_current_scope_bindings(pattern_capture_names(case.pattern))
             if case.guard:
                 self.visit(case.guard)
@@ -528,9 +544,8 @@ class ScopeAnalyzer(ScopeVisitor):
         for case in node.cases:
             for name in sorted(pattern_capture_names(case.pattern)):
                 self.current_scope.add_binding(name, case.pattern)
-            for child in ast.walk(case.pattern):
-                if isinstance(child, ast.MatchValue):
-                    self.visit(child.value)
+            for expression in pattern_expressions(case.pattern):
+                self.visit(expression)
             if case.guard:
                 self.visit(case.guard)
             for stmt in case.body:

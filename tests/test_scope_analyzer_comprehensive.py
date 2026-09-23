@@ -8,6 +8,10 @@ of scope analysis, binding tracking, and free variable detection.
 
 import unittest
 import ast
+import textwrap
+
+import pytest
+
 from towel.unification.scope_analyzer import ScopeAnalyzer, Scope
 
 
@@ -661,3 +665,32 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def _free_variables(source: str) -> set[str]:
+    return ScopeAnalyzer().free_variables(ast.parse(textwrap.dedent(source)).body)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "reads"),
+    [
+        ("kind()", {"kind"}),
+        ("[kind()]", {"kind"}),
+        ("str() | kind()", {"kind"}),
+        ("{n.real: found}", {"n"}),
+        ("Color.RED", {"Color"}),
+        ("Point(x=n.y, y=[kind()])", {"Point", "n", "kind"}),
+        ("{'key': [first, *rest]}", set()),
+    ],
+)
+def test_what_a_pattern_evaluates_is_free(pattern: str, reads: set[str]) -> None:
+    # A class pattern evaluates its class, a value pattern its dotted name, a
+    # mapping pattern its keys, as the match runs; captures bind and read none.
+    source = f"""
+    match value:
+        case {pattern}:
+            result = 1
+        case _:
+            result = 2
+    """
+    assert _free_variables(source) == {"value"} | reads
