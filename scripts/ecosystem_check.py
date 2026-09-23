@@ -19,7 +19,8 @@ Towel runs the way a user runs it: inside the project's own environment, after
 project's test dependencies, the project itself installed editable from the
 tree under test, the tools of Towel's two extras (mypy and pyright; Black, isort
 and ruff), each left as the project's own requirements installed it or installed
-at the version the project's lock file pins, unless that version fails the
+at the version the project pins -- in its lock file, else as the revision of its
+pre-commit hook, else in a requirements file -- unless that version fails the
 extra's requirement, and the candidate: one wheel, built from ``--towel-src`` or
 named by ``--towel-wheel``, verified to be that source, and verified again in
 every environment it is installed into. Towel still picks the formatter from
@@ -98,7 +99,7 @@ import tomllib
 import traceback
 import urllib.parse
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import (
     Callable,
     ContextManager,
@@ -108,6 +109,7 @@ from typing import (
     List,
     Literal,
     Mapping,
+    NewType,
     Optional,
     Sequence,
     Set,
@@ -125,12 +127,18 @@ SUMMARY_PATTERNS = (
 )
 TypingMode = Literal["default", "no-types"]
 LockFile = Literal["uv.lock", "poetry.lock", "pdm.lock"]
-ToolSource = Union[Literal["project", "towel[types]", "towel[format]"], LockFile]
+PreCommitConfig = Literal[".pre-commit-config.yaml"]
+RequirementsFile = NewType("RequirementsFile", str)
+"""A requirements file of the project's, by its path in the tree: ``requirements/lint.txt``."""
+PinSource = Union[LockFile, PreCommitConfig, RequirementsFile]
+"""A file of the project's that pins the version of one of Towel's tools."""
+ToolSource = Union[Literal["project", "towel[types]", "towel[format]"], PinSource]
 LOCK_FILES: Tuple[LockFile, ...] = ("uv.lock", "poetry.lock", "pdm.lock")
 """The lock files whose pins describe a project's own environment, in the order they are read."""
+PRE_COMMIT_CONFIG: PreCommitConfig = ".pre-commit-config.yaml"
 TOWEL_PACKAGE = "towel"
 """The import package the candidate wheel provides."""
-ENVIRONMENT_LAYOUT = 5
+ENVIRONMENT_LAYOUT = 6
 """What a project environment holds; raised when that changes, so an older one is rebuilt."""
 CROSS_MODULE_FLAG = "--cross-module"
 """The option that turns on extraction across modules, where the Towel under test has it."""
@@ -211,9 +219,10 @@ class Tool:
     name: str
     version: str
     source: ToolSource
-    """``project`` when the project's own requirements installed it, the lock file whose pin
-    it was installed at, or the candidate's extra that named it (``towel[types]`` for mypy
-    and pyright, ``towel[format]`` for Black, isort and ruff)."""
+    """``project`` when the project's own requirements installed it; the file whose pin it
+    was installed at (a lock file, ``.pre-commit-config.yaml``, or a requirements file by its
+    path, as ``tool_pins`` chooses); or the candidate's extra that named it (``towel[types]``
+    for mypy and pyright, ``towel[format]`` for Black, isort and ruff)."""
     overridden: str = ""
     """A version the project had chosen that fails its extra's requirement, as
     ``poetry.lock 22.12.0``; the extra's own was installed instead, as installing it does."""
@@ -958,6 +967,158 @@ def applicable_version(
     return matches[0] if matches else None
 
 
+PRE_COMMIT_TOOL_REPOSITORIES: Mapping[str, str] = {
+    "pre-commit/mirrors-mypy": "mypy",
+    "robertcraigie/pyright-python": "pyright",
+    "psf/black": "black",
+    "psf/black-pre-commit-mirror": "black",
+    "pycqa/isort": "isort",
+    "astral-sh/ruff-pre-commit": "ruff",
+    "charliermarsh/ruff-pre-commit": "ruff",
+}
+"""The hook repositories that run one of Towel's tools at the version their revision names,
+by the ``owner/name`` their URL ends with, compared without case."""
+
+_VERSION_TAG = re.compile(r"v?(\d+(?:\.\d+)+(?:(?:a|b|rc)\d+)?(?:\.post\d+)?)")
+"""A tag that is a version, ``v1.17.1`` or ``23.11.0``, and the version it names."""
+
+
+def _repository_key(url: str) -> str:
+    """The ``owner/name`` a repository URL ends with, in lower case."""
+    parts = re.split(r"[/:]", url.strip().lower().removesuffix("/").removesuffix(".git"))
+    return "/".join(parts[-2:])
+
+
+def pre_commit_versions(text: str) -> List[Tuple[str, str]]:
+    """Each repository of a pre-commit configuration pinned at a version, and that version.
+
+    A revision is a tag (``rev: v1.17.1``) or a commit, which ``pre-commit autoupdate
+    --freeze`` writes with the tag it stands for in a comment,
+    ``rev: 7ff8d35...  # frozen: v1.17.1``, read as that tag. A revision that is
+    neither -- a bare commit, a branch -- pins no version, and its repository is left
+    out. The configuration is read in the part of YAML ``pre_commit_dependencies``
+    reads: a repository is an item of a block sequence whose ``repo`` and ``rev`` keys
+    stand in one column, in either order, and whatever is indented further belongs to
+    its hooks.
+    """
+    found: List[Tuple[str, str]] = []
+    column = -1
+    item: Dict[str, str] = {}
+
+    def finish() -> None:
+        if item.get("repo") and item.get("rev"):
+            found.append((item["repo"], item["rev"]))
+        item.clear()
+
+    for raw in text.splitlines():
+        line = _without_comment(raw)
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        dashed = re.match(r"^(-\s+)([\w-]+):\s*(.*)$", stripped)
+        if dashed is not None and dashed[2] in ("repo", "rev"):
+            finish()
+            column = indent + len(dashed[1])
+            key, value = dashed[2], dashed[3]
+        elif indent == column and not stripped.startswith("-"):
+            key, _, value = (part.strip() for part in stripped.partition(":"))
+        else:
+            if indent < column:
+                finish()
+                column = -1
+            continue
+        value = _yaml_scalar(value)
+        if key == "rev":
+            tag = _VERSION_TAG.fullmatch(value)
+            frozen = re.fullmatch(r"#\s*frozen:\s*(\S+)", raw[len(line) :].strip())
+            if tag is None and frozen is not None:
+                tag = _VERSION_TAG.fullmatch(frozen[1])
+            value = tag[1] if tag is not None else ""
+        item[key] = value
+    finish()
+    return found
+
+
+def pre_commit_pins(tree: Path, names: Sequence[str]) -> Dict[str, str]:
+    """The version ``.pre-commit-config.yaml`` runs each of ``names`` at, where it runs one.
+
+    A repository of ``PRE_COMMIT_TOOL_REPOSITORIES`` runs its tool at the version
+    its revision names; the first such repository of a tool decides.
+    """
+    try:
+        text = (tree / PRE_COMMIT_CONFIG).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {}
+    wanted = {_canonical(name) for name in names}
+    pins: Dict[str, str] = {}
+    for repository, version in pre_commit_versions(text):
+        tool = PRE_COMMIT_TOOL_REPOSITORIES.get(_repository_key(repository))
+        if tool is not None and tool in wanted:
+            pins.setdefault(tool, version)
+    return pins
+
+
+def requirement_pins(
+    python: Path, tree: Path, names: Sequence[str]
+) -> Dict[str, Tuple[RequirementsFile, str]]:
+    """The version a requirements file pins each of ``names`` at for ``python``, and the file.
+
+    Only an exact pin (``mypy==1.17.1``) chooses a version, and only where its marker
+    holds for the interpreter. Files named for typing are read first and then the
+    project's others (see ``_requirements_files``), each group in path order, and a
+    tool's first pin decides. A file is read with every ``-r`` it includes, so a pin
+    that only an included file holds is recorded under the file that includes it.
+    """
+    wanted = {_canonical(name) for name in names}
+    files = sorted(
+        _requirements_files(tree),
+        key=lambda path: not _named_for_typing(path.relative_to(tree).with_suffix("").as_posix()),
+    )
+    lines = [
+        (path, requirement)
+        for path in files
+        for requirement in _requirements_file(path, tree, frozenset())
+        if (named := _REQUIREMENT_NAME.match(requirement)) is not None
+        and _canonical(named[1]) in wanted
+    ]
+    if not lines:
+        return {}
+    parsed = _ask_packaging(python, parse=[requirement for _, requirement in lines]).parsed
+    pins: Dict[str, Tuple[RequirementsFile, str]] = {}
+    for (path, _), requirement in zip(lines, parsed):
+        if requirement is None or not requirement.applies or requirement.url:
+            continue
+        exact = re.fullmatch(r"===?([^\s,*]+)", requirement.specifier)
+        if exact is not None and requirement.name in wanted:
+            source = RequirementsFile(path.relative_to(tree).as_posix())
+            pins.setdefault(requirement.name, (source, exact[1]))
+    return pins
+
+
+def tool_pins(python: Path, tree: Path, names: Sequence[str]) -> Dict[str, Tuple[PinSource, str]]:
+    """The version the project pins each of ``names`` at for ``python``, and the file that does.
+
+    The first of these to pin a tool decides: the lock file (see ``lock_pins``), which
+    is the project's environment written down; then the revision of the tool's
+    pre-commit hook (see ``pre_commit_pins``), the version the project's own checks
+    run it at; then an exact pin in a requirements file (see ``requirement_pins``).
+    A tool none of them pins is left out, for the candidate's extra to supply.
+    """
+    pins: Dict[str, Tuple[PinSource, str]] = {}
+    lock, locked = lock_pins(tree, names)
+    for name in names:
+        if lock is not None and name in locked:
+            version = applicable_version(python, lock, name, locked[name])
+            if version is not None:
+                pins[name] = (lock, version)
+    for name, version in pre_commit_pins(tree, [n for n in names if n not in pins]).items():
+        pins[name] = (PRE_COMMIT_CONFIG, version)
+    for name, pin in requirement_pins(python, tree, [n for n in names if n not in pins]).items():
+        pins[name] = pin
+    return pins
+
+
 @dataclasses.dataclass(frozen=True)
 class Choice:
     """Who chose one tool's version, and a choice of the project's that was overruled."""
@@ -969,12 +1130,13 @@ class Choice:
 def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) -> Dict[str, Choice]:
     """Install the checkers and formatters of Towel's extras as installing them would.
 
-    A tool the project's own requirements installed stays, and one its lock file pins
-    is installed at that version, so the project is checked and formatted by the tools
-    its own checks use. One the project leaves to Towel comes from the candidate's
-    extra at the version that resolves today, and so does one whose chosen version
-    fails the extra's requirement: ``pip install "code-towel[format,types]"`` would
-    replace that version too, and the record says which it replaced.
+    A tool the project's own requirements installed stays, and one the project pins
+    (see ``tool_pins``) is installed at that version, so the project is checked and
+    formatted by the tools its own checks use. One the project leaves to Towel comes
+    from the candidate's extra at the version that resolves today, and so does one
+    whose chosen version fails the extra's requirement: ``pip install
+    "code-towel[format,types]"`` would replace that version too, and the record says
+    which it replaced.
     """
     requested: List[Tuple[str, str, ToolSource]] = []
     for requirement in candidate.types_requirements:
@@ -983,16 +1145,14 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
         requested.append((requirement_name(requirement), requirement, "towel[format]"))
     names = [name for name, _, _ in requested]
     present = probe_environment(python, names).versions
-    lock, pins = lock_pins(tree, [name for name in names if present.get(name) is None])
+    pinned = tool_pins(python, tree, [name for name in names if present.get(name) is None])
     offered: Dict[str, Tuple[ToolSource, str]] = {}
     for name in names:
         installed = present.get(name)
         if installed is not None:
             offered[name] = ("project", installed)
-        elif lock is not None and name in pins:
-            pinned = applicable_version(python, lock, name, pins[name])
-            if pinned is not None:
-                offered[name] = (lock, pinned)
+        elif name in pinned:
+            offered[name] = pinned[name]
     judged = [(name, requirement) for name, requirement, _ in requested if name in offered]
     satisfied = (
         _ask_packaging(
@@ -1024,9 +1184,20 @@ _TOOL_SOURCES: Mapping[str, ToolSource] = {
     "uv.lock": "uv.lock",
     "poetry.lock": "poetry.lock",
     "pdm.lock": "pdm.lock",
+    PRE_COMMIT_CONFIG: PRE_COMMIT_CONFIG,
     "towel[types]": "towel[types]",
     "towel[format]": "towel[format]",
 }
+
+
+def _recorded_source(recorded: str) -> Optional[ToolSource]:
+    """The source a provenance record names: one of ``_TOOL_SOURCES``, or a requirements file."""
+    if recorded in _TOOL_SOURCES:
+        return _TOOL_SOURCES[recorded]
+    path = PurePosixPath(recorded)
+    if path.is_absolute() or ".." in path.parts or path.suffix not in (".txt", ".in"):
+        return None
+    return RequirementsFile(recorded)
 
 
 def _read_provenance(path: Path) -> Optional[Dict[str, Choice]]:
@@ -1041,7 +1212,7 @@ def _read_provenance(path: Path) -> Optional[Dict[str, Choice]]:
     for name, entry in data.items():
         if not isinstance(entry, dict):
             return None
-        source = _TOOL_SOURCES.get(str(entry.get("source")))
+        source = _recorded_source(str(entry.get("source")))
         overridden = entry.get("overridden", "")
         if source is None or not isinstance(overridden, str):
             return None
@@ -1702,9 +1873,12 @@ def _pre_commit_declarations(declarer: _Declarer) -> List[Declaration]:
 _REQUIREMENT_DIRECTORIES = ("requirements", "requirements.d", "reqs")
 
 
-def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
-    """Requirements files named for typing, at the root or in a requirements directory."""
-    root = declarer.tree
+def _requirements_files(root: Path) -> List[Path]:
+    """The project's requirements files, at the root or in a requirements directory, in order.
+
+    A ``.in`` beside the ``.txt`` compiled from it is left out: the ``.txt`` pins what the
+    ``.in`` names.
+    """
     candidates = [
         path
         for path in (root.iterdir() if root.is_dir() else [])
@@ -1717,16 +1891,20 @@ def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
                 for path in (root / directory).rglob("*")
                 if path.is_file() and path.suffix in (".txt", ".in")
             ]
-    named = sorted(
+    return sorted(
         path
         for path in candidates
-        if _named_for_typing(path.relative_to(root).with_suffix("").as_posix())
-        # A compiled requirements.txt beside its .in pins what the .in names.
-        and not (path.suffix == ".in" and path.with_suffix(".txt").is_file())
+        if not (path.suffix == ".in" and path.with_suffix(".txt").is_file())
     )
+
+
+def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
+    """Requirements files named for typing, at the root or in a requirements directory."""
+    root = declarer.tree
     return [
         declaration
-        for path in named
+        for path in _requirements_files(root)
+        if _named_for_typing(path.relative_to(root).with_suffix("").as_posix())
         for declaration in declarer.declared(
             path.relative_to(root).as_posix(), _requirements_file(path, root, frozenset())
         )
@@ -2984,8 +3162,10 @@ def main() -> int:
         "with the project installed editable from the tree under test. The Checkers "
         "and Formatters columns name the mypy and pyright, and the Black, isort and "
         "ruff, there: `(project)` marks one the project's own requirements installed, "
-        "`(uv.lock)` and the like one installed at the version the project's lock file "
-        "pins, `(over ...)` one whose chosen version failed the extra's requirement and "
+        "`(uv.lock)`, `(.pre-commit-config.yaml)`, `(requirements.txt)` and the like one "
+        "installed at the version that file of the project's pins (a lock file first, "
+        "then a pre-commit hook's revision, then a requirements file), "
+        "`(over ...)` one whose chosen version failed the extra's requirement and "
         "was replaced as installing the extra replaces it, and the rest came from the "
         "candidate's `types` and `format` extras. Which formatter a project gets is its "
         "configuration's choice, as it is for any user. Typing deps counts the "
