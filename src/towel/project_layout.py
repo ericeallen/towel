@@ -89,6 +89,21 @@ def package_chain(path: Path) -> List[Path]:
     return chain
 
 
+def package_chain_name(path: Path) -> Optional[str]:
+    """The module name ``path`` has when its top regular package's parent is on ``sys.path``.
+
+    Read from ``__init__.py`` markers alone, never from packaging metadata, so
+    it is a derivation independent of the layout readers: ``src/pkg/m.py``
+    under ``src/pkg/__init__.py`` is ``pkg.m`` whatever a ``setup.cfg`` or a
+    Hatch table says. A module in no package is named by its stem.
+    """
+    resolved = path.resolve()
+    parts = [package.name for package in reversed(package_chain(resolved))]
+    if resolved.stem != "__init__":
+        parts.append(resolved.stem)
+    return _valid_module_path(".".join(parts))
+
+
 def _setuptools_default_src_root(project_root: Path, data: Mapping[str, object]) -> Optional[Path]:
     """Recognize conventional setuptools src discovery without overriding configuration.
 
@@ -249,6 +264,15 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
             if package.parent not in roots:
                 roots.append(package.parent)
         return roots
+    # An ``include`` naming a package selects files and turns Hatch's
+    # name-based default off;
+    # with no ``sources`` nothing is relocated, so every file ships at its
+    # path from the project root. beautifulsoup4's ``"/bs4/**/*.py"`` ships
+    # ``bs4/__init__.py``, and ``"/src/foo"`` ships ``src/foo/a.py`` as
+    # ``src.foo.a`` -- which the default, had it been applied, would have
+    # named ``foo.a``. Both built wheels agree.
+    if _hatch_includes_a_package(project_root, wheel, build):
+        return [project_root.resolve()]
     project = data.get("project", {})
     name = project.get("name") if isinstance(project, dict) else None
     if not isinstance(name, str):
@@ -257,9 +281,6 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
     for root in (project_root, project_root / "src"):
         if (root / normalized / "__init__.py").is_file():
             return [root.resolve()]
-    evidenced = _hatch_included_package_roots(project_root, wheel, build)
-    if evidenced:
-        return evidenced
     raise UnsupportedLayoutError(
         "Unsupported Hatch default package layout; cannot infer safe imports"
     )
@@ -275,10 +296,10 @@ def _literal_prefix(pattern: str) -> Optional[Path]:
     return Path(*parts) if parts else None
 
 
-def _hatch_included_package_roots(
+def _hatch_includes_a_package(
     project_root: Path, wheel: Mapping[str, object], build: Mapping[str, object]
-) -> List[Path]:
-    """Source roots evidenced by the packages a wheel include names.
+) -> bool:
+    """Whether a wheel include names a classic package, evidence of where the code ships.
 
     A project whose distribution name is not its package name defeats Hatch's
     own default, which looks for a directory named after the project:
@@ -286,12 +307,12 @@ def _hatch_included_package_roots(
     ``"/bs4/**/*.py"`` -- and with no ``sources`` to relocate anything, the
     wheel holds ``bs4/__init__.py`` at its root, which its built wheel
     confirms. The directory named before the first wildcard is a classic
-    package, so the directory holding it is an import root.
+    package. Nothing is relocated, so the import root is the project root:
+    ``"/src/foo"`` ships ``src/foo/a.py`` as ``src.foo.a``.
 
     An include naming no package is no evidence and contributes nothing; where
     none of them does, the layout is still refused rather than guessed at.
     """
-    roots: List[Path] = []
     for source in (wheel, build):
         for key in ("include", "only-include"):
             patterns = source.get(key)
@@ -306,11 +327,9 @@ def _hatch_included_package_roots(
                 package = (project_root / prefix).resolve()
                 if not package.is_relative_to(project_root):
                     continue
-                if not (package / "__init__.py").is_file():
-                    continue
-                if package.parent not in roots:
-                    roots.append(package.parent)
-    return roots
+                if (package / "__init__.py").is_file():
+                    return True
+    return False
 
 
 def _flit_source_roots(project_root: Path, data: Dict[str, Any]) -> List[Path]:
@@ -684,14 +703,13 @@ class ProjectLayout:
                 # Validate package path components
                 if not parts:
                     return None
-                if not self.pep420_namespace_packages:
-                    # Ensure every directory in the chain is a traditional package
-                    cursor = src_root
-                    for comp in parts[:-1]:
-                        cursor = cursor / comp
-                        if not is_package_dir(cursor):
-                            # Not a classic package path; fall back to absolute-from-project
-                            break
+                # Without namespace packages a bare directory is not a
+                # package, so no name passes through one.
+                if not self.pep420_namespace_packages and not all(
+                    is_package_dir(src_root.joinpath(*parts[: index + 1]))
+                    for index in range(len(parts) - 1)
+                ):
+                    return None
                 return _valid_module_path(".".join(parts))
             except ValueError:
                 continue

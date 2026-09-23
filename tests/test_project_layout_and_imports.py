@@ -82,6 +82,10 @@ package-dir = {"" = "src"}
         pkg_dir = root / "src" / "pkg" / "mod"
         a_py = pkg_dir / "alpha.py"
         b_py = pkg_dir / "beta.py"
+        # Regular packages: setuptools ships no bare directory without
+        # find_namespace, so only these give the name a second derivation.
+        write_file(root / "src" / "pkg" / "__init__.py", "")
+        write_file(pkg_dir / "__init__.py", "")
 
         # Two functions with identical blocks to trigger extraction
         write_file(

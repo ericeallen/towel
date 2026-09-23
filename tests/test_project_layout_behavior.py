@@ -141,10 +141,9 @@ class TestProjectLayoutBehavior(unittest.TestCase):
             layout_ns = ProjectLayout.discover(root, pep420_namespace_packages=True)
             self.assertEqual(layout_ns.module_name_for(mod), "ns.sub.mod")
 
-            # pep420 False: require classic packages with __init__.py, but our implementation
-            # still returns a module name; exercise the branch without __init__.py
+            # pep420 False: a bare directory is not a package, so no name passes through one
             layout_no_ns = ProjectLayout.discover(root, pep420_namespace_packages=False)
-            self.assertEqual(layout_no_ns.module_name_for(mod), "ns.sub.mod")
+            self.assertIsNone(layout_no_ns.module_name_for(mod))
 
             # Add __init__.py and ensure the same result (covers the classic package path)
             (root / "ns" / "__init__.py").write_text("")

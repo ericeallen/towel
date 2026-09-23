@@ -43,7 +43,7 @@ from typing import Dict, Iterator, List, Optional, Set, Tuple
 from .exceptions import RefactoringError
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
-from ..project_layout import ProjectLayout, is_package_dir
+from ..project_layout import ProjectLayout, package_chain, package_chain_name
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
 from ..type_inference import TypeDiagnostic
@@ -580,23 +580,26 @@ class Materialization(
             prefer_absolute_imports=self.prefer_absolute_imports,
             pep420_namespace_packages=self.pep420_namespace_packages,
         )
-        abs_mod = layout.module_name_for(origin_from)
+        absolute = _corroborated_module_name(layout, origin_from)
+        # A relative import states only that the two modules share a package,
+        # which holds wherever the package is installed. None when the
+        # importer is in no package or the helper lies outside its top one.
         relative = relative_import_module(from_path, to_path)
-        # A relative import only resolves inside a classic package; flat
-        # modules on sys.path (no __init__.py) must use an absolute name.
-        importer_in_package = is_package_dir(to_path.parent)
-        # Prefer an absolute import only when the layout is anchored by
-        # real packaging metadata, so the name stays valid after an
-        # out-of-place output is adopted into its real location. Otherwise
-        # use a relative import when the file is in a package: it encodes
-        # only the intrinsic same-package relationship, is valid wherever
-        # the code lands, and matches the surrounding intra-package style.
-        if abs_mod and layout.prefer_absolute_imports and layout.metadata_root:
-            module_name = abs_mod
-        elif relative is not None and importer_in_package:
+        # Prefer an absolute import only when the layout is anchored by real
+        # packaging metadata and the name is corroborated; otherwise a
+        # relative import, which encodes only the intrinsic same-package
+        # relationship and matches the surrounding intra-package style.
+        if absolute and layout.prefer_absolute_imports and layout.metadata_root:
+            module_name = absolute
+        elif relative is not None:
             module_name = relative
+        elif absolute:
+            module_name = absolute
         else:
-            module_name = abs_mod or from_path.stem
+            raise RefactoringError(
+                f"No import of {origin_from} from {origin_to} can be shown to resolve:"
+                " the packaging metadata and the package markers name it differently"
+            )
         self._ensure_import(lines, module_name, proposal.extracted_function.name)
 
     def _ensure_import(self, lines: List[str], module_name: str, name: str) -> None:
@@ -668,3 +671,30 @@ class Materialization(
                         f"Generated call to {helper_name} passes {len(node.args)} arguments "
                         f"but the helper binds {expected}: {path}"
                     )
+
+
+def _corroborated_module_name(layout: ProjectLayout, path: Path) -> Optional[str]:
+    """The absolute module name of ``path``, when two independent derivations agree on it.
+
+    The layout readers reimplement five build backends' package discovery,
+    and a wrong answer from them is an import that names a module the
+    installed project does not have: ``src.foo.a`` for a ``setup.cfg`` src
+    layout they do not read, ``foo.src.foo.a`` for a project directory named
+    like its package. The checker cannot catch it, since with no project
+    configuration it names modules from the same root. The name the
+    ``__init__`` markers imply is a second derivation that shares none of
+    that machinery, and a name both give is the one used. When they differ
+    the name is unknown, and a caller that has no relative import to fall
+    back on declines rather than guess.
+
+    A module in no regular package, in a project with no packaging metadata,
+    has no second derivation: its only name is its path from the import
+    root, which for such a project is the directory Towel was pointed at.
+    That assumption is the documented one, and it is kept there alone.
+    """
+    declared = layout.module_name_for(path)
+    if declared is None or declared == package_chain_name(path):
+        return declared
+    if not layout.metadata_root and not package_chain(path.resolve()):
+        return declared
+    return None
