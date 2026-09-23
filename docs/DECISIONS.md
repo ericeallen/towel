@@ -389,6 +389,49 @@ What remains is an assumption of the opt-in mode, stated in the
 limitations: code outside the project that patches a builtin into one of its
 modules is not seen.
 
+*Status: implemented on the `audit-1772` branch; not yet released. The same
+day the owner made this the default rather than a prohibition; see "A name
+is its binding, not its spelling" below.*
+
+## 2026-09-23: A name is its binding, not its spelling
+
+Extraction moves code between environments, so every free variable of a
+pair is a question of what it is bound to at each site and whether the
+helper would see the same binding. The owner adopted this rule as the
+default:
+
+- **The same binding everywhere, the helper included.** The helper reads
+  the name directly. Examples are a global of the same module, read by a
+  helper in that module, and a builtin that no participating module shadows,
+  rebinds or has patched.
+- **Bound at each site to the corresponding thing.** This covers each
+  enclosing function's own local, parameter or closure variable, and a
+  module name in two different modules. The helper takes the name as an
+  ordinary parameter, and each call site passes its own. This is how
+  extraction treats free variables: sound, and unsurprising, since a helper
+  takes the variables it uses. A parameter is evaluated at the call, while
+  the original read the name where it used it, so the existing checks for
+  rebinding in between (thunks, `module_data_lookup`, the closure guards)
+  choose between eager, lazy and declining.
+- **Bound to different kinds of thing at the two sites**, such as local at
+  one and global at the other. The blocks differ at that name, and it is
+  treated as any difference is: parameterized where that is safe, declined
+  otherwise. A user global at one site against a local at the other is
+  declined today, as `module_data_lookup`.
+
+Builtins differ only in the second and third cases. Passing one is correct
+but surprising, so by default a builtin is read directly only where it is
+the builtin at every site and nothing says it may differ; otherwise the pair
+is declined. A builtin at one site against a local of the same spelling at
+the other (`len` in `first`, a parameter `len` in `second`) is such a
+difference, and is declined.
+
+**`--parameterize-builtins` opts out of that default.** With it, in exactly
+the cases the default declines, each call site passes its own binding of the
+builtin as a parameter, so behaviour is preserved. It never makes a builtin
+a parameter where reading it directly is already sound. The owner asked for
+it so that a user who wants those extractions can have them explicitly.
+
 *Status: being implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-22: Checked with the project's own checker, as configured
