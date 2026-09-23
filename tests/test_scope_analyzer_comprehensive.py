@@ -694,3 +694,77 @@ def test_what_a_pattern_evaluates_is_free(pattern: str, reads: set[str]) -> None
             result = 2
     """
     assert _free_variables(source) == {"value"} | reads
+
+
+@pytest.mark.parametrize(
+    ("source", "reads"),
+    [
+        # What a definition evaluates where it stands.
+        ("g = lambda v, s=k: v * s", {"k"}),
+        ("g = lambda v, *, s=k: v * s", {"k"}),
+        ("g = lambda v: (lambda s=k: v * s)()", {"k"}),
+        ("if c:\n    def g(v, s=k, *, t=j): return v", {"c", "k", "j"}),
+        ("if c:\n    @deco(k)\n    def g(): pass", {"c", "deco", "k"}),
+        ("if c:\n    def g(v: A, *w: B, **x: C) -> D: return v", {"c", "A", "B", "C", "D"}),
+        ("if c:\n    class C(Base, metaclass=Meta, flag=k): pass", {"c", "Base", "Meta", "k"}),
+        ("if c:\n    @deco\n    class C: pass", {"c", "deco"}),
+        # A class body runs where it stands; what is inside it looks past it.
+        ("if c:\n    class C:\n        x = k", {"c", "k"}),
+        ("if c:\n    class C:\n        k = 1\n        y = k", {"c"}),
+        ("if c:\n    class C:\n        y = k\n        k = 1", {"c"}),
+        ("if c:\n    class C:\n        k = 1\n        def m(self): return k", {"c", "k"}),
+        ("if c:\n    class C:\n        k = 1\n        f = lambda: k", {"c", "k"}),
+        ("if c:\n    class C:\n        k = 1\n        xs = [k for _ in r]", {"c", "k", "r"}),
+        ("if c:\n    class C:\n        r = [1]\n        xs = [0 for _ in r]", {"c"}),
+        ("if c:\n    class C:\n        k = 1\n        class D:\n            y = k", {"c", "k"}),
+        ("if c:\n    class C:\n        T = int\n        def m(self, x: T) -> T: pass", {"c"}),
+        ("if c:\n    class C:\n        x: A = 1", {"c", "A"}),
+        # A dotted import binds its first name.
+        ("import a.b\ny = a.c", set()),
+    ],
+)
+def test_what_a_definition_evaluates_is_read_where_it_stands(source: str, reads: set[str]) -> None:
+    assert _free_variables(source) == reads
+
+
+def test_annotations_a_module_postpones_are_not_read() -> None:
+    source = textwrap.dedent("""
+        from __future__ import annotations
+        def f(c):
+            if c:
+                def g(v: A) -> B:
+                    return v
+                class C:
+                    x: D = 1
+            return c
+        """)
+    tree = ast.parse(source)
+    analyzer = ScopeAnalyzer()
+    analyzer.analyze(tree)
+    function = tree.body[1]
+    assert isinstance(function, ast.FunctionDef)
+    assert analyzer.free_variables(function.body[:1]) == {"c"}
+
+
+@pytest.mark.parametrize(
+    ("source", "reads"),
+    [
+        ("if c:\n    def g[T: B](x: T) -> T: return T", {"c", "B"}),
+        (
+            "if c:\n    class C[T](Base[T]):\n        x: T\n        def m(self): return T",
+            {"c", "Base"},
+        ),
+        (
+            "if c:\n    class C:\n        k = 1\n        def m[T](self, x: k) -> T: return k",
+            {"c", "k"},
+        ),
+        ("type A[T] = list[T | k]", {"k"}),
+        ("if c:\n    class C:\n        k = int\n        type A = list[k]", {"c"}),
+    ],
+)
+def test_type_parameters_bind_in_their_annotation_scope(source: str, reads: set[str]) -> None:
+    try:
+        ast.parse(source)
+    except SyntaxError:
+        pytest.skip("PEP 695 syntax needs Python 3.12")
+    assert _free_variables(source) == reads

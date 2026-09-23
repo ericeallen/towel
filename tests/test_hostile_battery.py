@@ -157,6 +157,10 @@ TRANSFORMED = {
     # literal or a whole dotted name differs, is declined: a bare name there
     # would be a capture.)
     "r151_pattern_names_that_may_differ",
+    # What a definition evaluates where it stands (defaults, decorators,
+    # annotations, bases, a class body) is read from the caller.
+    "r152_definition_time_reads",
+    "r153_class_definition_reads",
 }
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise
