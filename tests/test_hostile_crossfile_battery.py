@@ -54,6 +54,9 @@ TRANSFORMED = {
     "xf24_relative_import_climbs_elsewhere",
     "xf25_relative_import_in_the_same_package",
     "xf26_relative_import_ancestor_in_another_package",
+    "xf27_registration_decorator_in_host",
+    "xf28_registration_decorator_in_reused_module",
+    "xf29_type_checking_block_with_branches",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.

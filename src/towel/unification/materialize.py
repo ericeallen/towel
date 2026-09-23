@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
 from .exceptions import ProjectScanLimitError, RefactoringError
+from .import_graph import ImportTimeCode
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
@@ -505,7 +506,9 @@ class Materialization(
     ) -> None:
         node: ast.AST = proposal.extracted_function
         dependencies = self._placeable_dependencies(
-            "".join(lines), self._annotation_names(proposal.extracted_function)
+            "".join(lines),
+            self._annotation_names(proposal.extracted_function),
+            Path(proposal.file_path),
         )
         if proposal.helper_type_declarations:
             node = ast.Module(
@@ -530,7 +533,7 @@ class Materialization(
         lines_to_insert.extend(["\n", "\n"])
         lines[insert_line:insert_line] = lines_to_insert
 
-    def _placeable_dependencies(self, source: str, names: Set[str]) -> Set[str]:
+    def _placeable_dependencies(self, source: str, names: Set[str], path: Path) -> Set[str]:
         """The annotation names the helper may be placed after; refuse when one it needs is not.
 
         A helper placed after a definition its annotations name can spell it
@@ -552,7 +555,7 @@ class Materialization(
             elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
                 module_names.add(statement.target.id)
         ordered = names & module_names
-        blocked = ordered - self.placeable_after(source)
+        blocked = ordered - self.placeable_after(source, path=path, cache=self.import_graph)
         if blocked and not _postpones_annotations(source):
             raise RefactoringError(
                 f"The helper's annotations name {sorted(blocked)}, defined after code that"
@@ -603,10 +606,10 @@ class Materialization(
         self, lines: List[str], dependencies: Set[str], insert_line: int
     ) -> int:
         """Keep eager declaration dependencies available before the helper can be called."""
-        body = self._parse_source("".join(lines)).body
+        code = ImportTimeCode("".join(lines))
         movable = True
-        for statement in body:
-            movable = movable and self._is_definition_like(statement)
+        for statement, runs_code in zip(code.tree.body, code.statements()):
+            movable = movable and not runs_code
             if not dependencies.intersection(bindings_of(statement, into_nested_scopes=False)):
                 continue
             if not movable or isinstance(statement, (ast.If, ast.Try)):

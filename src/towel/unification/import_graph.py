@@ -1,16 +1,20 @@
 """Resolving a project's import graph on the filesystem, for the cycle guard and helper placement.
 
 Which files an import statement reaches, which module defines an imported name,
-and whether a new import would close a static cycle. Results are cached per
-run in an ``ImportGraphCache`` the engine owns.
+whether a new import would close a static cycle, and whether running a
+module's top level can run code of its own (``ImportTimeCode``). Results are
+cached per run in an ``ImportGraphCache`` the engine owns.
 """
 
 from __future__ import annotations
 
 import ast
+import builtins
 import os
 import re
 import sys
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Dict,
@@ -21,11 +25,13 @@ from typing import (
     Sequence,
     Set,
     Tuple,
+    Union,
 )
 
 from .bounded_cache import BoundedCache
 from .exceptions import UnsupportedLayoutError
 from ..project_layout import ProjectLayout, find_project_root, load_pyproject, package_chain
+from .module_bindings import NAMESPACE_PRESERVING_DECORATORS, dotted_name, global_bindings
 from .statement_facts import (
     imported_binding_name,
 )
@@ -57,6 +63,9 @@ class ImportGraphCache:
         self.source_roots: BoundedCache[Path, Tuple[Path, ...]] = BoundedCache(limit)
         # Whether a module runs code at import, keyed like the edges.
         self.effects: BoundedCache[Tuple[Path, int, int], bool] = BoundedCache(limit)
+        # Whether subclassing a module's class runs only Python's class
+        # machinery, keyed like the edges plus the class's name.
+        self.quiet_classes: BoundedCache[Tuple[Path, int, int, str], bool] = BoundedCache(limit)
         # The top-level names a module imports unconditionally, keyed like the edges.
         self.required_imports: BoundedCache[Tuple[Path, int, int], FrozenSet[str]] = BoundedCache(
             limit
@@ -458,66 +467,657 @@ def _reachable_modules(
     return visited
 
 
-def _is_definition_only(statement: ast.stmt) -> bool:
-    """A module-level statement that does nothing at import beyond binding a name."""
-    if isinstance(
-        statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom)
-    ):
-        return True
-    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
-        return True  # a docstring or a bare literal
-    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-        value = statement.value
-        return value is None or _is_literal(value)
-    if isinstance(statement, ast.If):
-        return _is_guarded_block(statement)
-    if isinstance(statement, ast.Try):
-        return (
-            all(_is_definition_only(item) for item in statement.body)
-            and all(
-                _is_definition_only(item) for handler in statement.handlers for item in handler.body
+# -- What running a module's top level can do ------------------------------
+#
+# One question serves helper hosting and helper insertion alike: can this
+# top-level statement, as its module is imported, run code other than
+# Python's own? A decorator, a default value, an evaluated annotation, a base
+# class's metaclass or ``__init_subclass__``, an attribute access, an
+# operator, and any call can run project code, and all count, unless what
+# runs is one of the few callables below, resolved through the module's own
+# imports, whose effect is Python's alone and reaches nothing outside what it
+# builds. Each is checked in tests/test_import_time_code.py.
+
+# Function decorators that wrap or mark the function and register it nowhere.
+# ``typing.overload`` is absent: it records each overload in a registry that
+# ``typing.clear_overloads()`` empties, so an earlier import is observable.
+_QUIET_FUNCTION_DECORATORS = frozenset(
+    {
+        "abc.abstractmethod",
+        "builtins.classmethod",
+        "builtins.property",
+        "builtins.staticmethod",
+        "contextlib.asynccontextmanager",
+        "contextlib.contextmanager",
+        "functools.cache",
+        "functools.cached_property",
+        "functools.lru_cache",
+        "typing.final",
+        "typing.no_type_check",
+        "typing.override",
+        "typing_extensions.final",
+        "typing_extensions.override",
+    }
+)
+
+# Class decorators that return the class built from its own namespace.
+_QUIET_CLASS_DECORATORS = NAMESPACE_PRESERVING_DECORATORS | {
+    "typing.runtime_checkable",
+    "typing_extensions.runtime_checkable",
+}
+
+# Constructors that only store their arguments in the object they return, so
+# names may be passed as well as constants. ``logging.getLogger`` is absent:
+# it registers the logger with the manager, and a ``dictConfig`` or
+# ``fileConfig`` that runs later disables every logger existing by then, so
+# creating one earlier silences it.
+_QUIET_CONSTRUCTORS = frozenset(
+    {
+        "builtins.classmethod",
+        "builtins.property",
+        "builtins.staticmethod",
+        "dataclasses.field",
+        "typing.NewType",
+        "typing.ParamSpec",
+        "typing.TypeVar",
+        "typing.TypeVarTuple",
+        "typing_extensions.NewType",
+        "typing_extensions.ParamSpec",
+        "typing_extensions.TypeVar",
+        "typing_extensions.TypeVarTuple",
+    }
+)
+
+# Builtin constructors, quiet over constants only: handed a name they would
+# iterate, hash or convert an object whose methods may be the project's.
+_QUIET_BUILTIN_CONSTRUCTORS = frozenset(
+    {"bool", "bytes", "dict", "float", "frozenset", "int", "list", "object", "set", "str", "tuple"}
+)
+
+# Classes whose subclass creation runs only their own metaclass and
+# ``__init_subclass__``, which build the new class and register it nowhere.
+_QUIET_BASES = frozenset(
+    {
+        "abc.ABC",
+        "typing.NamedTuple",
+        "typing.Protocol",
+        "typing_extensions.Protocol",
+    }
+)
+_QUIET_SUBSCRIPTED_BASES = frozenset(
+    {"typing.Generic", "typing.Protocol", "typing_extensions.Protocol"}
+)
+_QUIET_METACLASSES = frozenset({"abc.ABCMeta", "builtins.type"})
+
+# Where the names an evaluated annotation subscripts may come from.
+_ANNOTATION_MODULES = frozenset({"collections.abc", "typing", "typing_extensions"})
+_BUILTIN_GENERICS = frozenset({"dict", "frozenset", "list", "set", "tuple", "type"})
+
+# Facts of the running interpreter a module may branch on at import.
+_PLATFORM_FACTS = frozenset({"os.name", "sys.byteorder", "sys.platform", "sys.version_info"})
+_TYPE_CHECKING = frozenset({"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"})
+
+_BUILTIN_CLASSES = frozenset(
+    f"builtins.{name}" for name, value in vars(builtins).items() if isinstance(value, type)
+)
+
+
+@dataclass(frozen=True)
+class _ClassBody:
+    """What a class body has bound so far, which shadows the module's names after it.
+
+    ``functions`` are the plain functions among them, and ``properties`` the
+    ones a ``@property`` (or a setter of one) made properties.
+    """
+
+    names: FrozenSet[str] = frozenset()
+    functions: FrozenSet[str] = frozenset()
+    properties: FrozenSet[str] = frozenset()
+
+    def after(self, statement: ast.stmt, *, is_property: bool = False) -> "_ClassBody":
+        """The body's names once ``statement`` has run."""
+        bound = _statement_binds(statement)
+        plain = (
+            isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and not statement.decorator_list
+        )
+        return _ClassBody(
+            names=self.names | bound,
+            functions=(self.functions - bound) | (bound if plain else frozenset()),
+            properties=(self.properties - bound) | (bound if is_property else frozenset()),
+        )
+
+
+class ImportTimeCode:
+    """Which top-level statements of one module can run code other than Python's own on import.
+
+    Names resolve the way the module resolves them where each statement runs
+    (``ModuleBindings``): a builtin only when the module can never bind its
+    name, anything else only through a binding certainly in effect there.
+    A base class is quiet when subclassing it runs only Python's class
+    machinery: a builtin, one of ``_QUIET_BASES``, or a class of the project
+    whose decorators keep it, whose metaclass is ``type`` or ``ABCMeta``,
+    which defines no ``__init_subclass__``, and whose own bases are quiet; one
+    imported from another module is followed there when ``path`` and
+    ``cache`` locate it. A body guarded by a resolved ``TYPE_CHECKING`` never
+    runs, nor one guarded by ``__name__ == "__main__"`` when the module is
+    imported rather than run.
+    """
+
+    def __init__(
+        self,
+        source: str,
+        *,
+        path: Optional[Path] = None,
+        cache: Optional[ImportGraphCache] = None,
+        depth: int = 0,
+    ) -> None:
+        self._tree = ast.parse(source)
+        self._bindings = global_bindings(source)
+        self._path = path
+        self._cache = cache
+        self._depth = depth
+        self._postponed = any(
+            isinstance(statement, ast.ImportFrom)
+            and statement.module == "__future__"
+            and any(alias.name == "annotations" for alias in statement.names)
+            for statement in self._tree.body
+        )
+
+    @property
+    def tree(self) -> ast.Module:
+        return self._tree
+
+    def statements(self) -> Tuple[bool, ...]:
+        """For each top-level statement, in order, whether running it can run code."""
+        return tuple(
+            self._statement(statement, order, None)
+            for order, statement in enumerate(self._tree.body)
+        )
+
+    # -- statements -----------------------------------------------------------
+
+    def _statement(self, statement: ast.stmt, order: int, body: Optional[_ClassBody]) -> bool:
+        """Whether ``statement``, running where top-level statement ``order`` does, can run code.
+
+        ``body`` is the enclosing class body's state, or None at module level.
+        """
+        if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)):
+            return False
+        if isinstance(statement, ast.Expr):
+            return self._expression(statement.value, order, body)
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return self._function(statement, order, body)
+        if isinstance(statement, ast.ClassDef):
+            return self._class(statement, order, body)
+        if isinstance(statement, ast.Assign):
+            return not all(
+                isinstance(target, ast.Name) for target in statement.targets
+            ) or self._assigned(statement.value, order, body)
+        if isinstance(statement, ast.AnnAssign):
+            return (
+                not isinstance(statement.target, ast.Name)
+                or self._annotation(statement.annotation, order, body)
+                or (statement.value is not None and self._assigned(statement.value, order, body))
             )
-            and all(_is_definition_only(item) for item in statement.orelse + statement.finalbody)
-        )
-    return False
-
-
-def _is_literal(expression: ast.expr) -> bool:
-    if isinstance(expression, ast.Constant):
+        if isinstance(statement, ast.If):
+            return self._conditional(statement, order, body)
+        if isinstance(statement, ast.Try):
+            handlers = [handler.type for handler in statement.handlers if handler.type]
+            nested = statement.body + statement.orelse + statement.finalbody
+            nested += [inner for handler in statement.handlers for inner in handler.body]
+            return any(self._expression(handler, order, body) for handler in handlers) or any(
+                self._statement(inner, order, body) for inner in nested
+            )
         return True
-    if isinstance(expression, ast.Name):
-        return True  # binding an existing name allocates nothing
-    if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
-        return all(_is_literal(item) for item in expression.elts)
-    if isinstance(expression, ast.Dict):
-        return all(key is not None and _is_literal(key) for key in expression.keys) and all(
-            _is_literal(value) for value in expression.values
+
+    def _function(
+        self,
+        function: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+        order: int,
+        body: Optional[_ClassBody],
+    ) -> bool:
+        arguments = function.args
+        defaults = [*arguments.defaults, *filter(None, arguments.kw_defaults)]
+        annotations = [
+            argument.annotation
+            for argument in (
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+                *filter(None, (arguments.vararg, arguments.kwarg)),
+            )
+            if argument.annotation is not None
+        ]
+        if function.returns is not None:
+            annotations.append(function.returns)
+        return (
+            any(
+                not self._quiet_decorator(decorator, order, body, _QUIET_FUNCTION_DECORATORS)
+                for decorator in function.decorator_list
+            )
+            or any(self._expression(default, order, body) for default in defaults)
+            or any(self._annotation(annotation, order, body) for annotation in annotations)
         )
-    if isinstance(expression, ast.UnaryOp):
-        return _is_literal(expression.operand)
+
+    def _class(self, node: ast.ClassDef, order: int, body: Optional[_ClassBody]) -> bool:
+        if body is not None and (node.bases or node.keywords or node.decorator_list):
+            return True  # A nested class's bases would resolve in the enclosing body.
+        if any(
+            not self._quiet_decorator(decorator, order, body, _QUIET_CLASS_DECORATORS)
+            for decorator in node.decorator_list
+        ):
+            return True
+        if not self._quiet_keywords(node.keywords, order) or not all(
+            self._quiet_base(base, order) for base in node.bases
+        ):
+            return True
+        inner_body = _ClassBody()
+        for inner in node.body:
+            if self._statement(inner, order, inner_body):
+                return True
+            inner_body = inner_body.after(
+                inner, is_property=self._makes_property(inner, order, inner_body)
+            )
+        return False
+
+    def _makes_property(self, statement: ast.stmt, order: int, body: _ClassBody) -> bool:
+        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+        return any(
+            self._origin(decorator, order, body) == "builtins.property"
+            or self._is_property_accessor(decorator, body)
+            for decorator in statement.decorator_list
+        )
+
+    def _conditional(self, statement: ast.If, order: int, body: Optional[_ClassBody]) -> bool:
+        test = statement.test
+        if self._is_type_checking(test, order, body) or (body is None and _is_main_guard(test)):
+            # Never true where the module is imported: only the ``else`` runs.
+            return any(self._statement(inner, order, body) for inner in statement.orelse)
+        if not self._quiet_test(test, order, body):
+            return True
+        return any(
+            self._statement(inner, order, body) for inner in statement.body + statement.orelse
+        )
+
+    # -- expressions ----------------------------------------------------------
+
+    def _assigned(self, value: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
+        """Whether binding ``value`` can run code; in a class body, ``__set_name__`` included.
+
+        The class statement calls ``__set_name__`` on every object its
+        namespace holds that has one, so a class attribute that merely names
+        an object needs that object to be one without it.
+        """
+        if body is not None and isinstance(value, ast.Name):
+            return not self._lacks_set_name(value.id, order, body)
+        return self._expression(value, order, body)
+
+    def _expression(self, node: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
+        """Whether evaluating ``node`` can run code."""
+        if isinstance(node, (ast.Constant, ast.Name)):
+            return False
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return any(self._expression(item, order, body) for item in node.elts)
+        if isinstance(node, (ast.Set, ast.UnaryOp, ast.BinOp)):
+            return not _is_constant(node)
+        if isinstance(node, ast.Dict):
+            return not all(key is not None and _is_constant(key) for key in node.keys) or any(
+                self._expression(value, order, body) for value in node.values
+            )
+        if isinstance(node, (ast.Compare, ast.BoolOp)):
+            return not self._quiet_test(node, order, body)
+        if isinstance(node, ast.Lambda):
+            defaults = [*node.args.defaults, *filter(None, node.args.kw_defaults)]
+            return any(self._expression(default, order, body) for default in defaults)
+        if isinstance(node, ast.Call):
+            return not self._quiet_call(node, order, body)
+        return True
+
+    def _annotation(self, node: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
+        """Whether an annotation, evaluated where it is written, can run code."""
+        if self._postponed or isinstance(node, (ast.Constant, ast.Name)):
+            return False
+        if isinstance(node, ast.Subscript):
+            origin = self._origin(node.value, order, body)
+            generic = origin is not None and (
+                origin.rpartition(".")[0] in _ANNOTATION_MODULES
+                or origin in {f"builtins.{name}" for name in _BUILTIN_GENERICS}
+            )
+            parts = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            return not generic or any(self._annotation(part, order, body) for part in parts)
+        if isinstance(node, ast.List):
+            # ``Callable[[int, str], bool]``'s parameters.
+            return any(self._annotation(item, order, body) for item in node.elts)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            # ``X | None`` runs ``type.__or__``, which a metaclass may override.
+            return not all(
+                isinstance(operand, ast.Constant)
+                or self._annotation_name(operand, order, body)
+                or not self._annotation(operand, order, body)
+                and isinstance(operand, (ast.Subscript, ast.BinOp))
+                for operand in (node.left, node.right)
+            )
+        return not self._annotation_name(node, order, body)
+
+    def _annotation_name(self, node: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
+        """A typing name, a builtin class, or a class of the project with a quiet metaclass."""
+        origin = self._origin(node, order, body)
+        if origin is not None and (
+            origin.rpartition(".")[0] in _ANNOTATION_MODULES or origin in _BUILTIN_CLASSES
+        ):
+            return True
+        return isinstance(node, ast.Name) and body is None and self._quiet_base(node, order)
+
+    def _quiet_test(self, test: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
+        """A condition that compares facts of the interpreter with constants."""
+        if isinstance(test, ast.BoolOp):
+            return all(self._quiet_test(value, order, body) for value in test.values)
+        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            return self._quiet_test(test.operand, order, body)
+        if not isinstance(test, ast.Compare):
+            return False
+        return all(
+            _is_constant(operand) or self._is_platform_fact(operand, order, body)
+            for operand in (test.left, *test.comparators)
+        )
+
+    def _is_platform_fact(self, node: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
+        if isinstance(node, ast.Subscript) and _is_constant(node.slice):
+            node = node.value
+        if isinstance(node, ast.Attribute) and node.attr in {"major", "minor", "micro"}:
+            node = node.value
+        return self._origin(node, order, body) in _PLATFORM_FACTS
+
+    def _is_type_checking(self, test: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
+        if self._origin(test, order, body) in _TYPE_CHECKING:
+            return True
+        # The module's own ``TYPE_CHECKING = False``, bound once and never again.
+        if not isinstance(test, ast.Name) or body is not None or self._bindings is None:
+            return False
+        binding = self._bindings.in_effect(test.id, order)
+        if binding is None or len(self._bindings.bindings.get(test.id, ())) != 1:
+            return False
+        statement = self._tree.body[binding.order]
+        return (
+            isinstance(statement, ast.Assign)
+            and isinstance(statement.value, ast.Constant)
+            and statement.value.value is False
+        )
+
+    # -- callables ------------------------------------------------------------
+
+    def _quiet_decorator(
+        self,
+        decorator: ast.expr,
+        order: int,
+        body: Optional[_ClassBody],
+        allowed: FrozenSet[str],
+    ) -> bool:
+        if body is not None and self._is_property_accessor(decorator, body):
+            return True
+        if isinstance(decorator, ast.Call):
+            return (
+                self._origin(decorator.func, order, body) in allowed
+                and not decorator.args
+                and all(_is_constant(keyword.value) for keyword in decorator.keywords)
+            )
+        return self._origin(decorator, order, body) in allowed
+
+    @staticmethod
+    def _is_property_accessor(decorator: ast.expr, body: _ClassBody) -> bool:
+        """``@value.setter`` on a property this class body defined above."""
+        return (
+            isinstance(decorator, ast.Attribute)
+            and decorator.attr in {"setter", "getter", "deleter"}
+            and isinstance(decorator.value, ast.Name)
+            and decorator.value.id in body.properties
+        )
+
+    def _quiet_keywords(self, keywords: Sequence[ast.keyword], order: int) -> bool:
+        return all(
+            keyword.arg == "metaclass"
+            and self._origin(keyword.value, order, None) in _QUIET_METACLASSES
+            for keyword in keywords
+        )
+
+    def _quiet_call(self, call: ast.Call, order: int, body: Optional[_ClassBody]) -> bool:
+        origin = self._origin(call.func, order, body)
+        if origin is None:
+            return False
+        if any(isinstance(argument, ast.Starred) for argument in call.args) or any(
+            keyword.arg is None for keyword in call.keywords
+        ):
+            return False
+        arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
+        if origin in _QUIET_CONSTRUCTORS:
+            return all(self._stored(argument, order, body) for argument in arguments)
+        if origin.startswith("builtins.") and origin[9:] in _QUIET_BUILTIN_CONSTRUCTORS:
+            return all(_is_constant(argument) for argument in arguments)
+        if origin == "re.compile":
+            return self._quiet_pattern(call, order, body)
+        return False
+
+    def _stored(self, argument: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
+        """An argument a quiet constructor may keep: it is evaluated, never called.
+
+        A constant, a name, a lambda with quiet defaults, or the docstring of
+        a plain function the class body defined, as ``property(eos,
+        eos.__doc__)`` passes it.
+        """
+        if _is_constant(argument) or isinstance(argument, ast.Name):
+            return True
+        if isinstance(argument, ast.Lambda):
+            return not self._expression(argument, order, body)
+        return (
+            body is not None
+            and isinstance(argument, ast.Attribute)
+            and argument.attr == "__doc__"
+            and isinstance(argument.value, ast.Name)
+            and argument.value.id in body.functions
+        )
+
+    def _quiet_pattern(self, call: ast.Call, order: int, body: Optional[_ClassBody]) -> bool:
+        """``re.compile`` of a constant pattern that compiles here without a warning.
+
+        Compiling a pattern runs only the regular expression compiler, but a
+        pattern it rejects raises at import and one it doubts warns, so the
+        pattern is compiled here, once, to see which it is.
+        """
+        if call.keywords or not 1 <= len(call.args) <= 2:
+            return False
+        pattern = self._constant_text(call.args[0], order, body)
+        flags = self._regex_flags(call.args[1], order, body) if len(call.args) == 2 else 0
+        if pattern is None or flags is None:
+            return False
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                re.compile(pattern, flags)
+            except (re.error, TypeError, ValueError, OverflowError, RecursionError):
+                return False
+        return not caught
+
+    def _constant_text(
+        self, node: ast.expr, order: int, body: Optional[_ClassBody]
+    ) -> Optional[str]:
+        """The string ``node`` always evaluates to: literals, ``+``, and the module's own constants."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left = self._constant_text(node.left, order, body)
+            right = self._constant_text(node.right, order, body)
+            return None if left is None or right is None else left + right
+        if isinstance(node, ast.Name) and body is None and self._bindings is not None:
+            binding = self._bindings.in_effect(node.id, order)
+            if binding is None or binding.origin is not None or binding.is_import:
+                return None
+            statement = self._tree.body[binding.order]
+            if (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+            ):
+                return self._constant_text(statement.value, binding.order, None)
+        return None
+
+    def _regex_flags(self, node: ast.expr, order: int, body: Optional[_ClassBody]) -> Optional[int]:
+        if isinstance(node, ast.Constant) and type(node.value) is int:
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            left = self._regex_flags(node.left, order, body)
+            right = self._regex_flags(node.right, order, body)
+            return None if left is None or right is None else left | right
+        origin = self._origin(node, order, body)
+        if origin is not None and origin.startswith("re."):
+            flag = getattr(re.RegexFlag, origin[3:], None)
+            return int(flag) if isinstance(flag, re.RegexFlag) else None
+        return None
+
+    # -- names ----------------------------------------------------------------
+
+    def _origin(self, node: ast.expr, order: int, body: Optional[_ClassBody]) -> Optional[str]:
+        """The absolute dotted name ``node`` denotes where statement ``order`` runs, if known."""
+        dotted = dotted_name(node)
+        if dotted is None or self._bindings is None:
+            return None
+        head = dotted.split(".")[0]
+        if body is not None and head in body.names:
+            return None
+        if not self._bindings.may_bind(head):
+            return f"builtins.{dotted}" if head in vars(builtins) else None
+        return self._bindings.resolve(dotted, order)
+
+    def _lacks_set_name(self, name: str, order: int, body: _ClassBody) -> bool:
+        """Whether the object ``name`` holds in a class body certainly has no ``__set_name__``."""
+        if name in body.names:
+            return name in body.functions
+        if self._bindings is None:
+            return False
+        if not self._bindings.may_bind(name):
+            return name in vars(builtins)
+        binding = self._bindings.in_effect(name, order)
+        if binding is None or binding.is_import:
+            return False
+        statement = self._tree.body[binding.order]
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return not statement.decorator_list
+        return isinstance(statement, ast.Assign) and _is_constant(statement.value)
+
+    def _quiet_base(self, base: ast.expr, order: int) -> bool:
+        """Whether subclassing ``base`` runs only Python's own class machinery."""
+        if isinstance(base, ast.Subscript):
+            return self._origin(base.value, order, None) in _QUIET_SUBSCRIPTED_BASES and not (
+                self._annotation(base.slice, order, None)
+            )
+        origin = self._origin(base, order, None)
+        if origin in _QUIET_BASES or origin in _BUILTIN_CLASSES:
+            return True
+        dotted = dotted_name(base)
+        if dotted is None or self._bindings is None or self._depth > 8:
+            return False
+        binding = self._bindings.in_effect(dotted.split(".")[0], order)
+        if binding is None:
+            return False
+        if binding.class_qualname is not None and binding.class_qualname == dotted:
+            node = self._tree.body[binding.order]
+            return isinstance(node, ast.ClassDef) and self._quiet_ancestor(node, binding.order)
+        if binding.is_import:
+            return self._quiet_imported_class(dotted)
+        return False
+
+    def _quiet_ancestor(self, node: ast.ClassDef, order: int) -> bool:
+        """A class of this module whose own machinery leaves its subclasses' creation alone."""
+        return (
+            all(
+                self._origin(decorator, order, None) in NAMESPACE_PRESERVING_DECORATORS
+                for decorator in node.decorator_list
+            )
+            and self._quiet_keywords(node.keywords, order)
+            and not any("__init_subclass__" in _statement_binds(inner) for inner in node.body)
+            and all(self._quiet_base(base, order) for base in node.bases)
+        )
+
+    def _quiet_imported_class(self, dotted: str) -> bool:
+        """An imported class of the project, judged in the module that defines it."""
+        if self._path is None or self._cache is None:
+            return False
+        sites = imported_definition_sites(str(self._path), dotted, self._cache)
+        if not sites or len(sites) != 1:
+            return False
+        ((module, qualname),) = sites
+        if "." in qualname:
+            return False
+        try:
+            stat = module.stat()
+        except OSError:
+            return False
+        key = (module, stat.st_mtime_ns, stat.st_size, qualname)
+        known = self._cache.quiet_classes.get(key)
+        if known is not None:
+            return known
+        try:
+            other = ImportTimeCode(
+                read_source(module), path=module, cache=self._cache, depth=self._depth + 1
+            )
+        except (OSError, UnicodeError, SyntaxError, ValueError):
+            return self._cache.quiet_classes.put(key, False)
+        return self._cache.quiet_classes.put(key, other._quiet_named_class(qualname))
+
+    def _quiet_named_class(self, name: str) -> bool:
+        """Whether the class the module binds to ``name`` once it has run is quiet to subclass."""
+        return self._quiet_base(ast.Name(id=name, ctx=ast.Load()), len(self._tree.body))
+
+
+def _is_constant(node: ast.expr) -> bool:
+    """An expression of literals whose evaluation runs only Python's own arithmetic."""
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return all(_is_constant(item) for item in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(key is not None and _is_constant(key) for key in node.keys) and all(
+            _is_constant(value) for value in node.values
+        )
+    if isinstance(node, ast.UnaryOp):
+        return _is_constant(node.operand)
+    if isinstance(node, ast.BinOp):
+        return _is_constant(node.left) and _is_constant(node.right)
     return False
 
 
-def _is_guarded_block(statement: ast.If) -> bool:
-    """``if TYPE_CHECKING:`` and ``if __name__ == "__main__":`` run nothing at import."""
-    test = statement.test
-    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
-        return all(_is_definition_only(item) for item in statement.body + statement.orelse)
-    if (
+def _is_main_guard(test: ast.expr) -> bool:
+    """``__name__ == "__main__"``, true only for the module Python runs as the program."""
+    return (
         isinstance(test, ast.Compare)
         and isinstance(test.left, ast.Name)
         and test.left.id == "__name__"
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
         and len(test.comparators) == 1
         and isinstance(test.comparators[0], ast.Constant)
         and test.comparators[0].value == "__main__"
-        and not statement.orelse
-    ):
-        return True
-    return False
+    )
+
+
+def _statement_binds(statement: ast.stmt) -> FrozenSet[str]:
+    """The names a class-body statement binds in the class namespace."""
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return frozenset({statement.name})
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return frozenset(
+            name for alias in statement.names if (name := imported_binding_name(alias))
+        )
+    return frozenset(
+        node.id
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+    )
 
 
 def _has_import_time_effects(module: Path, cache: ImportGraphCache) -> bool:
-    """Whether importing ``module`` runs code beyond definitions and literal bindings."""
+    """Whether importing ``module`` can run code beyond Python's own (``ImportTimeCode``)."""
     try:
         stat = module.stat()
     except OSError:
@@ -527,10 +1127,10 @@ def _has_import_time_effects(module: Path, cache: ImportGraphCache) -> bool:
     if known is not None:
         return known
     try:
-        tree = ast.parse(read_source(module))
-    except (OSError, UnicodeError, SyntaxError):
+        code = ImportTimeCode(read_source(module), path=module, cache=cache)
+    except (OSError, UnicodeError, SyntaxError, ValueError):
         return cache.effects.put(key, True)
-    return cache.effects.put(key, not all(_is_definition_only(item) for item in tree.body))
+    return cache.effects.put(key, any(code.statements()))
 
 
 def import_runs_new_code(host_file: str, borrower_file: str, cache: ImportGraphCache) -> bool:

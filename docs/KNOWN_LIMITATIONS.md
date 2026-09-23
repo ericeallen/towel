@@ -216,10 +216,25 @@ addresses:
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
   names can be written bare, when no statement before that point could run
-  code at import time. A statement counts as running code when anything it
-  evaluates as the module loads is a call: an assignment such as `Y = f()`, a
-  decorator, a default, a base or class keyword, or a statement of a class
-  body; what a base's `__init_subclass__` runs is not seen. When a name the
+  code at import time. One judgment decides that here and for a cross-file
+  host below (`ImportTimeCode`): a statement runs code when anything it
+  evaluates as the module loads can run code other than Python's own, which
+  a call, a decorator, a default, an evaluated annotation, an attribute
+  access or an operator on a name, and a base class whose metaclass or
+  `__init_subclass__` is not Python's all can. A base of the project is
+  followed through its bases, into the module that defines it. The
+  exceptions are a short list of callables, resolved through the module's
+  own imports, that build a value and touch nothing else: `property`,
+  `staticmethod` and `classmethod`, `abc.abstractmethod`, the `functools`
+  caches, `contextlib` context managers, `typing.final` and `override`, the
+  namespace-preserving class decorators, `TypeVar` and its kin, `NewType`,
+  `dataclasses.field`, builtin constructors over constants, and
+  `re.compile` of a constant pattern that compiles here without a warning;
+  `typing.overload` records a registry and `logging.getLogger` a logger a
+  later `dictConfig` would disable, so both count as code. Nothing under a
+  `TYPE_CHECKING` resolved through the imports runs, however it branches,
+  and a condition comparing `sys.version_info`, `sys.platform` or `os.name`
+  with constants runs nothing. When a name the
   annotations need is defined only after such code, the helper goes before
   it anyway where annotations are postponed (`from __future__ import
   annotations`), and is declined elsewhere. Cross-file helpers add a module import; a helper
@@ -243,9 +258,15 @@ requirements of its own: gunicorn's `workers/gtornado.py` raises at import
 time unless tornado is installed, and a helper hosted there made
 `workers/sync.py` import it, so environments without tornado could no longer
 import the sync worker. Towel now refuses a host whose import would run
-module-level statements beyond definitions, imports and literal assignments
-that the borrower's own imports do not already run (`import_time_effects`),
-and one whose import would require a module the borrower does not already
+code (the judgment of *Import-time behavior* above) in a module the
+borrower's own imports do not already run (`import_time_effects`): a
+registration decorator there would register wherever the borrower is
+imported (fixtures `xf27`, `xf28`). A module whose classes derive from a
+base with a metaclass of the project's own counts as running code even when
+that metaclass only builds the class, since nothing shows it registers
+nothing; most of Pygments' lexer modules are such, which costs Pygments 12
+of its 23 cross-module helpers. Towel also refuses a host
+whose import would require a module the borrower does not already
 import: an unconditional import, including one inside a module-level `if`,
 of anything outside the project, the standard library and the project's
 declared `[project].dependencies`. An import inside `try` is taken as an
