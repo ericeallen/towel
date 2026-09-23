@@ -306,6 +306,15 @@ rev = "48bd1af97e71baf8e96fce5b663d589caac8f147"
 package = "src/dateutil"
 pythonpath = "src"
 deps = ["freezegun", "hypothesis", "six", "pytest-cov", "pytest<9"]
+# tests/property imports the IANA tz database that `updatezinfo.py` downloads
+# and builds, which this corpus does not run: it needs the network at corpus
+# time and runs before a project's dependencies are installed. Without it the
+# directory cannot even be collected, so it yields no before/after evidence
+# either way, and its collection error stopped the whole suite -- including the
+# several hundred tests that do run and do give evidence.
+test = [
+    "{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--ignore=tests/property",
+]
 
 [[project]]
 name = "decorator"

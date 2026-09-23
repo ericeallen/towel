@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from keyword import iskeyword
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from .diagnostics import LOG
@@ -257,9 +257,60 @@ def _hatch_source_roots(project_root: Path, data: Mapping[str, object]) -> List[
     for root in (project_root, project_root / "src"):
         if (root / normalized / "__init__.py").is_file():
             return [root.resolve()]
+    evidenced = _hatch_included_package_roots(project_root, wheel, build)
+    if evidenced:
+        return evidenced
     raise UnsupportedLayoutError(
         "Unsupported Hatch default package layout; cannot infer safe imports"
     )
+
+
+def _literal_prefix(pattern: str) -> Optional[Path]:
+    """The directory a wheel include pattern names before its first wildcard."""
+    parts: List[str] = []
+    for part in PurePosixPath(pattern.lstrip("/")).parts:
+        if any(character in part for character in "*?["):
+            break
+        parts.append(part)
+    return Path(*parts) if parts else None
+
+
+def _hatch_included_package_roots(
+    project_root: Path, wheel: Mapping[str, object], build: Mapping[str, object]
+) -> List[Path]:
+    """Source roots evidenced by the packages a wheel include names.
+
+    A project whose distribution name is not its package name defeats Hatch's
+    own default, which looks for a directory named after the project:
+    beautifulsoup4 ships ``bs4``. Its ``include`` says so --
+    ``"/bs4/**/*.py"`` -- and with no ``sources`` to relocate anything, the
+    wheel holds ``bs4/__init__.py`` at its root, which its built wheel
+    confirms. The directory named before the first wildcard is a classic
+    package, so the directory holding it is an import root.
+
+    An include naming no package is no evidence and contributes nothing; where
+    none of them does, the layout is still refused rather than guessed at.
+    """
+    roots: List[Path] = []
+    for source in (wheel, build):
+        for key in ("include", "only-include"):
+            patterns = source.get(key)
+            if not isinstance(patterns, list):
+                continue
+            for pattern in patterns:
+                if not isinstance(pattern, str):
+                    continue
+                prefix = _literal_prefix(pattern)
+                if prefix is None:
+                    continue
+                package = (project_root / prefix).resolve()
+                if not package.is_relative_to(project_root):
+                    continue
+                if not (package / "__init__.py").is_file():
+                    continue
+                if package.parent not in roots:
+                    roots.append(package.parent)
+    return roots
 
 
 def _flit_source_roots(project_root: Path, data: Dict[str, Any]) -> List[Path]:

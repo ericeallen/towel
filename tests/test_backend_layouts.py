@@ -474,3 +474,40 @@ def test_hatch_force_include_is_still_refused(tmp_path: Path) -> None:
     module = package(tmp_path, "my_project")
     with pytest.raises(UnsupportedLayoutError, match="force-include"):
         ProjectLayout.discover(module).module_name_for(module)
+
+
+def test_a_hatch_include_names_the_package_when_the_project_name_does_not(
+    tmp_path: Path,
+) -> None:
+    """Corroborated against a built wheel: beautifulsoup4 4.15.0 ships ``bs4``.
+
+    Hatch's own default looks for a directory named after the distribution,
+    which a project whose package has a different name defeats. Its wheel
+    ``include`` says where the package is -- ``"/bs4/**/*.py"`` -- and with no
+    ``sources`` to relocate anything the wheel holds ``bs4/__init__.py`` at its
+    root. The directory named before the first wildcard is the package, so the
+    directory holding it is the import root.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="hatchling.build"\n'
+        '[project]\nname="distribution-name"\nversion="0.0.0"\n'
+        "[tool.hatch.build.targets.wheel]\n"
+        'include = ["/my_project/**/*.py", "/my_project/py.typed"]\n'
+    )
+    module = package(tmp_path, "my_project")
+    assert ProjectLayout.discover(module).module_name_for(module) == "my_project.tools"
+
+
+def test_an_include_naming_no_package_is_no_evidence_and_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Refusing remains the answer where nothing says where the package lives."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nbuild-backend="hatchling.build"\n'
+        '[project]\nname="distribution-name"\nversion="0.0.0"\n'
+        '[tool.hatch.build.targets.wheel]\ninclude = ["/docs/**/*.md", "README.rst"]\n'
+    )
+    (tmp_path / "docs").mkdir()
+    module = package(tmp_path, "my_project")
+    with pytest.raises(UnsupportedLayoutError, match="default package layout"):
+        ProjectLayout.discover(module).module_name_for(module)
