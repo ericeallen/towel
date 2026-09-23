@@ -795,9 +795,9 @@ def nested_scopes_cross_block_boundary(function: FunctionNode, nodes: Iterable[a
 
     A nested function, lambda or generator reads its free names when it runs,
     not when it is defined, and a ``type`` statement or a type parameter's
-    bound reads them when first asked (``_lazily_read_names``). If it is defined outside the block and the block
-    rebinds one of those names, the helper rebinds its own local instead of the
-    caller's cell. If it is defined inside the block and the caller rebinds one
+    bound reads them when first asked (``_lazily_read_names``). If it is
+    defined outside the block and the block rebinds one of those names, the
+    helper rebinds its own local instead of the caller's cell. If it is defined inside the block and the caller rebinds one
     of its free names after the block, the closure keeps the helper's cell
     while the original saw the caller's rebinding; that holds whether the
     block bound the name itself (a loop target the caller assigns again
@@ -1108,15 +1108,14 @@ def _binds(arguments: ast.arguments, positional: int, keywords: Sequence[str]) -
     if positional > len(ordered) and arguments.vararg is None:
         return False
     filled = {argument.arg for argument in ordered[:positional]}
-    by_keyword = {
-        argument.arg
-        for argument in arguments.args[max(0, positional - len(arguments.posonlyargs)) :]
-    }
-    by_keyword |= {argument.arg for argument in arguments.kwonlyargs}
+    by_keyword = {argument.arg for argument in [*arguments.args, *arguments.kwonlyargs]}
     for keyword in keywords:
-        if keyword in filled or (keyword not in by_keyword and arguments.kwarg is None):
-            return False
-        filled.add(keyword)
+        if keyword in by_keyword:
+            if keyword in filled:
+                return False  # multiple values for one parameter
+            filled.add(keyword)
+        elif arguments.kwarg is None:
+            return False  # an unexpected keyword, or a positional-only one
     required = ordered[: len(ordered) - len(arguments.defaults)]
     required_keywords = [
         argument

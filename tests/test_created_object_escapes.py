@@ -11,12 +11,13 @@ or consumed where it stands.
 from __future__ import annotations
 
 import ast
+import inspect
 import textwrap
 
 import pytest
 
 from towel.unification.scope_analyzer import ScopeAnalyzer
-from towel.unification.semantic_safety import created_object_escapes
+from towel.unification.semantic_safety import _binds, created_object_escapes
 
 
 def _escapes(body: str, *, after: str = "", module: str = "") -> bool:
@@ -110,3 +111,48 @@ def test_a_builtin_the_module_can_shadow_is_not_trusted() -> None:
 
 def test_a_name_declared_nonlocal_or_global_is_a_store_elsewhere() -> None:
     assert _escapes("global g\ng = lambda: k\ny = g()")
+
+
+SIGNATURES = [
+    "",
+    "a",
+    "a, b=1",
+    "a, /, b",
+    "a, /, **kw",
+    "*, a",
+    "*, a=1",
+    "a, *args",
+    "a=1, *, b",
+    "a, b, /, c=2, *, d, e=3, **kw",
+    "*args, **kw",
+]
+CALLS = [
+    (0, ()),
+    (1, ()),
+    (2, ()),
+    (3, ()),
+    (1, ("a",)),
+    (0, ("a",)),
+    (1, ("b",)),
+    (0, ("a", "b")),
+    (2, ("d",)),
+    (3, ("d",)),
+    (1, ("z",)),
+    (0, ("d", "e")),
+    (2, ("c", "d")),
+    (0, ("c",)),
+]
+
+
+@pytest.mark.parametrize("signature", SIGNATURES)
+def test_binding_is_decided_as_python_decides_it(signature: str) -> None:
+    function = eval(f"lambda {signature}: None")  # noqa: S307 - a literal lambda
+    lambda_node = ast.parse(f"lambda {signature}: None", mode="eval").body
+    assert isinstance(lambda_node, ast.Lambda)
+    for positional, keywords in CALLS:
+        try:
+            inspect.signature(function).bind(*range(positional), **dict.fromkeys(keywords, 0))
+            expected = True
+        except TypeError:
+            expected = False
+        assert _binds(lambda_node.args, positional, keywords) is expected, (positional, keywords)
