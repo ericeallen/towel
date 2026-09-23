@@ -511,3 +511,22 @@ def test_an_include_naming_no_package_is_no_evidence_and_is_still_refused(
     module = package(tmp_path, "my_project")
     with pytest.raises(UnsupportedLayoutError, match="default package layout"):
         ProjectLayout.discover(module).module_name_for(module)
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        '[build-system]\nbuild-backend="hatchling.build"\n[project]\nname="p"\n'
+        '[tool.hatch.build.targets]\nwheel = "garbage"\n',
+        '[build-system]\nbuild-backend="poetry.core.masonry.api"\n[tool]\npoetry = "x"\n',
+        '[tool.setuptools]\npackage-dir = "src"\n',
+    ],
+)
+def test_a_layout_table_that_is_not_a_table_is_refused_not_ignored(
+    tmp_path: Path, table: str
+) -> None:
+    """Read as absent, it would apply the backend's defaults to a project that asked otherwise."""
+    (tmp_path / "pyproject.toml").write_text(table, encoding="utf-8")
+    module = package(tmp_path, "p")
+    with pytest.raises(UnsupportedLayoutError, match="is not a table"):
+        ProjectLayout.discover(module)

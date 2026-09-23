@@ -34,9 +34,18 @@ import tomllib
 
 
 def _table(mapping: object, key: str) -> Mapping[str, object]:
-    """``mapping[key]`` when both are tables, else an empty table; TOML is checked, never trusted."""
-    value = mapping.get(key, {}) if isinstance(mapping, dict) else {}
-    return value if isinstance(value, dict) else {}
+    """``mapping[key]`` when it is a table, an empty table when it is absent.
+
+    A key that is present but not a table is configuration Towel cannot read,
+    and reading it as absent would apply the backend's defaults to a project
+    that asked for something else, so it is refused.
+    """
+    if not isinstance(mapping, dict) or key not in mapping:
+        return {}
+    value = mapping[key]
+    if not isinstance(value, dict):
+        raise UnsupportedLayoutError(f"[{key}] in pyproject.toml is not a table")
+    return value
 
 
 def load_pyproject(project_root: Path) -> Dict[str, Any]:

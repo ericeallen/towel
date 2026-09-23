@@ -13,4 +13,4 @@ prune docs/docs_local
 prune .todo
 prune .claude
 prune .vscode
-global-exclude __pycache__ *.py[cod] .env .DS_Store
+global-exclude __pycache__ *.py[cod] .env .DS_Store *.whl *.tar.gz
