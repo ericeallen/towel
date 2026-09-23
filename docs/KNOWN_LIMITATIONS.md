@@ -269,7 +269,10 @@ of its 23 cross-module helpers. Towel also refuses a host
 whose import would require a module the borrower does not already
 import: an unconditional import, including one inside a module-level `if`,
 of anything outside the project, the standard library and the project's
-declared `[project].dependencies`. An import inside `try` is taken as an
+declared dependencies: PEP 621's `[project].dependencies`, Poetry's
+`[tool.poetry.dependencies]` less the optional ones an extra installs, and
+setup.cfg's `install_requires`; a setup.py is not run, so dependencies it
+alone declares are not known. An import inside `try` is taken as an
 optional dependency and requires nothing. A dependency declared under a
 distribution name that differs from its import name (`PyYAML` for `yaml`) is
 not recognized, which refuses a host rather than accepting one; an import

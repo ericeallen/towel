@@ -260,3 +260,66 @@ def test_a_helper_import_that_would_require_a_new_third_party_module_is_refused(
     assert not refused("stdlib.py")
     assert not refused("declared.py")
     assert not refused("needs_tornado.py", "has_tornado.py")
+
+
+@pytest.mark.parametrize(
+    "filename, metadata",
+    [
+        (
+            "pyproject.toml",
+            '[tool.poetry]\nname = "pkg"\nversion = "0"\n\n[tool.poetry.dependencies]\n'
+            'python = "^3.10"\ndeclared-dep = "^1"\n'
+            'extra-dep = {version = "^1", optional = true}\n',
+        ),
+        (
+            "setup.cfg",
+            "[metadata]\nname = pkg\n\n[options]\ninstall_requires =\n"
+            "    declared-dep>=1  # the one this module needs\n"
+            "    other; python_version < '3.8'\n",
+        ),
+    ],
+    ids=["poetry", "setup-cfg"],
+)
+def test_a_dependency_poetry_or_setup_cfg_declares_is_no_new_requirement(
+    tmp_path: Path, filename: str, metadata: str
+) -> None:
+    """Declared dependencies are read where Poetry and setuptools declare them too.
+
+    An optional Poetry dependency is installed only with an extra, so it is
+    still a new requirement; so is anything undeclared.
+    """
+    (tmp_path / filename).write_text(metadata)
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    files = {
+        "declared.py": "import declared_dep\n",
+        "extra.py": "import extra_dep\n",
+        "undeclared.py": "import tornado\n",
+        "borrower.py": "def use():\n    return 2\n",
+    }
+    for name, text in files.items():
+        (package / name).write_text(text)
+    cache = ImportGraphCache()
+
+    def refused(host: str) -> bool:
+        return import_runs_new_code(str(package / host), str(package / "borrower.py"), cache)
+
+    assert not refused("declared.py")
+    assert refused("extra.py")
+    assert refused("undeclared.py")
+
+
+def test_a_setup_cfg_that_reads_its_requirements_from_a_file_declares_none(tmp_path: Path) -> None:
+    (tmp_path / "setup.cfg").write_text(
+        "[metadata]\nname = pkg\n\n[options]\ninstall_requires = file: requirements.txt\n"
+    )
+    (tmp_path / "requirements.txt").write_text("declared-dep\n")
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "declared.py").write_text("import declared_dep\n")
+    (package / "borrower.py").write_text("def use():\n    return 2\n")
+    assert import_runs_new_code(
+        str(package / "declared.py"), str(package / "borrower.py"), ImportGraphCache()
+    )
