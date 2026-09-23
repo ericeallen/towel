@@ -379,9 +379,19 @@ class AnalysisSession:
             tree = ast.parse(source, filename=path)
         except SyntaxError as error:
             raise SourceFileError(str(error)) from error
-        module = analyze_scopes([RawModule(file_path=path, source=source, tree=tree)])[0]
-        module.class_infos = collect_classes([module])
-        analysis = ModuleAnalysis(module, tuple(collect_functions([module])))
+        try:
+            module = analyze_scopes([RawModule(file_path=path, source=source, tree=tree)])[0]
+            module.class_infos = collect_classes([module])
+            analysis = ModuleAnalysis(module, tuple(collect_functions([module])))
+        except RecursionError as error:
+            # The analysis walks the tree recursively, and one expression of a
+            # few hundred chained terms is deeper than the interpreter allows.
+            # That is a limit on what Towel can read, not a defect in the
+            # file; the file is skipped like one that does not parse, rather
+            # than ending the run for every other file.
+            raise SourceFileError(
+                "it nests too deeply for Towel to analyze (maximum recursion depth exceeded)"
+            ) from error
         source_bytes = len(source.encode("utf-8"))
         if self._max_entries and source_bytes <= self._max_source_bytes:
             while self._entries and (
