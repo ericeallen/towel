@@ -161,6 +161,7 @@ TRANSFORMED = {
     # annotations, bases, a class body) is read from the caller.
     "r152_definition_time_reads",
     "r153_class_definition_reads",
+    "r154_bare_annotation_reads_the_caller",
 }
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise

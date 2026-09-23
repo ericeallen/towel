@@ -360,7 +360,12 @@ class _ScopeRespectingWalker(ScopeVisitor):
             self.visit(node.annotation)
         if node.value is not None:
             self.visit(node.value)
-        self.visit(node.target)
+            self.visit(node.target)
+        elif not isinstance(node.target, ast.Name):
+            # ``obj.attr: T`` evaluates ``obj``; nothing is assigned.
+            self.visit(node.target)
+        # A bare ``x: T`` assigns nothing: x keeps whatever it was bound to,
+        # so a later read of x is still the caller's x.
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         # An augmented assignment reads its target, which must already be

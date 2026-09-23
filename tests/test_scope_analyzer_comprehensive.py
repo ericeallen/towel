@@ -719,7 +719,9 @@ def test_what_a_pattern_evaluates_is_free(pattern: str, reads: set[str]) -> None
         ("if c:\n    class C:\n        k = 1\n        class D:\n            y = k", {"c", "k"}),
         ("if c:\n    class C:\n        T = int\n        def m(self, x: T) -> T: pass", {"c"}),
         ("if c:\n    class C:\n        x: A = 1", {"c", "A"}),
-        # A dotted import binds its first name.
+        # A bare annotation assigns nothing; a dotted import binds its first name.
+        ("x: int\ny = x", {"x"}),
+        ("self.x: int\ny = 1", {"self"}),
         ("import a.b\ny = a.c", set()),
     ],
 )
