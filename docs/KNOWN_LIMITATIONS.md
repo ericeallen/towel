@@ -85,7 +85,17 @@ describe belong to that version.
   The same holds when a same-file pair's helper becomes a method of a
   shared ancestor class defined in another module: the pair is decided
   again with every name a parameter (oauthlib's `BearerToken`, fixture
-  `xf15`).
+  `xf15`). A builtin is the same lookup from every module only while no
+  module involved can bind its name, so a helper that a site in another
+  module calls takes a builtin spelling as a parameter when either site's
+  function or module binds it, or when any participating module, the
+  helper's host included, may bind it at all: by any statement of its own
+  scope, a `global` declaration, a star import, or a rebound
+  `__builtins__`, whichever module the pair names first (fixtures
+  `xf17`-`xf22`). The names checked are the ones CPython's symbol table
+  says the rendered helper reads from its module, so reads inside its
+  lambdas and comprehensions count. A module `__getattr__` changes no bare
+  lookup and is not consulted.
 - **Forwarded callees.** A differing expression in call position would be
   passed as `lambda *args, **kwargs: callee(*args, **kwargs)`; such a call
   site reads worse than the duplication it removes, so the pair is declined

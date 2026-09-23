@@ -242,6 +242,21 @@ class _ModuleBindings:
             return None
         return binding
 
+    def may_bind(self, name: str) -> bool:
+        """Whether some path through the module could leave ``name`` in its namespace.
+
+        Any statement of the module's own scope that binds it counts, however
+        conditional, and so does a ``global`` declaration anywhere, since a
+        call may then bind it. A star import may bind any name, and so may
+        rebinding ``__builtins__``, where every builtin lookup of the module's
+        functions then goes.
+        """
+        if self.star_imports or "__builtins__" in self.bindings:
+            return True
+        if "__builtins__" in self.rebound_by_global:
+            return True
+        return name in self.bindings or name in self.rebound_by_global
+
     def resolve(self, dotted: str, order: int, depth: int = 0) -> Optional[str]:
         """The absolute dotted name ``dotted`` denotes where statement ``order`` runs.
 

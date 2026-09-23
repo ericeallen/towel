@@ -274,6 +274,7 @@ the bound receiver of a method helper."""
 class RejectReason(StrEnum):
     """Why a candidate pair was declined; the vocabulary of the rejection trace."""
 
+    BARE_NAME_DIFFERS_BY_MODULE = "bare_name_differs_by_module"
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
