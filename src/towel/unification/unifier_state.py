@@ -25,7 +25,9 @@ another mixin implements each stub.
 from __future__ import annotations
 
 import ast
-from typing import Any, Dict, Hashable, Iterator, List, Optional, Set, Tuple, Sequence
+from typing import Any, Dict, Hashable, Iterator, List, Mapping, Optional, Set, Tuple, Sequence
+
+from .static_positions import Pin
 
 ConstantIdentity = Tuple[type, Hashable]
 """A constant's type and value, as ``constant_consistency.constant_identity`` computes them."""
@@ -64,11 +66,18 @@ class UnifierState:
     _pattern_parameters_allowed: bool
     """Whether a parameter may stand where the pattern being unified is (see ``Unifier._unify_pattern``)."""
 
+    _read_in_place: Sequence[Mapping[int, Pin]]
+    """Per block, the nodes a tool reads where they stand (see ``static_positions``), by ``id``."""
+
     @staticmethod
     def _iter_child_fields(node: ast.AST) -> Iterator[Tuple[str, Any]]:
         """Provided by Unifier."""
         raise NotImplementedError
 
     def _fresh_parameter_name(self) -> str:
+        """Provided by Parameterization."""
+        raise NotImplementedError
+
+    def _read_where_it_stands(self, exprs: Sequence[ast.AST], block_indices: Sequence[int]) -> bool:
         """Provided by Parameterization."""
         raise NotImplementedError

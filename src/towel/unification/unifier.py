@@ -19,7 +19,8 @@ template keeps the node, and where they differ in an expression the
 template takes a fresh parameter that each block instantiates with its own
 expression. Bound names (loop targets, lambda parameters, comprehension
 targets, with-items, handler names, walrus targets) are alpha-equivalent,
-never parameterized. This is Plotkin and Reynolds's anti-unification (the
+never parameterized, and so is whatever a tool reads where it stands (see
+``static_positions``). This is Plotkin and Reynolds's anti-unification (the
 least general generalization), not Robinson's unification, which solves
 for a substitution making two terms equal.
 """
@@ -31,9 +32,23 @@ from .constant_consistency import ConstantConsistency, constant_identity
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
-from .substitution import Substitution
+from .static_positions import DEFAULT_TRANSLATION_KEYWORDS, TranslationKeywords, statically_read
+from .substitution import Substitution, structural_text
 from .unifier_state import ConstantIdentity
 from .visitors import all_instances
+
+_REPEATING = (
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.comprehension,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+    ast.Lambda,
+)
+"""Constructs whose parts may run more than once each time the statement holding them runs."""
 
 
 def _dotted_chain(expression: ast.AST) -> Optional[Tuple[ast.Name, List[str]]]:
@@ -85,9 +100,14 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.constant_positions = {}
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
+        self._read_in_place = ()
 
     def unify_blocks(
-        self, blocks: Sequence[Sequence[ast.AST]], hygienic_renames: List[Dict[str, str]]
+        self,
+        blocks: Sequence[Sequence[ast.AST]],
+        hygienic_renames: List[Dict[str, str]],
+        *,
+        translation_keywords: TranslationKeywords = DEFAULT_TRANSLATION_KEYWORDS,
     ) -> Optional[Substitution]:
         """
         Unify multiple code blocks.
@@ -96,6 +116,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             blocks: List of code blocks (each is a list of AST statements)
             hygienic_renames: For each block, a mapping from original names
                              to hygienically renamed names
+            translation_keywords: The markers whose messages extraction reads,
+                             which the blocks may not differ in
 
         Returns:
             Substitution mapping expressions to parameters, or None if unification fails
@@ -109,7 +131,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # Reset per-unification state to avoid cross-pair contamination
         # Alpha-renamings and parameter counters must start fresh for each call
         self.alpha_renamings = {}
-        self._reset_unification_state(blocks)
+        self._reset_unification_state(blocks, translation_keywords)
 
         self._collect_constant_positions(blocks)
 
@@ -864,8 +886,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         num_params = param_counts[0]
         if num_params == 0:
-            # No parameters - just unify bodies directly
-            return self._unify_nodes([n.body for n in nodes], substitution, block_indices)
+            return self._unify_thunks(nodes, substitution, block_indices)
 
         canonical_params = [nodes[0].args.args[i].arg for i in range(num_params)]
 
@@ -891,6 +912,92 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     actual_param = node.args.args[param_idx].arg
                     key = (block_idx, actual_param)
                     self._restore_alpha_mapping(key, old_mappings)
+
+    def _unify_thunks(
+        self, nodes: List[ast.Lambda], substitution: Substitution, block_indices: List[int]
+    ) -> bool:
+        """Unify lambdas that take nothing; one the blocks differ in as a whole is passed through.
+
+        Where the blocks differ in a lambda's whole body, the body becomes a
+        parameter and the helper makes a lambda of its own around it,
+        ``lambda: __param_0()``. Handed to a call, that is a function made
+        by the helper and named for it, where the block handed on one it made
+        itself; a chain of helpers wraps it once more at every step. So when
+        each lambda is an argument of a call, is made at most once per run of
+        its block, and is the only lambda of its text there, the lambda
+        itself is the parameter instead: the call site makes it, in the
+        function that made it before, and the helper passes it on as it
+        came (see ``semantic_safety.defer_impure_parameters``).
+
+        Bodies that differ only in a free name (``lambda: a`` against
+        ``lambda: b``) are left as they were: unifying them records that the
+        names correspond, and the call sites would then pass the other
+        block's spelling for a name the helper no longer reads.
+        """
+        bodies = [node.body for node in nodes]
+        # A body an earlier parameter already stands for keeps that parameter.
+        if not all(
+            self._passed_on_once(node, index)
+            and substitution.get_param_for_expr(index, node.body) is None
+            for node, index in zip(nodes, block_indices)
+        ):
+            return self._unify_nodes(bodies, substitution, block_indices)
+        counter, known = self.param_counter, set(substitution.param_expressions)
+        correspondences = dict(self.alpha_renamings)
+        if not self._unify_nodes(bodies, substitution, block_indices):
+            return False
+        fresh = [name for name in substitution.param_expressions if name not in known]
+        if (
+            len(fresh) != 1
+            or fresh[0] in substitution.function_params
+            or self.alpha_renamings != correspondences
+            or sorted(
+                (index, id(expression))
+                for index, expression in substitution.param_expressions[fresh[0]]
+            )
+            != sorted((index, id(body)) for index, body in zip(block_indices, bodies))
+        ):
+            return True
+        substitution.remove_parameter(fresh[0])
+        self.param_counter = counter
+        return self._try_parameterize(nodes, substitution, block_indices)
+
+    def _passed_on_once(self, node: ast.Lambda, block_index: int) -> bool:
+        """Whether a lambda is an argument of a call, made at most once per run of its block.
+
+        It must also be the only lambda of its text in the block: a parameter
+        stands for every occurrence of its text, and two lambdas the block
+        made separately must not become one object.
+        """
+        if self.current_blocks is None or block_index >= len(self.current_blocks):
+            return False
+        block = self.current_blocks[block_index]
+        parents = {
+            id(child): parent
+            for statement in block
+            for parent in ast.walk(statement)
+            for child in ast.iter_child_nodes(parent)
+        }
+        holder = parents.get(id(node))
+        if isinstance(holder, ast.keyword):
+            holder = parents.get(id(holder))
+        if not isinstance(holder, ast.Call) or holder.func is node:
+            return False
+        ancestor = parents.get(id(node))
+        while ancestor is not None:
+            if isinstance(ancestor, _REPEATING):
+                return False
+            ancestor = parents.get(id(ancestor))
+        text = structural_text(node)
+        return (
+            sum(
+                1
+                for statement in block
+                for other in ast.walk(statement)
+                if isinstance(other, ast.Lambda) and structural_text(other) == text
+            )
+            == 1
+        )
 
     def _unify_joined_str(
         self, nodes: List[ast.JoinedStr], substitution: Substitution, block_indices: List[int]
@@ -1016,11 +1123,24 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.parameterize_constants = parameterize_constants
         self.promote_equal_hof_literals = promote_equal_hof_literals
 
-    def _reset_unification_state(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
+    def _reset_unification_state(
+        self,
+        blocks: Sequence[Sequence[ast.AST]],
+        translation_keywords: TranslationKeywords = DEFAULT_TRANSLATION_KEYWORDS,
+    ) -> None:
         self.param_counter = 0
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
         self.current_blocks = blocks
+        # What each block's statements pin, looked up by node id.
+        self._read_in_place = [
+            {
+                node: pin
+                for statement in block
+                for node, pin in statically_read(statement, translation_keywords).items()
+            }
+            for block in blocks
+        ]
         # A helper extracted on an earlier pass already binds names such as
         # ``__param_0``; a fresh parameter must not alias any identifier the
         # blocks mention, or the substituted body becomes ambiguous.

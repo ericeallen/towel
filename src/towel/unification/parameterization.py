@@ -16,9 +16,11 @@
 
 A differing sub-expression becomes a helper parameter when it is a value
 that can be passed (never a slice, a starred item, or an expression that
-binds); names the blocks bind at the same position are alpha-renamed to one
-canonical spelling instead, so ``result`` in one block and ``output`` in the
-other are the same variable, not a parameter.
+binds) and no tool reads it where it stands (a translation marker's message,
+a typing form's name or type; see ``static_positions``); names the blocks
+bind at the same position are alpha-renamed to one canonical spelling
+instead, so ``result`` in one block and ``output`` in the other are the same
+variable, not a parameter.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from ..diagnostics import UNIFIER
 
 from .substitution import Substitution
 from .binding_context import bound_variables_in_block
+from .static_positions import is_statically_read
 from .statement_facts import loaded_names
 from .statement_facts import memoized_per_node
 from .unifier_state import UnifierState
@@ -100,7 +103,7 @@ class Parameterization(UnifierState):
         Returns:
             True if parameterization succeeded
         """
-        if not _parameterizable(exprs):
+        if not _parameterizable(exprs) or self._read_where_it_stands(exprs, block_indices):
             return False
         # Expressions already mapped must all map to one parameter.
         existing_params = [
@@ -132,6 +135,18 @@ class Parameterization(UnifierState):
         for idx, expr in zip(block_indices, exprs):
             substitution.add_mapping(idx, expr, param_name, bound_vars=common_bound_vars)
         return True
+
+    def _read_where_it_stands(self, exprs: Sequence[ast.AST], block_indices: Sequence[int]) -> bool:
+        """Whether a tool reads any of the differing expressions from the source text.
+
+        Then the blocks are not duplicates: a parameter would move the
+        literal out of the call that extraction or a checker looks in.
+        """
+        read_in_place = getattr(self, "_read_in_place", ())
+        return any(
+            idx < len(read_in_place) and is_statically_read(expr, read_in_place[idx])
+            for idx, expr in zip(block_indices, exprs)
+        )
 
     def _common_bound_variables(
         self, exprs: Sequence[ast.AST], block_indices: Sequence[int]

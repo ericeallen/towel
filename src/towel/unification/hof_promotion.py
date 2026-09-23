@@ -19,7 +19,8 @@ used as a callable or a value, the literal may still be worth a parameter,
 so a helper can serve a family of factories. This is a feature behind
 ``promote_equal_hof_literals``, off by default; a promotion is applied only
 after every block has been checked, so one that cannot apply changes
-nothing.
+nothing. A literal a tool reads where it stands, such as the message of
+``label = _("Total")``, is never promoted (see ``static_positions``).
 """
 
 from __future__ import annotations
@@ -193,9 +194,10 @@ class LiteralPromotion(UnifierState):
     ) -> None:
         """Promote the literal at ``arg_path`` of statement ``stmt_idx`` to a fresh parameter.
 
-        Every block must carry an expression at that path and none of them
-        may already be parameterized; then each block's expression is mapped
-        to one new parameter and recorded as its promoted argument.
+        Every block must carry an expression at that path, none of them may
+        already be parameterized, and no tool may read one where it stands;
+        then each block's expression is mapped to one new parameter and
+        recorded as its promoted argument.
         """
         per_block_exprs: List[ast.AST] = []
         for block in blocks:
@@ -210,6 +212,8 @@ class LiteralPromotion(UnifierState):
             substitution.get_param_for_expr(bidx, expr) is not None
             for bidx, expr in enumerate(per_block_exprs)
         ):
+            return
+        if self._read_where_it_stands(per_block_exprs, range(len(per_block_exprs))):
             return
         param_name = self._fresh_parameter_name()
         for bidx, expr in enumerate(per_block_exprs):

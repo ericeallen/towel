@@ -52,8 +52,9 @@ def _engine_unification(tmp_path: Path) -> Unification:
     captured: list[Unification] = []
     original = engine.unifier.unify_blocks
 
-    def capture(blocks, renames):
-        result = original(blocks, renames)
+    def capture(blocks, hygienic_renames, **options):
+        renames = hygienic_renames
+        result = original(blocks, renames, **options)
         if result is not None and not captured:
             captured.append((blocks, result, [dict(mapping) for mapping in renames]))
         return result

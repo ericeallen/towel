@@ -19,10 +19,10 @@ whether it reassigns a name it did not bind; which external names another
 function may rebind while it runs, and whether it reads module data a
 callback could rebind (exempting names the helper reads bare); which names
 must be declared
-global or nonlocal in a helper; and the two filters that decline helpers
-which only forward or rename. Every answer is memoized per block structure
-or per function, since the pair stages ask the same questions of the same
-blocks many times.
+global or nonlocal in a helper; and the filters that decline helpers which
+only forward, only rename, or only call helpers this tool generated. Every
+answer is memoized per block structure or per function, since the pair
+stages ask the same questions of the same blocks many times.
 """
 
 from __future__ import annotations
@@ -58,11 +58,13 @@ from .models import (
     FunctionNode,
     RejectReason,
     encloses,
+    is_generated_helper_name,
 )
-from .parameters import parameter_names
+from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import rebound_external_names, walk_own_scope
 from .statement_facts import memoized_per_node
+from .static_positions import TranslationKeywords, configured_translation_keywords
 from .structural_memo import load_substitution, store_substitution
 from .substitution import Substitution
 from .visitors import (
@@ -204,14 +206,41 @@ def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -
 class BlockAnalysis(EngineState):
     """See the module docstring."""
 
+    # The files of the analysis the translation keywords were last read for,
+    # and those keywords.
+    _keywords_read_for: Optional[Tuple[Tuple[str, ...], TranslationKeywords]] = None
+
+    def _translation_keywords(self) -> TranslationKeywords:
+        """The markers extraction reads in the projects being analyzed, read once per analysis.
+
+        Unification and the clustering scans are memoized by structure
+        alone, which is sound while the keywords stay the same; when the
+        files belong to a project that configures others, both are dropped.
+        """
+        paths = self._analysis_paths
+        known = self._keywords_read_for
+        if known is not None and (known[0] is paths or known[0] == paths):
+            if known[0] is not paths:
+                self._keywords_read_for = (paths, known[1])
+            return known[1]
+        keywords = configured_translation_keywords(paths)
+        if known is not None and known[1] != keywords:
+            self._unify_cache.clear()
+            self._cluster_scan_cache.clear()
+        self._keywords_read_for = (paths, keywords)
+        return keywords
+
     def _unify_memoized(
         self,
         blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
     ) -> Optional[Substitution]:
         """Unify two blocks, reusing the result for any pair with the same structure."""
+        keywords = self._translation_keywords()
         if len(blocks) != 2:
-            return self.unifier.unify_blocks(blocks, hygienic_renames)
+            return self.unifier.unify_blocks(
+                blocks, hygienic_renames, translation_keywords=keywords
+            )
         key = (self._sid(blocks[0]), self._sid(blocks[1]))
         if key in self._unify_cache:
             stored = self._unify_cache[key]
@@ -222,7 +251,7 @@ class BlockAnalysis(EngineState):
                 target.clear()
                 target.update(source)
             return substitution
-        result = self.unifier.unify_blocks(blocks, hygienic_renames)
+        result = self.unifier.unify_blocks(blocks, hygienic_renames, translation_keywords=keywords)
         self._unify_cache[key] = (
             None if result is None else store_substitution(result, blocks, hygienic_renames)
         )
@@ -805,10 +834,13 @@ class BlockAnalysis(EngineState):
             return True
         if len(body) == 2:
             # ``name = call(...)`` then ``return name``, or ``a, b = call(...)``
-            # then ``return (a, b)``, forwards just as a lone ``return call(...)``
-            # does. Left unfiltered, two such helpers pair with each other and
-            # extract a third, without end (h2 under Black, whose wrapping of
-            # the call took the body over the line minimum).
+            # then ``return (b, a)``, forwards just as a lone ``return call(...)``
+            # does: the results go back as they came, in whatever order. Left
+            # unfiltered, two such helpers pair with each other and extract a
+            # third, without end (h2 under Black, whose wrapping of the call
+            # took the body over the line minimum; sqlglot, whose call sites
+            # each unpacked a helper's tuple in their own order, so that every
+            # new helper returned the previous one's permuted).
             first, second = body
             if not (
                 isinstance(first, ast.Assign)
@@ -818,7 +850,7 @@ class BlockAnalysis(EngineState):
                 and second.value is not None
             ):
                 return False
-            return BlockAnalysis._same_names(first.targets[0], second.value)
+            return BlockAnalysis._repacks_names(first.targets[0], second.value)
         if len(body) != 1:
             return False
         statement = body[0]
@@ -872,15 +904,115 @@ class BlockAnalysis(EngineState):
         return True
 
     @staticmethod
-    def _same_names(target: ast.expr, returned: ast.expr) -> bool:
-        """Whether ``returned`` is exactly the name, or tuple of names, ``target`` binds."""
-        if isinstance(target, ast.Name) and isinstance(returned, ast.Name):
-            return target.id == returned.id
-        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(
-            returned, (ast.Tuple, ast.List)
-        ):
-            return len(target.elts) == len(returned.elts) and all(
-                isinstance(bound, ast.Name) and isinstance(used, ast.Name) and bound.id == used.id
-                for bound, used in zip(target.elts, returned.elts)
-            )
+    def _repacks_names(target: ast.expr, returned: ast.expr) -> bool:
+        """Whether ``returned`` is only names ``target`` binds: one of them, or a tuple or list.
+
+        Their order does not matter, nor does leaving some out: either way the
+        helper returns nothing the call did not. A starred target builds a
+        list, which is something of its own.
+        """
+        bound = _plain_names(target)
+        given = _plain_names(returned)
+        return bound is not None and given is not None and set(given) <= set(bound)
+
+    @staticmethod
+    def _helper_only_calls_generated_helpers(func: ast.FunctionDef) -> bool:
+        """Whether all the helper would compute is calls of helpers this tool generated.
+
+        Each statement binds, returns or evaluates such calls, evaluates a
+        thunk the call site passes, or re-packs what they return, and every
+        argument is a name, a literal, a thunk, or another such call. The
+        blocks it came from differ only in what they pass to an earlier
+        helper, which already holds everything they share that the user
+        wrote, so this helper would share nothing, and its call sites would
+        have the same shape again. Declining it is what makes the fixed point
+        end: every other extraction replaces something the user wrote in at
+        least two places, a computation or at least a statement, with one
+        copy in a helper, and there is only so much of it; a call of a
+        generated helper, and the thunks it is passed, are not the user's.
+        So it is declined whatever ``skip_trivial_helpers`` says.
+        """
+        thunks = frozenset(
+            argument.arg
+            for argument in func.args.args
+            if argument.arg.startswith(GENERATED_PARAMETER_PREFIX)
+        )
+        values: List[ast.expr] = []
+        for statement in func.body:
+            if isinstance(statement, (ast.Global, ast.Nonlocal)):
+                continue
+            if isinstance(statement, ast.Assign):
+                if any(_plain_names(target) is None for target in statement.targets):
+                    return False
+                values.append(statement.value)
+            elif isinstance(statement, (ast.Return, ast.Expr)):
+                if statement.value is not None:
+                    values.append(statement.value)
+            else:
+                return False
+        return any(
+            _calls_generated_helper(node) for value in values for node in ast.walk(value)
+        ) and all(_is_plumbing(value, thunks) for value in values)
+
+
+def _plain_names(node: ast.expr) -> Optional[List[str]]:
+    """The names ``node`` spells when it is a name or a tuple or list of them, nested or not."""
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, (ast.Tuple, ast.List)):
+        names: List[str] = []
+        for element in node.elts:
+            inner = _plain_names(element)
+            if inner is None:
+                return None
+            names.extend(inner)
+        return names
+    return None
+
+
+def _calls_generated_helper(node: ast.AST) -> bool:
+    """Whether ``node`` is a call of a helper this tool generated, bare or through a receiver."""
+    if not isinstance(node, ast.Call):
         return False
+    callee = node.func
+    if isinstance(callee, ast.Name):
+        return is_generated_helper_name(callee.id)
+    return (
+        isinstance(callee, ast.Attribute)
+        and isinstance(callee.value, ast.Name)
+        and is_generated_helper_name(callee.attr)
+    )
+
+
+def _is_plumbing(node: ast.expr, thunks: AbstractSet[str]) -> bool:
+    """Whether ``node`` computes nothing of its own: it only moves values between calls.
+
+    A name, a literal, a tuple of such values or a starred one; a lambda that
+    takes nothing and returns such a value (the extractor's ``lambda:
+    __param_0()`` forwarding a thunk); or a call, with such arguments, of a
+    generated helper or of one of ``thunks``, the helper's own parameters,
+    which evaluates code of the call site's. A list display is not among
+    them: it makes a new list each time.
+    """
+    if isinstance(node, (ast.Name, ast.Constant)):
+        return True
+    if isinstance(node, ast.Tuple):
+        return all(_is_plumbing(element, thunks) for element in node.elts)
+    if isinstance(node, ast.Starred):
+        return _is_plumbing(node.value, thunks)
+    if isinstance(node, ast.Lambda):
+        arguments = node.args
+        return (
+            not (arguments.posonlyargs or arguments.args or arguments.kwonlyargs)
+            and arguments.vararg is None
+            and arguments.kwarg is None
+            and _is_plumbing(node.body, thunks)
+        )
+    if isinstance(node, ast.Call) and (
+        _calls_generated_helper(node)
+        or (isinstance(node.func, ast.Name) and node.func.id in thunks)
+    ):
+        return all(_is_plumbing(argument, thunks) for argument in node.args) and all(
+            _is_plumbing(keyword.value, thunks) for keyword in node.keywords
+        )
+    return False
