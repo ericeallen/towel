@@ -59,6 +59,7 @@ from .semantic_safety import (
     block_requires_original_frame,
     created_object_escapes,
     frame_read_outside_block,
+    needs_class_body,
     unbinds_external_name,
 )
 from .thunk_inlining import inline_leading_thunks
@@ -188,6 +189,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 hygienic_renames=cluster_renames,
             )
         except UnsupportedExtraction:
+            return None
+        # A ``super()`` the call itself holds runs in a thunk or in the helper,
+        # neither of which reads the method's receiver and cell (``SUPER_IN_CALL``).
+        if needs_class_body([call_node2]):
             return None
         if thunk_reads_possibly_unbound_local(call_node2, candidate.function, available[1]):
             return None

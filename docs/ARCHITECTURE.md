@@ -282,8 +282,9 @@ and says why.
 a helper could change behavior even if the shapes match:
 
 - **Frames and suspension.** `yield`, `await`, `async for`/`with`, an async
-  comprehension, `locals()`, `globals()`, no-argument `vars()`/`dir()`/
-  `super()`, `eval`/`exec`, direct frame or stack inspection, and
+  comprehension, `locals()`, `globals()`, no-argument `vars()`/`dir()`,
+  `super()` reached through another name (`s = super; s()`,
+  `builtins.super()`), `eval`/`exec`, direct frame or stack inspection, and
   `warnings.warn` (with a `stacklevel`, or without one, since the helper's
   frame would then be the one attributed) — a helper adds a frame these
   would observe. The frame-reading builtins and `eval`/`exec` decline the
@@ -300,6 +301,17 @@ a helper could change behavior even if the shapes match:
   one; any call with a `stacklevel=` keyword counts as a warning. A
   `break` or `continue` whose loop lies outside the block would leave the
   helper instead of the loop.
+- **The class cell.** Zero-argument `super()` reads the `__class__` cell of
+  the function calling it and that frame's first argument, so code using it
+  needs its class body (`needs_class_body`). The guard stage marks the pair;
+  the free-variable stage then reads `__class__` bare instead of passing it,
+  since a parameter of that name hides the cell; a call site may not
+  evaluate `super()` itself, in a thunk or by passing `super` on; and
+  placement declines every home but a method helper of the class that holds
+  both blocks. A block whose method rebinds or deletes its first parameter,
+  or binds `__class__`, is declined here, since no helper would read the
+  same receiver and cell. `super(C, obj)`, which names both, is an ordinary
+  call.
 - **Binding discipline.** A block that deletes, rebinds, or `except ... as`
   binds a name the caller keeps using; a moved `global`/`nonlocal`
   declaration; a comprehension assignment expression that would bind in the
@@ -346,7 +358,12 @@ decides:
   class's name can be a parameter, deleted, rebound, mangled, bound to what a
   decorator returned, or not bound yet while the class body runs, and mypy
   does not know `__class__`. Where one method of a pair dispatches and the
-  other does not, the module function serves both.
+  other does not, the module function serves both. Code using zero-argument
+  `super()` has the method helper or nothing: compiled in the same class
+  body and reached through the same receiver, the helper's `super()`
+  resolves as the method's did, and where any condition here fails,
+  including the receiver conditions, the pair is declined
+  (`needs_class_body`) rather than given a module function.
 - **Module level otherwise.** Blocks shared by sibling classes, by a parent
   and its child, or by classes in different modules, blocks in local or
   nested classes, in nested functions, or in functions whose common

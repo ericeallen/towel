@@ -141,9 +141,12 @@ ancestor as before, and never adding anything to a class. The justification:
   class, both are accepted. Zero-argument `super()` and `__class__` would be
   too, since a helper defined in the same class body binds them to the same
   class. Only a same-class method helper can extract such code at all.
-  (As implemented today, moved code using either is still declined
-  everywhere: the guard that refuses it runs before placement is known.
-  Allowing it for same-class helpers is follow-up work.)
+  (Moved code using zero-argument `super()` is extracted only into such a
+  helper, and only when the helper takes the method's own receiver: the
+  guard marks it as needing the class body, and placement declines the pair
+  rather than give it a module function. `__class__` without `super()` is
+  passed as an argument wherever the helper goes, each site passing its own
+  class; beside `super()` the helper reads its own cell.)
 - **The receiver.** A method's receiver is typed as an instance of its class
   unless the method declares otherwise. `A.m1(SimpleNamespace(v=10), 1)` is
   rejected by both checkers, so it is outside the contract. A method that
@@ -163,8 +166,9 @@ The costs:
 
 - Blocks shared across classes become module functions with an explicit
   receiver. That is sound but less idiomatic.
-- Such a block is declined when it uses private names. Zero-argument `super()`
-  or `__class__` in it is declined as before.
+- Such a block is declined when it uses private names or zero-argument
+  `super()`. `__class__` in it is passed as an argument, each site passing
+  its own class.
 - A pyright-strict project's own check will reject one that reads protected
   attributes.
 - Across modules, such a block needs an import under the import rule below.
