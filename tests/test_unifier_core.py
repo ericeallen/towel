@@ -231,3 +231,43 @@ def test_the_same_constant_of_the_same_type_needs_no_parameter() -> None:
         blocks = [ast.parse(f"x = {literal}").body, ast.parse(f"x = {literal}").body]
         substitution = Unifier().unify_blocks(blocks, [{}, {}])
         assert substitution is not None and not substitution.param_expressions, literal
+
+
+def _match_blocks(first: str, second: str) -> list[list[ast.stmt]]:
+    source = (
+        "match value:\n    case {}:\n        found = 'hit'\n    case _:\n        found = 'miss'\n"
+    )
+    return [ast.parse(source.format(pattern)).body for pattern in (first, second)]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("[1, rest]", "[2, rest]"),
+        ("Color.RED", "Color.BLUE"),
+        ('{"a": found}', '{"b": found}'),
+        ("Point(x=1)", "Point(x=2)"),
+        ("-1", "-2"),
+        ("None", "True"),
+        ("[kind(), x]", "[kind(), y]"),
+    ],
+)
+def test_a_pattern_part_that_differs_is_no_parameter(first: str, second: str) -> None:
+    # A bare parameter name where a pattern expects a value is a capture that
+    # matches anything; a mapping key cannot be a bare name at all.
+    assert Unifier().unify_blocks(_match_blocks(first, second), [{}, {}]) is None
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("First()", "Second()"),
+        ("[mod_a.First()]", "[mod_b.First()]"),
+        ("lights.RED", "paints.RED"),
+        ("{keys_a.RED: found}", "{keys_b.RED: found}"),
+    ],
+)
+def test_a_class_or_dotted_root_that_differs_is_a_parameter(first: str, second: str) -> None:
+    substitution = Unifier().unify_blocks(_match_blocks(first, second), [{}, {}])
+    assert substitution is not None
+    assert len(substitution.param_expressions) == 1

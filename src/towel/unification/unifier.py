@@ -36,6 +36,17 @@ from .unifier_state import ConstantIdentity
 from .visitors import all_instances
 
 
+def _dotted_chain(expression: ast.AST) -> Optional[Tuple[ast.Name, List[str]]]:
+    """``a.b.c`` as its root name and attribute names, or None for anything else."""
+    attributes: List[str] = []
+    while isinstance(expression, ast.Attribute):
+        attributes.append(expression.attr)
+        expression = expression.value
+    if not isinstance(expression, ast.Name):
+        return None
+    return expression, attributes[::-1]
+
+
 class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
     """
     Unify AST blocks to find parameterizable differences.
@@ -72,6 +83,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.alpha_renamings: Dict[Tuple[int, str], str] = {}
         self.current_blocks: Optional[Sequence[Sequence[ast.AST]]] = None
         self.constant_positions = {}
+        self._pattern_depth = 0
+        self._pattern_parameters_allowed = False
 
     def unify_blocks(
         self, blocks: Sequence[Sequence[ast.AST]], hygienic_renames: List[Dict[str, str]]
@@ -229,8 +242,109 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         handler = self._BINDING_CONSTRUCT_UNIFIERS.get(type(first_node))
         if handler is not None:
             return handler(self, nodes, substitution, list(block_indices))
+        if isinstance(first_node, ast.pattern):
+            return self._unify_pattern(nodes, substitution, block_indices)
+        return self._unify_fields(nodes, substitution, block_indices)
 
-        # For each field in the node
+    def _unify_pattern(
+        self, nodes: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
+    ) -> bool:
+        """Unify match patterns, where only the names of classes and namespaces may differ.
+
+        A pattern is not an expression, and most of it cannot stand for a
+        parameter: where a pattern expects a value, a bare name is a capture
+        that matches anything and binds it (``case [1, x]`` would become
+        ``case [__param_0, x]``, ``case Color.RED`` a capture or a class
+        pattern), and a mapping key must be a literal or a dotted name. A
+        name keeps its meaning in two places only: as the class of a class
+        pattern (``case __param_0():``) and at the root of a dotted name
+        (``case __param_0.RED:``), and only while the argument is passed by
+        value; one passed as a thunk puts a call in the pattern, which does
+        not parse, and the rendered proposal is dropped.
+        """
+        self._pattern_depth += 1
+        try:
+            first = nodes[0]
+            if isinstance(first, ast.MatchValue) and all_instances(nodes, ast.MatchValue):
+                return self._unify_pattern_value(
+                    [node.value for node in nodes], substitution, block_indices
+                )
+            if isinstance(first, ast.MatchClass) and all_instances(nodes, ast.MatchClass):
+                return (
+                    self._unify_pattern_class(
+                        [node.cls for node in nodes], substitution, block_indices
+                    )
+                    and all(node.kwd_attrs == first.kwd_attrs for node in nodes)
+                    and self._unify_lists(
+                        [node.patterns for node in nodes], substitution, block_indices
+                    )
+                    and self._unify_lists(
+                        [node.kwd_patterns for node in nodes], substitution, block_indices
+                    )
+                )
+            if isinstance(first, ast.MatchMapping) and all_instances(nodes, ast.MatchMapping):
+                key_lists = [node.keys for node in nodes]
+                if any(len(keys) != len(first.keys) for keys in key_lists):
+                    return False
+                return (
+                    all(
+                        self._unify_pattern_value(
+                            [keys[index] for keys in key_lists], substitution, block_indices
+                        )
+                        for index in range(len(first.keys))
+                    )
+                    and all(node.rest == first.rest for node in nodes)
+                    and self._unify_lists(
+                        [node.patterns for node in nodes], substitution, block_indices
+                    )
+                )
+            return self._unify_fields(nodes, substitution, block_indices)
+        finally:
+            self._pattern_depth -= 1
+
+    def _unify_pattern_value(
+        self, values: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
+    ) -> bool:
+        """A value pattern's literal or dotted name, or a mapping key: only a dotted name's root may differ."""
+        chains = [_dotted_chain(value) for value in values]
+        if any(chain is None for chain in chains):
+            return self._unify_nodes(values, substitution, block_indices)
+        attributes = {tuple(chain[1]) for chain in chains if chain is not None}
+        if len(attributes) != 1:
+            return self._unify_nodes(values, substitution, block_indices)
+        roots = [chain[0] for chain in chains if chain is not None]
+        return self._unify_with_pattern_parameters(roots, substitution, block_indices)
+
+    def _unify_pattern_class(
+        self, classes: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
+    ) -> bool:
+        """A class pattern's class: a name or dotted name, which may differ as a whole."""
+        return self._unify_with_pattern_parameters(classes, substitution, block_indices)
+
+    def _unify_with_pattern_parameters(
+        self, nodes: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
+    ) -> bool:
+        """Unify expressions a pattern holds where a parameter's bare name keeps its meaning."""
+        allowed = self._pattern_parameters_allowed
+        self._pattern_parameters_allowed = True
+        try:
+            return self._unify_nodes(nodes, substitution, block_indices)
+        finally:
+            self._pattern_parameters_allowed = allowed
+
+    def _try_parameterize(
+        self, exprs: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
+    ) -> bool:
+        """Parameterize differing expressions; inside a pattern, only where ``_unify_pattern`` allows."""
+        if self._pattern_depth and not self._pattern_parameters_allowed:
+            return False
+        return super()._try_parameterize(exprs, substitution, block_indices)
+
+    def _unify_fields(
+        self, nodes: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
+    ) -> bool:
+        """Unify nodes of one type field by field, parameterizing where expressions differ."""
+        first_node = nodes[0]
         for field_name in first_node._fields:
             if field_name in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
                 continue
@@ -894,6 +1008,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
     def _reset_unification_state(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         self.param_counter = 0
+        self._pattern_depth = 0
+        self._pattern_parameters_allowed = False
         self.current_blocks = blocks
         # A helper extracted on an earlier pass already binds names such as
         # ``__param_0``; a fresh parameter must not alias any identifier the

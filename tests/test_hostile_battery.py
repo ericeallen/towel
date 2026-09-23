@@ -152,6 +152,11 @@ TRANSFORMED = {
     # The names a pattern evaluates (a class, a dotted value, a mapping key)
     # are the helper's arguments.
     "r149_match_pattern_reads_caller_names",
+    # A pattern's class, or the root of its dotted name, may differ: the
+    # parameter's bare name keeps the pattern's meaning. (r150, where a
+    # literal or a whole dotted name differs, is declined: a bare name there
+    # would be a capture.)
+    "r151_pattern_names_that_may_differ",
 }
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise

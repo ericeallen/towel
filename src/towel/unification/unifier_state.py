@@ -58,6 +58,12 @@ class UnifierState:
     _reserved_parameter_names: Set[str]
     """Identifiers the blocks mention; a fresh parameter must not alias one."""
 
+    _pattern_depth: int
+    """How many match patterns enclose the nodes being unified."""
+
+    _pattern_parameters_allowed: bool
+    """Whether a parameter may stand where the pattern being unified is (see ``Unifier._unify_pattern``)."""
+
     @staticmethod
     def _iter_child_fields(node: ast.AST) -> Iterator[Tuple[str, Any]]:
         """Provided by Unifier."""
