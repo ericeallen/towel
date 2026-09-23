@@ -48,6 +48,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from towel.import_model import ImportModel, ImportProblem
     from towel.type_inference import TypeOracle
     from towel.unification.fixed_point import RunReport
     from towel.unification.models import RefactoringProposal
@@ -252,6 +253,18 @@ def _warn_about_retired_flags(args: argparse.Namespace) -> None:
         )
 
 
+def _add_exclude_flag(parser: argparse.ArgumentParser) -> None:
+    """Add ``--exclude``, shared by the commands that analyze a directory."""
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="DIRECTORY",
+        help="Directory name to leave out of directory mode (repeatable), e.g. tests; "
+        "the names the program's imports give its modules are read without it too",
+    )
+
+
 def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
     """Add ``--cross-module``, shared by the commands that analyze a project.
 
@@ -265,8 +278,10 @@ def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Also share a helper between duplicates in different modules, importing it from "
-        "the module that hosts it into the others; --no-cross-module, the default, extracts "
-        "only within a module and adds no import between the project's modules.",
+        "the module that hosts it into the others, spelled as the program's own imports "
+        "show that import works; a run refuses when those imports leave the names of the "
+        "package it refactors in doubt. --no-cross-module, the default, extracts only within "
+        "a module and adds no import between the project's modules that runs.",
     )
 
 
@@ -298,13 +313,7 @@ Examples:
     parser.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
     )
-    parser.add_argument(
-        "--exclude",
-        action="append",
-        default=[],
-        metavar="DIRECTORY",
-        help="Directory name to leave out of directory mode (repeatable), e.g. tests",
-    )
+    _add_exclude_flag(parser)
     _add_cross_module_flag(parser)
 
     _add_import_layout_flags(parser)
@@ -405,6 +414,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     )
 
     parser.add_argument("target", help="File or directory to analyze")
+    _add_exclude_flag(parser)
     _add_cross_module_flag(parser)
     _add_tuning_flags(parser)
     _add_progress_flag(
@@ -825,6 +835,7 @@ class PreviewOptions:
     max_parameters: int
     max_pairs: int
     progress: ProgressMode
+    exclude: Tuple[str, ...] = ()
     cross_module: bool = False
 
     @classmethod
@@ -835,6 +846,7 @@ class PreviewOptions:
             max_parameters=int(args.max_parameters),
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
+            exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
         )
 
@@ -893,6 +905,8 @@ def _run_dry(args: argparse.Namespace) -> None:
             raise ValueError(
                 "Output already exists; choose a new path or explicitly refactor in place"
             )
+    if options.cross_module and is_dir:
+        _judge_import_problems(source, options.exclude)
 
     print("=" * 70)
     _banner("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
@@ -985,6 +999,104 @@ def _run_dry(args: argparse.Namespace) -> None:
     finally:
         if oracle is not None:
             oracle.close()
+
+
+IMPORT_PROBLEM_REMEDY = (
+    "Leave out each directory holding a stray copy or a broken import with --exclude"
+    " <directory name> (for example --exclude build), or fix the import."
+)
+"""What a user can do about an import problem: the one remedy every report names."""
+
+
+def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
+    """Report what keeps the program's imports from naming its modules; refuse when the target's own.
+
+    A helper shared across modules is imported by the name the program's own
+    imports give its host (docs/DECISIONS.md, "Import names come from the
+    program"), and the model those imports make already declines every name a
+    problem involves. So every problem is named before anything is written.
+    One that involves the package being refactored (:func:`_problems_involving`)
+    refuses the run, since the helpers shared across its modules are what
+    ``--cross-module`` asks for and none could be named soundly; any other is
+    reported, and the run goes on. Only a run with ``--cross-module`` asks:
+    without it no import that runs is written, so nothing depends on them.
+    """
+    from towel.consumers import ScanLimitExceeded
+    from towel.import_model import build_import_model
+    from towel.project_layout import find_project_root
+    from towel.unification.exceptions import AmbiguousImportsError, ProjectScanLimitError
+
+    root = find_project_root(target)
+    try:
+        model = build_import_model(root, excluded_names=excluded)
+    except ScanLimitExceeded as error:
+        raise ProjectScanLimitError(
+            f"{error}. Towel reads the project from the nearest directory with a"
+            " pyproject.toml, setup.cfg or setup.py; give the code one, or move it out of the"
+            " larger tree"
+        ) from error
+    if not model.problems:
+        return
+    involved = _problems_involving(model, target)
+    if involved:
+        others = len(model.problems) - len(involved)
+        raise AmbiguousImportsError(
+            f"Refusing to share helpers across the modules of {target}: the program's imports"
+            " do not name them unambiguously, so no import of one could be shown to work:\n"
+            + "".join(f"  {problem.describe(model.root)}\n" for problem in involved)
+            + (f"({others} other problem(s) involve only modules outside it.)\n" if others else "")
+            + IMPORT_PROBLEM_REMEDY
+        )
+    LOG.warning(
+        "The program's imports do not name every module unambiguously, so no helper is shared"
+        " across the modules these involve:\n%s%s",
+        "".join(f"  {problem.describe(model.root)}\n" for problem in model.problems),
+        IMPORT_PROBLEM_REMEDY,
+    )
+
+
+def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProblem"]:
+    """The problems that involve the package being refactored.
+
+    One does when a file it names lies under ``target``, or when it concerns a
+    top-level name one of whose locations lies under ``target`` or holds it:
+    anyio's stale ``build/lib/anyio`` beside ``anyio`` is a problem of
+    ``anyio``, wherever the stray copy sits.
+    """
+    from towel.import_model import (
+        AmbiguousName,
+        FileUnderTwoNames,
+        TopLevelInsidePackage,
+        UnresolvedImport,
+    )
+
+    resolved = target.resolve()
+
+    def under(path: Path) -> bool:
+        return path == resolved or path.is_relative_to(resolved)
+
+    own = {
+        name
+        for name, info in model.names.items()
+        if any(under(location) or resolved.is_relative_to(location) for location in info.candidates)
+    }
+    involved: List["ImportProblem"] = []
+    for problem in model.problems:
+        files: Sequence[Path]
+        names: Set[str]
+        if isinstance(problem, AmbiguousName):
+            files, names = problem.candidates, {problem.name}
+        elif isinstance(problem, UnresolvedImport):
+            files, names = (problem.site.file,), {problem.name}
+        elif isinstance(problem, FileUnderTwoNames):
+            files, names = (problem.location,), {name.partition(".")[0] for name in problem.names}
+        elif isinstance(problem, TopLevelInsidePackage):
+            files, names = (problem.location,), {problem.name}
+        else:
+            files, names = (problem.site.file,), set()
+        if any(under(path) for path in files) or names & own:
+            involved.append(problem)
+    return involved
 
 
 def _print_declined(report: "RunReport", applied: int) -> None:
@@ -1098,6 +1210,8 @@ def _run_preview(args: argparse.Namespace) -> None:
     journal = _pending_journal(Path(target))
     if journal is not None:
         LOG.warning("An interrupted transaction is pending; recover it first: %s", journal)
+    if options.cross_module and is_dir:
+        _judge_import_problems(Path(target).resolve(), options.exclude)
 
     engine = UnificationRefactorEngine(
         max_parameters=options.max_parameters,
@@ -1105,6 +1219,7 @@ def _run_preview(args: argparse.Namespace) -> None:
         max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,
+        excluded_directories=options.exclude,
         cross_module_helpers=options.cross_module,
     )
 

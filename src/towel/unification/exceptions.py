@@ -47,6 +47,15 @@ class UnsupportedLayoutError(TowelError, ValueError):
     """
 
 
+class AmbiguousImportsError(TowelError):
+    """The program's imports do not name the modules of the refactoring target unambiguously.
+
+    A helper shared across modules is imported by the name the program's own
+    imports give its host, so a run that may share one refuses before it
+    writes anything when those imports leave the target's names in doubt.
+    """
+
+
 class ProjectScanLimitError(TowelError):
     """The project around the input is too large to read whole for what it already names.
 
