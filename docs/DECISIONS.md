@@ -254,6 +254,75 @@ The costs, accepted:
 
 *Status: being implemented on the `audit-1772` branch; not yet released.*
 
+## 2026-09-23: How the import model decides, and when a problem refuses
+
+This refines the previous entry, which is now implemented as
+`src/towel/import_model.py`. Measured against runtime oracles, the literal
+rules reproduced some of the defects they were written to prevent, so the
+model follows the import system's own rules:
+
+- A built-in or frozen module cannot be shadowed by a project file of its
+  name, and a regular package or module anywhere on the path beats a
+  namespace directory of the same name.
+- A stray `src/__init__.py` does not make `src` a package unless some import
+  uses it as one.
+- Only an import that actually runs attests a name. Imports under
+  `TYPE_CHECKING`, inside `try`/`except ImportError`, or in a file that
+  changes `sys.path` do not count.
+- A package's `__main__.py` is never offered as a host, since importing it
+  runs the program. Nor is a module below a directory without `__init__.py`
+  inside a regular package, which setuptools' `find_packages` leaves out of
+  the wheel.
+
+**Import problems refuse the run only where they touch the code being
+refactored.** Read literally, "Well-formed input" refuses every run whose
+program has an import problem. Over the 141-project corpus that refuses 27
+projects, almost all over files outside the code being refactored:
+
+- a stale `build/lib/anyio` beside anyio's source;
+- deliberately odd test data in sphinx's `tests/roots` and black's
+  `tests/data`;
+- an example importing a module that no longer exists.
+
+Soundness does not need that. The model declines exactly the names a
+problem involves, and a problem in test data cannot change how the package
+being refactored is named. So a problem that involves the package being
+refactored refuses the run before anything is written: anyio's stale copy
+of itself must be excluded or deleted first. A problem anywhere else is
+listed with its `--exclude` remedy, and the run continues. The owner chose
+this as the friendliest policy that keeps soundness.
+
+**The directory rule stays strict.** A new import may enter a directory only
+where its own side already imports from it. beautifulsoup4's wheel leaves out
+`bs4/tests`: without the rule, 10 of 40 sampled import pairs broke the
+installed wheel, and with it none did. The price, as the share of candidate
+module pairs that would otherwise have been spelled, is 44% for networkx,
+31% for tornado, 27% for beautifulsoup4, 7% for sphinx, and none for
+waitress, attrs or pytest. Most of it is test code borrowing across test
+directories inside a package. Relaxing the rule for test code would accept
+the risk that only part of a test tree ships, and the owner kept it strict.
+
+*Status: the model is implemented; wiring it into import naming, host
+choice, the cycle and import-effect checks, renaming and the CLI is in
+progress on the `audit-1772` branch. Not yet released.*
+
+## 2026-09-23: Cross-module extraction stays on for the third audit
+
+Most of the P1s the first two audit rounds found were in cross-module
+extraction: import naming, cycles and import-time effects, hosts that need a
+dependency or do not ship, stubs, shadowed builtins, relative imports inside
+moved code, and scripts run by path. The latest is a builtin patched into
+the borrower alone (`mock.patch("m.len", create=True)`), which a helper
+hosted elsewhere does not see. Cross-module helpers are about 14% of the
+helpers on click, rich, packaging and pygments.
+
+The owner kept cross-module extraction on by default. The stop rule of
+2026-09-22 stands: if the third from-scratch audit finds cross-module P1s,
+1.772 ships with cross-module extraction off by default, behind a flag. The
+builtin case is being fixed by passing the builtins that moved code reads to
+a cross-module helper from each call site, so each is looked up where the
+original code looked it up.
+
 ## 2026-09-22: Checked with the project's own checker, as configured
 
 A candidate is verified by the checker the project configures, exactly as the
