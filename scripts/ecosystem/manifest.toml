@@ -28,12 +28,12 @@
 # installed, editable, from the tree under test, as its developers have it, which
 # supplies the metadata and generated modules its tests read and the installation
 # Towel's import model expects; false only where an editable install cannot be
-# built or compiles an extension module into the tree, which the suite would then
-# exercise in place of the Python code the refactoring changes, and each such
-# entry says which), cross_module (default true: the refactor extracts across
-# modules, where the corpus finds the most bugs; false only together with
-# cross_module_reason, the reason it is off, which the harness requires and the
-# report lists).
+# built, or compiles an extension module that every test then runs in place of
+# the Python code the refactoring changes, and each such entry says which; an
+# extension the suite tests beside its Python counterpart is no reason),
+# cross_module (default true: the refactor extracts across modules, where the
+# corpus finds the most bugs; false only together with cross_module_reason, the
+# reason it is off, which the harness requires and the report lists).
 
 [[project]]
 name = "tabulate"
@@ -341,7 +341,8 @@ url = "https://github.com/GrahamDumpleton/wrapt.git"
 rev = "f1586a5e48e79024e45bf9139b6a4293798aee1b"
 package = "src/wrapt"
 pythonpath = "src"
-# Installing compiles `wrapt._wrappers`, which replaces the Python wrappers.
+# Installing compiles `wrapt._wrappers`, which every test then runs in place of
+# the Python wrappers; they run only with WRAPT_DISABLE_EXTENSIONS set.
 install = false
 
 # --- Second batch (September 13, 2026): larger and application-shaped projects ---
@@ -439,8 +440,6 @@ package = "peewee.py"
 test = ["{python}", "runtests.py"]
 # This pinned unittest runner exits 2 for completed suites containing errors.
 failure_exit_codes = [1, 2]
-# Installing compiles `playhouse._sqlite_udf`, which replaces Python functions.
-install = false
 
 [[project]]
 name = "python-prompt-toolkit"
@@ -584,8 +583,6 @@ url = "https://github.com/tornadoweb/tornado.git"
 rev = "85b6917d05a84a6d26b7488b2b56d0b52c107a0f"
 package = "tornado"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tornado/test"]
-# Installing compiles `tornado.speedups`, which replaces the Python websocket mask.
-install = false
 
 [[project]]
 name = "trio"
@@ -639,8 +636,6 @@ url = "https://github.com/pallets/markupsafe.git"
 rev = "b2e4d9c7687be25695fffbe93a37622302b24fb1"
 package = "src/markupsafe"
 pythonpath = "src"
-# Installing compiles `markupsafe._speedups`, which replaces the Python escaping.
-install = false
 
 [[project]]
 name = "sniffio"
@@ -735,8 +730,6 @@ rev = "0c0b7aec8cd25b1d2d8ba07b10acdefd0f38f2c7"
 package = "pyrsistent"
 deps = ["hypothesis", "typing-extensions"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
-# Installing compiles `pvectorc`, which replaces the Python persistent vector.
-install = false
 
 [[project]]
 name = "jsonpatch"

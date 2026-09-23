@@ -560,18 +560,13 @@ def test_the_corpus_turns_cross_module_off_for_no_project() -> None:
 
 def test_every_project_is_installed_unless_its_entry_says_why_not() -> None:
     """An editable install of the project is how its developers have it, and what Towel's
-    import model expects. The exceptions cannot be built, or compile an extension into the
-    tree that the suite would exercise in place of the Python code Towel changes."""
+    import model and a checker resolving the project's own imports expect. The exceptions
+    cannot be built, or compile an extension that every test runs in place of the Python
+    code Towel changes. MarkupSafe, Tornado and pyrsistent test their Python code beside
+    their extensions, and Peewee's is outside the module refactored, so they install."""
     manifest = ecosystem.REPO / "scripts/ecosystem/manifest.toml"
     projects = ecosystem.load_manifest(manifest, [])
-    assert [project.name for project in projects if not project.install] == [
-        "wrapt",
-        "peewee",
-        "tornado",
-        "markupsafe",
-        "html5lib",
-        "pyrsistent",
-    ]
+    assert [project.name for project in projects if not project.install] == ["wrapt", "html5lib"]
     lines = manifest.read_text().splitlines()
     for index, line in enumerate(lines):
         if line == "install = false":
