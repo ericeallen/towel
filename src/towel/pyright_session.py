@@ -21,7 +21,9 @@ language server keeps its analysis warm between candidates and reanalyzes only
 what the change reached, reaching the same verdict for a fraction of the work.
 
 The server is told to analyze the whole workspace rather than open files alone,
-so a change in one module is still judged by its consumers.
+so a change in one module is still judged by its consumers, and is configured
+setting by setting as the command line configures itself (see
+``server_settings``), so the two reach one verdict on the same files.
 
 The server is pointed at a private copy of the project rather than at the user's
 tree, and is told which copied files changed. Its in-memory overlays are not
@@ -49,7 +51,7 @@ import select
 import subprocess
 import threading
 import time
-from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterator, List, Literal, Mapping, Optional, Sequence, Set, Tuple, TypedDict
 
 from .diagnostics import LOG
 from .source_files import PROBE_PREFIX
@@ -108,6 +110,95 @@ class SessionFailure(RuntimeError):
 
 
 _SEVERITIES = {1: "error", 2: "warning", 3: "information", 4: "hint"}
+
+
+class AnalysisSettings(TypedDict):
+    """``python.analysis``: each setting sent, at the only value that matches the command line."""
+
+    diagnosticMode: Literal["workspace"]
+    autoSearchPaths: Literal[True]
+    typeCheckingMode: Literal["standard"]
+    useLibraryCodeForTypes: Literal[True]
+
+
+class PythonSettings(TypedDict):
+    """The ``python`` section: the interpreter, and the analysis settings under it."""
+
+    pythonPath: str
+    analysis: AnalysisSettings
+
+
+class ServerSettings(TypedDict):
+    """Everything the server is told; a section it asks for and this lacks is answered empty."""
+
+    python: PythonSettings
+
+
+def server_settings(interpreter: str) -> ServerSettings:
+    """The configuration under which the server reaches the command line's verdict.
+
+    The language server and ``pyright`` share one analyzer and configure it
+    differently wherever the client is silent. Every setting the server reads
+    that can change a diagnostic is below, with its default in pyright
+    1.1.414's server once the client sends a ``python.analysis`` section, the
+    command line's, and what Towel sends:
+
+    ======================================  ==================  ================  ============
+    setting                                 server default      command line      sent
+    ======================================  ==================  ================  ============
+    ``python.analysis.autoSearchPaths``     false               true, always      true
+    ``python.analysis.diagnosticMode``      open files only     every file        workspace
+    ``python.analysis.typeCheckingMode``    standard [1]        standard [1]      standard
+    ``python.analysis.useLibraryCode...``   true [1]            true [1]          true
+    ``python.analysis.extraPaths``          none [1]            none              unset
+    ``python.analysis.include``, ``exclude``,                   none [2]          unset
+    ``ignore``                              none [1]
+    ``python.analysis.diagnosticSeverity``  none [1]            none              unset
+    ``python.analysis.stubPath``            ``typings``         ``typings``       unset
+    ``python.analysis.typeshedPaths``       bundled             bundled           unset
+    ``python.pythonPath``                   ``python`` on PATH  ``--pythonpath``  the oracle's
+    ``python.venvPath``                     none                none              unset
+    ``pyright.*``, which override the       none                none              unset
+    ``python.analysis`` ones
+    ======================================  ==================  ================  ============
+
+    [1] Applied by the server only to a project without a pyright
+    configuration. With one, the server takes these from the configuration
+    alone, as the command line does, which has no flag for them. [2] With
+    ``--project`` and no files named, as Towel runs it.
+
+    ``autoSearchPaths`` is the one that decides verdicts. The server turns it
+    on only for a client that sends no ``python.analysis`` section at all, and
+    Towel must send one for ``diagnosticMode``, so it was off. In a ``src``
+    layout the package was then analyzed as ``src.<package>``, and ``import
+    <package>`` resolved to the copy installed in the environment -- with an
+    editable install, the user's own tree, not the copy under check. A
+    consumer outside ``src`` was judged against the unchanged project, so a
+    candidate that broke it read as clean, and the two copies' types clashed
+    in errors the project does not have (``"src.pkg.Task" is not assignable
+    to "pkg.Task"``). The command line adds ``src`` to the search paths
+    whenever it exists without an ``__init__.py``; so does the server now.
+
+    What is left unset is unset on the command line too, so the analyzer's
+    own defaults apply to both; any value sent for it could only differ.
+    Settings that change what an editor shows but no diagnostic (completion,
+    indexing, logging) keep the server's defaults. The interpreter is the
+    oracle's for both paths, and is where the search paths, the Python
+    version and the platform come from.
+    """
+    return ServerSettings(
+        python=PythonSettings(
+            pythonPath=interpreter,
+            analysis=AnalysisSettings(
+                # Open files alone would leave a helper's consumers
+                # unexamined, which is the whole point of the check.
+                diagnosticMode="workspace",
+                autoSearchPaths=True,
+                typeCheckingMode="standard",
+                useLibraryCodeForTypes=True,
+            ),
+        )
+    )
 
 
 def _uri(path: Path) -> str:
@@ -171,16 +262,7 @@ class PyrightSession:
         environment: Optional[Mapping[str, str]] = None,
     ) -> None:
         self._root = root
-        self._settings = {
-            "python": {
-                "pythonPath": interpreter,
-                "analysis": {
-                    # Open files alone would leave a helper's consumers
-                    # unexamined, which is the whole point of the check.
-                    "diagnosticMode": "workspace",
-                },
-            }
-        }
+        self._settings = server_settings(interpreter)
         try:
             self._process = subprocess.Popen(
                 [*command, "--stdio"],
@@ -326,6 +408,11 @@ class PyrightSession:
             pass
 
     def _setting(self, item: object) -> object:
+        """The section of ``server_settings`` that ``item`` asks for, empty where it holds none.
+
+        An empty section leaves the server at its defaults, which for every
+        section not held there are the command line's.
+        """
         section = item.get("section") if isinstance(item, dict) else None
         node: object = self._settings
         for part in str(section or "").split("."):

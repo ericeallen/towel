@@ -799,6 +799,12 @@ class PyrightOracle:
     wrote into the input it promised only to read, and a kill between writing
     and removing it left it there. Raises ``ImportError`` at construction when
     pyright is not installed; it is part of the ``types`` extra.
+
+    The server and the command line are configured alike (see
+    ``towel.pyright_session.server_settings``) and resolve imports through one
+    interpreter, this one's, whose environment holds the project's
+    dependencies and, installed editable, the project itself. Either path
+    therefore reaches the verdict the other would.
     """
 
     def __init__(self, *, language_server: bool = True) -> None:
@@ -806,6 +812,7 @@ class PyrightOracle:
         if command is None:
             raise ImportError("pyright is not installed")
         self._command: List[str] = command
+        self._interpreter = sys.executable
         # The command line is the fallback and reaches the same verdicts, so it
         # stays available: a caller that must not keep a checker process alive,
         # and the tests covering that path, ask for it here.
@@ -867,7 +874,7 @@ class PyrightOracle:
             session = PyrightSession(
                 self._server,
                 snapshot.tree,
-                sys.executable,
+                self._interpreter,
                 environment=python_tool_environment(),
             )
         except SessionFailure as error:
@@ -931,7 +938,7 @@ class PyrightOracle:
                     *self._command,
                     "--outputjson",
                     "--pythonpath",
-                    sys.executable,
+                    self._interpreter,
                     *project_arguments,
                     *paths,
                 ],
