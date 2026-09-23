@@ -1,7 +1,12 @@
 # Proposal: form a Template Method instead of extracting a free helper
 
 Status: idea recorded 2026-09-18; not designed, not implemented. Research
-needed before design (see *What we need to find out*).
+needed before design (see *What we need to find out*). Since 2026-09-22 the
+owner's decision "Towel does not change externally visible class design"
+(docs/DECISIONS.md) rules out Towel forming the pattern itself: a new base
+class is the paired coding agent's change to make, from the module function
+Towel extracts, as an ordinary edit checked by the project's tests and type
+checker.
 Author: design note from the 2026-09 audit sessions
 
 ## The observation

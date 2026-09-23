@@ -143,7 +143,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`). |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
 | `skip_trivial_helpers` | `True` | Do not propose a helper that only forwards, renames, or unpacks. |
-| `reuse_existing_functions` | `True` | A duplicate that is the whole body of a plain module-level function calls that function instead of a new helper. |
+| `reuse_existing_functions` | `True` | No effect: a duplicate that is the whole body of a function calls a new helper like any other (see *Reusing an existing function* in [ARCHITECTURE.md](ARCHITECTURE.md)). |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
 | `type_oracle` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one nothing is inferred or verified (`--types/--no-types`). |
 | `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
@@ -251,12 +251,14 @@ proposal.replacements         # List of Replacement dataclasses: line_range, nod
                               # generated call statement), file_path, class_name,
                               # method_kind, implicit_param
 proposal.file_path            # Canonical location for the extracted function
-proposal.reused_function      # ReusedFunction(name, file_path, line_range) when the
-                              # sites call an existing function; None for a helper
+proposal.reused_function      # ReusedFunction(name, file_path, line_range) on a proposal
+                              # built by hand whose sites call an existing function;
+                              # always None from the engine, which extracts a helper
 proposal.required_imports     # Imports the host needs for the helper's annotations
 proposal.helper_type_declarations  # Fresh generic declarations, materialized with the helper
 proposal.return_variables     # Names the helper returns, in the call's unpacking order
-proposal.insert_into_class    # The class the helper becomes a method of, if any;
+proposal.insert_into_class    # The class the helper becomes a class-private method of,
+                              # if any: only ever the class holding every site;
 proposal.method_kind          # instance, class, or static, with insert_into_function
                               # for a helper nested in a common enclosing function
 proposal.source_digests       # The file digests the proposal was computed from; applying
@@ -361,21 +363,87 @@ def calculate_discount_for_premium_customer(price, customer):
     return final_price
 ```
 
-**After (file1.py):** unchanged. The duplicate is the whole body of
-`calculate_discount_for_regular_customer`, so no helper is generated: the
-first-defined function is kept and the other calls it (the preview reports
-this as "Reuse calculate_discount_for_regular_customer (file1.py)").
+**After (file1.py):**
+```python
+def __extracted_func_0(customer, price):
+    base_discount = 0.1
+    if customer.get("years_member", 0) > 5:
+        base_discount += 0.05
+    if customer.get("total_purchases", 0) > 1000:
+        base_discount += 0.05
+    discount_amount = price * base_discount
+    final_price = price - discount_amount
+    return final_price
+
+
+def calculate_discount_for_regular_customer(price, customer):
+    return __extracted_func_0(customer, price)
+```
 
 **After (file2.py):**
 ```python
-from .file1 import calculate_discount_for_regular_customer
+from .file1 import __extracted_func_0
 def calculate_discount_for_premium_customer(price, customer):
-    return calculate_discount_for_regular_customer(price, customer)
+    return __extracted_func_0(customer, price)
 ```
 
-The import is relative because both modules sit in one package. Had the
-shared block been only part of each body, a `__extracted_func_0` helper would
-have been placed in one file and imported by the other in the same way.
+The duplicate is the whole body of both functions, and each becomes a call of
+the new helper: neither is rewritten to call the other, since such a call
+looks the other function up in its module every time, so patching or rebinding
+it would change both. The import is relative because both modules sit in one
+package.
+
+### Example 3: Methods
+
+**Before:**
+```python
+class Report:
+    def __init__(self, rows):
+        self.rows = rows
+        self.__cache = {}
+
+    def totals(self):
+        values = [row["amount"] for row in self.rows if row["amount"] > 0]
+        total = sum(values)
+        self.__cache["total"] = total
+        return f"total {total:.2f}"
+
+    def refunds(self):
+        values = [row["amount"] for row in self.rows if row["amount"] < 0]
+        total = sum(values)
+        self.__cache["total"] = total
+        return f"total {total:.2f}"
+```
+
+**After:**
+```python
+class Report:
+    def __init__(self, rows):
+        self.rows = rows
+        self.__cache = {}
+
+    def totals(self):
+        values = [row["amount"] for row in self.rows if row["amount"] > 0]
+        return self.__extracted_func_0(values)
+
+    def refunds(self):
+        values = [row["amount"] for row in self.rows if row["amount"] < 0]
+        return self.__extracted_func_0(values)
+
+    def __extracted_func_0(self, values):
+        total = sum(values)
+        self.__cache["total"] = total
+        return f"total {total:.2f}"
+```
+
+A block that methods of one class share becomes a method of that class, with a
+class-private name, which the class stores as `_Report__extracted_func_0`, so
+no subclass can override it. Written in the class's body, the helper reads
+`self.__cache` as the methods did. A block shared by methods of different
+classes, siblings or a parent and its child, becomes a module-level function
+that takes the receiver as an argument instead: Towel never adds a method to a
+class that did not already hold the code, and whether such a function belongs
+in a base class or a mixin is left to your review.
 
 ## Tips
 

@@ -82,10 +82,15 @@ def quote_summary(quote):
     return f"Quote {quote.id}: ${total}"
 ```
 
-When a duplicate is the whole body of an existing function, Towel does not
-extract a helper that would only restate it: the function is kept and the other
-copies call it, so two identical functions become one function and one
-one-line forwarder.
+When a duplicate is the whole body of an existing function, that function gets
+a call of the new helper like every other copy; it is never rewritten to call
+another function that restates it, since patching or rebinding that one would
+then change both. A block that methods of one class share becomes a method of
+that class with a class-private name (`self.__extracted_func_0(...)`), which no
+subclass can override; a block shared across classes becomes a module-level
+function that takes the receiver, and whether it belongs in a class is left to
+your review: Towel never adds a method to a class that did not already hold the
+code.
 
 Towel checks each proposed extraction by instantiating the helper with each
 call's arguments and comparing it with the block it replaces. It also checks

@@ -82,10 +82,10 @@ describe belong to that version.
   other module's same-named binding may differ, so the name stays a
   parameter there, and module data that a callback may rebind still
   declines the pair (`module_data_lookup`, `rebound_external_binding`).
-  The same holds when a same-file pair's helper becomes a method of a
-  shared ancestor class defined in another module: the pair is decided
-  again with every name a parameter (oauthlib's `BearerToken`, fixture
-  `xf15`). A builtin is the same lookup from every module only while no
+  A same-file pair's helper, a method or a function, always lives in the
+  pair's own module, so these names are always read there (oauthlib's
+  `BearerToken`, fixture `xf15`, broke when a helper was hoisted into a base
+  class defined in another module). A builtin is the same lookup from every module only while no
   module involved can bind its name, so a helper that a site in another
   module calls takes a builtin spelling as a parameter when either site's
   function or module binds it, or when any participating module, the
@@ -102,9 +102,9 @@ describe belong to that version.
   with a relative import is shared across modules only when every
   participating module resolves each of its relative imports in the same
   package (fixtures `xf23`-`xf25`); the part of the block after the import
-  may still be shared, taking the imported name as a parameter. An ancestor
-  class in another package is passed over as a host, and a same-file pair
-  then gets a module-level helper beside its sites (`xf26`).
+  may still be shared, taking the imported name as a parameter. A same-file
+  pair's helper lives beside its sites, never in a base class elsewhere
+  (`xf26`).
 - **Forwarded callees.** A differing expression in call position would be
   passed as `lambda *args, **kwargs: callee(*args, **kwargs)`; such a call
   site reads worse than the duplication it removes, so the pair is declined
@@ -218,10 +218,8 @@ addresses:
   Any other class (pygments' lexers, whose metaclass is the project's own; a
   base reached through a star import or built by a call such as
   `with_metaclass(...)`; `NamedTuple`; a library's base class) gets the
-  module-level helper that takes the receiver as an argument. A common
-  ancestor that takes the helper for methods of two different classes is not
-  judged this way. `__slots__` interactions with added methods are not
-  modeled beyond compilation.
+  module-level helper that takes the receiver as an argument. `__slots__`
+  interactions with added methods are not modeled beyond compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
@@ -330,6 +328,59 @@ configuration (`mypy_path`, pyright's `stubPath`) are not read.
 
 ## Method insertion
 
+A helper becomes a method only of the class whose methods hold both
+duplicates, one module-level class statement, and nowhere else: a block
+shared by sibling classes, by a parent and its child, or by classes in
+different modules becomes a module-level function that takes the receiver as
+an ordinary argument (docs/DECISIONS.md, "A method helper lives in the class
+that holds both duplicates"). No class gains a member unless the code it
+replaces was already in that class. Whether such a function belongs in a
+class, an existing base, a mixin or a new one, is a design question Towel
+leaves to whoever reviews the change ("Towel does not change externally
+visible class design"). The rule's costs:
+
+- A block shared across classes is a module function with an explicit
+  receiver, which is sound but less idiomatic than a method.
+- Such a block is declined when the function holding it uses a
+  class-private name (`self.__x`), which a module function would have to
+  spell mangled, `receiver._A__x`, a spelling mypy and pyright both reject
+  (`private_name_lexical_class`). `__class__` is passed to it as an
+  argument, each site passing its own class. Zero-argument `super()` is declined in
+  every block (`frame_sensitive_block`), before placement is known, so even a
+  method helper of the class holding both duplicates, which would bind it
+  alike, does not get it.
+- A pyright-strict project rejects a module function that reads a protected
+  attribute (`receiver._cache`, `reportPrivateUsage`), so its own check
+  declines such an extraction.
+- Across modules the function lives in one of them and the other imports
+  it, under the import rules above; a base class both modules already
+  imported no longer serves as the host. On the pricing corpus this
+  declines 6 of pygments' 77 refactorings and 3 of rich's 33, for the
+  import-time code of the module that would host the function.
+- In typed mode the receiver is annotated from the call sites, as a union of
+  the classes or as `Any`, and no generic signature is tried whose receiver
+  is a different class at each site: two subclasses sharing `values[0]` of a
+  `list[int]` in one and a `list[str]` in the other, once a generic method of
+  their base, are declined under mypy's strict checks.
+
+A method helper is class-private: `__extracted_func_0`, which its class `A`
+stores as `_A__extracted_func_0` and its methods call as
+`self.__extracted_func_0()`. No subclass, in the project or outside it, can
+override it or collide with it, since a subclass's own `__extracted_func_0`
+is stored under the subclass's name. Mangling goes by name, not by class, so
+a subclass named like its base (`class A(base.A)`) that defines
+`__extracted_func_0` stores it as `_A__extracted_func_0` too: Python sources
+under the project root are read for such a member, for `_A__extracted_func_0`
+spelled out, and for attribute stores, `setattr` and namespace writes of the
+stored name, before a number is chosen, and one outside that root is not
+seen. A class named only with underscores (`class __`) mangles nothing, and
+gets the module-level helper. A module-level helper's name must likewise be
+one no source under the root writes into a namespace (an attribute store
+`lib._extracted_func_0 = ...`, `setattr`, a subscript store); a class member
+of that name can no longer displace it and claims nothing. The root is the
+nearest directory with packaging metadata above the input (or the directory
+above its packages), read with the consumer scan's exclusions.
+
 A helper shared by methods that never read an attribute of their receiver, or
 by static methods, is a module-level function. Such a method works when it is
 called through its class with anything in the receiver's place --
@@ -344,54 +395,42 @@ method that ignores its receiver has no dispatch to preserve, so the only cost
 is that the helper sits before the class rather than inside it; a block that
 does use the receiver takes it as an ordinary argument.
 
-A generated helper's name is one no Python source under the project root
-spells yet, not only none of the files under refactoring: a subclass in
-another package that already defines `_extracted_func_0` would override a
-helper of that name placed in its base. The root is the nearest directory
-with packaging metadata above the input (or the directory above its
-packages), read with the consumer scan's exclusions; a subclass defined
-outside that root, or reached only through `exec`, is not seen.
-
-A base-class name is resolved as the binding in effect where the class
-statement runs, never by name across the project. It must be bound there by an
-unconditional class statement of that module or by one of its unconditional
-module-level imports. A base bound conditionally, declared `global` by some
-function, reachable through a star import, or bound in the same top-level
-statement as the class that uses it contributes no ancestor, and the helper is
-placed at module level instead. Rebinding the name between two subclasses --
-`Base = object` on a line of its own -- is therefore respected rather than
-overlooked. A *decorated* base contributes no ancestor either, unless each of
-its decorators is one of those known to keep the class and its namespace (see
-above): `@register class Base:` binds `Base` to whatever `register` returns,
-and Towel does not evaluate the decorator to find out. `exec`,
-`globals()[name] = ...` and other reflection remain outside what any static
-rule here can see.
-
-A helper becomes a method only when both blocks belong to functions defined
-directly in one unique module-level class, or in classes with a unique
-module-level common ancestor, every
-decorator on the source methods is known
-to preserve the receiver, the methods have a first parameter named
-`self` (or the method is a `classmethod`), and both read an attribute of it.
-That parameter's annotation, if it has one, must name only the class: the
-class itself, `Self`, or a type variable bound to the class, or `type[...]`
-of one of those for a class method. `def m(self: HasV)` declares that any
-object with the protocol's attributes may be passed, as `Box.m(other)`, and
-`self._extracted_func_0()` would raise `AttributeError` on it, so such a
+The class holding both duplicates takes the helper only when every
+decorator on the source methods is known to preserve the receiver, the
+methods have a first parameter named `self` (or the method is a
+`classmethod`), and both read an attribute of it. That parameter's
+annotation, if it has one, must name only the class: the class itself,
+`Self`, or a type variable bound to the class, or `type[...]` of one of those
+for a class method. `def m(self: HasV)` declares that any object with the
+protocol's attributes may be passed, as `Box.m(other)`, and
+`self.__extracted_func_0()` would raise `AttributeError` on it, so such a
 method gets the module-level helper that takes the receiver as an argument.
-The class that takes the helper, whether the methods' own or their common
-ancestor, must also be able to hold it as an ordinary member: not a
+The class must also be able to hold the helper as an ordinary member: not a
 `Protocol` (a method there is one more member every structural implementer
 lacks, so a runtime-checkable `isinstance` turns false), not written with its
 body on the header's line (`class Base: pass` takes no further statement), and
 not decorated beyond the known namespace-preserving decorators. A base that
 could be `Protocol` on any path through its module, or is spelled
-`Protocol`, counts as one. When the nearest common ancestor is refused, a
-farther one that qualifies is used. Local classes, duplicated class names, unknown
-decorators, functions nested inside methods, and class-body functions with
-no parameter or a first parameter other than `self` get a module-level helper that takes the
-receiver explicitly. Additional call sites gathered from the same file join
-a method helper only when they are methods of the same classes with the same
+`Protocol`, counts as one. Its metaclass and every `__init_subclass__` it
+runs must be known to leave a plain function alone (see *Metaclasses and
+descriptors* above), and no class on its method resolution order may bind
+`__getattribute__`, which intercepts every attribute lookup, the helper's
+included: a proxy that answers attributes from another object would look the
+helper up there. A builtin base must look attributes up as `object` does,
+which rules out `type` and `super`, so a metaclass's methods share a module
+function. `__getattr__` is allowed, since it runs only when normal lookup
+fails and nothing spells the helper's stored name: a class whose
+`__getattr__` serves every unknown name from its data keeps serving
+`_extracted_func_0` (fixture `r158`). A subclass that defines
+`__getattribute__` is not examined, since the rule judges the class alone and
+a subclass may lie outside the project: one that lets the class's own methods
+through but answers every other name from another object sends
+`self.__extracted_func_0` there too, and the call raises on its instances.
+Local classes, nested classes, duplicated class names, unknown decorators,
+functions nested inside methods, and class-body functions with no parameter or
+a first parameter other than `self` get a module-level helper that takes the
+receiver explicitly. Additional call sites gathered from the same file join a
+method helper only when they are methods of the same class with the same
 receiver kind; other occurrences keep their code.
 
 ## Type annotations on helpers
@@ -443,8 +482,9 @@ where the evidence comes from:
   explicit arguments. Generic method
   inference currently requires implicit `self`/`cls` typing; explicit receiver
   contracts are not generalized.
-  Inherited helpers must type-check in the chosen ancestor, without assuming
-  subclass-only attributes. Function-hosted generic helpers remain unsupported. See
+  A module function shared by methods of different classes gets no generic
+  signature whose receiver differs by site (see *Method insertion*).
+  Function-hosted generic helpers remain unsupported. See
   the [type-parameter design](proposals/type-parameters.md).
 - Mypy can report several different specializations for one expression inside
   a constrained generic function. Towel treats that reveal as ambiguous instead

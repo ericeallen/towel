@@ -183,10 +183,9 @@ Each parameter is passed in the way that preserves the original evaluation:
   classes, imports, and module data that another function rebinds through
   `global`. A clustered occurrence joins only where every such name resolves
   the same way. A cross-file helper keeps them as parameters, since the
-  other module's same-named binding may differ, and so does a helper that
-  placement (stage 10) hosts in an ancestor class defined in another
-  module: the driver notices the move and decides the pair again from
-  unification with every name a parameter (`_unify_and_place`).
+  other module's same-named binding may differ; a same-module helper is
+  always placed in that module, a method only of the class holding both
+  sites (*Helper placement*).
 - **Thunk.** Any other expression is passed as a zero-argument lambda (a *thunk*
   [Ingerman 1961]) and called inside the helper exactly where the original
   expression stood. This
@@ -311,41 +310,49 @@ reached through a callee or a dynamic lookup is outside the model.
 A helper is inserted where every call site can see it. `placement.py`
 decides:
 
-- **Method.** When both blocks are methods of one unique module-level class,
-  or of classes with a unique module-level common ancestor, every decorator is
-  known to preserve the receiver, and the first parameter is `self` (or the
-  method is a `classmethod`), the helper becomes a method and the receiver is
-  passed explicitly. A source method that never reads an attribute of its
-  receiver, and a `staticmethod`, get a module-level helper instead: such a
-  method runs when it is called through its class with anything in the
-  receiver's place, and a helper reached through `self` would take that away
-  while no checker said so. A static method in the class would have to be
-  reached through something, and nothing a method can spell is sure to be its
-  class -- the class's name can be a parameter, deleted, rebound, mangled,
-  bound to what a decorator returned, or not bound yet while the class body
-  runs, and mypy does not know `__class__`. Where one method of a pair
-  dispatches and the other does not, the module function serves both.
-- **Common ancestor by the binding in effect.** A base-class name is resolved
-  the way the referencing module resolves it *at the point the class statement
-  runs*: the name must be bound there by an unconditional class statement of
-  that module, or by one of that module's own unconditional module-level
-  imports (relative, absolute, aliased, or dotted). Position is the whole of
-  it, because Python binds globals as the module executes: with `Base = object`
-  written between two subclasses, the name denotes one thing where the first
-  is defined and another where the second is, and a helper hoisted into the
-  class the first sees is not a method of the second at all. A binding that
-  cannot be established there -- conditional, declared `global` by some
-  function, possibly replaced by a star import, or made in the same top-level
-  statement as the reference -- yields no ancestor, and the helper goes to
-  module level. A name is never matched across the project, so a project with
-  several same-named base
-  classes (a `BaseEndpoint` per protocol) does not misattribute the ancestor.
-- **Module level otherwise.** When the blocks are in local classes, nested
-  functions, or functions whose common enclosing function name is not unique in
-  the file, the helper is hoisted to module level. Every free variable is a
-  parameter or a module name read bare, so a module-level helper is always
-  a correct fallback, and it avoids placing a helper in a scope that a
-  same-named sibling function cannot see.
+- **Method of the class that holds both duplicates.** When both blocks are
+  methods of one unique module-level class, every decorator is known to
+  preserve the receiver, and the first parameter is `self` (or the method is
+  a `classmethod`), the helper becomes a method of that class, and of no
+  other (docs/DECISIONS.md, "A method helper lives in the class that holds
+  both duplicates"). Its name is class-private, `__extracted_func_0`, which
+  the class stores as `_A__extracted_func_0` and its methods call as
+  `self.__extracted_func_0()`, so no subclass, inside the project or outside
+  it, can override it or collide with it; `class_private.py` holds CPython's
+  mangling rule, which allocation, the project scan and renaming share. The
+  class must keep the helper what its methods reach: not a `Protocol`, no
+  decorator beyond the known namespace-preserving ones, a body below its
+  header, a metaclass and every `__init_subclass__` on its order known to
+  leave a plain function alone, no `__getattribute__` on that order (which
+  intercepts the helper's own lookup), no builtin base but those that look
+  attributes up as `object` does, a name that mangles (not only
+  underscores), and receivers annotated, if at all, as the class
+  (`ImportTimeCode.hosts_method_helpers`, `ModuleBindings.refuses_helper`).
+  A source method that never reads an attribute of its receiver, and a
+  `staticmethod`, get a module-level helper instead: such a method runs when
+  it is called through its class with anything in the receiver's place, and a
+  helper reached through `self` would take that away while no checker said
+  so. A static method in the class would have to be reached through
+  something, and nothing a method can spell is sure to be its class -- the
+  class's name can be a parameter, deleted, rebound, mangled, bound to what a
+  decorator returned, or not bound yet while the class body runs, and mypy
+  does not know `__class__`. Where one method of a pair dispatches and the
+  other does not, the module function serves both.
+- **Module level otherwise.** Blocks shared by sibling classes, by a parent
+  and its child, or by classes in different modules, blocks in local or
+  nested classes, in nested functions, or in functions whose common
+  enclosing function name is not unique in the file, get a module-level
+  helper. Every free variable is a parameter or a module name read bare, and
+  a method's receiver is an ordinary argument, so a module-level helper is
+  always a correct fallback, and it avoids placing a helper in a scope that a
+  same-named sibling function cannot see. Towel never puts a helper into a
+  class that did not already contain the duplicated code: which class, if
+  any, such a function belongs in is a design question left to whoever
+  reviews the change (docs/DECISIONS.md, "Towel does not change externally
+  visible class design"). Placing helpers in a common ancestor, as Towel once
+  did, made them members of every subclass of a base that was often public
+  API, needed a base-name resolution that twice went wrong, and moved code
+  into modules that held none of it.
 - **After the definitions its annotations name.** A module-level helper goes
   before the module's first definition, after its imports and docstring.
   When its annotations name classes or functions of the module, it goes
@@ -357,35 +364,30 @@ decides:
   is reordered relative to the helper (`placeable_after`). Otherwise the
   helper stays at the top and the names are quoted.
 
+A generated name is also kept clear of what the project's other sources
+already define where the helper would live (`HelperNameClaims`): for a
+module-level helper, a name some file writes into a namespace (an attribute
+store, `setattr`, a subscript store); for a method helper, the stored name
+`_A__extracted_func_0` as any class member, attribute store or namespace
+write, which is what an explicit spelling of it, or `__extracted_func_0` in
+another class named `A`, would define. The project is read once per engine
+from the nearest directory with packaging metadata above the input.
+
 ## Reusing an existing function
 
-A pair whose block is the entire body of a plain module-level function is
-not a case for a new helper: the helper would restate that function. The
-engine (`_redirect_to_existing_function`) instead keeps the function and
-rewrites the other sites to call it, so two identical functions become one
-function and a one-line forwarder, and a matching block inside a larger
-function calls the existing function directly. Arguments follow the
-function's parameter order; names the body reads from its own module
-(functions, classes, absolute imports) are ambient there and are not passed.
-The existing function must be defined unconditionally at module level,
-without decorators, not `async` (the sites are synchronous), not variadic,
-and never rebound or deleted; otherwise the pair falls back to ordinary
-extraction. A block that binds variables read after it qualifies when the
-function ends by returning exactly those names, in any order: the other
-sites then unpack the function's result in its order. When both halves of
-the pair are whole bodies, the first-defined function is kept. Across files
-the call is imported like a helper and refused when it would close an
-import cycle, by the same guard. The redirect rests on the helper's own
-verification rather than repeating it: the helper has already been shown,
-by instantiation, to reproduce every site; at the function's own site the
-generated call passes each of the function's positional parameters exactly
-once by name, so the helper applied to those arguments is the function's
-body, and the function applied to any site's parameter arguments is the
-helper applied to them, provided the remaining arguments are the same
-module-level objects at every site (`_reuse_plan` checks both). After
-rendering, every generated call is checked to bind exactly the function's
-positional parameters, against its last definition when `@overload` stubs
-precede it. `reuse_existing_functions=False` restores extraction.
+A duplicate that is the whole body of a plain module-level function used to
+be answered by keeping that function and rewriting the other sites to call
+it (`_redirect_to_existing_function`), so two identical functions became one
+function and a one-line forwarder. That call looked the function up in its
+module every time, so patching or rebinding it (`mock.patch("mod.f1")`)
+changed the forwarder too (audit `r06`). Since commit `c4bf39e` every
+whole-body site is extracted like any other: both functions become calls of
+one new helper, which nothing outside can know to patch, and each existing
+function keeps depending only on itself. `reuse.py` keeps only the rule that
+declines reducing an earlier pass's helper to a forwarder while another site
+is only part of its function, and the arity check for a proposal built by
+other means that names an existing function. That left
+`reuse_existing_functions` with no effect.
 
 ## Helper annotations
 
@@ -811,8 +813,9 @@ previous pass produced from them has since been consumed:
 1. *What a verdict depends on.* `_try_refactor_pair_multi_file` decides a
    pair from the two functions' syntax trees and the scope analyses of their
    modules; from the same-file clustering scan (`_add_clustered_replacements`
-   looks only at the pair's own file); from the class hierarchy (method
-   placement, ancestor insertion); and from the project's import graph (the
+   looks only at the pair's own file); from the class hierarchy (whether the
+   class holding both methods can take a method helper); and from the
+   project's import graph (the
    cycle guard). Nothing else. Proposal priority is a pure function of the
    proposals themselves (size, then position).
 2. *Unchanged files, unchanged scans.* An unchanged file has the same
@@ -1172,7 +1175,8 @@ but the ideas and their names are from the literature.
 | Per-block facts (bindings, returns, used names) and the trivial-helper filters | `block_analysis.py` |
 | Per-analysis function lookups (by file, by name, enclosing a range) | `function_index.py` |
 | The pair decision, in eleven stages | `pair_evaluation.py` |
-| Method or module placement, base-class resolution | `placement.py` |
+| Method or module placement | `placement.py` |
+| CPython's private-name mangling, shared by naming and renaming | `class_private.py` |
 | Reusing an existing function | `reuse.py` |
 | Insertion points and re-indentation | `insertion.py` |
 | Annotation wiring and type verification | `annotation_wiring.py` |
