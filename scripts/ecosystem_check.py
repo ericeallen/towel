@@ -1324,7 +1324,8 @@ class _Declarer:
         declared = _table(project.get("optional-dependencies"))
         return {_canonical(name): _strings(value) for name, value in declared.items()}
 
-    def extra(self, name: str) -> List[str]:
+    def extra_requirements(self, name: str) -> List[str]:
+        """What the project's extra ``name`` holds; nothing when it declares no such extra."""
         return self._extras().get(_canonical(name), [])
 
     def declared(
@@ -1343,7 +1344,7 @@ class _Declarer:
             for requirement in self.group(group):
                 found += self._expanded(requirement, f"{source}, group {group}", frozenset())
         for extra in extras:
-            for requirement in self.extra(extra):
+            for requirement in self.extra_requirements(extra):
                 found += self._expanded(
                     requirement, f"{source}, through {self.name}[{extra}]", frozenset()
                 )
@@ -1361,7 +1362,7 @@ class _Declarer:
             return found
         for extra in (part.strip() for part in (match[2] or "").split(",")):
             if extra and _canonical(extra) not in seen:
-                for inner in self.extra(extra):
+                for inner in self.extra_requirements(extra):
                     found += self._expanded(
                         inner,
                         f"{source}, through {self.name}[{extra}]",
@@ -1457,7 +1458,8 @@ def _extra_declarations(declarer: _Declarer) -> List[Declaration]:
         for name in extras
         if _named_for_typing(name)
         for declaration in declarer.declared(
-            f"pyproject.toml [project.optional-dependencies] {name}", declarer.extra(name)
+            f"pyproject.toml [project.optional-dependencies] {name}",
+            declarer.extra_requirements(name),
         )
     ]
 
