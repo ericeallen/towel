@@ -141,21 +141,27 @@ def _imported_modules(
     package's ``__init__`` is the module itself: ``from .sub import y`` in
     ``app/__init__.py`` names ``app.sub``, not ``sub``. Taking the parent there
     missed every consumer that reaches a change through a re-export.
+
+    ``from app import helpers`` may import the module ``app.helpers``, and
+    whether it does is not visible here, so both are recorded. Recording only
+    ``app`` missed every file that reaches the change through ``helpers``, since
+    ``app/__init__`` itself need not consume it. A name that is not a module
+    only ever matches a module that does not exist.
     """
     package = module if is_package else module.rpartition(".")[0]
     names: Set[str] = set()
     for statement in statements:
         if statement.level == 0:
-            if statement.module:
-                names.add(statement.module)
-            continue
-        # ``from . import x`` inside ``a.b.c`` names ``a.b``; each further
-        # dot drops one more component.
-        parts = package.split(".") if package else []
-        climbed = parts[: len(parts) - (statement.level - 1)] if statement.level > 1 else parts
-        base = ".".join([*climbed, statement.module] if statement.module else climbed)
+            base = statement.module or ""
+        else:
+            # ``from . import x`` inside ``a.b.c`` names ``a.b``; each further
+            # dot drops one more component.
+            parts = package.split(".") if package else []
+            climbed = parts[: len(parts) - (statement.level - 1)] if statement.level > 1 else parts
+            base = ".".join([*climbed, statement.module] if statement.module else climbed)
         if base:
             names.add(base)
+        names.update(f"{base}.{name}" if base else name for name in statement.names if name != "*")
     implied: Set[str] = set()
     for name in names:
         parts = name.split(".")

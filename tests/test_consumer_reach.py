@@ -162,3 +162,41 @@ def test_following_the_project_reads_only_the_files_that_changed(
         str((tmp_path / name).resolve()) for name in ("a.py", "b.py")
     )
     assert parsed == ["b.py"]
+
+
+@pytest.mark.parametrize(
+    "files, consumer",
+    [
+        ({"top.py": "from app import helpers\nx: int = helpers.g()\n"}, "top.py"),
+        ({"app/user.py": "from . import helpers\nx: int = helpers.g()\n"}, "app/user.py"),
+        (
+            {"app/sub/__init__.py": "from .. import helpers\nx: int = helpers.g()\n"},
+            "app/sub/__init__.py",
+        ),
+    ],
+    ids=["absolute", "relative", "relative-from-a-subpackage"],
+)
+def test_a_consumer_reached_through_a_submodule_imported_from_its_package_is_checked(
+    tmp_path: Path, files: Mapping[str, str], consumer: str
+) -> None:
+    """``from app import helpers`` imports the module ``app.helpers``.
+
+    Only ``app`` was recorded, so a file reaching the change through
+    ``helpers`` was never found: ``app/__init__`` does not consume the change.
+    """
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": STRICT,
+            "pkg/__init__.py": "",
+            "pkg/lib.py": RETURNS_INT,
+            "app/__init__.py": "",
+            "app/helpers.py": "from pkg.lib import f\ng = f\n",
+            **files,
+        },
+    )
+    oracle = MypyInferrer()
+    try:
+        assert _flagged(oracle, tmp_path, {"pkg/lib.py": RETURNS_STR}) == [consumer]
+    finally:
+        oracle.close()
