@@ -49,6 +49,7 @@ from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import statement_shape
 from .semantic_safety import (
     available_argument_names,
+    thunk_reads_possibly_unbound_local,
     module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
@@ -184,6 +185,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 hygienic_renames=cluster_renames,
             )
         except UnsupportedExtraction:
+            return None
+        if thunk_reads_possibly_unbound_local(call_node2, candidate.function, available[1]):
             return None
         # Validate candidate call-site does not reference undefined names
         used2 = self._used_names(call_node2)

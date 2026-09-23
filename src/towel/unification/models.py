@@ -305,6 +305,7 @@ class RejectReason(StrEnum):
     UNBINDS_EXTERNAL_NAME = "unbinds_external_name"
     DUPLICATE_PROPOSAL = "duplicate_proposal"
     FORWARDED_CALLEE = "forwarded_callee"
+    THUNK_OF_POSSIBLY_UNBOUND_LOCAL = "thunk_of_possibly_unbound_local"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
     UNIFICATION_FAILED = "unification_failed"
     UNSAFE_REASSIGNMENT_BLOCK1 = "unsafe_reassignment_block1"

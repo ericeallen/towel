@@ -61,9 +61,15 @@ describe belong to that version.
   path before the block, a module name bound on every path before the
   top-level statement holding the function and never deleted, or a binding
   of an enclosing function made before the inner function's definition. Any
-  other free variable (a local bound only on some path, a cell of an
-  enclosing function not yet filled) is passed as a thunk so it is read
-  where the block read it. Definite assignment is computed conservatively:
+  other free variable (a module name bound later, a cell of an enclosing
+  function not yet filled) is passed as a thunk so it is read where the block
+  read it. A call site whose thunk would read a *local* of its own function
+  that may be unbound there is declined instead: the block raised
+  `UnboundLocalError` reading it, the thunk raises `NameError` reading an
+  unfilled closure cell, and a handler for `UnboundLocalError` stops matching.
+  This gives up extractions whose read of such a local can never happen
+  unbound, because only a correlation between paths shows it
+  (`r85_conditionally_bound_parameter`). Definite assignment is computed conservatively:
   loops, `contextlib.suppress`, and non-exhaustive `match` statements never
   bind definitely.
 - **Module names stay module names.** A free name that both sites resolve at

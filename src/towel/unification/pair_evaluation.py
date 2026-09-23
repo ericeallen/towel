@@ -58,6 +58,7 @@ from .semantic_safety import (
     module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
+    thunk_reads_possibly_unbound_local,
 )
 from .clustering import Clustering
 from .reuse import ExistingFunctionReuse
@@ -1039,6 +1040,16 @@ class PairEvaluation(
             # and reads worse than the duplication it removes. Declined; a
             # callee the site resolves is passed as a thunk or inlined.
             self._debug_reject(RejectReason.FORWARDED_CALLEE, pair, detail=f"block{block_idx+1}")
+            return None
+        if thunk_reads_possibly_unbound_local(
+            call_node,
+            setup.ctx.func1 if block_idx == 0 else setup.ctx.func2,
+            free.available_names[block_idx],
+        ):
+            # See :func:`thunk_reads_possibly_unbound_local`.
+            self._debug_reject(
+                RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL, pair, detail=f"block{block_idx+1}"
+            )
             return None
         allowed_before = set(snapshot.bound_before_block) | set(free_here)
         invalid_names = {

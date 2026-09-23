@@ -65,7 +65,6 @@ TRANSFORMED = {
     "r82_local_classes_same_name",
     "r83_tab_indented_class",
     "r84_warn_stacklevel",
-    "r85_conditionally_bound_parameter",
     "r87_nested_function_in_method",
     "r88_elif_branch",
     "r90_cluster_across_classes",
@@ -142,6 +141,10 @@ TRANSFORMED = {
     # The positive control: every decorator here keeps the helper a method.
     "p18_known_class_decorators_keep_the_helper",
 }
+# r85_conditionally_bound_parameter left the set when a thunk of a local that
+# may be unbound at the call began to be declined: the thunk would raise
+# NameError where the block raised UnboundLocalError. Its own read never
+# happens unbound, but nothing short of path correlation can show that.
 # Every other fixture must come back byte-identical. One of them once changed:
 # r86_annotated_assignment_live left the set when the trivial-helper filter
 # began declining its shared block, which binds only a literal and a parameter.
