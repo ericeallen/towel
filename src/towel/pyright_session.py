@@ -139,28 +139,27 @@ def server_settings(interpreter: str) -> ServerSettings:
 
     The language server and ``pyright`` share one analyzer and configure it
     differently wherever the client is silent. Every setting the server reads
-    that can change a diagnostic is below, with its default in pyright
-    1.1.414's server once the client sends a ``python.analysis`` section, the
-    command line's, and what Towel sends:
+    that can change a diagnostic is below -- under ``python.analysis`` unless
+    named in full -- with its default in pyright 1.1.414's server once the
+    client sends a ``python.analysis`` section, the command line's, and what
+    Towel sends:
 
-    ======================================  ==================  ================  ============
-    setting                                 server default      command line      sent
-    ======================================  ==================  ================  ============
-    ``python.analysis.autoSearchPaths``     false               true, always      true
-    ``python.analysis.diagnosticMode``      open files only     every file        workspace
-    ``python.analysis.typeCheckingMode``    standard [1]        standard [1]      standard
-    ``python.analysis.useLibraryCode...``   true [1]            true [1]          true
-    ``python.analysis.extraPaths``          none [1]            none              unset
-    ``python.analysis.include``, ``exclude``,                   none [2]          unset
-    ``ignore``                              none [1]
-    ``python.analysis.diagnosticSeverity``  none [1]            none              unset
-    ``python.analysis.stubPath``            ``typings``         ``typings``       unset
-    ``python.analysis.typeshedPaths``       bundled             bundled           unset
-    ``python.pythonPath``                   ``python`` on PATH  ``--pythonpath``  the oracle's
-    ``python.venvPath``                     none                none              unset
-    ``pyright.*``, which override the       none                none              unset
-    ``python.analysis`` ones
-    ======================================  ==================  ================  ============
+    ===========================  ================  ===============  ============
+    setting                      server default    command line     sent
+    ===========================  ================  ===============  ============
+    autoSearchPaths              false             true, always     true
+    diagnosticMode               open files only   every file       workspace
+    typeCheckingMode             standard [1]      standard [1]     standard
+    useLibraryCodeForTypes       true [1]          true [1]         true
+    extraPaths                   none [1]          none             unset
+    include, exclude, ignore     none [1]          none [2]         unset
+    diagnosticSeverityOverrides  none [1]          none             unset
+    stubPath                     typings [1]       typings          unset
+    typeshedPaths                bundled [1]       bundled          unset
+    python.pythonPath            python on PATH    --pythonpath     the oracle's
+    python.venvPath              none              none             unset
+    pyright.*, over the above    none              none             unset
+    ===========================  ================  ===============  ============
 
     [1] Applied by the server only to a project without a pyright
     configuration. With one, the server takes these from the configuration
