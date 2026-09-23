@@ -520,7 +520,7 @@ class PairEvaluation(
         A bare read in the helper looks in its host module's namespace, then
         the builtins; the block it replaced looked in its own module's. From
         a site in another module that is the same lookup only for a builtin
-        that no participating module may bind (``_ModuleBindings.may_bind``)
+        that no participating module may bind (``ModuleBindings.may_bind``)
         and whose namespace no reflection may rebind: a module's own
         function, class or import of that name, a star import, or a
         ``global`` declaration makes the host's answer differ from the

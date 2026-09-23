@@ -34,14 +34,14 @@ from typing import Optional
 
 import pytest
 
-from towel.unification.placement import _global_bindings
+from towel.unification.module_bindings import global_bindings
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_cases"
 
 
 def _refusal(source: str, qualname: str) -> Optional[str]:
-    table = _global_bindings(textwrap.dedent(source))
+    table = global_bindings(textwrap.dedent(source))
     assert table is not None
     return table.refuses_helper(qualname)
 
