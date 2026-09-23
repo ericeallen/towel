@@ -315,7 +315,7 @@ def staged_project(
                 staged_root,
                 staged_target,
                 target,
-                _staged_digests(root, target, planned),
+                _staged_digests(root, target, staged_root, planned),
             )
             return
         if target.is_dir():
@@ -328,19 +328,22 @@ def staged_project(
         yield StagedProject(root, target, staged_root, staged_target, output)
 
 
-def _staged_digests(root: Path, target: Path, planned: Iterable[PurePath]) -> Mapping[Path, str]:
-    """The digest each regular file of the target had when it was staged, by its project path.
+def _staged_digests(
+    root: Path, target: Path, staged_root: Path, planned: Iterable[PurePath]
+) -> Mapping[Path, str]:
+    """The digest of each regular file staged from the target, by the project path it copies.
 
-    Read from the originals just after copying, so a file edited in between is
-    one whose result cannot be written, which is the conservative mistake.
+    Taken from the copies, not the originals: the copy is what the run starts
+    from, so an original edited even while it was being copied no longer
+    matches, and its result is refused rather than written over the edit.
     """
     digests = {}
     for relative in planned:
-        original = root / relative
+        original, copy = root / relative, staged_root / relative
         if not (original == target or original.is_relative_to(target)):
             continue
-        if original.is_file() and not original.is_symlink():
-            digests[original] = _digest(original.read_bytes())
+        if copy.is_file() and not copy.is_symlink():
+            digests[original] = _digest(copy.read_bytes())
     return digests
 
 

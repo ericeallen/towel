@@ -190,6 +190,32 @@ def test_an_edit_made_during_the_run_stops_the_write_and_survives(
     assert list(private_temp.iterdir()) == []
 
 
+def test_an_edit_made_while_the_project_was_being_copied_is_kept(
+    tmp_path: Path, private_temp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What the run starts from is the copy, so it is the copy the project must still match."""
+    from towel import filesystem
+
+    root = tmp_path / "project"
+    files = _project(root)
+    edited = "# edited while Towel copied it\n" + MODULE
+    real_copy = filesystem._copy_entry
+
+    def copy_then_edit(source: Path, destination: Path) -> None:
+        real_copy(source, destination)
+        if source == files["a.py"]:
+            source.write_text(edited, encoding="utf-8")
+
+    monkeypatch.setattr(filesystem, "_copy_entry", copy_then_edit)
+    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    with pytest.raises(changes.StaleSource, match="changed while"):
+        with contextlib.redirect_stdout(io.StringIO()):
+            engine.refactor_directory_to_fixed_point(
+                str(root / "pkg"), str(root / "pkg"), progress="none"
+            )
+    assert files["a.py"].read_text(encoding="utf-8") == edited
+
+
 def test_an_interrupted_run_leaves_the_project_and_no_stage(
     tmp_path: Path, private_temp: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
