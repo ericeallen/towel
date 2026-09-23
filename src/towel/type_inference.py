@@ -75,7 +75,7 @@ from typing import (
 from .diagnostics import LOG
 from .project_tools import ToolChoice, python_tool_environment
 from .unification.exceptions import TowelError
-from .checker_project import CheckerSnapshot, checker_snapshot
+from .checker_project import CheckerSnapshot, UnusableConfiguration, checker_snapshot
 from .unification.bounded_cache import BoundedCache
 from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
 from .source_text import read_source, source_lines
@@ -876,6 +876,8 @@ class PyrightOracle:
             return existing
         try:
             snapshot = CheckerSnapshot(root, excluded_paths=excluded_paths)
+        except UnusableConfiguration:
+            return None  # The command line refuses the check, saying why.
         except (OSError, ValueError, UnicodeError) as error:
             LOG.warning("could not copy %s for pyright (%s); using the command line", root, error)
             return None
@@ -961,20 +963,24 @@ class PyrightOracle:
             LOG.warning("%s; checker result unavailable", reason)
             return CheckFailure(reason)
         output = completed.stdout
+        said = _what_pyright_said(completed.stderr)
         start, end = output.find("{"), output.rfind("}")
         if start < 0 or end < 0:
-            reason = f"pyright produced no JSON: {completed.stderr.strip()}"
+            reason = f"pyright produced no JSON{said}"
             LOG.warning(reason)
             return CheckFailure(reason)
         try:
             data = json.loads(output[start : end + 1])
         except json.JSONDecodeError as error:
-            reason = f"pyright output is not JSON: {error}"
+            reason = f"pyright output is not JSON: {error}{said}"
             LOG.warning(reason)
             return CheckFailure(reason)
         diagnostics = data.get("generalDiagnostics") if isinstance(data, dict) else None
         if completed.returncode not in {0, 1} or not isinstance(diagnostics, list):
-            reason = f"pyright failed or returned an unexpected shape (exit {completed.returncode})"
+            reason = (
+                "pyright failed or returned an unexpected shape "
+                f"(exit {completed.returncode}){said}"
+            )
             LOG.warning(reason)
             return CheckFailure(reason)
         validated: List[_PyrightDiagnostic] = []
@@ -1006,7 +1012,7 @@ class PyrightOracle:
             validated.append(cast(_PyrightDiagnostic, diagnostic))
         has_errors = any(item.get("severity") == "error" for item in validated)
         if (completed.returncode == 1) != has_errors:
-            return CheckFailure("pyright exit status disagrees with its diagnostics")
+            return CheckFailure(f"pyright exit status disagrees with its diagnostics{said}")
         return _PyrightDiagnostics(tuple(validated))
 
     @staticmethod
@@ -1114,6 +1120,8 @@ class PyrightOracle:
                                 None if start is None else start + 1,
                             )
                         )
+            except UnusableConfiguration as error:
+                return CheckFailure(str(error))
             except (OSError, ValueError, UnicodeError) as error:
                 return CheckFailure(f"Could not snapshot the project for pyright: {error}")
         return CheckSuccess(tuple(errors))
@@ -1141,6 +1149,19 @@ class PyrightOracle:
 
 PYRIGHT_TIMEOUT_SECONDS = 600.0
 """How long one pyright run may take before Towel proceeds without its answer."""
+
+
+def _what_pyright_said(stderr: str) -> str:
+    """The end of pyright's standard error, as a clause a failure's reason ends with.
+
+    A failure is only as useful as its reason: "exit 3" alone told the user
+    nothing, while pyright had said which configuration file it could not parse.
+    """
+    said = stderr.strip()
+    if not said:
+        return ""
+    return f"; pyright said: {said[-_STDERR_TAIL_BYTES:]}"
+
 
 _PYRIGHT_REVEALED = re.compile(r'^Type of ".*" is "(?P<type>.*)"$', re.DOTALL)
 

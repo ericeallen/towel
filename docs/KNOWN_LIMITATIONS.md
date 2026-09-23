@@ -422,7 +422,14 @@ where the evidence comes from:
   timestamp does, so an edit by something other than Towel cannot leave a
   verdict standing against a project the copy no longer matches. A checker
   configuration whose bytes are not UTF-8 is refused rather than copied
-  without rewriting the absolute paths in it. Cyclic or external source symlinks and
+  without rewriting the absolute paths in it. A `pyrightconfig.json` (or a
+  file it extends) that pyright itself cannot parse refuses the typed run
+  before anything is written, naming the file and the position: pyright's
+  grammar is JSON with `//` and `/* */` comments and one trailing comma per
+  object or array, and a byte-order mark, a form feed or a no-break space is
+  an error to it. pyright's language server would otherwise go on checking
+  with default settings. A pyright command line that fails is reported with
+  the end of what it printed to standard error. Cyclic or external source symlinks and
   configured source or stub search roots outside the project cannot be
   represented safely and cause verification to decline the proposal.
   Project include/exclude settings still determine the checker's coverage.
