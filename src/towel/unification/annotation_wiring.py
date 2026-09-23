@@ -48,7 +48,7 @@ from .annotations import (
     _import_bound_names,
     _defined_names,
 )
-from .exceptions import RefactoringError
+from .exceptions import CheckerUnavailableError, RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
 from ..type_inference import (
@@ -514,7 +514,7 @@ class HelperAnnotationWiring(EngineState):
             raise RefactoringError("Type checking was requested without a type oracle")
         after = oracle.check_project(modified_files)
         if isinstance(after, CheckFailure):
-            raise RefactoringError(f"Prospective project type check failed: {after.reason}")
+            raise CheckerUnavailableError(f"Prospective project type check failed: {after.reason}")
         for diagnostic, count in Counter(after.errors).items():
             TYPES.debug("new error x%d in %s: %s", count, diagnostic.path, diagnostic.message)
         return after.errors

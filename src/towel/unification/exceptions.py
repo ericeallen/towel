@@ -31,6 +31,14 @@ class RefactoringError(TowelError):
     """
 
 
+class CheckerUnavailableError(RefactoringError):
+    """The type checker could not judge a candidate: it timed out, crashed, or could not start.
+
+    Distinct from a candidate the checker refused, so a run whose every
+    candidate went unjudged is reported as that rather than as a fixed point.
+    """
+
+
 class UnsupportedLayoutError(TowelError, ValueError):
     """The project's packaging layout is one Towel does not model.
 

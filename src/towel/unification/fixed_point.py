@@ -54,7 +54,7 @@ from typing import (
     Tuple,
 )
 from .defaults import DEFAULT_MAX_ITERATIONS
-from .exceptions import RefactoringError
+from .exceptions import CheckerUnavailableError, RefactoringError
 from .models import RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
@@ -94,16 +94,8 @@ def _note_missing_tqdm() -> None:
         )
 
 
-_CHECKER_FAILURE = "Prospective project type check failed"
-"""How a candidate whose check could not run is refused, as against one the check refused.
-
-The two reach the driver as the same ``RefactoringError``; only the wording
-tells a checker that crashed or timed out from a verdict on the proposal.
-"""
-
-
 def _is_checker_failure(error: BaseException) -> bool:
-    return isinstance(error, RefactoringError) and str(error).startswith(_CHECKER_FAILURE)
+    return isinstance(error, CheckerUnavailableError)
 
 
 class FixedPointDrivers(Materialization):
