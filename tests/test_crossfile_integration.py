@@ -25,23 +25,17 @@ from towel.unification.pipeline import run_pipeline
 PROJECT_ROOT = Path(__file__).parent.parent
 CROSSFILE_DIR = PROJECT_ROOT / "test_examples_crossfile"
 
-# The one proposal analysis of the simple_crossfile project produces.
-REUSE_ADMIN_EMAIL = (
-    "Reuse validate_admin_email (admin_service.py) for duplicated code in validate_user_email"
+# The one proposal analysis of the simple_crossfile project produces: both
+# validators call one new helper, which admin_service hosts.
+ADMIN_EMAIL_HELPER = (
+    "Extract common code from validate_admin_email (admin_service.py) and "
+    "validate_user_email (user_service.py)"
 )
 
 
 def _participating_files(proposal) -> set[str]:
-    """Files a proposal touches, counting a reused definition's module.
-
-    When one duplicate is the whole body of an existing function, that
-    function is left in place and the other file calls it, so the proposal
-    spans both files even though only one receives an edit.
-    """
-    files = {r.file_path or proposal.file_path for r in proposal.replacements}
-    if proposal.reused_function is not None:
-        files.add(proposal.reused_function.file_path)
-    return files
+    """Files a proposal touches: every site's, and the helper's host."""
+    return {proposal.file_path} | {r.file_path or proposal.file_path for r in proposal.replacements}
 
 
 def get_crossfile_project_files(project_name: str) -> List[str]:
@@ -82,7 +76,7 @@ class TestCrossFileProposalStructure:
 
         # The one duplicate is the whole body of validate_admin_email, so the
         # user module is rewritten to call it.
-        assert [p.description for p in proposals] == [REUSE_ADMIN_EMAIL]
+        assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
 
     def test_crossfile_proposal_has_replacements_in_multiple_files(self):
         """Cross-file proposals should have replacements spanning multiple files."""
@@ -90,8 +84,7 @@ class TestCrossFileProposalStructure:
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files(files)
 
-        # Every proposal spans both modules: the reused definition lives in one
-        # and the rewritten site in the other.
+        # Every proposal spans both modules: a site in each, the helper in one.
         assert [sorted(Path(f).name for f in _participating_files(p)) for p in proposals] == [
             ["admin_service.py", "user_service.py"]
         ]
@@ -161,7 +154,7 @@ class TestCrossFileWithPipeline:
         files = get_crossfile_project_files("simple_crossfile")
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
 
-        assert [p.description for p in proposals] == [REUSE_ADMIN_EMAIL]
+        assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
 
     def test_pipeline_crossfile_matches_engine(self):
         """Pipeline and engine should produce same results for cross-file."""
@@ -184,7 +177,7 @@ class TestCrossFileWithPipeline:
                 for p in proposals
             )
 
-        assert [p.description for p in pipeline_proposals] == [REUSE_ADMIN_EMAIL]
+        assert [p.description for p in pipeline_proposals] == [ADMIN_EMAIL_HELPER]
         assert signatures(engine_proposals) == signatures(pipeline_proposals)
 
 
@@ -350,7 +343,7 @@ class TestCrossFilePerformance:
         with patch.object(UnificationRefactorEngine, "process_block_pairs", record):
             proposals = engine.analyze_files(files, progress="none")
 
-        assert [p.description for p in proposals] == [REUSE_ADMIN_EMAIL]
+        assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
         assert evaluated, "the project has duplicate blocks to pair"
         assert len(evaluated) == len(set(evaluated)), "a block pair was evaluated twice"
 
@@ -359,12 +352,12 @@ class TestCrossFilePerformance:
         files = get_crossfile_project_files("simple_crossfile")
 
         proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
-        assert [p.description for p in proposals] == [REUSE_ADMIN_EMAIL]
+        assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
 
 
-EXAMPLE3_REUSE = (
-    "Reuse calculate_discount_for_regular_customer (example3_file1.py) for duplicated code "
-    "in calculate_discount_for_premium_customer"
+EXAMPLE3_HELPER = (
+    "Extract common code from calculate_discount_for_regular_customer (example3_file1.py) and "
+    "calculate_discount_for_premium_customer (example3_file2.py)"
 )
 
 
@@ -375,8 +368,9 @@ class TestExampleThreeCrossFile:
     inputs). Analyzed together as they stand, they still share nothing: they
     are two top-level modules and neither imports the other, so nothing is
     known to ship the one with the other and neither may gain an import of
-    it. Once the premium module imports the regular one, its discount
-    function, the whole body of the regular module's, is rewritten to call it.
+    it. Once the premium module imports the regular one, both discount
+    functions, whole bodies of each other, call one helper the regular module
+    hosts.
     """
 
     def test_example3_modules_that_never_import_each_other_share_nothing(self):
@@ -405,10 +399,10 @@ class TestExampleThreeCrossFile:
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files([file1, file2])
 
-        assert [p.description for p in proposals] == [EXAMPLE3_REUSE]
+        assert [p.description for p in proposals] == [EXAMPLE3_HELPER]
         assert _participating_files(proposals[0]) == {file1, file2}
 
-    def test_example3_directory_run_imports_the_reused_function(self, tmp_path: Path):
+    def test_example3_directory_run_imports_the_helper(self, tmp_path: Path):
         source = tmp_path / "example3"
         self._premium_imports_regular(source)
         out = tmp_path / "out"
@@ -420,19 +414,19 @@ class TestExampleThreeCrossFile:
 
         assert termination == "fixed_point"
         # Both modules take part in the one proposal: the regular module hosts the
-        # reused definition and the premium module is rewritten to call it.
+        # helper, and neither discount function calls the other.
         assert results == {
-            str(out / "example3_file1.py"): (1, [EXAMPLE3_REUSE]),
-            str(out / "example3_file2.py"): (1, [EXAMPLE3_REUSE]),
+            str(out / "example3_file1.py"): (1, [EXAMPLE3_HELPER]),
+            str(out / "example3_file2.py"): (1, [EXAMPLE3_HELPER]),
         }
-        assert (out / "example3_file1.py").read_bytes() == (
-            source / "example3_file1.py"
-        ).read_bytes()
+        regular = (out / "example3_file1.py").read_text()
         premium = (out / "example3_file2.py").read_text()
-        assert "from example3_file1 import calculate_discount_for_regular_customer\n" in premium
-        assert (
-            "def calculate_discount_for_premium_customer(price, customer):\n"
-            '    """Calculate discount for premium customer."""\n'
-            "    # Calculate discount (DUPLICATE across files!)\n"
-            "    return calculate_discount_for_regular_customer(price, customer)\n"
-        ) in premium
+        assert "def __extracted_func_0(customer, price):\n" in regular
+        assert "from example3_file1 import __extracted_func_0\n" in premium
+        for text, kind in ((regular, "regular"), (premium, "premium")):
+            assert (
+                f"def calculate_discount_for_{kind}_customer(price, customer):\n"
+                f'    """Calculate discount for {kind} customer."""\n'
+                "    # Calculate discount (DUPLICATE across files!)\n"
+                "    return __extracted_func_0(customer, price)\n"
+            ) in text

@@ -1,14 +1,14 @@
 """Repeated extraction never stacks helpers into a chain of forwarders.
 
-Three mechanisms keep a run flat. A helper that returns live variables now
+Two mechanisms keep a run flat. A helper that returns live variables now
 admits every further same-file occurrence whose call assigns them, so twelve
 identical functions become one helper with twelve calls on the first pass
-rather than a pair per pass. A function whose body is a block followed by a
-plain ``return`` of the block's live names is reused by any site that assigns
-those names, so a later pass calls it instead of restating it. And when a
-site is the whole body of a helper an earlier pass inserted and neither
-mechanism applies (the parameters differ), the proposal is declined: the
-helper would keep only the new call, one more layer with no logic of its own.
+rather than a pair per pass; a function whose body is such a block followed
+by a plain ``return`` of the block's live names takes the same helper, and
+is never made to call another existing function instead. And when a site is
+the whole body of a helper an earlier pass inserted while another site is
+not a whole body, the proposal is declined: the helper would keep only the
+new call, one more layer with no logic of its own.
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> N
         assert unparsed_body(functions[name]).startswith("tmp, total = __extracted_func_0(v)")
 
 
-def test_a_function_that_is_the_block_plus_its_return_is_reused(tmp_path: Path) -> None:
+def test_a_function_that_is_the_block_plus_its_return_shares_the_helper(tmp_path: Path) -> None:
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
             tmp_path,
@@ -158,16 +158,21 @@ def test_a_function_that_is_the_block_plus_its_return_is_reused(tmp_path: Path) 
         3,
     )
     functions = module_functions(final)
-    assert set(functions) == {"compute", "show", "label"}, "no helper is emitted"
+    assert set(functions) == {"compute", "show", "label", "__extracted_func_0"}
+    assert unparsed_body(functions["compute"]) == "total = __extracted_func_0(v)\nreturn total"
     assert (
-        unparsed_body(functions["compute"])
-        == "tmp = v + 1\nbase = tmp - 3\ntotal = base * 2\nreturn total"
+        unparsed_body(functions["show"]) == "total = __extracted_func_0(v)\nreturn f'show {total}'"
     )
-    assert unparsed_body(functions["show"]) == "total = compute(v)\nreturn f'show {total}'"
-    assert unparsed_body(functions["label"]) == "amount = compute(w)\nreturn f'label {amount}'"
+    # ``label`` spells its parameter ``w``, so it does not join the helper on
+    # the pass that inserts it; a later pass would have to reduce that helper
+    # to a forwarder or redirect ``label`` to it, and does neither.
+    assert (
+        unparsed_body(functions["label"])
+        == "step = w + 1\noffset = step - 3\namount = offset * 2\nreturn f'label {amount}'"
+    )
 
 
-def test_a_function_returning_the_names_in_another_order_is_reused_in_its_order(
+def test_a_function_returning_the_names_in_another_order_keeps_its_order(
     tmp_path: Path,
 ) -> None:
     final, _applied = refactor_to_fixed_point_silently(
@@ -196,13 +201,16 @@ def test_a_function_returning_the_names_in_another_order_is_reused_in_its_order(
         3,
     )
     functions = module_functions(final)
-    assert set(functions) == {"compute", "show", "label"}, "no helper is emitted"
+    assert set(functions) == {"compute", "show", "label", "__extracted_func_0"}
+    assert unparsed_body(functions["compute"]) == "hi, lo = __extracted_func_0(v)\nreturn (lo, hi)"
     assert (
-        unparsed_body(functions["compute"])
-        == "lo = v - 1\nhi = v + 1\nmid = (lo + hi) / 2\nreturn (lo, hi)"
+        unparsed_body(functions["show"])
+        == "hi, lo = __extracted_func_0(v)\nreturn f'show {lo} {hi}'"
     )
-    assert unparsed_body(functions["show"]) == "lo, hi = compute(v)\nreturn f'show {lo} {hi}'"
-    assert unparsed_body(functions["label"]) == "lo, hi = compute(v)\nreturn f'label {lo} {hi}'"
+    assert (
+        unparsed_body(functions["label"])
+        == "hi, lo = __extracted_func_0(v)\nreturn f'label {lo} {hi}'"
+    )
 
 
 GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT = """

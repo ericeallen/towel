@@ -613,17 +613,23 @@ the pair decision raises them, grouped by stage:
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper
-  an earlier pass inserted, which would keep only the new call.
+  an earlier pass inserted, which would keep only the new call, while
+  another site is not a whole body. When every site is the whole body of its
+  function, each of them, an earlier helper included, becomes a call of the
+  new helper, since no function is ever redirected to another.
 
 Other behaviors that leave a duplicate in place are not rejections of a
 formed pair:
 
-- A duplicate that is the whole body of an existing function is redirected
-  to that function rather than extracted, but only when the function is a
-  plain module-level `def`: a decorated, async, variadic, shadowed, or
-  rebound function, or one whose call across files would close an import
-  cycle, falls back to ordinary extraction (which the trivial-helper filter
-  then usually declines, since the helper would restate the function).
+- A duplicate that is the whole body of an existing function is extracted
+  like any other, and the function becomes a call of the new helper; it is
+  never rewritten to call another existing function that restates it. Such
+  a call looks the other function up in its module every time, so
+  `mock.patch("mod.f1")`, or any other rebinding of `mod.f1`, changed `f2`
+  as well (audit `r06`). The `reuse_existing_functions` setting no longer
+  changes anything. A site that duplicates an earlier pass's helper, where
+  the other site is only part of its function, is left in place rather than
+  reduced to a call of it or chained through it.
 - A block that begins at an `elif` is never extracted, because its call
   would have to be rendered inside the preceding branch's `else`; the
   `elif`'s own body and further branches remain candidates. This gives up a
@@ -729,7 +735,7 @@ it tractable, all exact: they change no proposal.
   nothing further. A precise ordinary signature that passes means no generic
   candidate is ever built or checked, which is the cheapest order as well as
   the documented one.
-- The reuse redirect finds a function whose body starts where a site does
+- The forwarder check finds a function whose body starts where a site does
   through an index, instead of scanning every function of the file for
   every replacement of every proposal.
 - Three pure per-block analyses (orphan detection, the instantiation check's

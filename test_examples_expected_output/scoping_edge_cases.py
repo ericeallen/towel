@@ -9,6 +9,14 @@ Tests:
 """
 
 
+def __extracted_func_2(items):
+    result = []
+    for item in items:
+        if len(item) > 0:
+            result.append(str(item))
+    return result
+
+
 def __extracted_func_1(items, multiplier):
     result = []
     for item in items:
@@ -97,13 +105,9 @@ def shadowing_b(x):
 
 def builtin_override_a(items):
     """Don't treat builtin names as parameters."""
-    result = []
-    for item in items:
-        if len(item) > 0:
-            result.append(str(item))
-    return result
+    return __extracted_func_2(items)
 
 
 def builtin_override_b(items):
     """Don't treat builtin names as parameters (duplicate)."""
-    return builtin_override_a(items)
+    return __extracted_func_2(items)

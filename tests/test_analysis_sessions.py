@@ -202,9 +202,7 @@ def test_mutating_returned_engine_proposal_does_not_change_reanalysis(tmp_path):
     path = write_module(tmp_path, source=source)
     engine = UnificationRefactorEngine(min_lines=2)
     proposals = engine.analyze_files([path], progress="none")
-    assert [p.description for p in proposals] == [
-        "Reuse first (module.py) for duplicated code in second"
-    ]
+    assert [p.description for p in proposals] == ["Extract common code from first and second"]
     expected = [ast.dump(proposal.extracted_function) for proposal in proposals]
     proposals[0].extracted_function.body.clear()
     proposals[0].replacements.clear()
@@ -237,7 +235,7 @@ def test_engine_invalidate_paths_drops_the_snapshot_and_reanalyzes_new_content(t
     engine = UnificationRefactorEngine(min_lines=3)
 
     first = engine.analyze_files([path], progress="none")
-    assert [p.description for p in first] == ["Reuse alpha (module.py) for duplicated code in beta"]
+    assert [p.description for p in first] == ["Extract common code from alpha and beta"]
     assert engine.analysis_session.entry_count == 1
     assert engine.analysis_session.reusable(path)
 
@@ -247,9 +245,7 @@ def test_engine_invalidate_paths_drops_the_snapshot_and_reanalyzes_new_content(t
 
     Path(path).write_text(DUPLICATED_PAIR.replace("alpha", "gamma").replace("beta", "delta"))
     second = engine.analyze_files([path], progress="none")
-    assert [p.description for p in second] == [
-        "Reuse gamma (module.py) for duplicated code in delta"
-    ]
+    assert [p.description for p in second] == ["Extract common code from gamma and delta"]
     assert engine.analysis_session.reusable(path)
 
 

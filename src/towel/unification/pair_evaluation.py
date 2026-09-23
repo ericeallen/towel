@@ -34,8 +34,8 @@ None for a rejection that was already traced through ``_debug_reject``:
 8. the orphan check on what the blocks leave behind;
 9. the call sites, each verified by instantiation, plus clustered sites;
 10. placement: function, class, or module, and a host that closes no cycle;
-11. the proposal: reuse of an existing function, the filter that declines
-    reducing an earlier pass's helper to a forwarder, and annotations.
+11. the proposal: the filter that declines reducing an earlier pass's
+    helper to a forwarder, and annotations.
 """
 
 from __future__ import annotations
@@ -1458,11 +1458,15 @@ class PairEvaluation(
         placement: _Placement,
         functions: FunctionIndex,
     ) -> Optional[RefactoringProposal]:
-        """The proposal, redirected to an existing function or annotated as configured.
+        """The proposal, annotated as configured.
 
-        Declined when a site is the whole body of a helper an earlier pass
-        inserted and no redirect was possible: the helper would keep only the
-        new call, one more layer of indirection with no logic of its own.
+        A site that is the whole body of an existing function is never
+        redirected to call another existing function: that call would look
+        the other up in its module at every call, so patching or rebinding it
+        would change this one too. Declined when a site is the whole body of
+        a helper an earlier pass inserted while another site is not a whole
+        body (``_helper_reduced_to_forwarder``): the helper would keep only
+        the new call, one more layer of indirection with no logic of its own.
         """
         is_cross_file = pair.is_cross_file
         desc = f"Extract common code from {pair.function1_name}"
@@ -1507,10 +1511,6 @@ class PairEvaluation(
             self._debug_reject(RejectReason.DUPLICATE_PROPOSAL, pair)
             return None
         self._seen_proposals.add(identity)
-        if self.reuse_existing_functions:
-            redirected = self._redirect_to_existing_function(proposal, functions)
-            if redirected is not None:
-                return redirected
         if self.skip_trivial_helpers:
             forwarder = self._helper_reduced_to_forwarder(proposal, functions)
             if forwarder is not None:

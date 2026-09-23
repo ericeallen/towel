@@ -51,14 +51,14 @@ def test_detail_progress_lists_proposals(tmp_path: Path, caplog: pytest.LogCaptu
     assert "[towel] Discovered 2 proposal(s)" in messages
     listed = [message.strip() for message in messages if message.strip()[:2] in {"1.", "2."}]
     assert listed == [
-        "1. Reuse f1 (sample.py) for duplicated code in f2",
-        "2. Reuse g1 (sample.py) for duplicated code in g2",
+        "1. Extract common code from f1 and f2",
+        "2. Extract common code from g1 and g2",
     ]
     # One iteration applies only the first proposal, so the cap ends the run
     # with the second still pending.
     assert termination == "iteration_cap"
     applied = [description for _, descriptions in results.values() for description in descriptions]
-    assert applied == ["Reuse f1 (sample.py) for duplicated code in f2"]
+    assert applied == ["Extract common code from f1 and f2"]
 
 
 def test_termination_reason_fixed_point(tmp_path: Path) -> None:

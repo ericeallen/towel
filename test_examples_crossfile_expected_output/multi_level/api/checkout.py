@@ -3,20 +3,28 @@ Checkout API.
 """
 
 
-def validate_checkout_amount(amount, currency):
-    """Validate checkout amount."""
-    # Validation logic (DUPLICATE across multiple levels!)
+def __extracted_func_1(amount, currency):
     if amount <= 0:
         return False
     if not currency:
         return False
     if len(currency) != 3:
         return False
-    if currency not in ["USD", "EUR", "GBP"]:
+    if currency not in ['USD', 'EUR', 'GBP']:
         return False
     if amount > 1000000:
         return False
     return True
+
+
+def __extracted_func_0(amount, currency):
+    return __extracted_func_1(amount, currency)
+
+
+def validate_checkout_amount(amount, currency):
+    """Validate checkout amount."""
+    # Validation logic (DUPLICATE across multiple levels!)
+    return __extracted_func_0(amount, currency)
 
 
 def checkout(cart_items, amount, currency):

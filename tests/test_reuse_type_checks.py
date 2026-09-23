@@ -1,4 +1,11 @@
-"""Existing callees retain their signatures while new callers are type-checked."""
+"""Whole-body duplicates keep their signatures while the helper they share is type-checked.
+
+Two functions whose bodies are the same once had the second rewritten to call
+the first; they now both call a new helper (see
+``tests/test_functions_keep_their_own_bodies.py``), and under a strict
+checker each keeps the signature it had while the helper is checked with
+them.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +14,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from unittest.mock import patch
 
 import pytest
 
@@ -47,7 +53,7 @@ def _assert_mypy_clean(path: Path) -> None:
 
 
 @pytest.mark.parametrize("second_type", ["int", "float"])
-def test_default_cli_preserves_strict_types_when_reusing_functions(
+def test_default_cli_preserves_strict_types_of_whole_body_duplicates(
     tmp_path: Path, second_type: str
 ) -> None:
     pytest.importorskip("mypy")
@@ -73,42 +79,29 @@ def test_default_cli_preserves_strict_types_when_reusing_functions(
         env={**os.environ, "TOWEL_WORKERS": "1"},
         text=True,
         capture_output=True,
-        timeout=30,
+        timeout=60,
         check=False,
     )
     assert run.returncode == 0, run.stdout + run.stderr
     _assert_mypy_clean(output)
-    transformed = output.read_text()
-    assert ast.dump(ast.parse(transformed).body[0]) == ast.dump(ast.parse(original).body[0])
+    transformed = ast.parse(output.read_text())
+    signatures = {
+        node.name: ast.dump(node.args) + ast.dump(node.returns or ast.Constant(None))
+        for node in transformed.body
+        if isinstance(node, ast.FunctionDef) and node.name in {"first", "second"}
+    }
+    assert signatures == {
+        node.name: ast.dump(node.args) + ast.dump(node.returns or ast.Constant(None))
+        for node in ast.parse(original).body
+        if isinstance(node, ast.FunctionDef)
+    }
     assert source.read_text() == original
     if second_type == "int":
-        assert "return first(x)" in transformed, "Compatible reuse must still apply"
-    else:
-        assert transformed == original, "An incompatible existing signature must not be widened"
+        assert "__extracted_func" in output.read_text(), "the shared body is extracted"
+        assert "return first(x)" not in output.read_text()
 
 
-def test_invalid_reuse_is_checked_once_without_annotation_fallback(tmp_path: Path) -> None:
-    pytest.importorskip("mypy")
-    (tmp_path / "mypy.ini").write_text("[mypy]\nstrict = true\n")
-    path = tmp_path / "source.py"
-    original = _source("float")
-    path.write_text(original)
-    checker = MypyInferrer()
-    try:
-        engine = UnificationRefactorEngine(type_oracle=checker)
-        proposal = engine.analyze_file(str(path))[0]
-        assert proposal.reused_function is not None
-        with patch.object(checker, "check_project", wraps=checker.check_project) as check:
-            with pytest.raises(RefactoringError, match="Reusing.*type errors"):
-                engine.apply_refactoring(str(path), proposal)
-        assert check.call_count == 2, "Check the baseline and the unchanged callee signature once"
-        assert path.read_text() == original
-        assert engine._change_log == []
-    finally:
-        checker.close()
-
-
-def test_reuse_does_not_treat_checker_failure_as_acceptance(tmp_path: Path) -> None:
+def test_a_checker_failure_is_not_taken_for_acceptance(tmp_path: Path) -> None:
     pytest.importorskip("mypy")
     path = tmp_path / "source.py"
     original = _source("int")
@@ -118,7 +111,7 @@ def test_reuse_does_not_treat_checker_failure_as_acceptance(tmp_path: Path) -> N
     assert isinstance(checker.check(str(path), original), CheckFailure)
     engine = UnificationRefactorEngine(type_oracle=checker)
     proposal = engine.analyze_file(str(path))[0]
-    assert proposal.reused_function is not None
+    assert proposal.reused_function is None
     with pytest.raises(RefactoringError, match="Original project type check failed"):
         engine.apply_refactoring(str(path), proposal)
     assert path.read_text() == original
