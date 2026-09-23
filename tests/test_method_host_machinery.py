@@ -1,6 +1,6 @@
 """A method helper only where every call of it reaches the class as written.
 
-A helper made a method is reached as ``self._extracted_func_0(...)``, which
+A helper made a method is reached as ``self.__extracted_func_0(...)``, which
 holds only for receivers the class machinery built with the helper in place:
 
 - ``def m(self: HasV, n)`` declares that anything with a ``v`` may be the
@@ -119,7 +119,7 @@ def test_a_receiver_annotated_as_a_protocol_takes_a_module_helper(tmp_path: Path
     """
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert "self._extracted_func" not in final
+    assert "self.__extracted_func" not in final
 
 
 def test_a_class_method_whose_receiver_may_be_another_class_takes_a_module_helper(
@@ -139,7 +139,7 @@ def test_a_class_method_whose_receiver_may_be_another_class_takes_a_module_helpe
     """
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert "self._extracted_func" not in final
+    assert "self.__extracted_func" not in final
 
 
 @pytest.mark.parametrize(
@@ -161,7 +161,7 @@ def test_a_receiver_annotated_as_its_own_class_keeps_the_method_helper(
     )
     before, after, final = _refactored(tmp_path, source)
     assert after == before
-    assert "self._extracted_func" in final
+    assert "self.__extracted_func" in final
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 input requires Python 3.12")
@@ -173,7 +173,7 @@ def test_a_receiver_of_a_type_parameter_bound_to_its_class_keeps_the_method_help
     )
     before, after, final = _refactored(tmp_path, source)
     assert after == before
-    assert "self._extracted_func" in final
+    assert "self.__extracted_func" in final
 
 
 def test_a_receiver_of_a_variable_bound_elsewhere_takes_a_module_helper(tmp_path: Path) -> None:
@@ -194,7 +194,7 @@ def test_a_receiver_of_a_variable_bound_elsewhere_takes_a_module_helper(tmp_path
     driver = "from box import Base, Box\nprint(Box().first(1), Box.second(Base(), 1))\n"
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert "self._extracted_func" not in final
+    assert "self.__extracted_func" not in final
 
 
 WRAPPING_METACLASS = """
@@ -253,7 +253,7 @@ def test_class_machinery_that_sees_the_namespace_gets_a_module_helper(
 ) -> None:
     before, after, final = _refactored(tmp_path, _module(prelude, header), driver)
     assert after == before
-    assert "self._extracted_func" not in final
+    assert "self.__extracted_func" not in final
 
 
 def test_a_base_imported_from_the_project_is_followed_to_its_metaclass(tmp_path: Path) -> None:
@@ -266,7 +266,7 @@ def test_a_base_imported_from_the_project_is_followed_to_its_metaclass(tmp_path:
         DRIVER,
     )
     assert after == before
-    assert "self._extracted_func" not in final
+    assert "self.__extracted_func" not in final
 
 
 def test_a_base_imported_from_the_project_is_judged_where_it_is_defined(tmp_path: Path) -> None:
@@ -279,7 +279,7 @@ def test_a_base_imported_from_the_project_is_judged_where_it_is_defined(tmp_path
         DRIVER,
     )
     assert after == before
-    assert "self._extracted_func" in final
+    assert "self.__extracted_func" in final
 
 
 ENUM_BOX = "class Box(enum.Enum):\n    ONE = 1\n\n    @property\n    def v(self):\n        return self.value\n"
@@ -311,7 +311,7 @@ def test_class_machinery_known_to_leave_functions_alone_keeps_the_method_helper(
     )
     before, after, final = _refactored(tmp_path, _module(prelude, header), driver)
     assert after == before
-    assert "self._extracted_func" in final
+    assert "self.__extracted_func" in final
 
 
 def _resolve(dotted: str) -> object:

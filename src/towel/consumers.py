@@ -27,11 +27,15 @@ no amount of following imports forward will find it::
     class Child(lib.Base):
         def _extracted_func_0(self, value: int) -> str: ...
 
-Extracting the duplicate body of ``Base.first`` adds ``_extracted_func_0`` to
-``Base``, and ``Child`` now overrides it incompatibly. The project no longer
-checks, and ``Child().first(2)`` returns ``'surprise'`` where it returned ``3``.
-A check that walked only ``lib`` never looked at ``consumer.py`` and called it
-clean.
+Extracting the duplicate body of ``Base.first`` once added ``_extracted_func_0``
+to ``Base``, and ``Child`` then overrode it incompatibly. The project no longer
+checked, and ``Child().first(2)`` returned ``'surprise'`` where it returned
+``3``. A check that walked only ``lib`` never looked at ``consumer.py`` and
+called it clean. That particular conflict is gone, since a method helper is
+now class-private and stored as ``_Base__extracted_func_0``, out of every
+subclass's reach; the check still has to see ``consumer.py``, because anything
+else a candidate changes that a consumer's own code relies on, such as a type
+a checker infers for an unannotated function, is judged only there.
 
 Walking the whole repository instead is how this was once found, and it fails
 for a different reason: repositories hold files mypy cannot build at all, test

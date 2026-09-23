@@ -90,6 +90,9 @@ TRANSFORMED = {
     "h01_side_effect_order",
     "h61_str_method_param",
     "r50_helper_name_collision",
+    # A class whose __getattr__ serves every unknown name from its data keeps
+    # serving the helper's old name once the helper is class-private.
+    "r158_getattr_serves_unknown_names_from_data",
     "r69_annassign",
     "r76_return_order",
     "r94_import_binds_live_name",

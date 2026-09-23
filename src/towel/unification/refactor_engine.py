@@ -67,7 +67,7 @@ from .progress import (
 )
 from .parallel import ParallelEvaluation
 from .bounded_cache import BoundedCache
-from .engine_state import ClusteredSite, ClusterScanKey, GuardKey
+from .engine_state import ClusteredSite, ClusterScanKey, GuardKey, HelperNameClaims
 from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
@@ -422,7 +422,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
         # Helper-shaped names anywhere in each project, scanned once per engine.
-        self._project_helper_names: Dict[str, FrozenSet[str]] = {}
+        self._project_helper_names: Dict[str, HelperNameClaims] = {}
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejections: Dict[str, int] = {}
@@ -693,10 +693,15 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self,
         file_path: str,
         *,
-        class_context: bool = False,
+        prefix: str,
         related_paths: Sequence[str] = (),
     ) -> str:
-        """Return a unique helper name for the given canonical file."""
+        """The next ``{prefix}_N`` for ``file_path``, past every number these files spell.
+
+        The number is shared by every prefix and counts past any helper-shaped
+        name in the file, the files the proposal touches, and every analysed
+        file, so a name is unique across a run whatever its prefix.
+        """
 
         counter = max(
             self._helper_name_counters.get(file_path, 0),
@@ -705,9 +710,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 for path in {file_path, *related_paths, *self._analysis_paths}
             ),
         )
-        # Python mangles double-underscore names in class bodies, including
-        # references to module helpers and inherited methods from another class.
-        prefix = "_extracted_func" if class_context else "__extracted_func"
         helper_name = f"{prefix}_{counter}"
         self._helper_name_counters[file_path] = counter + 1
         return helper_name

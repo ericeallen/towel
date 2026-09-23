@@ -17,7 +17,9 @@
 A helper is a method only when both blocks are methods of one unique
 module-level class, every decorator on the source methods is known to
 preserve the receiver, the receiver is the first parameter, and both methods
-read an attribute of it. No other class ever takes a helper: methods of
+read an attribute of it; it is then class-private (``__extracted_func_0``), so
+a class named only with underscores, which mangles nothing, takes none. No
+other class ever takes a helper: methods of
 sibling classes, of a parent and a child, or of classes in different modules
 share a module-level helper that takes the receiver explicitly, as does
 everything else (docs/DECISIONS.md, "A method helper lives in the class that
@@ -46,6 +48,7 @@ from .models import (
     MethodInfo,
     MethodKind,
 )
+from .class_private import mangling_prefix
 from .scope_analyzer import ScopeAnalyzer
 from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
 from .import_graph import ImportTimeCode, module_scope_statements
@@ -93,7 +96,7 @@ def _dispatches_on(func: FunctionNode, implicit_param: str) -> bool:
     instance, most often in tests; a classmethod's function is reached the
     same way through ``__func__``.
 
-    A helper reached as ``self._extracted_func_0(...)`` would end that: the
+    A helper reached as ``self.__extracted_func_0(...)`` would end that: the
     rewritten body demands a receiver the body it replaced did not, and the
     call raises ``AttributeError`` while every genuine instance goes on
     returning what it always did. A checker reports nothing, because the
@@ -141,7 +144,7 @@ def _admits_other_receivers(
 
     ``def m(self: HasV, n)`` declares that anything with a ``v`` may be the
     receiver, so ``Box.m(SimpleNamespace(v=10), 1)`` is a well-typed call, and a
-    helper reached as ``self._extracted_func_0(...)`` would raise
+    helper reached as ``self.__extracted_func_0(...)`` would raise
     ``AttributeError`` there. No annotation, the class itself (subscripted or
     not), ``Self``, or a type variable bound to the class declares instances
     alone; so does ``type[...]`` of one of them for a class method. Anything
@@ -657,6 +660,12 @@ class HelperPlacement(EngineState):
             # ordinary argument.
             return None
         if k1 != k2:
+            return None
+        if mangling_prefix(class_name) is None:
+            # The helper is class-private, ``__extracted_func_0``, so that no
+            # subclass can reach it; a class named only with underscores
+            # (``class __``) mangles nothing, and there it would be an
+            # ordinary member any subclass may override.
             return None
         sources = {pair.file_path: pair.source1}
         if not self._can_host(host, sources) or not self._leaves_functions_alone(host, sources):

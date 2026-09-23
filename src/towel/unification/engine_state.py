@@ -115,6 +115,22 @@ class ClusterScanKey(NamedTuple):
 
 
 @dataclass(frozen=True)
+class HelperNameClaims:
+    """The helper-shaped names a project's sources already define, by what they could displace.
+
+    Each is the name as Python stores it, so ``def __extracted_func_0`` in
+    ``class A`` is ``_A__extracted_func_0``. ``namespace`` holds what an
+    attribute store, ``setattr`` or a namespace subscript writes, any of
+    which could replace a module-level helper; ``members`` holds those and
+    every class member, and a ``type(...)`` namespace's keys, which could
+    override or shadow a method helper stored under the same name.
+    """
+
+    namespace: FrozenSet[str] = frozenset()
+    members: FrozenSet[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class ClusteredSite:
     """A block that can call a template's helper, with the method context of its function.
 
@@ -136,12 +152,12 @@ class EngineState:
     """What this run has learned about the project's import graph."""
 
     _helper_name_counters: Dict[str, int]
-    _project_helper_names: Dict[str, FrozenSet[str]]
-    """Helper-shaped identifiers each project root's sources already spell, by root."""
+    """Next helper number per file, so generated names are unique across a run."""
+    _project_helper_names: Dict[str, HelperNameClaims]
+    """The helper-shaped names each project root's sources already define, by root."""
     # Identities of the proposals this analysis has finished; a pair whose
     # proposal repeats one is declined before reuse, filtering and annotation.
     _seen_proposals: Set[Hashable]
-    """Next helper number per file, so generated names are unique across a run."""
     _pair_rejection: Optional[RejectReason]
     """The reason the pair being decided was last declined for, or None."""
     _pair_rejections: Dict[str, int]
@@ -250,7 +266,7 @@ class EngineState:
         self,
         file_path: str,
         *,
-        class_context: bool = False,
+        prefix: str,
         related_paths: Sequence[str] = (),
     ) -> str:
         """Provided by UnificationRefactorEngine."""

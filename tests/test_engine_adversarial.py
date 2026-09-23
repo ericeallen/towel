@@ -200,12 +200,13 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         proposals = engine.analyze_file(str(m.path))
         self.assertTrue(proposals, "Expected a proposal for same-class methods")
         out = engine.apply_refactoring(str(m.path), proposals[0])
-        # Extracted method should be inserted inside class with leading underscore
+        # The extracted method is inserted inside the class, class-private
         self.assertIn("class C:", out)
-        self.assertIn("def _extracted_func", out)
-        # Calls should be rewritten to self._extracted_func and not pass self explicitly
-        self.assertIn("return self._extracted_func_", out)
-        self.assertNotIn("self, self._extracted_func_", out)
+        self.assertIn("def __extracted_func", out)
+        # Calls should be rewritten to the class-private self.__extracted_func and
+        # not pass self explicitly
+        self.assertIn("return self.__extracted_func_", out)
+        self.assertNotIn("self, self.__extracted_func_", out)
 
     def test_decorators_preserved_and_no_triple_blank_lines_in_class(self):
         code = """
