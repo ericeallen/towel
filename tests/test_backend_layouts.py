@@ -166,7 +166,7 @@ def test_vcs_root_does_not_control_crossfile_imports(tmp_path, packaged):
     command = [sys.executable, "-c", imports + "; print(first(2),second(2))"]
     cwd = tmp_path if packaged else target
     before = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)
-    engine = UnificationRefactorEngine(min_lines=2)
+    engine = UnificationRefactorEngine(min_lines=2, cross_module_helpers=True)
     proposal = engine.analyze_files([str(a), str(b)], progress="none")[0]
     apply_changes(engine.plan_refactoring(proposal))
     after = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)

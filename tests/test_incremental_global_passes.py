@@ -22,7 +22,9 @@ PROJECTS = sorted(p.name for p in EXAMPLES.iterdir() if p.is_dir())
 
 
 def _fixed_point(source: Path, out: Path, incremental: bool) -> tuple[dict[str, bytes], int]:
-    engine = UnificationRefactorEngine(incremental_global_passes=incremental)
+    engine = UnificationRefactorEngine(
+        incremental_global_passes=incremental, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(source), str(out), max_iterations=0, progress="none"

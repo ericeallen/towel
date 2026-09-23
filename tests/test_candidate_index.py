@@ -113,11 +113,16 @@ class Container:
         path.write_text(source)
         paths.append(str(path))
     functions = analyzed_functions(paths)
-    engine = UnificationRefactorEngine(min_lines=min_lines)
+    engine = UnificationRefactorEngine(min_lines=min_lines, cross_module_helpers=True)
     expected = exhaustive_pairs(engine, functions)
     actual = engine.find_block_pairs(functions, progress="none")
     assert expected
     assert actual == expected
+    # Without cross-module helpers only the pairs within one module are formed.
+    within = [pair for pair in expected if not pair.is_cross_file]
+    assert len(within) < len(expected)
+    default = UnificationRefactorEngine(min_lines=min_lines)
+    assert default.find_block_pairs(functions, progress="none") == within
 
 
 def test_index_matches_all_original_example_files():

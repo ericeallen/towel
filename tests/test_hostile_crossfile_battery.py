@@ -78,7 +78,7 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
         after = Path(directory) / "after"
         shutil.copytree(CASES / case, before)
         shutil.copytree(CASES / case, after)
-        engine = UnificationRefactorEngine(min_lines=3)
+        engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             results, _ = engine.refactor_directory_to_fixed_point(
                 str(after / "pkg"), str(after / "pkg"), progress="none"

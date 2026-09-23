@@ -68,6 +68,7 @@ def _dry(cwd: Path, target: str, output: Path) -> str:
             target,
             str(output),
             "--no-interactive",
+            "--cross-module",
             "--progress",
             "none",
             "--no-types",

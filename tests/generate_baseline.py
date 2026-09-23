@@ -161,7 +161,11 @@ def main():
         print(f"\nWarning: {test_examples} not found")
 
     if crossfile_examples.exists():
-        generate_crossfile_baseline(engine, crossfile_examples, output_crossfile)
+        # These projects exist to share helpers across their modules.
+        crossfile_engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=3, cross_module_helpers=True
+        )
+        generate_crossfile_baseline(crossfile_engine, crossfile_examples, output_crossfile)
     else:
         print(f"\nWarning: {crossfile_examples} not found")
 

@@ -342,7 +342,9 @@ class TestCrossFileRegression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test fixtures."""
-        cls.engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        cls.engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=3, cross_module_helpers=True
+        )
         cls.tester = CrossFileEquivalenceTester(cls.engine)
         cls.crossfile_examples = project_root / "test_examples_crossfile"
         cls.expected_output = project_root / "test_examples_crossfile_expected_output"
@@ -421,7 +423,9 @@ class TestCrossFileRegression(unittest.TestCase):
             self.assertTrue(golden_dir.is_dir(), f"no cross-file golden for {project_dir.name}")
             with tempfile.TemporaryDirectory(prefix="towel-regression-") as directory:
                 out = Path(directory) / project_dir.name
-                engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+                engine = UnificationRefactorEngine(
+                    max_parameters=5, min_lines=3, cross_module_helpers=True
+                )
                 results, reason = engine.refactor_directory_to_fixed_point(
                     str(project_dir), str(out), progress="none"
                 )

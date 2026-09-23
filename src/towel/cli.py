@@ -237,6 +237,24 @@ def _add_import_layout_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
+    """Add ``--cross-module``, shared by the commands that analyze a project.
+
+    Off by default: a helper shared across modules adds an import between
+    them, a change to how the project's modules depend on each other that a
+    user should ask for rather than find in the diff.
+    """
+    parser.add_argument(
+        "--cross-module",
+        dest="cross_module",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Also share a helper between duplicates in different modules, importing it from "
+        "the module that hosts it into the others; --no-cross-module, the default, extracts "
+        "only within a module and adds no import between the project's modules.",
+    )
+
+
 def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add 'dry' subcommand parser."""
     parser = subparsers.add_parser(
@@ -272,6 +290,7 @@ Examples:
         metavar="DIRECTORY",
         help="Directory name to leave out of directory mode (repeatable), e.g. tests",
     )
+    _add_cross_module_flag(parser)
 
     _add_import_layout_flags(parser)
 
@@ -371,6 +390,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     )
 
     parser.add_argument("target", help="File or directory to analyze")
+    _add_cross_module_flag(parser)
     _add_tuning_flags(parser)
     _add_progress_flag(
         parser,
@@ -763,6 +783,7 @@ class DryOptions:
     prefer_absolute_imports: Optional[bool]
     pep420: Optional[bool]
     exclude: Tuple[str, ...]
+    cross_module: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -780,6 +801,7 @@ class DryOptions:
             prefer_absolute_imports=args.prefer_absolute_imports,
             pep420=args.pep420,
             exclude=tuple(args.exclude or ()),
+            cross_module=bool(args.cross_module),
         )
 
 
@@ -794,6 +816,7 @@ class PreviewOptions:
     progress: ProgressMode
     prefer_absolute_imports: Optional[bool]
     pep420: Optional[bool]
+    cross_module: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -805,6 +828,7 @@ class PreviewOptions:
             progress=normalize_progress(args.progress),
             prefer_absolute_imports=args.prefer_absolute_imports,
             pep420=args.pep420,
+            cross_module=bool(args.cross_module),
         )
 
 
@@ -892,6 +916,7 @@ def _run_dry(args: argparse.Namespace) -> None:
             prefer_absolute_imports=options.prefer_absolute_imports,
             pep420_namespace_packages=options.pep420,
             excluded_directories=options.exclude,
+            cross_module_helpers=options.cross_module,
             snippet_formatter=(
                 _generated_code_formatter(Path(input_path)) if options.format else None
             ),
@@ -1082,6 +1107,7 @@ def _run_preview(args: argparse.Namespace) -> None:
         parameterize_constants=True,
         prefer_absolute_imports=options.prefer_absolute_imports,
         pep420_namespace_packages=options.pep420,
+        cross_module_helpers=options.cross_module,
     )
 
     # Analyze

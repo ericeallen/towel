@@ -49,7 +49,9 @@ def _proposal(
 
 
 def _engine() -> UnificationRefactorEngine:
-    return UnificationRefactorEngine(annotate_helpers=False, reuse_existing_functions=False)
+    return UnificationRefactorEngine(
+        annotate_helpers=False, reuse_existing_functions=False, cross_module_helpers=True
+    )
 
 
 @pytest.mark.parametrize(

@@ -57,6 +57,7 @@ def _refactor(root: Path, source: Path, destination: Path) -> str:
             str(source),
             str(destination),
             "--no-interactive",
+            "--cross-module",
             "--progress",
             "none",
             "--min-lines",

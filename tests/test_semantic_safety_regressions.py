@@ -352,7 +352,9 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         a.write_text("import b\n\ndef first(x):\n" + body, encoding="utf-8")
         b.write_text("def second(x):\n" + body, encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
-            proposals = UnificationRefactorEngine().analyze_files([str(a), str(b)], progress="none")
+            proposals = UnificationRefactorEngine(cross_module_helpers=True).analyze_files(
+                [str(a), str(b)], progress="none"
+            )
         self.assertEqual(len(proposals), 1)
         self.assertEqual(Path(proposals[0].file_path).name, "b.py")
 

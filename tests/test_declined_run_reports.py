@@ -80,7 +80,16 @@ def _force_include_project(root: Path) -> Path:
 def test_a_run_the_layout_emptied_says_why(tmp_path: Path, progress: str) -> None:
     root = _force_include_project(tmp_path / "project")
     result = invoke(
-        ["dry", str(root), str(root), "--no-interactive", "--no-types", "--progress", progress]
+        [
+            "dry",
+            str(root),
+            str(root),
+            "--no-interactive",
+            "--no-types",
+            "--cross-module",
+            "--progress",
+            progress,
+        ]
     )
     assert result.status == 0, result
     assert "No refactorings found!" in result.stdout

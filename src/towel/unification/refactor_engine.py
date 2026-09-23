@@ -21,9 +21,9 @@ evaluation, the fixed-point drivers) over ``EngineState``. This module
 keeps what every mixin builds on: the constructor and its caches, the
 entry points that analyze a file, a set of files or a directory, the
 enumeration of candidate blocks in every function and method (nested ones
-included), and the pairing of blocks that share a signature bucket, leaving
-the largest buckets out when the projected pair count exceeds
-``max_candidate_pairs``.
+included), and the pairing of blocks that share a signature bucket -- within
+one module unless ``cross_module_helpers`` is set -- leaving the largest
+buckets out when the projected pair count exceeds ``max_candidate_pairs``.
 """
 
 import ast
@@ -123,27 +123,80 @@ def _bucketed(blocks: Sequence[_SignedBlock]) -> _FunctionBuckets:
     return _FunctionBuckets(block_keys, by_key)
 
 
+@dataclass(frozen=True)
+class _Partners:
+    """Which later functions each function of an analysis is paired with.
+
+    Every later function when helpers may be shared across modules, and
+    otherwise only the later functions of its own module, found through a
+    list per module so that pairs never formed cost nothing to skip.
+    """
+
+    count: int
+    by_module: Optional[Mapping[int, Tuple[Sequence[int], int]]]
+    """Per function, its module's function indices and its own place among them; None: no limit."""
+
+    @classmethod
+    def of(cls, functions: Sequence[FunctionArtifact], across_modules: bool) -> "_Partners":
+        if across_modules:
+            return cls(len(functions), None)
+        members: Dict[str, List[int]] = {}
+        for index, entry in enumerate(functions):
+            members.setdefault(entry.file_path, []).append(index)
+        return cls(
+            len(functions),
+            {
+                index: (indices, place)
+                for indices in members.values()
+                for place, index in enumerate(indices)
+            },
+        )
+
+    def after(self, index: int) -> Sequence[int]:
+        """The functions after ``index``, in order, that it is paired with."""
+        if self.by_module is None:
+            return range(index + 1, self.count)
+        indices, place = self.by_module[index]
+        return indices[place + 1 :]
+
+    @property
+    def function_pairs(self) -> int:
+        if self.by_module is None:
+            return self.count * (self.count - 1) // 2
+        return sum(len(indices) - place - 1 for indices, place in self.by_module.values())
+
+    def group(self, index: int) -> int:
+        """Functions that may pair share a group: every one, or the first of its module."""
+        return 0 if self.by_module is None else self.by_module[index][0][0]
+
+
 def _buckets_over_budget(
-    buckets: Sequence[_FunctionBuckets], budget: int
+    buckets: Sequence[_FunctionBuckets], budget: int, partners: _Partners
 ) -> FrozenSet[BlockBucketKey]:
     """The bucket keys to leave out so the projected pair count fits the budget.
 
     A bucket key groups blocks with one statement-type sequence, and only
     blocks in one bucket pair, so the pairs the loop will form are, per
-    key, the pairs among all its blocks less the pairs within one function.
+    key, the pairs among the blocks of functions that may pair (``partners``:
+    all of them, or those of one module) less the pairs within one function.
     Keys are dropped largest first until the rest fit; each dropped key is
     named in a warning, since its blocks will not be proposed.
     """
     if budget <= 0:
         return frozenset()
     across: Dict[BlockBucketKey, int] = {}
+    grouped: Dict[Tuple[int, BlockBucketKey], int] = {}
     within: Dict[BlockBucketKey, int] = {}
-    for bucket in buckets:
+    for index, bucket in enumerate(buckets):
+        group = partners.group(index)
         for key, members in bucket.by_key.items():
             count = len(members)
             across[key] = across.get(key, 0) + count
+            grouped[(group, key)] = grouped.get((group, key), 0) + count
             within[key] = within.get(key, 0) + count * (count - 1) // 2
-    projected = {key: total * (total - 1) // 2 - within[key] for key, total in across.items()}
+    projected = {key: -within[key] for key in across}
+    for (_, key), total in grouped.items():
+        projected[key] += total * (total - 1) // 2
     remaining = sum(projected.values())
     if remaining <= budget:
         return frozenset()
@@ -244,6 +297,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         pep420_namespace_packages: Optional[bool] = None,
         promote_equal_hof_literals: bool = False,
         excluded_directories: Sequence[str] = (),
+        cross_module_helpers: bool = False,
         skip_trivial_helpers: bool = True,
         reuse_existing_functions: bool = True,
         annotate_helpers: bool = True,
@@ -282,6 +336,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 (Option B policy); default False.
             excluded_directories: Directory names to skip in directory mode, such
                 as a package that carries its own test suite.
+            cross_module_helpers: Share a helper between duplicates in different
+                modules, importing it from the one that hosts it into the others
+                (default: False). Off, only duplicates within one module are
+                paired, and no import of a project module is ever written, not
+                even one a helper's annotations would read under
+                ``TYPE_CHECKING``: an extraction then changes nothing about how
+                the project's modules depend on each other.
             skip_trivial_helpers: Skip proposing a helper whose body is a single
                 forwarding statement -- a lone ``raise``, a ``return`` of one
                 call, or a bare call -- which adds indirection without sharing any
@@ -351,6 +412,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # package carries its test suite inside itself (networkx: 77k of its
         # 198k lines).
         self.excluded_directories = tuple(excluded_directories)
+        self.cross_module_helpers = cross_module_helpers
         self.parameterize_constants = parameterize_constants
         self.unifier = Unifier(
             max_parameters=max_parameters,
@@ -744,7 +806,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[CodeBlockPair]:
         """
-        Find all non-overlapping pairs of code blocks across multiple files.
+        Find every pair of similar code blocks in two different functions.
+
+        The two functions share a file unless ``cross_module_helpers`` is
+        set, when they may be anywhere in the analysis.
 
         Args:
             all_functions: The analyzed functions with their context
@@ -759,13 +824,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._record_function_paths(all_functions)
         blocks = [self._signed_blocks(entry.node) for entry in all_functions]
         buckets = [_bucketed(function_blocks) for function_blocks in blocks]
-        excluded = _buckets_over_budget(buckets, self.max_candidate_pairs)
+        # Without cross-module helpers a function pairs only with the others
+        # of its own module, so no pair across modules is formed, counted
+        # against the budget, or evaluated.
+        partners = _Partners.of(all_functions, self.cross_module_helpers)
+        excluded = _buckets_over_budget(buckets, self.max_candidate_pairs, partners)
         if excluded:
             buckets = [bucket.without(excluded) for bucket in buckets]
-        total_funcs = len(all_functions)
-        reporter = _PairingProgress(
-            progress, (total_funcs * (total_funcs - 1)) // 2 if total_funcs > 1 else 0
-        )
+        reporter = _PairingProgress(progress, partners.function_pairs)
         pairs: List[CodeBlockPair] = []
         # The changed set holds absolute paths; the analysis spells paths as
         # the caller gave them (a relative output directory stays relative).
@@ -774,7 +840,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         )
         for i, first in enumerate(all_functions):
             file1_changed = changed is None or os.path.abspath(first.file_path) in changed
-            for j, second in enumerate(all_functions[i + 1 :], i + 1):
+            for j in partners.after(i):
+                second = all_functions[j]
                 if (
                     changed is not None
                     and not file1_changed

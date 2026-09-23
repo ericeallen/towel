@@ -203,6 +203,9 @@ class EngineState:
     skip_trivial_helpers: bool
     """Whether a helper that only forwards, renames, or unpacks is declined."""
 
+    cross_module_helpers: bool
+    """Whether a helper may be shared across modules, and so an import of one written."""
+
     annotate_helpers: bool
     """Whether helpers carry the annotations their call sites declare."""
 

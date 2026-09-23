@@ -749,6 +749,14 @@ class Materialization(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]
     ) -> None:
         """Import the module-level helper into a file whose call sites need it."""
+        if not self.cross_module_helpers:
+            # Pairing never forms such a proposal; one built by other means
+            # would add a dependency between modules nobody asked for.
+            raise RefactoringError(
+                f"{file_path} would import {proposal.extracted_function.name} from"
+                f" {proposal.file_path}: helpers are shared across modules only with"
+                " cross_module_helpers (--cross-module)"
+            )
         from_path = Path(proposal.file_path)
         to_path = Path(file_path)
         # An absolute name is read from the project the code belongs to, not
