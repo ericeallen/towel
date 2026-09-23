@@ -11,7 +11,11 @@ import pytest
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
-from towel.unification.semantic_safety import has_external_loop_control, uses_class_private_names
+from towel.unification.semantic_safety import (
+    frame_read_outside_block,
+    has_external_loop_control,
+    uses_class_private_names,
+)
 from towel.unification.substitution import Substitution
 
 
@@ -326,3 +330,44 @@ def test_equal_constants_of_different_types_are_passed_not_merged(tmp_path: Path
                 before = cast(Callable[..., object], original[name])(argument)
                 after = cast(Callable[..., object], namespace[name])(argument)
                 assert (type(after), after) == (type(before), before), name
+
+
+FRAME_AROUND_A_NESTED_BLOCK = """
+import sys
+
+
+def f(items, flag):
+    for item in items:
+        {before}
+        doubled = item * 2
+        label = str(doubled)
+        print(label)
+        {after}
+"""
+
+
+@pytest.mark.parametrize(
+    "before, after, read",
+    [
+        ("frame = sys._getframe()", "print(frame.f_locals)", True),
+        ("pass", "print(sorted(locals()))", True),
+        ("seen = sorted(locals()) if flag else []", "print(seen)", True),
+        ("pass", "print(item)", False),
+    ],
+    ids=["handle-before", "locals-after", "locals-before-in-the-loop", "no-frame-read"],
+)
+def test_frame_reads_beside_a_nested_block_are_seen(before: str, after: str, read: bool) -> None:
+    """A frame read in the loop that holds the block counts, before the block as after it.
+
+    A handle taken before the block sees its locals once it has run, and a
+    ``locals()`` earlier in the loop body sees them on the next iteration.
+    The walk once stopped at the block and never reached what preceded it.
+    """
+    tree = ast.parse(FRAME_AROUND_A_NESTED_BLOCK.format(before=before, after=after))
+    analyzer = ScopeAnalyzer()
+    analyzer.analyze(tree)
+    function = tree.body[1]
+    assert isinstance(function, ast.FunctionDef)
+    loop = function.body[0]
+    assert isinstance(loop, ast.For)
+    assert frame_read_outside_block(analyzer, function, loop.body[1:4]) is read

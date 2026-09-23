@@ -23,6 +23,7 @@ from typing import (
     TYPE_CHECKING,
     FrozenSet,
     Iterable,
+    Iterator,
     List,
     Sequence,
     Set,
@@ -601,11 +602,7 @@ def frame_read_outside_block(
         aliases.super_functions or aliases.builtins_modules
     ) and _loads_class_cell_name(nodes)
     for statement in function.body:
-        if id(statement) in inside:
-            continue
-        for node in walk_own_scope(statement):
-            if id(node) in inside:
-                break
+        for node in _walk_own_scope_outside(statement, inside):
             if isinstance(node, ast.Call) and (
                 is_namespace_access_call(node, aliases)
                 or _reads_own_frame(node, aliases)
@@ -613,6 +610,25 @@ def frame_read_outside_block(
             ):
                 return True
     return False
+
+
+def _walk_own_scope_outside(node: ast.AST, excluded: AbstractSet[int]) -> Iterator[ast.AST]:
+    """``walk_own_scope(node)`` without the nodes whose ids are ``excluded``, or anything in them.
+
+    The rest of a compound statement that holds the block is still walked: a
+    frame read earlier in the same loop body sees the block's locals on the
+    next iteration, and a frame handle taken before the block sees them
+    afterwards.
+    """
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if id(current) in excluded:
+            continue
+        yield current
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(current))
 
 
 def _frame_readers(module: ast.AST, aliases: FrameAliases) -> FrozenSet[str]:
