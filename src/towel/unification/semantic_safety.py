@@ -1362,6 +1362,31 @@ def _module_names_bound_before(module: ast.Module, statement: ast.stmt) -> Froze
     return result
 
 
+def passes_lambdas_through(expressions: Sequence[Tuple[int, ast.AST]]) -> bool:
+    """Whether every argument of a parameter is a lambda that takes nothing.
+
+    Only the unifier makes such a parameter (``Unifier._unify_thunks``), for
+    a lambda each block hands to a call, makes at most once per run, and
+    holds once. Making it at the call site instead is unobservable: a lambda
+    that takes nothing evaluates nothing when it is made and cannot fail, it
+    closes over the same variables of the same function as the block's, and
+    its ``__qualname__`` is the one the block's had. So it is passed as it
+    is; a thunk around it would be the ``lambda: __param_0()`` the unifier
+    avoided.
+    """
+    return all(
+        isinstance(expression, ast.Lambda)
+        and not (
+            expression.args.posonlyargs
+            or expression.args.args
+            or expression.args.kwonlyargs
+            or expression.args.vararg
+            or expression.args.kwarg
+        )
+        for _block_idx, expression in expressions
+    )
+
+
 def has_impure_eager_parameters(
     substitution: "Substitution", available: Sequence[AbstractSet[str]]
 ) -> bool:
@@ -1370,8 +1395,9 @@ def has_impure_eager_parameters(
     ``available`` gives, per block, the names its call site can resolve (see
     ``available_argument_names``). Lambda-lifted parameters and forwarded
     callees are evaluated inside the helper at the original position, so any
-    expression is acceptable there. Call this after extraction, which is when
-    callee parameters are known.
+    expression is acceptable there, and a lambda passed through is made the
+    same way at the call site (``passes_lambdas_through``). Call this after
+    extraction, which is when callee parameters are known.
     """
     deferred = (
         set(substitution.function_params)
@@ -1381,7 +1407,7 @@ def has_impure_eager_parameters(
     return any(
         not is_eagerly_evaluable(expression, available[block_idx])
         for name, expressions in substitution.param_expressions.items()
-        if name not in deferred
+        if name not in deferred and not passes_lambdas_through(expressions)
         for block_idx, expression in expressions
     )
 
@@ -1397,7 +1423,8 @@ def defer_impure_parameters(
     and as conditionally as the block did. ``available`` gives, per block, the
     names its call site can resolve. Parameters already lambda-lifted keep
     their arguments; parameters used only as callees are forwarded lazily by
-    the extractor and need no thunk.
+    the extractor and need no thunk, and neither does a lambda passed through
+    (``passes_lambdas_through``).
     """
     callees: Set[str] = set()
     for statement in template_block:
@@ -1407,7 +1434,11 @@ def defer_impure_parameters(
                 if parameter is not None:
                     callees.add(parameter)
     for name, expressions in substitution.param_expressions.items():
-        if name in substitution.function_params or name in callees:
+        if (
+            name in substitution.function_params
+            or name in callees
+            or passes_lambdas_through(expressions)
+        ):
             continue
         if any(
             not is_eagerly_evaluable(expression, available[block_idx])

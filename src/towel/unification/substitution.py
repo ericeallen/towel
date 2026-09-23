@@ -151,6 +151,13 @@ class Substitution:
         """Get the parameter name for an expression."""
         return self.mappings.get((block_idx, structural_text(expr)))
 
+    def remove_parameter(self, param_name: str) -> None:
+        """Forget ``param_name``: its expressions, the mappings to it, and its thunk variables."""
+        self.param_expressions.pop(param_name, None)
+        self.function_params.pop(param_name, None)
+        for key in [key for key, name in self.mappings.items() if name == param_name]:
+            del self.mappings[key]
+
     def is_function_param(self, param_name: str) -> bool:
         """Check if a parameter should be a function parameter."""
         return param_name in self.function_params

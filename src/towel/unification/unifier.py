@@ -33,9 +33,22 @@ from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
 from .static_positions import DEFAULT_TRANSLATION_KEYWORDS, TranslationKeywords, statically_read
-from .substitution import Substitution
+from .substitution import Substitution, structural_text
 from .unifier_state import ConstantIdentity
 from .visitors import all_instances
+
+_REPEATING = (
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.comprehension,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+    ast.Lambda,
+)
+"""Constructs whose parts may run more than once each time the statement holding them runs."""
 
 
 def _dotted_chain(expression: ast.AST) -> Optional[Tuple[ast.Name, List[str]]]:
@@ -873,8 +886,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         num_params = param_counts[0]
         if num_params == 0:
-            # No parameters - just unify bodies directly
-            return self._unify_nodes([n.body for n in nodes], substitution, block_indices)
+            return self._unify_thunks(nodes, substitution, block_indices)
 
         canonical_params = [nodes[0].args.args[i].arg for i in range(num_params)]
 
@@ -900,6 +912,80 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                     actual_param = node.args.args[param_idx].arg
                     key = (block_idx, actual_param)
                     self._restore_alpha_mapping(key, old_mappings)
+
+    def _unify_thunks(
+        self, nodes: List[ast.Lambda], substitution: Substitution, block_indices: List[int]
+    ) -> bool:
+        """Unify lambdas that take nothing; one the blocks differ in as a whole is passed through.
+
+        Where the blocks differ in a lambda's whole body, the body becomes a
+        parameter and the helper makes a lambda of its own around it,
+        ``lambda: __param_0()``. Handed to a call, that is a function made
+        by the helper and named for it, where the block handed on one it made
+        itself; a chain of helpers wraps it once more at every step. So when
+        each lambda is an argument of a call, is made at most once per run of
+        its block, and is the only lambda of its text there, the lambda
+        itself is the parameter instead: the call site makes it, in the
+        function that made it before, and the helper passes it on as it
+        came (see ``semantic_safety.defer_impure_parameters``).
+        """
+        bodies = [node.body for node in nodes]
+        if not all(self._passed_on_once(node, index) for node, index in zip(nodes, block_indices)):
+            return self._unify_nodes(bodies, substitution, block_indices)
+        counter, known = self.param_counter, set(substitution.param_expressions)
+        if not self._unify_nodes(bodies, substitution, block_indices):
+            return False
+        fresh = [name for name in substitution.param_expressions if name not in known]
+        if (
+            len(fresh) != 1
+            or fresh[0] in substitution.function_params
+            or sorted(
+                (index, id(expression))
+                for index, expression in substitution.param_expressions[fresh[0]]
+            )
+            != sorted((index, id(body)) for index, body in zip(block_indices, bodies))
+        ):
+            return True
+        substitution.remove_parameter(fresh[0])
+        self.param_counter = counter
+        return self._try_parameterize(nodes, substitution, block_indices)
+
+    def _passed_on_once(self, node: ast.Lambda, block_index: int) -> bool:
+        """Whether a lambda is an argument of a call, made at most once per run of its block.
+
+        It must also be the only lambda of its text in the block: a parameter
+        stands for every occurrence of its text, and two lambdas the block
+        made separately must not become one object.
+        """
+        if self.current_blocks is None or block_index >= len(self.current_blocks):
+            return False
+        block = self.current_blocks[block_index]
+        parents = {
+            id(child): parent
+            for statement in block
+            for parent in ast.walk(statement)
+            for child in ast.iter_child_nodes(parent)
+        }
+        holder = parents.get(id(node))
+        if isinstance(holder, ast.keyword):
+            holder = parents.get(id(holder))
+        if not isinstance(holder, ast.Call) or holder.func is node:
+            return False
+        ancestor = parents.get(id(node))
+        while ancestor is not None:
+            if isinstance(ancestor, _REPEATING):
+                return False
+            ancestor = parents.get(id(ancestor))
+        text = structural_text(node)
+        return (
+            sum(
+                1
+                for statement in block
+                for other in ast.walk(statement)
+                if isinstance(other, ast.Lambda) and structural_text(other) == text
+            )
+            == 1
+        )
 
     def _unify_joined_str(
         self, nodes: List[ast.JoinedStr], substitution: Substitution, block_indices: List[int]

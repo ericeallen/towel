@@ -35,6 +35,7 @@ import pytest
 from tests.test_helpers import (
     function_def,
     module_functions,
+    parse_block,
     refactor_to_fixed_point_silently,
     unparsed_body,
     write_module,
@@ -44,6 +45,7 @@ from towel.unification import clustering, pair_evaluation
 from towel.unification.block_analysis import BlockAnalysis
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.unifier import Unifier
 
 
 def _summaries(source: str, names: list[str]) -> list[object]:
@@ -460,6 +462,28 @@ def test_the_fixed_point_ends_without_the_escape_guard(
     assert _rendered_sql(final) == _rendered_sql(SQL_GENERATOR)
 
 
+def test_a_forwarded_thunk_is_passed_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ``zipf_sql`` subscripts where the others call ``get``; the helper that
+    # takes the whole difference as thunks passes them on as it got them
+    # instead of wrapping each as ``lambda: __param_0()``.
+    final, _applied = _refactor_generator(tmp_path, monkeypatch, escape_guard=False)
+    rewrapped = [
+        ast.unparse(node)
+        for helper in _generated_helpers(final)
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Lambda)
+        and not node.args.args
+        and isinstance(node.body, ast.Call)
+        and isinstance(node.body.func, ast.Name)
+        and node.body.func.id.startswith("__param_")
+        and not node.body.args
+    ]
+    assert rewrapped == []
+    assert _rendered_sql(final) == _rendered_sql(SQL_GENERATOR)
+
+
 @pytest.mark.parametrize("formatted", [True, False])
 def test_sqlglots_generator_ends_after_one_helper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, formatted: bool
@@ -529,3 +553,49 @@ def test_a_helper_that_only_calls_generated_helpers_shares_nothing(body: str) ->
 def test_a_helper_with_code_of_its_own_is_not_plumbing(body: str) -> None:
     helper = function_def("def helper(self, p, q, e):\n" + textwrap.indent(body, "    "))
     assert not BlockAnalysis._helper_only_calls_generated_helpers(helper)
+
+
+def _lambda_parameters(first: str, second: str) -> List[str]:
+    """What each parameter stands for in the first block, when the blocks unify."""
+    substitution = Unifier().unify_blocks([parse_block(first), parse_block(second)], [{}, {}])
+    assert substitution is not None
+    return sorted(
+        ast.unparse(expression)
+        for expressions in substitution.param_expressions.values()
+        for index, expression in expressions
+        if index == 0
+    )
+
+
+def test_a_lambda_handed_to_a_call_is_the_parameter_itself() -> None:
+    assert _lambda_parameters(
+        "r = run(lambda: e.args['a'], e)", "r = run(lambda: e.args.get('b'), e)"
+    ) == ["lambda: e.args['a']"]
+    assert _lambda_parameters(
+        "r = run(key=lambda: e.args['a'])", "r = run(key=lambda: e.args.get('b'))"
+    ) == ["lambda: e.args['a']"]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        # Made on every iteration: one lambda passed in would stand for many.
+        (
+            "for i in r:\n    run(lambda: e.args['a'])",
+            "for i in r:\n    run(lambda: e.args.get('b'))",
+        ),
+        # Two lambdas of one text would become one object.
+        (
+            "run(lambda: e.args['a'], lambda: e.args['a'])",
+            "run(lambda: e.args.get('b'), lambda: e.args.get('b'))",
+        ),
+        # Called where it stands, not handed on.
+        ("r = (lambda: e.args['a'])()", "r = (lambda: e.args.get('b'))()"),
+        # Only part of the body differs.
+        ("r = run(lambda: e.args['a'])", "r = run(lambda: e.args['b'])"),
+    ],
+)
+def test_a_lambda_is_otherwise_kept_and_its_body_parameterized(first: str, second: str) -> None:
+    assert not any(
+        parameter.startswith("lambda") for parameter in _lambda_parameters(first, second)
+    )
