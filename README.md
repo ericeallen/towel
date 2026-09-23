@@ -317,10 +317,14 @@ with the corpus results in [Production readiness](https://github.com/ericeallen/
 
 The check executes third-party code with your privileges, so it requires
 `--run-untrusted-code` (or `TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1`) and belongs on a
-disposable machine or container. It imports Towel from `--towel-src` throughout
-the run. To keep editing, point that option at a committed snapshot's `src`
-directory. The harness reports the actual source revision and dirty state;
-source archives require an independently retained source manifest.
+disposable machine or container. It runs Towel as a user does, inside each
+project's own environment, where the project is installed from the tree under
+test beside Towel's `types` extra: one wheel of `--towel-src`, built when the
+run starts or named with `--towel-wheel`, and refused if its code differs from
+that source. Point `--towel-src` at a committed snapshot's `src` directory,
+since the report names its commit. The harness reports the actual source
+revision and dirty state; source archives require an independently retained
+source manifest.
 
 Behavioral tests compare sampled return values and types, exceptions, output, and argument mutations. Cross-file tests isolate imports for each execution. Empty selections, unsupported class construction, and cross-file returned closures do not count as success. Single-file callable comparison samples one returned-callable layer; deeper returned callables are not validated. These checks are regression evidence, not proof of equivalence for arbitrary programs.
 
