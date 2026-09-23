@@ -188,6 +188,61 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   refactorings found!" alone; a type-check refusal is no longer reported as
   "could not be rendered"; and the `.towel-helpers.json` sidecar lists only
   helpers present in the output.
+- A builtin that another participating module shadows or rebinds is passed
+  to a cross-module helper as a parameter, so it resolves as it did at each
+  call site; `len` shadowed only in the borrower had been read as the builtin
+  in the host. A relative import inside an extracted block stays within its
+  own package.
+- One predicate now decides what importing a module runs, for choosing a
+  host and for placing a helper. Decorators, defaults, annotations,
+  metaclasses and `__init_subclass__` count as code; a `TYPE_CHECKING` block
+  and a short list of callables verified at run time do not. A registration
+  decorator in the host had run when the borrower was imported.
+- A helper is hosted only in a module that ships with the module importing
+  it, never in `tests/` or `examples/` for the package to import. A module
+  with a stub (`.pyi`, `typings/`, `<pkg>-stubs`) never hosts a cross-module
+  helper, and a module that can run as a script (`__main__.py`, a main guard
+  in any form, a `#!` line) stays runnable by its path. Dependencies
+  declared by Poetry or in setup.cfg `install_requires` count as declared.
+- One existing function is never rewritten to call another. When duplicates
+  are whole function bodies, every site calls one new helper, so patching
+  `mod.f1` in a test no longer changes `f2`. `reuse_existing_functions` no
+  longer has any effect.
+- A class keeps a method helper only when its receivers are unannotated or
+  annotated as the class, `Self` or a type variable bound to it, and its
+  metaclass and every `__init_subclass__` it runs are known to leave an
+  added function alone. Otherwise the helper is a module-level function
+  taking the receiver.
+- A project that configures no mypy is checked as its own `mypy` would check
+  the same files, with mypy's defaults. Towel had forced
+  `check_untyped_defs`, `ignore_missing_imports` and `explicit_package_bases`
+  on it, and each changed the verdict: dacite, clean under `mypy .`, was
+  refused for 53 errors inside unannotated tests, and a root-relative
+  `src.foo.a` import was accepted. Probes that infer a helper's types still
+  check unannotated bodies, in a cache of their own. Such a project is now
+  refused a typed run wherever its own `mypy` fails; configure mypy or pass
+  `--no-types`.
+- A check resolves a module's imports where the project's own mypy does. The
+  project root had been searched first, so a test's `import helpers` was
+  checked against a root `helpers.py` instead of the one beside it.
+- A literal that a tool reads without running the program stays where the
+  tool reads it. python-statemachine's `_("There should be exactly one
+  initial state: {!r}")` had become `_(__param_1)`, and pybabel extracted
+  neither message; click had lost four of its 71 the same way. The message
+  and context arguments of Babel's, Django's and Flask-Babel's markers, and
+  of keywords a project configures, are never parameters; nor are the names,
+  fields and types of the functional typing forms, `Literal[...]`, or a type
+  spelled as a string in `cast` or `assert_type`. Only click changes over
+  the four reference packages: 10 refactorings instead of 11, with every
+  message still extracted.
+- The fixed point ends for a stated reason rather than an incidental one. On
+  sqlglot it once extracted 597 helpers, each forwarding to the previous one
+  with its tuple permuted, until ordinary SQL raised `RecursionError`. A
+  helper that only calls generated helpers and repacks their results is now
+  declined in every configuration, forwarding is recognized whatever order
+  results come back in, and a lambda handed on whole is passed through
+  rather than wrapped again. With the escape guard switched off, sqlglot's
+  DuckDB generator went from no fixed point in 900 s to one in 18 s.
 - A base-class name is resolved as the binding in effect where the class
   statement runs, not by finding a class of that qualname anywhere in the file.
   Python binds globals as a module executes, so `Base = object` written between
