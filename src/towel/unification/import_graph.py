@@ -607,6 +607,41 @@ _QUIET_SUBSCRIPTED_BASES = frozenset(
 )
 _QUIET_METACLASSES = frozenset({"abc.ABCMeta", "builtins.type"})
 
+# Class machinery known to leave a plain function of the class body in place,
+# unwrapped and unregistered, while it builds the class; each is checked in
+# tests/test_method_host_machinery.py. ``type`` and ``ABCMeta`` keep the
+# namespace as given, ``Generic`` and ``object`` define the only
+# ``__init_subclass__`` their subclasses run, and the enum metaclass makes
+# members of the body's other values but never of a function. ``Protocol``
+# is absent: a function in a protocol's body becomes one of its members.
+_ENUM_BASES = frozenset(
+    {"enum.Enum", "enum.Flag", "enum.IntEnum", "enum.IntFlag", "enum.ReprEnum", "enum.StrEnum"}
+)
+_ENUM_METACLASSES = frozenset({"enum.EnumMeta", "enum.EnumType"})
+
+
+@dataclass(frozen=True)
+class _ClassMachinery:
+    """The bases and metaclasses one judgment of class creation takes as Python's own."""
+
+    label: str
+    bases: FrozenSet[str]
+    subscripted_bases: FrozenSet[str]
+    metaclasses: FrozenSet[str]
+
+
+# Subclassing runs only Python's class machinery: nothing of the project runs.
+_RUNS_NO_CODE = _ClassMachinery(
+    "runs-no-code", _QUIET_BASES, _QUIET_SUBSCRIPTED_BASES, _QUIET_METACLASSES
+)
+# Building the class leaves every plain function of its body a plain member.
+_KEEPS_FUNCTIONS = _ClassMachinery(
+    "keeps-functions",
+    frozenset({"abc.ABC"}) | _ENUM_BASES,
+    frozenset({"typing.Generic"}),
+    _QUIET_METACLASSES | _ENUM_METACLASSES,
+)
+
 # Where the names an evaluated annotation subscripts may come from.
 _ANNOTATION_MODULES = frozenset({"collections.abc", "typing", "typing_extensions"})
 _BUILTIN_GENERICS = frozenset({"dict", "frozenset", "list", "set", "tuple", "type"})
@@ -933,11 +968,45 @@ class ImportTimeCode:
             and decorator.value.id in body.properties
         )
 
-    def _quiet_keywords(self, keywords: Sequence[ast.keyword], order: int) -> bool:
+    def _quiet_keywords(
+        self,
+        keywords: Sequence[ast.keyword],
+        order: int,
+        machinery: _ClassMachinery = _RUNS_NO_CODE,
+    ) -> bool:
         return all(
             keyword.arg == "metaclass"
-            and self._origin(keyword.value, order, None) in _QUIET_METACLASSES
+            and self._origin(keyword.value, order, None) in machinery.metaclasses
             for keyword in keywords
+        )
+
+    def leaves_functions_alone(self, name: str) -> bool:
+        """Whether building the top-level class ``name`` leaves a plain function of its body alone.
+
+        A helper placed in the body is seen by the class's metaclass, which
+        builds the class from the namespace, and by the ``__init_subclass__``
+        of every class on its method resolution order, its own included for
+        each subclass: any of them may wrap it, register it, or drop it. So
+        the metaclass must be ``type``, ``abc.ABCMeta`` or the enum
+        metaclass, the class must define no ``__init_subclass__``, and every
+        base must be a builtin class, ``abc.ABC``, ``typing.Generic[...]``,
+        an enum, or a class of the project that qualifies in turn, each
+        resolved through the module's imports (``_KEEPS_FUNCTIONS``). The
+        class's decorators are :meth:`ModuleBindings.keeps_namespace`'s
+        question.
+        """
+        if self._bindings is None:
+            return False
+        order = self._bindings.class_orders.get(name)
+        if order is None:
+            return False
+        node = self._tree.body[order]
+        return (
+            isinstance(node, ast.ClassDef)
+            and node.name == name
+            and self._quiet_keywords(node.keywords, order, _KEEPS_FUNCTIONS)
+            and not _defines_init_subclass(node)
+            and all(self._quiet_base(base, order, _KEEPS_FUNCTIONS) for base in node.bases)
         )
 
     def _quiet_call(self, call: ast.Call, order: int, body: Optional[_ClassBody]) -> bool:
@@ -1063,14 +1132,16 @@ class ImportTimeCode:
             return not statement.decorator_list
         return isinstance(statement, ast.Assign) and _is_constant(statement.value)
 
-    def _quiet_base(self, base: ast.expr, order: int) -> bool:
-        """Whether subclassing ``base`` runs only Python's own class machinery."""
+    def _quiet_base(
+        self, base: ast.expr, order: int, machinery: _ClassMachinery = _RUNS_NO_CODE
+    ) -> bool:
+        """Whether subclassing ``base`` runs only the class machinery ``machinery`` accepts."""
         if isinstance(base, ast.Subscript):
-            return self._origin(base.value, order, None) in _QUIET_SUBSCRIPTED_BASES and not (
-                self._annotation(base.slice, order, None)
-            )
+            return self._origin(
+                base.value, order, None
+            ) in machinery.subscripted_bases and not self._annotation(base.slice, order, None)
         origin = self._origin(base, order, None)
-        if origin in _QUIET_BASES or origin in _BUILTIN_CLASSES:
+        if origin in machinery.bases or origin in _BUILTIN_CLASSES:
             return True
         dotted = dotted_name(base)
         if dotted is None or self._bindings is None or self._depth > 8:
@@ -1080,24 +1151,30 @@ class ImportTimeCode:
             return False
         if binding.class_qualname is not None and binding.class_qualname == dotted:
             node = self._tree.body[binding.order]
-            return isinstance(node, ast.ClassDef) and self._quiet_ancestor(node, binding.order)
+            return isinstance(node, ast.ClassDef) and self._quiet_ancestor(
+                node, binding.order, machinery
+            )
         if binding.is_import:
-            return self._quiet_imported_class(dotted)
+            return self._quiet_imported_class(dotted, machinery)
         return False
 
-    def _quiet_ancestor(self, node: ast.ClassDef, order: int) -> bool:
+    def _quiet_ancestor(
+        self, node: ast.ClassDef, order: int, machinery: _ClassMachinery = _RUNS_NO_CODE
+    ) -> bool:
         """A class of this module whose own machinery leaves its subclasses' creation alone."""
         return (
             all(
                 self._origin(decorator, order, None) in NAMESPACE_PRESERVING_DECORATORS
                 for decorator in node.decorator_list
             )
-            and self._quiet_keywords(node.keywords, order)
-            and not any("__init_subclass__" in _statement_binds(inner) for inner in node.body)
-            and all(self._quiet_base(base, order) for base in node.bases)
+            and self._quiet_keywords(node.keywords, order, machinery)
+            and not _defines_init_subclass(node)
+            and all(self._quiet_base(base, order, machinery) for base in node.bases)
         )
 
-    def _quiet_imported_class(self, dotted: str) -> bool:
+    def _quiet_imported_class(
+        self, dotted: str, machinery: _ClassMachinery = _RUNS_NO_CODE
+    ) -> bool:
         """An imported class of the project, judged in the module that defines it."""
         if self._path is None or self._cache is None:
             return False
@@ -1111,7 +1188,7 @@ class ImportTimeCode:
             stat = module.stat()
         except OSError:
             return False
-        key = (module, stat.st_mtime_ns, stat.st_size, qualname)
+        key = (module, stat.st_mtime_ns, stat.st_size, f"{qualname} {machinery.label}")
         known = self._cache.quiet_classes.get(key)
         if known is not None:
             return known
@@ -1121,11 +1198,11 @@ class ImportTimeCode:
             )
         except (OSError, UnicodeError, SyntaxError, ValueError):
             return self._cache.quiet_classes.put(key, False)
-        return self._cache.quiet_classes.put(key, other._quiet_named_class(qualname))
+        return self._cache.quiet_classes.put(key, other._quiet_named_class(qualname, machinery))
 
-    def _quiet_named_class(self, name: str) -> bool:
+    def _quiet_named_class(self, name: str, machinery: _ClassMachinery) -> bool:
         """Whether the class the module binds to ``name`` once it has run is quiet to subclass."""
-        return self._quiet_base(ast.Name(id=name, ctx=ast.Load()), len(self._tree.body))
+        return self._quiet_base(ast.Name(id=name, ctx=ast.Load()), len(self._tree.body), machinery)
 
 
 def _is_constant(node: ast.expr) -> bool:
@@ -1157,6 +1234,11 @@ def _is_main_guard(test: ast.expr) -> bool:
         and isinstance(test.comparators[0], ast.Constant)
         and test.comparators[0].value == "__main__"
     )
+
+
+def _defines_init_subclass(node: ast.ClassDef) -> bool:
+    """Whether the class body binds ``__init_subclass__``, which then runs for every subclass."""
+    return any("__init_subclass__" in _statement_binds(inner) for inner in node.body)
 
 
 def _statement_binds(statement: ast.stmt) -> FrozenSet[str]:

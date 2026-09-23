@@ -207,11 +207,21 @@ addresses:
   helper in place only when it is one of `dataclasses.dataclass`,
   `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
   `enum.unique`, reached through the module's own absolute imports; a class
-  carrying any other decorator takes no helper. What a custom metaclass or an
-  inherited `__init_subclass__` hook does to the namespace of a class that
-  takes a helper is not modeled: one that wraps or drops every function of
-  its classes reaches the helper too. `__slots__` interactions with added methods are not modeled beyond
-  compilation.
+  carrying any other decorator takes no helper. A metaclass, and every
+  `__init_subclass__` on the class's method resolution order, sees the
+  namespace a method helper joins and may wrap, register or drop it, so the
+  class holding both duplicates takes one only when all of that is known to
+  leave a plain function alone: its metaclass is `type`, `abc.ABCMeta` or the
+  enum metaclass, it defines no `__init_subclass__` itself, and each base is
+  a builtin class, `abc.ABC`, `typing.Generic[...]`, an enum, or a class of
+  the project that qualifies in turn, resolved through the module's imports.
+  Any other class (pygments' lexers, whose metaclass is the project's own; a
+  base reached through a star import or built by a call such as
+  `with_metaclass(...)`; `NamedTuple`; a library's base class) gets the
+  module-level helper that takes the receiver as an argument. A common
+  ancestor that takes the helper for methods of two different classes is not
+  judged this way. `__slots__` interactions with added methods are not
+  modeled beyond compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
@@ -357,6 +367,12 @@ module-level common ancestor, every
 decorator on the source methods is known
 to preserve the receiver, the methods have a first parameter named
 `self` (or the method is a `classmethod`), and both read an attribute of it.
+That parameter's annotation, if it has one, must name only the class: the
+class itself, `Self`, or a type variable bound to the class, or `type[...]`
+of one of those for a class method. `def m(self: HasV)` declares that any
+object with the protocol's attributes may be passed, as `Box.m(other)`, and
+`self._extracted_func_0()` would raise `AttributeError` on it, so such a
+method gets the module-level helper that takes the receiver as an argument.
 The class that takes the helper, whether the methods' own or their common
 ancestor, must also be able to hold it as an ordinary member: not a
 `Protocol` (a method there is one more member every structural implementer

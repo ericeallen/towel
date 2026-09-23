@@ -269,6 +269,12 @@ _IMPORT_CHANGE_REASONS = {
 }
 
 
+def _analyzed_module(analyzer: Optional[ScopeAnalyzer]) -> Optional[ast.Module]:
+    """The module ``analyzer`` analyzed, when it analyzed a whole module."""
+    tree = analyzer.analyzed_tree if analyzer is not None else None
+    return tree if isinstance(tree, ast.Module) else None
+
+
 def _is_trivial_return_of_bound_name(
     block_nodes: Sequence[ast.stmt], bound_before_block: Set[str], bound_in_block: Set[str]
 ) -> bool:
@@ -632,10 +638,14 @@ class PairEvaluation(
         # but has no receiver; only a function defined directly in the class
         # body dispatches as a method.
         method_info1 = self._get_method_context(
-            func1, self._method_class(func1, pair.class1_name, scope_analyzer)
+            func1,
+            self._method_class(func1, pair.class1_name, scope_analyzer),
+            _analyzed_module(scope_analyzer),
         )
         method_info2 = self._get_method_context(
-            func2, self._method_class(func2, pair.class2_name, scope_analyzer2)
+            func2,
+            self._method_class(func2, pair.class2_name, scope_analyzer2),
+            _analyzed_module(scope_analyzer2),
         )
 
         for guard, reason in (

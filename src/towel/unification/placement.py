@@ -32,8 +32,10 @@ from __future__ import annotations
 import ast
 
 from collections import deque
+from pathlib import Path
 from typing import (
     Callable,
+    FrozenSet,
     List,
     Mapping,
     Optional,
@@ -51,12 +53,14 @@ from .models import (
     MethodKind,
 )
 from .scope_analyzer import ScopeAnalyzer
-from .module_bindings import ModuleBindings, global_bindings
+from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
 from .import_graph import (
+    ImportTimeCode,
     imported_definition_sites,
     relative_import_levels,
     relative_imports_resolve_alike,
 )
+from .statement_facts import imported_binding_name
 from .visitors import MethodCallRewriter, visit_as
 from ..source_text import read_source
 
@@ -133,6 +137,161 @@ def _implicit_param_for(kind: MethodKind, first: MethodInfo, second: MethodInfo)
     return (
         first.implicit_param or second.implicit_param or ("self" if kind == "instance" else "cls")
     )
+
+
+# What a receiver annotation may spell for the class, ``Self``, and a type variable.
+_CLASS_OF = frozenset({"type", "Type", "typing.Type", "typing_extensions.Type"})
+_SELF_TYPES = frozenset({"typing.Self", "typing_extensions.Self"})
+_TYPE_VARIABLES = frozenset({"typing.TypeVar", "typing_extensions.TypeVar"})
+
+
+def _admits_other_receivers(
+    func: FunctionNode, kind: MethodKind, class_name: str, module: Optional[ast.Module]
+) -> bool:
+    """Whether the receiver's annotation declares receivers other than instances of the class.
+
+    ``def m(self: HasV, n)`` declares that anything with a ``v`` may be the
+    receiver, so ``Box.m(SimpleNamespace(v=10), 1)`` is a well-typed call, and a
+    helper reached as ``self._extracted_func_0(...)`` would raise
+    ``AttributeError`` there. No annotation, the class itself (subscripted or
+    not), ``Self``, or a type variable bound to the class declares instances
+    alone; so does ``type[...]`` of one of them for a class method. Anything
+    else is taken to admit others.
+    """
+    positional = [*func.args.posonlyargs, *func.args.args]
+    if not positional or positional[0].annotation is None:
+        return False
+    annotation = _unquoted(positional[0].annotation)
+    if kind == "classmethod":
+        if not (
+            isinstance(annotation, ast.Subscript) and dotted_name(annotation.value) in _CLASS_OF
+        ):
+            return True
+        annotation = _unquoted(annotation.slice)
+    return annotation is None or not _denotes_the_class(annotation, class_name, func, module, 0)
+
+
+def _unquoted(annotation: ast.expr) -> Optional[ast.expr]:
+    """The expression a string annotation spells, or the annotation itself; None if unparsable."""
+    if not (isinstance(annotation, ast.Constant) and isinstance(annotation.value, str)):
+        return annotation
+    try:
+        return ast.parse(annotation.value.strip(), mode="eval").body
+    except SyntaxError:
+        return None
+
+
+def _denotes_the_class(
+    annotation: ast.expr,
+    class_name: str,
+    func: FunctionNode,
+    module: Optional[ast.Module],
+    depth: int,
+) -> bool:
+    """Whether a receiver annotation names only the class: itself, ``Self``, or a bound type variable."""
+    if depth > 4:
+        return False
+    if isinstance(annotation, ast.Subscript):
+        # ``Box[T]`` is an instance of the class, whatever its type arguments.
+        return dotted_name(annotation.value) == class_name
+    spelled = dotted_name(annotation)
+    if spelled is None or module is None:
+        return spelled == class_name
+    if spelled == class_name or _names_one_of(spelled, module, _SELF_TYPES):
+        return True
+    bound = _type_variable_bound(spelled, func, module)
+    return bound is not None and _denotes_the_class(bound, class_name, func, module, depth + 1)
+
+
+def _type_variable_bound(name: str, func: FunctionNode, module: ast.Module) -> Optional[ast.expr]:
+    """The bound of ``name`` where it names a type variable: the function's own, or the module's.
+
+    A type parameter of the function shadows the module's names. A module's
+    type variable counts only when ``name = TypeVar(...)`` is the one way the
+    module binds ``name``. The type-parameter nodes are inspected by
+    attribute, since Python 3.11's AST has no ``ast.TypeVar``.
+    """
+    parameters: object = getattr(func, "type_params", ())
+    for parameter in parameters if isinstance(parameters, list) else ():
+        if getattr(parameter, "name", None) == name:
+            bound: object = getattr(parameter, "bound", None)
+            is_variable = type(parameter).__name__ == "TypeVar"
+            return _unquoted(bound) if is_variable and isinstance(bound, ast.expr) else None
+    statements = _module_scope_bindings(module, name)
+    if len(statements) != 1 or not isinstance(statements[0], ast.Assign):
+        return None
+    call = statements[0].value
+    if not (
+        isinstance(call, ast.Call)
+        and _names_one_of(dotted_name(call.func) or "", module, _TYPE_VARIABLES)
+    ):
+        return None
+    bound = next((keyword.value for keyword in call.keywords if keyword.arg == "bound"), None)
+    return None if bound is None else _unquoted(bound)
+
+
+def _names_one_of(spelled: str, module: ast.Module, targets: FrozenSet[str]) -> bool:
+    """Whether ``spelled`` names one of ``targets`` however the module runs.
+
+    Every statement of the module's own scope that may bind its first name
+    must be an absolute import that makes it one of them.
+    """
+    head, _, rest = spelled.partition(".")
+    statements = _module_scope_bindings(module, head)
+    return bool(statements) and all(
+        (origin := _imported_origin(statement, head)) is not None
+        and (f"{origin}.{rest}" if rest else origin) in targets
+        for statement in statements
+    )
+
+
+def _imported_origin(statement: ast.stmt, name: str) -> Optional[str]:
+    """What an absolute import statement binds ``name`` to, as a dotted name; None for anything else."""
+    if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return None
+    origins = {
+        import_origin(statement, alias)
+        for alias in statement.names
+        if imported_binding_name(alias) == name
+    }
+    return origins.pop() if len(origins) == 1 else None
+
+
+def _module_scope_bindings(module: ast.Module, name: str) -> List[ast.stmt]:
+    """Every statement of the module's own scope that may bind ``name``, however conditionally.
+
+    A star import may bind any name. A compound statement counts when
+    anything within it stores the name, which can only over-count.
+    """
+    found: List[ast.stmt] = []
+    pending: List[ast.stmt] = list(module.body)
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            binds = statement.name == name
+        elif isinstance(statement, (ast.Import, ast.ImportFrom)):
+            binds = any(imported_binding_name(alias) in {name, None} for alias in statement.names)
+        else:
+            binds = any(
+                isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Store)
+                for node in ast.walk(statement)
+            )
+            pending.extend(_nested_statements(statement))
+        if binds:
+            found.append(statement)
+    return found
+
+
+def _nested_statements(statement: ast.stmt) -> List[ast.stmt]:
+    """The statements a compound statement runs in the scope it runs in."""
+    nested: List[ast.stmt] = []
+    for field in ("body", "orelse", "finalbody", "handlers", "cases"):
+        for item in getattr(statement, field, ()):
+            if isinstance(item, (ast.ExceptHandler, ast.match_case)):
+                nested.extend(item.body)
+            elif isinstance(item, ast.stmt):
+                nested.append(item)
+    return nested
 
 
 def _preserves_receiver(decorator: ast.expr) -> bool:
@@ -361,9 +520,16 @@ class HelperPlacement(EngineState):
         return class_name
 
     def _get_method_context(
-        self, func: Optional[FunctionNode], class_name: Optional[str]
+        self,
+        func: Optional[FunctionNode],
+        class_name: Optional[str],
+        module: Optional[ast.Module] = None,
     ) -> MethodInfo:
-        """Return method metadata for ``func`` when it is defined inside ``class_name``."""
+        """Return method metadata for ``func`` when it is defined inside ``class_name``.
+
+        ``module`` is the module ``func`` is defined in, where a type variable
+        or ``Self`` its receiver is annotated with is looked up.
+        """
 
         if func is None or class_name is None:
             return MethodInfo(kind=None, implicit_param=None)
@@ -403,6 +569,10 @@ class HelperPlacement(EngineState):
             # (pygments' ``fstring_rules(ttype)``); dispatching on that
             # parameter would call a method on an arbitrary object.
             if kind == "instance" and implicit_param != "self":
+                receiver_known = False
+            # A receiver annotated to admit other objects is one the helper
+            # must take as an argument, as for an unknown receiver.
+            if _admits_other_receivers(func, kind, class_name, module):
                 receiver_known = False
             if implicit_param is not None and not _dispatches_on(func, implicit_param):
                 # The method never asks anything of its receiver, so the helper
@@ -530,6 +700,27 @@ class HelperPlacement(EngineState):
         """
         table = self._module_bindings(info.file_path, sources)
         return table is not None and table.refuses_helper(info.qualname) is None
+
+    def _leaves_functions_alone(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
+        """Whether building the class leaves a helper placed in its body a plain member of it.
+
+        A metaclass that wraps every callable of the namespace, or a base whose
+        ``__init_subclass__`` registers them, would wrap or register the helper
+        too (:meth:`ImportTimeCode.leaves_functions_alone`); the helper then
+        stays at module level and takes the receiver as an argument.
+        """
+        if "." in info.qualname:
+            return False
+        source = sources.get(info.file_path)
+        try:
+            code = ImportTimeCode(
+                source if source is not None else read_source(info.file_path),
+                path=Path(info.file_path),
+                cache=self.import_graph,
+            )
+        except (OSError, UnicodeError, SyntaxError, ValueError):
+            return False
+        return code.leaves_functions_alone(info.qualname)
 
     def _ancestor_depths(
         self,
@@ -671,7 +862,11 @@ class HelperPlacement(EngineState):
         sources = {file1: pair.source1, file2: pair.source2}
         if file1 == file2 and pair.class1_name == pair.class2_name:
             own = self._find_class_info_by_name(class_infos, file1, pair.class1_name)
-            if own is None or not self._can_host(own, sources):
+            if (
+                own is None
+                or not self._can_host(own, sources)
+                or not self._leaves_functions_alone(own, sources)
+            ):
                 return None
             implicit_param = _implicit_param_for(effective_kind, method_info1, method_info2)
             return ClassInsertionPlan(
