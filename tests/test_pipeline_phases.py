@@ -111,10 +111,17 @@ class TestCollectClasses:
             "SMSProcessor",
         }
 
-    def test_collect_classes_handles_inheritance(self):
-        """collect_classes should extract base class names."""
-        # Create a temporary module with inheritance
+    def test_collect_classes_finds_subclasses_whatever_their_bases(self):
+        """collect_classes records a class by name, qualname and file, bases or not.
+
+        Which class a base name denotes is no longer the class index's question:
+        a helper goes only into the class that holds both duplicates, and the
+        class's machinery is judged where its statement runs
+        (``ImportTimeCode``).
+        """
         code = """
+import abc
+
 class Base:
     pass
 
@@ -122,6 +129,9 @@ class Child(Base):
     pass
 
 class MultiChild(Base, object):
+    pass
+
+class MyClass(abc.ABC):
     pass
 """
         temp_path = PROJECT_ROOT / "mytmp" / "test_inherit.py"
@@ -131,37 +141,9 @@ class MultiChild(Base, object):
         try:
             mods = parse_modules([str(temp_path)])
             classes = collect_classes(mods)
-
-            # Find Child class
-            child = next(c for c in classes if c.name == "Child")
-            assert "Base" in child.bases
-
-            # Find MultiChild
-            multi = next(c for c in classes if c.name == "MultiChild")
-            assert "Base" in multi.bases
-            assert "object" in multi.bases
-        finally:
-            if temp_path.exists():
-                temp_path.unlink()
-
-    def test_collect_classes_handles_attribute_bases(self):
-        """collect_classes should handle module.Class base syntax."""
-        code = """
-import abc
-
-class MyClass(abc.ABC):
-    pass
-"""
-        temp_path = PROJECT_ROOT / "mytmp" / "test_attr_base.py"
-        temp_path.parent.mkdir(exist_ok=True)
-        temp_path.write_text(code)
-
-        try:
-            mods = parse_modules([str(temp_path)])
-            classes = collect_classes(mods)
-
-            my_class = next(c for c in classes if c.name == "MyClass")
-            assert "abc.ABC" in my_class.bases
+            assert [(c.name, c.qualname, c.file_path) for c in classes] == [
+                (name, name, str(temp_path)) for name in ("Base", "Child", "MultiChild", "MyClass")
+            ]
         finally:
             if temp_path.exists():
                 temp_path.unlink()

@@ -261,8 +261,14 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
             call_sites = [ast.unparse(n) for n in ast.walk(method) if isinstance(n, ast.Call)]
             self.assertEqual(call_sites, [f"{helper_name}(value)"])
 
-    def test_sibling_instance_methods_promote_to_common_base(self):
-        """Sibling instance methods should extract helpers into their nearest shared base class."""
+    def test_sibling_instance_methods_share_a_module_helper_taking_the_receiver(self):
+        """Methods of two subclasses share a module function; their base gains nothing.
+
+        The helper used to be hoisted into ``Base``, a class that held none of
+        the code, where every subclass anywhere would inherit it
+        (docs/DECISIONS.md, "A method helper lives in the class that holds
+        both duplicates").
+        """
 
         result = self._analyze_and_apply("""
             class Base:
@@ -283,9 +289,10 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
         base = next(
             node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Base"
         )
-        helper = next(node for node in base.body if isinstance(node, ast.FunctionDef))
-        self.assertFalse(helper.decorator_list, "Base helper should default to instance semantics")
-        self.assertEqual([arg.arg for arg in helper.args.args], ["self", "value"])
+        self.assertEqual([ast.dump(node) for node in base.body], [ast.dump(ast.Pass())])
+        helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+        self.assertFalse(helper.decorator_list)
+        self.assertEqual(sorted(arg.arg for arg in helper.args.args), ["self", "value"])
 
         for cls_name, method_name in (("First", "alpha"), ("Second", "beta")):
             cls = next(
@@ -302,15 +309,14 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                 call
                 for call in ast.walk(method)
                 if isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and call.func.attr == helper.name
+                and isinstance(call.func, ast.Name)
+                and call.func.id == helper.name
             ]
             self.assertEqual(len(helper_calls), 1, "each sibling method calls the helper once")
-            for call in helper_calls:
-                assert isinstance(call.func, ast.Attribute)
-                self.assertIsInstance(call.func.value, ast.Name)
-                assert isinstance(call.func.value, ast.Name)
-                self.assertEqual(call.func.value.id, method.args.args[0].arg)
+            self.assertEqual(
+                [ast.unparse(argument) for argument in helper_calls[0].args],
+                [arg.arg for arg in helper.args.args],
+            )
 
 
 if __name__ == "__main__":

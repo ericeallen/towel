@@ -12,36 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Whether a helper becomes a method, and of which class.
+"""Whether a helper becomes a method of the class that holds both duplicates.
 
 A helper is a method only when both blocks are methods of one unique
-module-level class, or of classes with a unique module-level common
-ancestor, every decorator on the source methods is known to preserve the
-receiver, the receiver is the first parameter, and both methods read an
-attribute of it. Base classes are resolved
-the way the referencing module resolves them at the point the class
-statement runs, through the module's own bindings and unconditional
-imports, never by name across the project. Everything else gets a
-module-level helper that takes the receiver explicitly. This module also
-rewrites a rendered call into method form and the helper signature to
-match.
+module-level class, every decorator on the source methods is known to
+preserve the receiver, the receiver is the first parameter, and both methods
+read an attribute of it. No other class ever takes a helper: methods of
+sibling classes, of a parent and a child, or of classes in different modules
+share a module-level helper that takes the receiver explicitly, as does
+everything else (docs/DECISIONS.md, "A method helper lives in the class that
+holds both duplicates"). This module also rewrites a rendered call into
+method form and the helper signature to match.
 """
 
 from __future__ import annotations
 
 import ast
 
-from collections import deque
 from pathlib import Path
 from typing import (
-    Callable,
     FrozenSet,
     List,
     Mapping,
     Optional,
     Sequence,
-    Set,
-    Tuple,
     cast,
 )
 from .models import (
@@ -54,13 +48,7 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
-from .import_graph import (
-    ImportTimeCode,
-    imported_definition_sites,
-    module_scope_statements,
-    relative_import_levels,
-    relative_imports_resolve_alike,
-)
+from .import_graph import ImportTimeCode, module_scope_statements
 from .statement_facts import imported_binding_name
 from .visitors import MethodCallRewriter, visit_as
 from ..source_text import read_source
@@ -290,10 +278,17 @@ def _preserves_receiver(decorator: ast.expr) -> bool:
     return False
 
 
-def _unique_module_level_class(class_infos: Sequence[ClassInfo], file_path: str, name: str) -> bool:
-    """Whether ``name`` names exactly one class in ``file_path`` and it is module-level."""
+def _module_level_class(
+    class_infos: Sequence[ClassInfo], file_path: str, name: str
+) -> Optional[ClassInfo]:
+    """The class ``name`` names in ``file_path`` when it names exactly one, at module level.
+
+    A method is known only by its class's simple name, so a second class of
+    that name anywhere in the file, nested ones included, leaves open which
+    class statement holds it.
+    """
     matches = [info for info in class_infos if info.file_path == file_path and info.name == name]
-    return len(matches) == 1 and matches[0].qualname == name
+    return matches[0] if len(matches) == 1 and matches[0].qualname == name else None
 
 
 class _CallRenamer(ast.NodeTransformer):
@@ -568,36 +563,12 @@ class HelperPlacement(EngineState):
         return MethodInfo(kind=kind, implicit_param=implicit_param, receiver_known=receiver_known)
 
     @staticmethod
-    def _class_info_key(info: ClassInfo) -> Tuple[str, str]:
-        """Return a stable identifier for a class definition."""
-
-        return (info.file_path, info.qualname)
-
-    def _find_class_info_by_name(
-        self, class_infos: List[ClassInfo], file_path: str, class_name: str
-    ) -> Optional[ClassInfo]:
-        """Locate class metadata using its defining file and simple name."""
-
-        matches = [
-            info for info in class_infos if info.file_path == file_path and info.name == class_name
-        ]
-        if not matches:
-            return None
-        if len(matches) == 1:
-            return matches[0]
-
-        # Prefer the innermost definition (longest qualname) when duplicates exist.
-        matches.sort(key=lambda info: info.qualname.count("."), reverse=True)
-        return matches[0]
-
-    @staticmethod
     def _module_bindings(file_path: str, sources: Mapping[str, str]) -> Optional[ModuleBindings]:
         """What ``file_path`` binds at its top level, read from ``sources`` or from disk.
 
         The pair under evaluation carries the text its own modules were
-        parsed from, which is the text the class index describes; a module
-        reached only by walking a class hierarchy is read from the file,
-        the way an imported base class already is.
+        parsed from, which is the text the class index describes; any other
+        module is read from the file.
         """
         source = sources.get(file_path)
         if source is None:
@@ -606,78 +577,6 @@ class HelperPlacement(EngineState):
             except (OSError, UnicodeError, ValueError):
                 return None
         return global_bindings(source)
-
-    def _find_class_info_for_base(
-        self,
-        class_infos: List[ClassInfo],
-        base_name: str,
-        *,
-        referencing_file: str,
-        referencing_qualname: str,
-        sources: Mapping[str, str],
-    ) -> Optional[ClassInfo]:
-        """Resolve a base-class reference where the class statement making it runs.
-
-        A module binds its globals as it runs, so what a base name denotes
-        belongs to a position, not to the module as a whole: an ordinary
-        ``Base = object`` between two subclasses leaves the second
-        inheriting ``object`` while the first still inherits the class the
-        name held before. The binding the name has at the referencing class
-        statement therefore decides the answer, and it must be either a
-        ``class`` statement of this module (a base written as
-        ``Outer.Inner`` is that class's qualname) or one of the module's own
-        unconditional imports, in whose module the class is then looked up.
-        A project may define several classes with one name (oauthlib has a
-        ``BaseEndpoint`` per protocol), so a name is never matched across
-        the project, and a reference whose binding cannot be established, or
-        that resolves to no single class, contributes no ancestor.
-        """
-        table = self._module_bindings(referencing_file, sources)
-        if table is None:
-            return None
-        order = table.class_orders.get(referencing_qualname)
-        if order is None:
-            return None
-        binding = table.in_effect(base_name.split(".")[0], order)
-        if binding is None:
-            return None
-        if binding.class_qualname is not None:
-            root = binding.class_qualname
-            if base_name != root and not base_name.startswith(f"{root}."):
-                return None
-            local = [
-                info
-                for info in class_infos
-                if info.file_path == referencing_file and info.qualname == base_name
-            ]
-            found = local[0] if len(local) == 1 else None
-        elif not binding.is_import:
-            return None
-        else:
-            sites = imported_definition_sites(referencing_file, base_name, self.import_graph)
-            if not sites:
-                return None
-            matches = [
-                info
-                for info in class_infos
-                if (self.import_graph.resolve(info.file_path), info.qualname) in sites
-            ]
-            found = matches[0] if len(matches) == 1 else None
-        if found is None or self._decorated_out_of_reach(found, sources):
-            return None
-        return found
-
-    def _decorated_out_of_reach(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
-        """Whether a decorator may have bound the class's name to something other than it.
-
-        ``@register class Base:`` binds ``Base`` to whatever ``register``
-        returns, which a subclass then inherits from; only decorators known to
-        keep the class and its namespace let the class statement stand for it.
-        """
-        if "." in info.qualname:
-            return False  # A nested class is found through its module-level owner.
-        table = self._module_bindings(info.file_path, sources)
-        return table is None or not table.keeps_namespace(info.qualname)
 
     def _can_host(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
         """Whether a helper placed in ``info``'s body stays a plain member of the class.
@@ -708,93 +607,6 @@ class HelperPlacement(EngineState):
             return False
         return code.leaves_functions_alone(info.qualname)
 
-    def _ancestor_depths(
-        self,
-        class_info: ClassInfo,
-        class_infos: List[ClassInfo],
-        sources: Mapping[str, str],
-    ) -> List[Tuple[ClassInfo, int]]:
-        """Each ancestor with how many base-class steps away it is, nearest first."""
-        found: List[Tuple[ClassInfo, int]] = []
-        # The starting class is seeded: bases are resolved by name through
-        # imports, so a chain can appear to return to where it began, and it
-        # would otherwise be recorded as its own ancestor at depth two.
-        visited: Set[Tuple[str, str]] = {self._class_info_key(class_info)}
-        queue: deque[Tuple[ClassInfo, int]] = deque([(class_info, 0)])
-
-        while queue:
-            current, depth = queue.popleft()
-            for base_name in current.bases:
-                base_info = self._find_class_info_for_base(
-                    class_infos,
-                    base_name,
-                    referencing_file=current.file_path,
-                    referencing_qualname=current.qualname,
-                    sources=sources,
-                )
-                if base_info is None:
-                    continue
-                key = self._class_info_key(base_info)
-                if key in visited:
-                    continue
-                visited.add(key)
-                found.append((base_info, depth + 1))
-                queue.append((base_info, depth + 1))
-
-        found.sort(key=lambda item: item[1])
-        return found
-
-    def _find_common_ancestor(
-        self,
-        class1: Tuple[str, str],
-        class2: Tuple[str, str],
-        class_infos: List[ClassInfo],
-        sources: Mapping[str, str],
-        admits: Callable[[ClassInfo], bool] = lambda info: True,
-    ) -> Optional[ClassInfo]:
-        """The shared ancestor nearest to both classes, or None when they share none.
-
-        Several classes can be ancestors of both. Taking the first found from
-        one side made the answer depend on which class the pair happened to
-        present first: two classes whose common ancestors are ``Mid`` and its
-        own base ``Root`` were given ``Mid`` in one order and ``Root`` in the
-        other. Runtime dispatch is indifferent, since every common ancestor is
-        on both classes' method resolution orders, but the choice decides what
-        the helper's receiver is, and a nearer ancestor states a narrower type
-        that exposes more of what the body may use. So the candidates are
-        ranked by their greatest distance from either class, then by their
-        total distance, then by where they are defined, which is an order both
-        sides agree on. An ancestor ``admits`` refuses is passed over like one
-        that cannot host, and a farther one may still serve.
-        """
-        file1, name1 = class1
-        file2, name2 = class2
-
-        info1 = self._find_class_info_by_name(class_infos, file1, name1)
-        info2 = self._find_class_info_by_name(class_infos, file2, name2)
-        if info1 is None or info2 is None:
-            return None
-
-        key1 = self._class_info_key(info1)
-        key2 = self._class_info_key(info2)
-        reachable1 = {
-            self._class_info_key(info): depth
-            for info, depth in [(info1, 0), *self._ancestor_depths(info1, class_infos, sources)]
-        }
-        shared: List[Tuple[int, int, Tuple[str, str], ClassInfo]] = []
-        for info, depth2 in [(info2, 0), *self._ancestor_depths(info2, class_infos, sources)]:
-            key = self._class_info_key(info)
-            depth1 = reachable1.get(key)
-            if depth1 is None or (key == key1 and key == key2):
-                continue  # Identical class; handled elsewhere.
-            if not self._can_host(info, sources) or not admits(info):
-                # A farther ancestor is on both method resolution orders too.
-                continue
-            shared.append((max(depth1, depth2), depth1 + depth2, key, info))
-        if not shared:
-            return None
-        return min(shared, key=lambda candidate: candidate[:3])[3]
-
     def _choose_class_insertion(
         self,
         pair: CodeBlockPair,
@@ -802,17 +614,26 @@ class HelperPlacement(EngineState):
         method_info2: MethodInfo,
         class_infos: List[ClassInfo],
     ) -> Optional[ClassInsertionPlan]:
-        """Determine whether the helper should be inserted into a class context."""
-        # Both blocks must sit in methods of the same kind.
+        """The class whose method the helper becomes, or None for a module-level helper.
+
+        Only the class whose methods hold both duplicates can take it. A
+        method added to any other class, such as a base the two classes
+        share, is inherited by every class deriving from it, including ones
+        outside the project that Towel cannot see; the choice of base may not
+        be unique; and the class would gain a member where it held none of
+        the code. Blocks shared by sibling classes, by a parent and a child,
+        or by classes in different modules get the module-level helper that
+        takes the receiver as an argument, and whether it belongs in a class
+        is left to whoever reviews the change (docs/DECISIONS.md, "Towel does
+        not change externally visible class design").
+        """
         if not (method_info1.receiver_known and method_info2.receiver_known):
             return None
-        if pair.class1_name is not None and not _unique_module_level_class(
-            class_infos, pair.file_path, pair.class1_name
-        ):
+        class_name = pair.class1_name
+        if class_name is None or pair.is_cross_file or pair.class2_name != class_name:
             return None
-        if pair.class2_name is not None and not _unique_module_level_class(
-            class_infos, pair.file_path2, pair.class2_name
-        ):
+        host = _module_level_class(class_infos, pair.file_path, class_name)
+        if host is None:
             return None
         k1, k2 = method_info1.kind, method_info2.kind
         # A block with no method context (a function nested inside a method, or
@@ -837,56 +658,12 @@ class HelperPlacement(EngineState):
             return None
         if k1 != k2:
             return None
-        if pair.class1_name is None or pair.class2_name is None:
+        sources = {pair.file_path: pair.source1}
+        if not self._can_host(host, sources) or not self._leaves_functions_alone(host, sources):
             return None
-
-        file1 = pair.file_path
-        file2 = pair.file_path2
-
-        # At this point we know effective_kind is valid because we've already validated k1/k2
-        effective_kind: MethodKind = k1
-        sources = {file1: pair.source1, file2: pair.source2}
-        if file1 == file2 and pair.class1_name == pair.class2_name:
-            own = self._find_class_info_by_name(class_infos, file1, pair.class1_name)
-            if (
-                own is None
-                or not self._can_host(own, sources)
-                or not self._leaves_functions_alone(own, sources)
-            ):
-                return None
-            implicit_param = _implicit_param_for(effective_kind, method_info1, method_info2)
-            return ClassInsertionPlan(
-                class_name=pair.class1_name,
-                file_path=file1,
-                method_kind=effective_kind,
-                implicit_param=implicit_param,
-            )
-
-        # The modules the pair was parsed from answer for their own bindings
-        # without being read again, and answer for the text the class index
-        # describes rather than for whatever is on disk now. A method helper
-        # runs the template's relative imports in the ancestor's module, so
-        # an ancestor in another package would import other modules.
-        levels = relative_import_levels(pair.block1_nodes)
-        ancestor = self._find_common_ancestor(
-            (file1, pair.class1_name),
-            (file2, pair.class2_name),
-            class_infos,
-            sources,
-            admits=lambda info: relative_imports_resolve_alike(
-                (info.file_path, file1, file2), levels
-            ),
-        )
-        if ancestor is None or not _unique_module_level_class(
-            class_infos, ancestor.file_path, ancestor.name
-        ):
-            return None
-
-        implicit_param = _implicit_param_for(effective_kind, method_info1, method_info2)
-
         return ClassInsertionPlan(
-            class_name=ancestor.name,
-            file_path=ancestor.file_path,
-            method_kind=effective_kind,
-            implicit_param=implicit_param,
+            class_name=class_name,
+            file_path=pair.file_path,
+            method_kind=k1,
+            implicit_param=_implicit_param_for(k1, method_info1, method_info2),
         )

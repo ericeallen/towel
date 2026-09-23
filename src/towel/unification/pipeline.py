@@ -133,22 +133,6 @@ def analyze_scopes(mods: Sequence[RawModule]) -> List[ParsedModule]:
     return analyzed
 
 
-def _resolve_base_name(expr: ast.expr) -> Optional[str]:
-    """The dotted name a base-class expression spells, or None for anything else."""
-    if isinstance(expr, ast.Name):
-        return expr.id
-    if isinstance(expr, ast.Attribute):
-        parts: List[str] = []
-        cur: ast.expr = expr
-        while isinstance(cur, ast.Attribute):
-            parts.append(cur.attr)
-            cur = cur.value
-        if isinstance(cur, ast.Name):
-            parts.append(cur.id)
-            return ".".join(reversed(parts))
-    return None
-
-
 class _ClassCollector(DefinitionDepthVisitor):
     """Appends a ClassInfo for every class of one module to ``infos``."""
 
@@ -163,12 +147,7 @@ class _ClassCollector(DefinitionDepthVisitor):
         if not isinstance(node, ast.ClassDef):
             return
         qualname = ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
-        bases = [
-            resolved for resolved in map(_resolve_base_name, node.bases) if resolved is not None
-        ]
-        self.infos.append(
-            ClassInfo(name=node.name, qualname=qualname, file_path=self.file_path, bases=bases)
-        )
+        self.infos.append(ClassInfo(name=node.name, qualname=qualname, file_path=self.file_path))
         self.class_stack.append(node.name)
 
     def _leave_definition(

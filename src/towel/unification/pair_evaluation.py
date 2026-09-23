@@ -202,9 +202,6 @@ class _Placed:
     unified: _Unified
     rendered: _RenderedHelper
     placement: _Placement
-    # The helper reads module names bare (stage 6) but placement put it in a
-    # module other than the one both sites resolved them in.
-    reads_bare_elsewhere: bool
     # Names the helper reads bare from its host module's namespace that a site
     # in another module may resolve differently (``_reads_differing_by_module``).
     differing_reads: FrozenSet[str] = frozenset()
@@ -440,17 +437,13 @@ class PairEvaluation(
         if value_producing is None:
             return None
         placed = self._unify_and_place(
-            pair, setup, analysis, value_producing, functions, class_infos, keep_module_names=True
+            pair, setup, analysis, value_producing, functions, class_infos
         )
-        if placed is not None and (placed.reads_bare_elsewhere or placed.differing_reads):
-            # The names are the same lookup only from the sites' own module;
-            # a helper hosted in an ancestor class defined elsewhere would
-            # resolve them in that module, and a builtin that one of the
-            # modules rebinds is not the same lookup from the others. Decide
-            # the pair again with those names parameters, and with every
-            # module name one when the helper left the sites' module.
-            # Unification runs again because the later stages rewrite the
-            # substitution in place.
+        if placed is not None and placed.differing_reads:
+            # A builtin that one of the modules rebinds is not the same lookup
+            # from the others. Decide the pair again with those names
+            # parameters. Unification runs again because the later stages
+            # rewrite the substitution in place.
             placed = self._unify_and_place(
                 pair,
                 setup,
@@ -458,10 +451,9 @@ class PairEvaluation(
                 value_producing,
                 functions,
                 class_infos,
-                keep_module_names=not placed.reads_bare_elsewhere,
                 forced_parameters=placed.differing_reads,
             )
-            if placed is not None and (placed.reads_bare_elsewhere or placed.differing_reads):
+            if placed is not None and placed.differing_reads:
                 self._debug_reject(
                     RejectReason.BARE_NAME_DIFFERS_BY_MODULE,
                     pair,
@@ -483,13 +475,9 @@ class PairEvaluation(
         functions: FunctionIndex,
         class_infos: List[ClassInfo],
         *,
-        keep_module_names: bool,
         forced_parameters: FrozenSet[str] = frozenset(),
     ) -> Optional[_Placed]:
-        """Stages 4 to 10, with or without reading shared module names bare.
-
-        Every name in ``forced_parameters`` the template reads is a parameter.
-        """
+        """Stages 4 to 10; every name in ``forced_parameters`` the template reads is a parameter."""
         ctx = setup.ctx
         unified = self._unify_pair(pair, analysis)
         if unified is None:
@@ -500,7 +488,6 @@ class PairEvaluation(
             ctx,
             analysis,
             unified,
-            keep_module_names=keep_module_names,
             forced_parameters=forced_parameters,
         )
         if free is None:
@@ -518,14 +505,11 @@ class PairEvaluation(
         placement = self._place_helper(pair, setup, scope, sites, functions, class_infos)
         if placement is None:
             return None
-        elsewhere = bool(free.module_names) and os.path.abspath(
-            placement.home.file_path
-        ) != os.path.abspath(pair.file_path)
         differing = self._reads_differing_by_module(pair, placement, rendered.func_def, functions)
         if differing is None:
             self._debug_reject(RejectReason.BARE_NAME_DIFFERS_BY_MODULE, pair)
             return None
-        return _Placed(unified, rendered, placement, elsewhere, differing)
+        return _Placed(unified, rendered, placement, differing)
 
     def _reads_differing_by_module(
         self,
@@ -931,14 +915,11 @@ class PairEvaluation(
         analysis: _BindingAnalysis,
         unified: _Unified,
         *,
-        keep_module_names: bool = True,
         forced_parameters: FrozenSet[str] = frozenset(),
     ) -> Optional[_FreeVariables]:
         """The helper's free variables, checked for lifetime, declared, and thunked as needed.
 
-        With ``keep_module_names`` false every shared free name is a parameter,
-        as for a helper whose module is not the sites' own; a name in
-        ``forced_parameters`` that the template reads is one either way.
+        A name in ``forced_parameters`` that the template reads is a parameter.
         """
         debug_enabled = debugging(VALIDATION)
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
@@ -999,11 +980,7 @@ class PairEvaluation(
         globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
             pair, scope_analyzer, free_vars
         )
-        module_names = (
-            self._names_kept_free(pair, ctx, free_vars - forced_parameters)
-            if keep_module_names
-            else frozenset()
-        )
+        module_names = self._names_kept_free(pair, ctx, free_vars - forced_parameters)
         free_vars -= module_names
         if self._rejects_module_data_lookup(
             pair, pair.scope_analyzer1, pair.scope_analyzer2, deferred=module_names
@@ -1325,7 +1302,7 @@ class PairEvaluation(
                 for index, replacement in enumerate(replacements)
                 if index not in sites.cluster_contexts
                 or (
-                    sites.cluster_contexts[index].class_name in {pair.class1_name, pair.class2_name}
+                    sites.cluster_contexts[index].class_name == home.insert_into_class
                     and sites.cluster_contexts[index].method == setup.method_info1
                 )
             ]
@@ -1383,22 +1360,13 @@ class PairEvaluation(
             pair, setup.method_info1, setup.method_info2, class_infos
         )
         if class_plan is not None:
-            # Both blocks in one class: insert there. Different classes with a
-            # common ancestor that is neither: insert into the ancestor. A plan
-            # naming one concrete sibling would hide the helper from the other,
-            # so that falls back to module level.
-            same_class = pair.class1_name is not None and pair.class1_name == pair.class2_name
-            target_is_concrete_sibling = (
-                class_plan.class_name in {pair.class1_name, pair.class2_name} and not same_class
+            return HelperHome(
+                class_plan.file_path,
+                class_plan.class_name,
+                None,
+                class_plan.method_kind,
+                class_plan.implicit_param,
             )
-            if not target_is_concrete_sibling:
-                return HelperHome(
-                    class_plan.file_path,
-                    class_plan.class_name,
-                    None,
-                    class_plan.method_kind,
-                    class_plan.implicit_param,
-                )
         return HelperHome(canonical_file, None, None, None, None)
 
     def _safe_home_across_modules(

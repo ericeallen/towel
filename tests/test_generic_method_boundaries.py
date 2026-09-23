@@ -168,103 +168,84 @@ def test_explicit_source_receiver_contract_is_not_silently_erased(
     assert path.read_text() == source
 
 
-def test_inherited_helper_can_use_members_declared_on_its_actual_base_host(
-    tmp_path: Path, checker: TypeOracle
+SIBLINGS = {
+    # The shared block reads a member the classes inherit from their base.
+    "inherited-member": """
+        class Base:
+            calls: int = 0
+        class First(Base):
+            def first(self, values: list[int]) -> int:
+                self.calls += 1
+                result = values[0]
+                return result
+        class Second(Base):
+            def second(self, values: list[str]) -> str:
+                self.calls += 1
+                result = values[0]
+                return result
+        """,
+    # The shared block reads a member each class declares for itself, typed
+    # differently; the base has none.
+    "own-members": """
+        class Base:
+            pass
+        class First(Base):
+            items: list[int] = [1]
+            def first(self, value: int) -> list[int]:
+                result = self.items.copy()
+                result.append(value)
+                return result
+        class Second(Base):
+            items: list[str] = ["a"]
+            def second(self, value: str) -> list[str]:
+                result = self.items.copy()
+                result.append(value)
+                return result
+        """,
+}
+
+
+@pytest.mark.parametrize("program", sorted(SIBLINGS))
+def test_a_block_sibling_classes_share_is_a_module_function_the_checker_accepts(
+    tmp_path: Path, checker: TypeOracle, program: str
 ) -> None:
-    path = _project(
-        tmp_path,
-        textwrap.dedent("""
-            class Base:
-                calls: int = 0
-            class First(Base):
-                def first(self, values: list[int]) -> int:
-                    self.calls += 1
-                    result = values[0]
-                    return result
-            class Second(Base):
-                def second(self, values: list[str]) -> str:
-                    self.calls += 1
-                    result = values[0]
-                    return result
-            """),
-    )
+    """Methods of two classes share a helper only as a module function taking the receiver.
+
+    The base the classes have in common used to take it as a generic method,
+    which made it a member of every subclass of ``Base``; no class gains one
+    now (docs/DECISIONS.md). The module function must pass the project's
+    checker, or the extraction is declined and nothing changes.
+    """
+    path = _project(tmp_path, textwrap.dedent(SIBLINGS[program]))
     source = path.read_text()
     assert checker.check(str(path), source) == CheckSuccess()
     engine = _engine(checker)
-    proposal = next(
-        proposal
-        for proposal in engine.analyze_file(str(path))
-        if proposal.insert_into_class == "Base"
-    )
-    rendered = engine.apply_refactoring(str(path), proposal)
-    helper = _method(rendered, "Base")
-    assert "Any" not in rendered and _declarations(rendered)
-    assert helper.args.args[0].annotation is None
-    assert checker.check(str(path), rendered) == CheckSuccess()
-    namespace: dict[str, object] = {}
-    exec(
-        compile(
-            rendered
-            + "\nfirst = First()\nsecond = Second()\nassert first.first([1]) == 1\n"
-            + 'assert second.second(["x"]) == "x"\n'
-            + "assert first.calls == 1 and second.calls == 1\n",
-            str(path),
-            "exec",
-        ),
-        namespace,
-    )
-    assert path.read_text() == source
-
-
-def test_subclass_only_members_do_not_certify_a_generic_helper_on_the_base(
-    tmp_path: Path, checker: TypeOracle
-) -> None:
-    path = _project(
-        tmp_path,
-        textwrap.dedent("""
-            class Base:
-                pass
-            class First(Base):
-                items: list[int] = [1]
-                def first(self, value: int) -> list[int]:
-                    result = self.items.copy()
-                    result.append(value)
-                    return result
-            class Second(Base):
-                items: list[str] = ["a"]
-                def second(self, value: str) -> list[str]:
-                    result = self.items.copy()
-                    result.append(value)
-                    return result
-            """),
-    )
-    source = path.read_text()
-    assert checker.check(str(path), source) == CheckSuccess()
-    oracle = _RecordingOracle(checker)
-    engine = _engine(oracle)
-    proposal = next(
-        proposal
-        for proposal in engine.analyze_file(str(path))
-        if proposal.insert_into_class == "Base"
-    )
+    proposals = engine.analyze_file(str(path))
+    assert proposals and all(proposal.insert_into_class is None for proposal in proposals)
     try:
-        rendered = engine.apply_refactoring(str(path), proposal)
+        rendered = engine.apply_refactoring(str(path), proposals[0])
     except RefactoringError as error:
         assert "Every helper annotation variant" in str(error)
         assert engine.change_log == ()
     else:
-        assert not _declarations(rendered), "Only a separately verified ordinary fallback may pass"
+        helper = _module_function(rendered)
+        assert helper.args.args[0].arg == "self"
         assert checker.check(str(path), rendered) == CheckSuccess()
-    generic_checks = [result for files, result in oracle.checks if _declarations(files[str(path)])]
-    assert generic_checks
-    assert all(isinstance(result, CheckSuccess) and result.errors for result in generic_checks)
-    assert any(
-        "items" in diagnostic.message and "Base" in diagnostic.message
-        for result in generic_checks
-        if isinstance(result, CheckSuccess)
-        for diagnostic in result.errors
-    )
+        arguments = ("[1]", '["x"]') if program == "inherited-member" else ("2", '"b"')
+        driver = (
+            "\nfirst, second = First(), Second()\n"
+            f"results = (first.first({arguments[0]}), second.second({arguments[1]}),"
+            f" first.first({arguments[0]}), vars(first), vars(second))\n"
+        )
+        assert _results(rendered + driver) == _results(source + driver)
     assert path.read_text() == source
+
+
+def _results(program: str) -> object:
+    """What ``program`` leaves in ``results`` when run in a namespace of its own."""
+    namespace: dict[str, object] = {}
+    exec(compile(program, "program.py", "exec"), namespace)
+    return namespace["results"]
 
 
 def test_class_attribute_names_do_not_capture_generated_type_variables(
