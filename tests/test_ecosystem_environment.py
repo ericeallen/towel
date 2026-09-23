@@ -7,7 +7,7 @@ tools' own copies of click, packaging and the rest and called those projects'
 names ambiguous. These tests pin what replaced that: one candidate wheel, verified
 to be the source under test, installed with the types extra's checkers into each
 project's environment, where the project is installed editable from the tree the
-run is testing.
+run is testing, and ``--cross-module`` on every refactor that does not say why not.
 """
 
 from __future__ import annotations
@@ -379,6 +379,90 @@ def test_an_environment_whose_towel_is_not_the_candidate_is_refused(
 # -- How Towel is run ----------------------------------------------------------
 
 
+def _fake_towel(directory: Path, help_text: str, status: int = 0) -> Path:
+    towel = directory / "towel"
+    directory.mkdir(parents=True, exist_ok=True)
+    towel.write_text(f"#!/bin/sh\ncat <<'EOF'\n{help_text}\nEOF\nexit {status}\n")
+    towel.chmod(0o755)
+    return towel
+
+
+@pytest.mark.parametrize(
+    "help_text,accepted",
+    [
+        ("usage: towel dry [-h] [--cross-module] INPUT OUTPUT", True),
+        ("  --cross-module        extract helpers shared across modules", True),
+        ("usage: towel dry [-h] [--no-types] INPUT OUTPUT", False),
+        ("  --no-cross-module     keep helpers inside one module", False),
+        ("  --cross-module-limit N", False),
+    ],
+)
+def test_cross_module_support_is_read_from_the_towel_that_runs(
+    tmp_path: Path, help_text: str, accepted: bool
+) -> None:
+    towel = _fake_towel(tmp_path / "bin", help_text)
+    assert ecosystem.accepts_cross_module(towel, tmp_path, {"PATH": "/usr/bin:/bin"}) is accepted
+
+
+def test_a_towel_whose_help_fails_is_a_setup_failure(tmp_path: Path) -> None:
+    towel = _fake_towel(tmp_path / "bin", "Traceback: broken", status=1)
+    with pytest.raises(ecosystem.EnvironmentFailure, match="dry --help failed"):
+        ecosystem.accepts_cross_module(towel, tmp_path, {"PATH": "/usr/bin:/bin"})
+
+
+@pytest.mark.parametrize(
+    "enabled,reason,accepted,arguments,record",
+    [
+        (True, "", True, ("--cross-module",), (True, True, "--cross-module passed")),
+        (True, "", False, (), (True, True, "has no --cross-module option")),
+        (False, "hangs its suite", True, (), (False, False, "hangs its suite")),
+        (False, "hangs its suite", False, (), (False, True, "turns it off (hangs its suite)")),
+    ],
+)
+def test_every_refactor_extracts_across_modules_unless_the_manifest_says_why_not(
+    enabled: bool,
+    reason: str,
+    accepted: bool,
+    arguments: Tuple[str, ...],
+    record: Tuple[bool, bool, str],
+) -> None:
+    project = ecosystem.Project(
+        "fixture", "unused", "pinned", "p.py", cross_module=enabled, cross_module_reason=reason
+    )
+    passed, cross_module = ecosystem.cross_module_arguments(project, accepted)
+    assert passed == arguments
+    assert (cross_module.requested, cross_module.enabled) == record[:2]
+    assert record[2] in cross_module.reason
+
+
+@pytest.mark.parametrize(
+    "fields,message",
+    [
+        ({"cross_module": False}, "needs a cross_module_reason"),
+        ({"cross_module": False, "cross_module_reason": "  "}, "needs a cross_module_reason"),
+        ({"cross_module_reason": "stale"}, "is not turned off"),
+        ({"cross_module": "no"}, "must be a boolean"),
+    ],
+)
+def test_a_manifest_entry_cannot_turn_cross_module_off_without_a_reason(
+    tmp_path: Path, fields: Dict[str, object], message: str
+) -> None:
+    manifest = tmp_path / "manifest.toml"
+    extra = "".join(f"{key} = {json.dumps(value)}\n" for key, value in fields.items())
+    manifest.write_text(
+        '[[project]]\nname = "fixture"\nurl = "unused"\nrev = "pinned"\n'
+        f'package = "p.py"\n{extra}'
+    )
+    with pytest.raises(ValueError, match=message):
+        ecosystem.load_manifest(manifest, [])
+
+
+def test_the_corpus_turns_cross_module_off_for_no_project() -> None:
+    """Turning it off is a recorded decision; this pins that none has been made yet."""
+    projects = ecosystem.load_manifest(ecosystem.REPO / "scripts/ecosystem/manifest.toml", [])
+    assert [project.name for project in projects if not project.cross_module] == []
+
+
 def test_every_project_is_installed_unless_its_entry_says_why_not() -> None:
     """An editable install of the project is how its developers have it, and what Towel's
     import model expects. The exceptions cannot be built, or compile an extension into the
@@ -411,6 +495,8 @@ class Trace:
     steps: List[str] = dataclasses.field(default_factory=list)
     tests: List[Path] = dataclasses.field(default_factory=list)
     installs: List[Path] = dataclasses.field(default_factory=list)
+    helps: List[Tuple[Path, Path, bool]] = dataclasses.field(default_factory=list)
+    """The ``towel`` asked, where, and whether PYTHONPATH was set."""
     refactors: List[Tuple[List[str], Path, bool]] = dataclasses.field(default_factory=list)
     """The command, where it ran, and whether PYTHONPATH was set."""
 
@@ -420,6 +506,7 @@ def _orchestrated(
     monkeypatch: pytest.MonkeyPatch,
     *,
     distribution: Optional[str],
+    accepted: bool = True,
     project: Optional[ecosystem.Project] = None,
 ) -> Tuple[ecosystem.Result, Trace]:
     """``check_project`` with its environment stubbed, tracing each step it takes."""
@@ -446,6 +533,11 @@ def _orchestrated(
         trace.installs.append(tree)
         return dataclasses.replace(environment.record, installed_from=str(tree))
 
+    def accepts(towel: Path, cwd: Path, env: Mapping[str, str]) -> bool:
+        trace.steps.append("help")
+        trace.helps.append((towel, cwd, "PYTHONPATH" in env))
+        return accepted
+
     def run(
         command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, log: Path
     ) -> ecosystem.Phase:
@@ -464,6 +556,7 @@ def _orchestrated(
         return ecosystem.Phase(0, 0.0, "3 passed", str(log))
 
     monkeypatch.setattr(ecosystem, "install_from", install_from)
+    monkeypatch.setattr(ecosystem, "accepts_cross_module", accepts)
     monkeypatch.setattr(ecosystem, "run", run)
     project = project or ecosystem.Project("fixture", "unused", "pinned", "package.py")
     return ecosystem.check_project(project, work, CANDIDATE, 10), trace
@@ -477,23 +570,41 @@ def test_towel_runs_from_the_project_environment_on_the_tree_it_refactors(
     towel = tmp_path / "env/bin/towel"
     # The baseline tests the clone as installed; then the installation moves to the
     # copy Towel refactors, before Towel runs, and stays there for the run after.
-    assert trace.steps == ["test", "install", "refactor", "test"]
+    assert trace.steps == ["test", "install", "help", "refactor", "test"]
     assert trace.tests == [tmp_path / "work/fixture", ready]
     assert trace.installs == [ready]
     # Towel is the environment's own, run from the project root, with no PYTHONPATH.
+    assert trace.helps == [(towel, ready, False)]
     [(command, cwd, pythonpath)] = trace.refactors
-    assert command[:3] == [str(towel), "dry", "package.py"]
+    assert command[:3] == [str(towel), "dry", "package.py"] and "--cross-module" in command
     assert cwd == ready and pythonpath is False
     assert result.verdict == "PASS"
     assert result.environment is not None and result.environment.installed_from == str(ready)
+    assert result.cross_module == ecosystem.CrossModule(True, True, "--cross-module passed")
 
 
 def test_a_project_that_is_not_installed_is_not_moved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    result, trace = _orchestrated(tmp_path, monkeypatch, distribution=None)
-    assert trace.steps == ["test", "refactor", "test"]
+    result, trace = _orchestrated(tmp_path, monkeypatch, distribution=None, accepted=False)
+    assert trace.steps == ["test", "help", "refactor", "test"]
+    [(command, _, _)] = trace.refactors
+    assert "--cross-module" not in command
     assert result.environment is not None and result.environment.installed_from == ""
+    assert result.cross_module is not None and result.cross_module.enabled
+    assert "extracts across modules by default" in result.cross_module.reason
+
+
+def test_a_project_that_turns_cross_module_off_is_refactored_without_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = ecosystem.Project(
+        "fixture", "unused", "pinned", "package.py", cross_module=False, cross_module_reason="why"
+    )
+    result, trace = _orchestrated(tmp_path, monkeypatch, distribution=None, project=project)
+    [(command, _, _)] = trace.refactors
+    assert "--cross-module" not in command
+    assert result.cross_module == ecosystem.CrossModule(False, False, "why")
 
 
 def executor(max_workers: int, initializer: Callable[[], None]) -> ThreadPoolExecutor:
@@ -542,6 +653,25 @@ def test_the_summary_records_the_candidate_and_what_each_project_ran_with(
     assert project["environment"] == recorded
     markdown = (tmp_path / "report/summary.md").read_text()
     assert "| mypy 1.19.1 (project), pyright 1.1.414 |" in markdown
+
+
+def test_the_summary_names_every_project_refactored_without_cross_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    results = {
+        "kept": ecosystem.Result(
+            "kept", "PASS", cross_module=ecosystem.CrossModule(True, True, "--cross-module passed")
+        ),
+        "dropped": ecosystem.Result(
+            "dropped", "PASS", cross_module=ecosystem.CrossModule(False, False, "its suite hangs")
+        ),
+    }
+    assert _main_with(tmp_path, monkeypatch, results) == 0
+    summary = json.loads((tmp_path / "report/summary.json").read_text())
+    assert summary["cross_module_off"] == {"dropped": "its suite hangs"}
+    assert summary["results"][0]["cross_module"]["reason"] == "its suite hangs"
+    markdown = (tmp_path / "report/summary.md").read_text()
+    assert "Cross-module extraction off: dropped (its suite hangs)" in markdown
 
 
 # -- A retest of the original runs the original, installed copy included --------

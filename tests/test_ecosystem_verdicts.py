@@ -130,6 +130,7 @@ def _check(
     (source / "package.py").write_text("value = 1\n")
     monkeypatch.setattr(ecosystem, "clone", lambda *_: "pinned")
     monkeypatch.setattr(ecosystem, "environment", lambda *_: ENVIRONMENT)
+    monkeypatch.setattr(ecosystem, "accepts_cross_module", lambda *_: True)
     monkeypatch.setattr(ecosystem, "base_env", lambda *_: {})
     monkeypatch.setattr(ecosystem, "changed", lambda *_: (int(changed), "fixture"))
     phases = iter([before, after])
@@ -141,6 +142,7 @@ def _check(
         nonlocal refactor_calls
         if _is_refactor(command):
             refactor_calls += 1
+            assert ecosystem.CROSS_MODULE_FLAG in command, "every attempt extracts across modules"
             outcome = refactor
             if refactor_calls == 1:
                 assert command.count("--no-types") == int(no_types)
@@ -1285,6 +1287,7 @@ def test_check_project_requires_full_context_before_accepting_isolated_agreement
     ).strip()
     monkeypatch.setattr(ecosystem, "clone", lambda *_: commit)
     monkeypatch.setattr(ecosystem, "environment", lambda *_: ENVIRONMENT)
+    monkeypatch.setattr(ecosystem, "accepts_cross_module", lambda *_: False)
     actual_run = ecosystem.run
     refactor_calls = 0
 
@@ -1298,6 +1301,8 @@ def test_check_project_requires_full_context_before_accepting_isolated_agreement
             )
         refactor_calls += 1
         assert command[1:3] == ["dry", "package/original.py"]
+        # A Towel without --cross-module extracts across modules by default.
+        assert ecosystem.CROSS_MODULE_FLAG not in command
         assert cwd == tmp_path / "repository-ready"
         body = "return 0 if armed else 42" if regression else "return 40 + 2"
         Path(command[3]).write_text(common + f"def result():\n    {body}\n")

@@ -29,6 +29,12 @@ imports the project other than through ``PYTHONPATH`` tests the same code as the
 rest of its run. Each report records the interpreter, the candidate, and the
 mypy and pyright that were there, and who installed them.
 
+Every refactor extracts across modules, where the corpus finds the most bugs:
+the harness passes ``--cross-module`` wherever the Towel under test has that
+option, and leaves it out where it does not, since such a Towel extracts across
+modules by default. A manifest entry may turn it off only by giving its reason,
+and the report names each project that ran without it.
+
 Types stay enabled unless the caller explicitly requests ``--no-types``. A
 project whose own sources do not type-check is declined by Towel rather than
 refactored unverified, which is its documented behaviour and the answer it
@@ -108,6 +114,8 @@ TOWEL_PACKAGE = "towel"
 """The import package the candidate wheel provides."""
 ENVIRONMENT_LAYOUT = 2
 """What a project environment holds; raised when that changes, so an older one is rebuilt."""
+CROSS_MODULE_FLAG = "--cross-module"
+"""The option that turns on extraction across modules, where the Towel under test has it."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -127,12 +135,28 @@ class Project:
     timeout: Optional[int] = None
     exclude: Tuple[str, ...] = ()
     failure_exit_codes: Tuple[int, ...] = (1,)
+    cross_module: bool = True
+    """Refactor with extraction across modules, which the corpus exists to exercise."""
+    cross_module_reason: str = ""
+    """Why this project turns ``cross_module`` off; required exactly when it does."""
 
     def __post_init__(self) -> None:
         if not self.failure_exit_codes or any(
             type(code) is not int or not 1 <= code <= 255 for code in self.failure_exit_codes
         ):
             raise ValueError("failure_exit_codes must contain positive process exit codes (1-255)")
+        if type(self.cross_module) is not bool or type(self.cross_module_reason) is not str:
+            raise ValueError(f"{self.name}: cross_module must be a boolean and its reason a string")
+        # Every project runs with cross-module extraction, because that is where the
+        # bugs are; one that does not is a recorded decision, not a silent default.
+        if not self.cross_module and not self.cross_module_reason.strip():
+            raise ValueError(
+                f"{self.name}: cross_module = false needs a cross_module_reason saying why"
+            )
+        if self.cross_module and self.cross_module_reason:
+            raise ValueError(
+                f"{self.name}: cross_module_reason is given, but cross_module is not turned off"
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -183,6 +207,17 @@ class Environment:
     """The tree the project was installed from, editable, when Towel ran; empty if it was not."""
 
 
+@dataclasses.dataclass(frozen=True)
+class CrossModule:
+    """Whether a refactor extracted across modules, and on what authority."""
+
+    requested: bool
+    """What the manifest asked for: on, unless the entry gives a reason for off."""
+    enabled: bool
+    reason: str
+    """The option passed, the default of a Towel without it, or the manifest's reason for off."""
+
+
 @dataclasses.dataclass
 class Result:
     name: str
@@ -199,6 +234,8 @@ class Result:
     """Why the typed attempt was declined, when the verdict came from a retry without types."""
     environment: Optional[Environment] = None
     """What Towel ran with; absent only when the environment could not be built."""
+    cross_module: Optional[CrossModule] = None
+    """Whether the refactor extracted across modules; absent when no refactor ran."""
 
 
 def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
@@ -220,6 +257,8 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             timeout=entry.get("timeout"),
             exclude=tuple(entry.get("exclude", [])),
             failure_exit_codes=tuple(entry.get("failure_exit_codes", (1,))),
+            cross_module=entry.get("cross_module", True),
+            cross_module_reason=entry.get("cross_module_reason", ""),
         )
         if not only or project.name in only:
             projects.append(project)
@@ -959,6 +998,50 @@ def _prepare_test_command(command: Sequence[str]) -> List[str]:
     return prepared
 
 
+_CROSS_MODULE_OPTION = re.compile(rf"(?<![\w-]){re.escape(CROSS_MODULE_FLAG)}(?![\w-])")
+
+
+def accepts_cross_module(towel: Path, cwd: Path, env: Mapping[str, str]) -> bool:
+    """Whether this ``towel dry`` takes ``--cross-module``, by its own help, run as a refactor."""
+    completed = subprocess.run(
+        [str(towel), "dry", "--help"],
+        cwd=cwd,
+        env=dict(env),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise EnvironmentFailure(
+            f"{towel} dry --help failed (exit {completed.returncode}): {completed.stderr[-300:]}"
+        )
+    return _CROSS_MODULE_OPTION.search(completed.stdout) is not None
+
+
+def cross_module_arguments(project: Project, accepted: bool) -> Tuple[Tuple[str, ...], CrossModule]:
+    """The refactor's cross-module arguments, and the record of what they amount to.
+
+    Cross-module extraction is opt-in where Towel has ``--cross-module``, so the corpus
+    passes it to every project that does not give a reason to go without. A Towel
+    without the option extracts across modules by default, so there the flag is left
+    out to the same effect -- and then a manifest's opt-out cannot be honoured either,
+    which the record says rather than claiming it off.
+    """
+    default = (
+        f"the Towel under test has no {CROSS_MODULE_FLAG} option and extracts across modules "
+        "by default"
+    )
+    if project.cross_module:
+        if accepted:
+            return (CROSS_MODULE_FLAG,), CrossModule(True, True, f"{CROSS_MODULE_FLAG} passed")
+        return (), CrossModule(True, True, default)
+    if accepted:
+        return (), CrossModule(False, False, project.cross_module_reason)
+    not_applied = f"the manifest turns it off ({project.cross_module_reason}), but {default}"
+    return (), CrossModule(False, True, not_applied)
+
+
 def _setup_failed(result: Result, error: Exception) -> Result:
     """Record that the project's clone or environment could not be made what it must be."""
     result.verdict = "SETUP_ERROR"
@@ -1021,6 +1104,11 @@ def check_project(
     # projects in flight the caller caps that through TOWEL_WORKERS.
     if "TOWEL_WORKERS" in os.environ:
         towel_env["TOWEL_WORKERS"] = os.environ["TOWEL_WORKERS"]
+    try:
+        accepted = accepts_cross_module(towel, ready, towel_env)
+    except (EnvironmentFailure, subprocess.TimeoutExpired) as error:
+        return _setup_failed(result, error)
+    cross_module, result.cross_module = cross_module_arguments(project, accepted)
     # Refactor OUT OF PLACE to a differently named directory, then adopt the
     # cleaned copy back over the package. This mirrors the documented workflow
     # ("write to a new directory, diff, then adopt") and exercises import paths
@@ -1053,6 +1141,7 @@ def check_project(
                 "--no-interactive",
                 "--progress",
                 "none",
+                *cross_module,
                 *(["--no-types"] if without_types else []),
                 *(argument for name in project.exclude for argument in ("--exclude", name)),
             ],
@@ -1697,6 +1786,8 @@ def main() -> int:
             seconds = result.refactor.seconds if result.refactor else 0.0
             detail_line = result.detail.splitlines()[0] if result.detail else ""
             mode = f"[{result.typing_mode}]" if result.fallback else ""
+            if result.cross_module is not None and not result.cross_module.enabled:
+                mode += "[no cross-module]"
             print(
                 f"{result.verdict:15} {result.name:18} files={result.changed_files:<3} "
                 f"refactor={seconds:6.1f}s {mode}{detail_line[:80]}",
@@ -1713,6 +1804,18 @@ def main() -> int:
     for result in results:
         if result.fallback:
             fallbacks[result.fallback] = fallbacks.get(result.fallback, 0) + 1
+    cross_module_off = {
+        result.name: result.cross_module.reason
+        for result in results
+        if result.cross_module is not None and not result.cross_module.enabled
+    }
+    opt_out_not_applied = {
+        result.name: result.cross_module.reason
+        for result in results
+        if result.cross_module is not None
+        and result.cross_module.enabled
+        and not result.cross_module.requested
+    }
     lines = [
         f"# Ecosystem check — towel `{towel_commit or 'unavailable (source archive)'}`",
         "",
@@ -1726,6 +1829,10 @@ def main() -> int:
         "check is declined by Towel and rerun here without types; its row says so, and "
         "its verdict is evidence about the untyped path only. Runtime test outcomes do "
         "not establish type-checking coverage either way.",
+        "",
+        f"Every refactor extracts across modules ({CROSS_MODULE_FLAG}, or the default of a "
+        "Towel without that option) unless its manifest entry turns that off with a "
+        "reason; each such project is listed below the table.",
         "",
         "| Project | Commit | Verdict | Typing | Checkers | Changed files | Refactor s | Before "
         "| After |",
@@ -1747,6 +1854,19 @@ def main() -> int:
             "Declined the typed path and rerun without types: "
             + ", ".join(f"{key} {value}" for key, value in sorted(fallbacks.items())),
         ]
+    lines += [
+        "",
+        "Cross-module extraction off: "
+        + (
+            "; ".join(f"{name} ({why})" for name, why in sorted(cross_module_off.items())) or "none"
+        ),
+    ]
+    if opt_out_not_applied:
+        lines += [
+            "",
+            "Cross-module opt-out not applied: "
+            + "; ".join(f"{name} ({why})" for name, why in sorted(opt_out_not_applied.items())),
+        ]
     (report_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (report_dir / "summary.json").write_text(
         json.dumps(
@@ -1761,6 +1881,8 @@ def main() -> int:
                 "typing_mode": typing_mode,
                 "counts": counts,
                 "declined_typed_path": fallbacks,
+                "cross_module_off": cross_module_off,
+                "cross_module_opt_out_not_applied": opt_out_not_applied,
                 "results": [dataclasses.asdict(r) for r in results],
             },
             indent=2,
@@ -1769,7 +1891,9 @@ def main() -> int:
     )
     print(
         "\n".join(
-            line for line in lines if line.startswith("Totals:") or line.startswith("Declined")
+            line
+            for line in lines
+            if line.startswith(("Totals:", "Declined", "Cross-module extraction off"))
         ),
         flush=True,
     )

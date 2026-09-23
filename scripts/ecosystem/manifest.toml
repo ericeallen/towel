@@ -30,7 +30,10 @@
 # Towel's import model expects; false only where an editable install cannot be
 # built or compiles an extension module into the tree, which the suite would then
 # exercise in place of the Python code the refactoring changes, and each such
-# entry says which).
+# entry says which), cross_module (default true: the refactor extracts across
+# modules, where the corpus finds the most bugs; false only together with
+# cross_module_reason, the reason it is off, which the harness requires and the
+# report lists).
 
 [[project]]
 name = "tabulate"

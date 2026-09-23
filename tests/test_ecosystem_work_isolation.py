@@ -44,6 +44,7 @@ def _refactor_output(
     (source / "package.py").write_text("value = 1\n")
     monkeypatch.setattr(ecosystem, "clone", lambda *_: "pinned")
     monkeypatch.setattr(ecosystem, "environment", lambda *_: ENVIRONMENT)
+    monkeypatch.setattr(ecosystem, "accepts_cross_module", lambda *_: True)
     monkeypatch.setattr(ecosystem, "base_env", lambda *_: {})
     monkeypatch.setattr(ecosystem, "changed", lambda *_: (0, "fixture"))
     captured: list[Path] = []
