@@ -228,3 +228,172 @@ def test_pyright_types_a_receiver_as_its_class_unless_the_method_declares_otherw
     errors = _pyright_errors(_write(tmp_path, RECEIVERS))
     assert len(errors) == 2, errors
     assert all('parameter "self" of type "A"' in error for error in errors), errors
+
+
+# Zero-argument ``super()`` and ``__class__`` in a helper compiled in the class
+# body that holds the methods, reached through the receiver; in a module
+# function; and in a helper whose parameter named ``__class__`` hides the cell.
+CLASS_CELL = """
+    class A:
+        def who(self) -> str:
+            return "A"
+
+
+    class B(A):
+        def who(self) -> str:
+            return "B>" + super().who()
+
+
+    class C(A):
+        def who(self) -> str:
+            return "C>" + super().who()
+
+
+    class D(B, C):
+        def method(self) -> str:
+            return super().who() + "/" + __class__.__name__
+
+        def via_helper(self) -> str:
+            return self.__helper()
+
+        def __helper(self) -> str:
+            return super().who() + "/" + __class__.__name__
+
+        def via_shadowing_helper(self) -> str:
+            return self.__shadowing(D)
+
+        def __shadowing(self, __class__: type) -> str:
+            return super().who()
+
+
+    class E(D):
+        def who(self) -> str:
+            return "E"
+
+
+    def moved(receiver: D) -> str:
+        return super().who()
+    """
+
+
+def test_a_same_class_helper_reads_the_cell_and_receiver_the_method_reads() -> None:
+    """Why ``super()`` may move into a helper of its own class, and nowhere else.
+
+    The helper's cell is the same class and its first parameter the same
+    receiver, so a diamond resolves ``B``, ``C``, ``A`` from both, and a
+    subclass overriding ``who`` changes neither. A module function has no
+    cell, nor does a function whose parameter is named ``__class__``.
+    """
+    namespace: dict[str, object] = {}
+    exec(compile(textwrap.dedent(CLASS_CELL), "subject.py", "exec"), namespace)
+    for kind in ("D", "E"):
+        instance = namespace[kind]()  # type: ignore[operator]
+        assert instance.method() == instance.via_helper() == "B>C>A/D"
+    with pytest.raises(RuntimeError, match="__class__ cell not found"):
+        namespace["moved"](namespace["D"]())  # type: ignore[operator]
+    with pytest.raises(RuntimeError, match="__class__ cell not found"):
+        namespace["D"]().via_shadowing_helper()  # type: ignore[operator]
+
+
+# ``super()`` in scopes nested in a method, and the same scopes in a helper of
+# its class: each is evaluated where it stands, in the function's own scope.
+NESTED_SUPER_BODY = """
+        observed = []
+        try:
+            observed.append((lambda obj: super().who())(C()))
+        except (RuntimeError, TypeError) as error:
+            observed.append(type(error).__name__)
+        try:
+            observed.append((lambda: super().who())())
+        except (RuntimeError, TypeError) as error:
+            observed.append(type(error).__name__)
+        try:
+            observed.append([super().who() for _ in "x"])
+        except (RuntimeError, TypeError) as error:
+            observed.append(type(error).__name__)
+        try:
+            observed.append(list(super().who() for _ in "x"))
+        except (RuntimeError, TypeError) as error:
+            observed.append(type(error).__name__)
+        return observed
+"""
+
+NESTED_SUPER = """
+class A:
+    def who(self):
+        return "A:" + type(self).__name__
+
+
+class B(A):
+    def method(self):
+{body}
+    def via_helper(self):
+        return self.__helper()
+
+    def __helper(self):
+{body}
+
+class C(B):
+    pass
+"""
+
+
+def test_super_in_a_nested_scope_behaves_alike_in_a_method_and_a_same_class_helper() -> None:
+    """A nested scope's ``super()`` reads that scope's first argument and the class cell.
+
+    A lambda with an argument reads it (``A:C``); one without raises
+    ``RuntimeError``; a generator expression's first argument is its
+    iterator, so ``TypeError``; a list comprehension reads the function's
+    receiver where it is inlined (3.12 on) and its iterator, raising
+    ``TypeError``, where it is not. None of it depends on which function of
+    the class body holds the scope.
+    """
+    body = NESTED_SUPER_BODY.strip("\n")
+    namespace: dict[str, object] = {}
+    exec(compile(NESTED_SUPER.format(body=body), "subject.py", "exec"), namespace)
+    instance = namespace["B"]()  # type: ignore[operator]
+    comprehension: object = ["A:B"] if sys.version_info >= (3, 12) else "TypeError"
+    expected = ["A:C", "RuntimeError", comprehension, "TypeError"]
+    assert instance.method() == instance.via_helper() == expected
+
+
+SUPER_HELPER = """
+    class A:
+        def label(self, total: int) -> str:
+            return str(total)
+
+
+    class B(A):
+        def first(self, total: int) -> str:
+            return self.__helper(total).upper()
+
+        def second(self, total: int) -> str:
+            return self.__helper(total).lower()
+
+        def __helper(self, total: int) -> str:
+            return super().label(total + 1)
+    """
+
+
+@requires_mypy
+def test_mypy_accepts_super_in_a_class_private_helper(tmp_path: Path) -> None:
+    assert _mypy_errors(_write(tmp_path, SUPER_HELPER)) == []
+
+
+@requires_pyright
+def test_pyright_strict_accepts_super_in_a_class_private_helper(tmp_path: Path) -> None:
+    assert _pyright_errors(_write(tmp_path, SUPER_HELPER, strict_pyright=True)) == []
+
+
+CLASS_CELL_READ = """
+    class A:
+        def name(self) -> str:
+            return __class__.__name__
+    """
+
+
+@requires_mypy
+def test_mypy_does_not_know_the_class_cell(tmp_path: Path) -> None:
+    """Why a module helper for a static method is not reached through ``__class__``."""
+    errors = _mypy_errors(_write(tmp_path, CLASS_CELL_READ))
+    assert any('Name "__class__" is not defined' in error for error in errors), errors

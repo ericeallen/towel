@@ -98,6 +98,7 @@ from .semantic_safety import (
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
     frame_read_outside_block,
+    needs_class_body,
     unbinds_external_name,
     uses_class_private_names,
 )
@@ -122,6 +123,9 @@ class _PairSetup:
     ctx: "_PairContext"
     method_info1: MethodInfo
     method_info2: MethodInfo
+    # A block uses zero-argument ``super()`` (``needs_class_body``): the helper
+    # must be a method of the class holding both blocks, or nothing.
+    needs_class_body: bool = False
 
 
 @dataclass(frozen=True)
@@ -489,6 +493,7 @@ class PairEvaluation(
             analysis,
             unified,
             forced_parameters=forced_parameters,
+            in_class_body=setup.needs_class_body,
         )
         if free is None:
             return None
@@ -667,7 +672,13 @@ class PairEvaluation(
             ):
                 self._debug_reject(reason, pair)
                 return None
-        return _PairSetup(ctx=ctx, method_info1=method_info1, method_info2=method_info2)
+        return _PairSetup(
+            ctx=ctx,
+            method_info1=method_info1,
+            method_info2=method_info2,
+            needs_class_body=needs_class_body(pair.block1_nodes)
+            or needs_class_body(pair.block2_nodes),
+        )
 
     # -- 2 ---------------------------------------------------------------------
 
@@ -916,10 +927,15 @@ class PairEvaluation(
         unified: _Unified,
         *,
         forced_parameters: FrozenSet[str] = frozenset(),
+        in_class_body: bool = False,
     ) -> Optional[_FreeVariables]:
         """The helper's free variables, checked for lifetime, declared, and thunked as needed.
 
         A name in ``forced_parameters`` that the template reads is a parameter.
+        With ``in_class_body`` the helper can only be a method of the class
+        holding both blocks, compiled in its body, so it reads ``__class__``
+        bare: its own cell is that class, as each site's is, and zero-argument
+        ``super()`` in it needs that cell, which a parameter of the name hides.
         """
         debug_enabled = debugging(VALIDATION)
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
@@ -982,6 +998,8 @@ class PairEvaluation(
         )
         module_names = self._names_kept_free(pair, ctx, free_vars - forced_parameters)
         free_vars -= module_names
+        if in_class_body:
+            free_vars -= {"__class__"}
         if self._rejects_module_data_lookup(
             pair, pair.scope_analyzer1, pair.scope_analyzer2, deferred=module_names
         ):
@@ -1224,6 +1242,12 @@ class PairEvaluation(
             )
         except UnsupportedExtraction:
             return None
+        if needs_class_body([call_node]):
+            # The call would evaluate ``super()`` in a thunk, a lambda with no
+            # receiver, or pass ``super`` for the helper to call; neither frame
+            # reads the method's receiver, and the helper's may have no cell.
+            self._debug_reject(RejectReason.SUPER_IN_CALL, pair, detail=f"block{block_idx+1}")
+            return None
         if any(_is_forwarding_lambda(node) for node in ast.walk(call_node)):
             # ``lambda *args, **kwargs: callee(*args, **kwargs)`` keeps the
             # callee's timing but re-evaluates its expression on every call
@@ -1295,6 +1319,12 @@ class PairEvaluation(
         """Where the helper lives: a unique enclosing function, a class, or a module that closes no cycle."""
         ctx = setup.ctx
         home = self._helper_home(pair, setup, scope, functions, class_infos)
+        if setup.needs_class_body and home.insert_into_class is None:
+            # Zero-argument ``super()`` means what it meant only in a helper
+            # compiled in the class body that holds both blocks; a module or
+            # nested function has no cell for it. Nothing else can host it.
+            self._debug_reject(RejectReason.NEEDS_CLASS_BODY, pair)
+            return None
         replacements = sites.replacements
         if home.insert_into_class is not None and sites.cluster_contexts:
             # The helper is a method called through the receiver. A clustered

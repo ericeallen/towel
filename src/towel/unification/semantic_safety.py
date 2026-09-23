@@ -15,6 +15,7 @@ import dataclasses
 
 import ast
 import builtins
+from itertools import chain
 from typing import (
     Dict,
     Optional,
@@ -306,6 +307,9 @@ class FrameAliases:
     # ``stacklevel=``), directly or by calling another such function: a call
     # to one from inside a helper would see the helper instead.
     frame_readers: FrozenSet[str] = frozenset()
+    # ``s = super`` and ``from builtins import super as s``: names bound to
+    # ``super`` itself, whose call with no arguments reads the calling frame.
+    super_functions: FrozenSet[str] = frozenset()
 
 
 NO_ALIASES = FrameAliases()
@@ -324,6 +328,7 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
     warnings_modules: Set[str] = set()
     warn_functions: Set[str] = set()
     frame_functions: Set[str] = set()
+    super_functions: Set[str] = set()
     for node in ast.walk(module):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -337,6 +342,8 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
                     alias.name in _NAMESPACE_CALLEES or alias.name in _NAMESPACE_CALLEES_NO_ARGS
                 ):
                     namespace_functions.add(alias.asname or alias.name)
+                elif node.module == "builtins" and alias.name == "super":
+                    super_functions.add(alias.asname or alias.name)
                 elif node.module == "warnings" and alias.name == "warn":
                     warn_functions.add(alias.asname or alias.name)
     # ``e = eval`` and ``warn = warnings.warn`` are aliases too, wherever they
@@ -361,6 +368,7 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
                 )
                 warning = value.id in warn_functions
                 frame_reader = value.id in frame_functions
+                super_alias = value.id == "super" or value.id in super_functions
             elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
                 frame_builtin = value.value.id in builtins_modules and (
                     value.attr in _NAMESPACE_CALLEES or value.attr in _NAMESPACE_CALLEES_NO_ARGS
@@ -368,6 +376,7 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
                 warning = value.value.id in warnings_modules and value.attr == "warn"
                 # Any receiver: the attribute name alone identifies these.
                 frame_reader = value.attr in _FRAME_RELATIVE_CALLEES
+                super_alias = value.value.id in builtins_modules and value.attr == "super"
             else:
                 continue
             if frame_builtin and aliased not in namespace_functions:
@@ -379,12 +388,16 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
             if frame_reader and aliased not in frame_functions:
                 frame_functions.add(aliased)
                 grew = True
+            if super_alias and aliased not in super_functions:
+                super_functions.add(aliased)
+                grew = True
     aliases = FrameAliases(
         frozenset(builtins_modules),
         frozenset(namespace_functions),
         frozenset(warnings_modules),
         frozenset(warn_functions),
         frozenset(frame_functions),
+        super_functions=frozenset(super_functions),
     )
     result = dataclasses.replace(aliases, frame_readers=_frame_readers(module, aliases))
     _FRAME_ALIASES[module] = result
@@ -472,8 +485,99 @@ def requires_original_frame(nodes: Iterable[ast.AST], aliases: FrameAliases = NO
 def block_requires_original_frame(
     analyzer: "ScopeAnalyzer", function: FunctionNode, nodes: Sequence[ast.stmt]
 ) -> bool:
-    """``requires_original_frame`` with the module's aliases resolved (the guard-memo form)."""
-    return requires_original_frame(nodes, frame_aliases(analyzer.analyzed_tree))
+    """``requires_original_frame`` with the module's aliases resolved (the guard-memo form).
+
+    A block that needs its class body (``needs_class_body``) counts too when
+    its function's ``super()`` could mean something else in a helper of that
+    class (``_super_differs_in_a_helper``): no home at all would keep it.
+    """
+    return requires_original_frame(nodes, frame_aliases(analyzer.analyzed_tree)) or (
+        needs_class_body(nodes) and _super_differs_in_a_helper(function)
+    )
+
+
+def needs_class_body(nodes: Iterable[ast.AST]) -> bool:
+    """Whether moved code reads its class's ``__class__`` cell through ``super``.
+
+    Zero-argument ``super()`` is ``super(__class__, first)``. ``__class__`` is
+    the cell the compiler gives every function of a class body that loads
+    the name ``super`` or ``__class__``, and ``first`` is the current value of
+    the calling frame's first argument. A helper compiled in the same class
+    body gets the same cell, and one reached as ``self.__extracted_func_0()``
+    has the method's receiver first; a module-level function has no cell,
+    and its ``super()`` raises ``RuntimeError``. Such code may therefore move
+    only into a method helper of the class that holds it, and placement
+    declines every other home (docs/DECISIONS.md, "A method helper lives in
+    the class that holds both duplicates").
+
+    A call of ``super`` with a leading positional argument names its class
+    and object, reads no cell, and moves anywhere. Every other load of the
+    name counts: a call that may pass nothing (``super(*args)``,
+    ``super(**kwargs)``), and the bare value, which whatever receives it may
+    call with nothing (``s = super; s()`` works only in a function of the
+    class body). A nested function, lambda or comprehension in the code
+    counts as well; its cell is the same class's in a same-class helper, and
+    its own first argument moves with it, so each behaves as it did.
+    """
+    return any(
+        memoized_per_node(_CLASS_BODY_NEEDED, statement, _statement_needs_class_body)
+        for statement in nodes
+    )
+
+
+_CLASS_BODY_NEEDED: "WeakKeyDictionary[ast.AST, bool]" = WeakKeyDictionary()
+
+
+def _statement_needs_class_body(statement: ast.AST) -> bool:
+    explicit = {
+        id(node.func)
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Call) and not _may_pass_no_arguments(node)
+    }
+    return any(
+        isinstance(node, ast.Name)
+        and node.id == "super"
+        and isinstance(node.ctx, ast.Load)
+        and id(node) not in explicit
+        for node in ast.walk(statement)
+    )
+
+
+def _may_pass_no_arguments(call: ast.Call) -> bool:
+    """Whether ``call`` may pass no positional argument: none written, or a leading ``*iterable``."""
+    return not call.args or isinstance(call.args[0], ast.Starred)
+
+
+def _super_differs_in_a_helper(function: FunctionNode) -> bool:
+    """Whether zero-argument ``super()`` in ``function`` could mean something else in a method helper.
+
+    The helper's ``super()`` reads the helper's own cell and first
+    parameter, the method's reads the method's. They agree only while the
+    method's first positional parameter is the receiver that
+    ``self.__extracted_func_0()`` passes: never rebound or deleted in the
+    method, not even through a nested function's ``nonlocal``. The method
+    must also leave ``__class__`` alone: one that binds it, takes it as a
+    parameter, or declares it ``global`` or ``nonlocal`` has no cell, and its
+    ``super()`` raises where a helper's would not. A function with no
+    positional parameter has no receiver for ``super()`` to read either.
+    """
+    positional = [*function.args.posonlyargs, *function.args.args]
+    if not positional:
+        return True
+    rebound = set(
+        chain.from_iterable(
+            bindings_of(statement, into_nested_scopes=False) for statement in function.body
+        )
+    )
+    rebound.update(
+        name
+        for node in ast.walk(function)
+        if isinstance(node, (ast.Global, ast.Nonlocal))
+        for name in node.names
+    )
+    return positional[0].arg in rebound or "__class__" in rebound | set(
+        parameter_names(function.args)
+    )
 
 
 def frame_read_outside_block(
@@ -485,10 +589,17 @@ def frame_read_outside_block(
     walk after the block sees the block's locals; moved into a helper, they
     are gone (``dir()`` after the block lists fewer names; ``eval("total")``
     raises). Only the function's own scope counts: a nested function's
-    ``locals()`` is its own frame.
+    ``locals()`` is its own frame. An aliased ``super()`` outside the block
+    (``_is_aliased_super_call``) counts when the block loads ``super`` or
+    ``__class__``: that load may be what gives the function its class cell,
+    and it moves into the helper.
     """
     aliases = frame_aliases(analyzer.analyzed_tree)
     inside = set(map(id, nodes))
+    # Only a module that binds an alias of ``super`` or ``builtins`` can spell one.
+    moves_cell_load = bool(
+        aliases.super_functions or aliases.builtins_modules
+    ) and _loads_class_cell_name(nodes)
     for statement in function.body:
         if id(statement) in inside:
             continue
@@ -496,7 +607,9 @@ def frame_read_outside_block(
             if id(node) in inside:
                 break
             if isinstance(node, ast.Call) and (
-                is_namespace_access_call(node, aliases) or _reads_own_frame(node, aliases)
+                is_namespace_access_call(node, aliases)
+                or _reads_own_frame(node, aliases)
+                or (moves_cell_load and _is_aliased_super_call(node, aliases))
             ):
                 return True
     return False
@@ -551,6 +664,41 @@ def _called_name(call: ast.Call) -> Optional[str]:
     return None
 
 
+def _is_aliased_super_call(call: ast.Call, aliases: FrameAliases) -> bool:
+    """``super()`` reached through another name, with possibly no arguments: ``s()``, ``bi.super()``.
+
+    Like ``super()`` it reads the calling frame's ``__class__`` cell and
+    first argument, but the compiler gives a function that cell only for
+    loads of the names ``super`` and ``__class__`` in it; ``s()`` works in a
+    method only while something else in the method loads one of them. A
+    helper holding the call may lack the cell the method had, so the call
+    requires its original frame. The name ``super`` itself is the case
+    ``needs_class_body`` handles.
+    """
+    if not _may_pass_no_arguments(call):
+        return False
+    callee = call.func
+    if isinstance(callee, ast.Name):
+        return callee.id != "super" and callee.id in aliases.super_functions
+    return (
+        isinstance(callee, ast.Attribute)
+        and callee.attr == "super"
+        and isinstance(callee.value, ast.Name)
+        and callee.value.id in aliases.builtins_modules
+    )
+
+
+def _loads_class_cell_name(nodes: Iterable[ast.AST]) -> bool:
+    """Whether the nodes load ``super`` or ``__class__``, either of which gives a function its class cell."""
+    return any(
+        isinstance(node, ast.Name)
+        and node.id in {"super", "__class__"}
+        and isinstance(node.ctx, ast.Load)
+        for statement in nodes
+        for node in ast.walk(statement)
+    )
+
+
 def _reads_own_frame(call: ast.Call, aliases: FrameAliases) -> bool:
     """``sys._getframe()`` or ``inspect.currentframe()``: a handle to this frame's locals.
 
@@ -580,14 +728,7 @@ def _statement_requires_original_frame(statement: ast.AST, aliases: FrameAliases
             # An async comprehension is only valid inside an async function.
             return True
         if isinstance(node, ast.Call):
-            if is_namespace_access_call(node, aliases):
-                return True
-            if (
-                isinstance(node.func, ast.Name)
-                and node.func.id == "super"
-                and not node.args
-                and not node.keywords
-            ):
+            if is_namespace_access_call(node, aliases) or _is_aliased_super_call(node, aliases):
                 return True
             if _is_frame_relative_call(node, aliases) or _is_warning_call(node, aliases):
                 return True
