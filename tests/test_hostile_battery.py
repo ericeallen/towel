@@ -159,11 +159,17 @@ TRANSFORMED = {
     # would be a capture.)
     "r151_pattern_names_that_may_differ",
     # What a definition evaluates where it stands (defaults, decorators,
-    # annotations, bases, a class body) is read from the caller.
+    # annotations) is read from the caller.
     "r152_definition_time_reads",
-    "r153_class_definition_reads",
     "r154_bare_annotation_reads_the_caller",
+    # Only the code around the objects that escape is extracted (r156); what
+    # the block only calls or consumes moves with it (r157).
+    "r156_created_objects_that_escape",
+    "r157_created_objects_only_called",
 }
+# r153_class_definition_reads left the set when a class defined in the block
+# began to decline it: every instance and the class itself show the helper in
+# their qualified names. Its reads are still what free_variables reports.
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise
 # NameError where the block raised UnboundLocalError. Its own read never

@@ -276,6 +276,7 @@ class RejectReason(StrEnum):
 
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
+    CREATED_OBJECT_ESCAPES = "created_object_escapes"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
     EXISTING_HELPER_BECOMES_FORWARDER = "existing_helper_becomes_forwarder"
     FRAME_READ_IN_FUNCTION = "frame_read_in_function"

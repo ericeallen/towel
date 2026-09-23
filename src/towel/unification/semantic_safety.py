@@ -832,6 +832,300 @@ def nested_scopes_cross_block_boundary(function: FunctionNode, nodes: Iterable[a
     return False
 
 
+_CONSUMING_BUILTINS = frozenset(
+    {
+        "all",
+        "any",
+        "dict",
+        "frozenset",
+        "list",
+        "max",
+        "min",
+        "next",
+        "set",
+        "sorted",
+        "sum",
+        "tuple",
+    }
+)
+"""Builtins that iterate their first argument where they are called and keep nothing of it."""
+
+_WRAPPING_BUILTINS = frozenset({"enumerate", "filter", "map", "zip"})
+"""Builtins whose iterator holds its arguments: consumed exactly when the iterator is."""
+
+_KEY_CALLING_BUILTINS = frozenset({"max", "min", "sorted"})
+"""Builtins that call a ``key=`` function on each element and keep nothing of it."""
+
+_SHADOWED_BUILTINS: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def _shadowable_names(module: Optional[ast.AST]) -> Optional[FrozenSet[str]]:
+    """Every name the module binds anywhere, or None when a star import may bind any name.
+
+    A builtin is trusted to call a key function and keep nothing only while
+    no binding of the module can stand in for it; over-counting a local of
+    another function as a shadow only declines.
+    """
+    if module is None:
+        return None
+    known = _SHADOWED_BUILTINS.get(module)
+    if known is not None:
+        return known
+    if any(
+        isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names)
+        for node in ast.walk(module)
+    ):
+        return None
+    names = bindings_of(module, into_nested_scopes=True)
+    _SHADOWED_BUILTINS[module] = names
+    return names
+
+
+def created_object_escapes(
+    analyzer: "ScopeAnalyzer", function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """Whether the block creates a function, class or generator that anything could observe.
+
+    An object made by moved code is made by the helper: a function, lambda
+    or generator expression carries ``__extracted_func_0.<locals>`` in its
+    ``__qualname__`` where it carried the enclosing function's, and a
+    lambda built from a unified template has the template's parameter
+    names. Both reach output through ``repr``, logging, registries and
+    ``inspect.signature``, and a caller passing ``other=`` by keyword to a
+    lambda now spelled ``value`` gets TypeError. Such an object is safe only
+    where nothing can look at it: a function or lambda that is only ever
+    called inside the block, with arguments its parameters accept (a call
+    that fails to bind raises TypeError naming the function), a ``key=``
+    function of ``sorted``, ``min`` or ``max``, the function of a ``map``
+    or ``filter`` consumed in the block, and a generator expression the
+    block consumes on the spot. Anything else -- returned, yielded, stored
+    anywhere, passed to another call, formatted, decorated, a coroutine
+    function, or a class, whose every instance shows its qualified name --
+    declines the block.
+    """
+    block = list(nodes)
+    shadowable = _shadowable_names(analyzer.analyzed_tree)
+    parents: Dict[ast.AST, ast.AST] = {
+        child: parent
+        for statement in block
+        for parent in ast.walk(statement)
+        for child in ast.iter_child_nodes(parent)
+    }
+    inside = {id(node) for statement in block for node in ast.walk(statement)}
+    context = _CreatedObjectContext(function, parents, inside, shadowable)
+    for statement in block:
+        for node in ast.walk(statement):
+            if isinstance(node, (ast.ClassDef, ast.AsyncFunctionDef)):
+                return True
+            if isinstance(node, ast.FunctionDef):
+                if (
+                    node.decorator_list
+                    or _makes_generator(node)
+                    or not context.only_called(node.name, node.args)
+                ):
+                    return True
+            elif isinstance(node, ast.Lambda):
+                if _makes_generator(node) or not context.lambda_only_called(node):
+                    return True
+            elif isinstance(node, ast.GeneratorExp) and not context.consumed(node):
+                return True
+    return False
+
+
+def _makes_generator(node: Union[ast.FunctionDef, ast.Lambda]) -> bool:
+    """Whether calling ``node`` returns a generator, whose repr names the function."""
+    return any(isinstance(child, (ast.Yield, ast.YieldFrom)) for child in _walk_own_body(node))
+
+
+def _walk_own_body(node: Union[ast.FunctionDef, ast.Lambda]) -> Iterable[ast.AST]:
+    """The nodes of a function's or lambda's body, not of the scopes nested in it."""
+    body: List[ast.AST] = list(node.body) if isinstance(node, ast.FunctionDef) else [node.body]
+    for statement in body:
+        yield from walk_own_scope(statement)
+
+
+@dataclass(frozen=True)
+class _CreatedObjectContext:
+    """Where the objects a block creates stand, for ``created_object_escapes``.
+
+    An object is looked at only through the expression that makes it or a
+    local name bound to it, so each is followed to every place it is read:
+    a function or lambda must be called there, a generator or a builtin's
+    iterator over one must be iterated there, all inside the block.
+    """
+
+    function: FunctionNode
+    parents: Dict[ast.AST, ast.AST]
+    inside: AbstractSet[int]
+    shadowable: Optional[FrozenSet[str]]
+
+    def _builtin(self, callee: ast.AST, names: FrozenSet[str]) -> Optional[str]:
+        """The builtin of ``names`` a callee spells, when nothing in the module can shadow it."""
+        if (
+            isinstance(callee, ast.Name)
+            and callee.id in names
+            and self.shadowable is not None
+            and callee.id not in self.shadowable
+        ):
+            return callee.id
+        return None
+
+    def _local_reads(self, name: str) -> Optional[List[ast.Name]]:
+        """Every read of ``name`` in the function, or None when one is outside the block.
+
+        A ``global`` or ``nonlocal`` declaration of the name makes storing
+        to it a store outside the block, so it counts as None too.
+        """
+        reads: List[ast.Name] = []
+        for node in ast.walk(self.function):
+            if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+                return None
+            if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load):
+                if id(node) not in self.inside:
+                    return None
+                reads.append(node)
+        return reads
+
+    def _bound_name(self, node: ast.AST) -> Optional[str]:
+        """The one local name an assignment whose value is ``node`` binds, if it is one."""
+        parent = self.parents.get(node)
+        if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is node:
+            targets = _assignment_targets(parent)
+            if len(targets) == 1 and isinstance(targets[0], ast.Name):
+                return targets[0].id
+        return None
+
+    def only_called(self, name: str, arguments: ast.arguments) -> bool:
+        """Whether every read of a function's name, all inside the block, calls it where allowed."""
+        reads = self._local_reads(name)
+        return reads is not None and all(self._called_here(read, arguments) for read in reads)
+
+    def lambda_only_called(self, node: ast.Lambda) -> bool:
+        """Whether a lambda is only called: where it stands, or through the local name it is bound to."""
+        name = self._bound_name(node)
+        if name is not None:
+            return self.only_called(name, node.args)
+        return self._called_here(node, node.args)
+
+    def _called_here(self, node: ast.AST, arguments: ast.arguments) -> bool:
+        """Whether the function ``node`` evaluates to is called where it stands, and nothing more.
+
+        Called directly with arguments that bind; the ``key=`` of a trusted
+        ``sorted``, ``min`` or ``max``, which calls it with one argument; or
+        the function of a trusted ``map`` or ``filter`` whose iterator is
+        consumed on the spot.
+        """
+        parent = self.parents.get(node)
+        if isinstance(parent, ast.Call) and parent.func is node:
+            return _call_binds(arguments, parent)
+        if isinstance(parent, ast.keyword) and parent.arg == "key":
+            call = self.parents.get(parent)
+            return (
+                isinstance(call, ast.Call)
+                and self._builtin(call.func, _KEY_CALLING_BUILTINS) is not None
+                and _binds(arguments, 1, ())
+            )
+        if isinstance(parent, ast.Call) and parent.args and parent.args[0] is node:
+            builtin = self._builtin(parent.func, frozenset({"map", "filter"}))
+            iterables = parent.args[1:]
+            if builtin is None or any(isinstance(item, ast.Starred) for item in iterables):
+                return False
+            arity = 1 if builtin == "filter" else len(iterables)
+            return _binds(arguments, arity, ()) and self.consumed(parent)
+        return False
+
+    def consumed(self, node: ast.AST, seen: FrozenSet[str] = frozenset()) -> bool:
+        """Whether an iterator the block makes is iterated where it stands, or through its local name.
+
+        ``seen`` holds the names already being followed, so a name read in
+        its own definition does not loop.
+        """
+        name = self._bound_name(node)
+        if name is not None:
+            reads = self._local_reads(name)
+            return (
+                name not in seen
+                and reads is not None
+                and all(self.consumed(read, seen | {name}) for read in reads)
+            )
+        parent = self.parents.get(node)
+        if isinstance(parent, (ast.For, ast.comprehension)) and parent.iter is node:
+            if isinstance(parent, ast.For):
+                return True
+            owner = self.parents.get(parent)
+            return not isinstance(owner, ast.GeneratorExp) or self.consumed(owner, seen)
+        if isinstance(parent, ast.Starred):
+            return True
+        if isinstance(parent, ast.Compare):
+            return any(
+                comparator is node and isinstance(op, (ast.In, ast.NotIn))
+                for op, comparator in zip(parent.ops, parent.comparators)
+            )
+        if isinstance(parent, ast.Assign) and parent.value is node:
+            return all(isinstance(target, (ast.Tuple, ast.List)) for target in parent.targets)
+        if not isinstance(parent, ast.Call) or node not in parent.args:
+            return False
+        consumer = self._builtin(parent.func, _CONSUMING_BUILTINS)
+        if consumer is not None:
+            # ``min(a, gen)`` compares its arguments and may return one of them.
+            return parent.args[0] is node and (
+                consumer not in {"min", "max"} or len(parent.args) == 1
+            )
+        callee = parent.func
+        if (
+            isinstance(callee, ast.Attribute)
+            and callee.attr == "join"
+            and isinstance(callee.value, ast.Constant)
+            and isinstance(callee.value.value, str)
+        ):
+            return parent.args == [node]
+        if self._builtin(callee, _WRAPPING_BUILTINS) is not None:
+            return self.consumed(parent, seen)
+        return False
+
+
+def _assignment_targets(statement: Union[ast.Assign, ast.AnnAssign]) -> List[ast.expr]:
+    return list(statement.targets) if isinstance(statement, ast.Assign) else [statement.target]
+
+
+def _call_binds(arguments: ast.arguments, call: ast.Call) -> bool:
+    """Whether ``call`` binds its arguments to these parameters; unknowable with ``*``/``**``."""
+    if any(isinstance(argument, ast.Starred) for argument in call.args):
+        return False
+    keywords = [keyword.arg for keyword in call.keywords]
+    if any(keyword is None for keyword in keywords):
+        return False
+    return _binds(arguments, len(call.args), [keyword for keyword in keywords if keyword])
+
+
+def _binds(arguments: ast.arguments, positional: int, keywords: Sequence[str]) -> bool:
+    """Whether ``positional`` arguments and these keywords bind without a TypeError.
+
+    The TypeError a failed binding raises names the function by its
+    qualified name, which a helper changes.
+    """
+    ordered = [*arguments.posonlyargs, *arguments.args]
+    if positional > len(ordered) and arguments.vararg is None:
+        return False
+    filled = {argument.arg for argument in ordered[:positional]}
+    by_keyword = {
+        argument.arg
+        for argument in arguments.args[max(0, positional - len(arguments.posonlyargs)) :]
+    }
+    by_keyword |= {argument.arg for argument in arguments.kwonlyargs}
+    for keyword in keywords:
+        if keyword in filled or (keyword not in by_keyword and arguments.kwarg is None):
+            return False
+        filled.add(keyword)
+    required = ordered[: len(ordered) - len(arguments.defaults)]
+    required_keywords = [
+        argument
+        for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults)
+        if default is None
+    ]
+    return all(argument.arg in filled for argument in [*required, *required_keywords])
+
+
 def is_eagerly_evaluable(expression: ast.AST, available: AbstractSet[str]) -> bool:
     """Whether hoisting this expression to the call site is unobservable.
 

@@ -6,7 +6,21 @@ and object-oriented code patterns correctly.
 """
 
 
-def __extracted_func_5(model, validator):
+def __extracted_func_6(__param_0, __param_1, response, validator):
+    data = response.json().get(__param_0, {}).get(__param_1, [])
+    cleaned = [item.strip().lower() for item in data]
+    validated = [validator.check(item) for item in cleaned]
+    return validated
+
+
+def __extracted_func_5(result, transformer):
+    if len(result) > 0:
+        transformer.commit()
+        return result
+    return []
+
+
+def __extracted_func_4(model, validator):
     if validator.is_valid(model):
         model.save()
         model.notify_observers()
@@ -14,18 +28,16 @@ def __extracted_func_5(model, validator):
     return False
 
 
-def __extracted_func_4(__param_0, __param_1, response, transformer, validator):
-    data = response.json().get(__param_0, {}).get(__param_1, [])
-    cleaned = [item.strip().lower() for item in data]
-    validated = [validator.check(item) for item in cleaned]
-    result = transformer.process(validated).filter(lambda x: x is not None).to_list()
-    if len(result) > 0:
-        transformer.commit()
-        return result
-    return []
+def __extracted_func_3(handler, processed):
+    for item in processed:
+        handler.process(item)
+        handler.update_metrics(item.get_size())
+        if handler.should_commit():
+            handler.commit()
+    return handler.get_statistics()
 
 
-def __extracted_func_3(__param_0, cache, data, serializer):
+def __extracted_func_2(__param_0, cache, data, serializer):
     response = serializer.create_response()
     response.set_data(data)
     response.set_status(200)
@@ -36,7 +48,7 @@ def __extracted_func_3(__param_0, cache, data, serializer):
     return response.build()
 
 
-def __extracted_func_2(__param_0, entity, transformer, validator):
+def __extracted_func_1(__param_0, entity, transformer, validator):
     entity.set_field(__param_0, True)
     entity.increment_version()
     transformed_data = transformer.apply(entity.get_data())
@@ -49,16 +61,6 @@ def __extracted_func_2(__param_0, entity, transformer, validator):
     return None
 
 
-def __extracted_func_1(__param_0, handler, parser, stream):
-    processed = stream.filter(lambda x: x.is_valid()).map(parser.parse).filter(lambda x: x is not None).take(__param_0)
-    for item in processed:
-        handler.process(item)
-        handler.update_metrics(item.get_size())
-        if handler.should_commit():
-            handler.commit()
-    return handler.get_statistics()
-
-
 def __extracted_func_0(__param_0, db, mapper):
     results = db.table('users').where('age', '>', __param_0).where('status', '=', 'active').order_by('created_at', 'desc').limit(100).get()
     mapped = [mapper.to_dto(row) for row in results]
@@ -69,13 +71,19 @@ def __extracted_func_0(__param_0, db, mapper):
 def process_api_response_v1(response, validator, transformer):
     """Version 1: Method chaining on API response."""
     # Complex method chain
-    return __extracted_func_4('data', 'items', response, transformer, validator)
+    validated = __extracted_func_6('data', 'items', response, validator)
+    result = transformer.process(validated).filter(lambda x: x is not None).to_list()
+
+    return __extracted_func_5(result, transformer)
 
 
 def process_api_response_v2(response, validator, transformer):
     """Version 2: Different key path, same chaining pattern."""
     # Different keys, same chain
-    return __extracted_func_4('payload', 'records', response, transformer, validator)
+    validated = __extracted_func_6('payload', 'records', response, validator)
+    result = transformer.process(validated).filter(lambda x: x is not None).to_list()
+
+    return __extracted_func_5(result, transformer)
 
 
 def update_model_fields_a(model, updates, validator):
@@ -85,7 +93,7 @@ def update_model_fields_a(model, updates, validator):
         "active"
     ).validate()
 
-    return __extracted_func_5(model, validator)
+    return __extracted_func_4(model, validator)
 
 
 def update_model_fields_b(model, updates, validator):
@@ -95,7 +103,7 @@ def update_model_fields_b(model, updates, validator):
         "active"
     ).validate()
 
-    return __extracted_func_5(model, validator)
+    return __extracted_func_4(model, validator)
 
 
 def query_database_v1(db, filters, mapper):
@@ -113,37 +121,51 @@ def query_database_v2(db, filters, mapper):
 def process_stream_v1(stream, parser, handler):
     """Version 1: Stream processing with method calls."""
     # Stream operations
-    return __extracted_func_1(1000, handler, parser, stream)
+    processed = (
+        stream.filter(lambda x: x.is_valid())
+        .map(parser.parse)
+        .filter(lambda x: x is not None)
+        .take(1000)
+    )
+
+    return __extracted_func_3(handler, processed)
 
 
 def process_stream_v2(stream, parser, handler):
     """Version 2: Different take limit, same pattern."""
     # Same stream pattern, different limit
-    return __extracted_func_1(5000, handler, parser, stream)
+    processed = (
+        stream.filter(lambda x: x.is_valid())
+        .map(parser.parse)
+        .filter(lambda x: x is not None)
+        .take(5000)
+    )
+
+    return __extracted_func_3(handler, processed)
 
 
 def build_response_a(data, serializer, cache):
     """Version A: Response builder with multiple method calls."""
     # Building response
-    return __extracted_func_3('max-age=3600', cache, data, serializer)
+    return __extracted_func_2('max-age=3600', cache, data, serializer)
 
 
 def build_response_b(data, serializer, cache):
     """Version B: Different cache duration, same pattern."""
     # Same building pattern
-    return __extracted_func_3('max-age=7200', cache, data, serializer)
+    return __extracted_func_2('max-age=7200', cache, data, serializer)
 
 
 def transform_entity_v1(entity, transformer, validator):
     """Version 1: Entity transformation with validation."""
     # Transform entity
-    return __extracted_func_2('processed', entity, transformer, validator)
+    return __extracted_func_1('processed', entity, transformer, validator)
 
 
 def transform_entity_v2(entity, transformer, validator):
     """Version 2: Different field name, same pattern."""
     # Same transformation pattern
-    return __extracted_func_2('completed', entity, transformer, validator)
+    return __extracted_func_1('completed', entity, transformer, validator)
 
 
 def aggregate_results_a(results, aggregator, formatter):
