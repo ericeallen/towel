@@ -213,6 +213,28 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   metaclass and every `__init_subclass__` it runs are known to leave an
   added function alone. Otherwise the helper is a module-level function
   taking the receiver.
+- A helper goes into a class only when every duplicate it replaces is a
+  method of that class; blocks shared by different classes become
+  module-level functions taking the receiver. Towel had hoisted 14 of 45
+  method helpers over click, rich, packaging and pygments into ancestors
+  that held none of the code, among them click's `UsageError`, rich's
+  `JupyterMixin` and pygments' `Formatter` and `Lexer`: public bases that
+  other code subclasses, where any subclass could take the helper's place.
+  Whether such a function belongs in a class is left to whoever reviews the
+  output (see `docs/DECISIONS.md`). pygments makes 71 refactorings instead
+  of 77 and rich 30 instead of 33; click and packaging are unchanged, and
+  all four behave identically on smoke programs.
+- A method helper is class-private (`__extracted_func_N`, stored as
+  `_Cls__extracted_func_N`), so no subclass in or outside the project can
+  override it; a class that answers unknown attribute names through
+  `__getattr__`, as tinydb's `Query` does, keeps answering the helper's old
+  name. A class whose hierarchy defines `__getattribute__` gets a
+  module-level helper instead, since it intercepts every lookup.
+- `rename-helpers` renames a class-private helper by its class
+  (`path.py:Class.__extracted_func_N`) to another class-private name; a
+  non-private new name, or the stored name spelled elsewhere, refuses the
+  batch. `reuse_existing_functions` is still accepted, as a documented
+  no-op.
 - A project that configures no mypy is checked as its own `mypy` would check
   the same files, with mypy's defaults. Towel had forced
   `check_untyped_defs`, `ignore_missing_imports` and `explicit_package_bases`

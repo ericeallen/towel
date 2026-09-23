@@ -138,10 +138,12 @@ ancestor as before, and never adding anything to a class. The justification:
   attribute must then be spelled mangled (`a._A__x`); that runs, but mypy and
   pyright both reject it. Strict pyright also rejects a module function
   reading a protected `receiver._cache`, as `reportPrivateUsage`. Inside the
-  class, both are accepted. So are zero-argument `super()` and `__class__`,
-  because a helper defined in the same class body binds them to the same
-  class. Keeping same-class helpers as methods is what lets that code be
-  extracted at all.
+  class, both are accepted. Zero-argument `super()` and `__class__` would be
+  too, since a helper defined in the same class body binds them to the same
+  class. Only a same-class method helper can extract such code at all.
+  (As implemented today, moved code using either is still declined
+  everywhere: the guard that refuses it runs before placement is known.
+  Allowing it for same-class helpers is follow-up work.)
 - **The receiver.** A method's receiver is typed as an instance of its class
   unless the method declares otherwise. `A.m1(SimpleNamespace(v=10), 1)` is
   rejected by both checkers, so it is outside the contract. A method that
