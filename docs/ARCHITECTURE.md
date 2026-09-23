@@ -479,6 +479,17 @@ directory beside the package it describes — and one of them fails the build an
 refuses the project. None of them imports the package, so none is a consumer,
 and none is selected.
 
+*Stubs beside their modules.* Every file Towel changes, and every consumer it
+scanned for, is named to mypy one by one, and mypy checks a named `a.py` even
+where `a.pyi` sits beside it. The project's own run does not: its walk of a
+directory keeps the stub and never reads the implementation, and an import of
+the module finds the stub first. So a named implementation whose stub is beside
+it is replaced in the build by that stub, unless the project's `files` names the
+implementation itself, which is the one way its own mypy checks it. An importer
+of a name the implementation gained and the stub lacks is then refused, as the
+project's mypy refuses it; the implementation behind a stub is not checked by
+mypy, as in the project's own run.
+
 *Speculative text.* Nearly every candidate is rejected and nothing it proposed
 reaches disk, but its text was checked, and mypy wrote a cache entry for each
 module from that text stamped with the file's mtime and size. mypy trusts a

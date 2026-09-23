@@ -406,6 +406,12 @@ where the evidence comes from:
   destinations are never used. Each mypy build imports the plugins afresh in a
   forked child, so a plugin that is slow to import (django-stubs sets Django
   up) costs that much on every check.
+- A module that ships its own stub (`a.pyi` beside `a.py`) is checked through
+  the stub, as mypy checks it: its importers see the stub, and the
+  implementation itself is not checked by mypy unless the configuration's
+  `files` names it. A change inside such an implementation is therefore not
+  verified by mypy, exactly as the project's own mypy run never checks it;
+  Pyright, when configured, still checks the implementation as a file.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration, made once per run, kept in step with the
   project as it is refactored, and watched by one long-lived language server.

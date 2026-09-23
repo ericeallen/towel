@@ -320,56 +320,58 @@ def _complete_targets(
     return sorted(walked) or [str(root)]
 
 
-def _implementation_of_stub(paths: Sequence[str]) -> Optional[str]:
-    """The implementation of a stub-and-implementation pair, or ``None`` for anything else.
+def _named_by_the_project(options: Options) -> set[str]:
+    """The ``.py`` files the project's configuration names one by one, not through a directory.
 
-    The only two files that may answer to one module name without a loss: a
-    ``.pyi`` and the ``.py`` beside it, same directory and same stem. That is a
-    package shipping stubs for itself, which attrs and more-itertools both do.
-    Two unrelated files that merely infer the same module name are not this, and
-    collapsing them would drop one file's errors and report the project clean.
+    Naming the file is the one way the project's own mypy checks an
+    implementation that has a stub beside it; see :func:`_as_the_project_resolves`.
     """
-    if len(paths) != 2:
-        return None
-    ordered = sorted(paths, key=lambda path: path.endswith(".pyi"))
-    implementation, stub = ordered
-    if not stub.endswith(".pyi") or not implementation.endswith(".py"):
-        return None
-    if Path(stub).with_suffix(".py") != Path(implementation):
-        return None
-    return implementation
+    return {
+        os.path.abspath(entry)
+        for entry in options.files or ()
+        if entry.endswith(".py") and os.path.isfile(entry)
+    }
+
+
+def _as_the_project_resolves(source: BuildSource, named: set[str]) -> BuildSource:
+    """``source``, or the stub beside it when that stub is what the project's mypy reads.
+
+    mypy's walk of a directory keeps ``a.pyi`` and never reads ``a.py``, and an
+    import of the module finds the stub first. So a module that ships its own
+    stub is the stub to every importer and to the project's own run, and the
+    implementation is not checked at all -- unless the configuration names the
+    implementation file itself. Towel names every file it changes, and names
+    each consumer it scanned for, which on its own would make every such
+    module its implementation: an importer of a name the implementation gained
+    and the stub lacks was checked against the implementation and called clean,
+    while the project's mypy reported the name missing.
+    """
+    path = source.path
+    if path is None or not path.endswith(".py") or os.path.abspath(path) in named:
+        return source
+    stub = path + "i"
+    if not os.path.isfile(stub):
+        return source
+    return BuildSource(stub, source.module, None, source.base_dir)
 
 
 def _one_source_per_module(selected: Sequence[BuildSource]) -> list[BuildSource]:
-    """The build sources with each module named once where naming it twice is a duplicate.
+    """The build sources with each file named once.
 
     A module is reached twice whenever it is both a walked target and a file
-    being changed; those are one file and collapse to it. A stub and the
-    implementation beside it are two files, and mypy refuses a build naming one
-    module twice, so a package shipping stubs for itself was refused outright.
-    That pair collapses to the implementation, because that is the file Towel is
-    changing and the one that has to be checked; the choice is the same before
-    and after the change, which is what the invariant needs.
-
-    Anything else keeps every file. Two unrelated modules can infer one name --
-    ``a/module.py`` and ``b/module.py``, neither directory a package -- and
-    collapsing those silently drops the second file's errors and calls the
-    project clean. mypy's own refusal is the right answer there: it is loud, it
-    names both files, and Towel turns it into a refusal that says what to do.
+    being changed; those are one file and collapse to it. Two different files
+    that answer to one module name are kept: ``a/module.py`` and
+    ``b/module.py`` where neither directory is a package, or an implementation
+    the project names beside its own stub. Collapsing either silently drops a
+    file's errors and calls the project clean; mypy's own refusal is the right
+    answer there, since it is loud, names both files, and is what the
+    project's own run says.
     """
-    by_module: dict[str, list[BuildSource]] = {}
+    by_path: dict[str, BuildSource] = {}
     for source in selected:
         if source.path is not None:
-            by_module.setdefault(source.module, []).append(source)
-    kept: list[BuildSource] = []
-    for sources in by_module.values():
-        by_path = {os.path.abspath(source.path or ""): source for source in sources}
-        if len(by_path) > 1:
-            implementation = _implementation_of_stub(sorted(by_path))
-            if implementation is not None:
-                by_path = {implementation: by_path[implementation]}
-        kept.extend(by_path.values())
-    return kept
+            by_path.setdefault(os.path.abspath(source.path), source)
+    return list(by_path.values())
 
 
 def _build_sources(
@@ -387,21 +389,31 @@ def _build_sources(
     # nowhere to be given: a sparse request names a handful of modules, and the
     # poisoned entries are all the others.
     restored = sorted(set(given) - set(replacements))
+    named = _named_by_the_project(options)
     # SourceFinder handles namespace packages and .pyi precedence with mypy's
     # own rules. Explicit replacements are included even if config excludes them.
     if not complete:
-        named = [BuildSource(path, modules[path], given.get(path)) for path in replacements]
-        return named + [
-            BuildSource(source.path, source.module, given.get(source.path or ""), source.base_dir)
-            for source in create_source_list(restored, options)
-            if source.path is not None and source.path not in replacements
+        # The probed modules are the question and are built from their own
+        # text; every other module is read as the project's mypy would read it.
+        probed = [BuildSource(path, modules[path], given.get(path)) for path in replacements]
+        return probed + [
+            BuildSource(
+                resolved.path, resolved.module, given.get(resolved.path or ""), resolved.base_dir
+            )
+            for resolved in (
+                _as_the_project_resolves(source, named)
+                for source in create_source_list(restored, options)
+            )
+            if resolved.path is not None and resolved.path not in replacements
         ]
     selected = create_source_list(list(replacements) + restored, options)
     targets = _complete_targets(replacements, options, root, consumers)
     selected = create_source_list(targets, options, allow_empty_dir=True) + selected
     by_path = {
         os.path.abspath(source.path): source
-        for source in _one_source_per_module(selected)
+        for source in _one_source_per_module(
+            [_as_the_project_resolves(source, named) for source in selected]
+        )
         if source.path is not None
     }
     return [
