@@ -196,6 +196,8 @@ class TypeOracle(Protocol):
 
 
 _ERROR = re.compile(r"^(?P<path>.*?):(?P<line>\d+):(?:\d+:)? error: ")
+_UNPLACED_ERROR = re.compile(r"^(?:(?P<path>(?:(?!: ).)+): )?error: ")
+"""An error mypy gives no line for, and sometimes no file: about a module, or the build."""
 _REVEALED = re.compile(
     r'^(?P<path>.*?):(?P<line>\d+):(?:\d+:)? note: Revealed type is "(?P<type>.*)"$'
 )
@@ -230,6 +232,25 @@ def _module_name_and_root(path: Path) -> Tuple[str, Path]:
         parts = parts[1:]
     root = packages[-1].parent if packages else path.parent
     return ".".join(reversed(parts)), root
+
+
+def _mypy_error(message: str, root: Path) -> Optional[TypeDiagnostic]:
+    """The error ``message`` reports, or ``None`` when it is not one.
+
+    An error without a line is still an error. Reading only ``path:line:``
+    dropped it as though it were a note, and a project mypy rejects was called
+    clean; one that names no file is attributed to the checked root.
+    """
+    placed = _ERROR.match(message)
+    if placed is not None:
+        path = str((root / placed.group("path")).resolve())
+        return TypeDiagnostic(path, message[placed.end() :].strip(), int(placed.group("line")))
+    unplaced = _UNPLACED_ERROR.match(message)
+    if unplaced is None:
+        return None
+    named = unplaced.group("path")
+    path = str((root / named).resolve()) if named else str(root)
+    return TypeDiagnostic(path, message[unplaced.end() :].strip())
 
 
 def _module_name(path: Path) -> str:
@@ -583,15 +604,11 @@ class MypyInferrer:
             )
             if isinstance(result, CheckFailure):
                 return result
-            for message in result.messages:
-                match = _ERROR.match(message)
-                if match is not None:
-                    path = str((root / match.group("path")).resolve())
-                    errors.append(
-                        TypeDiagnostic(
-                            path, message[match.end() :].strip(), int(match.group("line"))
-                        )
-                    )
+            errors.extend(
+                diagnostic
+                for diagnostic in (_mypy_error(message, root) for message in result.messages)
+                if diagnostic is not None
+            )
         return CheckSuccess(tuple(errors))
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
