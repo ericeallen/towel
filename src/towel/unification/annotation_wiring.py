@@ -108,6 +108,14 @@ _VERSION_CLAUSE = re.compile(
 )
 
 
+def _table(document: Mapping[str, object], *keys: str) -> Mapping[str, object]:
+    """``document[keys[0]][keys[1]]...``, or an empty table where any step is not one."""
+    node: object = document
+    for key in keys:
+        node = node.get(key, {}) if isinstance(node, dict) else {}
+    return node if isinstance(node, dict) else {}
+
+
 def _checker_python(value: object) -> Optional[PythonVersion]:
     """``python_version``/``pythonVersion`` as a version: ``"3.9"``, or TOML's ``3.9``."""
     match = re.fullmatch(r"(\d+)\.(\d+)(?:\.\d+)?", str(value).strip())
@@ -130,22 +138,22 @@ def _checker_targets(path: Path) -> List[PythonVersion]:
     config = _mypy_config(mypy_root) if mypy_root is not None else None
     if config is not None and mypy_root is not None:
         if config.endswith("pyproject.toml"):
-            mypy = load_pyproject(mypy_root).get("tool", {}).get("mypy", {})
+            mypy = _table(load_pyproject(mypy_root), "tool", "mypy")
             targets.append(_checker_python(mypy.get("python_version", "")))
         else:
             targets.append(_checker_python(_ini_option(Path(config), "mypy", "python_version")))
     pyright_root = _configured_root(path, "pyright")
     if pyright_root is not None:
+        settings: Mapping[str, object]
         try:
             settings = (
                 _read_json_config(pyright_root / "pyrightconfig.json")
                 if (pyright_root / "pyrightconfig.json").is_file()
-                else load_pyproject(pyright_root).get("tool", {}).get("pyright", {})
+                else _table(load_pyproject(pyright_root), "tool", "pyright")
             )
         except ValueError:
-            settings = {}
-        if isinstance(settings, dict):
-            targets.append(_checker_python(settings.get("pythonVersion", "")))
+            settings = {}  # A configuration pyright rejects refuses the run elsewhere.
+        targets.append(_checker_python(settings.get("pythonVersion", "")))
     return [target for target in targets if target is not None]
 
 
@@ -160,14 +168,11 @@ def declared_oldest_python(path: Path) -> Optional[PythonVersion]:
     """
     root = find_project_root(path)
     pyproject = load_pyproject(root)
-    project = pyproject.get("project", {})
-    requirement = project.get("requires-python") if isinstance(project, dict) else None
+    requirement: object = _table(pyproject, "project").get("requires-python")
     if not isinstance(requirement, str) and (root / "setup.cfg").is_file():
         requirement = _ini_option(root / "setup.cfg", "options", "python_requires")
     if not isinstance(requirement, str):
-        poetry = pyproject.get("tool", {}).get("poetry", {})
-        dependencies = poetry.get("dependencies", {}) if isinstance(poetry, dict) else {}
-        requirement = dependencies.get("python") if isinstance(dependencies, dict) else None
+        requirement = _table(pyproject, "tool", "poetry", "dependencies").get("python")
     if isinstance(requirement, str):
         bound = python_lower_bound(requirement)
         if bound is not None:
