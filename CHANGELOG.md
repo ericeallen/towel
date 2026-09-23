@@ -30,6 +30,14 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A directory run ends when a proposal renders exactly the bytes its files
+  already hold. The directory driver had counted such a proposal as applied,
+  so the next analysis found it again and, with no iteration bound, the loop
+  never stopped; the single-file driver has always had this guard. The
+  proposal is now declined and remembered until the project changes.
+- Type probes at adjacent extraction sites retain their lexical scope even when
+  they share a source line. Conflicting mypy specialization notes for one probe
+  are treated as ambiguous evidence instead of silently retaining the last type.
 - An extraction no longer gives a method a receiver it never needed. A method
   reached through its class is an ordinary call with nothing bound, so
   `Formatter.as_dollars(None, 1.5)` runs for as long as the body reads no
@@ -425,16 +433,11 @@ the correlation the call sites had.
   the complete prospective project and committed as one transaction. Failed
   attempts leave no declarations behind. Generated syntax remains compatible
   with Python 3.11; existing PEP 695 input requires Python 3.12 or newer.
-- Generic instance, class, and static helper methods preserve argument/result
-  relationships. Instance and class helpers retain the host's type parameters;
-  static helpers infer fresh parameters from their explicit arguments. Fresh
-  declarations precede the host class at module scope, preserving descriptor
-  behavior and declaration rollback.
-
-### Fixed
-- Type probes at adjacent extraction sites retain their lexical scope even when
-  they share a source line. Conflicting mypy specialization notes for one probe
-  are treated as ambiguous evidence instead of silently retaining the last type.
+- Generic instance and class helper methods preserve argument/result
+  relationships and retain the host's type parameters. A module-level helper
+  shared by methods that never read their receiver infers fresh parameters
+  from its explicit arguments. Fresh declarations precede the host class at
+  module scope, preserving descriptor behavior and declaration rollback.
 
 ### Fixed (release harness)
 - The sdist no longer ships a built wheel: `recursive-include scripts *`
