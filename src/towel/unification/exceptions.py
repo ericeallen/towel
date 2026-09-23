@@ -37,3 +37,11 @@ class UnsupportedLayoutError(TowelError, ValueError):
     Raised by layout discovery for a configuration whose import names it
     cannot infer safely. Still a ``ValueError`` for callers that catch that.
     """
+
+
+class ProjectScanLimitError(TowelError):
+    """The project around the input is too large to read whole for what it already names.
+
+    Not a ``RefactoringError``: that declines one proposal and the run goes on,
+    whereas no proposal can be named safely here, so the run stops and says so.
+    """

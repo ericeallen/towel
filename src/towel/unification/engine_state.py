@@ -135,6 +135,8 @@ class EngineState:
     """What this run has learned about the project's import graph."""
 
     _helper_name_counters: Dict[str, int]
+    _project_helper_names: Dict[str, FrozenSet[str]]
+    """Helper-shaped identifiers each project root's sources already spell, by root."""
     # Identities of the proposals this analysis has finished; a pair whose
     # proposal repeats one is declined before reuse, filtering and annotation.
     _seen_proposals: Set[Hashable]

@@ -240,6 +240,14 @@ method that ignores its receiver has no dispatch to preserve, so the only cost
 is that the helper sits before the class rather than inside it; a block that
 does use the receiver takes it as an ordinary argument.
 
+A generated helper's name is one no Python source under the project root
+spells yet, not only none of the files under refactoring: a subclass in
+another package that already defines `_extracted_func_0` would override a
+helper of that name placed in its base. The root is the nearest directory
+with packaging metadata above the input (or the directory above its
+packages), read with the consumer scan's exclusions; a subclass defined
+outside that root, or reached only through `exec`, is not seen.
+
 A base-class name is resolved as the binding in effect where the class
 statement runs, never by name across the project. It must be bound there by an
 unconditional class statement of that module or by one of its unconditional
