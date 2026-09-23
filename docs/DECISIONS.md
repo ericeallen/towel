@@ -176,6 +176,36 @@ one fails that file and returns the decision for review.
 *Status: decided; implementation follows the fix branches now in progress.
 Not yet released.*
 
+## 2026-09-22: Towel does not change class design
+
+The owner's position: changing a class's design is a judgement for an
+intelligent actor, not for a mechanical transformation. That covers moving a
+function into a base class, a mixin or a new class. Towel is meant to be
+paired with a coding agent. Towel's part is the extraction it can prove
+sound. The agent's part is to inspect each extracted function and decide
+whether it belongs in a class, existing or new, and to make that change as an
+ordinary edit checked by the project's tests and type checker.
+
+The justification: where a function belongs depends on intent that is not in
+the program's semantics. It depends on which classes the function serves,
+whether a base class is public API that others subclass, whether a mixin is
+warranted, and what the project's conventions are. A mechanical rule either
+chooses arbitrarily or encodes design heuristics. When Towel chose, it put
+helpers into pygments' `Formatter` and click's `UsageError`, public bases
+that plugins and users subclass. An agent can weigh those things, and its
+change is reviewed like any other.
+
+The class-private helper of the previous entry is consistent with this. It
+goes only into the class that already contains both copies of the code. It
+is invisible outside that class, since Python mangles its name. It changes no
+interface and no hierarchy. It is an implementation detail of that class, as
+the duplicated code was. A block shared across classes stays a module
+function that takes the receiver. Towel leaves the design question it raises
+to the agent.
+
+*Status: the `towel-rename` skill will carry the agent's step once the
+hosting rule and class-private renaming are implemented.*
+
 ## 2026-09-22: Import names come from the program
 
 A module's name is not a property of its file. It depends on how the project
