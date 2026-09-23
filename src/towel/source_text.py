@@ -23,10 +23,11 @@ refactoring changed.
 
 from __future__ import annotations
 
+import ast
 import io
 from pathlib import Path
 import tokenize
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 
 def source_encoding(data: bytes) -> str:
@@ -88,13 +89,75 @@ def dominant_newline(data: bytes) -> bytes:
 
 
 class UnencodableText(ValueError):
-    """New text holds a character its file's own encoding cannot represent.
+    """New text holds a character its file's own encoding cannot represent, even escaped.
 
     Rendering writes a string constant by value, so an escape such as
-    ``"\\u20ac"`` in a Latin-1 file comes back as the character itself. The
-    file cannot hold that text, and the refactoring that produced it cannot
-    be written; nothing else about the run is wrong.
+    ``"\\u20ac"`` in a Latin-1 file comes back as the character itself; that
+    is written back as an escape (``_escaped_for``). What remains is a
+    character no escape can spell, such as one in a raw string, and the
+    refactoring that produced it cannot be written.
     """
+
+
+def _escape(character: str) -> str:
+    code = ord(character)
+    if code < 0x100:
+        return f"\\x{code:02x}"
+    return f"\\u{code:04x}" if code < 0x10000 else f"\\U{code:08x}"
+
+
+def _escaped_for(text: str, encoding: str) -> Optional[str]:
+    """``text`` with each character ``encoding`` cannot hold escaped inside its string literal.
+
+    A valid source file never holds a character its encoding cannot
+    represent; such a character reached the new text only because rendering
+    spelled a constant by value. Escaping it inside the literal restores the
+    file's own kind of spelling, and the rewrite is kept only when the syntax
+    tree is unchanged by it -- every constant the same value, nothing else
+    touched. None when some character is outside an escapable literal (a raw
+    string, a comment, a name) or the proof fails.
+    """
+
+    def encodable(character: str) -> bool:
+        try:
+            character.encode(encoding)
+        except UnicodeEncodeError:
+            return False
+        return True
+
+    literal_kinds = {tokenize.STRING}
+    literal_kinds.update(
+        getattr(tokenize, name) for name in ("FSTRING_MIDDLE",) if hasattr(tokenize, name)
+    )
+    lines = source_lines(text)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    edits: List[Tuple[int, int, str]] = []
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    for token in tokens:
+        if token.type not in literal_kinds or all(encodable(c) for c in token.string):
+            continue
+        prefix = token.string[: len(token.string) - len(token.string.lstrip("rRbBuUfF"))]
+        if token.type == tokenize.STRING and ("r" in prefix.lower() or "b" in prefix.lower()):
+            return None
+        start = offsets[token.start[0] - 1] + token.start[1]
+        end = offsets[token.end[0] - 1] + token.end[1]
+        spelled = "".join(c if encodable(c) else _escape(c) for c in text[start:end])
+        edits.append((start, end, spelled))
+    rewritten = text
+    for start, end, spelled in sorted(edits, reverse=True):
+        rewritten = rewritten[:start] + spelled + rewritten[end:]
+    try:
+        rewritten.encode(encoding)
+        if ast.dump(ast.parse(rewritten)) != ast.dump(ast.parse(text)):
+            return None
+    except (UnicodeEncodeError, SyntaxError, ValueError):
+        return None
+    return rewritten
 
 
 def encode_like(original: bytes, text: str) -> bytes:
@@ -106,6 +169,9 @@ def encode_like(original: bytes, text: str) -> bytes:
     try:
         encoded = text.encode(encoding)
     except UnicodeEncodeError as error:
+        escaped = _escaped_for(text, encoding)
+        if escaped is not None:
+            return encode_like(original, escaped)
         character = error.object[error.start]
         line = error.object.count("\n", 0, error.start) + 1
         raise UnencodableText(

@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from towel.source_text import decode_source, dominant_newline, encode_like, read_source
+from towel.source_text import (
+    UnencodableText,
+    decode_source,
+    dominant_newline,
+    encode_like,
+    read_source,
+)
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 DUPLICATES = (
@@ -87,7 +93,8 @@ def test_coding_cookie_file_is_written_back_in_its_encoding(tmp_path: Path) -> N
 
 
 # The first pair prints an escape the file's encoding cannot hold once
-# rendering spells it as the character; the second pair is ordinary.
+# rendering spells it as the character: the file itself is plain Latin-1, and
+# only Towel's rendering ever produced the character. The second is ordinary.
 UNENCODABLE = (
     "# -*- coding: latin-1 -*-\n\n\n"
     "def alpha(items):\n    total = 0\n    for item in items:\n        if item > 4:\n"
@@ -100,9 +107,10 @@ UNENCODABLE = (
 
 
 @pytest.mark.parametrize("single_file", [False, True])
-def test_a_rendering_the_encoding_cannot_hold_is_declined_and_the_run_goes_on(
+def test_an_escape_the_rendering_spelled_as_a_character_is_written_back_escaped(
     tmp_path: Path, single_file: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """The extraction is kept, its literal escaped again, and the program prints what it did."""
     source = tmp_path / "source"
     source.mkdir()
     module = source / "m.py"
@@ -121,8 +129,36 @@ def test_a_rendering_the_encoding_cannot_hold_is_declined_and_the_run_goes_on(
             )
             applied = sum(count for count, _ in results.values())
             written = (out / "m.py").read_bytes()
-    assert applied == 1
-    assert "cannot represent '€' (U+20AC)" in caplog.text
+    assert applied == 2
+    assert "cannot represent" not in caplog.text
     text = written.decode("latin-1")
-    assert text.count('print("price \\u20ac", total)') == 2
-    assert "__extracted_func_0(b)" in text
+    # The helper spells the escape as the source did, never the character.
+    assert "\\u20ac" in text and "\u20ac" not in text
+
+    def observed(program: str) -> str:
+        namespace: dict[str, object] = {}
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exec(compile(program, "m.py", "exec"), namespace)
+            for name in ("alpha", "beta"):
+                print(namespace[name]([1, 5, 9]))  # type: ignore[operator]
+        return buffer.getvalue()
+
+    assert observed(text) == observed(UNENCODABLE)
+
+
+def test_an_unencodable_constant_is_escaped_in_every_kind_of_literal() -> None:
+    """Plain, f-string and astral characters come back as escapes of the same value."""
+    import ast
+
+    original = b"# -*- coding: latin-1 -*-\nx = 1\n"
+    text = "x = '€'\ny = f'{x}€\U0001f600'\n"
+    written = encode_like(original, text).decode("latin-1")
+    assert ast.dump(ast.parse(written)) == ast.dump(ast.parse(text))
+    assert "€" not in written
+
+
+def test_a_character_no_escape_can_spell_is_still_refused() -> None:
+    """A comment has no escapes; declining is the only sound answer there."""
+    with pytest.raises(UnencodableText):
+        encode_like(b"# -*- coding: latin-1 -*-\n", "x = 1  # €\n")

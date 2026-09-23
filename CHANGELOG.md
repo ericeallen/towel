@@ -111,8 +111,12 @@ that version; Towel's own checks run against a newer mypy and do not show it.
 - Generated helper names avoid every name another source under the project
   root defines as a class member or attribute, so a subclass outside the
   target can no longer override a new helper.
-- A duplicate whose rendering holds a character the file's encoding cannot
-  represent is declined instead of aborting the run; a file nested too deeply
+- An escape in a string literal survives extraction into a file whose
+  encoding cannot hold the character it denotes. Rendering spells a constant
+  by value, so `"\u20ac"` in a Latin-1 file came back as `€`, which the file
+  cannot hold, and the run aborted. The escape is now written back, inside
+  the literal only and kept only when the syntax tree is unchanged by it; a
+  character no escape can spell is declined instead. A file nested too deeply
   to analyze is skipped with a warning instead of ending directory mode with
   `RecursionError`.
 - A run whose every candidate the type checker could not judge (timeout or
