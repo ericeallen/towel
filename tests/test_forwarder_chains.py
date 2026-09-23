@@ -593,6 +593,9 @@ def test_a_lambda_handed_to_a_call_is_the_parameter_itself() -> None:
         ("r = (lambda: e.args['a'])()", "r = (lambda: e.args.get('b'))()"),
         # Only part of the body differs.
         ("r = run(lambda: e.args['a'])", "r = run(lambda: e.args['b'])"),
+        # Only a free name differs: the names correspond, and the helper
+        # would no longer read the one the call sites pass.
+        ("r = run(lambda: first, e)", "r = run(lambda: second, e)"),
     ],
 )
 def test_a_lambda_is_otherwise_kept_and_its_body_parameterized(first: str, second: str) -> None:

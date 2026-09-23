@@ -928,17 +928,29 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         itself is the parameter instead: the call site makes it, in the
         function that made it before, and the helper passes it on as it
         came (see ``semantic_safety.defer_impure_parameters``).
+
+        Bodies that differ only in a free name (``lambda: a`` against
+        ``lambda: b``) are left as they were: unifying them records that the
+        names correspond, and the call sites would then pass the other
+        block's spelling for a name the helper no longer reads.
         """
         bodies = [node.body for node in nodes]
-        if not all(self._passed_on_once(node, index) for node, index in zip(nodes, block_indices)):
+        # A body an earlier parameter already stands for keeps that parameter.
+        if not all(
+            self._passed_on_once(node, index)
+            and substitution.get_param_for_expr(index, node.body) is None
+            for node, index in zip(nodes, block_indices)
+        ):
             return self._unify_nodes(bodies, substitution, block_indices)
         counter, known = self.param_counter, set(substitution.param_expressions)
+        correspondences = dict(self.alpha_renamings)
         if not self._unify_nodes(bodies, substitution, block_indices):
             return False
         fresh = [name for name in substitution.param_expressions if name not in known]
         if (
             len(fresh) != 1
             or fresh[0] in substitution.function_params
+            or self.alpha_renamings != correspondences
             or sorted(
                 (index, id(expression))
                 for index, expression in substitution.param_expressions[fresh[0]]
