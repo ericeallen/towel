@@ -59,7 +59,6 @@ from enum import Enum
 from typing import (
     Dict,
     Final,
-    FrozenSet,
     Iterable,
     Iterator,
     List,
@@ -80,8 +79,8 @@ from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFail
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
 from .consumers import (
+    ImportScan,
     ScanLimitExceeded,
-    consumers_of as consumers_of,
     module_prefixes,
     walked_package,
 )
@@ -233,6 +232,10 @@ def _module_name_and_root(path: Path) -> Tuple[str, Path]:
     return ".".join(reversed(parts)), root
 
 
+def _module_name(path: Path) -> str:
+    return _module_name_and_root(path)[0]
+
+
 def _with_probes(request: RevealRequest) -> Tuple[str, List[int]]:
     """The module text with one ``reveal_type`` line per expression before ``line``.
 
@@ -374,7 +377,7 @@ class MypyInferrer:
             self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
             cache_dir = Path(self._cache.name)
         self._cache_dir = cache_dir.resolve()
-        self._consumer_cache: Dict[Path, Tuple[FrozenSet[str], Sequence[str]]] = {}
+        self._import_scans: Dict[Path, ImportScan] = {}
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
@@ -415,7 +418,7 @@ class MypyInferrer:
         self.close()
 
     def _consumers(self, root: Path, replacements: Mapping[str, str]) -> Sequence[str]:
-        """The unchanged modules that import this change, found once and kept.
+        """The unchanged modules that import this change, as the project now stands.
 
         A complete build walks the packages under refactoring, and mypy follows
         imports out of them. What imports *into* them is reached by neither, so
@@ -423,33 +426,19 @@ class MypyInferrer:
         the new helper collides with is unchanged, unimported and broken by the
         change, and the check that never looked at it reported clean.
 
-        The scan is one ``ast`` pass over the project, and it must stay one: a
-        prospective check happens hundreds of times in a run, and each names
-        only the few modules it is about. The answer is therefore kept against
-        the *modules asked about so far*, not against the set of a single
-        request, so those sparse checks reuse the scan the first complete one
-        paid for. A request naming a module never seen before -- a second
-        project under one oracle -- widens the set and scans once more.
+        One scan per project is kept for the oracle's life and follows the tree
+        (see :class:`towel.consumers.ImportScan`): a prospective check happens
+        hundreds of times in a run, and each costs a walk and a stat per file,
+        not a parse.
         """
-
-        def namer(path: Path) -> str:
-            return _module_name_and_root(path)[0]
-
-        wanted = module_prefixes(replacements, namer)
-        remembered = self._consumer_cache.get(root)
-        if remembered is not None and wanted <= remembered[0]:
-            return remembered[1]
-        if remembered is not None:
-            wanted |= remembered[0]
+        scan = self._import_scans.get(root)
+        if scan is None:
+            scan = self._import_scans[root] = ImportScan(root, _module_name)
         packages = {walked_package(Path(path)) or Path(path).resolve() for path in replacements}
-        found = consumers_of(
-            root,
-            wanted,
-            module_name=namer,
+        return scan.consumers(
+            module_prefixes(replacements, _module_name),
             exclude=[package for package in packages if package.is_dir()],
         )
-        self._consumer_cache[root] = (frozenset(wanted), found)
-        return found
 
     def _build_errors(
         self,

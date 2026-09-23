@@ -24,10 +24,11 @@ with another, for a stub beside the module it describes.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 import textwrap
-from typing import List, Mapping
+from typing import Mapping
 
 import pytest
 
@@ -290,9 +291,9 @@ def test_the_consumer_scan_is_paid_for_once_however_many_checks_follow(
 
     Verification checks the project once per candidate signature, hundreds of
     times in a run, and each of those requests names only the modules it is
-    about. Keeping the scan against the set of one request would have missed on
-    every one of them and walked the whole tree again: 0.31 s on Sphinx, where
-    a capped run makes 54 such checks.
+    about. Scanning afresh for each would parse the whole tree every time:
+    0.31 s on Sphinx, where a capped run makes 54 such checks. What a sparse
+    check pays is a walk and a stat per file.
     """
     _write(
         tmp_path,
@@ -304,26 +305,26 @@ def test_the_consumer_scan_is_paid_for_once_however_many_checks_follow(
             "consumer.py": "from pkg.one import VALUE\n\nUSED: int = VALUE\n",
         },
     )
-    scans = 0
-    original = type_inference.consumers_of
+    parses = 0
+    original = ast.parse
 
-    def counting(*arguments: object, **keywords: object) -> List[str]:
-        nonlocal scans
-        scans += 1
-        return original(*arguments, **keywords)  # type: ignore[arg-type]
+    def counting(*arguments: object, **keywords: object) -> object:
+        nonlocal parses
+        parses += 1
+        return original(*arguments, **keywords)  # type: ignore[call-overload]
 
-    monkeypatch.setattr(type_inference, "consumers_of", counting)
+    monkeypatch.setattr(ast, "parse", counting)
     one, two = str(tmp_path / "pkg" / "one.py"), str(tmp_path / "pkg" / "two.py")
     oracle = MypyInferrer()
     try:
         oracle.check_project({one: "VALUE: int = 1\n", two: "OTHER: int = 2\n"})
-        assert scans == 1, "the first complete check pays for the scan"
+        assert parses == 4, "the first complete check pays for the scan"
         oracle.check_project({one: "VALUE: int = 3\n"})
         oracle.check_project({two: "OTHER: int = 4\n"})
         oracle.check_project({one: "VALUE: int = 5\n"})
     finally:
         oracle.close()
-    assert scans == 1, f"a sparse check rescanned the project ({scans} scans)"
+    assert parses == 4, f"a sparse check parsed the project again ({parses} parses)"
 
 
 @requires_mypy
