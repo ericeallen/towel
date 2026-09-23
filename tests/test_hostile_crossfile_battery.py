@@ -40,6 +40,7 @@ TRANSFORMED = {
     "xf12_cycle_through_package_init",
     "xf14_script_with_leading_statement",
     "xf15_ancestor_in_another_module",
+    "xf16_consumer_outside_target_owns_helper_name",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.

@@ -61,9 +61,15 @@ describe belong to that version.
   path before the block, a module name bound on every path before the
   top-level statement holding the function and never deleted, or a binding
   of an enclosing function made before the inner function's definition. Any
-  other free variable (a local bound only on some path, a cell of an
-  enclosing function not yet filled) is passed as a thunk so it is read
-  where the block read it. Definite assignment is computed conservatively:
+  other free variable (a module name bound later, a cell of an enclosing
+  function not yet filled) is passed as a thunk so it is read where the block
+  read it. A call site whose thunk would read a *local* of its own function
+  that may be unbound there is declined instead: the block raised
+  `UnboundLocalError` reading it, the thunk raises `NameError` reading an
+  unfilled closure cell, and a handler for `UnboundLocalError` stops matching.
+  This gives up extractions whose read of such a local can never happen
+  unbound, because only a correlation between paths shows it
+  (`r85_conditionally_bound_parameter`). Definite assignment is computed conservatively:
   loops, `contextlib.suppress`, and non-exhaustive `match` statements never
   bind definitely.
 - **Module names stay module names.** A free name that both sites resolve at
@@ -178,14 +184,26 @@ addresses:
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
   usual descriptor protocol. Methods decorated with anything other than the
   recognized receiver-preserving decorators receive a module-level helper with
-  the receiver passed explicitly. Custom metaclasses that alter attribute
-  lookup, `__init_subclass__` hooks, and `__slots__` interactions with added
-  methods are not modeled beyond compilation.
+  the receiver passed explicitly. A class decorator is trusted to leave a
+  helper in place only when it is one of `dataclasses.dataclass`,
+  `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
+  `enum.unique`, reached through the module's own absolute imports; a class
+  carrying any other decorator takes no helper. What a custom metaclass or an
+  inherited `__init_subclass__` hook does to the namespace of a class that
+  takes a helper is not modeled: one that wraps or drops every function of
+  its classes reaches the helper too. `__slots__` interactions with added methods are not modeled beyond
+  compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
   names can be written bare, when no statement before that point could run
-  code at import time. Cross-file helpers add a module import; a helper
+  code at import time. A statement counts as running code when anything it
+  evaluates as the module loads is a call: an assignment such as `Y = f()`, a
+  decorator, a default, a base or class keyword, or a statement of a class
+  body; what a base's `__init_subclass__` runs is not seen. When a name the
+  annotations need is defined only after such code, the helper goes before
+  it anyway where annotations are postponed (`from __future__ import
+  annotations`), and is declined elsewhere. Cross-file helpers add a module import; a helper
   import goes after the module's last leading import (after the docstring
   when there are none), so a script that runs a statement before its
   imports keeps it first. Static local import cycles are rejected
@@ -214,17 +232,27 @@ in a neutral module by hand when it matters.
 
 ## Method insertion
 
-A helper shared by methods that never read an attribute of their receiver is a
-`staticmethod`, reached through the class rather than through `self`. Such a
-method works when it is called through its class with anything in the
-receiver's place -- `Formatter.as_dollars(None, 1.5)` -- and a helper reached
-through `self` would end that. A method that ignores its receiver has no
-dispatch to preserve, so nothing is given up: the helper stays in the class,
-and a block that does use the receiver takes it as an ordinary argument.
+A helper shared by methods that never read an attribute of their receiver, or
+by static methods, is a module-level function. Such a method works when it is
+called through its class with anything in the receiver's place --
+`Formatter.as_dollars(None, 1.5)` -- and a helper reached through `self` would
+end that. A static method in the class would have to be reached through
+something, and nothing a method can spell is sure to be its class: its name
+may be a parameter of the method, deleted, rebound through `global`, mangled
+(`class __C`), bound to whatever a class decorator returned, or not bound yet
+while the class body calls the method, and a metaclass sees the lookup. The
+`__class__` cell is always the class, but mypy does not know the name. A
+method that ignores its receiver has no dispatch to preserve, so the only cost
+is that the helper sits before the class rather than inside it; a block that
+does use the receiver takes it as an ordinary argument.
 
-The class is named at the call site by the name the referencing module uses for
-it, so the same caveat applies as to any module-level helper: rebinding that
-name at run time, after the class is defined, is not something Towel can see.
+A generated helper's name is one no Python source under the project root
+spells yet, not only none of the files under refactoring: a subclass in
+another package that already defines `_extracted_func_0` would override a
+helper of that name placed in its base. The root is the nearest directory
+with packaging metadata above the input (or the directory above its
+packages), read with the consumer scan's exclusions; a subclass defined
+outside that root, or reached only through `exec`, is not seen.
 
 A base-class name is resolved as the binding in effect where the class
 statement runs, never by name across the project. It must be bound there by an
@@ -234,17 +262,28 @@ function, reachable through a star import, or bound in the same top-level
 statement as the class that uses it contributes no ancestor, and the helper is
 placed at module level instead. Rebinding the name between two subclasses --
 `Base = object` on a line of its own -- is therefore respected rather than
-overlooked, but a *decorated* base class is still trusted to be the class it
-wraps: `@register class Base:` may bind something else, and Towel does not
-evaluate the decorator to find out. `exec`, `globals()[name] = ...` and other
-reflection remain outside what any static rule here can see.
+overlooked. A *decorated* base contributes no ancestor either, unless each of
+its decorators is one of those known to keep the class and its namespace (see
+above): `@register class Base:` binds `Base` to whatever `register` returns,
+and Towel does not evaluate the decorator to find out. `exec`,
+`globals()[name] = ...` and other reflection remain outside what any static
+rule here can see.
 
 A helper becomes a method only when both blocks belong to functions defined
 directly in one unique module-level class, or in classes with a unique
 module-level common ancestor, every
 decorator on the source methods is known
-to preserve the receiver, and the methods have a first parameter named
-`self` (or the method is a `classmethod`). Local classes, duplicated class names, unknown
+to preserve the receiver, the methods have a first parameter named
+`self` (or the method is a `classmethod`), and both read an attribute of it.
+The class that takes the helper, whether the methods' own or their common
+ancestor, must also be able to hold it as an ordinary member: not a
+`Protocol` (a method there is one more member every structural implementer
+lacks, so a runtime-checkable `isinstance` turns false), not written with its
+body on the header's line (`class Base: pass` takes no further statement), and
+not decorated beyond the known namespace-preserving decorators. A base that
+could be `Protocol` on any path through its module, or is spelled
+`Protocol`, counts as one. When the nearest common ancestor is refused, a
+farther one that qualifies is used. Local classes, duplicated class names, unknown
 decorators, functions nested inside methods, and class-body functions with
 no parameter or a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join
@@ -295,8 +334,9 @@ where the evidence comes from:
   are tried: unrestricted concrete disagreements, then constraints with two to
   four concrete alternatives. Every fresh helper type parameter must occur in an
   input. Instance and class helpers retain type parameters bound by their host
-  class, which can also appear only in the result. Static helpers freshen source
-  class parameters and must infer them from explicit arguments. Generic method
+  class, which can also appear only in the result. A module helper taken from
+  static methods freshens source class parameters and must infer them from
+  explicit arguments. Generic method
   inference currently requires implicit `self`/`cls` typing; explicit receiver
   contracts are not generalized.
   Inherited helpers must type-check in the chosen ancestor, without assuming

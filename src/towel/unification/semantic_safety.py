@@ -22,6 +22,7 @@ from typing import (
     TYPE_CHECKING,
     FrozenSet,
     Iterable,
+    List,
     Sequence,
     Set,
     Tuple,
@@ -40,13 +41,16 @@ from .definite_assignment import (
 from .models import FunctionNode
 from .bounded_cache import BoundedCache
 from .scope_analyzer import ScopeAnalyzer, type_parameter_names
+from .parameters import parameter_names
 from .statement_facts import (
     bindings_of,
+    import_binding_names,
     loaded_names,
     memoized_per_node,
+    pattern_capture_names,
 )
 from .structural_memo import structural_id
-from .visitors import OwnScopeVisitor
+from .visitors import FreeNameCollector, OwnScopeVisitor
 
 if TYPE_CHECKING:
     from .substitution import Substitution
@@ -1088,6 +1092,70 @@ def defer_impure_parameters(
             for block_idx, expression in expressions
         ):
             substitution.function_params[name] = []
+
+
+def thunk_reads_possibly_unbound_local(
+    call: ast.AST, function: FunctionNode, available: AbstractSet[str]
+) -> bool:
+    """Whether a thunk in ``call`` reads a local of ``function`` that may be unbound.
+
+    A thunk keeps a read where the block had it, so the name is looked up only
+    on the path that reads it; that is why a local bound on some paths only is
+    passed as one. The lookup is not the same, though. The block read the name
+    as a local of its function, and an unbound local raises
+    ``UnboundLocalError``; the thunk reads it as a free variable of a lambda,
+    and an unfilled closure cell raises ``NameError``, with a different
+    message. ``UnboundLocalError`` is the subclass, so a handler for it, or an
+    ``isinstance`` test, no longer matches. No thunk can raise the original
+    error without restating the interpreter's message, so such a call site is
+    declined. A module name or an enclosing function's cell reads the same way
+    from both places and is not a concern here.
+    """
+    local = _own_scope_locals(function)
+    for node in ast.walk(call):
+        if isinstance(node, ast.Lambda):
+            reader = FreeNameCollector()
+            reader.visit(node)
+            if (reader.used & local) - available:
+                return True
+    return False
+
+
+def _own_scope_locals(function: FunctionNode) -> Set[str]:
+    """The names that are locals of ``function``'s own scope, exactly.
+
+    ``locally_bound_names`` over-approximates on purpose and counts a
+    comprehension's loop variable, which is a local of the comprehension: a
+    read of that name in the function is a global lookup, and reads the same
+    from a thunk. A walrus inside a comprehension does bind in the function,
+    and a ``global`` or ``nonlocal`` declaration makes a name no local at all.
+    """
+    names: Set[str] = set(parameter_names(function.args))
+    declared: Set[str] = set()
+    pending: List[ast.AST] = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            pending.extend([*node.decorator_list])
+            continue  # a nested scope binds its own names
+        if isinstance(node, ast.Lambda):
+            continue
+        if isinstance(node, ast.comprehension):
+            pending.extend([node.iter, *node.ifs])  # the target is the comprehension's own
+            continue
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            declared.update(node.names)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(import_binding_names(node))
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.match_case):
+            names.update(pattern_capture_names(node.pattern))
+        pending.extend(ast.iter_child_nodes(node))
+    return names - declared
 
 
 def moves_scope_declaration(function: FunctionNode, nodes: Iterable[ast.AST]) -> bool:

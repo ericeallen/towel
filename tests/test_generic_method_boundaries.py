@@ -47,6 +47,14 @@ def _method(source: str, owner: str) -> ast.FunctionDef:
     )
 
 
+def _module_function(source: str) -> ast.FunctionDef:
+    return next(
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
+    )
+
+
 @pytest.mark.parametrize("syntax", ["legacy", "pep695"])
 @pytest.mark.parametrize("method_kind", ["instance", "staticmethod"])
 def test_class_bound_result_keeps_the_public_contract(
@@ -77,14 +85,17 @@ def test_class_bound_result_keeps_the_public_contract(
     path = _project(tmp_path, source)
     assert checker.check(str(path), source) == CheckSuccess()
     engine = _engine(checker)
+    # A helper that dispatches on nothing is a module function (see
+    # `test_receiver_dependency.py`); the class's contract must survive either way.
+    static = method_kind == "staticmethod"
     proposal = next(
         proposal
         for proposal in engine.analyze_file(str(path))
-        if proposal.insert_into_class == "Box"
+        if proposal.insert_into_class == (None if static else "Box")
     )
-    assert proposal.method_kind == method_kind
+    assert proposal.method_kind == (None if static else method_kind)
     rendered = engine.apply_refactoring(str(path), proposal)
-    helper = _method(rendered, "Box")
+    helper = _module_function(rendered) if static else _method(rendered, "Box")
     assert "Any" not in rendered
     assert checker.check(str(path), rendered) == CheckSuccess()
     assert path.read_text() == source
@@ -98,10 +109,7 @@ def test_class_bound_result_keeps_the_public_contract(
         invalid = checker.check(str(path), rendered + '\nbad = Box[int].first(["x"])\n')
         assert isinstance(invalid, CheckSuccess) and invalid.errors
         invalid_helper_use = checker.check(
-            str(path),
-            rendered
-            + "\n    def invalid(self) -> int:\n"
-            + f'        return self.{helper.name}(["x"])\n',
+            str(path), rendered + f'\nbad_use: int = {helper.name}(["x"])\n'
         )
         assert isinstance(invalid_helper_use, CheckSuccess) and invalid_helper_use.errors
     else:
@@ -268,10 +276,13 @@ def test_class_attribute_names_do_not_capture_generated_type_variables(
             class Calculator:
                 _TowelT0 = 42
                 _towel_typevar = "preserved"
+                calls: int = 0
                 def first(self, left: int, right: int) -> int:
+                    self.calls += 1
                     result = left + right
                     return result
                 def second(self, left: str, right: str) -> str:
+                    self.calls += 1
                     result = left + right
                     return result
             """),

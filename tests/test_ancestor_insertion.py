@@ -86,7 +86,7 @@ class TestAmbiguousCommonAncestor(TemporaryModuleTestCase):
     """
 
     BODY = (
-        "        total = value + 1\n"
+        "        total = value + self.step\n"
         "        doubled = total * 2\n"
         "        answer = doubled - 3\n"
         "        return answer\n"
@@ -97,7 +97,8 @@ class TestAmbiguousCommonAncestor(TemporaryModuleTestCase):
             "X": "class X(Mid):\n    def go(self, value: int) -> int:\n" + self.BODY,
             "Y": "class Y(Root, Mid):\n    def go(self, value: int) -> int:\n" + self.BODY,
         }
-        code = "class Root:\n    pass\n\n\nclass Mid(Root):\n    pass\n\n\n"
+        # The body reads its receiver, so the helper dispatches and has a home.
+        code = "class Root:\n    step = 1\n\n\nclass Mid(Root):\n    pass\n\n\n"
         code += "\n\n".join(classes[name] for name in order)
         path = self._write_temp(code)
         engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)

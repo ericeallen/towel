@@ -420,6 +420,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         )
         # Track helper name allocation per canonical file so helpers remain unique.
         self._helper_name_counters: Dict[str, int] = {}
+        # Helper-shaped names anywhere in each project, scanned once per engine.
+        self._project_helper_names: Dict[str, FrozenSet[str]] = {}
         self._seen_proposals: Set[Hashable] = set()
         # Per-run record of what each applied extraction replaced: the original
         # block and the generated call, for the naming step's before/after view.

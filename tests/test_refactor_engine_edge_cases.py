@@ -183,14 +183,16 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
 
         result = self._analyze_and_apply("""
             class Example:
+                step = 1
+
                 @classmethod
                 def alpha(cls, value):
-                    tmp = value + 1
+                    tmp = value + cls.step
                     return tmp * 2
 
                 @classmethod
                 def beta(cls, value):
-                    tmp = value + 1
+                    tmp = value + cls.step
                     return tmp * 2
             """)
 
@@ -217,8 +219,9 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
             call_sites = [ast.unparse(n) for n in ast.walk(method) if isinstance(n, ast.Call)]
             self.assertEqual(call_sites, [f"cls.{helper_name}(value)"])
 
-    def test_staticmethods_extracted_into_class(self):
-        """Duplicate static methods should place helper inside the class with @staticmethod."""
+    def test_staticmethods_share_a_module_level_helper(self):
+        """Duplicate static methods call a module function: a static helper had to be
+        reached through the class's name, which the method cannot be sure of."""
 
         result = self._analyze_and_apply("""
             class Example:
@@ -237,14 +240,13 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
         cls = next(
             node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example"
         )
-        helper = next(
-            node
-            for node in cls.body
-            if isinstance(node, ast.FunctionDef) and node.name not in {"alpha", "beta"}
+        self.assertEqual(
+            [node.name for node in cls.body if isinstance(node, ast.FunctionDef)],
+            ["alpha", "beta"],
         )
+        helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
         helper_name = helper.name
-        decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
-        self.assertIn("staticmethod", decorator_ids)
+        self.assertEqual(helper.decorator_list, [])
         helper_args = [arg.arg for arg in helper.args.args]
         self.assertTrue(helper_args, "Static helper should retain explicit parameters")
         self.assertNotIn("self", helper_args)
@@ -257,7 +259,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                 if isinstance(node, ast.FunctionDef) and node.name == method_name
             )
             call_sites = [ast.unparse(n) for n in ast.walk(method) if isinstance(n, ast.Call)]
-            self.assertEqual(call_sites, [f"Example.{helper_name}(value)"])
+            self.assertEqual(call_sites, [f"{helper_name}(value)"])
 
     def test_sibling_instance_methods_promote_to_common_base(self):
         """Sibling instance methods should extract helpers into their nearest shared base class."""

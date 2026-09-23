@@ -194,7 +194,9 @@ def test_method_declarations_respect_module_dependencies_and_host_decorators(
         )
         assert namespace["__doc__"] == "Example."
     else:
-        with pytest.raises(RefactoringError, match="binding after its host"):
+        # The decorator runs at import before Bound exists, which refuses the
+        # declaration before its position relative to the host is considered.
+        with pytest.raises(RefactoringError, match="binding after its host|unavailable binding"):
             engine.apply_refactoring(str(path), proposal)
         assert engine.change_log == ()
     assert path.read_text() == source

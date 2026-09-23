@@ -65,7 +65,6 @@ TRANSFORMED = {
     "r82_local_classes_same_name",
     "r83_tab_indented_class",
     "r84_warn_stacklevel",
-    "r85_conditionally_bound_parameter",
     "r87_nested_function_in_method",
     "r88_elif_branch",
     "r90_cluster_across_classes",
@@ -119,7 +118,36 @@ TRANSFORMED = {
     "r137_x1c_x85_in_comment",
     "r138_u2028_comment_same_indent_neighbours",
     "r139_literal_roundtrip",
+    # Methods that never read their receiver: the helper is a module-level
+    # function, since nothing a method can spell is sure to reach its class.
+    "p01_static_helper_class_name_shadowed_by_parameter",
+    "p02_static_helper_class_deleted",
+    "p03_static_helper_mangled_class_name",
+    "p04_static_helper_class_decorator_returns_factory",
+    "p05_static_helper_class_global_rebound",
+    "p06_static_helper_called_while_class_body_runs",
+    "p07_static_methods_called_while_class_body_runs",
+    "p08_classmethod_never_using_cls",
+    "p09_static_helper_metaclass_hides_attribute",
+    # Classes that cannot take a helper into their body: it goes to module level.
+    "p10_one_line_exception_base",
+    "p11_one_line_base_docstring_and_assignment",
+    "p12_one_line_body_after_a_split_header",
+    "p13_protocol_default_methods",
+    "p14_protocol_common_ancestor",
+    "p15_class_decorator_rebuilds_namespace",
+    "p16_class_decorator_wraps_every_function",
+    "p17_decorated_base_rebuilds_namespace",
+    # The positive control: every decorator here keeps the helper a method.
+    "p18_known_class_decorators_keep_the_helper",
+    # The helper is placed before the assignment that calls it, its annotations
+    # quoted, rather than after the class they name.
+    "p21_helper_placed_after_an_assignment_that_calls_it",
 }
+# r85_conditionally_bound_parameter left the set when a thunk of a local that
+# may be unbound at the call began to be declined: the thunk would raise
+# NameError where the block raised UnboundLocalError. Its own read never
+# happens unbound, but nothing short of path correlation can show that.
 # Every other fixture must come back byte-identical. One of them once changed:
 # r86_annotated_assignment_live left the set when the trivial-helper filter
 # began declining its shared block, which binds only a literal and a parameter.

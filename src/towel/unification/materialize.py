@@ -39,11 +39,17 @@ import textwrap
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Set, Tuple
-from .exceptions import RefactoringError
+from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
+from .exceptions import ProjectScanLimitError, RefactoringError
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
-from ..project_layout import ProjectLayout, package_chain, package_chain_name
+from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
+from ..project_layout import (
+    ProjectLayout,
+    find_project_root,
+    package_chain,
+    package_chain_name,
+)
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
 from ..type_inference import TypeDiagnostic
@@ -311,7 +317,8 @@ class Materialization(
             proposal.extracted_function.name = self._allocate_helper_name(
                 proposal.file_path, class_context=class_context, related_paths=related_paths
             )
-            while proposal.extracted_function.name in declaration_names:
+            taken = declaration_names | self._helper_names_in_project(proposal.file_path)
+            while proposal.extracted_function.name in taken:
                 proposal.extracted_function.name = self._allocate_helper_name(
                     proposal.file_path, class_context=class_context, related_paths=related_paths
                 )
@@ -331,6 +338,25 @@ class Materialization(
             ),
             parameter_count=len(parameters),
         )
+
+    def _helper_names_in_project(self, file_path: str) -> FrozenSet[str]:
+        """Every helper-shaped identifier the project around ``file_path`` already spells.
+
+        Names are allocated against the files under analysis, and a file
+        outside them can still own one: a subclass in another package that
+        defines ``_extracted_func_0`` overrides a helper of that name placed in
+        its base, and every call its instances make is hijacked. So the whole
+        project is read, once per engine, for identifiers of the helper's
+        shape, in the same directories the consumer scan reads. The project is
+        found from the file's original location, since an output directory is
+        only a copy of part of it.
+        """
+        root = find_project_root(Path(self._origin_of(file_path)))
+        key = str(root)
+        names = self._project_helper_names.get(key)
+        if names is None:
+            names = self._project_helper_names[key] = _helper_shaped_identifiers(root)
+        return names
 
     def _materialize_file(
         self,
@@ -478,7 +504,9 @@ class Materialization(
         self, proposal: RefactoringProposal, lines: List[str]
     ) -> None:
         node: ast.AST = proposal.extracted_function
-        dependencies = self._annotation_names(proposal.extracted_function)
+        dependencies = self._placeable_dependencies(
+            "".join(lines), self._annotation_names(proposal.extracted_function)
+        )
         if proposal.helper_type_declarations:
             node = ast.Module(
                 body=[*proposal.helper_type_declarations, proposal.extracted_function],
@@ -501,6 +529,36 @@ class Materialization(
         lines_to_insert.extend(func_lines)
         lines_to_insert.extend(["\n", "\n"])
         lines[insert_line:insert_line] = lines_to_insert
+
+    def _placeable_dependencies(self, source: str, names: Set[str]) -> Set[str]:
+        """The annotation names the helper may be placed after; refuse when one it needs is not.
+
+        A helper placed after a definition its annotations name can spell it
+        bare, but only when nothing before that definition runs code that
+        could call the helper (``placeable_after``): ``Y = f()`` above
+        ``class Late`` calls the helper before a helper below ``Late`` exists.
+        Where annotations are never evaluated (``from __future__ import
+        annotations``) such a name needs no ordering at all; elsewhere a bare
+        annotation read before its definition is a ``NameError`` at import,
+        and the proposal is declined.
+        """
+        # The names ``_find_insert_position`` would move the helper past.
+        module_names: Set[str] = set()
+        for statement in self._parse_source(source).body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                module_names.add(statement.name)
+            elif isinstance(statement, ast.Assign):
+                module_names.update(t.id for t in statement.targets if isinstance(t, ast.Name))
+            elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+                module_names.add(statement.target.id)
+        ordered = names & module_names
+        blocked = ordered - self.placeable_after(source)
+        if blocked and not _postpones_annotations(source):
+            raise RefactoringError(
+                f"The helper's annotations name {sorted(blocked)}, defined after code that"
+                " could call the helper"
+            )
+        return ordered - blocked
 
     def _insert_method_type_declarations(
         self, proposal: RefactoringProposal, lines: List[str]
@@ -671,6 +729,103 @@ class Materialization(
                         f"Generated call to {helper_name} passes {len(node.args)} arguments "
                         f"but the helper binds {expected}: {path}"
                     )
+
+
+def _postpones_annotations(source: str) -> bool:
+    """Whether the module is written under ``from __future__ import annotations``."""
+    try:
+        body = ast.parse(source).body
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(statement, ast.ImportFrom)
+        and statement.module == "__future__"
+        and any(alias.name == "annotations" for alias in statement.names)
+        for statement in body
+    )
+
+
+_HELPER_SHAPED = re.compile(r"(?<!\w)_{1,2}extracted_func(?:_\d+)?(?!\w)")
+
+
+def _helper_shaped_identifiers(root: Path) -> FrozenSet[str]:
+    """The helper-shaped names that sources under ``root`` could make override a helper.
+
+    A helper is reached as a method or as a module attribute, so another file
+    can take its place only by giving a class a member of that name or by
+    assigning the attribute: a ``def`` or assignment in a class body, an
+    attribute store anywhere, or the name as a string given to ``setattr``,
+    stored by subscript into a namespace, or keyed in a ``type(...)``
+    namespace. A mere call or mention takes nothing. A file that does not parse cannot be told
+    apart, so every helper-shaped word in it counts. Past the consumer scan's
+    limit the project cannot be read whole, and the run stops, as a typed
+    run's consumer scan does, rather than choose a name some unread file may
+    own.
+    """
+    found: Set[str] = set()
+    count = 0
+    for parent, directories, files in os.walk(root, onerror=lambda _: None):
+        directories[:] = [name for name in directories if name not in SKIPPED_DIRECTORIES]
+        for name in files:
+            if not name.endswith((".py", ".pyi")):
+                continue
+            count += 1
+            if count > MAXIMUM_FILES:
+                raise ProjectScanLimitError(
+                    f"{root} holds more than {MAXIMUM_FILES} Python files, so which helper"
+                    " names its sources already use cannot be established. Towel reads"
+                    " the project from the nearest directory with a pyproject.toml,"
+                    " setup.cfg or setup.py; give the code one, or move it out of the"
+                    " larger tree"
+                )
+            try:
+                text = Path(parent, name).read_bytes().decode("utf-8", errors="replace")
+            except OSError:
+                continue
+            words = set(_HELPER_SHAPED.findall(text))
+            if words:
+                found.update(_overriding_names(text, words))
+    return frozenset(found)
+
+
+def _overriding_names(text: str, words: Set[str]) -> Set[str]:
+    """Of the helper-shaped ``words`` in ``text``, those it defines where a helper could be."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return words
+    defined: Set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            pending: List[ast.AST] = list(node.body)
+            while pending:
+                member = pending.pop()
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    defined.add(member.name)
+                    continue
+                if isinstance(member, ast.Name) and isinstance(member.ctx, ast.Store):
+                    defined.add(member.id)
+                pending.extend(ast.iter_child_nodes(member))
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            defined.add(node.attr)
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
+            defined.update(_string_constants([node.slice]))  # namespace["name"] = ...
+        elif isinstance(node, ast.Call):
+            callee = node.func
+            called = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
+            if called in {"setattr", "__setattr__"} and len(node.args) >= 2:
+                defined.update(_string_constants([node.args[1]]))
+            elif called == "type" and len(node.args) == 3 and isinstance(node.args[2], ast.Dict):
+                defined.update(_string_constants([k for k in node.args[2].keys if k]))
+    return defined & words
+
+
+def _string_constants(nodes: List[ast.expr]) -> Set[str]:
+    return {
+        node.value
+        for node in nodes
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
 
 
 def _corroborated_module_name(layout: ProjectLayout, path: Path) -> Optional[str]:

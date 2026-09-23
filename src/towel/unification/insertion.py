@@ -82,18 +82,22 @@ def relative_import_module(from_path: Path, to_path: Path) -> Optional[str]:
     return "." * dots + ".".join(parts)
 
 
+def _calls_in(nodes: Sequence[ast.AST]) -> bool:
+    """Whether evaluating any of ``nodes`` calls something; a lambda's body is not evaluated."""
+    pending: List[ast.AST] = list(nodes)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.Call, ast.Await)):
+            return True
+        if isinstance(node, ast.Lambda):
+            pending.extend([*node.args.defaults, *filter(None, node.args.kw_defaults)])
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+    return False
+
+
 class InsertionPoints(EngineState):
     """InsertionPoints methods of the engine; see the module docstring."""
-
-    _DEFINITION_LIKE = (
-        ast.Import,
-        ast.ImportFrom,
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.ClassDef,
-        ast.Assign,
-        ast.AnnAssign,
-    )
 
     @staticmethod
     def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:
@@ -167,21 +171,44 @@ class InsertionPoints(EngineState):
     def _is_definition_like(cls, statement: ast.stmt) -> bool:
         """Whether a module-level statement runs no code of the module's own at import.
 
-        Definitions, imports, assignments and docstrings; an ``if`` or ``try``
-        whose bodies are all such statements (``TYPE_CHECKING`` guards,
-        optional imports). Anything else may call into the module, so a helper
-        must be defined before it.
+        Imports, docstrings, and definitions and assignments that call
+        nothing while they run; an ``if`` or ``try`` made only of such
+        statements (``TYPE_CHECKING`` guards, optional imports). A call is
+        what could reach a function whose block went into the helper: an
+        assignment ``Y = f()``, a decorator (itself a call, and free to
+        instantiate the class), a default, a base expression, a class
+        keyword such as ``metaclass=``, or a class body statement all run as
+        the module is imported, so a helper must be defined before any of
+        them. What a base class's ``__init_subclass__`` runs is not seen.
         """
-        if isinstance(statement, cls._DEFINITION_LIKE):
+        if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)):
             return True
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
             return True
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            evaluated: List[ast.AST] = [
+                *statement.args.defaults,
+                *(default for default in statement.args.kw_defaults if default is not None),
+            ]
+            return not statement.decorator_list and not _calls_in(evaluated)
+        if isinstance(statement, ast.ClassDef):
+            return (
+                not statement.decorator_list
+                and not statement.keywords
+                and not _calls_in(statement.bases)
+                and all(cls._is_definition_like(s) for s in statement.body)
+            )
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            return not _calls_in([statement])
         if isinstance(statement, ast.If):
-            return all(cls._is_definition_like(s) for s in statement.body + statement.orelse)
+            return not _calls_in([statement.test]) and all(
+                cls._is_definition_like(s) for s in statement.body + statement.orelse
+            )
         if isinstance(statement, ast.Try):
             nested = statement.body + statement.orelse + statement.finalbody
             nested += [s for handler in statement.handlers for s in handler.body]
-            return all(cls._is_definition_like(s) for s in nested)
+            handlers = [handler.type for handler in statement.handlers if handler.type]
+            return not _calls_in(handlers) and all(cls._is_definition_like(s) for s in nested)
         return False
 
     @classmethod
