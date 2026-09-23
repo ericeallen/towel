@@ -49,6 +49,7 @@ from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import statement_shape
 from .semantic_safety import (
     available_argument_names,
+    builtins_passed,
     thunk_reads_possibly_unbound_local,
     module_resolved_names,
     defer_impure_parameters,
@@ -193,6 +194,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         # A ``super()`` the call itself holds runs in a thunk or in the helper,
         # neither of which reads the method's receiver and cell (``SUPER_IN_CALL``).
         if needs_class_body([call_node2]):
+            return None
+        # A clustered block reading a builtin cannot join a helper whose sites
+        # pass their own local of that name: its call would hand over the builtin.
+        if builtins_passed(
+            call_node2, template.func_def.name, candidate.function, candidate.analyzer
+        ):
             return None
         if thunk_reads_possibly_unbound_local(call_node2, candidate.function, available[1]):
             return None

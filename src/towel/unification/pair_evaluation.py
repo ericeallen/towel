@@ -55,9 +55,10 @@ from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
-from .builtins import CALL_ARGUMENT_BUILTINS
+from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
     available_argument_names,
+    builtins_passed,
     module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
@@ -72,12 +73,7 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .narrowing import narrowing_lost_at_call_site
-from .namespace_writes import (
-    BUILTIN_NAMES,
-    ProjectWrites,
-    builtin_rebinding,
-    scan_project_writes,
-)
+from .namespace_writes import ProjectWrites, builtin_rebinding, scan_project_writes
 from .models import (
     HelperHome,
     proposal_identity,
@@ -1013,7 +1009,9 @@ class PairEvaluation(
         site passing its own. One that only one site's function binds is what
         a builtin parameter would have had to carry, and no helper takes a
         builtin as a parameter: the pair is declined. A same-file pair's
-        helper shares its sites' module, and nothing here applies to it.
+        analysis lists the spelling for both blocks, so it becomes a
+        parameter, and the site that would hand over the builtin declines the
+        pair when its call is generated (``builtins_passed``).
         """
         if not pair.is_cross_file:
             return frozenset()
@@ -1034,7 +1032,7 @@ class PairEvaluation(
             mixed = sorted(local[index] & at_module[other])
             if mixed:
                 self._debug_reject(
-                    RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE,
+                    RejectReason.BUILTIN_ARGUMENT,
                     pair,
                     detail=f"{mixed[0]}: {sites[index][3]} binds it, {sites[other][3]} does not",
                 )
@@ -1209,8 +1207,9 @@ class PairEvaluation(
 
         The call may name only what is bound before the block, the free
         variables, and a few builtins (a leaked placeholder or an invented
-        local would be an undefined name at the site), and instantiating the
-        helper with it must give back the block.
+        local would be an undefined name at the site), it may hand the helper
+        no builtin (``builtins_passed``), and instantiating the helper with it
+        must give back the block.
         """
         func_def = rendered.func_def
         if block_idx == 0:
@@ -1247,11 +1246,8 @@ class PairEvaluation(
             # callee the site resolves is passed as a thunk or inlined.
             self._debug_reject(RejectReason.FORWARDED_CALLEE, pair, detail=f"block{block_idx+1}")
             return None
-        if thunk_reads_possibly_unbound_local(
-            call_node,
-            setup.ctx.func1 if block_idx == 0 else setup.ctx.func2,
-            free.available_names[block_idx],
-        ):
+        function = setup.ctx.func1 if block_idx == 0 else setup.ctx.func2
+        if thunk_reads_possibly_unbound_local(call_node, function, free.available_names[block_idx]):
             # See :func:`thunk_reads_possibly_unbound_local`.
             self._debug_reject(
                 RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL, pair, detail=f"block{block_idx+1}"
@@ -1286,6 +1282,15 @@ class PairEvaluation(
         if mismatch is not None:
             self._debug_reject(
                 RejectReason.INSTANTIATION_MISMATCH, pair, detail=f"block{block_idx+1}: {mismatch}"
+            )
+            return None
+        analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
+        handed = builtins_passed(call_node, func_def.name, function, analyzer)
+        if handed:
+            # Only a site whose function binds the name hands over its own
+            # local; a name the site reads from the builtins stays out.
+            self._debug_reject(
+                RejectReason.BUILTIN_ARGUMENT, pair, detail=f"block{block_idx+1}: {sorted(handed)}"
             )
             return None
         return Replacement(

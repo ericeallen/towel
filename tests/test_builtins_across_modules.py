@@ -27,11 +27,8 @@ from typing import Dict, Mapping, Optional, Tuple
 import pytest
 
 from tests.test_helpers import module_functions, refactor_to_fixed_point_silently
-from towel.unification.namespace_writes import (
-    BUILTIN_NAMES,
-    builtin_rebinding,
-    scan_project_writes,
-)
+from towel.unification.builtins import BUILTIN_NAMES
+from towel.unification.namespace_writes import builtin_rebinding, scan_project_writes
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 BLOCK = """

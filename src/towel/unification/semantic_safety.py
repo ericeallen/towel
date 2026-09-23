@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
-from .builtins import PYTHON_BUILTINS
+from .builtins import BUILTIN_NAMES, PYTHON_BUILTINS
 from .definite_assignment import (
     definitely_bound_after,
     definitely_bound_before,
@@ -1643,6 +1643,46 @@ def thunk_reads_possibly_unbound_local(
             if (reader.used & local) - available:
                 return True
     return False
+
+
+def builtins_passed(
+    call: ast.AST, helper_name: str, function: FunctionNode, analyzer: "ScopeAnalyzer"
+) -> FrozenSet[str]:
+    """The builtins that ``call``, standing in ``function``, hands the helper ``helper_name``.
+
+    No helper takes a builtin as a parameter: ``helper(rows, len)`` would
+    surprise every reader. A builtin is handed over when an argument, or the
+    value a lambda argument returns, is a name that the site reads from the
+    builtins, bare or inside a literal tuple, list, set or dict:
+    ``lambda: __import__`` and ``(int, str)`` are, ``lambda: len(rows)``
+    is not, since it hands over what ``len`` computed. A name the site's
+    function or an enclosing one binds is its own local and is not a
+    builtin; one the site's module binds is counted all the same, being
+    spelled as a builtin.
+    """
+    handed: Set[str] = set()
+    for node in ast.walk(call):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == helper_name:
+                for argument in [*node.args, *(keyword.value for keyword in node.keywords)]:
+                    handed |= _builtin_values(argument, frozenset())
+    return module_resolved_names(function, analyzer, handed) if handed else frozenset()
+
+
+def _builtin_values(node: ast.expr, shadowed: FrozenSet[str]) -> Set[str]:
+    """The builtin spellings that are ``node``'s value or its literal container's members."""
+    if isinstance(node, ast.Lambda):
+        return _builtin_values(node.body, shadowed | frozenset(parameter_names(node.args)))
+    if isinstance(node, ast.Name):
+        return {node.id} if node.id in BUILTIN_NAMES and node.id not in shadowed else set()
+    if isinstance(node, ast.Starred):
+        return _builtin_values(node.value, shadowed)
+    members: List[ast.expr] = []
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        members = list(node.elts)
+    elif isinstance(node, ast.Dict):
+        members = [*(key for key in node.keys if key is not None), *node.values]
+    return set().union(*(_builtin_values(member, shadowed) for member in members))
 
 
 def _own_scope_locals(function: FunctionNode) -> Set[str]:

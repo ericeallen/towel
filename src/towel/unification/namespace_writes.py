@@ -57,7 +57,6 @@ outside the project does is not seen at all.
 from __future__ import annotations
 
 import ast
-import builtins
 import os
 import re
 from dataclasses import dataclass
@@ -67,6 +66,7 @@ from typing import Tuple, Union
 
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from .bounded_cache import BoundedCache
+from .builtins import BUILTIN_NAMES
 from .module_bindings import global_bindings
 
 ANY_NAME = "*"
@@ -74,26 +74,6 @@ ANY_NAME = "*"
 
 ANY_MODULE = "*"
 """The dotted name of a write into a module computed at run time: ``patch(prefix + ".open")``."""
-
-# Names every module's namespace defines for itself, each with that module's
-# own value: read bare in another module, each is the other module's.
-MODULE_OWN_NAMES = frozenset(
-    {
-        "__annotations__",
-        "__builtins__",
-        "__cached__",
-        "__doc__",
-        "__file__",
-        "__loader__",
-        "__name__",
-        "__package__",
-        "__path__",
-        "__spec__",
-    }
-)
-
-BUILTIN_NAMES = frozenset(vars(builtins)) - MODULE_OWN_NAMES
-"""What a bare read finds in the builtins when no module namespace holds it."""
 
 
 @dataclass(frozen=True)
