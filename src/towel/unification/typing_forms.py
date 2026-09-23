@@ -45,7 +45,7 @@ typing gives the forms.
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Dict, FrozenSet, List, Mapping, NamedTuple, Optional, Sequence, Tuple
@@ -118,6 +118,29 @@ class _ModuleFacts:
     """The imports and plain aliases of function and class bodies, by the name each binds."""
     star_modules: Tuple[Optional[str], ...]
     """The module each star import names; None for a relative one."""
+    _local: Dict[str, Tuple[FrozenSet[str], bool]] = field(
+        default_factory=dict, init=False, repr=False, compare=False, hash=False
+    )
+    """``local_forms`` per spelling: a pure function of the source, living as long as these facts."""
+
+    def local_forms(self, spelling: str) -> Tuple[FrozenSet[str], bool]:
+        """What ``spelling`` denotes as this module binds it, and whether an import must be followed."""
+        known = self._local.get(spelling)
+        if known is None:
+            known = self._local[spelling] = self._resolve_locally(spelling)
+        return known
+
+    def _resolve_locally(self, spelling: str) -> Tuple[FrozenSet[str], bool]:
+        head, _, rest = spelling.partition(".")
+        origins, opaque = self.origins(head)
+        targets = {f"{origin}.{rest}" if rest else origin for origin in origins}
+        forms = {FORM_ORIGINS[target] for target in targets if target in FORM_ORIGINS}
+        if not rest and self.foreign_star:
+            forms |= _named_form(head)
+        follow = bool(_named_form(spelling)) and (
+            opaque or any(target not in FORM_ORIGINS for target in targets)
+        )
+        return frozenset(forms), follow
 
     def origins(self, head: str, depth: int = 0) -> Tuple[FrozenSet[str], bool]:
         """The absolute names ``head`` may denote, and whether an import may bind it to another.
@@ -206,10 +229,6 @@ def _module_facts(source: str) -> Optional[_ModuleFacts]:
     return _FACTS.put(source, _ModuleFacts(bindings, scoped, stars))
 
 
-# What a spelling denotes as far as its own module shows, and whether that
-# rests on an import to follow; keyed by the module's source and the spelling.
-_LOCAL: BoundedCache[Tuple[str, str], Tuple[FrozenSet[str], bool]] = BoundedCache(65536)
-
 # What a name a followed module binds denotes, keyed by the module file's
 # path, modification time and size and the name, as the import graph keys
 # what it reads.
@@ -222,24 +241,15 @@ def _named_form(spelling: str) -> FrozenSet[str]:
 
 
 def _local_forms(source: str, spelling: str) -> Tuple[FrozenSet[str], bool]:
-    """What ``spelling`` denotes as ``source`` binds it, and whether an import must be followed."""
-    key = (source, spelling)
-    cached = _LOCAL.get(key)
-    if cached is not None:
-        return cached
+    """What ``spelling`` denotes as ``source`` binds it, and whether an import must be followed.
+
+    A module that does not parse binds nothing Towel can read, so the
+    spelling is taken to be the form its name spells.
+    """
     facts = _module_facts(source)
     if facts is None:
-        return _LOCAL.put(key, (_named_form(spelling), False))
-    head, _, rest = spelling.partition(".")
-    origins, opaque = facts.origins(head)
-    targets = {f"{origin}.{rest}" if rest else origin for origin in origins}
-    forms = {FORM_ORIGINS[target] for target in targets if target in FORM_ORIGINS}
-    if not rest and facts.foreign_star:
-        forms |= _named_form(head)
-    follow = bool(_named_form(spelling)) and (
-        opaque or any(target not in FORM_ORIGINS for target in targets)
-    )
-    return _LOCAL.put(key, (frozenset(forms), follow))
+        return _named_form(spelling), False
+    return facts.local_forms(spelling)
 
 
 @dataclass(frozen=True)
