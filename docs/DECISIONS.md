@@ -54,9 +54,50 @@ Three consequences follow, each ruled on explicitly:
   and rebound base names. Its costs: helpers stop being methods, a generic
   class's receiver needs a type variable in typed mode, and classes in
   different modules need an import where inheritance used to supply the
-  helper.
+  helper. *Superseded the same day, before it was implemented; see "Methods
+  keep method helpers" below.*
 
 *Status: being implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-22: Methods keep method helpers
+
+This supersedes the third consequence above. Towel keeps extracting the code
+a method shares into a method reached through `self`.
+
+The case that prompted the reversal, `A.m1(SimpleNamespace(v=10), 1)`, is a
+call no checker accepts as written: mypy and pyright both reject it, because
+the receiver of a method is typed as an instance of its class unless the
+method declares otherwise. That places it outside the contract, which holds
+for programs that are well formed. The alternative would itself have written
+code no checker can verify. Private attribute access would have to move out of
+the class in mangled form (`self.__x` inside `A` becomes `a._A__x`), and both
+mypy and pyright reject `a._A__x` although it runs. The owner does not want
+Towel to write code that cannot be type-checked under any annotations.
+
+Method extraction is sound for well-typed programs under three conditions:
+
+- **The receiver is an instance of the class.** This is the type every checker
+  gives `self`. A method that declares another self type, such as
+  `def m(self: HasV, n)` with a `Protocol`, has said that other receivers are
+  allowed, and it gets no helper reached through `self`.
+- **The class leaves an added function alone.** A metaclass, or an
+  `__init_subclass__` anywhere in the class's hierarchy, may wrap, register or
+  drop the functions a class defines. Only ones known to leave plain functions
+  alone are allowed: `type`, `abc.ABCMeta`, `enum.EnumType`, `typing.Generic`.
+  The class decorators, `Protocol` classes, one-line class bodies, rebound
+  bases and project-wide helper names handled earlier are part of the same
+  condition.
+- **The moved code does not need the class itself.** Zero-argument `super()`
+  and `__class__` bind to the class whose body the code is in.
+
+Where a class cannot host, the helper is a module-level function that takes
+the receiver as an ordinary parameter, as Towel already writes when no common
+class exists; code using private names is then declined. A helper from
+methods that never read their receiver stays a module-level function, as
+ruled on 2026-09-21 for `A.a(None, 3)`, since that costs nothing.
+
+*Status: the receiver and metaclass conditions are being implemented on the
+`audit-1772` branch; the rest is implemented there. Not yet released.*
 
 ## 2026-09-22: Import names come from the program
 
