@@ -19,11 +19,17 @@ import pytest
 from scripts import ecosystem_check as ecosystem
 
 CANDIDATE = ecosystem.Candidate(
-    Path("code_towel-0-py3-none-any.whl"), "code-towel", "0", "0", ("mypy", "pyright"), ()
+    Path("code_towel-0-py3-none-any.whl"),
+    "code-towel",
+    "0",
+    "0",
+    ("mypy", "pyright"),
+    ("black", "isort", "ruff"),
+    (),
 )
 """A candidate for runs whose environment is stubbed: nothing installs or verifies it."""
 ENVIRONMENT = ecosystem.ProjectEnvironment(
-    Path(sys.executable), None, ecosystem.Environment("3", "0", ())
+    Path(sys.executable), None, ecosystem.Environment("3", "0", (), ())
 )
 """The running interpreter standing in for a project environment that does not install it."""
 

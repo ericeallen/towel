@@ -55,16 +55,24 @@ third-party setup and tests with your privileges; use a disposable machine or
 container and the explicit `--run-untrusted-code` opt-in. Refresh upstream pins
 only after reviewing them.
 
-Towel runs in each project's own environment, as a user runs it. The
-environment holds the manifest's test dependencies; the project itself,
-installed editable from the tree under test; the mypy and pyright of Towel's
-`types` extra, at the version the project's `uv.lock`, `poetry.lock` or
-`pdm.lock` pins where it pins one, and not at all where the project's own
-requirements installed one already; and the candidate, installed with
-`--no-deps` and then compared file by file with the wheel. The checkers
-therefore see the project's dependencies, and Towel's import model sees the
-project installed from the tree it refactors rather than an installed copy
-elsewhere, which it would count as a second provider of the project's names.
+Towel runs in each project's own environment, as a user runs it after
+`pip install "code-towel[format,types]"`. The environment holds the manifest's
+test dependencies; the project itself, installed editable from the tree under
+test; the tools of Towel's two extras, mypy and pyright from `types` and Black,
+isort and ruff from `format`; and the candidate, installed with `--no-deps` and
+then compared file by file with the wheel. A tool the project's own
+requirements installed is left as it is, and one the project's `uv.lock`,
+`poetry.lock` or `pdm.lock` pins is installed at that version; only the rest
+come from the wheel's extras, at the versions that resolve that day. A version
+the project chose that fails the extra's requirement is replaced by the extra's,
+as installing the extra replaces it, and the result names the pin it overrode:
+rich's `poetry.lock` pins Black 22.12.0, below `black>=26.3.1`. Which formatter
+formats a project is still Towel's choice from the project's configuration,
+ruff where it configures ruff and Black otherwise; the harness only makes the
+tools available. The checkers therefore see the project's dependencies, and
+Towel's import model sees the project installed from the tree it refactors
+rather than an installed copy elsewhere, which it would count as a second
+provider of the project's names.
 The editable install follows the tree each test run exercises: the clone for
 the baseline, the refactored copy for Towel and the run after it, and the
 original package again for each retest of the original, so a regression in a
@@ -74,11 +82,11 @@ whose compiled extension replaces the Python wrappers in every test, and
 html5lib, whose `setup.py` cannot be built in isolation.
 
 Run the corpus with the default type policy, which is what a user gets. Each
-result records the interpreter, the candidate's version, each checker's
-version and who chose it (`project`, the lock file, or `towel[types]`), the
-tree the project was installed from, and whether its refactor extracted across
-modules; record those and the reported `typing_mode` alongside the verdict
-counts. Every refactor passes `--cross-module` where the Towel under test has
+result records the interpreter, the candidate's version, each checker's and
+formatter's version and who chose it (`project`, the lock file, or the extra,
+`towel[types]` or `towel[format]`, with any pin it overrode), the tree the
+project was installed from, and whether its refactor extracted across modules;
+record those and the reported `typing_mode` alongside the verdict counts. Every refactor passes `--cross-module` where the Towel under test has
 that option. A Towel without it extracts across modules by default, and the
 result says so. A manifest entry may turn cross-module extraction off only with
 a `cross_module_reason`, and the summary lists every project that ran without

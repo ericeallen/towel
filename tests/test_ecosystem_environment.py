@@ -5,9 +5,10 @@ none of the project's dependencies. mypy then checked with the wrong interpreter
 so the project's third-party imports were errors, and the import model found the
 tools' own copies of click, packaging and the rest and called those projects'
 names ambiguous. These tests pin what replaced that: one candidate wheel, verified
-to be the source under test, installed with the types extra's checkers into each
-project's environment, where the project is installed editable from the tree the
-run is testing, and ``--cross-module`` on every refactor that does not say why not.
+to be the source under test, installed with the checkers and formatters of its
+extras into each project's environment, where the project is installed editable
+from the tree the run is testing, and ``--cross-module`` on every refactor that
+does not say why not.
 """
 
 from __future__ import annotations
@@ -42,6 +43,11 @@ def main():
     return 2
 """
 TYPES = ('mypy>=1.0; extra == "types"', 'pyright>=1.1; extra == "types"')
+FORMAT = (
+    'black>=26.3.1; extra == "format"',
+    'isort>=5.12; extra == "format"',
+    'ruff>=0.4; extra == "format"',
+)
 
 
 def _record_line(path: str, data: bytes) -> str:
@@ -91,13 +97,13 @@ def _towel_files() -> Dict[str, str]:
     }
 
 
-def _candidate_wheel(directory: Path, *, requires: Sequence[str] = TYPES) -> Path:
+def _candidate_wheel(directory: Path, *, requires: Sequence[str] = (*TYPES, *FORMAT)) -> Path:
     return _wheel(
         directory,
         "code-towel",
         "9.9.9",
         _towel_files(),
-        requires=[*requires, 'black>=26; extra == "format"'],
+        requires=[*requires, 'pytest>=9; extra == "dev"'],
         scripts={"towel": "towel.cli:main"},
     )
 
@@ -117,8 +123,9 @@ def test_the_candidate_is_what_its_wheel_declares(tmp_path: Path) -> None:
     wheel = _candidate_wheel(tmp_path / "dist")
     candidate = ecosystem.load_candidate(wheel)
     assert (candidate.distribution, candidate.version) == ("code-towel", "9.9.9")
-    # Only the types extra names checkers; the format extra and the rest are not asked for.
+    # What `pip install "code-towel[format,types]"` adds, and nothing of the dev extra.
     assert candidate.types_requirements == ("mypy>=1.0", "pyright>=1.1")
+    assert candidate.format_requirements == ("black>=26.3.1", "isort>=5.12", "ruff>=0.4")
     assert candidate.sha256 == hashlib.sha256(wheel.read_bytes()).hexdigest()
     assert [path for path, _ in candidate.files] == ["__init__.py", "cli.py"]
     # A directory holding exactly one wheel names it, as the corpus image's does.
@@ -130,6 +137,7 @@ def test_the_candidate_is_what_its_wheel_declares(tmp_path: Path) -> None:
     [
         ("two wheels", "holds 2 wheels"),
         ("no types extra", "declares no types extra"),
+        ("no format extra", "declares no format extra"),
         ("no towel package", "holds no towel package"),
     ],
 )
@@ -141,7 +149,9 @@ def test_a_wheel_that_does_not_say_what_to_install_is_not_a_candidate(
         _candidate_wheel(dist)
         _wheel(dist, "code-towel", "9.9.8", _towel_files(), requires=TYPES)
     elif arrange == "no types extra":
-        _candidate_wheel(dist, requires=())
+        _candidate_wheel(dist, requires=FORMAT)
+    elif arrange == "no format extra":
+        _candidate_wheel(dist, requires=TYPES)
     else:
         _wheel(dist, "code-towel", "9.9.9", {"other/__init__.py": ""}, requires=TYPES)
     with pytest.raises(ValueError, match=message):
@@ -259,15 +269,35 @@ def _project_tree(root: Path, name: str, package: str, tree: str) -> Path:
     )
 
 
+def _packaging_wheel(directory: Path) -> Path:
+    """A wheel of the ``packaging`` running these tests: the real one, from no index."""
+    import packaging
+
+    root = Path(packaging.__file__).parent
+    files = {
+        f"packaging/{path.relative_to(root).as_posix()}": path.read_text(encoding="utf-8")
+        for path in root.rglob("*.py")
+    }
+    return _wheel(directory, "packaging", packaging.__version__, files)
+
+
 @pytest.fixture
 def offline_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """uv with no index: every requirement comes from a directory of fixture wheels."""
     links = tmp_path / "links"
-    _wheel(links, "pytest", "0.0.1", {"pytest.py": ""})
-    # Two mypys, so a lock file's pin is distinguishable from what resolves today.
+    # pytest brings packaging, which answers the harness's questions about versions.
+    _wheel(links, "pytest", "0.0.1", {"pytest.py": ""}, requires=["packaging"])
+    _packaging_wheel(links)
+    # Two of each tool that a lock pins below, so a pin is distinguishable from what
+    # resolves today; Black's older one also fails the format extra's requirement.
     _wheel(links, "mypy", "1.0.0", {"mypy/__init__.py": ""})
     _wheel(links, "mypy", "2.0.0", {"mypy/__init__.py": ""})
     _wheel(links, "pyright", "1.1.0", {"pyright/__init__.py": ""})
+    _wheel(links, "black", "22.12.0", {"black/__init__.py": ""})
+    _wheel(links, "black", "26.5.1", {"black/__init__.py": ""})
+    _wheel(links, "isort", "9.0.1", {"isort/__init__.py": ""})
+    _wheel(links, "ruff", "0.4.0", {"ruff/__init__.py": ""})
+    _wheel(links, "ruff", "0.16.0", {"ruff/__init__.py": ""})
     for name, value in {
         "UV_OFFLINE": "1",
         "UV_NO_INDEX": "1",
@@ -291,15 +321,15 @@ def _imported_tree(python: Path, package: str) -> str:
 
 
 @uv_required
-def test_the_environment_holds_the_project_its_checkers_and_the_candidate(
+def test_the_environment_holds_the_project_its_tools_and_the_candidate(
     tmp_path: Path, offline_index: Path
 ) -> None:
     candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
     work = tmp_path / "work"
     source = _project_tree(work / "sample", "sample", "sample", "source")
     log = tmp_path / "environment.log"
-    # The project brings its own pyright; mypy it leaves to Towel's types extra.
-    project = ecosystem.Project("sample", "unused", "pinned", "sample", deps=("pyright",))
+    # The project brings its own pyright and isort; the rest it leaves to Towel's extras.
+    project = ecosystem.Project("sample", "unused", "pinned", "sample", deps=("pyright", "isort"))
     installed = ecosystem.environment(project, work, source, candidate, log)
     assert installed.python == work / "sample-env/bin/python"
     assert installed.distribution == "sample"
@@ -307,8 +337,13 @@ def test_the_environment_holds_the_project_its_checkers_and_the_candidate(
         platform.python_version(),
         "9.9.9",
         (
-            ecosystem.Checker("mypy", "2.0.0", "towel[types]"),
-            ecosystem.Checker("pyright", "1.1.0", "project"),
+            ecosystem.Tool("mypy", "2.0.0", "towel[types]"),
+            ecosystem.Tool("pyright", "1.1.0", "project"),
+        ),
+        (
+            ecosystem.Tool("black", "26.5.1", "towel[format]"),
+            ecosystem.Tool("isort", "9.0.1", "project"),
+            ecosystem.Tool("ruff", "0.16.0", "towel[format]"),
         ),
         str(source),
     )
@@ -330,12 +365,13 @@ def test_the_environment_holds_the_project_its_checkers_and_the_candidate(
     assert _imported_tree(installed.python, "sample") == "source"
     commands = [line for line in log.read_text().splitlines() if line.startswith("$ uv pip")]
     mypy_installs = [command for command in commands if "mypy>=1.0" in command]
-    assert len(mypy_installs) == 1, "a reused environment keeps the checkers it was given"
+    assert len(mypy_installs) == 1, "a reused environment keeps the tools it was given"
     # A changed manifest entry is a different environment, built from nothing.
     changed = dataclasses.replace(project, deps=("pyright", "mypy"))
     rebuilt = ecosystem.environment(changed, work, source, candidate, log)
     assert not marker.exists()
-    assert [checker.source for checker in rebuilt.record.checkers] == ["project", "project"]
+    assert [tool.source for tool in rebuilt.record.checkers] == ["project", "project"]
+    assert [tool.source for tool in rebuilt.record.formatters] == ["towel[format]"] * 3
 
 
 @uv_required
@@ -369,7 +405,8 @@ def test_an_environment_whose_towel_is_not_the_candidate_is_refused(
     source = _project_tree(work / "sample", "sample", "sample", "source")
     project = ecosystem.Project("sample", "unused", "pinned", "sample")
     installed = ecosystem.environment(project, work, source, candidate, tmp_path / "log")
-    names = [checker.name for checker in installed.record.checkers]
+    record = installed.record
+    names = [tool.name for tool in (*record.checkers, *record.formatters)]
     (ecosystem._site_packages(installed.python) / "towel/cli.py").write_text("tampered = 1\n")
     with pytest.raises(ecosystem.EnvironmentFailure, match="is not the candidate"):
         ecosystem._verified(installed.python, candidate, names)
@@ -383,8 +420,18 @@ version = 1
 requires-python = ">=3.10"
 
 [[package]]
+name = "black"
+version = "22.12.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
 name = "mypy"
 version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "ruff"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 
 [[package]]
@@ -395,10 +442,11 @@ source = { editable = "." }
 
 
 @uv_required
-def test_a_checker_the_project_locks_is_installed_at_its_pin(
+def test_a_tool_the_project_locks_is_installed_at_its_pin(
     tmp_path: Path, offline_index: Path
 ) -> None:
-    """The project is checked as its own type check checks it, by the mypy its lock names."""
+    """The project is checked and formatted by the versions its lock names -- unless one
+    fails Towel's own requirement, which installing the extra would replace."""
     candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
     work = tmp_path / "work"
     source = _project_tree(work / "sample", "sample", "sample", "source")
@@ -406,8 +454,27 @@ def test_a_checker_the_project_locks_is_installed_at_its_pin(
     project = ecosystem.Project("sample", "unused", "pinned", "sample")
     installed = ecosystem.environment(project, work, source, candidate, tmp_path / "log")
     assert installed.record.checkers == (
-        ecosystem.Checker("mypy", "1.0.0", "uv.lock"),
-        ecosystem.Checker("pyright", "1.1.0", "towel[types]"),
+        ecosystem.Tool("mypy", "1.0.0", "uv.lock"),
+        ecosystem.Tool("pyright", "1.1.0", "towel[types]"),
+    )
+    assert installed.record.formatters == (
+        ecosystem.Tool("black", "26.5.1", "towel[format]", "uv.lock 22.12.0"),
+        ecosystem.Tool("isort", "9.0.1", "towel[format]"),
+        ecosystem.Tool("ruff", "0.4.0", "uv.lock"),
+    )
+
+
+@uv_required
+def test_a_tool_the_project_installed_below_the_extras_floor_is_replaced(
+    tmp_path: Path, offline_index: Path
+) -> None:
+    candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
+    work = tmp_path / "work"
+    source = _project_tree(work / "sample", "sample", "sample", "source")
+    project = ecosystem.Project("sample", "unused", "pinned", "sample", deps=("black==22.12.0",))
+    installed = ecosystem.environment(project, work, source, candidate, tmp_path / "log")
+    assert installed.record.formatters[0] == ecosystem.Tool(
+        "black", "26.5.1", "towel[format]", "project 22.12.0"
     )
 
 
@@ -576,7 +643,13 @@ def test_every_project_is_installed_unless_its_entry_says_why_not() -> None:
 
 
 CANDIDATE = ecosystem.Candidate(
-    Path("code_towel-0-py3-none-any.whl"), "code-towel", "0", "0", ("mypy", "pyright"), ()
+    Path("code_towel-0-py3-none-any.whl"),
+    "code-towel",
+    "0",
+    "0",
+    ("mypy", "pyright"),
+    ("black", "isort", "ruff"),
+    (),
 )
 
 
@@ -605,7 +678,7 @@ def _orchestrated(
     work = tmp_path / "work"
     source = _source_tree(work / "fixture", {"package.py": "value = 1\n"})
     trace = Trace()
-    record = ecosystem.Environment("3.12.0", "0", (ecosystem.Checker("mypy", "2.0", "project"),))
+    record = ecosystem.Environment("3.12.0", "0", (ecosystem.Tool("mypy", "2.0", "project"),), ())
     if distribution is not None:
         record = dataclasses.replace(record, installed_from=str(source))
     installed = ecosystem.ProjectEnvironment(tmp_path / "env/bin/python", distribution, record)
@@ -725,10 +798,15 @@ def test_the_summary_records_the_candidate_and_what_each_project_ran_with(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     checkers = (
-        ecosystem.Checker("mypy", "1.19.1", "uv.lock"),
-        ecosystem.Checker("pyright", "1.1.414", "towel[types]"),
+        ecosystem.Tool("mypy", "1.19.1", "uv.lock"),
+        ecosystem.Tool("pyright", "1.1.414", "towel[types]"),
     )
-    environment = ecosystem.Environment("3.12.14", "0", checkers, "/work/fixture-ready")
+    formatters = (
+        ecosystem.Tool("black", "26.5.1", "towel[format]", "poetry.lock 22.12.0"),
+        ecosystem.Tool("isort", "9.0.1", "project"),
+        ecosystem.Tool("ruff", "0.15.9", "uv.lock"),
+    )
+    environment = ecosystem.Environment("3.12.14", "0", checkers, formatters, "/work/fixture-ready")
     result = ecosystem.Result("fixture", "PASS", environment=environment)
     assert _main_with(tmp_path, monkeypatch, {"fixture": result}) == 0
     summary = json.loads((tmp_path / "report/summary.json").read_text())
@@ -740,11 +818,20 @@ def test_the_summary_records_the_candidate_and_what_each_project_ran_with(
     }
     recorded = summary["results"][0]["environment"]
     assert recorded["installed_from"] == "/work/fixture-ready"
-    assert recorded["checkers"][0] == {"name": "mypy", "version": "1.19.1", "source": "uv.lock"}
+    assert recorded["checkers"][0] == {
+        "name": "mypy",
+        "version": "1.19.1",
+        "source": "uv.lock",
+        "overridden": "",
+    }
+    assert recorded["formatters"][0]["overridden"] == "poetry.lock 22.12.0"
     project = json.loads((tmp_path / "report/fixture.json").read_text())
     assert project["environment"] == recorded
     markdown = (tmp_path / "report/summary.md").read_text()
-    assert "| mypy 1.19.1 (uv.lock), pyright 1.1.414 |" in markdown
+    assert (
+        "| mypy 1.19.1 (uv.lock), pyright 1.1.414 "
+        "| black 26.5.1 (over poetry.lock 22.12.0), isort 9.0.1 (project), ruff 0.15.9 (uv.lock) |"
+    ) in markdown
 
 
 def test_the_summary_names_every_project_refactored_without_cross_module(
