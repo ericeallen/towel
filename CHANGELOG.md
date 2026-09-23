@@ -35,11 +35,90 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   `Formatter.as_dollars(None, 1.5)` runs for as long as the body reads no
   attribute of `self`, and routing the block it shares through
   `self._extracted_func_0(...)` made that an `AttributeError` while every
-  genuine instance kept its answer and no checker said a word. Such a helper is
-  now a `staticmethod` reached through the class. It costs nothing: over
-  fourteen installed packages no helper leaves its class (306 class-homed
-  proposals against 305), the one gained where two methods disagreed about
-  needing a receiver and the pair was refused over the mismatch.
+  genuine instance kept its answer and no checker said a word. Such a helper,
+  and one shared by static methods or by classmethods that never read `cls`,
+  is now a module-level function. An intermediate candidate made it a
+  `staticmethod` reached as `ClassName._extracted_func_0`, and the class's
+  name does not always reach the class: a parameter of that name, `del`,
+  `global` rebinding, a mangled `class __C`, a decorator returning something
+  else, or a call while the class body still runs each broke it. `__class__`
+  would reach it, but mypy does not accept it. Over packaging, click and rich
+  nothing is declined; click goes from 11 helpers to 10, one module function
+  serving a third class.
+- An import Towel writes names a module the installed project has. Checked
+  against built wheels, the layout readers named 102 files of seven corpus
+  projects wrongly (a `setup.cfg` or `setup.py` src layout, never read, became
+  `src.foo.a`) and 937 more when a project directory shares its package's name
+  (`foo.src.foo.a`); without a project mypy configuration the checker names
+  modules from the same root, so it accepted them, and the adopted output
+  failed with `ModuleNotFoundError`. An absolute name is now written only when
+  the reader's answer equals the one the `__init__` markers imply, a second
+  derivation sharing none of that machinery; otherwise the import is relative,
+  and where neither holds the proposal is declined. A relative import no
+  longer climbs above the importer's top package, which Python refuses
+  (`..api.c` from `utils/v.py` with `api` and `utils` side by side). A Hatch
+  `include` without `sources` relocates nothing, so `/src/foo` ships as
+  `src.foo`; `--no-pep420` now does what it says; a layout table that is
+  present but not a table is refused rather than read as absent.
+  `[tool.setuptools.packages.find].where` is read (waitress'
+  `src/waitress/task.py` had been `src.waitress.task`, and its adopted package
+  unimportable), and a Hatch wheel `include` naming a package is evidence of
+  where it lives: beautifulsoup4 ships `bs4`, and goes from a refusal to 132
+  refactorings across 22 files.
+- `towel dry TARGET OUT` refactors TARGET inside a private copy of its whole
+  project and writes only TARGET to OUT, when the run succeeds. It refactored a
+  copy of TARGET alone, so everything read during the run saw a directory with
+  no packaging metadata and no rest-of-project: the layout readers were never
+  reached (every import came out relative, which hid the defects above), and
+  an import cycle or an import-time effect through a module outside TARGET was
+  invisible, leaving the adopted package unimportable where the same run in
+  place was correct. Out-of-place and in-place runs now make the same
+  decisions; staging click, rich and pygments (460 files) takes 0.07 s. A
+  project root holding more than 20,000 Python files is refused with a
+  message. A failed or interrupted run leaves no OUT behind.
+- The complete mypy check no longer calls a broken consumer clean. The
+  consumer scan cached an answer computed with the baseline's packages left
+  out and reused it for later sparse requests, so after the first check of
+  `towel dry . .` a sibling analysed package went unchecked; it never noticed a
+  file an applied refactoring had made into a consumer; it named a PEP 420
+  module `lib` where its importers say `nsp.lib`; it read `from app import
+  helpers` as an import of `app` alone; and it resolved an `__init__`'s
+  relative imports against the package's parent. It now keeps the whole import
+  graph, re-reads only files whose stamp changed, and applies exclusions per
+  request; at its file limit it fails the check instead of returning a partial
+  list. A mypy run that applied anything ends with one complete check from an
+  empty cache and a fresh scan, as a pyright run already did (0.6 s on click).
+  An error mypy reports without a line is counted, and a crashed worker's
+  standard error is quoted.
+- A helper is placed only where it stays a plain member. Never in a
+  `Protocol`, where it became a protocol member and turned runtime-checkable
+  `isinstance` checks false; never in a class written on one line
+  (`class E(Exception): pass`), where it was written at column zero; and only
+  in a class, or through a base, whose every decorator is known to keep the
+  namespace (`dataclass`, `total_ordering`, `final`, `enum.unique`), since a
+  decorator that rebuilds or wraps it dropped or wrapped the helper. A module
+  helper is no longer placed after an assignment, decorator or class body that
+  could call it at import.
+- A call site whose generated thunk would read a local that may be unbound is
+  declined: the thunk raised `NameError` where the original raised
+  `UnboundLocalError`, and `except UnboundLocalError` stopped matching.
+- Generated helper names avoid every name another source under the project
+  root defines as a class member or attribute, so a subclass outside the
+  target can no longer override a new helper.
+- A duplicate whose rendering holds a character the file's encoding cannot
+  represent is declined instead of aborting the run; a file nested too deeply
+  to analyze is skipped with a warning instead of ending directory mode with
+  `RecursionError`.
+- A run whose every candidate the type checker could not judge (timeout or
+  crash) exits non-zero and says so, instead of printing "No refactorings
+  found!"; a run that applied some reports how many went unjudged. The summary
+  shows the run's actual termination reason.
+- `rename-helpers` refuses a batch that would leave an import of the old name
+  behind, as it did on an out-of-place output whose imports name the package
+  rather than the output directory. Rename after adopting.
+- A project whose own mypy configuration excludes files (`exclude`, or `files`
+  not naming them) is no longer refused for errors in files its own mypy run
+  never checks; an excluded file that checked code imports is still checked.
 - A base-class name is resolved as the binding in effect where the class
   statement runs, not by finding a class of that qualname anywhere in the file.
   Python binds globals as a module executes, so `Base = object` written between
@@ -212,6 +291,8 @@ the correlation the call sites had.
   are treated as ambiguous evidence instead of silently retaining the last type.
 
 ### Fixed (release harness)
+- The sdist no longer ships a built wheel: `recursive-include scripts *`
+  picked up the corpus image's copy whenever one had been built there.
 - Two runs that failed *different* tests can no longer both count as a PASS. A
   failure line is `FAILED <node id> - <message>`, and the id was taken by
   splitting at the first `" - "` -- which a parametrized id may contain, so
