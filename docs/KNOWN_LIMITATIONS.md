@@ -88,17 +88,44 @@ describe belong to that version.
   A same-file pair's helper, a method or a function, always lives in the
   pair's own module, so these names are always read there (oauthlib's
   `BearerToken`, fixture `xf15`, broke when a helper was hoisted into a base
-  class defined in another module). A builtin is the same lookup from every module only while no
-  module involved can bind its name, so a helper that a site in another
-  module calls takes a builtin spelling as a parameter when either site's
-  function or module binds it, or when any participating module, the
-  helper's host included, may bind it at all: by any statement of its own
-  scope, a `global` declaration, a star import, or a rebound
-  `__builtins__`, whichever module the pair names first (fixtures
-  `xf17`-`xf22`). The names checked are the ones CPython's symbol table
-  says the rendered helper reads from its module, so reads inside its
-  lambdas and comprehensions count. A module `__getattr__` changes no bare
-  lookup and is not consulted.
+  class defined in another module). A builtin is never a parameter, since
+  a call such as `helper(rows, len)` would surprise every reader, so a
+  helper that a site in another module calls reads its builtins bare in its
+  host's namespace. That is the lookup each site made only while no
+  participating module holds the name, and the pair is declined
+  (`builtin_may_differ_by_module`) wherever the program shows one may: a
+  statement of the module's own scope binds the name, a function of it
+  declares it `global`, a star import of it may bind it (a project module's
+  literal `__all__` or else its public top-level names say what; a module
+  outside the project may bind anything), it rebinds `__builtins__`, it
+  writes its own namespace at run time (`globals()[...] = ...`, `vars()` or
+  `locals()` so used at its top level, `globals().update(...)`, `globals()`
+  handed to other code, `setattr(sys.modules[__name__], ...)`, `exec`,
+  `eval`), or the project's own code or tests patch the name into it:
+  `mock.patch("pkg.mod.len")` in any spelling, with or without
+  `create=True`, `patch.object`, `patch.multiple`, `patch.dict` of its
+  `__dict__`, pytest's `monkeypatch.setattr` in either form or
+  `monkeypatch.setitem` of its `__dict__`, `setattr(mod, "len", ...)`, or
+  `mod.len = ...` (`tests/test_builtins_across_modules.py`, fixtures
+  `xf17`-`xf19` and `xf22`; `xf21` shares what the other two modules can).
+  A module is matched by every dotted name its path gives it below the
+  project root, which include the names the program's imports use, and by
+  the file a relative import names. A target is read through literals,
+  f-strings, `+` and names bound once to a string, and one whose module part
+  is computed at run time (`"pkg." + name + ".len"`) counts for every
+  module. A site whose function binds a builtin's name while the other site reads
+  the builtin is declined too; where both functions bind it, each passes
+  its own local. The names checked are the ones CPython's symbol table says
+  the rendered helper reads from its module, so reads inside its lambdas
+  and comprehensions count. Not seen: code outside the project that patches
+  a builtin into one of its modules (with `create=True`, or through `mock`,
+  which creates a builtin's name without being asked); a target computed
+  whole, as by a wrapper that passes its argument to `patch`; and a module
+  object reached other than by an import, `importlib.import_module`,
+  `getattr` with a spelled name or `sys.modules`, such as a fixture's
+  return value. A cross-module helper then reads that builtin in its host's
+  namespace, and the patch reaches only the code the host itself runs. A
+  module `__getattr__` changes no bare lookup and is not consulted.
 - **Relative imports stay in their package.** A relative import in a block
   resolves in the package of the module that runs it, so a helper holding
   `from .sub import VAL` imports its host's `sub` for every caller. A block
@@ -787,7 +814,10 @@ the proposals it built and did not apply, by reason:
   some participating module resolves in another package.
   `bare_name_differs_by_module`: after the pair was decided again with them
   as parameters, the helper still reads bare a name that a site in another
-  module could resolve differently.
+  module could resolve differently. `builtin_may_differ_by_module`: the
+  helper would read bare a builtin that a participating module may hold in
+  its namespace, or one site's function binds the builtin's name and the
+  other's does not (*Module names stay module names*).
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper

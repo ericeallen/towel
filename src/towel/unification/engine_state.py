@@ -69,6 +69,7 @@ from .structural_memo import StoredSubstitution
 from .unifier import Unifier
 from .progress import DEFAULT_PROGRESS, ProgressMode
 from .import_graph import ImportGraphCache
+from .namespace_writes import ProjectWrites
 
 
 class GuardKey(NamedTuple):
@@ -170,6 +171,8 @@ class EngineState:
     """Next helper number per file, so generated names are unique across a run."""
     _project_helper_names: Dict[str, HelperNameClaims]
     """The helper-shaped names each project root's sources already define, by root."""
+    _namespace_writes: Dict[str, ProjectWrites]
+    """The writes into module namespaces each project root's sources make, by root."""
     # Identities of the proposals this analysis has finished; a pair whose
     # proposal repeats one is declined before reuse, filtering and annotation.
     _seen_proposals: Set[Hashable]
