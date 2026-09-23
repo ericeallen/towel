@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import importlib.util
 import io
 from pathlib import Path
 import subprocess
@@ -270,3 +271,80 @@ def test_the_class_holding_both_duplicates_still_takes_the_helper(tmp_path: Path
     assert _run(root, driver, root) == before
     module, classes = _helpers((root / "pkg" / "lib.py").read_text())
     assert not module and len(classes["Box"]) == 1, classes
+
+
+SHAPES = """
+from __future__ import annotations
+
+
+class Shape:
+    name: str = "shape"
+
+
+class Square(Shape):
+    def __init__(self, side: int) -> None:
+        self.side = side
+
+    def describe(self, unit: str) -> str:
+        label = self.name.upper()
+        size = f"{self.side}{unit}"
+        text = f"{label}: {size}"
+        return text
+
+
+class Circle(Shape):
+    def __init__(self, radius: int) -> None:
+        self.side = radius * 2
+
+    def summary(self, unit: str) -> str:
+        label = self.name.upper()
+        size = f"{self.side}{unit}"
+        text = f"{label}: {size}"
+        return text
+"""
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("mypy") is None or importlib.util.find_spec("pyright") is None,
+    reason="mypy or pyright absent",
+)
+def test_the_module_function_siblings_share_passes_mypy_strict_and_pyright_strict(
+    tmp_path: Path,
+) -> None:
+    """The receiver of the module function is typed as the classes whose methods call it.
+
+    It is written ``self: Square | Circle`` and placed after both classes, so
+    the annotation names them bare; the project's mypy and pyright, both
+    strict, accept the module Towel writes.
+    """
+    from tests.test_class_private_helpers import _strict_errors
+    from towel.type_inference import MypyInferrer
+
+    (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
+    path = tmp_path / "shapes.py"
+    path.write_text(SHAPES.lstrip())
+    for tool in ("mypy", "pyright"):
+        assert _strict_errors(tool, path) == []
+    driver = (
+        "from shapes import Circle, Square\n"
+        "print(Square(3).describe('cm'), Circle(2).summary('in'))\n"
+    )
+    before = _run(tmp_path, driver, tmp_path)
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            _, applied, _ = engine.refactor_to_fixed_point(str(path))
+    finally:
+        oracle.close()
+    assert applied == 1
+    source = path.read_text()
+    module, classes = _helpers(source)
+    assert len(module) == 1 and not any(classes.values()), source
+    helper = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef))
+    receiver = helper.args.args[0]
+    assert receiver.arg == "self" and receiver.annotation is not None
+    assert ast.unparse(receiver.annotation) == "Square | Circle", source
+    assert _run(tmp_path, driver, tmp_path) == before
+    for tool in ("mypy", "pyright"):
+        assert _strict_errors(tool, path) == [], (tool, source)

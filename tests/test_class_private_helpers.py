@@ -521,17 +521,17 @@ class Audited(Ledger):
 """
 
 
-def _strict_errors(tool: str, directory: Path) -> List[str]:
-    """The errors ``tool`` in strict mode reports for ``directory``'s module; asserts it ran."""
+def _strict_errors(tool: str, path: Path) -> List[str]:
+    """The errors ``tool`` in strict mode reports for the module at ``path``; asserts it ran."""
     if tool == "mypy":
-        command = [sys.executable, "-m", "mypy", "--strict", "--no-incremental", "ledger.py"]
+        command = [sys.executable, "-m", "mypy", "--strict", "--no-incremental", path.name]
         marker = ": error:"
     else:
-        (directory / "pyrightconfig.json").write_text('{"typeCheckingMode": "strict"}\n')
-        command = [sys.executable, "-m", "pyright", "ledger.py"]
+        (path.parent / "pyrightconfig.json").write_text('{"typeCheckingMode": "strict"}\n')
+        command = [sys.executable, "-m", "pyright", path.name]
         marker = " - error:"
     completed = subprocess.run(
-        command, cwd=directory, capture_output=True, text=True, timeout=300, check=False
+        command, cwd=path.parent, capture_output=True, text=True, timeout=300, check=False
     )
     errors = [line for line in completed.stdout.splitlines() if marker in line]
     assert completed.returncode == (1 if errors else 0), completed.stdout + completed.stderr
@@ -551,7 +551,7 @@ def test_a_class_private_helper_passes_mypy_strict_and_pyright_strict(tmp_path: 
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
     (tmp_path / "ledger.py").write_text(TYPED.lstrip())
     for tool in ("mypy", "pyright"):
-        assert _strict_errors(tool, tmp_path) == []
+        assert _strict_errors(tool, tmp_path / "ledger.py") == []
     driver = "from ledger import Audited\nledger = Audited()\nprint(ledger.credit(3), ledger.refund(1), ledger.shout())\n"
     before = _run(tmp_path, driver, tmp_path)
     oracle = MypyInferrer()
@@ -576,4 +576,4 @@ def test_a_class_private_helper_passes_mypy_strict_and_pyright_strict(tmp_path: 
     assert "self.__entries" in ast.unparse(helper), source
     assert _run(tmp_path, driver, tmp_path) == before
     for tool in ("mypy", "pyright"):
-        assert _strict_errors(tool, tmp_path) == [], (tool, source)
+        assert _strict_errors(tool, tmp_path / "ledger.py") == [], (tool, source)
