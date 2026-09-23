@@ -9,6 +9,8 @@ All test output goes to temporary directories that are automatically cleaned up.
 
 import unittest
 import ast
+import tempfile
+from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import (
     temporary_test_directory,
@@ -224,21 +226,24 @@ class TestDirectoryAnalysis(unittest.TestCase):
 
         files = [str(file1_path), str(file2_path)]
 
-        proposals = self.engine.analyze_files(files)
+        # Two top-level modules, neither importing the other: nothing is known
+        # to ship one with the other, so neither may gain an import of it.
+        self.assertEqual(self.engine.analyze_files(files), [])
 
-        # Should find cross-file duplicates
-        self.assertGreater(len(proposals), 0, "Should find cross-file duplicates")
-
-        # Check if any proposal is cross-file (replacement targeting a different file)
-        cross_file_proposals = [
-            p
-            for p in proposals
-            if any((r.file_path or p.file_path) != p.file_path for r in p.replacements)
-        ]
-
-        self.assertGreater(
-            len(cross_file_proposals), 0, "Should find at least one cross-file proposal"
-        )
+        # Once the premium module imports the regular one, the duplicate is
+        # shared across the two files.
+        with tempfile.TemporaryDirectory() as directory:
+            copy1 = Path(directory) / file1_path.name
+            copy2 = Path(directory) / file2_path.name
+            copy1.write_text(file1_original)
+            copy2.write_text("import example3_file1  # noqa: F401\n\n\n" + file2_original)
+            proposals = self.engine.analyze_files([str(copy1), str(copy2)])
+            spanned = [
+                {r.file_path or p.file_path for r in p.replacements}
+                | ({p.reused_function.file_path} if p.reused_function else set())
+                for p in proposals
+            ]
+            self.assertIn({str(copy1), str(copy2)}, spanned)
 
         # Verify files were not modified
         assert_file_not_modified(file1_path, file1_original)

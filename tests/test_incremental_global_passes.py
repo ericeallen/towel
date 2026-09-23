@@ -91,7 +91,12 @@ def _write_two_round_project(source: Path) -> None:
         '    print(names, "alpha_two")\n'
         "    return names\n"
     )
+    # Two top-level modules share a helper only when the borrower already
+    # imports the host; b and c import a.
     (source / "b.py").write_text(
+        "import a\n"
+        "\n"
+        "\n"
         "def beta(values):\n"
         "    total = 0\n"
         "    for value in values:\n"
@@ -100,6 +105,9 @@ def _write_two_round_project(source: Path) -> None:
         "    return total\n"
     )
     (source / "c.py").write_text(
+        "import a\n"
+        "\n"
+        "\n"
         "def gamma(entries):\n"
         "    names = []\n"
         "    for entry in entries:\n"
@@ -118,5 +126,5 @@ def test_a_restricted_pass_still_pairs_a_rewritten_file_with_an_untouched_one(
     restricted, applied_restricted = _fixed_point(source, tmp_path / "restricted", True)
     assert applied_full == applied_restricted == 4  # two helpers, each rewriting two files
     assert full == restricted
-    assert full["c.py"].startswith(b"from a import ")
-    assert full["b.py"].startswith(b"from a import ")
+    assert full["c.py"].startswith(b"import a\nfrom a import ")
+    assert full["b.py"].startswith(b"import a\nfrom a import ")

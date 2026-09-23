@@ -88,6 +88,9 @@ class TestCrossFileAndValidation(unittest.TestCase):
                         return x + y
                     """).strip())
             file2.write_text(textwrap.dedent("""
+                    import mod1
+
+
                     def fb():
                         x = 1
                         y = 2

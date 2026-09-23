@@ -1,6 +1,8 @@
 """
 Data processing module.
 """
+
+from lib import report_generator
 from lib.report_generator import calculate_report_stats
 
 

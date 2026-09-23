@@ -123,9 +123,9 @@ def test_sibling_top_level_packages_are_not_reached_by_climbing_above_them(
                 name="checkout", limit=1, prologue="values = list(values)"
             ),
             "utils/__init__.py": "",
-            "utils/validators.py": _BLOCK.format(
-                name="validate", limit=2, prologue="print(len(values))"
-            ),
+            # A package borrows only from one it already imports.
+            "utils/validators.py": "import api.checkout\n\n\n"
+            + _BLOCK.format(name="validate", limit=2, prologue="print(len(values))"),
         },
     )
     output = tmp_path / "out"
@@ -184,7 +184,8 @@ def test_a_project_directory_named_like_its_package_is_not_a_package(tmp_path: P
             "src/foo/a.py": _BLOCK.format(
                 name="total_a", limit=1, prologue="values = list(values)"
             ),
-            "tools/b.py": _BLOCK.format(name="total_b", limit=2, prologue="print(len(values))"),
+            "tools/b.py": "import foo.a\n\n\n"
+            + _BLOCK.format(name="total_b", limit=2, prologue="print(len(values))"),
         },
     )
     output = tmp_path / "out"

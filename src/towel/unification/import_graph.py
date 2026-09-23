@@ -16,12 +16,14 @@ import re
 import sys
 import warnings
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import (
     Dict,
     FrozenSet,
     Iterable,
     List,
+    Literal,
     Mapping,
     Optional,
     Sequence,
@@ -54,7 +56,7 @@ class ImportGraphCache:
 
     def __init__(self, limit: int = 8192) -> None:
         self.edges: BoundedCache[
-            Tuple[Path, int, int, FrozenSet[Path]], Optional[FrozenSet[Path]]
+            Tuple[Path, int, int, FrozenSet[Path], str], Optional[FrozenSet[Path]]
         ] = BoundedCache(limit)
         self.bindings: BoundedCache[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = (
             BoundedCache(limit)
@@ -226,15 +228,25 @@ def _suffix_in_tree(
     return set()
 
 
+# Which import statements of a module count: every one (the cycle guard,
+# which must not miss an edge), the ones its top level can run as it is
+# imported (in any branch, but not in a function body), or only those its top
+# level runs on every path (statements of the module body itself).
+ImportExtent = Literal["everywhere", "at_import", "unconditionally"]
+
+
 def _import_edges(
-    current: Path, roots: FrozenSet[Path], cache: ImportGraphCache
+    current: Path,
+    roots: FrozenSet[Path],
+    cache: ImportGraphCache,
+    extent: ImportExtent = "everywhere",
 ) -> Optional[FrozenSet[Path]]:
     """Local modules ``current`` imports, or None when its imports cannot be inspected."""
     try:
         stat = current.stat()
     except OSError:
         return None
-    key = (current, stat.st_mtime_ns, stat.st_size, roots)
+    key = (current, stat.st_mtime_ns, stat.st_size, roots, extent)
     if key in cache.edges:
         return cache.edges.get(key)
     try:
@@ -249,47 +261,85 @@ def _import_edges(
     # original, where the helper import did not yet exist, so the cycle it
     # closed in the copy went unseen.
     tree_root = _package_tree_root(current)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                dependencies.update(_module_files_relocated(roots, alias.name.split("."), cache))
-                dependencies.update(_suffix_in_tree(tree_root, alias.name.split("."), cache))
-        elif isinstance(node, ast.ImportFrom):
-            components = node.module.split(".") if node.module else []
-            if node.level:
-                # A relative import resolves unambiguously against a computed
-                # base; relocation does not apply, so no suffix fallback.
-                base = current.parent
-                for _ in range(node.level - 1):
-                    base = base.parent
-                dependencies.update(_module_files(base, components, cache))
-                for alias in node.names:
-                    if alias.name != "*":
-                        dependencies.update(_module_files(base, [*components, alias.name], cache))
-                # ``from . import name`` (or ``from .. import name``) runs the
-                # package's ``__init__`` whether ``name`` is a submodule or an
-                # attribute defined there. With no module file to resolve to,
-                # the edge to the initializer was missed, and a helper hosted
-                # in a submodule got imported by that ``__init__``, which the
-                # submodule imports back (beautifulsoup4's tests package).
-                package = base
-                for component in components:
-                    package = package / component
-                initializer = package / "__init__.py"
-                if initializer.is_file():
-                    dependencies.add(initializer.resolve())
-            else:
-                dependencies.update(_module_files_relocated(roots, components, cache))
-                dependencies.update(_suffix_in_tree(tree_root, components, cache))
-                for alias in node.names:
-                    if alias.name != "*":
-                        dependencies.update(
-                            _module_files_relocated(roots, [*components, alias.name], cache)
-                        )
-                        dependencies.update(
-                            _suffix_in_tree(tree_root, [*components, alias.name], cache)
-                        )
+    for node in _import_statements(tree, extent):
+        dependencies.update(_statement_edges(node, current, roots, tree_root, cache))
     return cache.edges.put(key, frozenset(dependencies))
+
+
+def _import_statements(
+    tree: ast.Module, extent: ImportExtent
+) -> List[Union[ast.Import, ast.ImportFrom]]:
+    """The import statements of ``tree`` that ``extent`` counts."""
+    if extent == "everywhere":
+        return [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    if extent == "unconditionally":
+        return [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
+    found: List[Union[ast.Import, ast.ImportFrom]] = []
+
+    def visit(statements: Sequence[ast.stmt]) -> None:
+        # A class body and every branch of a compound statement run, or may
+        # run, as the module is imported; a function body does not.
+        for statement in statements:
+            if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                found.append(statement)
+            elif not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for field in ("body", "orelse", "finalbody"):
+                    visit(getattr(statement, field, []))
+                for clause in (
+                    *getattr(statement, "handlers", []),
+                    *getattr(statement, "cases", []),
+                ):
+                    visit(clause.body)
+
+    visit(tree.body)
+    return found
+
+
+def _statement_edges(
+    node: Union[ast.Import, ast.ImportFrom],
+    current: Path,
+    roots: FrozenSet[Path],
+    tree_root: Path,
+    cache: ImportGraphCache,
+) -> Set[Path]:
+    """The local files one import statement of ``current`` loads."""
+    dependencies: Set[Path] = set()
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            dependencies.update(_module_files_relocated(roots, alias.name.split("."), cache))
+            dependencies.update(_suffix_in_tree(tree_root, alias.name.split("."), cache))
+        return dependencies
+    components = node.module.split(".") if node.module else []
+    if node.level:
+        # A relative import resolves unambiguously against a computed
+        # base; relocation does not apply, so no suffix fallback.
+        base = current.parent
+        for _ in range(node.level - 1):
+            base = base.parent
+        dependencies.update(_module_files(base, components, cache))
+        for alias in node.names:
+            if alias.name != "*":
+                dependencies.update(_module_files(base, [*components, alias.name], cache))
+        # ``from . import name`` (or ``from .. import name``) runs the
+        # package's ``__init__`` whether ``name`` is a submodule or an
+        # attribute defined there. With no module file to resolve to,
+        # the edge to the initializer was missed, and a helper hosted
+        # in a submodule got imported by that ``__init__``, which the
+        # submodule imports back (beautifulsoup4's tests package).
+        package = base
+        for component in components:
+            package = package / component
+        initializer = package / "__init__.py"
+        if initializer.is_file():
+            dependencies.add(initializer.resolve())
+        return dependencies
+    dependencies.update(_module_files_relocated(roots, components, cache))
+    dependencies.update(_suffix_in_tree(tree_root, components, cache))
+    for alias in node.names:
+        if alias.name != "*":
+            dependencies.update(_module_files_relocated(roots, [*components, alias.name], cache))
+            dependencies.update(_suffix_in_tree(tree_root, [*components, alias.name], cache))
+    return dependencies
 
 
 def _module_level_import_bindings(
@@ -449,11 +499,17 @@ def _package_initializers(module: Path, roots: FrozenSet[Path]) -> List[Path]:
 
 
 def _reachable_modules(
-    start: Path, roots: FrozenSet[Path], cache: ImportGraphCache
+    start: Path,
+    roots: FrozenSet[Path],
+    cache: ImportGraphCache,
+    extent: ImportExtent = "everywhere",
 ) -> Optional[Set[Path]]:
     """Every local module importing ``start`` runs, ``start`` and its package initializers included.
 
-    None when some import cannot be inspected.
+    ``extent`` says which of each module's imports count (``ImportExtent``):
+    ``"unconditionally"`` gives the modules importing ``start`` certainly
+    loads, ``"at_import"`` those it may. None when some import cannot be
+    inspected.
     """
     pending = [start, *_package_initializers(start, roots)]
     visited: Set[Path] = set()
@@ -462,7 +518,7 @@ def _reachable_modules(
         if current in visited:
             continue
         visited.add(current)
-        dependencies = _import_edges(current, roots, cache)
+        dependencies = _import_edges(current, roots, cache, extent)
         if dependencies is None:
             return None
         pending.extend(dependencies - visited)
@@ -1135,34 +1191,99 @@ def _has_import_time_effects(module: Path, cache: ImportGraphCache) -> bool:
     return cache.effects.put(key, any(code.statements()))
 
 
+class ImportChange(Enum):
+    """What importing a helper's host would change about importing its borrower."""
+
+    UNKNOWN = "the imports cannot be inspected"
+    RUNS_CODE = "a module the new import loads runs code at import"
+    NEW_REQUIREMENT = "a module the new import loads requires a package that may be absent"
+    NEW_TOP_LEVEL_PACKAGE = (
+        "a module the new import loads is in a package the borrower never imports"
+    )
+
+
 def import_runs_new_code(host_file: str, borrower_file: str, cache: ImportGraphCache) -> bool:
-    """Whether ``borrower`` importing ``host`` would run module code its import does not run today.
+    """Whether ``borrower`` importing ``host`` would change what importing the borrower does."""
+    return import_change(host_file, borrower_file, cache) is not None
+
+
+def import_change(
+    host_file: str, borrower_file: str, cache: ImportGraphCache
+) -> Optional[ImportChange]:
+    """What ``borrower`` importing ``host`` would change about importing the borrower, if anything.
 
     A cross-file helper adds ``from host import helper`` to the borrower. If
-    the borrower already reaches the host through its imports, nothing new
-    runs. Otherwise every module the new import loads that the borrower did
-    not load before must be definition-only, or the import changes what
-    importing the borrower does (a module that prints, registers, or
-    connects at import time now runs when it did not).
+    the borrower's import already certainly loads the host, nothing new runs.
+    Otherwise every module the new import may load that the borrower's does
+    not certainly load already must run no code at import
+    (``ImportTimeCode``), require no package that may be absent where the
+    borrower is installed (``_new_requirements``), and belong to a top-level
+    package the borrower's import already loads (``_new_top_level_packages``).
+    An import in a function body runs only when the function is called, so it
+    makes nothing present at the borrower's import.
     """
     host = Path(host_file).resolve()
     borrower = Path(borrower_file).resolve()
     common_root = Path(os.path.commonpath([str(host.parent), str(borrower.parent)]))
     source_roots = _source_roots(host, cache)
     if source_roots is None:
-        return True
+        return ImportChange.UNKNOWN
     roots = frozenset(source_roots) | {common_root}
-    already = _reachable_modules(borrower, roots, cache)
+    already = _reachable_modules(borrower, roots, cache, "unconditionally")
     if already is None:
-        return True
+        return ImportChange.UNKNOWN
     if host in already:
-        return False
-    loaded = _reachable_modules(host, roots, cache)
+        return None
+    loaded = _reachable_modules(host, roots, cache, "at_import")
     if loaded is None:
-        return True
-    if any(_has_import_time_effects(module, cache) for module in loaded - already):
-        return True
-    return bool(_new_requirements(loaded - already, already, roots, host, cache))
+        return ImportChange.UNKNOWN
+    added = loaded - already
+    if any(_has_import_time_effects(module, cache) for module in added):
+        return ImportChange.RUNS_CODE
+    if _new_requirements(added, already, roots, host, cache):
+        return ImportChange.NEW_REQUIREMENT
+    if _new_top_level_packages(added, already, source_roots):
+        return ImportChange.NEW_TOP_LEVEL_PACKAGE
+    return None
+
+
+def _new_top_level_packages(
+    added: Set[Path], present: Set[Path], source_roots: Sequence[Path]
+) -> FrozenSet[Optional[str]]:
+    """Top-level packages of the project the new import loads that the borrower's does not.
+
+    A distribution ships the packages its metadata names, not the whole
+    repository, and only what the borrower already imports is known to ship
+    with it: a helper in ``tests/test_b.py`` imported by ``zeta/a.py`` made
+    the installed ``zeta.a`` raise ``ModuleNotFoundError``. A module under
+    no source root has no top-level package that could be named, and is
+    always new.
+    """
+    available = _importable_top_levels(present, source_roots)
+    return frozenset(
+        top for module in added if (top := _top_level_name(module, source_roots)) not in available
+    )
+
+
+def _importable_top_levels(present: Set[Path], source_roots: Sequence[Path]) -> FrozenSet[str]:
+    """The top-level packages importing the borrower certainly loads, its own included.
+
+    Whatever the borrower's import loads ships wherever the borrower runs,
+    so a new import of any of these requires nothing that was not there.
+    """
+    return frozenset(
+        top for module in present if (top := _top_level_name(module, source_roots)) is not None
+    )
+
+
+def _top_level_name(module: Path, source_roots: Sequence[Path]) -> Optional[str]:
+    """The first component of ``module``'s import name, from the deepest source root holding it."""
+    holding = [root for root in source_roots if module.is_relative_to(root.resolve())]
+    if not holding:
+        return None
+    root = max(holding, key=lambda candidate: len(candidate.resolve().parts)).resolve()
+    parts = module.relative_to(root).parts
+    return Path(parts[0]).stem if len(parts) == 1 else parts[0]
 
 
 # Standard-library modules whose import does something visible.

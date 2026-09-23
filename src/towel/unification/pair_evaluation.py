@@ -101,7 +101,8 @@ from .semantic_safety import (
     uses_class_private_names,
 )
 from .import_graph import (
-    import_runs_new_code,
+    ImportChange,
+    import_change,
     layout_is_known,
     relative_import_levels,
     relative_imports_resolve_alike,
@@ -255,6 +256,15 @@ def _module_namespace_names(
                     declared.add(symbol.get_name())
         pending.extend(scope.get_children())
     return frozenset(names), frozenset(declared)
+
+
+# How a refused host is reported, by what its import would change.
+_IMPORT_CHANGE_REASONS = {
+    ImportChange.UNKNOWN: RejectReason.IMPORT_TIME_EFFECTS,
+    ImportChange.RUNS_CODE: RejectReason.IMPORT_TIME_EFFECTS,
+    ImportChange.NEW_REQUIREMENT: RejectReason.NEW_IMPORT_REQUIREMENT,
+    ImportChange.NEW_TOP_LEVEL_PACKAGE: RejectReason.NEW_TOP_LEVEL_PACKAGE,
+}
 
 
 def _is_trivial_return_of_bound_name(
@@ -1411,23 +1421,24 @@ class PairEvaluation(
         candidates = [canonical_file]
         if home.insert_into_class is None and home.insert_into_function is None:
             candidates += sorted(participating - {canonical_file})
-        effects = False
+        refusal: Optional[RejectReason] = None
         for candidate in candidates:
             if would_create_import_cycle(candidate, participating, self.import_graph):
                 continue
-            # The new import must not run module code the borrower's import does
-            # not already run: a host that prints or registers at import time
-            # would do so wherever the borrower is imported.
-            if any(
-                import_runs_new_code(candidate, borrower, self.import_graph)
-                for borrower in participating - {candidate}
-            ):
-                effects = True
+            # The new import must not change what importing a borrower does: a
+            # host that prints or registers at import time would do so wherever
+            # the borrower is imported, one that needs an absent package or one
+            # that does not ship with the borrower would stop its import.
+            changes = [
+                change
+                for borrower in sorted(participating - {candidate})
+                if (change := import_change(candidate, borrower, self.import_graph)) is not None
+            ]
+            if changes:
+                refusal = refusal or _IMPORT_CHANGE_REASONS[changes[0]]
                 continue
             return candidate
-        self._debug_reject(
-            RejectReason.IMPORT_TIME_EFFECTS if effects else RejectReason.IMPORT_CYCLE, pair
-        )
+        self._debug_reject(refusal or RejectReason.IMPORT_CYCLE, pair)
         return None
 
     # -- 11 --------------------------------------------------------------------

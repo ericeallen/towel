@@ -278,6 +278,19 @@ distribution name that differs from its import name (`PyYAML` for `yaml`) is
 not recognized, which refuses a host rather than accepting one; an import
 made by `importlib` or `__import__` is not seen at all.
 
+A distribution ships the packages its metadata names, not the repository, so
+a host is refused as well when its import would load a module of a
+top-level package the borrower's import does not already load, its own
+included (`new_top_level_package`): a helper hosted in `tests/test_b.py` that
+`zeta/a.py` imported made the installed `zeta.a` raise `ModuleNotFoundError`.
+Another participating module is then tried as host, so a test module that
+imports the package under test takes the helper from it, and a pair between
+the package and a module that never imports it is declined. What a
+borrower "already loads" counts only the imports its top level certainly
+runs: an import in a function body, a branch or a `try` makes nothing
+present, and a borrower whose function imports the host lazily no longer
+counts as running the host's import-time code already.
+
 ## Method insertion
 
 A helper shared by methods that never read an attribute of their receiver, or
@@ -560,11 +573,19 @@ the pair decision raises them, grouped by stage:
   `global`. `unknown_layout`: the project's packaging layout cannot be
   modeled, so no import can be written. `import_cycle`: every candidate
   host closes a static import cycle. `import_time_effects`: a cross-file
-  helper's host module, which the borrower does not already import, would
-  run module code beyond definitions, imports and literal assignments at
-  import (a module that prints, registers or connects at import time); a
-  module-level helper may move to a participating module that hosts it
-  without that, and the pair is declined only when none does.
+  helper's host module, which the borrower's import does not already
+  load, would run code at import (*Import-time behavior*: a module that
+  prints, registers or connects at import time); `new_import_requirement`:
+  it would require a package outside the project, the standard library and
+  the declared dependencies; `new_top_level_package`: it would load a
+  top-level package of the project the borrower's import does not. In each
+  case a module-level helper may move to a participating module that hosts
+  it without the change, and the pair is declined only when none does.
+  `relative_import_across_packages`: the block runs a relative import that
+  some participating module resolves in another package.
+  `bare_name_differs_by_module`: after the pair was decided again with them
+  as parameters, the helper still reads bare a name that a site in another
+  module could resolve differently.
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper

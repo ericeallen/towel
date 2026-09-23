@@ -372,26 +372,45 @@ class TestExampleThreeCrossFile:
     """The example3 pair: a duplicate that lives in two modules.
 
     Single-file mode finds nothing in either file (their goldens equal their
-    inputs); analyzed together, the premium module's discount function is the
-    whole body of the regular module's, so it is rewritten to import and call
-    it. The directory run is what generates the import line.
+    inputs). Analyzed together as they stand, they still share nothing: they
+    are two top-level modules and neither imports the other, so nothing is
+    known to ship the one with the other and neither may gain an import of
+    it. Once the premium module imports the regular one, its discount
+    function, the whole body of the regular module's, is rewritten to call it.
     """
 
-    def test_example3_finds_cross_file_duplication(self):
+    def test_example3_modules_that_never_import_each_other_share_nothing(self):
         file1, file2 = get_example3_files()
+
+        engine = UnificationRefactorEngine()
+        assert engine.analyze_files([file1, file2]) == []
+        assert engine.analyze_file(file1) == [] and engine.analyze_file(file2) == []
+
+    @staticmethod
+    def _premium_imports_regular(directory: Path) -> List[str]:
+        directory.mkdir()
+        file1, file2 = get_example3_files()
+        shutil.copy(file1, directory / Path(file1).name)
+        premium = (
+            Path(file2)
+            .read_text()
+            .replace('"""\n\n\n', '"""\n\nimport example3_file1  # noqa: F401\n\n\n', 1)
+        )
+        (directory / Path(file2).name).write_text(premium)
+        return [str(directory / Path(file1).name), str(directory / Path(file2).name)]
+
+    def test_example3_finds_cross_file_duplication(self, tmp_path: Path):
+        file1, file2 = self._premium_imports_regular(tmp_path / "example3")
 
         engine = UnificationRefactorEngine()
         proposals = engine.analyze_files([file1, file2])
 
         assert [p.description for p in proposals] == [EXAMPLE3_REUSE]
         assert _participating_files(proposals[0]) == {file1, file2}
-        assert engine.analyze_file(file1) == [] and engine.analyze_file(file2) == []
 
     def test_example3_directory_run_imports_the_reused_function(self, tmp_path: Path):
         source = tmp_path / "example3"
-        source.mkdir()
-        for path in get_example3_files():
-            shutil.copy(path, source / Path(path).name)
+        self._premium_imports_regular(source)
         out = tmp_path / "out"
 
         with contextlib.redirect_stdout(io.StringIO()):

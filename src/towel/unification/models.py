@@ -295,6 +295,8 @@ class RejectReason(StrEnum):
     MOVES_SCOPE_DECLARATION = "moves_scope_declaration"
     NARROWING_LOST_AT_CALL_SITE = "narrowing_lost_at_call_site"
     NESTED_BINDING_ESCAPES = "nested_binding_escapes"
+    NEW_IMPORT_REQUIREMENT = "new_import_requirement"
+    NEW_TOP_LEVEL_PACKAGE = "new_top_level_package"
     NONLOCAL_SAFETY_SKIP = "nonlocal_safety_skip"
     NOT_STRUCTURALLY_SIMILAR = "not_structurally_similar"
     ORPHANED_VARIABLES = "orphaned_variables"

@@ -1,6 +1,8 @@
 """
 Validation utilities.
 """
+
+from api import checkout
 from api.checkout import validate_checkout_amount
 
 

@@ -1,6 +1,8 @@
 """
 User service module.
 """
+
+import admin_service
 from admin_service import validate_admin_email
 
 

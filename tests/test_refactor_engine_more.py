@@ -34,6 +34,9 @@ def a(x, y):
             write_file(
                 f2,
                 """
+import f1
+
+
 def b(m, n):
     out = m
     out += n
