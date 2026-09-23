@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.ecosystem_fixtures import offline_index_at
+
 
 def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     """Prevent pytest from treating example and temporary directories as tests.
@@ -26,3 +28,9 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     if "tmp_out" in p:
         return True
     return False
+
+
+@pytest.fixture
+def offline_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """uv with no index, every requirement from fixture wheels (see ``ecosystem_fixtures``)."""
+    return offline_index_at(tmp_path, monkeypatch)

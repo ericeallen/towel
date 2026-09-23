@@ -13,7 +13,6 @@ does not say why not.
 
 from __future__ import annotations
 
-import base64
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import dataclasses
@@ -26,101 +25,26 @@ import shutil
 import subprocess
 import sys
 from typing import Callable, ContextManager, Dict, List, Mapping, Optional, Sequence, Tuple
-import zipfile
 
 import pytest
 
 from scripts import ecosystem_check as ecosystem
-
-CLI = """\
-import sys
-
-
-def main():
-    if sys.argv[1:] == ["dry", "--help"]:
-        print("usage: towel dry [-h] INPUT OUTPUT")
-        return 0
-    return 2
-"""
-TYPES = ('mypy>=1.0; extra == "types"', 'pyright>=1.1; extra == "types"')
-FORMAT = (
-    'black>=26.3.1; extra == "format"',
-    'isort>=5.12; extra == "format"',
-    'ruff>=0.4; extra == "format"',
+from tests.ecosystem_fixtures import (
+    FORMAT,
+    TYPES,
+    candidate_wheel,
+    project_tree,
+    source_tree,
+    towel_files,
+    uv_required,
+    wheel,
 )
-
-
-def _record_line(path: str, data: bytes) -> str:
-    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
-    return f"{path},sha256={digest},{len(data)}"
-
-
-def _wheel(
-    directory: Path,
-    name: str,
-    version: str,
-    files: Mapping[str, str],
-    *,
-    requires: Sequence[str] = (),
-    scripts: Optional[Mapping[str, str]] = None,
-) -> Path:
-    """A pure-Python wheel holding ``files``, as an installer expects one."""
-    stem = name.replace("-", "_")
-    info = f"{stem}-{version}.dist-info"
-    contents = dict(files)
-    contents[f"{info}/METADATA"] = (
-        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
-        + "".join(f"Requires-Dist: {requirement}\n" for requirement in requires)
-    )
-    contents[f"{info}/WHEEL"] = (
-        "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
-    )
-    if scripts:
-        contents[f"{info}/entry_points.txt"] = "[console_scripts]\n" + "".join(
-            f"{script} = {target}\n" for script, target in scripts.items()
-        )
-    directory.mkdir(parents=True, exist_ok=True)
-    wheel = directory / f"{stem}-{version}-py3-none-any.whl"
-    with zipfile.ZipFile(wheel, "w") as archive:
-        lines = []
-        for path, text in contents.items():
-            archive.writestr(path, text.encode())
-            lines.append(_record_line(path, text.encode()))
-        archive.writestr(f"{info}/RECORD", "\n".join([*lines, f"{info}/RECORD,,"]) + "\n")
-    return wheel
-
-
-def _towel_files() -> Dict[str, str]:
-    return {
-        "towel/__init__.py": '"""A stand-in for the candidate."""\n',
-        "towel/cli.py": CLI,
-    }
-
-
-def _candidate_wheel(directory: Path, *, requires: Sequence[str] = (*TYPES, *FORMAT)) -> Path:
-    return _wheel(
-        directory,
-        "code-towel",
-        "9.9.9",
-        _towel_files(),
-        requires=[*requires, 'pytest>=9; extra == "dev"'],
-        scripts={"towel": "towel.cli:main"},
-    )
-
-
-def _source_tree(root: Path, files: Mapping[str, str]) -> Path:
-    for relative, text in files.items():
-        path = root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-    return root
-
 
 # -- The candidate -------------------------------------------------------------
 
 
 def test_the_candidate_is_what_its_wheel_declares(tmp_path: Path) -> None:
-    wheel = _candidate_wheel(tmp_path / "dist")
+    wheel = candidate_wheel(tmp_path / "dist")
     candidate = ecosystem.load_candidate(wheel)
     assert (candidate.distribution, candidate.version) == ("code-towel", "9.9.9")
     # What `pip install "code-towel[format,types]"` adds, and nothing of the dev extra.
@@ -146,21 +70,21 @@ def test_a_wheel_that_does_not_say_what_to_install_is_not_a_candidate(
 ) -> None:
     dist = tmp_path / "dist"
     if arrange == "two wheels":
-        _candidate_wheel(dist)
-        _wheel(dist, "code-towel", "9.9.8", _towel_files(), requires=TYPES)
+        candidate_wheel(dist)
+        wheel(dist, "code-towel", "9.9.8", towel_files(), requires=TYPES)
     elif arrange == "no types extra":
-        _candidate_wheel(dist, requires=FORMAT)
+        candidate_wheel(dist, requires=FORMAT)
     elif arrange == "no format extra":
-        _candidate_wheel(dist, requires=TYPES)
+        candidate_wheel(dist, requires=TYPES)
     else:
-        _wheel(dist, "code-towel", "9.9.9", {"other/__init__.py": ""}, requires=TYPES)
+        wheel(dist, "code-towel", "9.9.9", {"other/__init__.py": ""}, requires=TYPES)
     with pytest.raises(ValueError, match=message):
         ecosystem.load_candidate(dist)
 
 
 def test_the_candidate_must_be_the_source_the_report_names(tmp_path: Path) -> None:
-    candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
-    source = _source_tree(tmp_path / "src", _towel_files())
+    candidate = ecosystem.load_candidate(candidate_wheel(tmp_path / "dist"))
+    source = source_tree(tmp_path / "src", towel_files())
     assert ecosystem.candidate_differences(candidate, source) == []
     (source / "towel/cli.py").write_text("changed = True\n")
     (source / "towel/added.py").write_text("")
@@ -177,8 +101,8 @@ def test_the_candidate_must_be_the_source_the_report_names(tmp_path: Path) -> No
 def test_a_run_whose_candidate_is_not_its_source_refuses_before_any_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _candidate_wheel(tmp_path / "dist")
-    source = _source_tree(tmp_path / "src", {**_towel_files(), "towel/cli.py": "edited = 1\n"})
+    candidate_wheel(tmp_path / "dist")
+    source = source_tree(tmp_path / "src", {**towel_files(), "towel/cli.py": "edited = 1\n"})
     project = ecosystem.Project("fixture", "unused", "pinned", "package.py")
     monkeypatch.setattr(ecosystem, "load_manifest", lambda *_: [project])
 
@@ -207,107 +131,6 @@ def test_a_run_whose_candidate_is_not_its_source_refuses_before_any_project(
 
 # -- The project's own environment, built for real ------------------------------
 
-BACKEND = '''\
-"""A build backend with no requirements, so an editable install needs no index."""
-
-import base64
-import hashlib
-import os
-import tomllib
-import zipfile
-
-
-def _record(path, data):
-    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
-    return f"{path},sha256={digest},{len(data)}"
-
-
-def get_requires_for_build_editable(config_settings=None):
-    return []
-
-
-def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
-    with open("pyproject.toml", "rb") as handle:
-        project = tomllib.load(handle)["project"]
-    name, version = project["name"], project["version"]
-    stem = name.replace("-", "_")
-    info = f"{stem}-{version}.dist-info"
-    files = {
-        f"_{stem}_editable.pth": os.path.abspath(os.getcwd()) + "\\n",
-        f"{info}/METADATA": f"Metadata-Version: 2.1\\nName: {name}\\nVersion: {version}\\n",
-        f"{info}/WHEEL": "Wheel-Version: 1.0\\nGenerator: fixture\\nRoot-Is-Purelib: true\\n"
-        "Tag: py3-none-any\\n",
-    }
-    wheel = f"{stem}-{version}-py3-none-any.whl"
-    with zipfile.ZipFile(os.path.join(wheel_directory, wheel), "w") as archive:
-        lines = []
-        for path, text in files.items():
-            archive.writestr(path, text.encode())
-            lines.append(_record(path, text.encode()))
-        archive.writestr(f"{info}/RECORD", "\\n".join([*lines, f"{info}/RECORD,,"]) + "\\n")
-    return wheel
-
-
-def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
-    raise NotImplementedError("this fixture only installs editable")
-'''
-
-uv_required = pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")
-
-
-def _project_tree(root: Path, name: str, package: str, tree: str) -> Path:
-    return _source_tree(
-        root,
-        {
-            "pyproject.toml": (
-                '[build-system]\nrequires = []\nbuild-backend = "backend"\n'
-                f'backend-path = ["."]\n\n[project]\nname = "{name}"\nversion = "1.0"\n'
-            ),
-            "backend.py": BACKEND,
-            f"{package}/__init__.py": f"TREE = {tree!r}\n",
-        },
-    )
-
-
-def _packaging_wheel(directory: Path) -> Path:
-    """A wheel of the ``packaging`` running these tests: the real one, from no index."""
-    import packaging
-
-    root = Path(packaging.__file__).parent
-    files = {
-        f"packaging/{path.relative_to(root).as_posix()}": path.read_text(encoding="utf-8")
-        for path in root.rglob("*.py")
-    }
-    return _wheel(directory, "packaging", packaging.__version__, files)
-
-
-@pytest.fixture
-def offline_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """uv with no index: every requirement comes from a directory of fixture wheels."""
-    links = tmp_path / "links"
-    # pytest brings packaging, which answers the harness's questions about versions.
-    _wheel(links, "pytest", "0.0.1", {"pytest.py": ""}, requires=["packaging"])
-    _packaging_wheel(links)
-    # Two of each tool that a lock pins below, so a pin is distinguishable from what
-    # resolves today; Black's older one also fails the format extra's requirement.
-    _wheel(links, "mypy", "1.0.0", {"mypy/__init__.py": ""})
-    _wheel(links, "mypy", "2.0.0", {"mypy/__init__.py": ""})
-    _wheel(links, "pyright", "1.1.0", {"pyright/__init__.py": ""})
-    _wheel(links, "black", "22.12.0", {"black/__init__.py": ""})
-    _wheel(links, "black", "26.5.1", {"black/__init__.py": ""})
-    _wheel(links, "isort", "9.0.1", {"isort/__init__.py": ""})
-    _wheel(links, "ruff", "0.4.0", {"ruff/__init__.py": ""})
-    _wheel(links, "ruff", "0.16.0", {"ruff/__init__.py": ""})
-    for name, value in {
-        "UV_OFFLINE": "1",
-        "UV_NO_INDEX": "1",
-        "UV_FIND_LINKS": str(links),
-        "UV_CACHE_DIR": str(tmp_path / "uv-cache"),
-        "UV_PYTHON_DOWNLOADS": "never",
-    }.items():
-        monkeypatch.setenv(name, value)
-    return links
-
 
 def _imported_tree(python: Path, package: str) -> str:
     """Which tree ``python`` imports ``package`` from, asked from outside any tree."""
@@ -324,9 +147,9 @@ def _imported_tree(python: Path, package: str) -> str:
 def test_the_environment_holds_the_project_its_tools_and_the_candidate(
     tmp_path: Path, offline_index: Path
 ) -> None:
-    candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
+    candidate = ecosystem.load_candidate(candidate_wheel(tmp_path / "dist"))
     work = tmp_path / "work"
-    source = _project_tree(work / "sample", "sample", "sample", "source")
+    source = project_tree(work / "sample", "sample", "sample", "source")
     log = tmp_path / "environment.log"
     # The project brings its own pyright and isort; the rest it leaves to Towel's extras.
     project = ecosystem.Project("sample", "unused", "pinned", "sample", deps=("pyright", "isort"))
@@ -379,9 +202,9 @@ def test_a_towel_checkout_leaves_its_distribution_to_the_candidate(
     tmp_path: Path, offline_index: Path
 ) -> None:
     """Towel's own checkouts are Towel's distribution, which the candidate must hold."""
-    candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
+    candidate = ecosystem.load_candidate(candidate_wheel(tmp_path / "dist"))
     work = tmp_path / "work"
-    source = _project_tree(work / "towel-old", "code-towel", "towel", "checkout")
+    source = project_tree(work / "towel-old", "code-towel", "towel", "checkout")
     project = ecosystem.Project("towel-old", "unused", "pinned", "towel")
     installed = ecosystem.environment(project, work, source, candidate, tmp_path / "log")
     assert installed.distribution is None and installed.record.installed_from == ""
@@ -400,9 +223,9 @@ def test_a_towel_checkout_leaves_its_distribution_to_the_candidate(
 def test_an_environment_whose_towel_is_not_the_candidate_is_refused(
     tmp_path: Path, offline_index: Path
 ) -> None:
-    candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
+    candidate = ecosystem.load_candidate(candidate_wheel(tmp_path / "dist"))
     work = tmp_path / "work"
-    source = _project_tree(work / "sample", "sample", "sample", "source")
+    source = project_tree(work / "sample", "sample", "sample", "source")
     project = ecosystem.Project("sample", "unused", "pinned", "sample")
     installed = ecosystem.environment(project, work, source, candidate, tmp_path / "log")
     record = installed.record
@@ -447,9 +270,9 @@ def test_a_tool_the_project_locks_is_installed_at_its_pin(
 ) -> None:
     """The project is checked and formatted by the versions its lock names -- unless one
     fails Towel's own requirement, which installing the extra would replace."""
-    candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
+    candidate = ecosystem.load_candidate(candidate_wheel(tmp_path / "dist"))
     work = tmp_path / "work"
-    source = _project_tree(work / "sample", "sample", "sample", "source")
+    source = project_tree(work / "sample", "sample", "sample", "source")
     (source / "uv.lock").write_text(UV_LOCK)
     project = ecosystem.Project("sample", "unused", "pinned", "sample")
     installed = ecosystem.environment(project, work, source, candidate, tmp_path / "log")
@@ -468,9 +291,9 @@ def test_a_tool_the_project_locks_is_installed_at_its_pin(
 def test_a_tool_the_project_installed_below_the_extras_floor_is_replaced(
     tmp_path: Path, offline_index: Path
 ) -> None:
-    candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
+    candidate = ecosystem.load_candidate(candidate_wheel(tmp_path / "dist"))
     work = tmp_path / "work"
-    source = _project_tree(work / "sample", "sample", "sample", "source")
+    source = project_tree(work / "sample", "sample", "sample", "source")
     project = ecosystem.Project("sample", "unused", "pinned", "sample", deps=("black==22.12.0",))
     installed = ecosystem.environment(project, work, source, candidate, tmp_path / "log")
     assert installed.record.formatters[0] == ecosystem.Tool(
@@ -676,7 +499,7 @@ def _orchestrated(
 ) -> Tuple[ecosystem.Result, Trace]:
     """``check_project`` with its environment stubbed, tracing each step it takes."""
     work = tmp_path / "work"
-    source = _source_tree(work / "fixture", {"package.py": "value = 1\n"})
+    source = source_tree(work / "fixture", {"package.py": "value = 1\n"})
     trace = Trace()
     record = ecosystem.Environment("3.12.0", "0", (ecosystem.Tool("mypy", "2.0", "project"),), ())
     if distribution is not None:
@@ -857,8 +680,8 @@ def test_the_summary_names_every_project_refactored_without_cross_module(
 
 
 def _trees(root: Path) -> Tuple[Path, Path]:
-    source = _source_tree(root / "source", {"pkg/mod.py": "original\n"})
-    ready = _source_tree(root / "ready", {"pkg/mod.py": "adopted\n"})
+    source = source_tree(root / "source", {"pkg/mod.py": "original\n"})
+    ready = source_tree(root / "ready", {"pkg/mod.py": "adopted\n"})
     return source, ready
 
 
