@@ -353,6 +353,41 @@ only with the flag on is for the owner to decide when it arises.
 
 *Status: being implemented on the `audit-1772` branch; not yet released.*
 
+## 2026-09-23: A helper never takes a builtin as a parameter
+
+A builtin that moved code reads resolves in the namespace of the module the
+code runs in. A cross-module helper therefore reads `len` in its host, while
+the original read it in the borrower. The difference shows only where the
+two modules' `len` can differ. It can differ if one module shadows or
+rebinds the name, or if a test patches it into one module alone:
+`mock.patch("pkg.exports.len", ..., create=True)` is the documented `mock`
+idiom for a builtin. Passing each builtin into the helper would preserve
+that, but a helper that takes `len` or `print` as a parameter would surprise
+anyone reading it, and the owner ruled it out.
+
+A cross-module pair is declined instead, wherever the program gives evidence
+that a builtin its moved code reads can differ between the participating
+modules. The evidence is either of two things:
+
+- the name is shadowed or rebound in one of them, statically (a definition,
+  import, assignment, `global` rebinding, or a star import that could bind
+  it) or through the module's own namespace (`globals()`, `vars()`, or
+  `setattr` on the module);
+- the project's own code or tests patch that builtin into one of them, by
+  `mock.patch` or `patch.object` (with or without `create=True`), or by
+  pytest's `monkeypatch.setattr` or `setitem`.
+
+Otherwise the helper reads the builtin in its host, as any function does,
+and takes no builtin parameter. This applies only with `--cross-module`. A
+helper in the module whose code it replaces reads the same namespace the
+code always did.
+
+What remains is an assumption of the opt-in mode, stated in the
+limitations: code outside the project that patches a builtin into one of its
+modules is not seen.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
+
 ## 2026-09-22: Checked with the project's own checker, as configured
 
 A candidate is verified by the checker the project configures, exactly as the
