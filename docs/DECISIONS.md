@@ -321,7 +321,37 @@ The owner kept cross-module extraction on by default. The stop rule of
 1.772 ships with cross-module extraction off by default, behind a flag. The
 builtin case is being fixed by passing the builtins that moved code reads to
 a cross-module helper from each call site, so each is looked up where the
-original code looked it up.
+original code looked it up. *Superseded the same day; see
+"Cross-module extraction is opt-in" below.*
+
+## 2026-09-23: Cross-module extraction is opt-in
+
+This supersedes the previous entry. Cross-module extraction is enabled only
+by an explicit flag, `--cross-module` (a matching engine option for library
+use). The owner's reason is the user's point of view. Someone who runs
+Towel to deduplicate a package may be surprised when it starts adding
+imports between their modules, and an explicit opt-in removes the surprise.
+It also confines the machinery behind most of the first two rounds' P1s
+(import naming, cycles and import-time effects, hosts that must ship, stubs,
+shadowed and patched builtins, scripts run by path) to runs that asked for
+it.
+
+Without the flag, a helper always lives in the module whose code it
+replaces, and Towel writes no import of a project module at all. That
+includes the type-only `if TYPE_CHECKING:` imports it used to add for helper
+annotations: they never run, but they are still new imports, and spelling
+them needs the import model. An annotation then names another module's type
+only where the module already binds it. Without the flag the import model
+is neither built nor consulted, so an import problem never refuses a run.
+
+The release corpus runs with the flag on for every project, to catch bugs in
+the mode that needs it most. A project may turn it off only through its
+manifest entry, with the reason recorded there, and the corpus report lists
+every such exception. The third from-scratch audit covers both modes. The
+stop rule applies to what it probes in each; what to do about a P1 found
+only with the flag on is for the owner to decide when it arises.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-22: Checked with the project's own checker, as configured
 
