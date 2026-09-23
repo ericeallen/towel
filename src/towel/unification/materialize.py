@@ -44,7 +44,7 @@ from .class_private import is_class_private, mangled, mangling_classes, mangling
 from .engine_state import HelperNameClaims
 from .exceptions import ProjectScanLimitError, RefactoringError
 from .import_graph import ImportTimeCode, fails_run_by_path, runs_as_script
-from .insertion import reindent, relative_import_module
+from .insertion import reindent
 from .models import (
     AppliedChange,
     MethodKind,
@@ -53,12 +53,7 @@ from .models import (
     is_generated_helper_name,
 )
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
-from ..project_layout import (
-    ProjectLayout,
-    find_project_root,
-    package_chain,
-    package_chain_name,
-)
+from ..project_layout import find_project_root
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
 from ..type_inference import TypeDiagnostic
@@ -748,46 +743,36 @@ class Materialization(
     def _insert_helper_import(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]
     ) -> None:
-        """Import the module-level helper into a file whose call sites need it."""
-        from_path = Path(proposal.file_path)
-        to_path = Path(file_path)
-        # An absolute name is read from the project the code belongs to, not
-        # from wherever a run happens to be writing it. An output directory is
-        # a staging area: naming a module after it states a fact about the
-        # scratch path, which is wrong for the checker, since it checks the
-        # copy under the original project's names, and wrong again for the
-        # reader, whose import breaks as soon as the output is adopted into
-        # the place it was meant for. A relative import says only that the two
-        # modules share a package, which is true in either tree.
-        origin_from = Path(self._origin_of(str(from_path)))
-        origin_to = Path(self._origin_of(str(to_path)))
-        common_dir = Path(os.path.commonpath([str(origin_from), str(origin_to)]))
-        layout = ProjectLayout.discover(
-            common_dir,
-            prefer_absolute_imports=self.prefer_absolute_imports,
-            pep420_namespace_packages=self.pep420_namespace_packages,
-        )
-        absolute = _corroborated_module_name(layout, origin_from)
-        # A relative import states only that the two modules share a package,
-        # which holds wherever the package is installed. None when the
-        # importer is in no package or the helper lies outside its top one.
-        relative = relative_import_module(from_path, to_path)
-        # Prefer an absolute import only when the layout is anchored by real
-        # packaging metadata and the name is corroborated; otherwise a
-        # relative import, which encodes only the intrinsic same-package
-        # relationship and matches the surrounding intra-package style.
-        if absolute and layout.prefer_absolute_imports and layout.metadata_root:
-            module_name = absolute
-        elif relative is not None:
-            module_name = relative
-        elif absolute:
-            module_name = absolute
-        else:
+        """Import the module-level helper into a file whose call sites need it.
+
+        The import is spelled as the program's own imports show it works
+        wherever the program runs (``ImportModel.spelling``; docs/DECISIONS.md,
+        "Import names come from the program"): relatively between modules of
+        one package, unless the importing file spells its own package
+        absolutely, and absolutely across top-level packages only where the
+        importing package already imports the other. It is never read from
+        packaging metadata, nor from where a run happens to be writing: the
+        model is read from the project the stage copies. Host selection
+        admits a host only when every borrower has such a spelling, so one
+        missing here is a proposal built by other means, refused rather than
+        guessed at.
+        """
+        if not self.cross_module_helpers:
+            # Pairing never forms such a proposal; one built by other means
+            # would add a dependency between modules nobody asked for.
             raise RefactoringError(
-                f"No import of {origin_from} from {origin_to} can be shown to resolve:"
-                " the packaging metadata and the package markers name it differently"
+                f"{file_path} would import {proposal.extracted_function.name} from"
+                f" {proposal.file_path}: helpers are shared across modules only with"
+                " cross_module_helpers (--cross-module)"
             )
-        self._ensure_import(lines, module_name, proposal.extracted_function.name)
+        importer, provider = Path(file_path), Path(proposal.file_path)
+        spelling = self.import_graph.program_for(provider).spelling(importer, provider)
+        if spelling is None:
+            raise RefactoringError(
+                f"No import of {provider} from {importer} is known to work: the program's"
+                " own imports show none"
+            )
+        self._ensure_import(lines, spelling.module, proposal.extracted_function.name)
 
     def _ensure_import(self, lines: List[str], module_name: str, name: str) -> None:
         """Add ``from module_name import name`` at the import position unless a line already says so."""
@@ -987,30 +972,3 @@ def _string_constants(nodes: List[ast.expr]) -> Set[str]:
         for node in nodes
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
-
-
-def _corroborated_module_name(layout: ProjectLayout, path: Path) -> Optional[str]:
-    """The absolute module name of ``path``, when two independent derivations agree on it.
-
-    The layout readers reimplement five build backends' package discovery,
-    and a wrong answer from them is an import that names a module the
-    installed project does not have: ``src.foo.a`` for a ``setup.cfg`` src
-    layout they do not read, ``foo.src.foo.a`` for a project directory named
-    like its package. The checker cannot catch it, since with no project
-    configuration it names modules from the same root. The name the
-    ``__init__`` markers imply is a second derivation that shares none of
-    that machinery, and a name both give is the one used. When they differ
-    the name is unknown, and a caller that has no relative import to fall
-    back on declines rather than guess.
-
-    A module in no regular package, in a project with no packaging metadata,
-    has no second derivation: its only name is its path from the import
-    root, which for such a project is the directory Towel was pointed at.
-    That assumption is the documented one, and it is kept there alone.
-    """
-    declared = layout.module_name_for(path)
-    if declared is None or declared == package_chain_name(path):
-        return declared
-    if not layout.metadata_root and not package_chain(path.resolve()):
-        return declared
-    return None

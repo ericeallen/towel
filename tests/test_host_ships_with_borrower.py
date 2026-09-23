@@ -56,7 +56,7 @@ def _write(root: Path, files: Dict[str, str]) -> None:
 
 
 def _refactor(root: Path, target: str) -> bool:
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / target), str(root / target), progress="none"
@@ -163,6 +163,13 @@ def test_a_test_module_that_imports_the_package_may_borrow_from_it(tmp_path: Pat
 
 
 def test_a_borrower_gains_only_top_level_packages_it_already_imports(tmp_path: Path) -> None:
+    """Its own package is always there; another only when its package already imports it.
+
+    That is the rule every new import is spelled by (docs/DECISIONS.md,
+    "Import names come from the program"), applied to what the host's import
+    loads as well: ``tests`` imports ``zeta``, so a test module may borrow
+    from ``zeta``, while ``zeta`` imports ``gamma`` but ``tests`` never does.
+    """
     _write(
         tmp_path,
         {
@@ -170,12 +177,14 @@ def test_a_borrower_gains_only_top_level_packages_it_already_imports(tmp_path: P
             "zeta/__init__.py": "",
             "zeta/a.py": "def fa():\n    return 1\n",
             "zeta/b.py": "def fb():\n    return 2\n",
-            "zeta/uses_tests.py": "import tests.util\ndef fc():\n    return 3\n",
-            "zeta/lazy.py": "def fl():\n    import tests.util\n    return 4\n",
+            "zeta/uses_gamma.py": "import gamma.util\ndef fc():\n    return 3\n",
+            "zeta/lazy.py": "def fl():\n    import gamma.util\n    return 4\n",
+            "gamma/__init__.py": "",
+            "gamma/util.py": "def helper():\n    return 5\n",
             "tests/__init__.py": "",
-            "tests/util.py": "def helper():\n    return 5\n",
-            "tests/test_b.py": "import zeta.a\ndef test_b():\n    return 6\n",
-            "tests/test_c.py": "def test_c():\n    return 7\n",
+            "tests/helpers.py": "def helper():\n    return 6\n",
+            "tests/test_b.py": "import zeta.a\ndef test_b():\n    return 7\n",
+            "scripts/tool.py": "def tool():\n    return 8\n",
         },
     )
     cache = ImportGraphCache()
@@ -183,17 +192,16 @@ def test_a_borrower_gains_only_top_level_packages_it_already_imports(tmp_path: P
     def refused(host: str, borrower: str) -> bool:
         return import_runs_new_code(str(tmp_path / host), str(tmp_path / borrower), cache)
 
-    # Its own top-level package is always there; another only when imported.
     assert not refused("zeta/b.py", "zeta/a.py")
-    assert refused("tests/util.py", "zeta/a.py")
+    assert refused("tests/helpers.py", "zeta/a.py")
     assert not refused("zeta/b.py", "tests/test_b.py")
-    assert refused("zeta/b.py", "tests/test_c.py")
-    # A host that imports tests makes its borrower need tests too.
-    assert refused("zeta/uses_tests.py", "zeta/a.py")
+    assert refused("zeta/b.py", "scripts/tool.py")
+    # A host whose import loads a package the borrower's never imports makes
+    # the borrower need it too.
+    assert refused("zeta/uses_gamma.py", "tests/test_b.py")
     # An import inside a function runs only when it is called: importing
-    # zeta.lazy does not require tests, and does not make them present.
-    assert not refused("zeta/lazy.py", "zeta/a.py")
-    assert refused("tests/util.py", "zeta/lazy.py")
+    # zeta.lazy loads nothing of gamma.
+    assert not refused("zeta/lazy.py", "tests/test_b.py")
 
 
 def test_a_borrower_that_imports_its_host_only_in_a_function_does_not_already_run_it(

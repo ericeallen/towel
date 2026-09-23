@@ -206,6 +206,9 @@ class EngineState:
     skip_trivial_helpers: bool
     """Whether a helper that only forwards, renames, or unpacks is declined."""
 
+    cross_module_helpers: bool
+    """Whether a helper may be shared across modules, and so an import of one written."""
+
     annotate_helpers: bool
     """Whether helpers carry the annotations their call sites declare."""
 
@@ -217,12 +220,6 @@ class EngineState:
 
     file_finisher: Optional[Callable[[str, str], str]]
     """Finishes each modified file (imports sorted), or None."""
-
-    prefer_absolute_imports: Optional[bool]
-    """Cross-file helper import style; None lets the discovered layout decide."""
-
-    pep420_namespace_packages: Optional[bool]
-    """Whether directories without __init__.py are packages; None infers it."""
 
     @staticmethod
     def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:

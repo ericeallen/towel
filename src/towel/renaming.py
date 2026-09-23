@@ -37,7 +37,8 @@ import unicodedata
 from typing import Iterable, Literal, NamedTuple, Sequence, cast
 
 from .changes import ChangePlan
-from .project_layout import ProjectLayout
+from .import_model import ImportModel, build_import_model
+from .project_layout import find_project_root
 from .source_text import decode_source
 from .source_files import python_sources
 from .unification.class_private import (
@@ -420,28 +421,72 @@ class _Edits:
         return result
 
 
-def _rename_layout(target: Path) -> ProjectLayout:
-    """Honor packaging configuration, but never infer imports from ambient Git roots.
+def _module_names(target: Path, paths: Sequence[Path]) -> dict[Path, str]:
+    """The name each module is matched by: the one the program's imports give it.
 
-    Without packaging metadata the explicit target is the import root. If the
-    target itself is a classic package, its parent supplies that package name.
-    An ancestor .git directory says nothing about Python's import search path.
+    A rename follows every import of a helper to the definition it binds, by
+    module name, so a module must be known by the name the program's imports
+    use for it (docs/DECISIONS.md, "Import names come from the program"),
+    read from the whole project around ``target``: the tests beside a ``src``
+    layout import ``alpha.a``, whatever its packaging metadata says. A module
+    they give no name keeps one no absolute import can spell, so that only a
+    relative import, resolved from its own place, can reach it
+    (:func:`_unimported_name`).
     """
-    directory = target.resolve()
-    for candidate in (directory, *directory.parents):
-        if any(
-            (candidate / marker).is_file() for marker in ("pyproject.toml", "setup.cfg", "setup.py")
-        ):
-            return ProjectLayout.discover(directory)
-    import_root = directory.parent if (directory / "__init__.py").is_file() else directory
-    return ProjectLayout(project_root=directory, source_roots=[import_root])
+    root = find_project_root(target).resolve()
+    model = build_import_model(root)
+    return {path: _program_name(model, path) or _unimported_name(root, path) for path in paths}
 
 
-def _module_name(layout: ProjectLayout, path: Path) -> str:
-    name = layout.module_name_for(path)
-    if name is None:
-        raise ValueError(f"Cannot resolve module path for rename: {path}")
-    return name.removesuffix(".__init__") if name != "__init__" else ""
+def _program_name(model: ImportModel, path: Path) -> str | None:
+    """The absolute name the program's imports reach ``path`` by, through its package if not itself.
+
+    The model names a module an import may be written into; one below a
+    directory without ``__init__.py`` inside a package, or one whose own
+    imports are broken, it does not, and the source tree still reaches it
+    through the nearest package the program names.
+    """
+    resolved = path.resolve()
+    name = model.module_name(resolved)
+    if name is not None:
+        return name
+    directory = resolved.parent
+    while directory != model.root and directory.is_relative_to(model.root):
+        package = model.module_name(directory / "__init__.py")
+        if package is not None:
+            parts = _module_parts(resolved.relative_to(directory))
+            if all(part.isidentifier() and not keyword.iskeyword(part) for part in parts):
+                return ".".join([package, *parts])
+            return None
+        directory = directory.parent
+    return None
+
+
+def _unimported_name(root: Path, path: Path) -> str:
+    """A name for a module the program's imports never reach: one no absolute import can spell.
+
+    It is the module's path through the regular packages enclosing it, as a
+    runner that imports it through them names it, under an anchor naming the
+    directory above them, so a relative import between such modules resolves
+    to the right one and an absolute import matches none: ``<>.tests.helpers``
+    for ``tests/helpers.py`` under ``tests/__init__.py``.
+    """
+    resolved = path.resolve()
+    parts = _module_parts(Path(resolved.name))
+    directory = resolved.parent
+    while (directory / "__init__.py").is_file() and directory.parent != directory:
+        parts.insert(0, directory.name)
+        directory = directory.parent
+    anchor = directory.relative_to(root).as_posix() if directory.is_relative_to(root) else ""
+    return ".".join([f"<{anchor.strip('.').replace('.', ':')}>", *parts])
+
+
+def _module_parts(relative: Path) -> list[str]:
+    """The dotted components a path relative to a package names: no suffix, no ``__init__``."""
+    parts = list(relative.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return parts
 
 
 class _ParameterSpec(NamedTuple):
@@ -764,9 +809,10 @@ def _load_rename_modules(target: Path) -> list[_Module]:
     it could not see might hold one. Encodings are honoured the way the
     refactoring commands honour them (byte-order mark, coding cookie).
     """
-    layout = _rename_layout(target)
+    paths = list(python_sources(target))
+    names = _module_names(target, paths)
     modules: list[_Module] = []
-    for path in python_sources(target):
+    for path in paths:
         original = path.read_bytes()
         text = decode_source(original)
         tree = ast.parse(text, filename=str(path))
@@ -774,7 +820,7 @@ def _load_rename_modules(target: Path) -> list[_Module]:
         modules.append(
             _Module(
                 path,
-                _module_name(layout, path),
+                names[path],
                 original,
                 text.encode("utf-8"),
                 tree,
@@ -909,8 +955,10 @@ def _refuse_unresolved_helper_imports(
     out-of-place output sits in a directory named for the output, not the
     package, so ``from pkg.b import __extracted_func_0`` in it names no module
     the rename can see: the definition was renamed and the import left, and
-    the adopted package failed to import. Any import of a renamed generated
-    name from a module outside the target's names is such a case.
+    the adopted package failed to import. So does a name the program's
+    imports leave ambiguous, a stale copy of the package beside it. Any
+    import of a renamed generated name from a module outside the target's
+    names is such a case.
     """
     known = {module.name for module in modules}
     renamed = {name for _, name in selected}

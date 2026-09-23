@@ -89,7 +89,7 @@ def test_a_cross_file_helper_still_takes_module_names(tmp_path: Path) -> None:
             print("second", total)
             return total - 1
         """))
-    engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL)
+    engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL, cross_module_helpers=True)
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path / "pkg"), str(tmp_path / "out"), progress="none"
     )

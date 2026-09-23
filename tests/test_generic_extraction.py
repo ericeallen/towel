@@ -343,7 +343,7 @@ def test_cross_file_generic_helper_respects_project_rules_and_unchanged_consumer
     )
     original_consumer = consumer.read_text()
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        min_lines=2, reuse_existing_functions=False, type_oracle=oracle, cross_module_helpers=True
     )
     proposals = engine.analyze_files([str(first), str(second), str(consumer)])
     proposal = next(

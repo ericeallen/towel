@@ -74,7 +74,11 @@ flowchart TD
    and rejects incompatible pairs before the expensive step, and, when the
    projected pair count exceeds `--max-pairs` (20,000,000 by default), leaves
    out the largest buckets of similar blocks with a warning naming them
-   (`_buckets_over_budget`).
+   (`_buckets_over_budget`). A function is paired only with the other
+   functions of its own module unless `cross_module_helpers`
+   (`--cross-module`) is set; the loop walks a list per module
+   (`_Partners`), so pairs across modules are neither formed nor projected
+   against the budget.
 5. **Decide each pair.** `pair_evaluation.py` runs eleven stages, each
    returning a typed result or a traced rejection:
    1. guards on the blocks themselves (`semantic_safety.py`: frame use in
@@ -118,9 +122,10 @@ flowchart TD
        no import cycle and whose import runs no module code the borrower's
        imports do not already run (a module-level helper may move to
        another participating module); a cross-module helper is refused when
-       a participating module declares a `global` or the layout is unknown
-       (`_safe_home_across_modules`; see *Helper placement* and
-       *Cross-file*);
+       a participating module declares a `global`, or when no participating
+       module can be imported by all the others as the program's own imports
+       show (`unproven_import`; `_safe_home_across_modules`; see *Helper
+       placement* and *Cross-file behavior*);
    11. the proposal: one whose helper, home and sites repeat an earlier
        pair's is declined (`duplicate_proposal`, the engine's
        `_seen_proposals`) before anything further is computed for it; the
@@ -713,31 +718,65 @@ without them code is inserted as rendered, and the CLI says so.
 
 ## Cross-file behavior
 
-`project_layout.py` maps files to importable module names so a cross-file
-helper can be imported correctly. It reads the build backend from
-`pyproject.toml` and derives import roots for setuptools (including
-`package-dir` mappings and the classic `src` layout), Hatch (wheel
-`packages`/`sources`), Flit, Poetry (`packages` with `from`), and pdm
-(`package-dir`). An unrecognized backend falls back to conventional inference:
-a package or module named after the distribution, in the project root or under
-`src`. Only a layout that cannot be resolved either way raises rather than
-guessing; the ecosystem check reports those as `UNSUPPORTED`.
+Sharing a helper across modules is opt-in (`cross_module_helpers`,
+`--cross-module`): it adds an import between two modules, a change to how
+the project's modules depend on each other. Every name an import needs comes
+from the program's own imports, never from packaging metadata or from where a
+copy of the tree sits (docs/DECISIONS.md, "Import names come from the
+program"). `import_model.py` reads every Python file under the project root
+once, less the directories `--exclude` names, and builds an `ImportModel`:
+which location each top-level name the imports use refers to (attested,
+ambiguous, or external), the problems the imports have, each module's
+context (its top-level package) and the names each context imports.
+`unification/program_imports.py` asks it in the paths a run works on: the
+run refactors a stage, a copy of the whole project at the same relative
+places, while the model is read from the project itself, where the
+interpreter probe sees an editable install; `ProgramImports.origin` maps a
+stage path to the project before each question and `in_run` maps an answer
+back to the staged copy, which holds what the run has written. The
+`ImportGraphCache` holds the model for the run (`begin_run`,
+`program_for`): read before any pair is judged when helpers may be shared
+across modules, and otherwise only when a question needs it.
 
-For a helper shared between two files in the same package, `materialize.py`
-generates a relative import (`relative_import_module` in `insertion.py`) (`from .module import helper`, or a deeper
-`..sub.module`). A relative import encodes only the intrinsic same-package
-relationship, so it stays valid wherever the code lands — in particular when an
-out-of-place output is adopted into its real location, the documented workflow —
-and it matches the intra-package style the code already uses. An absolute import
-is used only when the discovered layout is anchored by a real packaging marker
-(`ProjectLayout.metadata_root`), so the absolute name survives relocation; a flat
-module with no package, where a relative import would not resolve, keeps a bare
-absolute name.
+The model answers three kinds of question:
 
-`semantic_safety.py`'s
-`would_create_import_cycle` follows static imports through local modules,
-caching each module's import edges by path, mtime, and size, and rejects a
-helper placement that would close a cycle.
+- **How to spell an import** (`ImportModel.spelling`). Between two modules of
+  one package, the relative import, or the absolute one when the importing
+  module spells its own package absolutely and never relatively; across
+  top-level packages, the absolute import only when the importing context
+  already imports the other package; and into a directory only where the
+  importing side already imports from it. `None` otherwise. Host selection
+  keeps a candidate host only when every borrower has a spelling of it,
+  before the cycle guard, and declines a pair none survives as
+  `unproven_import`; `materialize.py` writes the spelling and refuses a
+  proposal built by other means that has none. `annotation_wiring.py` spells
+  the type-only import a helper's annotation needs by `split_qualified` and
+  `spelling` in either mode, under `TYPE_CHECKING`, where it never runs.
+- **What an import executes** (`ImportModel.files_reached`, through
+  `ProgramImports.reached`): the project files an import statement may run,
+  package initializers on the way included and every candidate of an
+  ambiguous name. The cycle guard (`would_create_import_cycle`) walks these
+  edges from the host and the initializers of its packages, reading each
+  file where the run keeps it so that an import an earlier extraction added
+  is an edge too; the import-time-effect, requirement, top-level-package and
+  run-by-path checks (`import_change`) walk them for what the new import
+  would load. An import that enters a directory the model did not read (one
+  `--exclude` names, one every scan skips, or a symbolic link) is unknown:
+  the checks refuse such a host rather than treat the directory as empty.
+- **What a name denotes** (`module_name`, `names`, context attestation): the
+  stub check looks for a module's stub under the names a checker may give
+  it; the requirement check counts a name the model does not call external
+  as the project's own; `imported_definition_sites` follows an absolute
+  import of a project module to the file that defines the name, for the
+  typing-form and quiet-base lookups, and takes one of no project module at
+  its word.
+
+The `dry` and `preview` commands, with `--cross-module`, read the model
+before the engine starts and report every problem with its remedy
+(`--exclude`); one that involves the package being refactored refuses the
+run before anything is written (`_judge_import_problems` in `cli.py`).
+`rename-helpers` names each module by the model too (`renaming.py`), so a
+rename follows an import to the module the program means by it.
 
 ## The clustering pass
 
@@ -996,8 +1035,8 @@ measure is exact and changes no proposal.
   their size or modification time changed; the annotation fallback variants
   copy the helper alone, not the whole proposal.
 - **Owned, bounded caches.** The import-graph tables (edges, import
-  bindings, module lookups, source roots, resolved paths) are an
-  `ImportGraphCache` the engine owns per run, keyed by path, modification
+  bindings, import-time effects, quiet base classes, resolved paths) and the
+  program's import model are an `ImportGraphCache` the engine owns per run, keyed by path, modification
   time, and size where the answer depends on a file's contents, and bounded;
   the eviction index that maps files to structural-cache entries prunes
   entries the bounded caches already dropped. Each module's source digest
@@ -1241,7 +1280,8 @@ but the ideas and their names are from the literature.
 | The bounded LRU mapping behind every id-keyed cache | `bounded_cache.py` |
 | Engine and CLI defaults (parameters, lines, iterations) | `defaults.py` |
 | Decoding and re-encoding sources (BOM, cookie, newline) | `source_text.py` (at `src/towel/`) |
-| Cross-file layout (packaging discovery) | `project_layout.py` (at `src/towel/`); `unification/project_layout.py` re-exports it for the old import path |
+| The names the program's imports give its modules | `import_model.py` (at `src/towel/`); `unification/program_imports.py` asks it in a run's paths |
+| Project root, `pyproject.toml`, package chain | `project_layout.py` (at `src/towel/`); `unification/project_layout.py` re-exports it for the old import path |
 | Data model | `models.py` |
 | Transactional application | `changes.py` (at `src/towel/`) |
 | Atomic project copy | `filesystem.py` (at `src/towel/`) |

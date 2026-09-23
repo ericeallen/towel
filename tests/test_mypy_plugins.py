@@ -226,7 +226,16 @@ def test_a_refactoring_of_a_plugin_project_passes_the_projects_own_mypy(tmp_path
     root = _project(tmp_path / "project")
     assert _fresh_mypy(root) == []
     result = invoke(
-        ["dry", str(root), str(root), "--no-interactive", "--no-format", "--progress", "none"]
+        [
+            "dry",
+            str(root),
+            str(root),
+            "--no-interactive",
+            "--no-format",
+            "--cross-module",
+            "--progress",
+            "none",
+        ]
     )
     assert result.status == 0, result
     assert "__extracted_func_0" in (root / "src" / "alpha" / "a.py").read_text(encoding="utf-8")

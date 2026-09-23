@@ -67,9 +67,22 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
 - **Engine end-to-end** — `test_refactoring_engine.py`,
   `test_engine_adversarial.py`: single-file, directory, and cross-file runs,
   parameter and min-lines limits.
-- **Cross-file & layout** — `test_crossfile_integration.py`,
-  `test_backend_layouts.py`, `test_project_layout_and_imports.py`: import-path
-  inference across packaging backends and relative-vs-absolute import choice.
+- **Cross-file & import names** — `test_cross_module_opt_in.py`: helpers are
+  shared across modules only with `--cross-module`, and no pair across
+  modules is formed or budgeted otherwise; `test_crossfile_integration.py`;
+  `test_import_name_corroboration.py`: `towel dry --cross-module` over eight
+  layouts that broke before (setup.cfg and setup.py src layouts, a stray
+  `src/__init__.py`, a project named like its package, a Hatch include, a
+  namespace package, tests that borrow and never lend, tests inside the
+  package), each imported in the source tree and from an installed wheel;
+  `test_import_cycles_by_the_program.py`: the cycle guard follows the
+  program's imports; `test_program_imports.py`: a run's paths, and imports
+  into excluded directories counted as unseen;
+  `test_import_problem_refusal.py`: import problems reported, and a run
+  refused when they concern its own package; `test_rename_by_the_programs_names.py`:
+  renames follow the program's module names; `test_project_layout_and_imports.py`,
+  `test_project_layout_behavior.py`: the project root, configuration and the
+  retired import preferences. The model itself is `test_import_model.py`.
 - **Soundness batteries** — `test_adversarial_semantics.py`,
   `test_adversarial_renaming.py`, `test_*_observational_equivalence.py`:
   instantiation-based equivalence checks and the hostile fixtures behind them.
@@ -164,7 +177,8 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   `test_source_encoding.py`, `test_unsupported_layout.py`,
   `test_symlinked_input_directory.py`: the refusals of the atomic project
   copy, the lazy engine import, the per-analysis function index,
-  byte-convention preservation, a layout Towel cannot model, and a symlinked
+  byte-convention preservation, a layout the packaging readers could not
+  model and the import model can, and a symlinked
   input directory (followed, while links inside it are copied as links and
   never analyzed or rewritten); `test_environment_independence.py` (the
   result does not depend on the working directory, path spelling or line

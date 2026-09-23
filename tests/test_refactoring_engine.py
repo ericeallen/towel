@@ -179,7 +179,7 @@ class TestDirectoryAnalysis(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=True
+            max_parameters=5, min_lines=4, parameterize_constants=True, cross_module_helpers=True
         )
 
     def test_analyze_directory(self):

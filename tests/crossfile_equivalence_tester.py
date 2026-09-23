@@ -202,6 +202,19 @@ class CrossFileEquivalenceTester:
         if not project_path.exists():
             return 0, 0, [f"Project directory not found: {project_dir}"]
 
+        # The project is analyzed where a user's project sits, in a directory
+        # of its own. In this checkout every fixture has its expected output
+        # beside it, a second copy of each module, so the program's imports
+        # could not say which copy a name means and none would be shared.
+        with tempfile.TemporaryDirectory(prefix="towel-crossfile-") as standalone:
+            copy = Path(standalone) / project_path.name
+            shutil.copytree(project_path, copy)
+            return self._test_standalone_project(copy, verbose)
+
+    def _test_standalone_project(
+        self, project_path: Path, verbose: bool
+    ) -> Tuple[int, int, List[str]]:
+        """``test_project`` on a project that is the only one in its tree."""
         if verbose:
             print(f"Testing project: {project_path.name}")
 

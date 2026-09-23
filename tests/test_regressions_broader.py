@@ -77,7 +77,9 @@ class TestOverlapFiltering(unittest.TestCase):
 
 class TestCrossFileAndValidation(unittest.TestCase):
     def test_cross_file_proposal_detected(self):
-        eng = UnificationRefactorEngine(max_parameters=5, min_lines=1, parameterize_constants=True)
+        eng = UnificationRefactorEngine(
+            max_parameters=5, min_lines=1, parameterize_constants=True, cross_module_helpers=True
+        )
         with temporary_test_directory() as tmp:
             file1 = Path(tmp) / "mod1.py"
             file2 = Path(tmp) / "mod2.py"

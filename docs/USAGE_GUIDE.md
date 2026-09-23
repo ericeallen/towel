@@ -25,10 +25,12 @@ if proposals:
 
 ### 2. Analyze Multiple Files (for cross-file duplicates)
 
+Sharing a helper between modules is opt-in: it adds an import between them.
+
 ```python
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+engine = UnificationRefactorEngine(max_parameters=5, min_lines=3, cross_module_helpers=True)
 
 # Analyze multiple files together
 files = ["file1.py", "file2.py", "file3.py"]
@@ -138,9 +140,8 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | Parameter | Default | Effect |
 |---|---|---|
 | `parameterize_constants` | `True` | Differing constants become helper parameters. |
-| `prefer_absolute_imports` | `None` | Cross-file helper import style; `None` lets the discovered layout decide (`--prefer-absolute-imports/--no-prefer-absolute-imports`). |
-| `pep420_namespace_packages` | `None` | Treat directories without `__init__.py` as packages; `None` infers it (`--pep420/--no-pep420`). |
-| `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`). |
+| `cross_module_helpers` | `False` | Also share a helper between duplicates in different modules, importing it into the others (`--cross-module/--no-cross-module`). Off, only duplicates within a module are paired and no import of a project module that runs is written. |
+| `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`); the program's import model reads nothing in them either. |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
 | `skip_trivial_helpers` | `True` | Do not propose a helper that only forwards, renames, or unpacks. |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
@@ -157,6 +158,46 @@ since 1.772 every such site calls a new helper instead, because a call to the
 existing function looked it up in its module each time, so patching or
 rebinding it changed both. The keyword is still accepted, and will be removed
 in a later release.
+
+`prefer_absolute_imports` and `pep420_namespace_packages`, and the
+`--prefer-absolute-imports` and `--pep420` flags, are deprecated and do
+nothing either. They chose how a cross-file helper's import was spelled from
+packaging metadata; since 1.772 every import Towel writes is spelled as the
+program's own imports show it works (see *How a cross-module import is
+spelled* below). They are still accepted, a run given one of the flags says
+it had no effect, and they will be removed in a later release.
+
+### How a cross-module import is spelled
+
+With `cross_module_helpers` (`--cross-module`), a helper shared by several
+modules lives in one of them and the others import it. Towel reads the
+imports every Python file of the project already makes, and writes only an
+import those show to work wherever the program runs
+(docs/DECISIONS.md, *Import names come from the program*):
+
+- between two modules of one package, the relative import, or the absolute
+  one when the importing module already spells its own package absolutely
+  and never relatively;
+- across top-level packages, an absolute import only when the importing
+  package already imports the other one, spelled as it already does;
+- into a directory only where the importing side already imports from it,
+  so a library never borrows from the test package inside it.
+
+A host that no participating module can import that way is not taken, and a
+pair with no such host is declined (`unproven_import`). The costs: sibling
+packages that never import each other share nothing; a directory of scripts
+that import nothing local gets no cross-file helpers; and a name the tree
+makes ambiguous (a stale `build/lib/alpha` beside `src/alpha`, or an
+installed copy of the package that the interpreter running Towel can see)
+gets none until the stray copy is left out with `--exclude`. On the command
+line, a `--cross-module` run names each such problem before it starts, and
+refuses when one concerns the package it refactors.
+
+Without `cross_module_helpers` no import between the project's modules that
+runs is ever written. A helper's annotation may still need a type from
+another module; that import is written under `if TYPE_CHECKING:`, where it
+never runs, spelled by the same rules, and where no import is known to work
+the annotation keeps the checker's full name.
 
 The CLI's `dry` command wires the formatter, import sorter, and type oracle
 from the project's own configuration. Library callers can do the same:
@@ -273,6 +314,8 @@ proposal.source_digests       # The file digests the proposal was computed from;
 
 ### Cross-File vs Same-File
 
+Cross-file proposals come only from an engine made with `cross_module_helpers=True`.
+
 ```python
 # Check if it's cross-file
 is_cross_file = any(r.file_path not in (None, proposal.file_path) for r in proposal.replacements)
@@ -342,6 +385,9 @@ both functions up to the renamed variable, so the call site becomes a
 `return` of the helper.
 
 ### Example 2: Cross-File Duplicates
+
+With `--cross-module`, for two modules of one package that neither import
+their package absolutely.
 
 **Before (file1.py):**
 ```python
@@ -456,6 +502,8 @@ in a base class or a mixin is left to your review.
 ### 1. Always Use analyze_files() or analyze_directory() for Cross-File
 
 ```python
+engine = UnificationRefactorEngine(cross_module_helpers=True)
+
 # ❌ BAD - Misses cross-file duplicates
 proposals1 = engine.analyze_file("file1.py")
 proposals2 = engine.analyze_file("file2.py")
@@ -517,17 +565,23 @@ simple_proposals = [p for p in proposals if p.parameters_count <= 2]
 
 ### Import errors after refactoring
 
-Towel writes a relative import for a cross-file helper inside a package
-(`from .module import helper`), so the result imports correctly whether you
-refactor in place or adopt an out-of-place copy into its real location. If you
-still hit an import error:
+Towel spells a cross-file helper's import the way the program's own imports
+show it works (*How a cross-module import is spelled* above), so the result
+imports wherever the original did, in place or once an out-of-place copy is
+adopted into its real location. If you still hit an import error:
 
 - Refactor through `analyze_files()`/`analyze_directory()` or the `towel dry`
-  command, which run the full pipeline including import-path inference; a
-  hand-built `RefactoringProposal` skips it.
-- For an unusual layout, declare the build backend and source roots in
-  `pyproject.toml` so the module names resolve; an unresolvable layout is
-  reported rather than guessed.
+  command, which run the full pipeline including the import model; a
+  hand-built `RefactoringProposal` skips host selection, and its import is
+  refused when no spelling is known.
+- Run Towel with the interpreter the project uses: an installed copy of the
+  package that only another interpreter holds is invisible to it.
+
+### "No helper shared across modules"
+
+- Pass `--cross-module`: by default only duplicates within a module are paired.
+- If the run names import problems, leave out the directory holding the stray
+  copy or the broken import with `--exclude`.
 
 ## Fast local testing
 

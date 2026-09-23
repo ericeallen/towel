@@ -75,7 +75,7 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
 
     def _refactor_and_adopt(self) -> None:
         cleaned = self.tmp / "work" / "cleaned"
-        UnificationRefactorEngine().refactor_directory_to_fixed_point(
+        UnificationRefactorEngine(cross_module_helpers=True).refactor_directory_to_fixed_point(
             str(self.pkg), str(cleaned), max_iterations=0, progress="none"
         )
         # Adopt the cleaned copy back over the package (as the harness does).
@@ -149,7 +149,7 @@ class TestSiblingOriginalRegression(unittest.TestCase):
 
     def test_adopted_package_imports_without_cycle(self) -> None:
         cleaned = self.tmp / "sphinx-cleaned"  # the harness's sibling layout
-        UnificationRefactorEngine().refactor_directory_to_fixed_point(
+        UnificationRefactorEngine(cross_module_helpers=True).refactor_directory_to_fixed_point(
             str(self.pkg), str(cleaned), max_iterations=0, progress="none"
         )
         shutil.rmtree(self.pkg)

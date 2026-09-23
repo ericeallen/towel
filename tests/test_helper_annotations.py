@@ -356,7 +356,9 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
                     print(text)
                     print(text.upper())
                 """))
-    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, cross_module_helpers=True
+    )
     proposals = engine.analyze_directory(str(package))
     assert proposals
     header = ast.unparse(proposals[0].extracted_function).split("\n", 1)[0]

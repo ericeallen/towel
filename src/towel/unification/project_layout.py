@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The project layout module moved to ``towel.project_layout``; this path re-exports it."""
+"""The project layout module moved to ``towel.project_layout``; this path re-exports it.
 
-from towel.project_layout import (
-    ProjectLayout,
-    find_project_root,
-    is_package_dir,
-    load_pyproject,
-)
+``ProjectLayout`` is gone since 1.772: module names come from the program's
+own imports (``towel.import_model``), not from packaging metadata.
+"""
 
-__all__ = ["ProjectLayout", "find_project_root", "is_package_dir", "load_pyproject"]
+from towel.project_layout import find_project_root, is_package_dir, load_pyproject
+
+__all__ = ["find_project_root", "is_package_dir", "load_pyproject"]

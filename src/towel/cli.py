@@ -48,6 +48,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from towel.import_model import ImportModel, ImportProblem
     from towel.type_inference import TypeOracle
     from towel.unification.fixed_point import RunReport
     from towel.unification.models import RefactoringProposal
@@ -213,27 +214,74 @@ def _count(text: str) -> int:
 
 
 def _add_import_layout_flags(parser: argparse.ArgumentParser) -> None:
-    """Add the shared import-layout flags (--prefer-absolute-imports, --pep420).
+    """Accept the retired import-layout flags, --prefer-absolute-imports and --pep420.
 
-    The dry and preview subcommands both infer cross-file import paths, so they
-    expose the same two mutually-exclusive toggles.
+    They chose how a cross-file helper's import was spelled from packaging
+    metadata. Since 1.772 every import is spelled as the program's own
+    imports show it works, so they decide nothing; scripts that pass them
+    keep working, the help no longer lists them, and a run that is given
+    one says it had no effect (:func:`_warn_about_retired_flags`).
+    """
+    for flag, dest in (
+        ("--prefer-absolute-imports", "prefer_absolute_imports"),
+        ("--pep420", "pep420"),
+    ):
+        parser.add_argument(  # retired in 1.772, kept for scripts
+            flag,
+            dest=dest,
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help=argparse.SUPPRESS,
+        )
+
+
+def _warn_about_retired_flags(args: argparse.Namespace) -> None:
+    """Say that a retired import-layout flag was given and changed nothing."""
+    given = [
+        flag
+        for flag, dest in (
+            ("--prefer-absolute-imports", "prefer_absolute_imports"),
+            ("--pep420", "pep420"),
+        )
+        if getattr(args, dest, None) is not None
+    ]
+    if given:
+        LOG.warning(
+            "%s no longer has any effect: every import Towel writes is spelled as the program's"
+            " own imports show it works.",
+            " and ".join(given),
+        )
+
+
+def _add_exclude_flag(parser: argparse.ArgumentParser) -> None:
+    """Add ``--exclude``, shared by the commands that analyze a directory."""
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="DIRECTORY",
+        help="Directory name to leave out of directory mode (repeatable), e.g. tests; "
+        "the names the program's imports give its modules are read without it too",
+    )
+
+
+def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
+    """Add ``--cross-module``, shared by the commands that analyze a project.
+
+    Off by default: a helper shared across modules adds an import between
+    them, a change to how the project's modules depend on each other that a
+    user should ask for rather than find in the diff.
     """
     parser.add_argument(
-        "--prefer-absolute-imports",
-        dest="prefer_absolute_imports",
+        "--cross-module",
+        dest="cross_module",
         action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Prefer an absolute import for a cross-file helper (honored when packaging "
-        "metadata anchors the module name); --no-prefer-absolute-imports prefers a relative "
-        "one. Unset: the discovered layout decides.",
-    )
-    parser.add_argument(
-        "--pep420",
-        dest="pep420",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Treat directories without __init__.py as namespace packages when deriving "
-        "module paths; --no-pep420 requires __init__.py. Unset: inferred from the project.",
+        default=False,
+        help="Also share a helper between duplicates in different modules, importing it from "
+        "the module that hosts it into the others, spelled as the program's own imports "
+        "show that import works; a run refuses when those imports leave the names of the "
+        "package it refactors in doubt. --no-cross-module, the default, extracts only within "
+        "a module and adds no import between the project's modules that runs.",
     )
 
 
@@ -265,13 +313,8 @@ Examples:
     parser.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
     )
-    parser.add_argument(
-        "--exclude",
-        action="append",
-        default=[],
-        metavar="DIRECTORY",
-        help="Directory name to leave out of directory mode (repeatable), e.g. tests",
-    )
+    _add_exclude_flag(parser)
+    _add_cross_module_flag(parser)
 
     _add_import_layout_flags(parser)
 
@@ -371,6 +414,8 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     )
 
     parser.add_argument("target", help="File or directory to analyze")
+    _add_exclude_flag(parser)
+    _add_cross_module_flag(parser)
     _add_tuning_flags(parser)
     _add_progress_flag(
         parser,
@@ -760,9 +805,8 @@ class DryOptions:
     progress: ProgressMode
     types: bool
     format: bool
-    prefer_absolute_imports: Optional[bool]
-    pep420: Optional[bool]
     exclude: Tuple[str, ...]
+    cross_module: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -777,9 +821,8 @@ class DryOptions:
             progress=normalize_progress(args.progress),
             types=bool(args.types),
             format=bool(args.format),
-            prefer_absolute_imports=args.prefer_absolute_imports,
-            pep420=args.pep420,
             exclude=tuple(args.exclude or ()),
+            cross_module=bool(args.cross_module),
         )
 
 
@@ -792,8 +835,8 @@ class PreviewOptions:
     max_parameters: int
     max_pairs: int
     progress: ProgressMode
-    prefer_absolute_imports: Optional[bool]
-    pep420: Optional[bool]
+    exclude: Tuple[str, ...] = ()
+    cross_module: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -803,8 +846,8 @@ class PreviewOptions:
             max_parameters=int(args.max_parameters),
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
-            prefer_absolute_imports=args.prefer_absolute_imports,
-            pep420=args.pep420,
+            exclude=tuple(args.exclude or ()),
+            cross_module=bool(args.cross_module),
         )
 
 
@@ -838,6 +881,7 @@ class RenameOptions:
 def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     options = DryOptions.from_namespace(args)
+    _warn_about_retired_flags(args)
     # Import here to avoid loading heavy modules if not needed
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -861,6 +905,8 @@ def _run_dry(args: argparse.Namespace) -> None:
             raise ValueError(
                 "Output already exists; choose a new path or explicitly refactor in place"
             )
+    if options.cross_module and is_dir:
+        _judge_import_problems(source, options.exclude)
 
     print("=" * 70)
     _banner("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
@@ -889,9 +935,8 @@ def _run_dry(args: argparse.Namespace) -> None:
             max_candidate_pairs=options.max_pairs,
             settings=_settings(),
             parameterize_constants=True,
-            prefer_absolute_imports=options.prefer_absolute_imports,
-            pep420_namespace_packages=options.pep420,
             excluded_directories=options.exclude,
+            cross_module_helpers=options.cross_module,
             snippet_formatter=(
                 _generated_code_formatter(Path(input_path)) if options.format else None
             ),
@@ -956,14 +1001,110 @@ def _run_dry(args: argparse.Namespace) -> None:
             oracle.close()
 
 
+IMPORT_PROBLEM_REMEDY = (
+    "Leave out each directory holding a stray copy or a broken import with --exclude"
+    " <directory name> (for example --exclude build), or fix the import."
+)
+"""What a user can do about an import problem: the one remedy every report names."""
+
+
+def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
+    """Report what keeps the program's imports from naming its modules; refuse when the target's own.
+
+    A helper shared across modules is imported by the name the program's own
+    imports give its host (docs/DECISIONS.md, "Import names come from the
+    program"), and the model those imports make already declines every name a
+    problem involves. So every problem is named before anything is written.
+    One that involves the package being refactored (:func:`_problems_involving`)
+    refuses the run, since the helpers shared across its modules are what
+    ``--cross-module`` asks for and none could be named soundly; any other is
+    reported, and the run goes on. Only a run with ``--cross-module`` asks:
+    without it no import that runs is written, so nothing depends on them.
+    """
+    from towel.consumers import ScanLimitExceeded
+    from towel.import_model import build_import_model
+    from towel.project_layout import find_project_root
+    from towel.unification.exceptions import AmbiguousImportsError, ProjectScanLimitError
+
+    root = find_project_root(target)
+    try:
+        model = build_import_model(root, excluded_names=excluded)
+    except ScanLimitExceeded as error:
+        raise ProjectScanLimitError(
+            f"{error}. Towel reads the project from the nearest directory with a"
+            " pyproject.toml, setup.cfg or setup.py; give the code one, or move it out of the"
+            " larger tree"
+        ) from error
+    if not model.problems:
+        return
+    involved = _problems_involving(model, target)
+    if involved:
+        others = len(model.problems) - len(involved)
+        raise AmbiguousImportsError(
+            f"Refusing to share helpers across the modules of {target}: the program's imports"
+            " do not name them unambiguously, so no import of one could be shown to work:\n"
+            + "".join(f"  {problem.describe(model.root)}\n" for problem in involved)
+            + (f"({others} other problem(s) involve only modules outside it.)\n" if others else "")
+            + IMPORT_PROBLEM_REMEDY
+        )
+    LOG.warning(
+        "The program's imports do not name every module unambiguously, so no helper is shared"
+        " across the modules these involve:\n%s%s",
+        "".join(f"  {problem.describe(model.root)}\n" for problem in model.problems),
+        IMPORT_PROBLEM_REMEDY,
+    )
+
+
+def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProblem"]:
+    """The problems that involve the package being refactored.
+
+    One does when a file it names lies under ``target``, or when it concerns a
+    top-level name one of whose locations lies under ``target`` or holds it:
+    anyio's stale ``build/lib/anyio`` beside ``anyio`` is a problem of
+    ``anyio``, wherever the stray copy sits.
+    """
+    from towel.import_model import (
+        AmbiguousName,
+        FileUnderTwoNames,
+        TopLevelInsidePackage,
+        UnresolvedImport,
+    )
+
+    resolved = target.resolve()
+
+    def under(path: Path) -> bool:
+        return path == resolved or path.is_relative_to(resolved)
+
+    own = {
+        name
+        for name, info in model.names.items()
+        if any(under(location) or resolved.is_relative_to(location) for location in info.candidates)
+    }
+    involved: List["ImportProblem"] = []
+    for problem in model.problems:
+        files: Sequence[Path]
+        names: Set[str]
+        if isinstance(problem, AmbiguousName):
+            files, names = problem.candidates, {problem.name}
+        elif isinstance(problem, UnresolvedImport):
+            files, names = (problem.site.file,), {problem.name}
+        elif isinstance(problem, FileUnderTwoNames):
+            files, names = (problem.location,), {name.partition(".")[0] for name in problem.names}
+        elif isinstance(problem, TopLevelInsidePackage):
+            files, names = (problem.location,), {problem.name}
+        else:
+            files, names = (problem.site.file,), set()
+        if any(under(path) for path in files) or names & own:
+            involved.append(problem)
+    return involved
+
+
 def _print_declined(report: "RunReport", applied: int) -> None:
     """Say what the run declined, and why, so "No refactorings found!" is never the whole story.
 
     Proposals that were built and then not applied are always counted. The
     candidate pairs the analysis declined are counted when nothing was
-    applied, which is when a reader asks why; and a layout the project's
-    packaging does not let Towel model is always named, since it rules out
-    every helper shared across modules, however much else was found.
+    applied, which is when a reader asks why.
     """
     from towel.unification.fixed_point import counted_reasons
 
@@ -977,11 +1118,6 @@ def _print_declined(report: "RunReport", applied: int) -> None:
         lines.append(
             f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
             f"{counted_reasons(report.declined_pairs)}"
-        )
-    if report.layout_refusal:
-        lines.append(
-            "  No helper can be shared across modules: the project's packaging cannot be "
-            f"modeled ({report.layout_refusal})"
         )
     if lines:
         print("\nDeclined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):")
@@ -1064,6 +1200,7 @@ def _print_call_sites(
 def _run_preview(args: argparse.Namespace) -> None:
     """Run the preview command."""
     options = PreviewOptions.from_namespace(args)
+    _warn_about_retired_flags(args)
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
 
@@ -1073,6 +1210,8 @@ def _run_preview(args: argparse.Namespace) -> None:
     journal = _pending_journal(Path(target))
     if journal is not None:
         LOG.warning("An interrupted transaction is pending; recover it first: %s", journal)
+    if options.cross_module and is_dir:
+        _judge_import_problems(Path(target).resolve(), options.exclude)
 
     engine = UnificationRefactorEngine(
         max_parameters=options.max_parameters,
@@ -1080,8 +1219,8 @@ def _run_preview(args: argparse.Namespace) -> None:
         max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,
-        prefer_absolute_imports=options.prefer_absolute_imports,
-        pep420_namespace_packages=options.pep420,
+        excluded_directories=options.exclude,
+        cross_module_helpers=options.cross_module,
     )
 
     # Analyze

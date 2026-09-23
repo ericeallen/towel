@@ -43,7 +43,7 @@ def _fixed_point(path: str, **engine_options: Unpack[EngineOptions]) -> str:
 
 
 def _fixed_point_directory(package: Path, **engine_options: Unpack[EngineOptions]) -> list[str]:
-    engine = UnificationRefactorEngine(min_lines=1, **engine_options)
+    engine = UnificationRefactorEngine(min_lines=1, cross_module_helpers=True, **engine_options)
     with contextlib.redirect_stdout(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), max_iterations=0, progress="none"
