@@ -471,6 +471,35 @@ the correlation the call sites had.
   module scope, preserving descriptor behavior and declaration rollback.
 
 ### Fixed (release harness)
+- The corpus runs Towel the way a user runs it: as `towel` inside each
+  project's own environment. That environment holds the project installed
+  editable from the tree under test, Towel's `format` and `types` extras,
+  and one candidate wheel, checked against `--towel-src` in every
+  environment. mypy, pyright, Black, ruff and isort are taken at the
+  versions the project's `uv.lock`, `poetry.lock` or `pdm.lock` pins, where
+  it pins them. The environment also holds whatever the project declares its
+  own type check needs: typing-named dependency groups and extras, the
+  dependencies of tox environments and nox sessions that run a checker, its
+  pre-commit mypy and pyright hooks' `additional_dependencies`, and
+  requirements files named for typing. That install only adds; nothing
+  already there may change. Towel had run in the harness's own interpreter,
+  which held Towel's tools and none of the project's dependencies. mypy
+  therefore reported a project's third-party imports as errors: packaging's
+  1158 errors are 14 in its own environment and none once its typing
+  dependencies are installed, and its typed run now completes. The import
+  model found the tools' own copies of click and packaging, and called those
+  projects' names ambiguous. Each result records the interpreter, the
+  candidate, every tool's version and what chose it, and what was installed
+  for typing.
+- The project's editable install follows the tree each test run exercises:
+  the clone for the baseline, the refactored copy for Towel and the run
+  after it, and the original package for a retest of the original. A test
+  that imports the installed copy therefore tests the same code as the rest
+  of its run. The run after refactoring had reached the unrefactored clone
+  that way, so a regression there could pass as flaky.
+- Every corpus refactor passes `--cross-module`. A manifest entry turns it
+  off only with a `cross_module_reason`, and the summary names each such
+  project.
 - The sdist no longer ships a built wheel: `recursive-include scripts *`
   picked up the corpus image's copy whenever one had been built there.
 - Two runs that failed *different* tests can no longer both count as a PASS. A
