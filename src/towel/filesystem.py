@@ -1,21 +1,27 @@
-"""Disposable copies: the private stage a run refactors, and the output it publishes.
+"""Disposable copies: the private stage a run refactors, and what it publishes from it.
 
-An out-of-place run must decide exactly what an in-place run on the same
-project would, so it refactors a private copy of the whole project
-(``staged_project``) and publishes only the target's counterpart from it
-(``copy_project``), all at once, when the run succeeds.
+Every run refactors a private copy of the whole project (``staged_project``)
+and touches nothing the user owns until it has succeeded, its cold
+confirmation included. An out-of-place run then publishes the target's
+counterpart to the output (``copy_project``), all at once; an in-place run
+applies the combined change to the project as one journaled plan
+(``staged_changes``). A run that fails, or is interrupted, leaves the project
+and the output path as they were.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import hashlib
 import os
 from pathlib import Path, PurePath
 import shutil
+import stat
 import tempfile
-from typing import Iterable, Iterator, List, Tuple
+from typing import Iterable, Iterator, List, Mapping, Tuple
 
+from .changes import ChangePlan, FileChange, StaleSource
 from .source_files import is_probe_file
 
 
@@ -135,7 +141,7 @@ STAGED_NAMES = frozenset({"py.typed", ".gitignore"})
 
 
 class ProjectTooLarge(ValueError):
-    """The project around an out-of-place target is too large to stage.
+    """The project around a target is too large to stage.
 
     Staging it would crawl, and staging part of it would bring back exactly
     the blindness the stage exists to remove.
@@ -149,7 +155,10 @@ class StagedProject:
     ``target`` is the counterpart of ``origin_target`` inside ``root``, the
     copy of ``origin_root``. Every path the run reports is about the stage,
     which is deleted when the run ends; ``public`` says which path the user
-    knows it by: the output for the target, the original for the rest.
+    knows it by: the output for the target, the original for the rest. An
+    in-place stage's output is its origin target, and ``staged`` records the
+    digest of every file staged from the target, which is how
+    ``staged_changes`` tells what the run rewrote from what someone else did.
     """
 
     origin_root: Path
@@ -157,6 +166,12 @@ class StagedProject:
     root: Path
     target: Path
     output: Path
+    staged: Mapping[Path, str] = field(default_factory=dict)
+
+    @property
+    def in_place(self) -> bool:
+        """Whether the result is written back over the project rather than to a new output."""
+        return self.output == self.origin_target
 
     def public(self, path: str) -> str:
         """The path the user knows ``path`` by; itself when it is not in the stage."""
@@ -180,10 +195,12 @@ def _is_environment(directory: Path) -> bool:
 
 
 def _stage_plan(
-    root: Path, target: Path, skipped: Iterable[Path], limit: int
+    root: Path, target: Path, skipped: Iterable[Path], limit: int, *, whole_target: bool
 ) -> Tuple[List[PurePath], int]:
-    """The project's inputs outside ``target`` (relative to ``root``), and its Python file count.
+    """The project's inputs (relative to ``root``), and its Python file count.
 
+    With ``whole_target`` the target is left out, to be copied whole as an
+    output would be; otherwise it is staged by the rules the rest follows.
     Symlinked directories are listed, not entered, as ``copytree(symlinks=True)``
     treats them. Raises ``ProjectTooLarge`` past ``limit`` Python files.
     """
@@ -192,9 +209,9 @@ def _stage_plan(
     python_files = 0
     for parent, directories, files in os.walk(root, followlinks=False):
         directory = Path(parent)
-        # The target is copied whole, as the output would be; it is walked
-        # only to be counted, under the same rules as the rest.
-        inside_target = directory == target or directory.is_relative_to(target)
+        # A target copied whole is walked here only to be counted, under the
+        # same rules as the rest.
+        inside_target = whole_target and (directory == target or directory.is_relative_to(target))
         kept = []
         for name in sorted(directories):
             path = directory / name
@@ -219,11 +236,16 @@ def _stage_plan(
                 if python_files > limit:
                     raise ProjectTooLarge(
                         f"The project around {target} ({root}) holds more than {limit} Python"
-                        " files. An out-of-place run copies the whole project so that it decides"
-                        " exactly what an in-place run would, and this one is too large to copy."
-                        " Copy the project yourself and refactor the copy in place."
+                        " files. A run refactors a private copy of the whole project, so that"
+                        " nothing is written until it has succeeded and every decision sees the"
+                        " modules around the target, and this one is too large to copy. Towel"
+                        " takes the project to be the nearest directory with a pyproject.toml,"
+                        " setup.cfg or setup.py; give the code one, or move it out of the larger"
+                        " tree."
                     )
-            if inside_target or path == target or path in avoided or is_probe_file(path):
+            if inside_target or (whole_target and path == target):
+                continue
+            if path in avoided or is_probe_file(path):
                 continue
             if path.suffix in STAGED_SUFFIXES or name in STAGED_NAMES:
                 planned.append(path.relative_to(root))
@@ -238,28 +260,44 @@ def _copy_entry(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
 
 
+def _digest(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
 @contextmanager
 def staged_project(
     root: Path, target: Path, output: Path, *, limit: int
 ) -> Iterator[StagedProject]:
     """A private copy of the project at ``root`` in which ``target`` can be refactored.
 
-    The target is copied whole, as ``copy_project`` would copy it to the
-    output; the rest of the project contributes its sources, stubs and
-    configuration, at the same relative places, so that layout discovery,
-    the import graph and the import-time-effect scan see the project an
-    in-place run would see. The copy lives outside the project, where no
-    scan of it can find the stage, and is removed however the block ends.
+    The project contributes its sources, stubs and configuration, at the same
+    relative places, so that layout discovery, the import graph and the
+    import-time-effect scan see the project as it stands. For an output
+    elsewhere the target is copied whole, as ``copy_project`` will copy it
+    there. For an output that is the target itself -- an in-place run -- the
+    target is staged like the rest, since only the files the run rewrites
+    will ever go back, and each staged file's digest is kept so that
+    ``staged_changes`` can tell them apart. The copy lives outside the
+    project, where no scan of it can find the stage, and is removed however
+    the block ends.
     """
     root, target = root.resolve(), target.resolve()
     if not (target == root or target.is_relative_to(root)):
         raise ValueError(f"{target} is not inside its project root {root}")
-    planned, _ = _stage_plan(root, target, (output,), limit)
+    in_place = output.absolute() == target or output.resolve() == target
+    planned, _ = _stage_plan(
+        root, target, () if in_place else (output,), limit, whole_target=not in_place
+    )
+    if in_place and target.is_file() and target.relative_to(root) not in planned:
+        # A file refactored on request whatever its suffix still has to be there.
+        planned.append(target.relative_to(root))
     with tempfile.TemporaryDirectory(prefix="towel-stage-") as temporary:
         staged_root = Path(temporary).resolve() / (root.name or "project")
         staged_target = staged_root / target.relative_to(root)
         relatives: List[PurePath] = list(planned)
-        if target.is_dir():
+        if in_place:
+            pass  # the plan already holds the target's inputs
+        elif target.is_dir():
             relatives.extend(path.relative_to(root) for path in target.rglob("*"))
         else:
             relatives.append(target.relative_to(root))
@@ -268,6 +306,18 @@ def staged_project(
         for relative in planned:
             _copy_entry(root / relative, staged_root / relative)
         staged_target.parent.mkdir(parents=True, exist_ok=True)
+        if in_place:
+            if target.is_dir():
+                staged_target.mkdir(parents=True, exist_ok=True)
+            yield StagedProject(
+                root,
+                target,
+                staged_root,
+                staged_target,
+                target,
+                _staged_digests(root, target, planned),
+            )
+            return
         if target.is_dir():
             if staged_target.exists():
                 # The target is the root itself; the loop above copied nothing.
@@ -276,3 +326,45 @@ def staged_project(
         else:
             shutil.copy2(target, staged_target)
         yield StagedProject(root, target, staged_root, staged_target, output)
+
+
+def _staged_digests(root: Path, target: Path, planned: Iterable[PurePath]) -> Mapping[Path, str]:
+    """The digest each regular file of the target had when it was staged, by its project path.
+
+    Read from the originals just after copying, so a file edited in between is
+    one whose result cannot be written, which is the conservative mistake.
+    """
+    digests = {}
+    for relative in planned:
+        original = root / relative
+        if not (original == target or original.is_relative_to(target)):
+            continue
+        if original.is_file() and not original.is_symlink():
+            digests[original] = _digest(original.read_bytes())
+    return digests
+
+
+def staged_changes(stage: StagedProject) -> ChangePlan:
+    """What an in-place run changes in the project: every staged target file it rewrote.
+
+    Each change goes from the bytes the file held when it was staged to what
+    the stage now holds, and is applied with the rest as one journaled plan.
+    A file that no longer holds what was staged was edited while the run
+    refactored a copy of it; writing the result would discard that edit, so
+    nothing is written at all.
+    """
+    changes: List[FileChange] = []
+    for original, digest in sorted(stage.staged.items()):
+        copy = stage.target / original.relative_to(stage.origin_target)
+        after = copy.read_bytes()
+        if _digest(after) == digest:
+            continue
+        before = original.read_bytes()
+        if _digest(before) != digest:
+            raise StaleSource(
+                f"{original} changed while Towel was refactoring a copy of the project, so"
+                " the result was not written: it would have discarded that change. Nothing"
+                " was written; run again on the project as it now stands."
+            )
+        changes.append(FileChange(original, before, after, stat.S_IMODE(original.stat().st_mode)))
+    return ChangePlan(tuple(changes))

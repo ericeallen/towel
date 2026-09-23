@@ -75,7 +75,7 @@ def test_a_project_too_large_to_stage_is_refused_before_anything_is_written(
     package = _project(project)
     monkeypatch.setattr(fixed_point, "MAXIMUM_FILES", 2)
     output = tmp_path / "out"
-    with pytest.raises(ProjectTooLarge, match="Copy the project yourself"):
+    with pytest.raises(ProjectTooLarge, match="give the code one"):
         UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
             str(package), str(output), progress="none"
         )

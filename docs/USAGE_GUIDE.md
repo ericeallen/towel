@@ -109,10 +109,12 @@ towel dry src/ src_cleaned/ --no-interactive
 
 `preview` lists each opportunity with the extracted helper and, per call site,
 the original block next to the generated call; `dry` writes the refactored copy.
-An out-of-place `dry` refactors the target inside a private temporary copy of its
-whole project, so it makes exactly the decisions an in-place run would (an import
-cycle through a module outside the target is seen), and writes only the target to
-the output directory, all at once, when the run succeeds.
+`dry` refactors the target inside a private temporary copy of its whole project,
+in place or not, so every decision sees the modules around the target (an import
+cycle through a module outside the target is seen), and writes nothing until the
+run has succeeded, its final type-check confirmation included: the target to the
+output directory all at once, or, in place, every file it changed as one
+journaled batch. A failed or interrupted run leaves the project as it was.
 See the [README](../README.md) and [Quick start](QUICKSTART.md) for the full CLI.
 
 ## Configuration

@@ -73,7 +73,13 @@ from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
 from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
-from ..filesystem import StagedProject, copy_project, refuse_unusable_output, staged_project
+from ..filesystem import (
+    StagedProject,
+    copy_project,
+    refuse_unusable_output,
+    staged_changes,
+    staged_project,
+)
 from ..project_layout import find_project_root
 from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
@@ -167,16 +173,17 @@ class FixedPointDrivers(Materialization):
         reported as a ``ValueError`` naming it.
 
         Args:
-            file_path: The file to refactor in place.
+            file_path: The file to refactor. It is refactored inside a
+                private copy of its whole project, and rewritten, as one
+                journaled change, only once the run has succeeded; a run that
+                fails or is interrupted leaves it as it was.
             max_iterations: Stop after this many applied refactorings; 0 or
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
                 installed), ``auto`` (that, or an inline bar), ``detail``
                 (a line per proposal), or ``none``.
-            output_path: An optional new file to write the result to. The
-                file is refactored inside a private copy of its whole project,
-                exactly as it would be in place, and written here only when
-                the run succeeds; the original is only read.
+            output_path: An optional new file to write the result to instead,
+                when the run succeeds; the original is then only read.
 
         Returns:
             The final source, the number of refactorings applied, and their
@@ -197,16 +204,26 @@ class FixedPointDrivers(Materialization):
         if not in_place:
             refuse_unusable_output(Path(file_path), Path(str(output_path)))
         self.begin_refactoring_run([file_path])
-        if output_path is None or in_place:
-            return self._refactor_file_in_place(
-                file_path, current_bytes, current_code, max_iterations, analysis_progress
-            )
-        with self._staged_output(Path(file_path), Path(output_path)) as stage:
+        destination = Path(file_path) if in_place else Path(str(output_path))
+        with self._staged_output(Path(file_path), destination) as stage:
             refactored = self._refactor_file_in_place(
                 str(stage.target), current_bytes, current_code, max_iterations, analysis_progress
             )
-            copy_project(stage.target, stage.output)
+            self._publish(stage)
             return refactored
+
+    @staticmethod
+    def _publish(stage: StagedProject, *, allow_empty: bool = False) -> None:
+        """Hand a finished, confirmed run to the user: the output, or the project itself.
+
+        Nothing the user owns has been touched before this. An in-place run's
+        combined change is one journaled plan, so an interruption part way
+        through it is rolled back or recoverable with ``towel recover``.
+        """
+        if stage.in_place:
+            apply_changes(staged_changes(stage))
+        else:
+            copy_project(stage.target, stage.output, allow_empty=allow_empty)
 
     def _refactor_file_in_place(
         self,
@@ -377,12 +394,13 @@ class FixedPointDrivers(Materialization):
 
         Args:
             input_dir: The directory to analyze.
-            output_dir: The directory to write into (the same as ``input_dir``
-                to refactor in place). Otherwise ``input_dir`` is refactored
-                inside a private copy of its whole project, exactly as it would
-                be in place, and only its refactored counterpart is written
-                here, all at once, when the run succeeds; the returned paths
-                name files here.
+            output_dir: The directory to write into, or ``input_dir`` itself
+                to refactor in place. Either way ``input_dir`` is refactored
+                inside a private copy of its whole project, and nothing is
+                written until the run has succeeded: then its refactored
+                counterpart is written here all at once, or, in place, every
+                file it rewrote is changed as one journaled plan. The returned
+                paths name files here.
             max_iterations: Stop after this many applied refactorings; 0 or
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
@@ -415,14 +433,13 @@ class FixedPointDrivers(Materialization):
         if resolved_input != resolved_output:
             refuse_unusable_output(input_path, output_path, allow_empty=True)
         self.begin_refactoring_run(self._find_python_files(input_dir))
-        if resolved_input == resolved_output:
-            return self._refactor_directory_in_place(output_path, reporter, max_iterations)
-        with self._staged_output(input_path, output_path) as stage:
+        destination = input_path if resolved_input == resolved_output else output_path
+        with self._staged_output(input_path, destination) as stage:
             self._analysis_paths = tuple(self._find_python_files(str(stage.target)))
             results, termination_reason = self._refactor_directory_in_place(
                 stage.target, reporter, max_iterations
             )
-            copy_project(stage.target, stage.output, allow_empty=True)
+            self._publish(stage, allow_empty=True)
             return {stage.public(path): result for path, result in results.items()}, (
                 termination_reason
             )
@@ -443,8 +460,10 @@ class FixedPointDrivers(Materialization):
         finally:
             # A display thread must not outlive the run, however it ended.
             reporter.close()
-            if run.applied:
-                self.confirm_run_with_a_cold_checker(self._find_python_files(str(directory)))
+        # Only a run that finished is confirmed: one that failed is published
+        # nowhere, and nothing it applied reached the user.
+        if run.applied:
+            self.confirm_run_with_a_cold_checker(self._find_python_files(str(directory)))
         self._refuse_a_run_the_checker_emptied(run.applied)
         return outcome
 
@@ -452,18 +471,20 @@ class FixedPointDrivers(Materialization):
     def _staged_output(self, origin: Path, output: Path) -> Iterator[StagedProject]:
         """Refactor ``origin``'s counterpart in a private copy of its whole project.
 
-        An in-place run reads the rest of the project as it refactors: the
-        import graph that the cycle and import-time-effect guards walk, the
-        packaging that names modules, the configuration. A copy of the target
-        alone has none of it, so a cycle through a module outside the target
-        went unseen and the adopted output could not be imported, while the
-        same run in place was right. Staging the whole project makes the two
-        runs one run: the target's counterpart is refactored in place in the
-        stage, with the checker reading the stage under the original's names,
-        and the caller publishes it to ``output`` only once the run succeeds,
-        so a failed run leaves nothing behind. Every path the run reports
-        names the output (or, outside the target, the original), not the
-        stage, which is removed however the block ends.
+        A run reads the rest of the project as it refactors: the import graph
+        that the cycle and import-time-effect guards walk, the packaging that
+        names modules, the configuration. A copy of the target alone has none
+        of it, so a cycle through a module outside the target went unseen and
+        the adopted output could not be imported. Staging the whole project
+        gives every run the same view: the target's counterpart is refactored
+        in the stage, with the checker reading the stage under the original's
+        names, and the caller publishes it -- to ``output``, or, when
+        ``output`` is ``origin``, back over the project -- only once the run
+        and its cold confirmation have succeeded, so a failed run leaves
+        nothing behind. An in-place run used to write each refactoring as it
+        went, and a confirmation that then refused the result left it written.
+        Every path the run reports names the output (or, outside the target,
+        the original), not the stage, which is removed however the block ends.
         """
         inner_oracle = self._type_run_oracle
         root = find_project_root(origin)

@@ -474,7 +474,9 @@ class HelperAnnotationWiring(EngineState):
         from a silent wrong answer into a loud one. It costs a single cold
         check per run, about what the run's own baseline cost, and is done
         whenever a run applied anything, since that is exactly when the promise
-        being kept is that the project still checks.
+        being kept is that the project still checks. The drivers ask this of
+        the private stage the run refactored, before anything is published, so
+        a refusal here leaves the project and the output as they were.
         """
         oracle = self._type_run_oracle
         if oracle is None or not holds_warm_state(oracle):
@@ -495,16 +497,15 @@ class HelperAnnotationWiring(EngineState):
             # be the same silence it was built to remove.
             raise RefactoringError(
                 "The finished project could not be confirmed by a checker started from "
-                f"nothing: {result.reason}. The refactorings that were applied are listed "
-                "above; check the project yourself before relying on them."
+                f"nothing: {result.reason}\nNothing was written."
             )
         if result.errors:
             details = "\n".join(f"  {error.path}: {error.message}" for error in result.errors[:3])
             raise RefactoringError(
                 f"The finished project reports {len(result.errors)} type error(s) that the "
                 f"checker did not report while the run was in progress:\n{details}\n"
-                "This is a defect in Towel's verification, not in the project. "
-                "Please report it; the refactorings that were applied are listed above."
+                "This is a defect in Towel's verification, not in the project; please report "
+                "it. Nothing was written."
             )
 
     def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:

@@ -209,10 +209,13 @@ addresses:
   imports keeps it first. Static local import cycles are rejected
   (including cycles through a package's `__init__`, which `from . import
   name` runs), dynamic ones are not detected.
-- **Concurrency of application.** Files are replaced atomically one at a time;
-  a batch is not atomic across files. Application requires exclusive write
-  access; a concurrent editor writing in the check/replace interval is not
-  prevented. Interrupted batches leave a recovery journal.
+- **Concurrency of application.** A run refactors a private copy of the
+  project and writes back only when it has succeeded, as one batch; a file
+  edited during the run refuses the batch, nothing written. Files are replaced
+  atomically one at a time; a batch is not atomic across files to a concurrent
+  reader. Application requires exclusive write access; a concurrent editor
+  writing in the check/replace interval is not prevented. Interrupted batches
+  leave a recovery journal.
 
 ### A cross-file helper adds an import of its host module
 
