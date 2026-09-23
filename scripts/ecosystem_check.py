@@ -17,9 +17,10 @@ before it can qualify.
 Towel runs the way a user runs it: inside the project's own environment. That
 environment holds the project's test dependencies, the project itself installed
 editable from the tree under test, Towel's types extra (mypy and pyright, unless
-the project's own requirements already installed one), and the candidate: one
-wheel, built from ``--towel-src`` or named by ``--towel-wheel``, verified to be
-that source, and verified again in every environment it is installed into. The
+the project's own requirements already installed one, and at the version the
+project's lock file pins where it pins one), and the candidate: one wheel, built
+from ``--towel-src`` or named by ``--towel-wheel``, verified to be that source,
+and verified again in every environment it is installed into. The
 type checkers therefore see the project's dependencies, and Towel's import model
 sees the project installed from the tree it refactors, not an installed copy
 elsewhere. The editable install follows the tree each test run exercises -- the
@@ -98,6 +99,7 @@ from typing import (
     Sequence,
     Set,
     Tuple,
+    Union,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -109,10 +111,13 @@ SUMMARY_PATTERNS = (
     re.compile(r"^Ran \d+ tests? in .*$"),
 )
 TypingMode = Literal["default", "no-types"]
-CheckerSource = Literal["project", "towel[types]"]
+LockFile = Literal["uv.lock", "poetry.lock", "pdm.lock"]
+CheckerSource = Union[Literal["project", "towel[types]"], LockFile]
+LOCK_FILES: Tuple[LockFile, ...] = ("uv.lock", "poetry.lock", "pdm.lock")
+"""The lock files whose pins describe a project's own environment, in the order they are read."""
 TOWEL_PACKAGE = "towel"
 """The import package the candidate wheel provides."""
-ENVIRONMENT_LAYOUT = 2
+ENVIRONMENT_LAYOUT = 3
 """What a project environment holds; raised when that changes, so an older one is rebuilt."""
 CROSS_MODULE_FLAG = "--cross-module"
 """The option that turns on extraction across modules, where the Towel under test has it."""
@@ -193,7 +198,8 @@ class Checker:
     name: str
     version: str
     source: CheckerSource
-    """``project`` when the project's own requirements installed it, else Towel's types extra."""
+    """Who chose it: ``project`` when the project's own requirements installed it, the lock
+    file whose pin it was installed at, or ``towel[types]`` for the candidate's types extra."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -736,20 +742,112 @@ def _verified(python: Path, candidate: Candidate, names: Sequence[str]) -> Envir
     return probe
 
 
-def _install_checkers(python: Path, candidate: Candidate, log: Path) -> Dict[str, CheckerSource]:
-    """Install the types extra's checkers that the project's own requirements did not."""
+@dataclasses.dataclass(frozen=True)
+class LockedVersion:
+    """One version of a package that a project's lock file pins."""
+
+    version: str
+    markers: Tuple[str, ...] = ()
+    """The environments it is locked for (uv's resolution markers); empty for every one."""
+
+
+def lock_pins(
+    tree: Path, names: Sequence[str]
+) -> Tuple[Optional[LockFile], Dict[str, Tuple[LockedVersion, ...]]]:
+    """The first lock file at the root of ``tree`` pinning any of ``names``, and its pins.
+
+    A lock file is the project's own environment written down: what its developers get
+    from ``uv sync`` or ``poetry install``, and what its own type check runs with.
+    """
+    wanted = {_canonical(name) for name in names}
+    for lock in LOCK_FILES:
+        path = tree / lock
+        if not path.is_file():
+            continue
+        try:
+            packages = tomllib.loads(path.read_text(encoding="utf-8")).get("package", [])
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+            raise EnvironmentFailure(f"cannot read the pins in {path}: {error}") from error
+        pins: Dict[str, List[LockedVersion]] = {}
+        for package in packages if isinstance(packages, list) else []:
+            if not isinstance(package, dict) or not isinstance(package.get("version"), str):
+                continue
+            name = _canonical(str(package.get("name", "")))
+            if name in wanted:
+                markers = package.get("resolution-markers") or []
+                pins.setdefault(name, []).append(
+                    LockedVersion(package["version"], tuple(str(marker) for marker in markers))
+                )
+        if pins:
+            return lock, {name: tuple(versions) for name, versions in pins.items()}
+    return None, {}
+
+
+_MARKER_PROBE = """\
+import json, sys
+from packaging.markers import Marker
+
+applies = []
+for markers in json.loads(sys.argv[1]):
+    applies.append(not markers or any(Marker(marker).evaluate() for marker in markers))
+print(json.dumps(applies))
+"""
+"""Which marker sets describe this interpreter, answered by the ``packaging`` pytest brings."""
+
+
+def applicable_version(
+    python: Path, lock: str, name: str, versions: Sequence[LockedVersion]
+) -> Optional[str]:
+    """The one locked version of ``name`` meant for ``python``, or ``None`` if none is."""
+    if len(versions) == 1 and not versions[0].markers:
+        return versions[0].version
+    completed = subprocess.run(
+        [str(python), "-I", "-c", _MARKER_PROBE, json.dumps([v.markers for v in versions])],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+        cwd=python.parent,
+    )
+    matches = [
+        version.version for version, match in zip(versions, json.loads(completed.stdout)) if match
+    ]
+    if len(matches) > 1:
+        raise EnvironmentFailure(f"{lock} locks {name} at {', '.join(matches)} for {python}")
+    return matches[0] if matches else None
+
+
+def _install_checkers(
+    python: Path, candidate: Candidate, tree: Path, log: Path
+) -> Dict[str, CheckerSource]:
+    """Install the checkers the project's own requirements did not, at its own pins.
+
+    One the project's lock file pins is installed at that version, so the project is
+    checked as its own type check checks it; only one it leaves unpinned comes from
+    the candidate's types extra, at the version that resolves today.
+    """
     names = [requirement_name(requirement) for requirement in candidate.types_requirements]
     present = probe_environment(python, names).versions
-    missing = [
-        requirement
-        for requirement, name in zip(candidate.types_requirements, names)
-        if present.get(name) is None
-    ]
-    if missing:
-        _install(python, log, *missing)
+    lock, pins = lock_pins(tree, [name for name in names if present.get(name) is None])
     provenance: Dict[str, CheckerSource] = {}
-    for name in names:
-        provenance[name] = "project" if present.get(name) is not None else "towel[types]"
+    requirements: List[str] = []
+    for requirement, name in zip(candidate.types_requirements, names):
+        if present.get(name) is not None:
+            provenance[name] = "project"
+            continue
+        pinned = (
+            applicable_version(python, lock, name, pins[name])
+            if lock is not None and name in pins
+            else None
+        )
+        if lock is not None and pinned is not None:
+            requirements.append(f"{name}=={pinned}")
+            provenance[name] = lock
+        else:
+            requirements.append(requirement)
+            provenance[name] = "towel[types]"
+    if requirements:
+        _install(python, log, *requirements)
     return provenance
 
 
@@ -761,14 +859,18 @@ def _read_provenance(path: Path) -> Optional[Dict[str, CheckerSource]]:
         return None
     if not isinstance(data, dict):
         return None
+    sources: Dict[str, CheckerSource] = {
+        "project": "project",
+        "uv.lock": "uv.lock",
+        "poetry.lock": "poetry.lock",
+        "pdm.lock": "pdm.lock",
+        "towel[types]": "towel[types]",
+    }
     provenance: Dict[str, CheckerSource] = {}
     for name, source in data.items():
-        if source == "project":
-            provenance[str(name)] = "project"
-        elif source == "towel[types]":
-            provenance[str(name)] = "towel[types]"
-        else:
+        if source not in sources:
             return None
+        provenance[str(name)] = sources[source]
     return provenance
 
 
@@ -829,7 +931,7 @@ def environment(
     )
     # After the project and its own requirements, so a checker they install is theirs.
     if not reusable or provenance is None:
-        provenance = _install_checkers(python, candidate, log)
+        provenance = _install_checkers(python, candidate, source, log)
         provenance_file.write_text(json.dumps(provenance), encoding="utf-8")
         # Written last: an environment without it is one whose build never finished.
         fingerprint.write_text(wanted)
@@ -1642,11 +1744,12 @@ def prepare_candidate(towel_src: Path, wheel: Optional[Path], work: Path) -> Can
 
 
 def _checkers_cell(environment: Optional[Environment]) -> str:
-    """``mypy 1.19.1 (project), pyright 1.1.414`` for one row of the summary."""
+    """``mypy 1.20.0 (uv.lock), pyright 1.1.414`` for one row of the summary."""
     if environment is None:
         return ""
     return ", ".join(
-        f"{checker.name} {checker.version}" + (" (project)" if checker.source == "project" else "")
+        f"{checker.name} {checker.version}"
+        + (f" ({checker.source})" if checker.source != "towel[types]" else "")
         for checker in environment.checkers
     )
 
@@ -1822,8 +1925,10 @@ def main() -> int:
         f"Candidate: `{candidate.wheel.name}` ({candidate.distribution} {candidate.version}, "
         f"sha256 `{candidate.sha256}`), installed into each project's own environment "
         "with the project installed editable from the tree under test. The Checkers "
-        "column names the mypy and pyright there; `(project)` marks one the project's "
-        "own requirements installed, the rest came from the candidate's types extra.",
+        "column names the mypy and pyright there: `(project)` marks one the project's "
+        "own requirements installed, `(uv.lock)` and the like one installed at the "
+        "version the project's lock file pins, and the rest came from the candidate's "
+        "types extra.",
         "",
         f"Typing mode requested: `{typing_mode}`. A project whose own sources do not "
         "check is declined by Towel and rerun here without types; its row says so, and "

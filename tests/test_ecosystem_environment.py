@@ -264,7 +264,9 @@ def offline_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """uv with no index: every requirement comes from a directory of fixture wheels."""
     links = tmp_path / "links"
     _wheel(links, "pytest", "0.0.1", {"pytest.py": ""})
+    # Two mypys, so a lock file's pin is distinguishable from what resolves today.
     _wheel(links, "mypy", "1.0.0", {"mypy/__init__.py": ""})
+    _wheel(links, "mypy", "2.0.0", {"mypy/__init__.py": ""})
     _wheel(links, "pyright", "1.1.0", {"pyright/__init__.py": ""})
     for name, value in {
         "UV_OFFLINE": "1",
@@ -305,7 +307,7 @@ def test_the_environment_holds_the_project_its_checkers_and_the_candidate(
         platform.python_version(),
         "9.9.9",
         (
-            ecosystem.Checker("mypy", "1.0.0", "towel[types]"),
+            ecosystem.Checker("mypy", "2.0.0", "towel[types]"),
             ecosystem.Checker("pyright", "1.1.0", "project"),
         ),
         str(source),
@@ -374,6 +376,99 @@ def test_an_environment_whose_towel_is_not_the_candidate_is_refused(
     # Every use reinstalls the candidate, so the next run is back on it.
     ecosystem.environment(project, work, source, candidate, tmp_path / "log")
     ecosystem._verified(installed.python, candidate, names)
+
+
+UV_LOCK = """\
+version = 1
+requires-python = ">=3.10"
+
+[[package]]
+name = "mypy"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "sample"
+version = "1.0"
+source = { editable = "." }
+"""
+
+
+@uv_required
+def test_a_checker_the_project_locks_is_installed_at_its_pin(
+    tmp_path: Path, offline_index: Path
+) -> None:
+    """The project is checked as its own type check checks it, by the mypy its lock names."""
+    candidate = ecosystem.load_candidate(_candidate_wheel(tmp_path / "dist"))
+    work = tmp_path / "work"
+    source = _project_tree(work / "sample", "sample", "sample", "source")
+    (source / "uv.lock").write_text(UV_LOCK)
+    project = ecosystem.Project("sample", "unused", "pinned", "sample")
+    installed = ecosystem.environment(project, work, source, candidate, tmp_path / "log")
+    assert installed.record.checkers == (
+        ecosystem.Checker("mypy", "1.0.0", "uv.lock"),
+        ecosystem.Checker("pyright", "1.1.0", "towel[types]"),
+    )
+
+
+def test_lock_pins_are_read_where_the_project_writes_them(tmp_path: Path) -> None:
+    assert ecosystem.lock_pins(tmp_path, ["mypy"]) == (None, {})
+    (tmp_path / "pdm.lock").write_text("[[package]\n")
+    with pytest.raises(ecosystem.EnvironmentFailure, match="cannot read the pins"):
+        ecosystem.lock_pins(tmp_path, ["mypy"])
+    (tmp_path / "pdm.lock").unlink()
+    (tmp_path / "poetry.lock").write_text(
+        '[[package]]\nname = "mypy"\nversion = "1.14.1"\npython-versions = ">=3.8"\n'
+    )
+    assert ecosystem.lock_pins(tmp_path, ["mypy", "pyright"]) == (
+        "poetry.lock",
+        {"mypy": (ecosystem.LockedVersion("1.14.1"),)},
+    )
+    # uv's lock comes first, and a resolution fork locks a version per interpreter range.
+    (tmp_path / "uv.lock").write_text(
+        '[[package]]\nname = "mypy"\nversion = "1.19.1"\n'
+        "resolution-markers = [\"python_full_version < '3.10'\"]\n\n"
+        '[[package]]\nname = "mypy"\nversion = "2.3.0"\n'
+        "resolution-markers = [\"python_full_version >= '3.10'\"]\n\n"
+        '[[package]]\nname = "Pyright"\nversion = "1.1.408"\n'
+    )
+    lock, pins = ecosystem.lock_pins(tmp_path, ["mypy", "pyright"])
+    assert lock == "uv.lock"
+    assert pins == {
+        "mypy": (
+            ecosystem.LockedVersion("1.19.1", ("python_full_version < '3.10'",)),
+            ecosystem.LockedVersion("2.3.0", ("python_full_version >= '3.10'",)),
+        ),
+        "pyright": (ecosystem.LockedVersion("1.1.408"),),
+    }
+
+
+@pytest.mark.parametrize(
+    "markers,expected",
+    [
+        ((("python_full_version < '3.10'",), ("python_full_version >= '3.10'",)), "2.3.0"),
+        ((("python_full_version < '3.10'",), ("python_full_version < '3.9'",)), None),
+    ],
+)
+def test_a_forked_lock_pin_is_the_one_meant_for_the_interpreter(
+    markers: Tuple[Tuple[str, ...], Tuple[str, ...]], expected: Optional[str]
+) -> None:
+    """The interpreter's own ``packaging`` decides, as the installer would."""
+    versions = [
+        ecosystem.LockedVersion("1.19.1", markers[0]),
+        ecosystem.LockedVersion("2.3.0", markers[1]),
+    ]
+    python = Path(sys.executable)
+    assert ecosystem.applicable_version(python, "uv.lock", "mypy", versions) == expected
+
+
+def test_a_lock_that_pins_two_versions_for_one_interpreter_is_refused() -> None:
+    versions = [
+        ecosystem.LockedVersion("1.19.1", ("python_full_version >= '3.0'",)),
+        ecosystem.LockedVersion("2.3.0", ("python_full_version >= '3.10'",)),
+    ]
+    with pytest.raises(ecosystem.EnvironmentFailure, match="locks mypy at 1.19.1, 2.3.0"):
+        ecosystem.applicable_version(Path(sys.executable), "uv.lock", "mypy", versions)
 
 
 # -- How Towel is run ----------------------------------------------------------
@@ -633,7 +728,7 @@ def test_the_summary_records_the_candidate_and_what_each_project_ran_with(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     checkers = (
-        ecosystem.Checker("mypy", "1.19.1", "project"),
+        ecosystem.Checker("mypy", "1.19.1", "uv.lock"),
         ecosystem.Checker("pyright", "1.1.414", "towel[types]"),
     )
     environment = ecosystem.Environment("3.12.14", "0", checkers, "/work/fixture-ready")
@@ -648,11 +743,11 @@ def test_the_summary_records_the_candidate_and_what_each_project_ran_with(
     }
     recorded = summary["results"][0]["environment"]
     assert recorded["installed_from"] == "/work/fixture-ready"
-    assert recorded["checkers"][0] == {"name": "mypy", "version": "1.19.1", "source": "project"}
+    assert recorded["checkers"][0] == {"name": "mypy", "version": "1.19.1", "source": "uv.lock"}
     project = json.loads((tmp_path / "report/fixture.json").read_text())
     assert project["environment"] == recorded
     markdown = (tmp_path / "report/summary.md").read_text()
-    assert "| mypy 1.19.1 (project), pyright 1.1.414 |" in markdown
+    assert "| mypy 1.19.1 (uv.lock), pyright 1.1.414 |" in markdown
 
 
 def test_the_summary_names_every_project_refactored_without_cross_module(
