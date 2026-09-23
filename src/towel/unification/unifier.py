@@ -852,6 +852,16 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                 # See docs/KNOWN_LIMITATIONS.md for details
                 return False
 
+        # Defaults are evaluated where the lambda stands, before its parameters
+        # exist, so they unify outside the parameters' renaming. Left out, a
+        # block's own default was replaced by the template's, and only the
+        # instantiation check noticed.
+        defaults = [n.args.defaults for n in nodes]
+        if any(len(block_defaults) != len(defaults[0]) for block_defaults in defaults):
+            return False
+        if not self._unify_lists(defaults, substitution, block_indices):
+            return False
+
         num_params = param_counts[0]
         if num_params == 0:
             # No parameters - just unify bodies directly

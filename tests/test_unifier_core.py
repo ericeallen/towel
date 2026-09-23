@@ -271,3 +271,25 @@ def test_a_class_or_dotted_root_that_differs_is_a_parameter(first: str, second: 
     substitution = Unifier().unify_blocks(_match_blocks(first, second), [{}, {}])
     assert substitution is not None
     assert len(substitution.param_expressions) == 1
+
+
+def test_a_lambda_default_that_differs_is_a_parameter() -> None:
+    # A default is evaluated where the lambda stands; each block keeps its own.
+    blocks = [
+        ast.parse("g = lambda v, s=k: v * s\nh = g(3)").body,
+        ast.parse("g = lambda v, s=j: v * s\nh = g(3)").body,
+    ]
+    substitution = Unifier().unify_blocks(blocks, [{}, {}])
+    assert substitution is not None
+    assert [
+        [ast.unparse(node) for _, node in expressions]
+        for expressions in substitution.param_expressions.values()
+    ] == [["k", "j"]]
+
+
+def test_lambdas_with_different_defaults_do_not_unify() -> None:
+    blocks = [
+        ast.parse("g = lambda v, s=k: v * s\nh = g(3)").body,
+        ast.parse("g = lambda v, s: v * s\nh = g(3, k)").body,
+    ]
+    assert Unifier().unify_blocks(blocks, [{}, {}]) is None
