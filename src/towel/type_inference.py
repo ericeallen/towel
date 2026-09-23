@@ -25,8 +25,10 @@ so names resolve as they do at the call, and asks subtyping through probe
 functions ``def _probe(v: narrow) -> wide: return v`` appended to the copy,
 so the relation is mypy's own; nothing is written to disk except mypy's
 cache, which lives for the inferrer's lifetime so later proposals in the
-same run rebuild incrementally. :class:`PyrightOracle` infers through
-the pyright command on a temporary sibling file. Verification uses a complete
+same run rebuild incrementally. :class:`PyrightOracle` infers through a
+language server, or the pyright command, watching a private copy of the
+project in which the probed text stands in for its module; nothing is ever
+written beside the project's own files. Verification uses a complete
 private project snapshot so changed hosts and unchanged consumers agree. :class:`CombinedOracle`
 infers with one checker and verifies with several, and
 :func:`type_oracle_for_project` picks them from the project's configuration.
@@ -39,10 +41,8 @@ name in them resolves where the helper is defined.
 from __future__ import annotations
 
 import configparser
-from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 import json
-import atexit
 import hashlib
 import importlib.util
 import select
@@ -61,7 +61,6 @@ from typing import (
     Dict,
     Final,
     Iterable,
-    Iterator,
     List,
     Mapping,
     Optional,
@@ -752,52 +751,7 @@ class MypyInferrer:
         return revealed
 
 
-_PENDING_PROBES: "set[Path]" = set()
-"""Probe files not yet removed; an interpreter exit removes them, a kill cannot."""
-
-
 MYPY_TIMEOUT_SECONDS = 600.0
-
-
-def _unlink_quietly(path: Path) -> None:
-    """Remove ``path`` if it is still there; a probe that is already gone is fine."""
-    try:
-        path.unlink()
-    except OSError:
-        pass
-
-
-def _remove_pending_probes() -> None:
-    for probe in list(_PENDING_PROBES):
-        _unlink_quietly(probe)
-        _PENDING_PROBES.discard(probe)
-
-
-atexit.register(_remove_pending_probes)
-
-
-@contextmanager
-def _probe_file(original: Path, text: str) -> Iterator[Path]:
-    """A sibling of ``original`` holding ``text`` for the duration of the block.
-
-    Pyright reads files, so the probed module must exist on disk in its own
-    package for imports to resolve. The file is created exclusively with a
-    unique name and owner-only permissions, so it never follows a symlink or
-    collides with a concurrent run, and it is removed when the block ends or
-    at interpreter exit, whichever comes first.
-    """
-    descriptor, name = tempfile.mkstemp(
-        prefix=f"{PROBE_PREFIX}{original.stem}_", suffix=".py", dir=original.parent, text=True
-    )
-    probe = Path(name)
-    _PENDING_PROBES.add(probe)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        yield probe
-    finally:
-        _unlink_quietly(probe)
-        _PENDING_PROBES.discard(probe)
 
 
 class _PyrightPosition(TypedDict, total=False):
@@ -830,12 +784,17 @@ class _PyrightDiagnostics:
 
 
 class PyrightOracle:
-    """A ``TypeOracle`` backed by the pyright command.
+    """A ``TypeOracle`` backed by pyright's language server, or its command line.
 
-    Pyright reads files, so a probed copy of the module is written as a
-    temporary sibling (same package, so its imports resolve) and removed
-    afterwards. Raises ``ImportError`` at construction when pyright is not
-    installed; it is part of the ``types`` extra.
+    Pyright reads files, so a probed module has to exist on disk, in its own
+    package so that its imports resolve. It is written only into a private copy
+    of the project that follows the project (see ``CheckerSnapshot``), where the
+    probed text stands in for the module: the copy a language server watches,
+    or one kept for the command line when no server can run. The probe used to
+    be written beside the module in the user's tree, so an out-of-place run
+    wrote into the input it promised only to read, and a kill between writing
+    and removing it left it there. Raises ``ImportError`` at construction when
+    pyright is not installed; it is part of the ``types`` extra.
     """
 
     def __init__(self, *, language_server: bool = True) -> None:
@@ -850,6 +809,8 @@ class PyrightOracle:
             _pyright_langserver_command() if language_server else None
         )
         self._warmed: Dict[Tuple[Path, Tuple[str, ...]], _WarmProject] = {}
+        # Private copies the command line probes modules in, one per project.
+        self._probe_copies: Dict[Path, CheckerSnapshot] = {}
         # Whether a session ever answered, which abandoning one does not undo.
         self.answered_from_a_session = False
 
@@ -858,6 +819,23 @@ class PyrightOracle:
         for warm in self._warmed.values():
             warm.close()
         self._warmed.clear()
+        for copy in self._probe_copies.values():
+            copy.close()
+        self._probe_copies.clear()
+
+    def _probe_copy(self, root: Path) -> CheckerSnapshot | CheckFailure:
+        """The private copy of ``root`` the command line probes modules in, made on first use."""
+        existing = self._probe_copies.get(root)
+        if existing is not None:
+            return existing
+        try:
+            copy = CheckerSnapshot(root)
+        except UnusableConfiguration as error:
+            return CheckFailure(str(error))
+        except (OSError, ValueError, UnicodeError) as error:
+            return CheckFailure(f"Could not copy the project for a pyright probe: {error}")
+        self._probe_copies[root] = copy
+        return copy
 
     def _warm(self, root: Path, excluded_paths: Sequence[str]) -> Optional[_WarmProject]:
         """The copy and live server for ``root``, made on first use.
@@ -927,11 +905,17 @@ class PyrightOracle:
                 return _PyrightDiagnostics(
                     tuple(_as_entry(entry) for entry in published.get(str(original), ()))
                 )
+        copy = self._probe_copy(root)
+        if isinstance(copy, CheckFailure):
+            return copy
         try:
-            with _probe_file(original, text) as probe:
-                return self._run_diagnostics([str(probe)], original.parent)
-        except OSError as error:
-            return CheckFailure(f"Could not create a pyright probe: {error}")
+            # The copy follows the project, then shows the probe as the module
+            # itself, where every import it makes resolves as it would there.
+            copy.apply({str(original): text})
+        except (OSError, ValueError, UnicodeError) as error:
+            return CheckFailure(f"Could not write a pyright probe into Towel's copy: {error}")
+        probe = copy.path_of(str(original))
+        return self._run_diagnostics([str(probe)], probe.parent)
 
     def _run_diagnostics(
         self, paths: Sequence[str], directory: Path, *, project: bool = False
@@ -1022,7 +1006,7 @@ class PyrightOracle:
         return start.get("line", -1) + 1 if start is not None else 0
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        """Reveal each request by running pyright on a probe copy of its module."""
+        """Reveal each request by having pyright check a probed copy of its module."""
         revealed: Dict[RevealKey, str] = {}
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:

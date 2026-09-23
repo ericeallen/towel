@@ -437,11 +437,13 @@ where the evidence comes from:
   collector. Library users should call the oracle's `close()` when finished;
   `CombinedOracle.close()` closes both checkers. The CLI closes its oracle on
   both success and failure.
-- Pyright reads files, so while it is consulted a probe copy of the module
-  exists beside it in the package, created exclusively with owner-only
-  permissions under a unique `_towel_probe_` name and removed afterwards,
-  or at interpreter exit if a crash skipped the cleanup. A kill signal can
-  leave it behind; it imports nothing the module does not.
+- Pyright reads files, so a module whose types are asked about is written,
+  with its probes, into Towel's private copy of the project, in place of the
+  module's own copy there: the copy a language server watches, or one kept
+  for the command line when no server runs. Nothing is written beside the
+  project's files. The copies live in the system temporary directory and go
+  when the oracle is closed; a kill signal can leave one there, never in the
+  project.
 
 ## Conservative rejections
 

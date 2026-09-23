@@ -451,6 +451,7 @@ def test_invalid_pyright_results_do_not_certify_subtypes(
     checker._command = ["unused"]
     checker._server = None
     checker._warmed = {}
+    checker._probe_copies = {}
     path = tmp_path / "m.py"
     path.write_text("x = 1\n")
     payload = json.dumps({"generalDiagnostics": [] if diagnostic is None else [diagnostic]})
@@ -461,8 +462,13 @@ def test_invalid_pyright_results_do_not_certify_subtypes(
             args=[], returncode=status, stdout=payload, stderr=""
         ),
     )
-    assert checker.is_subtype(str(path), path.read_text(), [("str", "int")]) == [Subtyping.UNKNOWN]
-    assert isinstance(checker.check(str(path), path.read_text()), CheckFailure)
+    try:
+        assert checker.is_subtype(str(path), path.read_text(), [("str", "int")]) == [
+            Subtyping.UNKNOWN
+        ]
+        assert isinstance(checker.check(str(path), path.read_text()), CheckFailure)
+    finally:
+        checker.close()
 
 
 @pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")

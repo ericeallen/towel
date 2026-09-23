@@ -178,6 +178,7 @@ def test_a_command_line_failure_says_what_pyright_said(tmp_path: Path) -> None:
     oracle._command = [_failing_pyright(tmp_path)]
     oracle._server = None
     oracle._warmed = {}
+    oracle._probe_copies = {}
     path = tmp_path / "project" / "m.py"
     path.parent.mkdir()
     path.write_text("x = 1\n", encoding="utf-8")
