@@ -19,7 +19,8 @@ template keeps the node, and where they differ in an expression the
 template takes a fresh parameter that each block instantiates with its own
 expression. Bound names (loop targets, lambda parameters, comprehension
 targets, with-items, handler names, walrus targets) are alpha-equivalent,
-never parameterized. This is Plotkin and Reynolds's anti-unification (the
+never parameterized, and so is whatever a tool reads where it stands (see
+``static_positions``). This is Plotkin and Reynolds's anti-unification (the
 least general generalization), not Robinson's unification, which solves
 for a substitution making two terms equal.
 """
@@ -31,6 +32,7 @@ from .constant_consistency import ConstantConsistency, constant_identity
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
+from .static_positions import DEFAULT_TRANSLATION_KEYWORDS, TranslationKeywords, statically_read
 from .substitution import Substitution
 from .unifier_state import ConstantIdentity
 from .visitors import all_instances
@@ -85,9 +87,14 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.constant_positions = {}
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
+        self._read_in_place = ()
 
     def unify_blocks(
-        self, blocks: Sequence[Sequence[ast.AST]], hygienic_renames: List[Dict[str, str]]
+        self,
+        blocks: Sequence[Sequence[ast.AST]],
+        hygienic_renames: List[Dict[str, str]],
+        *,
+        translation_keywords: TranslationKeywords = DEFAULT_TRANSLATION_KEYWORDS,
     ) -> Optional[Substitution]:
         """
         Unify multiple code blocks.
@@ -96,6 +103,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             blocks: List of code blocks (each is a list of AST statements)
             hygienic_renames: For each block, a mapping from original names
                              to hygienically renamed names
+            translation_keywords: The markers whose messages extraction reads,
+                             which the blocks may not differ in
 
         Returns:
             Substitution mapping expressions to parameters, or None if unification fails
@@ -109,7 +118,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # Reset per-unification state to avoid cross-pair contamination
         # Alpha-renamings and parameter counters must start fresh for each call
         self.alpha_renamings = {}
-        self._reset_unification_state(blocks)
+        self._reset_unification_state(blocks, translation_keywords)
 
         self._collect_constant_positions(blocks)
 
@@ -1016,11 +1025,24 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.parameterize_constants = parameterize_constants
         self.promote_equal_hof_literals = promote_equal_hof_literals
 
-    def _reset_unification_state(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
+    def _reset_unification_state(
+        self,
+        blocks: Sequence[Sequence[ast.AST]],
+        translation_keywords: TranslationKeywords = DEFAULT_TRANSLATION_KEYWORDS,
+    ) -> None:
         self.param_counter = 0
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
         self.current_blocks = blocks
+        # What each block's statements pin, looked up by node id.
+        self._read_in_place = [
+            {
+                node: pin
+                for statement in block
+                for node, pin in statically_read(statement, translation_keywords).items()
+            }
+            for block in blocks
+        ]
         # A helper extracted on an earlier pass already binds names such as
         # ``__param_0``; a fresh parameter must not alias any identifier the
         # blocks mention, or the substituted body becomes ambiguous.

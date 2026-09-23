@@ -63,6 +63,7 @@ from .parameters import parameter_names
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import rebound_external_names, walk_own_scope
 from .statement_facts import memoized_per_node
+from .static_positions import TranslationKeywords, configured_translation_keywords
 from .structural_memo import load_substitution, store_substitution
 from .substitution import Substitution
 from .visitors import (
@@ -204,14 +205,41 @@ def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -
 class BlockAnalysis(EngineState):
     """See the module docstring."""
 
+    # The files of the analysis the translation keywords were last read for,
+    # and those keywords.
+    _keywords_read_for: Optional[Tuple[Tuple[str, ...], TranslationKeywords]] = None
+
+    def _translation_keywords(self) -> TranslationKeywords:
+        """The markers extraction reads in the projects being analyzed, read once per analysis.
+
+        Unification and the clustering scans are memoized by structure
+        alone, which is sound while the keywords stay the same; when the
+        files belong to a project that configures others, both are dropped.
+        """
+        paths = self._analysis_paths
+        known = self._keywords_read_for
+        if known is not None and (known[0] is paths or known[0] == paths):
+            if known[0] is not paths:
+                self._keywords_read_for = (paths, known[1])
+            return known[1]
+        keywords = configured_translation_keywords(paths)
+        if known is not None and known[1] != keywords:
+            self._unify_cache.clear()
+            self._cluster_scan_cache.clear()
+        self._keywords_read_for = (paths, keywords)
+        return keywords
+
     def _unify_memoized(
         self,
         blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
     ) -> Optional[Substitution]:
         """Unify two blocks, reusing the result for any pair with the same structure."""
+        keywords = self._translation_keywords()
         if len(blocks) != 2:
-            return self.unifier.unify_blocks(blocks, hygienic_renames)
+            return self.unifier.unify_blocks(
+                blocks, hygienic_renames, translation_keywords=keywords
+            )
         key = (self._sid(blocks[0]), self._sid(blocks[1]))
         if key in self._unify_cache:
             stored = self._unify_cache[key]
@@ -222,7 +250,7 @@ class BlockAnalysis(EngineState):
                 target.clear()
                 target.update(source)
             return substitution
-        result = self.unifier.unify_blocks(blocks, hygienic_renames)
+        result = self.unifier.unify_blocks(blocks, hygienic_renames, translation_keywords=keywords)
         self._unify_cache[key] = (
             None if result is None else store_substitution(result, blocks, hygienic_renames)
         )
