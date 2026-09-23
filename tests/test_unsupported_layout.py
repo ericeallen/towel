@@ -16,8 +16,6 @@ import sys
 import pytest
 
 from towel.cli import main
-from towel.project_layout import ProjectLayout
-from towel.unification.exceptions import UnsupportedLayoutError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # ``compute`` is defined below its callers: the helper reads it as a bare
@@ -48,12 +46,6 @@ def _hatch_project(root: Path) -> None:
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "a.py").write_text(SAME_FILE + CROSS_A)
     (root / "pkg" / "b.py").write_text(CROSS_B)
-
-
-def test_discovery_refuses_the_layout(tmp_path: Path) -> None:
-    _hatch_project(tmp_path / "proj")
-    with pytest.raises(UnsupportedLayoutError):
-        ProjectLayout.discover(tmp_path / "proj" / "pkg" / "a.py")
 
 
 def test_same_file_extractions_still_happen(tmp_path: Path) -> None:

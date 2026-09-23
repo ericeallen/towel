@@ -2,64 +2,8 @@ import tempfile
 from pathlib import Path
 
 from tests.test_helpers import write_file
-from towel.project_layout import ProjectLayout
+from towel.import_model import build_import_model
 from towel.unification.refactor_engine import UnificationRefactorEngine
-
-
-def test_project_layout_module_name_src_layout_pep420():
-    # Create a temporary src-layout project with pyproject.toml
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        write_file(
-            root / "pyproject.toml",
-            """
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-package-dir = {"" = "src"}
-            """.strip(),
-        )
-
-        a_py = root / "src" / "acme" / "core" / "a.py"
-        b_py = root / "src" / "acme" / "core" / "b.py"
-
-        write_file(
-            a_py,
-            """
-def f1(x):
-    # duplicate block start
-    if x is None:
-        return 0
-    if x < 0:
-        return -x
-    return x
-    # duplicate block end
-""".lstrip(),
-        )
-
-        write_file(
-            b_py,
-            """
-def f2(x):
-    # duplicate block start
-    if x is None:
-        return 0
-    if x < 0:
-        return -x
-    return x
-    # duplicate block end
-""".lstrip(),
-        )
-
-        layout = ProjectLayout.discover(root)
-        mod_a = layout.module_name_for(a_py)
-        mod_b = layout.module_name_for(b_py)
-
-        # By default prefer absolute imports and PEP420 enabled
-        assert mod_a == "acme.core.a"
-        assert mod_b == "acme.core.b"
 
 
 def test_the_retired_absolute_preference_no_longer_decides_an_import():
@@ -144,7 +88,7 @@ def fb(x):
 def test_module_name_none_for_non_identifier_root():
     """A project root whose directory name is not a valid identifier is not importable.
 
-    Regression: module_name_for used to join path parts into a dotted name
+    Regression: the packaging readers joined path parts into a dotted name
     without checking they were legal identifiers, producing names like
     ``my-clean-copy.pkg.mod`` that are a SyntaxError when emitted as an import.
     """
@@ -160,10 +104,9 @@ def test_module_name_none_for_non_identifier_root():
         module = pkg / "scope_analyzer.py"
         write_file(module, "VALUE = 1\n")
 
-        layout = ProjectLayout.discover(module)
-        # The only candidate absolute name would contain the invalid component
-        # 'my-clean-copy'; refuse it rather than emit an illegal dotted name.
-        assert layout.module_name_for(module) is None
+        # No import can spell 'my-clean-copy', so the program's imports give
+        # the module no absolute name at all, rather than an illegal one.
+        assert build_import_model(root.parent).module_name(module) is None
         # Sanity: the invalid name really is not a legal import.
         try:
             ast.parse("from my-clean-copy.unification.scope_analyzer import x")
