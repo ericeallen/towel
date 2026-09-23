@@ -220,6 +220,14 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   compute). No helper takes a builtin as a parameter. A patch applied from
   outside the project is not seen. A relative import inside an extracted
   block stays within its own package.
+- No helper takes a builtin as a parameter within one module either. Where
+  one function binds `len` (`second(rows, name, len=...)`) and its duplicate
+  reads the builtin, the helper had taken `len`, and the first function
+  passed it the builtin; a block reading the builtin had also joined a
+  helper whose other sites passed their own `len`, and `__import__` or a
+  tuple of builtins could be passed as a value. Each is declined
+  (`builtin_argument`); where both functions bind the name, each still
+  passes its own.
 - One predicate now decides what importing a module runs, for choosing a
   host and for placing a helper. Decorators, defaults, annotations,
   metaclasses and `__init_subclass__` count as code; a `TYPE_CHECKING` block
@@ -472,6 +480,15 @@ anti-unifies the types alongside the code, so the helper's signature carries
 the correlation the call sites had.
 
 ### Added
+- `--parameterize-builtins` (`parameterize_builtins=True`), off by default:
+  where a builtin that duplicated code reads may differ between its sites (a
+  function's own `len` against the builtin, or with `--cross-module` a module
+  that may hold the name), each site passes its own binding to the helper as
+  a parameter instead of the pair being declined. A builtin every site reads
+  alike is still read directly. In typed code the parameter keeps the
+  checker's signature where it can be written, else `type[C]` for a class
+  (`type[str]`) or `Callable[..., R]` for a callable (`Callable[..., int]`
+  for `len`).
 - Extracted module-level helpers can preserve relationships among argument and
   return types through type anti-unification. Nested containers, multiple type
   parameters, and supported existing generic binders receive fresh helper type
