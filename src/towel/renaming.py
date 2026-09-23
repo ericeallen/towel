@@ -438,6 +438,7 @@ def plan_renames(
     by_name = {module.name: module for module in modules}
     selected, method_specifications = _select_definitions(modules, function_specifications)
     _extend_to_generated_importers(modules, selected)
+    _refuse_unresolved_helper_imports(modules, selected)
     method_renames = _validate_method_renames(modules, method_specifications)
     if not selected and not method_renames and not parameter_specifications:
         return ChangePlan(()), 0
@@ -635,6 +636,36 @@ def _extend_to_generated_importers(
                         continue
                     selected[key] = new
                     changed = True
+
+
+def _refuse_unresolved_helper_imports(
+    modules: Sequence[_Module], selected: dict[tuple[str, str], str]
+) -> None:
+    """Refuse when a renamed helper may be imported from a module the rename cannot name.
+
+    The rename matches an import to its definition by module name. An
+    out-of-place output sits in a directory named for the output, not the
+    package, so ``from pkg.b import __extracted_func_0`` in it names no module
+    the rename can see: the definition was renamed and the import left, and
+    the adopted package failed to import. Any import of a renamed generated
+    name from a module outside the target's names is such a case.
+    """
+    known = {module.name for module in modules}
+    renamed = {name for _, name in selected}
+    for module in modules:
+        for node in ast.walk(module.tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            origin = _import_origin(module, node)
+            if origin in known:
+                continue
+            for alias in node.names:
+                if alias.name in renamed:
+                    raise ValueError(
+                        f"{module.path} imports {alias.name} from {origin}, which is not a"
+                        " module of the rename target under that name. Adopt the output into"
+                        " its project first and rename it there."
+                    )
 
 
 def _validate_method_renames(

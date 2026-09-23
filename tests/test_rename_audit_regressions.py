@@ -223,3 +223,25 @@ def test_method_rename_cannot_remove_protocol_behavior(tmp_path: Path) -> None:
     _project(tmp_path, {"main.py": "class A:\n    def __len__(self):\n        return 3\n"})
     with pytest.raises(ValueError, match="Special method"):
         plan_renames(tmp_path, [("__len__", "ordinary", None)])
+
+
+def test_an_output_whose_imports_name_its_package_is_refused_not_half_renamed(
+    tmp_path: Path,
+) -> None:
+    """An out-of-place output is named for the output, while its imports name the package.
+
+    ``from pkg.b import __extracted_func_0`` in ``candidate/a.py`` matched no
+    module of the target, so the definition was renamed and the import kept,
+    and the adopted package no longer imported.
+    """
+    candidate = tmp_path / "candidate"
+    _project(
+        candidate,
+        {
+            "__init__.py": "",
+            "b.py": HELPER,
+            "a.py": "from pkg.b import __extracted_func_0\n\nvalue = __extracted_func_0(1)\n",
+        },
+    )
+    with pytest.raises(ValueError, match="Adopt the output"):
+        plan_renames(candidate, [("__extracted_func_0", "increment", candidate / "b.py")])
