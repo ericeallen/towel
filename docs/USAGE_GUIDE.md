@@ -143,7 +143,6 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`). |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
 | `skip_trivial_helpers` | `True` | Do not propose a helper that only forwards, renames, or unpacks. |
-| `reuse_existing_functions` | `True` | No effect: a duplicate that is the whole body of a function calls a new helper like any other (see *Reusing an existing function* in [ARCHITECTURE.md](ARCHITECTURE.md)). |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
 | `type_oracle` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one nothing is inferred or verified (`--types/--no-types`). |
 | `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
@@ -151,6 +150,13 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). The rehearing that ends a run re-pairs everything regardless. |
 | `promote_equal_hof_literals` | `False` | Expose literal arguments of higher-order factory calls as helper parameters even when they are equal in every block. |
 | `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). When omitted, the engine reads the environment once at construction; the command line and the analysis session each read it once as well (see *Diagnostics and settings* in [ARCHITECTURE.md](ARCHITECTURE.md)). |
+
+`reuse_existing_functions` is deprecated and does nothing: a duplicate that is
+the whole body of a function once made the other sites call that function, and
+since 1.772 every such site calls a new helper instead, because a call to the
+existing function looked it up in its module each time, so patching or
+rebinding it changed both. The keyword is still accepted, and will be removed
+in a later release.
 
 The CLI's `dry` command wires the formatter, import sorter, and type oracle
 from the project's own configuration. Library callers can do the same:

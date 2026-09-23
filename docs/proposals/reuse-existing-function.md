@@ -4,7 +4,7 @@ Status: implemented for the whole-body case (2026-09-17) and withdrawn on
 2026-09-23 (commit c4bf39e): a function rewritten to call another looked that
 one up in its module at every call, so patching or rebinding it changed both
 (audit r06). Every whole-body site now calls one new helper, and
-`reuse_existing_functions` has no effect. The general
+`reuse_existing_functions` is a deprecated no-op. The general
 index-by-signature form below would meet the same objection.
 Author: design note from the 2026-09 audit sessions
 

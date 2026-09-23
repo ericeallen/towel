@@ -188,9 +188,6 @@ class EngineState:
     skip_trivial_helpers: bool
     """Whether a helper that only forwards, renames, or unpacks is declined."""
 
-    reuse_existing_functions: bool
-    """Whether a whole-body duplicate calls the function it already is."""
-
     annotate_helpers: bool
     """Whether helpers carry the annotations their call sites declare."""
 

@@ -286,10 +286,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 forwarding statement -- a lone ``raise``, a ``return`` of one
                 call, or a bare call -- which adds indirection without sharing any
                 logic (default: True).
-            reuse_existing_functions: When a duplicate site is the whole body of a
-                plain module-level function, leave that function as it is and
-                have the other sites call it instead of extracting a helper that
-                would only restate it (default: True).
+            reuse_existing_functions: Deprecated, and has no effect. It chose
+                whether a site that is the whole body of a plain module-level
+                function was left alone and the other sites rewritten to call
+                it; since 1.772 every whole-body site calls a new helper
+                instead, because such a call looked the other function up in
+                its module each time, so patching or rebinding it changed both.
+                Still accepted so existing callers keep working; it will be
+                removed in a later release.
             annotate_helpers: Give a helper the parameter and return annotations
                 its call sites agree on -- an annotated, never-rebound parameter
                 of the enclosing function, a literal's builtin type, the sites'
@@ -335,7 +339,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.min_lines = min_lines
         self.max_candidate_pairs = max_candidate_pairs
         self.skip_trivial_helpers = skip_trivial_helpers
-        self.reuse_existing_functions = reuse_existing_functions
+        # reuse_existing_functions is accepted and ignored; see the docstring.
         self.annotate_helpers = annotate_helpers
         self.type_oracle = type_oracle
         self._type_run_oracle = type_oracle

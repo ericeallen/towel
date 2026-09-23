@@ -387,7 +387,9 @@ function keeps depending only on itself. `reuse.py` keeps only the rule that
 declines reducing an earlier pass's helper to a forwarder while another site
 is only part of its function, and the arity check for a proposal built by
 other means that names an existing function. That left
-`reuse_existing_functions` with no effect.
+`reuse_existing_functions` with no effect; the engine still accepts it,
+deprecated, so existing callers keep working until a later release removes
+it.
 
 ## Helper annotations
 

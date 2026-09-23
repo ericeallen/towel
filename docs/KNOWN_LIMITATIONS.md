@@ -733,8 +733,8 @@ formed pair:
   never rewritten to call another existing function that restates it. Such
   a call looks the other function up in its module every time, so
   `mock.patch("mod.f1")`, or any other rebinding of `mod.f1`, changed `f2`
-  as well (audit `r06`). The `reuse_existing_functions` setting no longer
-  changes anything. A site that duplicates an earlier pass's helper, where
+  as well (audit `r06`). The `reuse_existing_functions` setting is
+  deprecated and changes nothing. A site that duplicates an earlier pass's helper, where
   the other site is only part of its function, is left in place rather than
   reduced to a call of it or chained through it.
 - A block that begins at an `elif` is never extracted, because its call

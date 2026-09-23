@@ -84,7 +84,7 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   recovery.
 - **Whole-body duplicates** — `test_reuse_existing_function.py`: a duplicate
   that is the whole body of a function calls one new helper like any other
-  copy, never another existing function, whatever
+  copy, never another existing function, whatever the deprecated
   `reuse_existing_functions` says; decorated, async and rebound functions,
   and the cross-file host that closes no cycle.
 - **Where a method helper goes** — `test_method_helper_hosting.py`,
