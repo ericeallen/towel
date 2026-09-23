@@ -99,6 +99,12 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   decorator that rebuilds or wraps it dropped or wrapped the helper. A module
   helper is no longer placed after an assignment, decorator or class body that
   could call it at import.
+- A borrower is never made to import a host that requires a module the
+  borrower does not: `import tornado` is inert as a statement, but a helper
+  hosted in gunicorn's tornado worker made the sync worker unimportable
+  wherever tornado was absent. The standard library, declared dependencies,
+  and imports inside `try` require nothing. Over rich, click, packaging and
+  pygments the output is byte-identical.
 - A call site whose generated thunk would read a local that may be unbound is
   declined: the thunk raised `NameError` where the original raised
   `UnboundLocalError`, and `except UnboundLocalError` stopped matching.

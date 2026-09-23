@@ -221,3 +221,42 @@ def test_a_forwarding_lambda_reads_only_its_callee() -> None:
     collector = FreeNameCollector()
     collector.visit(call)
     assert collector.used == {"h", "f", "d", "y", "z"}
+
+
+def test_a_helper_import_that_would_require_a_new_third_party_module_is_refused(
+    tmp_path: Path,
+) -> None:
+    """``import tornado`` is inert, but a borrower made to import its module now needs tornado.
+
+    gunicorn's sync worker stopped importing where tornado was absent. The
+    standard library, a declared dependency, an import the borrower already
+    makes, and one guarded by ``try`` require nothing new.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "pkg"\nversion = "0"\ndependencies = ["declared-dep>=1"]\n'
+    )
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    files = {
+        "needs_tornado.py": "import tornado\ndef helper():\n    return 1\n",
+        "needs_tornado_if.py": "import sys\nif sys.version_info > (3,):\n    import tornado\n",
+        "optional.py": "try:\n    import tornado\nexcept ImportError:\n    tornado = None\n",
+        "stdlib.py": "import json\nfrom os import path\n",
+        "declared.py": "import declared_dep\n",
+        "borrower.py": "def use():\n    return 2\n",
+        "has_tornado.py": "import tornado.web\ndef use():\n    return 2\n",
+    }
+    for name, text in files.items():
+        (package / name).write_text(text)
+    cache = ImportGraphCache()
+
+    def refused(host: str, borrower: str = "borrower.py") -> bool:
+        return import_runs_new_code(str(package / host), str(package / borrower), cache)
+
+    assert refused("needs_tornado.py")
+    assert refused("needs_tornado_if.py")
+    assert not refused("optional.py")
+    assert not refused("stdlib.py")
+    assert not refused("declared.py")
+    assert not refused("needs_tornado.py", "has_tornado.py")

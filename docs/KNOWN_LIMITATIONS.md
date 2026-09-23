@@ -225,10 +225,15 @@ time unless tornado is installed, and a helper hosted there made
 `workers/sync.py` import it, so environments without tornado could no longer
 import the sync worker. Towel now refuses a host whose import would run
 module-level statements beyond definitions, imports and literal assignments
-that the borrower's own imports do not already run (`import_time_effects`);
-it still does not know which imports a module needs. Review new
-cross-module imports in the diff with that in mind, and host such helpers
-in a neutral module by hand when it matters.
+that the borrower's own imports do not already run (`import_time_effects`),
+and one whose import would require a module the borrower does not already
+import: an unconditional import, including one inside a module-level `if`,
+of anything outside the project, the standard library and the project's
+declared `[project].dependencies`. An import inside `try` is taken as an
+optional dependency and requires nothing. A dependency declared under a
+distribution name that differs from its import name (`PyYAML` for `yaml`) is
+not recognized, which refuses a host rather than accepting one; an import
+made by `importlib` or `__import__` is not seen at all.
 
 ## Method insertion
 

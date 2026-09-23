@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import ast
 import os
+import re
+import sys
 from pathlib import Path
 from typing import (
     Dict,
@@ -23,7 +25,7 @@ from typing import (
 
 from .bounded_cache import BoundedCache
 from .exceptions import UnsupportedLayoutError
-from ..project_layout import ProjectLayout, package_chain
+from ..project_layout import ProjectLayout, find_project_root, load_pyproject, package_chain
 from .statement_facts import (
     imported_binding_name,
 )
@@ -55,6 +57,10 @@ class ImportGraphCache:
         self.source_roots: BoundedCache[Path, Tuple[Path, ...]] = BoundedCache(limit)
         # Whether a module runs code at import, keyed like the edges.
         self.effects: BoundedCache[Tuple[Path, int, int], bool] = BoundedCache(limit)
+        # The top-level names a module imports unconditionally, keyed like the edges.
+        self.required_imports: BoundedCache[Tuple[Path, int, int], FrozenSet[str]] = BoundedCache(
+            limit
+        )
         # Resolving a path walks the filesystem; the class-hierarchy lookup
         # resolves every class's file per base-class reference.
         self.resolved_paths: BoundedCache[str, Path] = BoundedCache(limit)
@@ -518,7 +524,102 @@ def import_runs_new_code(host_file: str, borrower_file: str, cache: ImportGraphC
     loaded = _reachable_modules(host, roots, cache)
     if loaded is None:
         return True
-    return any(_has_import_time_effects(module, cache) for module in loaded - already)
+    if any(_has_import_time_effects(module, cache) for module in loaded - already):
+        return True
+    return bool(_new_requirements(loaded - already, already, roots, host, cache))
+
+
+# Standard-library modules whose import does something visible.
+_EFFECTFUL_STDLIB = frozenset({"this", "antigravity"})
+
+
+def _new_requirements(
+    added: Set[Path],
+    present: Set[Path],
+    roots: FrozenSet[Path],
+    host: Path,
+    cache: ImportGraphCache,
+) -> FrozenSet[str]:
+    """Third-party modules the new import requires that the borrower's import does not.
+
+    An import is inert as a statement, but it is also a requirement: a host
+    doing ``import tornado`` cannot be imported where tornado is absent, so a
+    borrower made to import it stopped importing in exactly those
+    environments (gunicorn's sync worker). What the borrower already imports
+    it already requires; the standard library is always there; and a
+    project's declared dependencies are installed wherever it is. Anything
+    else is a new requirement, and the host is refused. An import guarded by
+    ``try``/``except`` is how optional dependencies are spelled, and requires
+    nothing.
+    """
+
+    def required(modules: Set[Path]) -> Set[str]:
+        return {name for module in modules for name in _required_imports(module, cache)}
+
+    names = required(added) - required(present)
+    names = {name for name in names if not _is_local(name, roots)}
+    available = (set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB) | _declared_dependencies(host)
+    return frozenset(name for name in names if _normalized(name) not in available)
+
+
+def _is_local(name: str, roots: FrozenSet[Path]) -> bool:
+    return any((root / name).is_dir() or (root / f"{name}.py").is_file() for root in roots)
+
+
+def _normalized(name: str) -> str:
+    return re.sub(r"[-_.]+", "_", name).lower()
+
+
+def _declared_dependencies(path: Path) -> Set[str]:
+    """The import names the project's declared runtime dependencies provide, as best known.
+
+    A distribution name is taken as its import name, normalized; one that
+    differs (``PyYAML`` providing ``yaml``) is simply not recognized, which
+    refuses a host rather than accepting one.
+    """
+    data = load_pyproject(find_project_root(path))
+    project = data.get("project", {})
+    declared = project.get("dependencies", []) if isinstance(project, dict) else []
+    if not isinstance(declared, list):
+        return set()
+    return {
+        _normalized(match.group(0))
+        for requirement in declared
+        if isinstance(requirement, str)
+        for match in [re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement.strip())]
+        if match is not None
+    }
+
+
+def _required_imports(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
+    """Top-level names of the absolute imports ``module`` runs unconditionally at import."""
+    try:
+        stat = module.stat()
+    except OSError:
+        return frozenset()
+    key = (module, stat.st_mtime_ns, stat.st_size)
+    known = cache.required_imports.get(key)
+    if known is not None:
+        return known
+    try:
+        tree = ast.parse(read_source(module))
+    except (OSError, UnicodeError, SyntaxError):
+        return cache.required_imports.put(key, frozenset())
+    names: Set[str] = set()
+    pending: List[ast.stmt] = list(tree.body)
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in statement.names)
+        elif isinstance(statement, ast.ImportFrom) and statement.level == 0 and statement.module:
+            names.add(statement.module.split(".")[0])
+        elif isinstance(statement, ast.If) and not (
+            isinstance(statement.test, ast.Name) and statement.test.id == "TYPE_CHECKING"
+        ):
+            # Either branch may be the one that runs; an import there is required there.
+            pending.extend(statement.body + statement.orelse)
+    names.discard("__future__")
+    return cache.required_imports.put(key, frozenset(names))
 
 
 def would_create_import_cycle(
