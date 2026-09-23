@@ -261,10 +261,20 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   neither message; click had lost four of its 71 the same way. The message
   and context arguments of Babel's, Django's and Flask-Babel's markers, and
   of keywords a project configures, are never parameters; nor are the names,
-  fields and types of the functional typing forms, `Literal[...]`, or a type
-  spelled as a string in `cast` or `assert_type`. Only click changes over
-  the four reference packages: 10 refactorings instead of 11, with every
-  message still extracted.
+  fields and types of the functional typing forms, `Literal[...]`, or the
+  type argument of typing's `cast` and `assert_type`, where no annotation
+  makes a parameter acceptable to mypy or pyright. A typing form is
+  recognized by what its callee is bound to, however it is spelled
+  (`from typing import TypeVar as TV`, `typing.cast`, `typing_extensions`,
+  a project module that re-exports it), so a project's own `cast`, such as
+  sqlglot's `exp.cast(column, to)` or SQLAlchemy's, stays an ordinary call.
+  Only click changes over the four reference packages: 10 refactorings
+  instead of 11, with every message still extracted.
+- A helper that computes nothing is no longer extracted, whatever
+  `skip_trivial_helpers` says: two unrelated `return` statements had become
+  `def _extracted_func_24(__param_0, self): return __param_0`, which rich's
+  `Tag.markup` and `MofNCompleteColumn.render` called across two modules;
+  packaging and pygments had one each, and those are exactly what is gone.
 - The fixed point ends for a stated reason rather than an incidental one. On
   sqlglot it once extracted 597 helpers, each forwarding to the previous one
   with its tuple permuted, until ordinary SQL raised `RecursionError`. A
