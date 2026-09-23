@@ -140,6 +140,9 @@ TRANSFORMED = {
     "p17_decorated_base_rebuilds_namespace",
     # The positive control: every decorator here keeps the helper a method.
     "p18_known_class_decorators_keep_the_helper",
+    # The helper is placed before the assignment that calls it, its annotations
+    # quoted, rather than after the class they name.
+    "p21_helper_placed_after_an_assignment_that_calls_it",
 }
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise

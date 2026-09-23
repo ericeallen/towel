@@ -504,7 +504,9 @@ class Materialization(
         self, proposal: RefactoringProposal, lines: List[str]
     ) -> None:
         node: ast.AST = proposal.extracted_function
-        dependencies = self._annotation_names(proposal.extracted_function)
+        dependencies = self._placeable_dependencies(
+            "".join(lines), self._annotation_names(proposal.extracted_function)
+        )
         if proposal.helper_type_declarations:
             node = ast.Module(
                 body=[*proposal.helper_type_declarations, proposal.extracted_function],
@@ -527,6 +529,36 @@ class Materialization(
         lines_to_insert.extend(func_lines)
         lines_to_insert.extend(["\n", "\n"])
         lines[insert_line:insert_line] = lines_to_insert
+
+    def _placeable_dependencies(self, source: str, names: Set[str]) -> Set[str]:
+        """The annotation names the helper may be placed after; refuse when one it needs is not.
+
+        A helper placed after a definition its annotations name can spell it
+        bare, but only when nothing before that definition runs code that
+        could call the helper (``placeable_after``): ``Y = f()`` above
+        ``class Late`` calls the helper before a helper below ``Late`` exists.
+        Where annotations are never evaluated (``from __future__ import
+        annotations``) such a name needs no ordering at all; elsewhere a bare
+        annotation read before its definition is a ``NameError`` at import,
+        and the proposal is declined.
+        """
+        # The names ``_find_insert_position`` would move the helper past.
+        module_names: Set[str] = set()
+        for statement in self._parse_source(source).body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                module_names.add(statement.name)
+            elif isinstance(statement, ast.Assign):
+                module_names.update(t.id for t in statement.targets if isinstance(t, ast.Name))
+            elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+                module_names.add(statement.target.id)
+        ordered = names & module_names
+        blocked = ordered - self.placeable_after(source)
+        if blocked and not _postpones_annotations(source):
+            raise RefactoringError(
+                f"The helper's annotations name {sorted(blocked)}, defined after code that"
+                " could call the helper"
+            )
+        return ordered - blocked
 
     def _insert_method_type_declarations(
         self, proposal: RefactoringProposal, lines: List[str]
@@ -697,6 +729,20 @@ class Materialization(
                         f"Generated call to {helper_name} passes {len(node.args)} arguments "
                         f"but the helper binds {expected}: {path}"
                     )
+
+
+def _postpones_annotations(source: str) -> bool:
+    """Whether the module is written under ``from __future__ import annotations``."""
+    try:
+        body = ast.parse(source).body
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(statement, ast.ImportFrom)
+        and statement.module == "__future__"
+        and any(alias.name == "annotations" for alias in statement.names)
+        for statement in body
+    )
 
 
 _HELPER_SHAPED = re.compile(r"(?<!\w)_{1,2}extracted_func(?:_\d+)?(?!\w)")

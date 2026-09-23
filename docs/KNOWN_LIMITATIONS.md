@@ -197,7 +197,13 @@ addresses:
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
   names can be written bare, when no statement before that point could run
-  code at import time. Cross-file helpers add a module import; a helper
+  code at import time. A statement counts as running code when anything it
+  evaluates as the module loads is a call: an assignment such as `Y = f()`, a
+  decorator, a default, a base or class keyword, or a statement of a class
+  body; what a base's `__init_subclass__` runs is not seen. When a name the
+  annotations need is defined only after such code, the helper goes before
+  it anyway where annotations are postponed (`from __future__ import
+  annotations`), and is declined elsewhere. Cross-file helpers add a module import; a helper
   import goes after the module's last leading import (after the docstring
   when there are none), so a script that runs a statement before its
   imports keeps it first. Static local import cycles are rejected
