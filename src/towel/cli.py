@@ -31,7 +31,6 @@ from typing import (
     TYPE_CHECKING,
     Tuple,
     TypedDict,
-    TypeVar,
 )
 
 if TYPE_CHECKING:
@@ -934,15 +933,6 @@ def _run_dry(args: argparse.Namespace) -> None:
             oracle.close()
 
 
-_Reason = TypeVar("_Reason", bound=str)
-
-
-def _counts(counts: Mapping[_Reason, int]) -> str:
-    """``reason count`` for each reason, most frequent first."""
-    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return ", ".join(f"{reason} {count}" for reason, count in ordered)
-
-
 def _print_declined(report: "RunReport", applied: int) -> None:
     """Say what the run declined, and why, so "No refactorings found!" is never the whole story.
 
@@ -952,16 +942,18 @@ def _print_declined(report: "RunReport", applied: int) -> None:
     packaging does not let Towel model is always named, since it rules out
     every helper shared across modules, however much else was found.
     """
+    from towel.unification.fixed_point import counted_reasons
+
     lines: List[str] = []
     if report.declined_proposals:
         lines.append(
             f"  {sum(report.declined_proposals.values())} proposal(s) not applied: "
-            f"{_counts(report.declined_proposals)}"
+            f"{counted_reasons(report.declined_proposals)}"
         )
     if not applied and report.declined_pairs:
         lines.append(
             f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
-            f"{_counts(report.declined_pairs)}"
+            f"{counted_reasons(report.declined_pairs)}"
         )
     if report.layout_refusal:
         lines.append(

@@ -53,6 +53,7 @@ from typing import (
     Sequence,
     Set,
     Tuple,
+    TypeVar,
 )
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import CheckerUnavailableError, RefactoringError, UnsupportedLayoutError
@@ -134,7 +135,10 @@ class RunReport:
     layout_refusal: Optional[str] = None
 
 
-def _counted(counts: Mapping[str, int]) -> str:
+_Reason = TypeVar("_Reason", bound=str)
+
+
+def counted_reasons(counts: Mapping[_Reason, int]) -> str:
     """``reason count`` for each reason, most frequent first: ``unknown_layout 1``."""
     return ", ".join(
         f"{reason} {count}"
@@ -185,7 +189,7 @@ class FixedPointDrivers(Materialization):
         if reporter is not None and self._last_declined_pairs:
             reporter.detail(
                 f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
-                f"{_counted(self._last_declined_pairs)}"
+                f"{counted_reasons(self._last_declined_pairs)}"
             )
 
     def _decline(self, proposal: RefactoringProposal, reason: DeclineReason) -> None:
