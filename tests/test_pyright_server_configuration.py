@@ -14,6 +14,11 @@ in six places by the command line and in none by the server, and trio's
 modules clashed with themselves: ``"src.trio._core._run.Task" is not assignable
 to "trio._core._run.Task"``.
 
+The command line's probes had a divergence of their own: pyright found their
+project from its working directory, which it sees with symbolic links
+resolved, so where the temporary directory is a link, as on macOS, a probed
+module was outside the project found for it and clashed with its own package.
+
 Each project here is checked in an environment of its own, as a user's is:
 an untyped library installed, and the project either installed editable, as
 its developers have it and as the corpus runs it, or not installed at all.
@@ -35,6 +40,7 @@ from towel.type_inference import (
     CheckResult,
     CheckSuccess,
     PyrightOracle,
+    RevealRequest,
     served_by_a_language_server,
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -221,6 +227,59 @@ def test_the_server_and_the_command_line_agree_on_a_src_layout(
     baseline, candidate = served
     assert not [error for error in baseline if "src.pkg" in error[2]], baseline
     assert any(error[0] == "tests/typing/typing_edit.py" for error in candidate), candidate
+
+
+PROBED = {
+    "pkg/__init__.py": "",
+    "pkg/_core.py": "class Task:\n    pass\n",
+    "pkg/use.py": (
+        "from pkg._core import Task\nfrom ._core import Task as Local\n\n\n"
+        "def make() -> Task:\n    task = Local()\n    return task\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "layout",
+    [
+        {"pyproject.toml": '[tool.pyright]\ntypeCheckingMode = "basic"\n', **PROBED},
+        {
+            "setup.py": "from setuptools import setup\n\nsetup()\n",
+            **{f"src/{name}": text for name, text in PROBED.items()},
+        },
+    ],
+    ids=["flat-configured", "src-without-configuration"],
+)
+def test_a_probe_is_answered_alike_by_the_server_and_the_command_line(
+    tmp_path: Path, layout: Mapping[str, str]
+) -> None:
+    """Inference and subtyping, asked of both paths, in a module reaching its package both ways.
+
+    The command line's probe was answered where pyright found the project
+    from its working directory: past a symbolically linked temporary
+    directory in the flat layout, and at the probe's own directory in the
+    ``src`` one, where ``src`` is not found. Either way the module's two
+    names for ``Task`` were two classes, and ``Local`` was not a ``Task``.
+    """
+    project = tmp_path / "project"
+    _write(project, layout)
+    interpreter = _environment(tmp_path, project, editable="setup.py" in layout)
+    use = next(project.rglob("use.py"))
+    source = use.read_text(encoding="utf-8")
+    request = RevealRequest(str(use), source, 7, "    ", ("task", "Local()"))
+    answers = []
+    for language_server in (True, False):
+        oracle = _oracle(interpreter, language_server=language_server)
+        try:
+            revealed = oracle.reveal([request])
+            subtyping = oracle.is_subtype(str(use), source, [("Local", "Task"), ("Task", "Local")])
+        finally:
+            oracle.close()
+        answers.append((sorted(revealed.items()), [verdict.value for verdict in subtyping]))
+    served, command_line = answers
+    assert served == command_line
+    assert served[1] == ["yes", "yes"]
+    assert [kind for _, kind in served[0]] == ["Task", "Task"]
 
 
 SOURCE = textwrap.dedent("""

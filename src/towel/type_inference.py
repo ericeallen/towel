@@ -925,13 +925,26 @@ class PyrightOracle:
             copy.apply({str(original): text})
         except (OSError, ValueError, UnicodeError) as error:
             return CheckFailure(f"Could not write a pyright probe into Towel's copy: {error}")
-        probe = copy.path_of(str(original))
-        return self._run_diagnostics([str(probe)], probe.parent)
+        return self._run_diagnostics(copy.tree, [str(copy.path_of(str(original)))])
 
     def _run_diagnostics(
-        self, paths: Sequence[str], directory: Path, *, project: bool = False
+        self, project: Path, paths: Sequence[str] = ()
     ) -> _PyrightDiagnostics | CheckFailure:
-        project_arguments = ["--project", str(directory)] if project else []
+        """``pyright`` over the project copied at ``project``, or over just ``paths`` in it.
+
+        The project is named, never left for pyright to find: the language
+        server is given its root, and the command line must stand in the same
+        place. pyright looks for a configuration from its working directory,
+        which it sees with symbolic links resolved, while the paths it is given
+        keep theirs; where the temporary directory is such a link, as on macOS,
+        a probe was then outside the project found for it, and was analyzed as
+        a module of its own directory, whose relative imports named a second
+        copy of its package: ``"_core.Task" is not assignable to
+        "pkg._core.Task"``. A project with no configuration at its root was
+        rooted at the probe's directory besides, where ``src`` is not found.
+        Named files replace the configured include list but not its exclusions;
+        without them the configuration's own scope is checked.
+        """
         try:
             completed = subprocess.run(
                 [
@@ -939,12 +952,13 @@ class PyrightOracle:
                     "--outputjson",
                     "--pythonpath",
                     self._interpreter,
-                    *project_arguments,
+                    "--project",
+                    str(project),
                     *paths,
                 ],
                 capture_output=True,
                 text=True,
-                cwd=str(directory),
+                cwd=str(project),
                 check=False,
                 timeout=PYRIGHT_TIMEOUT_SECONDS,
                 env=python_tool_environment(),
@@ -1093,9 +1107,9 @@ class PyrightOracle:
                 with checker_snapshot(
                     root, replacements, excluded_paths=excluded_paths
                 ) as snapshot:
-                    # A positional directory overrides both configured include
-                    # and exclude lists. Project mode preserves their scope.
-                    result = self._run_diagnostics([], snapshot, project=True)
+                    # A positional directory would override both configured
+                    # include and exclude lists; naming none keeps their scope.
+                    result = self._run_diagnostics(snapshot)
                     if isinstance(result, CheckFailure):
                         return result
                     for diagnostic in result.diagnostics:

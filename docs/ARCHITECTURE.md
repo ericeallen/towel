@@ -453,7 +453,8 @@ in `pyright_session.py` lists each setting and why it is sent or left unset):
 above all `autoSearchPaths`, without which a `src` layout's consumers resolved
 the package to the environment's installed copy, the user's own tree, and a
 candidate that broke them read as clean. Both paths resolve imports through
-the same interpreter.
+the same interpreter, and the command line is told the project's root rather
+than left to find it from a working directory.
 `type_oracle_for_project` picks the checker the project configures: mypy
 for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
 `pyrightconfig.json`, and for a project configuring both, mypy infers
