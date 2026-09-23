@@ -176,7 +176,7 @@ one fails that file and returns the decision for review.
 *Status: decided; implementation follows the fix branches now in progress.
 Not yet released.*
 
-## 2026-09-22: Towel does not change class design
+## 2026-09-22: Towel does not change externally visible class design
 
 The owner's position: changing a class's design is a judgement for an
 intelligent actor, not for a mechanical transformation. That covers moving a
@@ -195,7 +195,8 @@ helpers into pygments' `Formatter` and click's `UsageError`, public bases
 that plugins and users subclass. An agent can weigh those things, and its
 change is reviewed like any other.
 
-The class-private helper of the previous entry is consistent with this. It
+The class-private helper of the previous entry is consistent with this, as
+the owner confirmed: it does not affect externally visible class design. It
 goes only into the class that already contains both copies of the code. It
 is invisible outside that class, since Python mangles its name. It changes no
 interface and no hierarchy. It is an implementation detail of that class, as
