@@ -48,14 +48,17 @@ describe belong to that version.
   entered as a parameter.
 - **Frame and control flow.** Blocks containing `yield`, `await`, `async`
   loops, context managers or comprehensions, `locals()`, `globals()`,
-  `eval`, `exec`, zero-argument `vars()`, `dir()` or `super()`,
+  `eval`, `exec`, zero-argument `vars()` or `dir()`, `super()` reached
+  through another name (`s = super; s()`, `builtins.super()`),
   `break`/`continue` targeting an outer loop, comprehension assignment
   expressions, `warnings.warn` in any spelling with or without
   `stacklevel`, any call with a `stacklevel=` keyword, or direct frame or
   stack inspection are rejected; aliases of these bound by import or
   assignment are resolved. A block is also rejected when its enclosing
   function reads its own frame (`locals()`, `dir()`, `eval`,
-  `sys._getframe()`, ...) anywhere outside the block.
+  `sys._getframe()`, ...) anywhere outside the block. Zero-argument
+  `super()` itself moves only into a method helper of the class that holds
+  the block (see *Method insertion*).
 - **Names the call site may not resolve.** A free variable is passed eagerly
   only when the call site resolves it on every path: a local bound on every
   path before the block, a module name bound on every path before the
@@ -143,8 +146,8 @@ unchanged. Towel handles this in three layers, and it is worth being explicit
 about where each one stops.
 
 - **Rejected outright.** A block that *itself* contains generator or async
-  suspension, `locals()`/`globals()`/`vars()`/`dir()`/`super()` with no
-  arguments,
+  suspension, `locals()`/`globals()`/`vars()`/`dir()` with no arguments, a
+  `super()` reached through another name,
   `eval`/`exec`, direct frame or stack inspection (`sys._getframe`,
   `inspect.stack`, and the like), or `warnings.warn` is never extracted:
   with a `stacklevel`, because the helper's frame shifts the attribution,
@@ -345,10 +348,9 @@ visible class design"). The rule's costs:
   class-private name (`self.__x`), which a module function would have to
   spell mangled, `receiver._A__x`, a spelling mypy and pyright both reject
   (`private_name_lexical_class`). `__class__` is passed to it as an
-  argument, each site passing its own class. Zero-argument `super()` is declined in
-  every block (`frame_sensitive_block`), before placement is known, so even a
-  method helper of the class holding both duplicates, which would bind it
-  alike, does not get it.
+  argument, each site passing its own class. Zero-argument `super()` in such
+  a block is declined (`needs_class_body`): a module function has no class
+  cell, and its `super()` raises `RuntimeError`.
 - A pyright-strict project rejects a module function that reads a protected
   attribute (`receiver._cache`, `reportPrivateUsage`), so its own check
   declines such an extraction.
@@ -432,6 +434,30 @@ a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join a
 method helper only when they are methods of the same class with the same
 receiver kind; other occurrences keep their code.
+
+Zero-argument `super()` is `super(__class__, self)`: the cell the compiler
+gives every function of a class body that loads `super` or `__class__`, and
+the current value of the frame's first argument. A method helper of the class
+holding both duplicates has the same cell and, reached as
+`self.__extracted_func_0()`, the same receiver first, so code using `super()`
+moves there and nowhere else. Every condition above applies, and none falls
+back to a module function: a pair whose helper cannot be a method of that
+class is declined (`needs_class_body`), including one in methods that never
+read an attribute of their receiver, which may still run with `None` in its
+place (`super(One, None)` is an unbound super whose own attributes answer,
+though from Python 3.12 a call site that has already run raises instead). The
+method must also keep its first parameter, never rebinding or deleting it,
+not even through a nested `nonlocal`, and its own scope must leave
+`__class__` alone (`frame_sensitive_block`): otherwise its `super()` reads
+something a helper's would not. A `super()` in a lambda, nested function or
+comprehension of the moved code moves with it and reads that scope's own
+first argument, as before; a comprehension's is the receiver where Python
+inlines it (3.12 on) and its iterator where it does not, in the method and
+the helper alike. `__class__` beside `super()` is read bare in the helper,
+its own cell, which a parameter of that name would hide. A call site that
+would evaluate `super()` itself, as a thunk or by passing `super` for the
+helper to call, is declined (`super_in_call`). `super(One, self)`, which names
+its class and object, reads no cell and moves anywhere.
 
 ## Type annotations on helpers
 
@@ -612,10 +638,14 @@ the proposals it built and did not apply, by reason:
 
 - Frame use. `frame_sensitive_block`: the block contains a suspension,
   a namespace read, a frame or stack read, a warning, a loop transfer
-  out of the block, or a comprehension assignment expression (the list
-  under *Frame and control flow* above). `frame_read_in_function`: the
-  enclosing function reads its own frame (`locals()`, `dir()`, `eval`,
-  `sys._getframe()`, ...) somewhere outside the block.
+  out of the block, a comprehension assignment expression, or a `super()`
+  reached through another name (the list under *Frame and control flow*
+  above), or zero-argument `super()` in a method that rebinds its receiver or
+  binds `__class__`. `frame_read_in_function`: the enclosing function reads
+  its own frame (`locals()`, `dir()`, `eval`, `sys._getframe()`, ...)
+  somewhere outside the block, or calls `super()` through another name there
+  while the block holds a load of `super` or `__class__`, which may be what
+  gives the function its class cell.
 - Bindings crossing the block boundary. `nested_binding_escapes`: a block
   nested inside a loop or branch binds a name the rest of the function
   reads. `closure_crosses_block_boundary`: a nested function or lambda
@@ -686,14 +716,20 @@ the proposals it built and did not apply, by reason:
   case. A match capture, `with` target, or exception name that would have
   to cross the block boundary in a way the return analysis does not
   represent is declined here or under the alignment reason above.
-- Call sites. `forwarded_callee`: a differing expression in call position
+- Call sites. `super_in_call`: the call would evaluate zero-argument
+  `super()` itself, in a thunk or by passing `super` for the helper to call,
+  where no frame reads the method's receiver and class cell.
+  `forwarded_callee`: a differing expression in call position
   would be passed as `lambda *args, **kwargs: callee(*args, **kwargs)`,
   which reads worse than the duplication it removes. `undefined_names_in_call`:
   the generated call names something the site cannot resolve (a leaked
   placeholder, a name bound only inside the block).
   `instantiation_mismatch`: the helper applied to the call's arguments does
   not reproduce the block up to renamed binders.
-- Placement. `nonlocal_safety_skip`: either block's function declares
+- Placement. `needs_class_body`: the blocks use zero-argument `super()` and
+  the helper cannot be a method of the class holding both, reached through
+  the same receiver (*Method insertion*); nothing else binds `super()` alike.
+  `nonlocal_safety_skip`: either block's function declares
   `nonlocal`. `private_name_lexical_class`: a site's method uses a
   `__private` name and the helper would live in another class, which
   changes name mangling. `cross_module_global_declaration`: a cross-file
