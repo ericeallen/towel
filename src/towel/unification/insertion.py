@@ -37,7 +37,6 @@ from .visitors import ClassLocator, FuncLocator, body_without_docstring
 from .engine_state import EngineState
 from .exceptions import RefactoringError
 from .models import FunctionNode
-from ..project_layout import package_chain
 from ..source_text import read_source, source_lines
 
 
@@ -47,41 +46,6 @@ def reindent(line: str, prefix: str) -> str:
     levels = (len(line) - len(stripped)) // 4
     unit = "\t" if "\t" in prefix else "    "
     return prefix + unit * levels + stripped
-
-
-def relative_import_module(from_path: Path, to_path: Path) -> Optional[str]:
-    """The relative-import module for reaching ``from_path`` from ``to_path``.
-
-    Ascends from the importing file's own directory until it contains the helper
-    file, using one leading dot for that package plus one more per level climbed:
-    ``.helpers`` for a sibling module, ``.sub.helpers`` for one in a subpackage,
-    ``..helpers`` for one a level up. Returns ``None`` when a relative import
-    cannot reach across: when the importer is in no package, or when the
-    nearest directory holding both files is above the importer's top-level
-    package. Python refuses a relative import that climbs out of the top
-    package, so ``utils/v.py`` cannot reach ``api/c.py`` as ``..api.c`` when
-    ``utils`` and ``api`` are two packages side by side.
-    """
-    helper = from_path.resolve()
-    package_dir = to_path.resolve().parent
-    climbable = len(package_chain(to_path.resolve()))
-    dots = 1
-    while True:
-        try:
-            relative = helper.relative_to(package_dir)
-            break
-        except ValueError:
-            parent = package_dir.parent
-            if parent == package_dir:
-                return None
-            package_dir = parent
-            dots += 1
-    if dots > climbable:
-        return None
-    parts = list(relative.with_suffix("").parts)
-    if parts and parts[-1] == "__init__":
-        parts.pop()
-    return "." * dots + ".".join(parts)
 
 
 class InsertionPoints(EngineState):

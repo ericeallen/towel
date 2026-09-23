@@ -324,18 +324,25 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 (default: 20,000,000).
             parameterize_constants: Whether differing constants across the matched
                 blocks become helper parameters (default: True).
-            prefer_absolute_imports: For a cross-file helper, prefer an absolute
-                import over a relative one -- honored only when packaging metadata
-                anchors the module name. None (default) lets the discovered layout
-                decide.
-            pep420_namespace_packages: Treat directories without ``__init__.py`` as
-                namespace packages when deriving module paths. None (default)
-                infers it from the project.
+            prefer_absolute_imports: Deprecated, and has no effect. It chose an
+                absolute or a relative import for a cross-file helper, a name
+                read from packaging metadata; since 1.772 every import Towel
+                writes is spelled as the program's own imports show it works
+                (docs/DECISIONS.md, "Import names come from the program"), so
+                there is nothing left to choose. Still accepted so existing
+                callers keep working; it will be removed in a later release.
+            pep420_namespace_packages: Deprecated, and has no effect, for the
+                same reason: whether a directory without ``__init__.py`` is a
+                package is read from the imports that use it.
             promote_equal_hof_literals: Expose literal arguments of higher-order
                 factory calls as parameters even when they are equal across blocks
                 (Option B policy); default False.
             excluded_directories: Directory names to skip in directory mode, such
-                as a package that carries its own test suite.
+                as a package that carries its own test suite. The program's
+                import model reads nothing in them either, which is how a stray
+                copy of a package that makes its name ambiguous is set aside;
+                what an import that enters one runs is then unknown, and no
+                host whose import would enter one is taken.
             cross_module_helpers: Share a helper between duplicates in different
                 modules, importing it from the one that hosts it into the others
                 (default: False). Off, only duplicates within one module are
@@ -394,7 +401,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.analysis_session = AnalysisSession(
             check_ast_immutable=self._settings.check_ast_immutable
         )
-        self.import_graph = ImportGraphCache()
+        # Names come from the program's imports, less the directories the
+        # run leaves out.
+        self.import_graph = ImportGraphCache(excluded_names=excluded_directories)
         self._source_lines_cache: Dict[str, Tuple[Tuple[int, int, int], Tuple[str, ...]]] = {}
         self.max_parameters = max_parameters
         self.min_lines = min_lines
@@ -420,9 +429,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
             promote_equal_hof_literals=promote_equal_hof_literals,
         )
         self.extractor = HygienicExtractor()
-        # Cross-file import preferences
-        self.prefer_absolute_imports = prefer_absolute_imports
-        self.pep420_namespace_packages = pep420_namespace_packages
+        # prefer_absolute_imports and pep420_namespace_packages are accepted
+        # and ignored; see the docstring.
         # Default behavior: allow safe handling of globals/nonlocals by not parameterizing
         # them and promoting necessary declarations into the extracted function when needed.
 
@@ -614,6 +622,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         for path in stale:
             self._evict_cached_analysis(path)
         self._analysis_paths = tuple(file_paths)
+        if self.cross_module_helpers and file_paths:
+            # Read the program's imports before any pair is judged or a
+            # worker forked, once for the project; a run's stage has them.
+            self.import_graph.program_for(Path(file_paths[0]))
         return run_pipeline(
             file_paths,
             engine=self,

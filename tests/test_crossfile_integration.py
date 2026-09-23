@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import io
 import shutil
+import tempfile
 from pathlib import Path
 from typing import List
 
@@ -39,14 +40,32 @@ def _participating_files(proposal) -> set[str]:
     return {proposal.file_path} | {r.file_path or proposal.file_path for r in proposal.replacements}
 
 
+_STANDALONE = tempfile.TemporaryDirectory(prefix="towel-crossfile-")
+"""Where each fixture project is copied to be analyzed, as a user's project sits."""
+
+
+def standalone_project(project_name: str) -> Path:
+    """A copy of a cross-file fixture project in a directory of its own, made once.
+
+    In this checkout every fixture has its expected output beside it, a second
+    copy of each module, so the program's imports could not say which copy a
+    name means and no helper would be shared across its modules.
+    """
+    project_dir = CROSSFILE_DIR / project_name
+    assert project_dir.is_dir(), f"cross-file fixture missing: {project_dir}"
+    copy = Path(_STANDALONE.name) / project_name
+    if not copy.exists():
+        shutil.copytree(project_dir, copy)
+    return copy
+
+
 def get_crossfile_project_files(project_name: str) -> List[str]:
-    """All Python files of a cross-file fixture project, which must exist.
+    """All Python files of a cross-file fixture project, which must exist, in its standalone copy.
 
     A missing or empty fixture is a broken test tree, not a reason to skip:
     renaming a fixture directory must fail every test that depends on it.
     """
-    project_dir = CROSSFILE_DIR / project_name
-    assert project_dir.is_dir(), f"cross-file fixture missing: {project_dir}"
+    project_dir = standalone_project(project_name)
     # Include files in nested directories to support complex project layouts
     files = sorted(str(f) for f in project_dir.rglob("*.py") if f.is_file())
     assert files, f"cross-file fixture has no Python files: {project_dir}"
@@ -191,7 +210,7 @@ class TestNestedStructureCrossFile:
         """Nested structure test project should exist and have files."""
         files = get_crossfile_project_files("nested_structure")
         # The fixture nests packages, so files live below the project root.
-        assert any(Path(f).parent != CROSSFILE_DIR / "nested_structure" for f in files)
+        assert any(Path(f).parent != standalone_project("nested_structure") for f in files)
 
     def test_nested_structure_analysis(self):
         """Nested package structure should be analyzable."""

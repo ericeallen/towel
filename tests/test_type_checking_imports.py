@@ -166,6 +166,24 @@ def test_the_guarded_import_does_not_run(tmp_path: Path) -> None:
     assert ran.stdout.strip().endswith("B")
 
 
+def _runtime_imports(source: str) -> set[str]:
+    """The imports a module runs at its top level: every one not under ``TYPE_CHECKING``."""
+    tree = ast.parse(source)
+    guarded = {
+        id(node)
+        for statement in tree.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.Name)
+        and statement.test.id == "TYPE_CHECKING"
+        for node in ast.walk(statement)
+    }
+    return {
+        ast.unparse(node)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and id(node) not in guarded
+    }
+
+
 def _cross_module_project(root: Path) -> Path:
     """A host that needs another module's class in a signature, deferring nothing.
 
@@ -218,8 +236,15 @@ def _cross_module_project(root: Path) -> Path:
 def test_a_guarded_name_is_quoted_where_the_module_evaluates_its_annotations(
     tmp_path: Path,
 ) -> None:
-    """Type-checking and importing are different questions and both must be answered."""
+    """Type-checking and importing are different questions and both must be answered.
+
+    The helper stays in its module, so the run needs no ``--cross-module``;
+    the import its annotation needs is one only a checker reads, so it is
+    written anyway, spelled as the module spells its own package, and it is
+    the only import the run adds besides ``TYPE_CHECKING`` itself.
+    """
     package = _cross_module_project(tmp_path)
+    before = _runtime_imports((package / "host.py").read_text(encoding="utf-8"))
     result = subprocess.run(
         [
             sys.executable,
@@ -229,7 +254,6 @@ def test_a_guarded_name_is_quoted_where_the_module_evaluates_its_annotations(
             str(package),
             str(package),
             "--no-interactive",
-            "--cross-module",
             "--progress",
             "none",
             "--min-lines",
@@ -243,7 +267,8 @@ def test_a_guarded_name_is_quoted_where_the_module_evaluates_its_annotations(
     assert result.returncode == 0, result.stdout + result.stderr
 
     host = (package / "host.py").read_text(encoding="utf-8")
-    assert "from pkg.other import Thing" in host, host
+    assert "if TYPE_CHECKING:\n    from pkg.other import Thing\n" in host, host
+    assert _runtime_imports(host) == before | {"from typing import TYPE_CHECKING"}
     helper = next(
         node
         for node in ast.walk(ast.parse(host))

@@ -1,4 +1,10 @@
-"""A project whose layout Towel cannot model loses its cross-file pairs, nothing else."""
+"""A layout the packaging readers could not model is modeled from its imports like any other.
+
+A ``hatch.toml`` refused every cross-file pair once. Import names now come
+from the program's own imports, which say nothing about the build backend:
+the same-file extraction happens by default, and the cross-module one when
+asked for.
+"""
 
 from __future__ import annotations
 
@@ -61,6 +67,21 @@ def test_same_file_extractions_still_happen(tmp_path: Path) -> None:
     changed = {Path(path).name: count for path, (count, _) in results.items()}
     assert changed == {"a.py": 1}
     assert (tmp_path / "out" / "pkg" / "b.py").read_text() == CROSS_B
+
+
+def test_the_cross_module_pair_is_shared_when_asked(tmp_path: Path) -> None:
+    _hatch_project(tmp_path / "proj")
+    engine = UnificationRefactorEngine(
+        min_lines=3, reuse_existing_functions=False, cross_module_helpers=True
+    )
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        results, _ = engine.refactor_directory_to_fixed_point(
+            str(tmp_path / "proj"), str(tmp_path / "out"), max_iterations=0, progress="none"
+        )
+    changed = {Path(path).name: count for path, (count, _) in results.items()}
+    assert changed == {"a.py": 2, "b.py": 1}
+    borrower = (tmp_path / "out" / "pkg" / "b.py").read_text()
+    assert "from .a import __extracted_func" in borrower, borrower
 
 
 def test_the_command_line_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

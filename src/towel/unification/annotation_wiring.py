@@ -54,7 +54,7 @@ from .annotations import (
     _import_bound_names,
     _defined_names,
 )
-from .exceptions import CheckerUnavailableError, RefactoringError
+from .exceptions import CheckerUnavailableError, ProjectScanLimitError, RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
 from ..checker_project import _read_json_config
@@ -73,7 +73,7 @@ from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
 from .generic_annotations import MethodContext, generic_helpers
-from .import_graph import module_and_qualname
+from .program_imports import ProgramImports
 
 UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
 """The way out of every refusal to verify: the one thing such a user can act on."""
@@ -200,6 +200,7 @@ class HelperAnnotationWiring(EngineState):
         self._type_run_baseline = None
         self._analysis_paths = tuple(file_paths)
         self._output_origin = None
+        self.import_graph.begin_run()
         self._ensure_type_checking(file_paths)
 
     def _ensure_type_checking(self, file_paths: Sequence[str]) -> None:
@@ -315,26 +316,45 @@ class HelperAnnotationWiring(EngineState):
         head is bound: the package object carries no such attribute. Whether a
         path is reachable is not decidable from the syntax, so the test is
         whether the short name is free here. When it is, the short name is used
-        and the import stated under ``TYPE_CHECKING``; when it is taken, the
-        path is left as the checker wrote it and the project check decides.
+        and the import stated under ``TYPE_CHECKING``, spelled as the program's
+        own imports show the host can import that module
+        (``ImportModel.split_qualified``, then ``ImportModel.spelling``). When
+        the name is taken, or no module of the project is known to own it, or
+        the host is not known to be able to import that module, the path is
+        left as the checker wrote it and the project check decides.
+
+        Such an import never runs, so it changes nothing a program does, and
+        it is written whether or not helpers are shared across modules; the
+        program's imports are read for it only when a name needs one. Where
+        they cannot be read at all, every path is left as written.
         """
         imports: List[Tuple[str, str]] = []
         shortened: Dict[str, str] = {}
         bound = (_import_bound_names(host) | _defined_names(host)) if host is not None else set()
+        importer = Path(proposal.file_path)
+        program: Optional[ProgramImports] = None
         for dotted in qualified_names_in_annotations(proposal.extracted_function):
             name = dotted.rsplit(".", 1)[-1]
             if name in bound or name in shortened.values():
                 continue
-            split = module_and_qualname(
-                self._origin_of(proposal.file_path), dotted, self.import_graph
-            )
+            if program is None:
+                try:
+                    program = self.import_graph.program_for(importer)
+                except ProjectScanLimitError:
+                    if self.cross_module_helpers:
+                        raise
+                    break  # Nothing can be spelled; every path stays as written.
+            split = program.model.split_qualified(dotted)
             if split is None:
-                continue  # No module of this project owns it; leave it written out.
-            module_name, qualname = split
+                continue  # No trusted name of the project owns it; leave it written out.
+            module_file, _, qualname = split
             if qualname != name:
                 continue  # A nested name needs its owner in scope, not just itself.
+            spelling = program.spelling(importer, module_file)
+            if spelling is None:
+                continue  # The host is not known to be able to import it; leave it written out.
             shortened[dotted] = name
-            imports.append((module_name, name))
+            imports.append((spelling.module, name))
         if shortened:
             shorten_qualified_names(
                 proposal.extracted_function, shortened, quote=not defers_annotations(host)

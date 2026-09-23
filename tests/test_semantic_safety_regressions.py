@@ -382,48 +382,12 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         b.write_text("", encoding="utf-8")
         self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}, ImportGraphCache()))
 
-    def test_absolute_import_cycle_detected_in_relocated_flat_layout(self) -> None:
-        # Out-of-place refactoring writes a package's modules into a flat output
-        # directory, but the modules keep their original absolute imports
-        # (``from app.b import ...``). The localized follow-up pass then analyzes
-        # those relocated files, where no ``app/`` package directory exists. The
-        # cycle guard must still resolve ``app.b`` to ``b.py`` by its trailing
-        # component and detect the cycle; regression for the ecosystem breakage
-        # where starlette/pygments/parso/... gained circular imports because the
-        # guard silently returned False against the relocated layout.
-        a, b = self.root / "a.py", self.root / "b.py"
-        a.write_text("from app.b import seed\n\ndef first(x):\n    return x\n", encoding="utf-8")
-        b.write_text("seed = 1\n", encoding="utf-8")
-        self.assertTrue(would_create_import_cycle(str(a), {str(a), str(b)}, ImportGraphCache()))
-
     def test_absolute_import_no_cycle_in_relocated_flat_layout(self) -> None:
-        # The mirror of the regression: when the relocated module imports an
-        # unrelated module, resolving trailing components must not invent a cycle.
+        # An import of a package this tree does not hold names none of its
+        # files, however its last component is spelled: no cycle is invented.
         a, b = self.root / "a.py", self.root / "b.py"
         a.write_text(
             "from app.other import seed\n\ndef first(x):\n    return x\n", encoding="utf-8"
         )
         b.write_text("seed = 1\n", encoding="utf-8")
         self.assertFalse(would_create_import_cycle(str(a), {str(a), str(b)}, ImportGraphCache()))
-
-    def test_relocated_self_package_import_cycles_through_package_init(self) -> None:
-        # tenacity regression: the flat output has a subpackage whose module
-        # reaches back into the package with an absolute self-import (``from
-        # tenacity import _utils``). Importing a name from the package runs its
-        # ``__init__``, so the edge to the root ``__init__.py`` must be seen;
-        # ``__init__`` importing the borrower then closes the cycle
-        # (sub.helper -> pkg/__init__ -> borrower). A single trailing-suffix
-        # match must therefore also add the relocated root's ``__init__.py``.
-        (self.root / "__init__.py").write_text("from .borrower import thing\n", encoding="utf-8")
-        (self.root / "borrower.py").write_text("thing = 1\n", encoding="utf-8")
-        (self.root / "leaf.py").write_text("leaf = 1\n", encoding="utf-8")
-        sub = self.root / "sub"
-        sub.mkdir()
-        (sub / "__init__.py").write_text("", encoding="utf-8")
-        helper_home = sub / "helper_home.py"
-        helper_home.write_text("from app import leaf\n", encoding="utf-8")
-        self.assertTrue(
-            would_create_import_cycle(
-                str(helper_home), {str(self.root / "borrower.py")}, ImportGraphCache()
-            )
-        )

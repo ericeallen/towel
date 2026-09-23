@@ -108,15 +108,16 @@ PYPROJECT = '[project]\nname = "pkg"\nversion = "0"\n'
         (True, "import sys", "import sys", False),
         (True, "import sys\nfrom pkg import util", "import sys\nfrom pkg import util", True),
         (True, "import sys\nfrom . import util", "import sys\nfrom . import util", True),
-        # Without packaging metadata the helper's import would be relative,
-        # which no run by path resolves: declined when the import is written.
-        (False, "import sys\nfrom pkg import util", "import sys\nfrom pkg import util", False),
+        # Packaging metadata names nothing: the tools' own absolute imports of
+        # their package are what the helper's import is spelled like, and a
+        # run by path resolves it wherever it resolves theirs.
+        (False, "import sys\nfrom pkg import util", "import sys\nfrom pkg import util", True),
     ],
     ids=[
         "imports-nothing-of-its-package",
         "imports-its-package",
         "imports-relatively",
-        "would-gain-a-relative-import",
+        "imports-its-package-without-metadata",
     ],
 )
 def test_a_script_by_path_keeps_running_as_it_did(

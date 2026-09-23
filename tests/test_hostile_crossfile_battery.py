@@ -12,7 +12,10 @@ As in ``test_hostile_battery``, ``TRANSFORMED`` pins which packages the
 current engine rewrites, so a lost cross-file extraction fails as loudly as
 a wrong one. Every package is in exactly one state. Rejected today:
 ``xf13_import_time_effects``, whose helper import would run a module that
-prints at import time, which the borrower's own import never ran.
+prints at import time, which the borrower's own import never ran; and
+``xf23_relative_import_in_another_package``, whose subpackages ``pkg.x`` and
+``pkg.y`` never import each other, so neither may gain an import of the
+other (docs/DECISIONS.md, "Import names come from the program").
 """
 
 from __future__ import annotations
@@ -50,7 +53,6 @@ TRANSFORMED = {
     "xf20_builtin_shadowed_in_ancestor_module",
     "xf21_builtin_shadowed_in_third_module",
     "xf22_borrower_rebinds_builtins_namespace",
-    "xf23_relative_import_in_another_package",
     "xf24_relative_import_climbs_elsewhere",
     "xf25_relative_import_in_the_same_package",
     "xf26_relative_import_ancestor_in_another_package",
@@ -60,7 +62,7 @@ TRANSFORMED = {
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
-REJECTED = {"xf13_import_time_effects"}
+REJECTED = {"xf13_import_time_effects", "xf23_relative_import_in_another_package"}
 
 
 def _python_files(root: Path) -> dict[str, bytes]:

@@ -340,11 +340,15 @@ def test_cross_file_rollback_removes_declarations_imports_and_calls_together(
 ) -> None:
     host, caller = tmp_path / "a.py", tmp_path / "b.py"
     original = "def first(value):\n    return value\n"
+    # The caller imports the host, so the program's own imports show it can.
+    borrowing = "import a\n\n\n" + original
     host.write_text(original)
-    caller.write_text(original)
+    caller.write_text(borrowing)
     proposal = _proposal(host, "from typing import TypeVar\n_T = TypeVar('_T')\n")
+    site = proposal.replacements[0]
+    shifted = (site.line_range[0] + 3, site.line_range[1] + 3)  # below the caller's import
     proposal = replace(
-        proposal, replacements=[replace(proposal.replacements[0], file_path=str(caller))]
+        proposal, replacements=[replace(site, file_path=str(caller), line_range=shifted)]
     )
     plan = _engine().plan_refactoring(proposal)
     assert len(plan.changes) == 2
@@ -364,5 +368,5 @@ def test_cross_file_rollback_removes_declarations_imports_and_calls_together(
     with pytest.raises(OSError, match="simulated second file"):
         apply_changes(plan)
     assert failed
-    assert host.read_text() == caller.read_text() == original
+    assert host.read_text() == original and caller.read_text() == borrowing
     assert not list(tmp_path.glob(".towel-transaction-*"))

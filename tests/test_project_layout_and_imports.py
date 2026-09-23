@@ -62,9 +62,10 @@ def f2(x):
         assert mod_b == "acme.core.b"
 
 
-def test_import_insertion_prefers_absolute_even_same_dir_when_requested():
-    # Verify that when prefer_absolute_imports=True, engine uses absolute module name
-    # even when files are in the same directory within a package.
+def test_the_retired_absolute_preference_no_longer_decides_an_import():
+    # prefer_absolute_imports is accepted and ignored: between two modules of
+    # one package that never spell their own package absolutely, the import
+    # is the relative one, which holds wherever the package is imported.
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         write_file(
@@ -134,16 +135,10 @@ def fb(x):
         other_path = other_files[0]
         content = modified[str(other_path)]
 
-        # With prefer_absolute_imports=True and src-layout package, expect absolute import
-        # Module should be pkg.mod.alpha if alpha.py is the canonical file
-        if canonical.name == "alpha.py":
-            expected_prefix = "from pkg.mod.alpha import __extracted_func"
-        else:
-            expected_prefix = "from pkg.mod.beta import __extracted_func"
-
+        expected_prefix = f"from .{canonical.stem} import __extracted_func"
         assert (
             expected_prefix in content
-        ), f"Expected absolute import: {expected_prefix}\nGot:\n{content}"
+        ), f"Expected a relative import: {expected_prefix}\nGot:\n{content}"
 
 
 def test_module_name_none_for_non_identifier_root():

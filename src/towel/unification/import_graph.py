@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Resolving a project's import graph on the filesystem, for the cycle guard and helper placement.
+"""Resolving a project's import graph, for the cycle guard and helper placement.
 
 Which files an import statement reaches, which module defines an imported name,
 whether a new import would close a static cycle, and whether running a
-module's top level can run code of its own (``ImportTimeCode``). Results are
-cached per run in an ``ImportGraphCache`` the engine owns.
+module's top level can run code of its own (``ImportTimeCode``). What an
+import names is the program's own answer, the import model's
+(``ProgramImports``; docs/DECISIONS.md, "Import names come from the
+program"), never one derived from packaging metadata or from where a copy
+of the tree happens to sit. Results are cached per run in an
+``ImportGraphCache`` the engine owns.
 """
 
 from __future__ import annotations
@@ -25,7 +29,6 @@ from __future__ import annotations
 import ast
 import builtins
 import configparser
-import os
 import re
 import sys
 import warnings
@@ -48,13 +51,24 @@ from typing import (
 )
 
 from .bounded_cache import BoundedCache
-from .exceptions import UnsupportedLayoutError
-from ..project_layout import ProjectLayout, find_project_root, load_pyproject, package_chain
+from .exceptions import ProjectScanLimitError
+from ..import_model import NameStatus
+from ..project_layout import find_project_root, load_pyproject
 from .module_bindings import NAMESPACE_PRESERVING_DECORATORS, dotted_name, global_bindings
+from .program_imports import ProgramImports, program_imports
 from .statement_facts import (
     imported_binding_name,
 )
 from ..source_text import read_source
+
+
+@dataclass(frozen=True)
+class _Edges:
+    """The project files one module's imports may execute, and whether some may run unseen."""
+
+    files: FrozenSet[Path]
+    unseen: bool
+    """Some import enters a directory the model did not read (``ProgramImports.reached``)."""
 
 
 class ImportGraphCache:
@@ -64,22 +78,25 @@ class ImportGraphCache:
     cycle, and answering re-reads every reachable module unless the edges are
     remembered (Sphinx: 243 modules per pair). Edges and import bindings are
     keyed by path, modification time, and size, so a rewritten file is
-    re-read; module lookups and source roots are keyed by path. Every table
-    is bounded, and the engine owns one instance per run; the module-level
-    default serves callers that have no engine.
+    re-read. Every table is bounded, and the engine owns one instance per
+    run; a caller with no engine makes its own.
+
+    What an import names comes from the program's imports
+    (:meth:`program_for`): the model of the project a path belongs to, read
+    the first time a question needs it, less the directories
+    ``excluded_names`` names. During a run that project is the one the stage
+    copies (:meth:`begin_run`).
     """
 
-    def __init__(self, limit: int = 8192) -> None:
-        self.edges: BoundedCache[
-            Tuple[Path, int, int, FrozenSet[Path], str], Optional[FrozenSet[Path]]
-        ] = BoundedCache(limit)
+    def __init__(self, limit: int = 8192, *, excluded_names: Iterable[str] = ()) -> None:
+        self.excluded_names = frozenset(excluded_names)
+        self._stage: Optional[Tuple[Path, Path]] = None
+        self._programs: Dict[Path, ProgramImports] = {}
+        self._unreadable: Dict[Path, ProjectScanLimitError] = {}
+        self.edges: BoundedCache[Tuple[Path, int, int, str], Optional[_Edges]] = BoundedCache(limit)
         self.bindings: BoundedCache[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = (
             BoundedCache(limit)
         )
-        self.module_files: BoundedCache[Tuple[Path, Tuple[str, ...]], FrozenSet[Path]] = (
-            BoundedCache(limit)
-        )
-        self.source_roots: BoundedCache[Path, Tuple[Path, ...]] = BoundedCache(limit)
         # Whether a module runs code at import, keyed like the edges.
         self.effects: BoundedCache[Tuple[Path, int, int], bool] = BoundedCache(limit)
         # Whether subclassing a module's class runs only Python's class
@@ -99,6 +116,53 @@ class ImportGraphCache:
         if resolved is None:
             resolved = self.resolved_paths.put(path, Path(path).resolve())
         return resolved
+
+    def begin_run(
+        self, origin_root: Optional[Path] = None, stage_root: Optional[Path] = None
+    ) -> None:
+        """Forget every model and what was learned under it; a run starts.
+
+        With ``stage_root`` the run refactors a copy of the project at
+        ``origin_root``, and a path in either is answered by that project's
+        model, read from the project itself.
+        """
+        self._stage = (
+            None
+            if origin_root is None or stage_root is None
+            else (origin_root.resolve(), stage_root.resolve())
+        )
+        self._programs = {}
+        self._unreadable = {}
+        for table in (self.edges, self.effects, self.quiet_classes):
+            table.clear()
+
+    def program_for(self, path: Path) -> ProgramImports:
+        """The program imports of the project ``path`` belongs to, read on first use.
+
+        Raises ``ProjectScanLimitError`` for a project too large to read whole,
+        each time it is asked, having tried once.
+        """
+        resolved = path.resolve()
+        stage = self._stage
+        if stage is not None and any(
+            resolved == root or resolved.is_relative_to(root) for root in stage
+        ):
+            root, stage_root = stage
+        else:
+            root, stage_root = find_project_root(resolved).resolve(), None
+        known = self._programs.get(root)
+        if known is not None:
+            return known
+        failure = self._unreadable.get(root)
+        if failure is not None:
+            raise failure
+        try:
+            known = program_imports(root, self.excluded_names, stage_root=stage_root)
+        except ProjectScanLimitError as error:
+            self._unreadable[root] = error
+            raise
+        self._programs[root] = known
+        return known
 
 
 def relative_import_levels(nodes: Iterable[ast.AST]) -> FrozenSet[int]:
@@ -135,150 +199,11 @@ def relative_imports_resolve_alike(files: Iterable[str], levels: Iterable[int]) 
     return True
 
 
-def layout_is_known(canonical_file: str, cache: ImportGraphCache) -> bool:
-    """Whether the project around ``canonical_file`` has a layout Towel can model.
-
-    Cross-file helpers need an import, and an import needs the project's
-    source roots; a layout that discovery refuses leaves every cross-file
-    pair in that project undecidable.
-    """
-    return _source_roots(Path(canonical_file).resolve(), cache) is not None
-
-
-def _source_roots(path: Path, cache: ImportGraphCache) -> Optional[Tuple[Path, ...]]:
-    """The project's source roots as seen from ``path``, or None when the layout is unknown."""
-    roots = cache.source_roots.get(path)
-    if roots is None:
-        try:
-            roots = tuple(ProjectLayout.discover(path).source_roots)
-        except UnsupportedLayoutError:
-            return None
-        cache.source_roots.put(path, roots)
-    return roots
-
-
-def _module_files(
-    base: Path, components: Iterable[str], cache: ImportGraphCache
-) -> FrozenSet[Path]:
-    key = (base, tuple(components))
-    cached = cache.module_files.get(key)
-    if cached is not None:
-        return cached
-    result: Set[Path] = set()
-    cursor = base
-    for component in key[1]:
-        cursor = cursor / component
-        initializer = cursor / "__init__.py"
-        if initializer.is_file():
-            result.add(initializer.resolve())
-    module = cursor.with_suffix(".py")
-    if module.is_file():
-        result.add(module.resolve())
-    return cache.module_files.put(key, frozenset(result))
-
-
-def _module_files_relocated(
-    roots: FrozenSet[Path], components: Sequence[str], cache: ImportGraphCache
-) -> Set[Path]:
-    """Files an absolute import resolves to across ``roots``, tolerating relocation.
-
-    A package analyzed as a copy outside its project (a library caller's
-    fixture, a copied checkout; ``towel dry`` itself stages the whole project,
-    so it never does this) keeps its original absolute imports, so the leading
-    package components (``starlette`` in ``starlette.websockets``) have no
-    directory to match and the full path resolves to nothing. Only then do we
-    retry against progressively shorter trailing suffixes, so
-    ``starlette.websockets`` still resolves to a relocated ``websockets.py`` and
-    the import-cycle guard sees the edge. The fallback can only *add* edges, so
-    at worst the guard grows more conservative; a normally laid-out project
-    resolves on the first attempt and never reaches it.
-    """
-    parts = list(components)
-    files: Set[Path] = set()
-    for root in roots:
-        files |= set(_module_files(root, parts, cache))
-    if files or len(parts) <= 1:
-        return files
-    for start in range(1, len(parts)):
-        for root in roots:
-            resolved = _module_files(root, parts[start:], cache)
-            if resolved:
-                files |= set(resolved)
-                # The dropped leading components are the relocated package
-                # itself, whose ``__init__`` executes when the import runs, so
-                # importing ``pkg.sub`` from a relocated ``pkg`` also depends on
-                # the root ``__init__.py``. Missing this edge let the tenacity
-                # cycle (retry -> asyncio.retry -> tenacity/__init__ -> retry)
-                # slip through.
-                initializer = root / "__init__.py"
-                if initializer.is_file():
-                    files.add(initializer.resolve())
-        if files:
-            break
-    return files
-
-
-def _package_tree_root(module: Path) -> Path:
-    """The topmost package directory containing ``module``, or its own directory."""
-    packages = package_chain(module)
-    return packages[-1] if packages else module.parent
-
-
-def _suffix_in_tree(
-    tree_root: Path, components: Sequence[str], cache: ImportGraphCache
-) -> Set[Path]:
-    """Files a dotted import resolves to inside the file's own package tree by suffix.
-
-    ``sphinx.transforms.x`` from a file under a relocated ``sphinx-cleaned``
-    resolves to ``transforms/x.py`` there; the dropped leading components
-    are the package itself, whose initializer runs with the import.
-    """
-    parts = list(components)
-    if not (tree_root / "__init__.py").is_file():
-        return set()
-    for start in range(1, len(parts)):
-        found = _module_files(tree_root, parts[start:], cache)
-        if found:
-            return set(found) | {(tree_root / "__init__.py").resolve()}
-    return set()
-
-
 # Which import statements of a module count: every one (the cycle guard,
 # which must not miss an edge), the ones its top level can run as it is
 # imported (in any branch, but not in a function body), or only those its top
 # level runs on every path (statements of the module body itself).
 ImportExtent = Literal["everywhere", "at_import", "unconditionally"]
-
-
-def _import_edges(
-    current: Path,
-    roots: FrozenSet[Path],
-    cache: ImportGraphCache,
-    extent: ImportExtent = "everywhere",
-) -> Optional[FrozenSet[Path]]:
-    """Local modules ``current`` imports, or None when its imports cannot be inspected."""
-    try:
-        stat = current.stat()
-    except OSError:
-        return None
-    key = (current, stat.st_mtime_ns, stat.st_size, roots, extent)
-    if key in cache.edges:
-        return cache.edges.get(key)
-    try:
-        tree = ast.parse(read_source(current))
-    except (OSError, UnicodeError, SyntaxError):
-        return cache.edges.put(key, None)
-    dependencies: Set[Path] = set()
-    # The tree the file lives in, for resolving its own package's absolute
-    # imports by suffix even when a full-path match exists elsewhere: an
-    # out-of-place output sits beside the original clone (sphinx-cleaned next
-    # to sphinx), and ``from sphinx.transforms import X`` resolved to the
-    # original, where the helper import did not yet exist, so the cycle it
-    # closed in the copy went unseen.
-    tree_root = _package_tree_root(current)
-    for node in _import_statements(tree, extent):
-        dependencies.update(_statement_edges(node, current, roots, tree_root, cache))
-    return cache.edges.put(key, frozenset(dependencies))
 
 
 def _import_statements(
@@ -310,51 +235,61 @@ def _import_statements(
     return found
 
 
-def _statement_edges(
-    node: Union[ast.Import, ast.ImportFrom],
+def _import_edges(
     current: Path,
-    roots: FrozenSet[Path],
-    tree_root: Path,
+    program: ProgramImports,
     cache: ImportGraphCache,
-) -> Set[Path]:
-    """The local files one import statement of ``current`` loads."""
-    dependencies: Set[Path] = set()
+    extent: ImportExtent = "everywhere",
+) -> Optional[_Edges]:
+    """What the imports of ``current``, a module in the model's paths, may execute.
+
+    The module is read where the run keeps it (``ProgramImports.in_run``),
+    so an import an earlier extraction added is an edge like any other, and
+    each import is resolved as the program's import model resolves it
+    (``ImportModel.files_reached``): package initializers on the way
+    included, and every candidate location of an ambiguous name. None when
+    the module cannot be read.
+    """
+    path = program.in_run(current)
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = (path, stat.st_mtime_ns, stat.st_size, extent)
+    if key in cache.edges:
+        return cache.edges.get(key)
+    try:
+        tree = ast.parse(read_source(path))
+    except (OSError, UnicodeError, SyntaxError):
+        return cache.edges.put(key, None)
+    files: Set[Path] = set()
+    unseen = False
+    for node in _import_statements(tree, extent):
+        for level, module, names in _import_requests(node):
+            reached = program.reached(current, level, module, names)
+            if reached is None:
+                unseen = True
+            else:
+                files.update(reached)
+    return cache.edges.put(key, _Edges(frozenset(files), unseen))
+
+
+def _import_requests(
+    node: Union[ast.Import, ast.ImportFrom],
+) -> Iterator[Tuple[int, Optional[str], Tuple[str, ...]]]:
+    """``(level, module, names)`` for each module one import statement imports.
+
+    ``from . import name`` runs the package's ``__init__`` whether ``name``
+    is a submodule or an attribute defined there, which the model counts:
+    a helper hosted in a submodule and imported by that ``__init__``, which
+    the submodule imports back, was missed that way (beautifulsoup4's tests
+    package).
+    """
     if isinstance(node, ast.Import):
         for alias in node.names:
-            dependencies.update(_module_files_relocated(roots, alias.name.split("."), cache))
-            dependencies.update(_suffix_in_tree(tree_root, alias.name.split("."), cache))
-        return dependencies
-    components = node.module.split(".") if node.module else []
-    if node.level:
-        # A relative import resolves unambiguously against a computed
-        # base; relocation does not apply, so no suffix fallback.
-        base = current.parent
-        for _ in range(node.level - 1):
-            base = base.parent
-        dependencies.update(_module_files(base, components, cache))
-        for alias in node.names:
-            if alias.name != "*":
-                dependencies.update(_module_files(base, [*components, alias.name], cache))
-        # ``from . import name`` (or ``from .. import name``) runs the
-        # package's ``__init__`` whether ``name`` is a submodule or an
-        # attribute defined there. With no module file to resolve to,
-        # the edge to the initializer was missed, and a helper hosted
-        # in a submodule got imported by that ``__init__``, which the
-        # submodule imports back (beautifulsoup4's tests package).
-        package = base
-        for component in components:
-            package = package / component
-        initializer = package / "__init__.py"
-        if initializer.is_file():
-            dependencies.add(initializer.resolve())
-        return dependencies
-    dependencies.update(_module_files_relocated(roots, components, cache))
-    dependencies.update(_suffix_in_tree(tree_root, components, cache))
-    for alias in node.names:
-        if alias.name != "*":
-            dependencies.update(_module_files_relocated(roots, [*components, alias.name], cache))
-            dependencies.update(_suffix_in_tree(tree_root, [*components, alias.name], cache))
-    return dependencies
+            yield 0, alias.name, ()
+        return
+    yield node.level, node.module, tuple(alias.name for alias in node.names if alias.name != "*")
 
 
 def _module_level_import_bindings(
@@ -417,41 +352,11 @@ def _module_definition_file(base: Path, parts: Tuple[str, ...]) -> Optional[Path
     return None
 
 
-def _dotted_path_files(current: Path, roots: Iterable[Path], parts: Tuple[str, ...]) -> Set[Path]:
-    """Files defining the module at ``parts``; a leading dotted part marks a relative path."""
-    if parts and set(parts[0]) == {"."}:
-        base = current.parent
-        for _ in range(len(parts[0]) - 1):
-            base = base.parent
-        bases: Iterable[Path] = (base,)
-        parts = parts[1:]
-    else:
-        bases = roots
-    files = (_module_definition_file(base, parts) for base in bases)
-    return {file for file in files if file is not None}
-
-
-def module_and_qualname(
-    current_file: str, dotted: str, cache: ImportGraphCache
-) -> Optional[Tuple[str, str]]:
-    """Split a fully qualified name into the module that defines it and the rest.
-
-    A checker names a type by its whole path, ``pkg.mod.Outer.Inner``, and
-    writing that down needs to know where the module ends and the class begins.
-    Splitting at the last dot is wrong for a nested class, so the longest
-    prefix that is a module file in this project wins. None when the layout
-    gives no roots or no prefix names a module.
-    """
-    parts = tuple(dotted.split("."))
-    if len(parts) < 2:
-        return None
-    roots = _source_roots(Path(current_file).resolve(), cache)
-    if not roots:
-        return None
-    for end in range(len(parts) - 1, 0, -1):
-        if any(_module_definition_file(root, parts[:end]) is not None for root in roots):
-            return ".".join(parts[:end]), ".".join(parts[end:])
-    return None
+def _definition_file(location: Path, inner: Sequence[str]) -> Optional[Path]:
+    """The file whose top level is module ``inner`` below a top-level name's ``location``."""
+    if location.suffix == ".py":
+        return None if inner else location  # A module file has no submodules.
+    return _module_definition_file(location, tuple(inner))
 
 
 def imported_definition_sites(
@@ -464,9 +369,13 @@ def imported_definition_sites(
     by a module-level import names the module; the remainder is the
     qualified name inside it. Because ``from m import x`` may denote a
     submodule or an attribute, each split of the path into module and
-    qualname whose module file exists is a candidate. None when the name
-    is not bound by an unconditional module-level import, the module cannot
-    be parsed, or the project layout gives no import roots.
+    qualname whose module file exists is a candidate. A relative import is
+    resolved from the file's place; an absolute one through the location
+    the program's imports give its top-level name, and one of no module of
+    the project names no site. None when the name is not bound by an
+    unconditional module-level import, the module cannot be parsed, or the
+    absolute name cannot be followed: the program's imports leave it
+    ambiguous, or the project is too large to read them.
     """
     current = Path(current_file).resolve()
     bindings = _module_level_import_bindings(current, cache)
@@ -482,61 +391,66 @@ def imported_definition_sites(
     if bound is None:
         return None
     target, remainder = bound
-    roots = _source_roots(current, cache)
-    if roots is None:
-        return None
     full = (*target, *remainder)
-    sites: Set[Tuple[Path, str]] = set()
     # ``target`` may end in an attribute rather than a module, so every
     # split at or after the bound module's own length is tried.
-    for split in range(max(1, len(target) - 1), len(full)):
-        module, qualname = full[:split], full[split:]
-        if not qualname:
-            continue
-        for file in _dotted_path_files(current, roots, module):
-            sites.add((file, ".".join(qualname)))
-    return frozenset(sites)
-
-
-def _package_initializers(module: Path, roots: FrozenSet[Path]) -> List[Path]:
-    """``__init__.py`` of every package enclosing ``module``, innermost first.
-
-    Ascends while the directory is a package (has ``__init__.py``) and stops
-    at a source root, whose own initializer is not executed by an absolute
-    import of a module inside it.
-    """
-    initializers: List[Path] = []
-    for directory in package_chain(module):
-        if directory in roots:
-            break
-        initializers.append((directory / "__init__.py").resolve())
-    return initializers
+    splits = range(max(1, len(target) - 1), len(full))
+    if set(full[0]) == {"."}:
+        base = current.parent
+        for _ in range(len(full[0]) - 1):
+            base = base.parent
+        return frozenset(
+            (file, ".".join(full[split:]))
+            for split in splits
+            if (file := _module_definition_file(base, full[1:split])) is not None
+        )
+    try:
+        program = cache.program_for(current)
+    except ProjectScanLimitError:
+        return None
+    info = program.model.names.get(full[0])
+    if info is None:
+        return None
+    if info.status is NameStatus.EXTERNAL:
+        return frozenset()  # An import of no module of the project names none of its files.
+    location = info.location
+    if not info.trusted or location is None:
+        return None
+    return frozenset(
+        (program.in_run(file), ".".join(full[split:]))
+        for split in splits
+        if (file := _definition_file(location, full[1:split])) is not None
+    )
 
 
 def _reachable_modules(
-    start: Path,
-    roots: FrozenSet[Path],
+    start: Iterable[Path],
+    program: ProgramImports,
     cache: ImportGraphCache,
-    extent: ImportExtent = "everywhere",
+    extent: ImportExtent,
+    *,
+    sees_all: bool,
 ) -> Optional[Set[Path]]:
-    """Every local module importing ``start`` runs, ``start`` and its package initializers included.
+    """Every project module importing ``start`` may run, ``start`` included, in the model's paths.
 
     ``extent`` says which of each module's imports count (``ImportExtent``):
     ``"unconditionally"`` gives the modules importing ``start`` certainly
-    loads, ``"at_import"`` those it may. None when some import cannot be
-    inspected.
+    loads, ``"at_import"`` those it may. None when some module cannot be
+    read, or, with ``sees_all``, when some import may run what the model did
+    not read. Without it such an import is taken to run nothing, which only
+    ever leaves modules out.
     """
-    pending = [start, *_package_initializers(start, roots)]
+    pending = list(start)
     visited: Set[Path] = set()
     while pending:
         current = pending.pop()
         if current in visited:
             continue
         visited.add(current)
-        dependencies = _import_edges(current, roots, cache, extent)
-        if dependencies is None:
+        edges = _import_edges(current, program, cache, extent)
+        if edges is None or (sees_all and edges.unseen):
             return None
-        pending.extend(dependencies - visited)
+        pending.extend(edges.files - visited)
     return visited
 
 
@@ -1367,39 +1281,46 @@ def import_change(
 ) -> Optional[ImportChange]:
     """What ``borrower`` importing ``host`` would change about importing the borrower, if anything.
 
-    A cross-file helper adds ``from host import helper`` to the borrower. If
-    the borrower's import already certainly loads the host, nothing new runs.
-    Otherwise every module the new import may load that the borrower's does
-    not certainly load already must run no code at import
-    (``ImportTimeCode``), require no package that may be absent where the
-    borrower is installed (``_new_requirements``), and belong to a top-level
-    package the borrower's import already loads (``_new_top_level_packages``).
-    An import in a function body runs only when the function is called, so it
-    makes nothing present at the borrower's import.
+    A cross-file helper adds an import of the host to the borrower, which
+    runs the host and the initializers of the packages enclosing it. If the
+    borrower's import already certainly loads the host, nothing new runs.
+    Otherwise every
+    module the new import may load that the borrower's does not certainly
+    load already must run no code at import (``ImportTimeCode``), require no
+    package that may be absent where the borrower is installed
+    (``_new_requirements``), and belong to a top-level package the borrower
+    already relies on (``_new_top_level_packages``). An import in a function
+    body runs only when the function is called, so it makes nothing present
+    at the borrower's import. What the new import runs must be seen whole:
+    one that enters a directory the model did not read is unknown.
     """
-    host = Path(host_file).resolve()
-    borrower = Path(borrower_file).resolve()
-    common_root = Path(os.path.commonpath([str(host.parent), str(borrower.parent)]))
-    source_roots = _source_roots(host, cache)
-    if source_roots is None:
-        return ImportChange.UNKNOWN
-    roots = frozenset(source_roots) | {common_root}
-    already = _reachable_modules(borrower, roots, cache, "unconditionally")
+    program = cache.program_for(Path(host_file))
+    host = program.origin(Path(host_file))
+    borrower = program.origin(Path(borrower_file))
+    already = _reachable_modules(
+        [borrower, *program.package_initializers(borrower)],
+        program,
+        cache,
+        "unconditionally",
+        sees_all=False,
+    )
     if already is None:
         return ImportChange.UNKNOWN
     added: Set[Path] = set()
     if host not in already:
-        loaded = _reachable_modules(host, roots, cache, "at_import")
+        loaded = _reachable_modules(
+            [host, *program.package_initializers(host)], program, cache, "at_import", sees_all=True
+        )
         if loaded is None:
             return ImportChange.UNKNOWN
         added = loaded - already
-        if any(_has_import_time_effects(module, cache) for module in added):
+        if any(_has_import_time_effects(program.in_run(module), cache) for module in added):
             return ImportChange.RUNS_CODE
-        if _new_requirements(added, already, roots, host, cache):
+        if _new_requirements(added, already, program, cache):
             return ImportChange.NEW_REQUIREMENT
-        if _new_top_level_packages(added, already, source_roots):
+        if _new_top_level_packages(added, already, borrower, program):
             return ImportChange.NEW_TOP_LEVEL_PACKAGE
-    if _breaks_run_by_path(borrower, added | {host}, source_roots):
+    if _breaks_run_by_path(borrower, added | {host}, program):
         return ImportChange.RUN_BY_PATH
     return None
 
@@ -1414,30 +1335,52 @@ def host_has_stub(host_file: str, cache: ImportGraphCache) -> bool:
     counts, and so do a stub-only ``<package>-stubs`` directory beside its
     top-level package or at the project root, which a checker reads in
     place of the package once installed, and the module's stub under the
-    project's ``typings`` directory, pyright's default stub path. A module
-    whose layout is unknown counts as stubbed.
+    project's ``typings`` directory, pyright's default stub path. They are
+    looked for under every name a checker may give the module
+    (:func:`_checker_names`): mypy resolves even a relative import to an
+    absolute name and searches for that.
     """
     module = Path(host_file).resolve()
     if module.with_suffix(".pyi").is_file():
         return True
-    source_roots = _source_roots(module, cache)
-    root = _holding_root(module, source_roots or ())
-    if root is None:
-        return True
-    parts = module.relative_to(root).with_suffix("").parts
-    if parts[-1] == "__init__":
-        parts = parts[:-1]
-    if not parts:
-        return False
-    project = find_project_root(module)
-    for base in dict.fromkeys((root, project)):
-        package = base / f"{parts[0]}-stubs"
-        if package.is_dir():
-            # A partial stub package leaves the modules it omits to the
-            # runtime package; any other hides them from the checker.
-            if not _is_partial_stub_package(package) or _stub_file(package, parts[1:]):
-                return True
-    return _stub_file(project / "typings", parts)
+    program = cache.program_for(module)
+    root = program.model.root
+    for parts, base in _checker_names(program.origin(module), program):
+        for directory in dict.fromkeys((base, root)):
+            package = directory / f"{parts[0]}-stubs"
+            if package.is_dir():
+                # A partial stub package leaves the modules it omits to the
+                # runtime package; any other hides them from the checker.
+                if not _is_partial_stub_package(package) or _stub_file(package, parts[1:]):
+                    return True
+        if _stub_file(root / "typings", parts):
+            return True
+    return False
+
+
+def _checker_names(module: Path, program: ProgramImports) -> List[Tuple[Tuple[str, ...], Path]]:
+    """The dotted names a type checker may give ``module``, each with the directory holding its top.
+
+    The name the program's imports give it, and the one the package it is
+    imported as part of gives it, counted from the directory holding that
+    package, as a checker run there names it even when no import in the
+    program spells it: ``src/alpha/b.py`` is ``alpha.b`` to ``mypy -p alpha``
+    run in ``src``.
+    """
+    names: List[Tuple[Tuple[str, ...], Path]] = []
+    name = program.model.module_name(module)
+    if name is not None:
+        location = program.model.names[name.partition(".")[0]].location
+        if location is not None:
+            names.append((tuple(name.split(".")), location.parent))
+    context = program.model.context_of(module)
+    if context is not None:
+        base = context.parent
+        relative = module.relative_to(base).with_suffix("").parts
+        parts = relative[:-1] if relative[-1] == "__init__" else relative
+        if parts and all(part.isidentifier() for part in parts):
+            names.append((tuple(parts), base))
+    return list(dict.fromkeys(names))
 
 
 def _is_partial_stub_package(package: Path) -> bool:
@@ -1496,26 +1439,29 @@ def fails_run_by_path(tree: ast.Module) -> bool:
     return any(isinstance(node, ast.ImportFrom) and node.level for node in leading_imports(tree))
 
 
-def _breaks_run_by_path(borrower: Path, loaded: Set[Path], source_roots: Sequence[Path]) -> bool:
+def _breaks_run_by_path(borrower: Path, loaded: Set[Path], program: ProgramImports) -> bool:
     """Whether ``python borrower.py`` could no longer import once the borrower imports the host.
 
     Run by its path, a module has its own directory on ``sys.path``, not the
-    source root above it: ``python pkg/tool_b.py`` finds ``pkg`` only where
-    something else put it on the path, so ``from pkg.tool_a import helper``
-    raises ``ModuleNotFoundError`` there while ``python -m pkg.tool_b`` still
-    works. A module written to run as a program therefore imports a module
-    the new import loads only when its top-level package is one its leading
-    imports already import absolutely, which a run by path already needs,
-    or one that its own directory holds; a module whose leading imports
-    include a relative one fails by path already, at that import. The new
-    import must then be absolute too, which materialization checks.
+    directory its package is imported from: ``python pkg/tool_b.py`` finds
+    ``pkg`` only where something else put it on the path, so ``from
+    pkg.tool_a import helper`` raises ``ModuleNotFoundError`` there while
+    ``python -m pkg.tool_b`` still works. A module written to run as a
+    program therefore imports a module the new import loads only when its
+    top-level package is one its leading imports already import absolutely,
+    which a run by path already needs, or one that its own directory holds;
+    a module whose leading imports include a relative one fails by path
+    already, at that import. The new import must then be absolute too, which
+    materialization checks. Paths are the model's; the borrower is read
+    where the run keeps it.
     """
+    path = program.in_run(borrower)
     try:
-        source = read_source(borrower)
+        source = read_source(path)
         tree = ast.parse(source)
     except (OSError, UnicodeError, SyntaxError, ValueError):
         return True
-    if not runs_as_script(source, tree, borrower) or fails_run_by_path(tree):
+    if not runs_as_script(source, tree, path) or fails_run_by_path(tree):
         return False
     required = {
         alias.name.split(".")[0]
@@ -1528,57 +1474,49 @@ def _breaks_run_by_path(borrower: Path, loaded: Set[Path], source_roots: Sequenc
         if isinstance(node, ast.ImportFrom) and node.module and not node.level
     }
     for module in loaded:
-        top = _top_level_name(module, source_roots)
+        top = _top_level_name(module, program)
         if top is None:
             return True
-        if top in required or _holding_root(module, source_roots) == borrower.parent:
+        location = program.model.names[top].location
+        if top in required or (location is not None and location.parent == borrower.parent):
             continue
         return True
     return False
 
 
 def _new_top_level_packages(
-    added: Set[Path], present: Set[Path], source_roots: Sequence[Path]
+    added: Set[Path], present: Set[Path], borrower: Path, program: ProgramImports
 ) -> FrozenSet[Optional[str]]:
-    """Top-level packages of the project the new import loads that the borrower's does not.
+    """Top-level packages of the project the new import loads that the borrower does not rely on.
 
     A distribution ships the packages its metadata names, not the whole
-    repository, and only what the borrower already imports is known to ship
-    with it: a helper in ``tests/test_b.py`` imported by ``zeta/a.py`` made
-    the installed ``zeta.a`` raise ``ModuleNotFoundError``. A module under
-    no source root has no top-level package that could be named, and is
-    always new.
+    repository, and only what the borrower's package already relies on is
+    known to ship with it: a helper in ``tests/test_b.py`` imported by
+    ``zeta/a.py`` made the installed ``zeta.a`` raise
+    ``ModuleNotFoundError``. It relies on its own package, on what its
+    import certainly loads, and, by the rule new imports are spelled by, on
+    every top-level package its modules import at run time (docs/DECISIONS.md,
+    "Import names come from the program"). A module the program's imports
+    give no absolute name to, outside the borrower's own package, is always
+    new.
     """
-    available = _importable_top_levels(present, source_roots)
+    own = program.model.context_of(borrower)
+    available = set(program.model.attested_by(own)) if own is not None else set()
+    available.update(
+        top for module in present if (top := _top_level_name(module, program)) is not None
+    )
     return frozenset(
-        top for module in added if (top := _top_level_name(module, source_roots)) not in available
+        top
+        for module in added
+        if own is None or program.model.context_of(module) != own
+        if (top := _top_level_name(module, program)) not in available
     )
 
 
-def _importable_top_levels(present: Set[Path], source_roots: Sequence[Path]) -> FrozenSet[str]:
-    """The top-level packages importing the borrower certainly loads, its own included.
-
-    Whatever the borrower's import loads ships wherever the borrower runs,
-    so a new import of any of these requires nothing that was not there.
-    """
-    return frozenset(
-        top for module in present if (top := _top_level_name(module, source_roots)) is not None
-    )
-
-
-def _top_level_name(module: Path, source_roots: Sequence[Path]) -> Optional[str]:
-    """The first component of ``module``'s import name, from the deepest source root holding it."""
-    root = _holding_root(module, source_roots)
-    if root is None:
-        return None
-    parts = module.relative_to(root).parts
-    return Path(parts[0]).stem if len(parts) == 1 else parts[0]
-
-
-def _holding_root(module: Path, source_roots: Sequence[Path]) -> Optional[Path]:
-    """The deepest source root ``module`` lies under, resolved; None when it lies under none."""
-    holding = [root.resolve() for root in source_roots if module.is_relative_to(root.resolve())]
-    return max(holding, key=lambda root: len(root.parts)) if holding else None
+def _top_level_name(module: Path, program: ProgramImports) -> Optional[str]:
+    """The first component of the absolute name the program's imports give ``module``."""
+    name = program.model.module_name(module)
+    return None if name is None else name.partition(".")[0]
 
 
 # Standard-library modules whose import does something visible.
@@ -1588,8 +1526,7 @@ _EFFECTFUL_STDLIB = frozenset({"this", "antigravity"})
 def _new_requirements(
     added: Set[Path],
     present: Set[Path],
-    roots: FrozenSet[Path],
-    host: Path,
+    program: ProgramImports,
     cache: ImportGraphCache,
 ) -> FrozenSet[str]:
     """Third-party modules the new import requires that the borrower's import does not.
@@ -1598,24 +1535,24 @@ def _new_requirements(
     doing ``import tornado`` cannot be imported where tornado is absent, so a
     borrower made to import it stopped importing in exactly those
     environments (gunicorn's sync worker). What the borrower already imports
-    it already requires; the standard library is always there; and a
-    project's declared dependencies are installed wherever it is. Anything
+    it already requires; the standard library is always there; a project's
+    declared dependencies are installed wherever it is; and a name the
+    program's imports place in the project is the project's own. Anything
     else is a new requirement, and the host is refused. An import guarded by
     ``try``/``except`` is how optional dependencies are spelled, and requires
     nothing.
     """
 
     def required(modules: Set[Path]) -> Set[str]:
-        return {name for module in modules for name in _required_imports(module, cache)}
+        return {
+            name for module in modules for name in _required_imports(program.in_run(module), cache)
+        }
 
-    names = required(added) - required(present)
-    names = {name for name in names if not _is_local(name, roots)}
-    available = (set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB) | _declared_dependencies(host)
+    names = {name for name in required(added) - required(present) if not program.is_local(name)}
+    available = (set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB) | _declared_dependencies(
+        program.model.root
+    )
     return frozenset(name for name in names if _normalized(name) not in available)
-
-
-def _is_local(name: str, roots: FrozenSet[Path]) -> bool:
-    return any((root / name).is_dir() or (root / f"{name}.py").is_file() for root in roots)
 
 
 def _normalized(name: str) -> str:
@@ -1720,43 +1657,41 @@ def _required_imports(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
 def would_create_import_cycle(
     canonical_file: str, replacement_files: Set[str], cache: ImportGraphCache
 ) -> bool:
-    """Check whether adding imports of the helper closes a local import cycle.
+    """Whether importing the helper from ``canonical_file`` into the other files closes a cycle.
 
-    Follow static imports through local modules, including modules without any
-    candidate functions and package initializers. Imports inside functions are
-    included conservatively. Dynamic imports cannot be resolved statically. A
-    project whose layout cannot be modelled (see ``layout_is_known``) counts
-    as a cycle: the helper's import cannot be shown safe there.
+    Every file the new imports execute, the host and the initializers of
+    the packages enclosing it, is followed through its static imports,
+    resolved as the program's import model resolves them
+    (``ImportModel.files_reached``): initializers included, every candidate
+    location of an ambiguous name included, and imports inside functions
+    included conservatively. Dynamic imports cannot be resolved statically.
+    A borrower reached is a cycle; so is a module on the way that cannot be
+    read, or that imports what the model did not read, since neither can be
+    shown safe.
     """
-    canonical = Path(canonical_file).resolve()
-    targets = {Path(path).resolve() for path in replacement_files} - {canonical}
-    if not targets:
+    program = cache.program_for(Path(canonical_file))
+    host = program.origin(Path(canonical_file))
+    borrowers = {program.origin(Path(path)) for path in replacement_files} - {host}
+    if not borrowers:
         return False
-    common_root = Path(os.path.commonpath([str(path.parent) for path in targets | {canonical}]))
-    source_roots = _source_roots(canonical, cache)
-    if source_roots is None:
-        return True
-    roots = frozenset(source_roots) | {common_root}
-
     # Importing ``pkg.sub.helper`` runs ``pkg/__init__.py`` and
     # ``pkg/sub/__init__.py`` before the helper's module, so a cycle that
     # closes through one of those initializers is just as real as one through
     # the module itself (invoke: a vendored module importing a helper from
     # ``invoke.parser`` ran ``invoke/parser/__init__``, which reaches back
-    # into the vendored package through ``invoke.util``). Search from every
-    # package initializer above the host as well as from the host.
-    pending = [canonical, *_package_initializers(canonical, roots)]
+    # into the vendored package through ``invoke.util``).
+    pending: List[Path] = [host, *program.package_initializers(host)]
     visited: Set[Path] = set()
     while pending:
         current = pending.pop()
-        if current in targets:
+        if current in borrowers:
             return True
         if current in visited:
             continue
         visited.add(current)
-        dependencies = _import_edges(current, roots, cache)
-        if dependencies is None:
+        edges = _import_edges(current, program, cache)
+        if edges is None or edges.unseen:
             # If an import cannot be inspected, do not claim that it is safe.
             return True
-        pending.extend(dependencies - visited)
+        pending.extend(edges.files - visited)
     return False

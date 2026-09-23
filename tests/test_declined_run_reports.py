@@ -1,12 +1,12 @@
-"""A run that declined what it found says why, in counts, and names a layout it cannot model.
+"""A run that declined what it found says why, in counts.
 
 "No refactorings found!" was all a run printed when it declined every pair
-and every proposal, even with ``--progress detail``: a project whose Hatch
-``force-include`` layout Towel cannot model (the audit's L40), so that no
-helper can be shared across its packages, read exactly like a project with
-nothing duplicated. A proposal the type checker refused was reported as one
-that "could not be rendered". The summary now counts what was declined, by
-reason, and quotes the layout reader.
+and every proposal, even with ``--progress detail``: a project whose two
+packages share code but never import each other (the audit's L40, where a
+Hatch ``force-include`` also hid the layout from the packaging readers that
+named modules then) read exactly like a project with nothing duplicated. A
+proposal the type checker refused was reported as one that "could not be
+rendered". The summary now counts what was declined, by reason.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def {name}(items: list[int], scale: int) -> int:
 
 
 def _force_include_project(root: Path) -> Path:
-    """The audit's L40: two packages whose layout Hatch's force-include hides from Towel."""
+    """The audit's L40: two packages, neither importing the other, under a Hatch force-include."""
     (root / "src" / "alpha").mkdir(parents=True)
     (root / "src" / "beta").mkdir(parents=True)
     (root / "pyproject.toml").write_text(
@@ -77,7 +77,7 @@ def _force_include_project(root: Path) -> Path:
 
 
 @pytest.mark.parametrize("progress", ["none", "detail"])
-def test_a_run_the_layout_emptied_says_why(tmp_path: Path, progress: str) -> None:
+def test_a_run_whose_imports_allow_no_helper_says_why(tmp_path: Path, progress: str) -> None:
     root = _force_include_project(tmp_path / "project")
     result = invoke(
         [
@@ -93,8 +93,9 @@ def test_a_run_the_layout_emptied_says_why(tmp_path: Path, progress: str) -> Non
     )
     assert result.status == 0, result
     assert "No refactorings found!" in result.stdout
-    assert re.search(r"candidate pair\(s\) declined: .*unknown_layout \d+", result.stdout)
-    assert "Unsupported Hatch force-include layout; cannot infer safe imports" in result.stdout
+    # No module of either package is known to import the other: the
+    # program's own imports show no import between them that works.
+    assert re.search(r"candidate pair\(s\) declined: .*unproven_import \d+", result.stdout)
     if progress == "detail":
         assert re.search(r"\[towel\] Declined \d+ candidate pair\(s\):", result.stderr)
 

@@ -218,12 +218,6 @@ class EngineState:
     file_finisher: Optional[Callable[[str, str], str]]
     """Finishes each modified file (imports sorted), or None."""
 
-    prefer_absolute_imports: Optional[bool]
-    """Cross-file helper import style; None lets the discovered layout decide."""
-
-    pep420_namespace_packages: Optional[bool]
-    """Whether directories without __init__.py are packages; None infers it."""
-
     @staticmethod
     def _block_line_span(block: Sequence[ast.stmt]) -> Optional[Tuple[int, int]]:
         """The (start_line, end_line) of a contiguous block; provided by InsertionPoints."""

@@ -213,28 +213,43 @@ def _count(text: str) -> int:
 
 
 def _add_import_layout_flags(parser: argparse.ArgumentParser) -> None:
-    """Add the shared import-layout flags (--prefer-absolute-imports, --pep420).
+    """Accept the retired import-layout flags, --prefer-absolute-imports and --pep420.
 
-    The dry and preview subcommands both infer cross-file import paths, so they
-    expose the same two mutually-exclusive toggles.
+    They chose how a cross-file helper's import was spelled from packaging
+    metadata. Since 1.772 every import is spelled as the program's own
+    imports show it works, so they decide nothing; scripts that pass them
+    keep working, the help no longer lists them, and a run that is given
+    one says it had no effect (:func:`_warn_about_retired_flags`).
     """
-    parser.add_argument(
-        "--prefer-absolute-imports",
-        dest="prefer_absolute_imports",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Prefer an absolute import for a cross-file helper (honored when packaging "
-        "metadata anchors the module name); --no-prefer-absolute-imports prefers a relative "
-        "one. Unset: the discovered layout decides.",
-    )
-    parser.add_argument(
-        "--pep420",
-        dest="pep420",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Treat directories without __init__.py as namespace packages when deriving "
-        "module paths; --no-pep420 requires __init__.py. Unset: inferred from the project.",
-    )
+    for flag, dest in (
+        ("--prefer-absolute-imports", "prefer_absolute_imports"),
+        ("--pep420", "pep420"),
+    ):
+        parser.add_argument(  # retired in 1.772, kept for scripts
+            flag,
+            dest=dest,
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help=argparse.SUPPRESS,
+        )
+
+
+def _warn_about_retired_flags(args: argparse.Namespace) -> None:
+    """Say that a retired import-layout flag was given and changed nothing."""
+    given = [
+        flag
+        for flag, dest in (
+            ("--prefer-absolute-imports", "prefer_absolute_imports"),
+            ("--pep420", "pep420"),
+        )
+        if getattr(args, dest, None) is not None
+    ]
+    if given:
+        LOG.warning(
+            "%s no longer has any effect: every import Towel writes is spelled as the program's"
+            " own imports show it works.",
+            " and ".join(given),
+        )
 
 
 def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
@@ -780,8 +795,6 @@ class DryOptions:
     progress: ProgressMode
     types: bool
     format: bool
-    prefer_absolute_imports: Optional[bool]
-    pep420: Optional[bool]
     exclude: Tuple[str, ...]
     cross_module: bool = False
 
@@ -798,8 +811,6 @@ class DryOptions:
             progress=normalize_progress(args.progress),
             types=bool(args.types),
             format=bool(args.format),
-            prefer_absolute_imports=args.prefer_absolute_imports,
-            pep420=args.pep420,
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
         )
@@ -814,8 +825,6 @@ class PreviewOptions:
     max_parameters: int
     max_pairs: int
     progress: ProgressMode
-    prefer_absolute_imports: Optional[bool]
-    pep420: Optional[bool]
     cross_module: bool = False
 
     @classmethod
@@ -826,8 +835,6 @@ class PreviewOptions:
             max_parameters=int(args.max_parameters),
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
-            prefer_absolute_imports=args.prefer_absolute_imports,
-            pep420=args.pep420,
             cross_module=bool(args.cross_module),
         )
 
@@ -862,6 +869,7 @@ class RenameOptions:
 def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     options = DryOptions.from_namespace(args)
+    _warn_about_retired_flags(args)
     # Import here to avoid loading heavy modules if not needed
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -913,8 +921,6 @@ def _run_dry(args: argparse.Namespace) -> None:
             max_candidate_pairs=options.max_pairs,
             settings=_settings(),
             parameterize_constants=True,
-            prefer_absolute_imports=options.prefer_absolute_imports,
-            pep420_namespace_packages=options.pep420,
             excluded_directories=options.exclude,
             cross_module_helpers=options.cross_module,
             snippet_formatter=(
@@ -986,9 +992,7 @@ def _print_declined(report: "RunReport", applied: int) -> None:
 
     Proposals that were built and then not applied are always counted. The
     candidate pairs the analysis declined are counted when nothing was
-    applied, which is when a reader asks why; and a layout the project's
-    packaging does not let Towel model is always named, since it rules out
-    every helper shared across modules, however much else was found.
+    applied, which is when a reader asks why.
     """
     from towel.unification.fixed_point import counted_reasons
 
@@ -1002,11 +1006,6 @@ def _print_declined(report: "RunReport", applied: int) -> None:
         lines.append(
             f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
             f"{counted_reasons(report.declined_pairs)}"
-        )
-    if report.layout_refusal:
-        lines.append(
-            "  No helper can be shared across modules: the project's packaging cannot be "
-            f"modeled ({report.layout_refusal})"
         )
     if lines:
         print("\nDeclined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):")
@@ -1089,6 +1088,7 @@ def _print_call_sites(
 def _run_preview(args: argparse.Namespace) -> None:
     """Run the preview command."""
     options = PreviewOptions.from_namespace(args)
+    _warn_about_retired_flags(args)
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
 
@@ -1105,8 +1105,6 @@ def _run_preview(args: argparse.Namespace) -> None:
         max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,
-        prefer_absolute_imports=options.prefer_absolute_imports,
-        pep420_namespace_packages=options.pep420,
         cross_module_helpers=options.cross_module,
     )
 

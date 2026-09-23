@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,9 +34,17 @@ def _fixed_point(source: Path, out: Path, incremental: bool) -> tuple[dict[str, 
     return files, sum(count for count, _ in results.values())
 
 
+def _standalone(project: str, tmp_path: Path) -> Path:
+    """The fixture copied to a directory of its own: in this checkout its expected output
+    sits beside it, a second copy of every module, and would make each name ambiguous."""
+    source = tmp_path / "project" / project
+    shutil.copytree(EXAMPLES / project, source)
+    return source
+
+
 @pytest.mark.parametrize("project", PROJECTS)
 def test_restricted_global_passes_give_identical_output(project: str, tmp_path: Path) -> None:
-    source = EXAMPLES / project
+    source = _standalone(project, tmp_path)
     full, applied_full = _fixed_point(source, tmp_path / "full", False)
     restricted, applied_restricted = _fixed_point(source, tmp_path / "restricted", True)
     assert applied_full == applied_restricted
@@ -43,7 +52,7 @@ def test_restricted_global_passes_give_identical_output(project: str, tmp_path: 
 
 
 def test_restriction_skips_unchanged_pairs(tmp_path: Path) -> None:
-    source = EXAMPLES / PROJECTS[0]
+    source = _standalone(PROJECTS[0], tmp_path)
     engine = UnificationRefactorEngine(incremental_global_passes=True)
     seen: list[object] = []
     original = engine.find_block_pairs

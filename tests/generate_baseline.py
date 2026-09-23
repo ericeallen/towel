@@ -92,8 +92,12 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
         try:
             with tempfile.TemporaryDirectory(prefix="towel-baseline-") as temporary:
                 staged_output = Path(temporary) / project_dir.name
+                # Refactored where a user's project sits, in a directory of its
+                # own, as the regression test refactors it.
+                source = Path(temporary) / "source" / project_dir.name
+                shutil.copytree(project_dir, source)
                 results, termination_reason = engine.refactor_directory_to_fixed_point(
-                    str(project_dir), str(staged_output), progress="none"
+                    str(source), str(staged_output), progress="none"
                 )
                 shutil.copytree(staged_output, project_output, dirs_exist_ok=True)
             total = sum(count for count, _ in results.values()) if results else 0
