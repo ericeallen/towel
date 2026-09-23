@@ -25,7 +25,10 @@ another mixin implements each stub.
 from __future__ import annotations
 
 import ast
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Sequence
+from typing import Any, Dict, Hashable, Iterator, List, Optional, Set, Tuple, Sequence
+
+ConstantIdentity = Tuple[type, Hashable]
+"""A constant's type and value, as ``constant_consistency.constant_identity`` computes them."""
 
 
 class UnifierState:
@@ -49,11 +52,17 @@ class UnifierState:
     promote_equal_hof_literals: bool
     """Whether equal literal arguments of higher-order factory calls become parameters."""
 
-    constant_positions: Dict[Tuple[int, Any], List[Tuple[Any, ...]]]
-    """Where each constant value occurs in each block, as field paths."""
+    constant_positions: Dict[Tuple[int, ConstantIdentity], List[Tuple[object, ...]]]
+    """Where each constant occurs in each block, by block and identity, as field paths."""
 
     _reserved_parameter_names: Set[str]
     """Identifiers the blocks mention; a fresh parameter must not alias one."""
+
+    _pattern_depth: int
+    """How many match patterns enclose the nodes being unified."""
+
+    _pattern_parameters_allowed: bool
+    """Whether a parameter may stand where the pattern being unified is (see ``Unifier._unify_pattern``)."""
 
     @staticmethod
     def _iter_child_fields(node: ast.AST) -> Iterator[Tuple[str, Any]]:

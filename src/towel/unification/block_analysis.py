@@ -28,6 +28,8 @@ blocks many times.
 from __future__ import annotations
 
 import ast
+import sys
+from weakref import WeakKeyDictionary
 
 from typing import (
     AbstractSet,
@@ -60,6 +62,7 @@ from .models import (
 from .parameters import parameter_names
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import rebound_external_names, walk_own_scope
+from .statement_facts import memoized_per_node
 from .structural_memo import load_substitution, store_substitution
 from .substitution import Substitution
 from .visitors import (
@@ -74,6 +77,40 @@ from .engine_state import EngineState, GuardKey
 from .function_index import FunctionIndex
 
 T = TypeVar("T")
+
+
+_FIRST_UNSPELLABLE_INT = 10**sys.int_info.str_digits_check_threshold
+"""The least int with more decimal digits than every interpreter will read.
+
+Generated code spells an int as ``ast.unparse`` does, in decimal, and a
+decimal literal compiles only up to the interpreter's ``int_max_str_digits``:
+4,300 digits by default, and as few as 640 (``str_digits_check_threshold``)
+where ``PYTHONINTMAXSTRDIGITS`` lowers it. A literal the source spelled in
+hexadecimal compiles at any width, so written back in decimal it could stop
+the module importing.
+"""
+
+_SPELLS_UNSPELLABLE_INT: "WeakKeyDictionary[ast.AST, bool]" = WeakKeyDictionary()
+
+
+def holds_unspellable_int(statement: ast.AST) -> bool:
+    """Whether ``statement`` holds an int literal generated code could not spell back.
+
+    Such a block is never a candidate: its helper would carry the literal
+    in decimal. The AST keeps a literal's value, not its spelling, so any
+    int of more than 640 digits counts, however the source wrote it.
+    Memoized per statement, since every block spanning it asks.
+    """
+    return memoized_per_node(_SPELLS_UNSPELLABLE_INT, statement, _holds_unspellable_int)
+
+
+def _holds_unspellable_int(statement: ast.AST) -> bool:
+    return any(
+        isinstance(node, ast.Constant)
+        and type(node.value) is int
+        and abs(node.value) >= _FIRST_UNSPELLABLE_INT
+        for node in ast.walk(statement)
+    )
 
 
 def align_return_variables(
@@ -311,6 +348,9 @@ class BlockAnalysis(EngineState):
                         isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
                         for stmt in block
                     ):
+                        continue
+
+                    if any(holds_unspellable_int(stmt) for stmt in block):
                         continue
 
                     span = self._block_line_span(block)

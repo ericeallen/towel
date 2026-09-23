@@ -268,6 +268,63 @@ class ScopeVisitor(ast.NodeVisitor):
         self._visit_statements(node.body)
 
 
+def evaluated_before_definition(
+    node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda],
+) -> List[ast.expr]:
+    """What a definition evaluates in the enclosing scope before it exists.
+
+    Its decorators, and a callable's defaults and keyword-only defaults:
+    ``lambda v, s=k: ...`` and ``def f(s=k)`` read ``k`` where they stand,
+    once, when the definition runs.
+    """
+    evaluated: List[ast.expr] = []
+    if not isinstance(node, ast.Lambda):
+        evaluated.extend(node.decorator_list)
+    if not isinstance(node, ast.ClassDef):
+        evaluated.extend(node.args.defaults)
+        evaluated.extend(value for value in node.args.kw_defaults if value is not None)
+    return evaluated
+
+
+def annotation_expressions(node: FunctionNode) -> List[ast.expr]:
+    """A function's parameter and return annotations, in source order.
+
+    They are evaluated when the definition runs unless the module postpones
+    annotations (and lazily, when first read, from Python 3.14): either way
+    they read names where the function is defined.
+    """
+    arguments = node.args
+    annotated = [
+        *arguments.posonlyargs,
+        *arguments.args,
+        *([arguments.vararg] if arguments.vararg else []),
+        *arguments.kwonlyargs,
+        *([arguments.kwarg] if arguments.kwarg else []),
+    ]
+    found = [argument.annotation for argument in annotated if argument.annotation is not None]
+    if node.returns is not None:
+        found.append(node.returns)
+    return found
+
+
+def type_parameter_expressions(node: ast.AST) -> List[ast.expr]:
+    """What a PEP 695 definition's type parameters evaluate, lazily: bounds, constraints, defaults.
+
+    Attribute inspection keeps this importable on Python 3.11, whose AST has
+    no type parameters, and reads the defaults Python 3.13 added.
+    """
+    parameters: object = getattr(node, "type_params", ())
+    if not isinstance(parameters, list):
+        return []
+    found: List[ast.expr] = []
+    for parameter in parameters:
+        for attribute in ("bound", "default_value"):
+            value: object = getattr(parameter, attribute, None)
+            if isinstance(value, ast.expr):
+                found.append(value)
+    return found
+
+
 class FunctionCollector(DefinitionDepthVisitor):
     """Collect functions with enclosing class/function context for a module tree.
 

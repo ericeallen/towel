@@ -10,6 +10,7 @@ transforms it or rejects it, so a change in either direction is visible.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 from pathlib import Path
@@ -143,7 +144,32 @@ TRANSFORMED = {
     # The helper is placed before the assignment that calls it, its annotations
     # quoted, rather than after the class they name.
     "p21_helper_placed_after_an_assignment_that_calls_it",
+    # The blocks holding a literal generated code cannot spell stay; the run
+    # goes on and extracts the ordinary duplicate beside them.
+    "r147_wide_int_literal",
+    # Equal constants of different types (0 and 0.0, True and 1) are passed as
+    # arguments; a False elsewhere in a block no longer counts as its 0.
+    "r148_equal_constants_of_different_types",
+    # The names a pattern evaluates (a class, a dotted value, a mapping key)
+    # are the helper's arguments.
+    "r149_match_pattern_reads_caller_names",
+    # A pattern's class, or the root of its dotted name, may differ: the
+    # parameter's bare name keeps the pattern's meaning. (r150, where a
+    # literal or a whole dotted name differs, is declined: a bare name there
+    # would be a capture.)
+    "r151_pattern_names_that_may_differ",
+    # What a definition evaluates where it stands (defaults, decorators,
+    # annotations) is read from the caller.
+    "r152_definition_time_reads",
+    "r154_bare_annotation_reads_the_caller",
+    # Only the code around the objects that escape is extracted (r156); what
+    # the block only calls or consumes moves with it (r157).
+    "r156_created_objects_that_escape",
+    "r157_created_objects_only_called",
 }
+# r153_class_definition_reads left the set when a class defined in the block
+# began to decline it: every instance and the class itself show the helper in
+# their qualified names. Its reads are still what free_variables reports.
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise
 # NameError where the block raised UnboundLocalError. Its own read never
@@ -159,6 +185,10 @@ def _run(script: Path) -> tuple[int, str, list[str]]:
 
 @pytest.mark.parametrize("case", sorted(path.stem for path in CASES.glob("*.py")))
 def test_refactoring_preserves_program_output(case: str) -> None:
+    try:
+        ast.parse((CASES / f"{case}.py").read_bytes())
+    except SyntaxError:
+        pytest.skip("the fixture is written in syntax this Python does not have")
     with tempfile.TemporaryDirectory(prefix="towel-hostile-") as directory:
         root = Path(directory)
         before = root / "before" / "m.py"

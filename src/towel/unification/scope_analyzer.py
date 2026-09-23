@@ -18,13 +18,18 @@ rebinding, namespace reflection) later guards consult.
 """
 
 import ast
-from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
+from typing import Dict, FrozenSet, Iterator, List, Literal, Optional, Sequence, Set, Tuple, Union
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 from .models import FunctionNode
 from .statement_facts import import_binding_names, pattern_capture_names  # noqa: F401
 from .parameters import parameter_names, parameter_nodes
-from .visitors import ScopeVisitor
+from .visitors import (
+    ScopeVisitor,
+    annotation_expressions,
+    evaluated_before_definition,
+    type_parameter_expressions,
+)
 
 
 def type_parameter_names(node: ast.AST) -> FrozenSet[str]:
@@ -43,6 +48,22 @@ def type_parameter_names(node: ast.AST) -> FrozenSet[str]:
         if isinstance(name, str):
             names.add(name)
     return frozenset(names)
+
+
+def pattern_expressions(pattern: ast.AST) -> Iterator[ast.expr]:
+    """The expressions a match pattern evaluates as it matches, at any depth.
+
+    A value pattern evaluates its literal or dotted name, a class pattern its
+    class, and a mapping pattern its keys; ``case kind():`` reads ``kind``
+    as surely as ``kind()`` would. Captures bind names and read none.
+    """
+    for node in ast.walk(pattern):
+        if isinstance(node, ast.MatchValue):
+            yield node.value
+        elif isinstance(node, ast.MatchClass):
+            yield node.cls
+        elif isinstance(node, ast.MatchMapping):
+            yield from node.keys
 
 
 @dataclass(frozen=True)
@@ -85,23 +106,67 @@ class Scope:
         self.bindings[name] = ScopeBinding(name, self.scope_id, node)
 
 
-# Custom visitor that doesn't descend into nested functions
-class _ScopeRespectingWalker(ScopeVisitor):
-    """Collect the names a block uses and binds, following scopes but not entering nested functions.
+_ScopeKind = Literal["block", "function", "comprehension", "class", "annotation"]
 
-    ``uses`` are the names read, ``bindings`` the names bound in the block's
-    own scope, and ``used_before_assigned`` the names read before the block
-    binds them, which Python would treat as locals of the whole function.
+
+@dataclass
+class _WalkedScope:
+    """A scope the walker is inside, with the reads it has yet to resolve.
+
+    ``plain`` reads were made in the scope itself, ``nested`` ones came out of
+    a function, lambda, comprehension or class body within it. A class body's
+    own names shadow only the plain ones: what is defined inside a class
+    looks names up past it. An annotation scope (a generic definition's
+    type parameters, a ``type`` statement's value) sees its class's names,
+    and keeps the distinction for what it encloses, since the function body
+    of a generic method still looks past the class.
     """
 
-    def __init__(self) -> None:
-        self._saved: List[Tuple[Set[str], Set[str], Set[str]]] = []
-        self.uses: Set[str] = set()
-        self.bindings: Set[str] = set()
+    kind: _ScopeKind
+    assigned_before: Set[str]
+    bindings: Set[str] = field(default_factory=set)
+    plain: Set[str] = field(default_factory=set)
+    nested: Set[str] = field(default_factory=set)
+    pending_name: Optional[str] = None
+    """A generic definition's own name, bound in the enclosing scope once its annotation scope ends."""
+
+
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+class _ScopeRespectingWalker(ScopeVisitor):
+    """Collect the names a block reads and binds, following Python's scopes.
+
+    ``uses`` are the names read from the block's own scope, ``bindings`` the
+    names bound in it, and ``used_before_assigned`` the names read before the
+    block binds them, which Python would treat as locals of the whole
+    function. Nested scopes are entered: what a nested function, lambda,
+    comprehension or class reads and does not bind itself is read from the
+    block's scope too. Everything a definition evaluates where it stands
+    counts as read there: decorators, defaults, annotations (unless the
+    module postpones them), class bases and keywords, and the lazily
+    evaluated bounds of type parameters and values of ``type`` statements.
+    """
+
+    def __init__(self, *, postponed_annotations: bool = False) -> None:
+        self.postponed_annotations = postponed_annotations
+        self._scopes: List[_WalkedScope] = [_WalkedScope("block", set())]
+        self._annotation_scopes: Dict[ast.AST, _WalkedScope] = {}
         self.used_before_assigned: Set[str] = set()  # Variables used before assignment
         self.assigned_so_far: Set[str] = set()  # Variables assigned so far in traversal
         self.global_vars: Set[str] = set()  # Variables declared global
         self.nonlocal_vars: Set[str] = set()  # Variables declared nonlocal
+
+    @property
+    def uses(self) -> Set[str]:
+        """The names read from the block's own scope, by it or by the scopes nested in it."""
+        block = self._scopes[0]
+        return block.plain | block.nested
+
+    @property
+    def bindings(self) -> Set[str]:
+        """The names bound in the block's own scope."""
+        return self._scopes[0].bindings
 
     def _extract_binding_names(self, target: ast.AST) -> Set[str]:
         """Extract variable names from an assignment target."""
@@ -114,22 +179,105 @@ class _ScopeRespectingWalker(ScopeVisitor):
                     names.add(elt.id)
         return names
 
+    # -- scopes ------------------------------------------------------------
+
     def _enter_scope(self, node: ast.AST) -> None:
         """Begin a nested scope: bindings made inside will not leak out."""
-        self._saved.append((self.bindings.copy(), self.assigned_so_far.copy(), self.uses.copy()))
+        kind: _ScopeKind = (
+            "class"
+            if isinstance(node, ast.ClassDef)
+            else "comprehension" if isinstance(node, _COMPREHENSIONS) else "function"
+        )
+        self._push(kind)
 
     def _leave_scope(self, node: ast.AST) -> None:
-        """End the nested scope, keeping only the uses it left free."""
-        saved_bindings, saved_assigned, saved_uses = self._saved.pop()
-        scope_bindings = self.bindings - saved_bindings
-        self.uses = saved_uses | (self.uses - scope_bindings)
-        self.bindings = saved_bindings
-        self.assigned_so_far = saved_assigned
+        """End the nested scope, keeping only the reads it left free."""
+        self._pop()
+
+    def _push(self, kind: _ScopeKind) -> _WalkedScope:
+        scope = _WalkedScope(kind, set(self.assigned_so_far))
+        self._scopes.append(scope)
+        return scope
+
+    def _pop(self) -> None:
+        scope = self._scopes.pop()
+        self.assigned_so_far = scope.assigned_before
+        enclosing = self._scopes[-1]
+        if scope.kind == "annotation":
+            enclosing.plain |= scope.plain - scope.bindings
+            enclosing.nested |= scope.nested - scope.bindings
+        elif scope.kind == "class":
+            enclosing.nested |= (scope.plain - scope.bindings) | scope.nested
+        else:
+            enclosing.nested |= (scope.plain | scope.nested) - scope.bindings
+
+    # -- what a definition evaluates where it stands -----------------------
+
+    def _visit_definition_head(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda]
+    ) -> None:
+        """Decorators and defaults here; type parameters, annotations, bases in the annotation scope.
+
+        A generic definition's annotations (and a generic class's bases and
+        keywords) are evaluated in its annotation scope, where its type
+        parameters are bound; that scope stays open around the definition's
+        own scope and is closed in ``_visit_definition_tail``.
+        """
+        for expression in evaluated_before_definition(node):
+            self.visit(expression)
+        if isinstance(node, ast.Lambda):
+            return
+        parameters = type_parameter_names(node)
+        if parameters:
+            scope = self._push("annotation")
+            self._annotation_scopes[node] = scope
+            self._add_current_scope_bindings(set(parameters))
+            for expression in type_parameter_expressions(node):
+                self.visit(expression)
+        if isinstance(node, ast.ClassDef):
+            for expression in [*node.bases, *(keyword.value for keyword in node.keywords)]:
+                self.visit(expression)
+        elif not self.postponed_annotations:
+            for expression in annotation_expressions(node):
+                self.visit(expression)
 
     def _bind_definition_name(
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
     ) -> None:
-        self._add_current_scope_bindings({node.name})
+        scope = self._annotation_scopes.get(node)
+        if scope is None:
+            self._add_current_scope_bindings({node.name})
+            return
+        # Bound in the enclosing scope once the annotation scope ends; until
+        # then the name is assigned, so the body may call itself.
+        scope.pending_name = node.name
+        self.assigned_so_far.add(node.name)
+
+    def _visit_definition_tail(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        scope = self._annotation_scopes.pop(node, None)
+        if scope is None:
+            return
+        self._pop()
+        if scope.pending_name is not None:
+            self._add_current_scope_bindings({scope.pending_name})
+
+    def visit_TypeAlias(self, node: ast.AST) -> None:
+        """``type X[T] = value``: X binds here; the value is read lazily, in an annotation scope."""
+        name = getattr(node, "name", None)
+        if isinstance(name, ast.AST):
+            self.visit(name)
+        self._push("annotation")
+        self._add_current_scope_bindings(set(type_parameter_names(node)))
+        for expression in type_parameter_expressions(node):
+            self.visit(expression)
+        value = getattr(node, "value", None)
+        if isinstance(value, ast.AST):
+            self.visit(value)
+        self._pop()
+
+    # -- bindings ----------------------------------------------------------
 
     def _bind_parameters(self, args: ast.arguments) -> None:
         self._bind_callable_parameters(args)
@@ -137,18 +285,14 @@ class _ScopeRespectingWalker(ScopeVisitor):
     def _bind_target(self, target: ast.AST) -> None:
         self._add_current_scope_bindings(self._extract_binding_names(target))
 
-    def _visit_class_body(self, node: ast.ClassDef) -> None:
-        """A class body is not entered: it binds nothing the block can read.
-
-        The walker asks which names a block reads that the enclosing
-        function must supply; a class statement contributes only the
-        class name, as it always did here.
-        """
-
     def _add_current_scope_bindings(self, new_bindings: Set[str]) -> None:
         """Add bindings to the current scope (they persist)."""
-        self.bindings.update(new_bindings)
+        self._scopes[-1].bindings.update(new_bindings)
         self.assigned_so_far.update(new_bindings)
+
+    def _read(self, name: str) -> None:
+        """Record a read in the current scope."""
+        self._scopes[-1].plain.add(name)
 
     def _bind_callable_parameters(self, args: ast.arguments) -> None:
         """Bind a callable's parameters as locals of the current scope."""
@@ -177,18 +321,17 @@ class _ScopeRespectingWalker(ScopeVisitor):
 
     def visit_Name(self, node: ast.Name) -> None:
         if isinstance(node.ctx, ast.Load):
-            self.uses.add(node.id)
+            self._read(node.id)
             # If variable used before any assignment, mark it
             if node.id not in self.assigned_so_far:
                 self.used_before_assigned.add(node.id)
         elif isinstance(node.ctx, ast.Store):
             if node.id in self.global_vars or node.id in self.nonlocal_vars:
                 # Global/nonlocal assignments are uses, not local bindings
-                self.uses.add(node.id)
+                self._read(node.id)
             else:
                 # Normal local binding
-                self.bindings.add(node.id)
-                self.assigned_so_far.add(node.id)
+                self._add_current_scope_bindings({node.id})
         # Continue visiting (though Name has no children)
         self.generic_visit(node)
 
@@ -209,18 +352,26 @@ class _ScopeRespectingWalker(ScopeVisitor):
             self.visit(target)  # Then visit LHS targets
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        # Inside a function body no annotation is evaluated, whatever
-        # the target, so names that appear only in one are not free
-        # variables (astroid: a class imported under TYPE_CHECKING).
+        # Inside a function body no annotation is evaluated, whatever the
+        # target, so names that appear only in one are not free variables
+        # (astroid: a class imported under TYPE_CHECKING). A class body
+        # evaluates its annotations unless the module postpones them.
+        if self._scopes[-1].kind == "class" and not self.postponed_annotations:
+            self.visit(node.annotation)
         if node.value is not None:
             self.visit(node.value)
-        self.visit(node.target)
+            self.visit(node.target)
+        elif not isinstance(node.target, ast.Name):
+            # ``obj.attr: T`` evaluates ``obj``; nothing is assigned.
+            self.visit(node.target)
+        # A bare ``x: T`` assigns nothing: x keeps whatever it was bound to,
+        # so a later read of x is still the caller's x.
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         # An augmented assignment reads its target, which must already be
         # bound, so the target is a use, not a binding.
         if isinstance(node.target, ast.Name):
-            self.uses.add(node.target.id)
+            self._read(node.target.id)
         else:
             # For subscripts (metrics["count"] += 1) or attributes (obj.x += 1),
             # visit the target to capture the base variable
@@ -245,20 +396,23 @@ class _ScopeRespectingWalker(ScopeVisitor):
         self._visit_with_like_block(node)
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-        # Walrus operator: Visit RHS first, then add binding
+        # Walrus operator: visit the value first, then bind the target in the
+        # nearest scope that is not a comprehension, as Python does.
         self.visit(node.value)
         if isinstance(node.target, ast.Name):
-            # Walrus bindings leak into the current scope
-            self.bindings.add(node.target.id)
+            for scope in reversed(self._scopes):
+                if scope.kind != "comprehension":
+                    scope.bindings.add(node.target.id)
+                    break
             self.assigned_so_far.add(node.target.id)
 
     def visit_Match(self, node: ast.Match) -> None:
-        # Capture patterns bind in the enclosing function scope
+        # What a pattern evaluates is read before its captures bind, in the
+        # enclosing function scope, where the captures bind too.
         self.visit(node.subject)
         for case in node.cases:
-            for child in ast.walk(case.pattern):
-                if isinstance(child, ast.MatchValue):
-                    self.visit(child.value)
+            for expression in pattern_expressions(case.pattern):
+                self.visit(expression)
             self._add_current_scope_bindings(pattern_capture_names(case.pattern))
             if case.guard:
                 self.visit(case.guard)
@@ -275,25 +429,22 @@ class _ScopeRespectingWalker(ScopeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
-        # import foo, bar as baz
-        # Binds: foo, baz
-        imports: Set[str] = set()
-        for alias in node.names:
-            name = alias.asname if alias.asname else alias.name
-            imports.add(name)
-        self._add_current_scope_bindings(imports)
+        # ``import a.b`` binds ``a``, ``import a.b as c`` binds ``c``.
+        self._add_current_scope_bindings(set(import_binding_names(node)))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        # from module import foo, bar as baz
-        # Binds: foo, baz
-        imports: Set[str] = set()
-        for alias in node.names:
-            if alias.name == "*":
-                # from module import * - skip, can't determine bindings
-                continue
-            name = alias.asname if alias.asname else alias.name
-            imports.add(name)
-        self._add_current_scope_bindings(imports)
+        # ``from m import *`` binds nothing nameable.
+        self._add_current_scope_bindings(set(import_binding_names(node)))
+
+
+def _postpones_annotations(tree: Optional[ast.AST]) -> bool:
+    """Whether ``tree`` is a module written under ``from __future__ import annotations``."""
+    return isinstance(tree, ast.Module) and any(
+        isinstance(statement, ast.ImportFrom)
+        and statement.module == "__future__"
+        and any(alias.name == "annotations" for alias in statement.names)
+        for statement in tree.body
+    )
 
 
 class ScopeAnalyzer(ScopeVisitor):
@@ -528,9 +679,8 @@ class ScopeAnalyzer(ScopeVisitor):
         for case in node.cases:
             for name in sorted(pattern_capture_names(case.pattern)):
                 self.current_scope.add_binding(name, case.pattern)
-            for child in ast.walk(case.pattern):
-                if isinstance(child, ast.MatchValue):
-                    self.visit(child.value)
+            for expression in pattern_expressions(case.pattern):
+                self.visit(expression)
             if case.guard:
                 self.visit(case.guard)
             for stmt in case.body:
@@ -573,8 +723,10 @@ class ScopeAnalyzer(ScopeVisitor):
         Free variables are identifiers that are referenced but not bound
         within the block.
 
-        Nested function and class definitions are not descended into: they
-        are scopes of their own.
+        Nested functions, lambdas, comprehensions and classes are scopes of
+        their own: what they read and do not bind themselves is read from
+        the block, and so is everything a definition evaluates where it
+        stands (see ``_ScopeRespectingWalker``).
 
         Excludes Python builtins.
         """
@@ -587,7 +739,9 @@ class ScopeAnalyzer(ScopeVisitor):
             if cached is not None:
                 return set(cached)
 
-        walker = _ScopeRespectingWalker()
+        walker = _ScopeRespectingWalker(
+            postponed_annotations=_postpones_annotations(self.analyzed_tree)
+        )
         for node in nodes:
             walker.visit(node)
 

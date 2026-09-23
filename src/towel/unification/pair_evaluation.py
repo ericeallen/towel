@@ -89,6 +89,7 @@ from .orphan_detector import orphaned_variables
 from .parameters import fresh_parameter_name
 from .scope_analyzer import Scope, ScopeAnalyzer
 from .semantic_safety import (
+    created_object_escapes,
     moves_scope_declaration,
     nested_bindings_escape,
     nested_scopes_cross_block_boundary,
@@ -451,6 +452,16 @@ class PairEvaluation(
                 block_id=block_id,
             ):
                 self._debug_reject(RejectReason.FRAME_READ_IN_FUNCTION, pair)
+                return None
+            if self._block_rejected(
+                created_object_escapes,
+                nodes,
+                function,
+                analyzer,
+                function_id=function_id,
+                block_id=block_id,
+            ):
+                self._debug_reject(RejectReason.CREATED_OBJECT_ESCAPES, pair)
                 return None
 
         if debugging(VALIDATION):

@@ -96,3 +96,12 @@ def test_store_is_stable_under_deep_copy_of_the_blocks(tmp_path) -> None:
     copied = [copy.deepcopy(block) for block in blocks]
     loaded, _ = load_substitution(stored, copied)
     assert store_substitution(loaded, copied, renames) == stored
+
+
+def test_structural_id_of_an_int_too_wide_for_decimal_conversion() -> None:
+    # 16,000 bits: 4,817 decimal digits, more than an interpreter converts by
+    # default; the key must neither raise nor confuse neighbouring widths.
+    wide = ast.parse("x = " + "0x" + "f" * 4000).body
+    wider = ast.parse("x = " + "0x" + "f" * 4001).body
+    assert structural_id(wide) == structural_id(copy.deepcopy(wide))
+    assert structural_id(wide) != structural_id(wider)

@@ -17,22 +17,47 @@
 A constant that differs between blocks may become a parameter, but only
 when every occurrence of that constant in each block corresponds: the same
 value must appear at the same positions, so a helper that parameterizes it
-does not silently change one occurrence and not another.
+does not silently change one occurrence and not another. Constants are the
+same only when they are interchangeable, which equality does not decide.
 """
 
 from __future__ import annotations
 
 import ast
 
-from typing import Any, List, Sequence, Tuple
+from typing import Hashable, Sequence, Tuple
 
-from .unifier_state import UnifierState
+from .unifier_state import ConstantIdentity, UnifierState
+
+
+def constant_identity(value: object) -> ConstantIdentity:
+    """What makes two constants interchangeable: the same type and the same value.
+
+    Equality is not enough. ``0 == 0.0 == False`` and ``1 == True``, and
+    each pair hashes alike, so a set or a dict keyed by value merges them;
+    a helper that hard-codes one block's ``0`` then returns ``0`` where the
+    other block returned ``0.0`` or ``False``, which print differently and
+    are told apart by ``type``, ``is`` and every serializer. A float or
+    complex is identified by its ``repr``, which tells ``-0.0`` from ``0.0``
+    and makes every NaN one constant, where equality does neither. An int
+    is identified by value, never by its decimal spelling, which CPython
+    refuses for a very wide int.
+    """
+    if isinstance(value, (float, complex)):
+        return (type(value), repr(value))
+    if isinstance(value, tuple):
+        return (type(value), tuple(constant_identity(member) for member in value))
+    if isinstance(value, frozenset):
+        return (type(value), frozenset(constant_identity(member) for member in value))
+    return (type(value), value if isinstance(value, Hashable) else repr(value))
 
 
 class ConstantConsistency(UnifierState):
     """See the module docstring."""
 
-    def _check_constant_consistency(self, values: List[Any], block_indices: Sequence[int]) -> bool:
+    def _check_constant_consistency(
+        self, values: Sequence[object], block_indices: Sequence[int]
+    ) -> bool:
         """
         Check if constants can be consistently parameterized.
 
@@ -61,18 +86,18 @@ class ConstantConsistency(UnifierState):
             # the pairwise check is the only one that runs.
             return True
 
-        value0, value1 = values
+        identity0, identity1 = (constant_identity(value) for value in values)
         idx0, idx1 = block_indices
 
-        positions0 = self.constant_positions.get((idx0, value0), [])
-        positions1 = self.constant_positions.get((idx1, value1), [])
+        positions0 = self.constant_positions.get((idx0, identity0), [])
+        positions1 = self.constant_positions.get((idx1, identity1), [])
 
         # If either value appears only once, it's trivially consistent
         if len(positions0) <= 1 and len(positions1) <= 1:
             return True
 
         # If both values are the same, check they appear at same positions
-        if value0 == value1:
+        if identity0 == identity1:
             # Same value in both blocks - they should appear at same positions
             # If they do, unification will succeed without parameterization
             # This is fine, return True
@@ -121,7 +146,7 @@ class ConstantConsistency(UnifierState):
                 self._record_constants_in_tree(stmt, (stmt_idx,), block_idx)
 
     def _record_constants_in_tree(
-        self, node: ast.AST, path: Tuple[Any, ...], block_idx: int
+        self, node: ast.AST, path: Tuple[object, ...], block_idx: int
     ) -> None:
         """
         Recursively traverse AST and record all constant positions.
@@ -132,7 +157,7 @@ class ConstantConsistency(UnifierState):
             block_idx: Which block this is from
         """
         if isinstance(node, ast.Constant):
-            key = (block_idx, node.value)
+            key = (block_idx, constant_identity(node.value))
             if key not in self.constant_positions:
                 self.constant_positions[key] = []
             self.constant_positions[key].append(path)
