@@ -129,6 +129,65 @@ that version; Towel's own checks run against a newer mypy and do not show it.
 - A project whose own mypy configuration excludes files (`exclude`, or `files`
   not naming them) is no longer refused for errors in files its own mypy run
   never checks; an excluded file that checked code imports is still checked.
+- A block passes the caller's names that only a definition inside it reads
+  where it stands: defaults and keyword-only defaults, decorators and
+  annotations, class bases, keywords and bodies. The helper raised
+  `NameError` before its first call. A bare `x: int` no longer counts as
+  binding `x`, which raised `UnboundLocalError`.
+- A `match` pattern's class, dotted value and mapping keys are read from the
+  caller, and nothing in a pattern becomes a parameter except a class
+  pattern's class or the root of a dotted name. `case [1, x]` against
+  `case [2, x]` had become a capture that matched every pair, and
+  `case Color.RED` a class pattern that raised `TypeError`.
+- A `type` statement's value and a type parameter's bound are closures
+  evaluated when first read, and are declined wherever the caller or the
+  block rebinds what they read, as lambdas are.
+- A block is declined when a function, lambda, generator or class it creates
+  could be observed other than by calling it. Such an object would carry the
+  helper's `__qualname__`, and a unified lambda the template's parameter
+  names. It may still be called in the block, be the `key=` of `sorted`,
+  `min` or `max`, or be the function of a `map` or `filter` consumed there.
+  Rich makes 27 helpers instead of 28; packaging, click and pygments are
+  unchanged.
+- Constants that compare equal but differ in type (`0`, `0.0` and `False`;
+  `1` and `True`) are different constants, extracted as arguments where the
+  instantiation check used to decline them. Pygments makes 74 helpers
+  instead of 72, and its lexers and formatters produce identical output over
+  12,679 observations.
+- An integer literal too wide for decimal conversion no longer ends the run;
+  a block holding one of more than 640 digits is declined.
+- A checker the project configures that is not installed refuses the typed
+  run before anything is written, naming the checker and its configuration.
+  It had been replaced by the other checker, or by none after a one-line
+  note, so a pyright-only project was refactored unverified with exit
+  status 0.
+- mypy checks with the project's configured plugins, loaded as its own mypy
+  loads them; a plugin that cannot load refuses the run, quoting mypy's
+  error. Without them Towel accepted a helper the project's own mypy
+  rejected.
+- A module that ships its own stub is checked through the stub, as mypy
+  checks it, so an importer of a name the implementation gained and the stub
+  lacks is refused rather than accepted.
+- An in-place run refactors a private copy of the project and writes the
+  result once, as one journaled change, after its final confirmation
+  succeeds. A refused confirmation or an interruption leaves the project
+  unchanged, and a file edited during the run refuses the write instead of
+  losing the edit. Over click the output is byte-identical and 1.4% slower.
+- A pyright configuration is read with pyright's own grammar, so a file
+  pyright rejects refuses the run before anything is written, naming the
+  file and position; the language server would otherwise have checked with
+  default settings. pyright's failures quote its standard error, and its
+  command-line probes are written only into Towel's private copy.
+- A generated annotation that uses syntax newer than the project's oldest
+  Python (`int | None` before 3.10, `list[int]` before 3.9) is written as a
+  string in a module that does not postpone annotations. The oldest Python
+  comes from `requires-python`, else mypy's `python_version` or pyright's
+  `pythonVersion`. A project declaring `>=3.9` got a helper that raised
+  `TypeError` at import under 3.9.
+- `dry` reports what it declined, counted by reason, instead of "No
+  refactorings found!" alone; a type-check refusal is no longer reported as
+  "could not be rendered"; and the `.towel-helpers.json` sidecar lists only
+  helpers present in the output.
 - A base-class name is resolved as the binding in effect where the class
   statement runs, not by finding a class of that qualname anywhere in the file.
   Python binds globals as a module executes, so `Base = object` written between
