@@ -1,5 +1,6 @@
 # Functions defined after this line look builtins up in this dictionary,
-# where ``len`` is not the builtin; no statement here binds ``len`` itself.
+# where ``len`` is not the builtin; no statement here binds ``len`` itself,
+# but the pair is declined all the same.
 import builtins
 
 __builtins__ = dict(vars(builtins), len=lambda item: 7)

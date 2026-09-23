@@ -41,21 +41,21 @@ None for a rejection that was already traced through ``_debug_reject``:
 from __future__ import annotations
 
 import ast
-import builtins
 import dataclasses
 import os
 import symtable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Set, Tuple, FrozenSet
+from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
 
 from ..diagnostics import VALIDATION, debugging
+from ..project_layout import find_project_root
 from ..source_text import read_source
 from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
-from .builtins import CALL_ARGUMENT_BUILTINS, is_builtin
+from .builtins import CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
     available_argument_names,
     module_resolved_names,
@@ -72,6 +72,12 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .narrowing import narrowing_lost_at_call_site
+from .namespace_writes import (
+    BUILTIN_NAMES,
+    ProjectWrites,
+    builtin_rebinding,
+    scan_project_writes,
+)
 from .models import (
     HelperHome,
     proposal_identity,
@@ -207,37 +213,15 @@ class _Placed:
     unified: _Unified
     rendered: _RenderedHelper
     placement: _Placement
-    # Names the helper reads bare from its host module's namespace that a site
-    # in another module may resolve differently (``_reads_differing_by_module``).
+    # Module names the helper reads bare from its host's namespace that a site
+    # in another module resolves in its own (``_host_namespace_reads``).
     differing_reads: FrozenSet[str] = frozenset()
-
-
-# Names every module's namespace defines for itself, each with that module's
-# own value; read bare in another module, each is the other module's.
-_MODULE_OWN_NAMES = frozenset(
-    {
-        "__annotations__",
-        "__builtins__",
-        "__cached__",
-        "__doc__",
-        "__file__",
-        "__loader__",
-        "__name__",
-        "__package__",
-        "__path__",
-        "__spec__",
-    }
-)
-
-# What a bare read finds in the builtins when no namespace between binds it:
-# the one lookup that can be the same from every module.
-_BUILTIN_NAMES = frozenset(vars(builtins)) - _MODULE_OWN_NAMES
 
 
 def _module_namespace_names(
     helper: ast.FunctionDef,
 ) -> Optional[Tuple[FrozenSet[str], FrozenSet[str]]]:
-    """The names the helper uses from its module's namespace, and those it declares ``global``.
+    """The names the helper looks up in its module's namespace, and those it declares ``global``.
 
     CPython's own symbol table answers, so a name read inside a lambda or a
     comprehension of the helper that nothing in the helper binds is among
@@ -430,10 +414,10 @@ class PairEvaluation(
             pair, setup, analysis, value_producing, functions, class_infos
         )
         if placed is not None and placed.differing_reads:
-            # A builtin that one of the modules rebinds is not the same lookup
-            # from the others. Decide the pair again with those names
-            # parameters. Unification runs again because the later stages
-            # rewrite the substitution in place.
+            # The helper would read a module name bare in its host's namespace
+            # that a site in another module read in its own. Decide the pair
+            # again with those names parameters. Unification runs again
+            # because the later stages rewrite the substitution in place.
             placed = self._unify_and_place(
                 pair,
                 setup,
@@ -496,79 +480,85 @@ class PairEvaluation(
         placement = self._place_helper(pair, setup, scope, sites, functions, class_infos)
         if placement is None:
             return None
-        differing = self._reads_differing_by_module(pair, placement, rendered.func_def, functions)
-        if differing is None:
+        reads = self._host_namespace_reads(placement, rendered.func_def)
+        if reads is None:
             self._debug_reject(RejectReason.BARE_NAME_DIFFERS_BY_MODULE, pair)
+            return None
+        differing, builtin_reads = reads
+        evidence = self._builtin_evidence(pair, placement, builtin_reads)
+        if evidence is not None:
+            self._debug_reject(RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE, pair, detail=evidence)
             return None
         return _Placed(unified, rendered, placement, differing)
 
-    def _reads_differing_by_module(
-        self,
-        pair: CodeBlockPair,
-        placement: _Placement,
-        helper: ast.FunctionDef,
-        functions: FunctionIndex,
-    ) -> Optional[FrozenSet[str]]:
-        """The names the helper reads bare that a site in another module may not resolve alike.
+    @staticmethod
+    def _host_namespace_reads(
+        placement: _Placement, helper: ast.FunctionDef
+    ) -> Optional[Tuple[FrozenSet[str], FrozenSet[str]]]:
+        """What the helper reads bare from its host's namespace that a site in another module did not.
 
         A bare read in the helper looks in its host module's namespace, then
         the builtins; the block it replaced looked in its own module's. From
-        a site in another module that is the same lookup only for a builtin
-        that no participating module may bind (``ModuleBindings.may_bind``)
-        and whose namespace no reflection may rebind: a module's own
-        function, class or import of that name, a star import, or a
-        ``global`` declaration makes the host's answer differ from the
-        site's. Anything else read bare, a module name or a dunder every
-        module defines for itself, differs too. None when the helper's
-        names cannot be listed, or when a differing name is one the helper
-        declares ``global`` and so cannot take as a parameter.
+        a site in another module a module name, or a dunder every module
+        defines for itself, is another lookup, and these come first: the pair
+        is decided again with them as parameters. The builtins come second.
+        No helper takes a builtin as a parameter, so each is read bare where
+        no participating module may hold it and the pair is declined where
+        one may (``_builtin_evidence``); ``__debug__``, which the compiler
+        replaces by a constant, is neither. Both are empty when every site is
+        in the host. None when the helper's names cannot be listed, or when
+        one it reads is declared ``global`` and so cannot be a parameter.
         """
         host = placement.home.file_path
         paths = {host} | {replacement.file_path or host for replacement in placement.replacements}
         if len({os.path.abspath(path) for path in paths}) == 1:
-            return frozenset()
+            return frozenset(), frozenset()
         found = _module_namespace_names(helper)
         if found is None:
             return None
         names, declared = found
-        sources = {pair.file_path: pair.source1, pair.file_path2: pair.source2}
-        tables = [self._module_bindings(path, sources) for path in sorted(paths)]
-        unreliable = any(table is None for table in tables) or any(
-            self._namespace_is_reflective(path, sources, functions) for path in paths
-        )
-        differing = frozenset(
-            name
-            for name in names
-            if name not in _BUILTIN_NAMES
-            or unreliable
-            or any(table is not None and table.may_bind(name) for table in tables)
-        )
-        if differing & declared:
+        if names & declared:
             return None
-        return differing
+        builtin_reads = (names & BUILTIN_NAMES) - {"__debug__"}
+        return names - BUILTIN_NAMES, builtin_reads
 
-    @staticmethod
-    def _namespace_is_reflective(
-        path: str, sources: Mapping[str, str], functions: FunctionIndex
-    ) -> bool:
-        """Whether the module reaches its namespace through reflection (``globals()``, ``exec``, ...).
+    def _builtin_evidence(
+        self, pair: CodeBlockPair, placement: _Placement, names: FrozenSet[str]
+    ) -> Optional[str]:
+        """Why a builtin in ``names`` may not be the same lookup from every participating module.
 
-        Its scope analysis says so (``external_binding_hazards``); a module
-        with no analyzed function is analyzed here, and one that cannot be
-        read or parsed counts as reflective.
+        Each participating module, the host included, is asked whether it
+        may hold one in its namespace (``namespace_writes.builtin_rebinding``):
+        by a statement of its own scope, a ``global``, a star import, a write
+        at run time, or a patch anywhere in the project's own code. Each is
+        read where the project stands, which for a copy being refactored is
+        the original's location. None when no module may.
         """
-        artifacts = functions.in_file(path)
-        analyzer = artifacts[0].scope_analyzer if artifacts else None
-        if analyzer is None:
+        if not names:
+            return None
+        host = placement.home.file_path
+        paths = {host} | {replacement.file_path or host for replacement in placement.replacements}
+        sources = {pair.file_path: pair.source1, pair.file_path2: pair.source2}
+        for path in sorted(paths):
+            origin = Path(self._origin_of(path)).resolve()
             source = sources.get(path)
-            try:
-                tree = ast.parse(source if source is not None else read_source(path))
-            except (OSError, UnicodeError, ValueError, SyntaxError):
-                return True
-            analyzer = ScopeAnalyzer()
-            analyzer.analyze(tree)
-        hazards = analyzer.external_binding_hazards
-        return hazards is None or hazards.reflective
+            if source is None:
+                try:
+                    source = read_source(path)
+                except (OSError, UnicodeError, ValueError):
+                    return f"{Path(path).name} cannot be read"
+            reason = builtin_rebinding(origin, source, names, self._project_writes(origin))
+            if reason is not None:
+                return reason
+        return None
+
+    def _project_writes(self, module: Path) -> ProjectWrites:
+        """The project's own writes into module namespaces, read once per engine and project."""
+        root = find_project_root(module)
+        writes = self._namespace_writes.get(str(root))
+        if writes is None:
+            writes = self._namespace_writes[str(root)] = scan_project_writes(root)
+        return writes
 
     # -- 1 ---------------------------------------------------------------------
 
@@ -956,17 +946,12 @@ class PairEvaluation(
         substitution = unified.substitution
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
         self._strip_fstring_params(substitution)
-        # The template's free variables come from block 1's module, which
-        # keeps a builtin spelling only where it binds the name; block 2's
-        # module or function may bind it where block 1's does not. The forced
-        # names are ones the rendered helper read bare.
-        also_free = set(forced_parameters)
-        if pair.is_cross_file:
-            also_free |= {
-                name for name in free_vars2 - free_vars1 if is_builtin(name)
-            } & self._template_reads(pair)
-        free_vars1, free_vars2 = free_vars1 | also_free, free_vars2 | also_free
-        free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1)
+        read_bare = self._builtins_read_bare(pair, ctx, free_vars1 | free_vars2)
+        if read_bare is None:
+            return None
+        # The forced names are module names the rendered helper read bare.
+        free_vars1, free_vars2 = free_vars1 | forced_parameters, free_vars2 | forced_parameters
+        free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1) - read_bare
         # A parameter cannot also be declared global or nonlocal in the helper.
         globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
             pair, scope_analyzer, free_vars
@@ -1013,13 +998,48 @@ class PairEvaluation(
             module_names,
         )
 
-    @staticmethod
-    def _template_reads(pair: CodeBlockPair) -> FrozenSet[str]:
-        """The names the template block reads outside the functions it defines."""
-        collector = FreeNameCollector()
-        for statement in pair.block1_nodes:
-            collector.visit(statement)
-        return frozenset(collector.used)
+    def _builtins_read_bare(
+        self, pair: CodeBlockPair, ctx: "_PairContext", free_names: Set[str]
+    ) -> Optional[FrozenSet[str]]:
+        """The builtin spellings among a cross-file pair's free names that the helper reads bare.
+
+        Each module's analysis lists a builtin spelling as free only where
+        some scope of that module binds the name, so across modules the two
+        blocks can disagree about one both read. A spelling both sites
+        resolve at module scope, or nowhere, is a builtin to the helper, read
+        bare wherever it is placed; whether a participating module may hold
+        it is placement's question (``_builtin_evidence``). One both sites'
+        functions bind, as a local or a cell, stays an ordinary parameter, each
+        site passing its own. One that only one site's function binds is what
+        a builtin parameter would have had to carry, and no helper takes a
+        builtin as a parameter: the pair is declined. A same-file pair's
+        helper shares its sites' module, and nothing here applies to it.
+        """
+        if not pair.is_cross_file:
+            return frozenset()
+        spellings = frozenset(name for name in free_names if name in BUILTIN_NAMES)
+        if not spellings:
+            return frozenset()
+        sites = (
+            (ctx.func1, ctx.scope_analyzer, pair.block1_nodes, pair.function1_name),
+            (ctx.func2, ctx.scope_analyzer2, pair.block2_nodes, pair.function2_name),
+        )
+        read = [spellings & set().union(*map(loaded_names, nodes)) for _, _, nodes, _ in sites]
+        at_module = [
+            module_resolved_names(function, analyzer, names)
+            for (function, analyzer, _, _), names in zip(sites, read)
+        ]
+        local = [names - module for names, module in zip(read, at_module)]
+        for index, other in ((0, 1), (1, 0)):
+            mixed = sorted(local[index] & at_module[other])
+            if mixed:
+                self._debug_reject(
+                    RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE,
+                    pair,
+                    detail=f"{mixed[0]}: {sites[index][3]} binds it, {sites[other][3]} does not",
+                )
+                return None
+        return spellings - local[0] - local[1]
 
     def _names_kept_free(
         self, pair: CodeBlockPair, ctx: "_PairContext", free_vars: Set[str]

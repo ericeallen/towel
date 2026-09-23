@@ -1,6 +1,6 @@
 # The star import binds ``len`` to util's function, a binding no scope
 # analysis of this module lists; a helper in a.py reading ``len`` bare
-# would reach the builtin instead.
+# would reach the builtin instead, so the pair is declined.
 from pkg.util import *
 
 

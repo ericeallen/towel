@@ -5,14 +5,16 @@ reads a module-level name with a different meaning in each module: a local
 function, a class, an import alias, ``__file__``, or a builtin that only one
 module rebinds (by definition, star import, a local of its function, or its
 ``__builtins__``), including one only the ancestor class's module rebinds.
-The helper must receive that name from its caller rather than resolve it in
-the helper's own module.
+A module name must reach the helper from its caller rather than resolve in
+the helper's own module. A builtin cannot: no helper takes one as a
+parameter, so a pair whose modules may disagree about it is declined.
 
 As in ``test_hostile_battery``, ``TRANSFORMED`` pins which packages the
 current engine rewrites, so a lost cross-file extraction fails as loudly as
 a wrong one. Every package is in exactly one state. Rejected today:
 ``xf13_import_time_effects``, whose helper import would run a module that
-prints at import time, which the borrower's own import never ran.
+prints at import time, which the borrower's own import never ran; and the
+four whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``).
 """
 
 from __future__ import annotations
@@ -44,12 +46,8 @@ TRANSFORMED = {
     "xf14_script_with_leading_statement",
     "xf15_ancestor_in_another_module",
     "xf16_consumer_outside_target_owns_helper_name",
-    "xf17_builtin_shadowed_in_borrower",
-    "xf18_builtin_shadowed_by_star_import",
-    "xf19_builtin_shadowed_by_borrower_local",
     "xf20_builtin_shadowed_in_ancestor_module",
     "xf21_builtin_shadowed_in_third_module",
-    "xf22_borrower_rebinds_builtins_namespace",
     "xf23_relative_import_in_another_package",
     "xf24_relative_import_climbs_elsewhere",
     "xf25_relative_import_in_the_same_package",
@@ -60,7 +58,13 @@ TRANSFORMED = {
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
-REJECTED = {"xf13_import_time_effects"}
+REJECTED = {
+    "xf13_import_time_effects",
+    "xf17_builtin_shadowed_in_borrower",
+    "xf18_builtin_shadowed_by_star_import",
+    "xf19_builtin_shadowed_by_borrower_local",
+    "xf22_borrower_rebinds_builtins_namespace",
+}
 
 
 def _python_files(root: Path) -> dict[str, bytes]:
