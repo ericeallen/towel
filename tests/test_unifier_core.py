@@ -1,4 +1,7 @@
+import ast
 import unittest
+
+import pytest
 
 from tests.test_helpers import parse_block
 from towel.unification.unifier import Unifier
@@ -186,3 +189,45 @@ def test_assignment_expression_is_never_parameterized() -> None:
         _ast.parse("v = g(s)\nuse(v)\n").body,
     ]
     assert Unifier().unify_blocks(blocks, [{}, {}]) is None
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("0", "0.0"),
+        ("0", "False"),
+        ("1", "True"),
+        ("1.0", "True"),
+        ("0", "0j"),
+        ("0.0", "0j"),
+    ],
+)
+def test_equal_constants_of_different_types_are_different_constants(
+    first: str, second: str
+) -> None:
+    # They compare equal and hash alike, but a helper hard-coding one would
+    # hand the other block a value of the wrong type.
+    blocks = [ast.parse(f"x = {first}").body, ast.parse(f"x = {second}").body]
+    substitution = Unifier().unify_blocks(blocks, [{}, {}])
+    assert substitution is not None
+    assert [
+        [ast.unparse(node) for _, node in expressions]
+        for expressions in substitution.param_expressions.values()
+    ] == [[first, second]]
+
+
+def test_a_false_elsewhere_is_no_occurrence_of_a_differing_zero() -> None:
+    blocks = [
+        ast.parse("x = 0\ny = False").body,
+        ast.parse("x = 1\ny = False").body,
+    ]
+    substitution = Unifier().unify_blocks(blocks, [{}, {}])
+    assert substitution is not None
+    assert len(substitution.param_expressions) == 1
+
+
+def test_the_same_constant_of_the_same_type_needs_no_parameter() -> None:
+    for literal in ("0", "0.0", "False", "'a'", "b'a'", "None", "...", "1e400"):
+        blocks = [ast.parse(f"x = {literal}").body, ast.parse(f"x = {literal}").body]
+        substitution = Unifier().unify_blocks(blocks, [{}, {}])
+        assert substitution is not None and not substitution.param_expressions, literal

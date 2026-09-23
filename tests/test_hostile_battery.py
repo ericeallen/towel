@@ -146,6 +146,9 @@ TRANSFORMED = {
     # The blocks holding a literal generated code cannot spell stay; the run
     # goes on and extracts the ordinary duplicate beside them.
     "r147_wide_int_literal",
+    # Equal constants of different types (0 and 0.0, True and 1) are passed as
+    # arguments; a False elsewhere in a block no longer counts as its 0.
+    "r148_equal_constants_of_different_types",
 }
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise

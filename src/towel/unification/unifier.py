@@ -27,11 +27,12 @@ for a substitution making two terms equal.
 import ast
 from typing import Callable, Dict, Optional, List, Tuple, Any, Sequence, Type, Union, Iterator
 
-from .constant_consistency import ConstantConsistency
+from .constant_consistency import ConstantConsistency, constant_identity
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
 from .substitution import Substitution
+from .unifier_state import ConstantIdentity
 from .visitors import all_instances
 
 
@@ -45,7 +46,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
     Implements alpha-renaming for bound variables (loop vars, etc.).
     """
 
-    constant_positions: Dict[Tuple[int, Any], List[Tuple[Any, ...]]]
+    constant_positions: Dict[Tuple[int, ConstantIdentity], List[Tuple[object, ...]]]
 
     def __init__(
         self,
@@ -154,10 +155,12 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             # Different types - cannot unify at the statement level
             return self._try_parameterize(nodes, substitution, block_indices)
 
-        # Constants - check if they're identical, or parameterize if enabled
+        # Constants - check if they're identical, or parameterize if enabled.
+        # Identical means the same type as well as an equal value: 0, 0.0 and
+        # False are equal, and a helper keeping one would return it for all.
         if all_instances(nodes, ast.Constant):
             values = [n.value for n in nodes]
-            if len(set(values)) == 1:
+            if len({constant_identity(value) for value in values}) == 1:
                 return True  # All same constant
 
             if self.parameterize_constants:

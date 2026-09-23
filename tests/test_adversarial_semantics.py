@@ -303,3 +303,26 @@ def test_external_hazard_summary_is_owned_reused_and_reset() -> None:
     assert snapshots_rebound_external_names(
         analyzer, replacement_function, replacement_function.body
     ) == snapshots_rebound_external_names(fresh, replacement_function, replacement_function.body)
+
+
+def test_equal_constants_of_different_types_are_passed_not_merged(tmp_path: Path) -> None:
+    # 0 and 0.0, True and 1 compare equal; a block returning one must still get
+    # its own, as an argument, not have the pair declined or the literal merged.
+    fixture = Path(__file__).parent / "hostile_cases" / "r148_equal_constants_of_different_types.py"
+    source = fixture.read_text()
+    original: dict[str, object] = {}
+    exec(source, original)
+    calls: list[tuple[str, object]] = [
+        *((name, text) for name in ("score_int", "score_float") for text in ("ab", "abcd")),
+        *((name, items) for name in ("flag_true", "flag_one") for items in ([], [1] * 4)),
+    ]
+    extracted = [output for output in _rewrites(tmp_path, source) if "return 0.0" not in output]
+    assert extracted, "the score pair must be extracted with its constant as an argument"
+    for output in extracted:
+        namespace: dict[str, object] = {}
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(output, namespace)
+            for name, argument in calls:
+                before = cast(Callable[..., object], original[name])(argument)
+                after = cast(Callable[..., object], namespace[name])(argument)
+                assert (type(after), after) == (type(before), before), name
