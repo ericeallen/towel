@@ -78,6 +78,7 @@ from ..project_layout import find_project_root
 from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
 
+from .annotation_wiring import UNTYPED_REMEDY
 from .materialize import Materialization
 
 _TQDM_NOTED = False
@@ -93,8 +94,53 @@ def _note_missing_tqdm() -> None:
         )
 
 
+_CHECKER_FAILURE = "Prospective project type check failed"
+"""How a candidate whose check could not run is refused, as against one the check refused.
+
+The two reach the driver as the same ``RefactoringError``; only the wording
+tells a checker that crashed or timed out from a verdict on the proposal.
+"""
+
+
+def _is_checker_failure(error: BaseException) -> bool:
+    return isinstance(error, RefactoringError) and str(error).startswith(_CHECKER_FAILURE)
+
+
 class FixedPointDrivers(Materialization):
     """FixedPointDrivers methods of the engine; see the module docstring."""
+
+    # Proposals the last run dropped because the checker could not run, by
+    # identity, and the last reason it gave.
+    _unchecked: FrozenSet[str] = frozenset()
+    _unchecked_reason: str = ""
+
+    @property
+    def checker_failures(self) -> int:
+        """How many proposals the last fixed-point run dropped because the checker could not run.
+
+        Such a proposal was not refused on its merits: nothing is known about
+        it. A run in which that happened and nothing was applied raises
+        instead of reporting a fixed point it never reached.
+        """
+        return len(self._unchecked)
+
+    def _begin_counting_checker_failures(self) -> None:
+        self._unchecked, self._unchecked_reason = frozenset(), ""
+
+    def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
+        """Raise when nothing was applied and the checker failed on some proposal.
+
+        Reporting "no refactorings found" there would read as a verdict on the
+        project, and exiting cleanly would hide a checker that timed out or
+        crashed on every candidate it was given.
+        """
+        if applied or not self._unchecked:
+            return
+        raise RefactoringError(
+            f"Nothing was applied, and the type checker could not run for "
+            f"{len(self._unchecked)} proposal(s), which were therefore not judged: "
+            f"{self._unchecked_reason}\nFix what stops the checker, or {UNTYPED_REMEDY}"
+        )
 
     @staticmethod
     def _pop_next_proposal(queue: List[RefactoringProposal]) -> Optional[RefactoringProposal]:
@@ -145,6 +191,7 @@ class FixedPointDrivers(Materialization):
             descriptions in application order.
         """
         self._change_log = []
+        self._begin_counting_checker_failures()
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         current_bytes = Path(file_path).read_bytes()
         try:
@@ -232,6 +279,7 @@ class FixedPointDrivers(Materialization):
 
         if num_applied:
             self.confirm_run_with_a_cold_checker([file_path])
+        self._refuse_a_run_the_checker_emptied(num_applied)
         return current_code, num_applied, descriptions
 
     def _rendered_or_none(
@@ -254,11 +302,21 @@ class FixedPointDrivers(Materialization):
             return None
         return new_code
 
-    @staticmethod
-    def _report_dropped(proposal: RefactoringProposal, error: BaseException) -> None:
-        LOG.warning(
-            "Dropped a proposal that could not be rendered (%s): %s", proposal.description, error
-        )
+    def _report_dropped(self, proposal: RefactoringProposal, error: BaseException) -> None:
+        if _is_checker_failure(error):
+            self._unchecked = self._unchecked | {_RejectedProposals.identity(proposal)}
+            self._unchecked_reason = str(error)
+            LOG.warning(
+                "Dropped a proposal the type checker could not check (%s): %s",
+                proposal.description,
+                error,
+            )
+        else:
+            LOG.warning(
+                "Dropped a proposal that could not be rendered (%s): %s",
+                proposal.description,
+                error,
+            )
         if debugging(REJECTIONS):
             REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
 
@@ -344,6 +402,7 @@ class FixedPointDrivers(Materialization):
             termination_reason ∈ {"fixed_point", "iteration_cap"}
         """
         self._change_log = []
+        self._begin_counting_checker_failures()
         reporter = _ApplyProgress(*self._resolve_progress_backend(progress))
 
         input_path = Path(input_dir)
@@ -386,7 +445,7 @@ class FixedPointDrivers(Materialization):
         termination_reason: TerminationReason = "fixed_point"
 
         try:
-            return self._apply_until_fixed_point(
+            outcome = self._apply_until_fixed_point(
                 directory, run, reporter, max_iterations, termination_reason
             )
         finally:
@@ -394,6 +453,8 @@ class FixedPointDrivers(Materialization):
             reporter.close()
             if run.applied:
                 self.confirm_run_with_a_cold_checker(self._find_python_files(str(directory)))
+        self._refuse_a_run_the_checker_emptied(run.applied)
+        return outcome
 
     @contextmanager
     def _staged_output(self, origin: Path, output: Path) -> Iterator[StagedProject]:
@@ -698,7 +759,7 @@ class _RejectedProposals:
         self._identities: Set[str] = set()
 
     @staticmethod
-    def _identity(proposal: RefactoringProposal) -> str:
+    def identity(proposal: RefactoringProposal) -> str:
         return repr(
             (
                 proposal.file_path,
@@ -714,10 +775,10 @@ class _RejectedProposals:
         )
 
     def add(self, proposal: RefactoringProposal) -> None:
-        self._identities.add(self._identity(proposal))
+        self._identities.add(self.identity(proposal))
 
     def __contains__(self, proposal: RefactoringProposal) -> bool:
-        return self._identity(proposal) in self._identities
+        return self.identity(proposal) in self._identities
 
     def __bool__(self) -> bool:
         return bool(self._identities)
