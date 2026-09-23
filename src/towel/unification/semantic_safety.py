@@ -39,6 +39,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    Mapping,
     Sequence,
     Set,
     Tuple,
@@ -1646,7 +1647,12 @@ def thunk_reads_possibly_unbound_local(
 
 
 def builtins_passed(
-    call: ast.AST, helper_name: str, function: FunctionNode, analyzer: "ScopeAnalyzer"
+    call: ast.AST,
+    helper_name: str,
+    function: FunctionNode,
+    analyzer: "ScopeAnalyzer",
+    *,
+    permitted: AbstractSet[int] = frozenset(),
 ) -> FrozenSet[str]:
     """The builtins that ``call``, standing in ``function``, hands the helper ``helper_name``.
 
@@ -1658,15 +1664,47 @@ def builtins_passed(
     is not, since it hands over what ``len`` computed. A name the site's
     function or an enclosing one binds is its own local and is not a
     builtin; one the site's module binds is counted all the same, being
-    spelled as a builtin.
+    spelled as a builtin. The positional arguments at ``permitted`` are not
+    counted: ``parameterize_builtins`` lets a site pass a builtin there, as
+    its binding of a free variable (``free_variable_positions``).
     """
     handed: Set[str] = set()
     for node in ast.walk(call):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id == helper_name:
-                for argument in [*node.args, *(keyword.value for keyword in node.keywords)]:
+                arguments = [
+                    argument for index, argument in enumerate(node.args) if index not in permitted
+                ]
+                for argument in [*arguments, *(keyword.value for keyword in node.keywords)]:
                     handed |= _builtin_values(argument, frozenset())
     return module_resolved_names(function, analyzer, handed) if handed else frozenset()
+
+
+def free_variable_positions(
+    param_order: Mapping[str, int], substitution: "Substitution"
+) -> FrozenSet[int]:
+    """Where a generated call passes a free variable of the blocks, as its site spells it.
+
+    A parameter the substitution does not map is a free variable passed
+    eagerly; one it maps to the same bare name at every site is a free
+    variable passed as a thunk, because a site may not have bound it by the
+    time of the call (``_thunk_uncertain_free_variables``). Every other
+    parameter is a difference between the blocks, passed as a value or a
+    thunk of one.
+    """
+    positions: Set[int] = set()
+    for name, index in param_order.items():
+        expressions = substitution.param_expressions.get(name)
+        if expressions is None:
+            positions.add(index)
+            continue
+        spellings = {
+            expression.id if isinstance(expression, ast.Name) else None
+            for _, expression in expressions
+        }
+        if len(spellings) == 1 and None not in spellings:
+            positions.add(index)
+    return frozenset(positions)
 
 
 def _builtin_values(node: ast.expr, shadowed: FrozenSet[str]) -> Set[str]:

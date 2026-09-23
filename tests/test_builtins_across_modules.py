@@ -242,9 +242,10 @@ READS_ITS_OWN_NAMESPACE = {
 
 
 def _evidence(tmp_path: Path, source: str) -> Optional[str]:
+    """Why the module ``source`` may hold ``len``, or None."""
     _write(tmp_path, {"pyproject.toml": "", "pkg/__init__.py": "", "pkg/mod.py": source})
     module = (tmp_path / "pkg" / "mod.py").resolve()
-    return builtin_rebinding(module, source, {"len"}, scan_project_writes(tmp_path))
+    return builtin_rebinding(module, source, {"len"}, scan_project_writes(tmp_path)).get("len")
 
 
 @pytest.mark.parametrize("case", sorted(WRITES_ITS_OWN_NAMESPACE))

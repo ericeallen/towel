@@ -336,6 +336,16 @@ def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
         help=f"Most parameters an extracted helper may take (default: {DEFAULT_MAX_PARAMETERS})",
     )
     parser.add_argument(
+        "--parameterize-builtins",
+        dest="parameterize_builtins",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Where a builtin the duplicated code reads may differ between its sites (one "
+        "function binds len, the other reads the builtin; or, across modules, a module may hold "
+        "the name), pass it to the helper as a parameter instead of declining the pair. Off by "
+        "default: no helper takes a builtin as a parameter.",
+    )
+    parser.add_argument(
         "--max-pairs",
         type=_count,
         default=DEFAULT_MAX_CANDIDATE_PAIRS,
@@ -756,6 +766,7 @@ class DryOptions:
     max_refactorings: int
     min_lines: int
     max_parameters: int
+    parameterize_builtins: bool
     max_pairs: int
     progress: ProgressMode
     types: bool
@@ -773,6 +784,7 @@ class DryOptions:
             max_refactorings=int(args.max_refactorings),
             min_lines=int(args.min_lines),
             max_parameters=int(args.max_parameters),
+            parameterize_builtins=bool(args.parameterize_builtins),
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
             types=bool(args.types),
@@ -790,6 +802,7 @@ class PreviewOptions:
     target: str
     min_lines: int
     max_parameters: int
+    parameterize_builtins: bool
     max_pairs: int
     progress: ProgressMode
     prefer_absolute_imports: Optional[bool]
@@ -801,6 +814,7 @@ class PreviewOptions:
             target=str(args.target),
             min_lines=int(args.min_lines),
             max_parameters=int(args.max_parameters),
+            parameterize_builtins=bool(args.parameterize_builtins),
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
             prefer_absolute_imports=args.prefer_absolute_imports,
@@ -886,6 +900,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         engine = UnificationRefactorEngine(
             max_parameters=options.max_parameters,
             min_lines=options.min_lines,
+            parameterize_builtins=options.parameterize_builtins,
             max_candidate_pairs=options.max_pairs,
             settings=_settings(),
             parameterize_constants=True,
@@ -1077,6 +1092,7 @@ def _run_preview(args: argparse.Namespace) -> None:
     engine = UnificationRefactorEngine(
         max_parameters=options.max_parameters,
         min_lines=options.min_lines,
+        parameterize_builtins=options.parameterize_builtins,
         max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,

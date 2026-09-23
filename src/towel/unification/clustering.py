@@ -47,9 +47,11 @@ from .models import FunctionArtifact, FunctionNode, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import statement_shape
+from .substitution import Substitution
 from .semantic_safety import (
     available_argument_names,
     builtins_passed,
+    free_variable_positions,
     thunk_reads_possibly_unbound_local,
     module_resolved_names,
     defer_impure_parameters,
@@ -96,6 +98,18 @@ def _lines_of(line_range: Tuple[int, int]) -> range:
 
 class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
     """Clustering methods of the engine; see the module docstring."""
+
+    def _builtin_parameter_positions(
+        self, param_order: Dict[str, int], substitution: Substitution
+    ) -> FrozenSet[int]:
+        """Where a call may hand its helper a builtin: with ``parameterize_builtins``, at its free variables.
+
+        Each site then passes its own binding of the name
+        (``free_variable_positions``); without the flag, nowhere.
+        """
+        if not self.parameterize_builtins:
+            return frozenset()
+        return free_variable_positions(param_order, substitution)
 
     def _cluster_candidate_call(
         self, template: "HelperTemplate", candidate: "_ClusterCandidate"
@@ -196,9 +210,14 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         if needs_class_body([call_node2]):
             return None
         # A clustered block reading a builtin cannot join a helper whose sites
-        # pass their own local of that name: its call would hand over the builtin.
+        # pass their own local of that name: its call would hand over the
+        # builtin, which only ``parameterize_builtins`` permits.
         if builtins_passed(
-            call_node2, template.func_def.name, candidate.function, candidate.analyzer
+            call_node2,
+            template.func_def.name,
+            candidate.function,
+            candidate.analyzer,
+            permitted=self._builtin_parameter_positions(template.param_order, subst2),
         ):
             return None
         if thunk_reads_possibly_unbound_local(call_node2, candidate.function, available[1]):

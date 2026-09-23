@@ -88,10 +88,10 @@ describe belong to that version.
   A same-file pair's helper, a method or a function, always lives in the
   pair's own module, so these names are always read there (oauthlib's
   `BearerToken`, fixture `xf15`, broke when a helper was hoisted into a base
-  class defined in another module). A builtin is never a parameter, since
-  a call such as `helper(rows, len)` would surprise every reader, so a
-  helper that a site in another module calls reads its builtins bare in its
-  host's namespace. That is the lookup each site made only while no
+  class defined in another module). By default a builtin is never a
+  parameter, since a call such as `helper(rows, len)` would surprise every
+  reader, so a helper that a site in another module calls reads its
+  builtins bare in its host's namespace. That is the lookup each site made only while no
   participating module holds the name, and the pair is declined
   (`builtin_may_differ_by_module`) wherever the program shows one may: a
   statement of the module's own scope binds the name, a function of it
@@ -136,7 +136,28 @@ describe belong to that version.
   functions bind the name, each passes its own local. A lambda that calls a
   builtin (`lambda: len(rows)`) passes what the builtin computed, and an
   attribute of one (`str.upper`) is not the builtin
-  (`tests/test_no_builtin_arguments.py`).
+  (`tests/test_no_builtin_arguments.py`). With `--parameterize-builtins`
+  (`parameterize_builtins=True`), each of those declines that concerns a
+  builtin the sites may disagree about, one site's function binding the
+  name or a module that may hold it, passes the builtin as an ordinary
+  parameter instead, each site giving its own: eagerly, or as a thunk where
+  the site may not have bound it, as for any free variable. The rules for a
+  name rebound between the call and the read still apply, so a module whose
+  function declares the name `global` or writes its namespace at run time
+  (`rebound_external_binding`), or that assigns it at its top level
+  (`module_data_lookup`), is declined as before. A builtin every site reads
+  alike stays bare, and blocks that differ in which builtin they use
+  (`lambda: __import__`, `(int, str)`) are declined all the same. Such
+  a parameter is annotated from what the checker reveals of the builtin,
+  loosened to what the helper's body needs where the host could not spell
+  the signature: a class every constructor of which makes it is
+  `type[str]`, a callable whose overloads all return one type or whose
+  parameters name typeshed's protocols is `Callable[..., int]`, a signature
+  over builtins alone stays exact (`Callable[[object], str]`). A builtin
+  whose overloads return different types (`open`, `sorted`, `min`) or a
+  generic one (`abs`) has no such annotation and gets `Any`, which a strict
+  checker may then refuse where the helper returns what it computes
+  (`tests/test_parameterize_builtins.py`).
 - **Relative imports stay in their package.** A relative import in a block
   resolves in the package of the module that runs it, so a helper holding
   `from .sub import VAL` imports its host's `sub` for every caller. A block

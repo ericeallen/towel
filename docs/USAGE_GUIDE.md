@@ -138,6 +138,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | Parameter | Default | Effect |
 |---|---|---|
 | `parameterize_constants` | `True` | Differing constants become helper parameters. |
+| `parameterize_builtins` | `False` | Where a builtin the duplicated code reads may differ between its sites (one site's function binds `len` and the other reads the builtin, or, across modules, a module may hold the name), pass it to the helper as a parameter, each site giving its own, instead of declining the pair (`--parameterize-builtins/--no-parameterize-builtins`). A builtin every site reads alike is still read bare, and blocks that differ in which builtin they use are still declined. In typed code such a parameter is annotated with what its body needs: `Callable[..., int]` for `len`, `type[str]` for `str`; a builtin whose overloads return different types (`open`, `sorted`) gets `Any`. |
 | `prefer_absolute_imports` | `None` | Cross-file helper import style; `None` lets the discovered layout decide (`--prefer-absolute-imports/--no-prefer-absolute-imports`). |
 | `pep420_namespace_packages` | `None` | Treat directories without `__init__.py` as packages; `None` infers it (`--pep420/--no-pep420`). |
 | `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`). |
