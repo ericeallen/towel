@@ -9,20 +9,41 @@ those names, so a later pass calls it instead of restating it. And when a
 site is the whole body of a helper an earlier pass inserted and neither
 mechanism applies (the parameters differ), the proposal is declined: the
 helper would keep only the new call, one more layer with no logic of its own.
+
+The fixed point terminates for a reason that does not depend on any guard
+declining a block for its own purposes. A helper that only calls a helper
+this tool generated, unpacking and re-packing what it returns, shares no
+code the user wrote, and is never extracted, whatever the settings; with
+that excluded every extraction moves some of the user's code into a helper,
+so extraction runs out. sqlglot once chained 597 such helpers, each
+returning the previous one's tuple permuted, which the forwarding filter
+did not recognize, until ordinary SQL raised RecursionError.
 """
 
 from __future__ import annotations
 
+import ast
+import contextlib
+import io
 from pathlib import Path
 import textwrap
 from types import SimpleNamespace
+from typing import Dict, List, Tuple
+
+import pytest
 
 from tests.test_helpers import (
+    function_def,
     module_functions,
     refactor_to_fixed_point_silently,
     unparsed_body,
     write_module,
 )
+from towel.formatting import BlackSettings, black_formatter
+from towel.unification import clustering, pair_evaluation
+from towel.unification.block_analysis import BlockAnalysis
+from towel.unification.models import is_generated_helper_name
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 def _summaries(source: str, names: list[str]) -> list[object]:
@@ -262,3 +283,249 @@ def test_a_user_named_function_may_specialize_the_new_helper(tmp_path: Path) -> 
         unparsed_body(module_functions(final)["square_shifted"])
         == "__extracted_func_0(x, 10, result)"
     )
+
+
+# sqlglot's generator, reduced: each method reads ``expression.this`` and two
+# arguments, and the keys are long enough that a call passing them wraps over
+# the line minimum once formatted. Every extraction left call sites that
+# unpack a helper's tuple in their own order.
+SQL_GENERATOR = """
+class Expr:
+    def __init__(self, this, **args):
+        self.this = this
+        self.args = args
+
+
+class Generator:
+    def func(self, name, *args):
+        return f"{name}({', '.join(map(str, args))})"
+
+    def zipf_sql(self, expression):
+        s = expression.this
+        n = expression.args["elementcount_argument_key"]
+        gen = expression.args["gen_argument_key"]
+        return self.func("ZIPF", gen, n, s)
+
+    def tobinary_sql(self, expression):
+        value = expression.this
+        format_arg = expression.args.get("format_argument_key")
+        is_safe = expression.args.get("safe_argument_key")
+        return self.func("TO_BINARY", is_safe, format_arg, value)
+
+    def sortarray_sql(self, expression):
+        arr = expression.this
+        asc = expression.args.get("asc_argument_key")
+        nulls_first = expression.args.get("nulls_first_argument_key")
+        return self.func("LIST_SORT", arr, asc, nulls_first)
+
+    def strposition_sql(self, expression):
+        this = expression.this
+        substr = expression.args.get("substr_argument_key")
+        position = expression.args.get("position_argument_key")
+        return self.func("STRPOS", substr, position, this)
+
+    def round_sql(self, expression):
+        this = expression.this
+        decimals = expression.args.get("decimals_argument_key")
+        truncate = expression.args.get("truncate_argument_key")
+        return self.func("ROUND", decimals, this, truncate)
+
+    def splitpart_sql(self, expression):
+        string_arg = expression.this
+        delimiter_arg = expression.args.get("delimiter_argument_key")
+        part_index_arg = expression.args.get("part_index_argument_key")
+        return self.func("SPLIT_PART", part_index_arg, delimiter_arg, string_arg)
+"""
+
+SQL_KEYS = {
+    "zipf_sql": ("elementcount", "gen"),
+    "tobinary_sql": ("format", "safe"),
+    "sortarray_sql": ("asc", "nulls_first"),
+    "strposition_sql": ("substr", "position"),
+    "round_sql": ("decimals", "truncate"),
+    "splitpart_sql": ("delimiter", "part_index"),
+}
+
+
+def _rendered_sql(source: str) -> Dict[str, str]:
+    """What each generator method renders for an expression carrying its two arguments."""
+    namespace: Dict[str, object] = {}
+    exec(compile(source, "<generator>", "exec"), namespace)
+    generator = namespace["Generator"]()  # type: ignore[operator]
+    expression_type = namespace["Expr"]
+    return {
+        method: getattr(generator, method)(
+            expression_type("x", **{f"{key}_argument_key": index for index, key in enumerate(keys)})  # type: ignore[operator]
+        )
+        for method, keys in SQL_KEYS.items()
+    }
+
+
+def _generated_helpers(source: str) -> List[ast.FunctionDef]:
+    return [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
+    ]
+
+
+def _refactor_generator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    escape_guard: bool,
+    min_lines: int = 1,
+    formatted: bool = False,
+    bound: int = 25,
+    skip_trivial_helpers: bool = True,
+) -> Tuple[str, int]:
+    """Refactor ``SQL_GENERATOR`` for at most ``bound`` applications.
+
+    With ``escape_guard`` false the guard that declines a block whose lambdas
+    could be looked at is switched off. It declined the blocks that fed the
+    sqlglot chain only incidentally, because they pass fresh lambdas to a
+    call; termination must not rest on it.
+    """
+    if not escape_guard:
+        monkeypatch.setattr(pair_evaluation, "created_object_escapes", lambda *_: False)
+        monkeypatch.setattr(clustering, "created_object_escapes", lambda *_: False)
+    engine = UnificationRefactorEngine(
+        min_lines=min_lines,
+        snippet_formatter=black_formatter(BlackSettings()) if formatted else None,
+        skip_trivial_helpers=skip_trivial_helpers,
+    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        final, applied, _descriptions = engine.refactor_to_fixed_point(
+            write_module(tmp_path, SQL_GENERATOR, "generator.py"),
+            max_iterations=bound,
+            progress="none",
+        )
+    return final, applied
+
+
+_PLUMBING = (
+    ast.Assign,
+    ast.Return,
+    ast.Expr,
+    ast.Name,
+    ast.Constant,
+    ast.Tuple,
+    ast.List,
+    ast.Starred,
+    ast.Lambda,
+    ast.arguments,
+    ast.keyword,
+    ast.expr_context,
+)
+
+
+def _only_forwards_to_generated_helpers(helper: ast.FunctionDef) -> bool:
+    """Whether the helper computes nothing but calls of generated helpers and of its thunks."""
+    generated_calls = 0
+    for statement in helper.body:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Call):
+                callee = node.func
+                name = (
+                    callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+                )
+                if is_generated_helper_name(name):
+                    generated_calls += 1
+                elif not name.startswith("__param_"):
+                    return False
+            elif isinstance(node, ast.Attribute):
+                if not is_generated_helper_name(node.attr):
+                    return False
+            elif not isinstance(node, _PLUMBING):
+                return False
+    return generated_calls > 0
+
+
+@pytest.mark.parametrize("skip_trivial_helpers", [True, False])
+def test_the_fixed_point_ends_without_the_escape_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip_trivial_helpers: bool
+) -> None:
+    # On the unfixed engine this shape extracts a helper per pass until the
+    # bound: each forwards to the previous one and returns its tuple permuted.
+    final, applied = _refactor_generator(
+        tmp_path, monkeypatch, escape_guard=False, skip_trivial_helpers=skip_trivial_helpers
+    )
+    assert applied < 25, "the run reached a fixed point"
+    forwarders = [
+        helper.name
+        for helper in _generated_helpers(final)
+        if _only_forwards_to_generated_helpers(helper)
+    ]
+    assert forwarders == []
+    assert _rendered_sql(final) == _rendered_sql(SQL_GENERATOR)
+
+
+@pytest.mark.parametrize("formatted", [True, False])
+def test_sqlglots_generator_ends_after_one_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, formatted: bool
+) -> None:
+    # The r5_chain reproducer as ``towel dry`` runs it: formatted, three lines.
+    final, applied = _refactor_generator(
+        tmp_path, monkeypatch, escape_guard=True, min_lines=3, formatted=formatted
+    )
+    assert applied == 1
+    assert len(_generated_helpers(final)) == 1
+    assert _rendered_sql(final) == _rendered_sql(SQL_GENERATOR)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "a, b, c = self._extracted_func_3(p, q, e)\nreturn (c, a, b)",
+        "a, b, c = forward(p, q, e)\nreturn (b, a)",
+        "a, b = forward(p)\nreturn [b, a]",
+        "(a, b), c = forward(p)\nreturn (c, b, a)",
+    ],
+)
+def test_a_call_whose_results_are_returned_rearranged_only_forwards(body: str) -> None:
+    helper = function_def("def helper(self, p, q, e):\n" + textwrap.indent(body, "    "))
+    assert BlockAnalysis._helper_is_trivial_forwarding(helper)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "a, b = forward(p)\nreturn (b, a + 1)",
+        "a, *rest = forward(p)\nreturn (a, rest)",
+        "a, b = forward(p)\nreturn (b, other)",
+    ],
+)
+def test_a_call_whose_results_are_computed_on_is_not_forwarding(body: str) -> None:
+    helper = function_def("def helper(p, other):\n" + textwrap.indent(body, "    "))
+    assert not BlockAnalysis._helper_is_trivial_forwarding(helper)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "a, b, c = self._extracted_func_3(p, q, e)\nreturn (c, a, b)",
+        "return __extracted_func_0(lambda: __param_0(), p, 'key', *rest)",
+        "x = __extracted_func_0(p)\ny = __extracted_func_1(x, key=q)\nreturn (y, x)",
+        "__extracted_func_2(__extracted_func_1(p), lambda: q)",
+    ],
+)
+def test_a_helper_that_only_calls_generated_helpers_shares_nothing(body: str) -> None:
+    helper = function_def("def helper(self, p, q, e, rest):\n" + textwrap.indent(body, "    "))
+    assert BlockAnalysis._helper_only_calls_generated_helpers(helper)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # The user's own code: an attribute read, an operator, another call.
+        "a, b = self._extracted_func_3(p.key, q)\nreturn (b, a)",
+        "return __extracted_func_0(p) + 1",
+        "x = __extracted_func_0(p)\nreturn self.func(x)",
+        "return __extracted_func_0(lambda: e.args.get(p))",
+        # No generated helper at all: the forwarding filter's concern.
+        "return forward(p, q)",
+    ],
+)
+def test_a_helper_with_code_of_its_own_is_not_plumbing(body: str) -> None:
+    helper = function_def("def helper(self, p, q, e):\n" + textwrap.indent(body, "    "))
+    assert not BlockAnalysis._helper_only_calls_generated_helpers(helper)

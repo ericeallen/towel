@@ -908,8 +908,12 @@ class PairEvaluation(
         # A helper that only forwards (a lone raise, a return of one call, a
         # bare call, or an assignment returned as is) adds indirection and
         # shares no logic; decline it here, before the call sites, clustering
-        # and placement are worked out for a helper that will be dropped.
-        if self.skip_trivial_helpers and self._helper_is_trivial_forwarding(func_def):
+        # and placement are worked out for a helper that will be dropped. One
+        # that only calls generated helpers is declined whatever the setting:
+        # admitting it is what let the fixed point extract one per pass.
+        if self._helper_only_calls_generated_helpers(func_def) or (
+            self.skip_trivial_helpers and self._helper_is_trivial_forwarding(func_def)
+        ):
             self._debug_reject(RejectReason.TRIVIAL_FORWARDING_HELPER, pair)
             return None
         preamble_length = int(bool(free.globals_to_declare)) + int(bool(free.nonlocals_to_declare))
