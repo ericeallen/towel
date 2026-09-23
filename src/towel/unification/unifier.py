@@ -32,7 +32,13 @@ from .constant_consistency import ConstantConsistency, constant_identity
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
-from .static_positions import DEFAULT_TRANSLATION_KEYWORDS, TranslationKeywords, statically_read
+from .static_positions import (
+    DEFAULT_TRANSLATION_KEYWORDS,
+    TYPING_FORMS_BY_NAME,
+    TranslationKeywords,
+    TypingForms,
+    statically_read,
+)
 from .substitution import Substitution, structural_text
 from .unifier_state import ConstantIdentity
 from .visitors import all_instances
@@ -108,6 +114,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         hygienic_renames: List[Dict[str, str]],
         *,
         translation_keywords: TranslationKeywords = DEFAULT_TRANSLATION_KEYWORDS,
+        typing_forms: Optional[Sequence[TypingForms]] = None,
     ) -> Optional[Substitution]:
         """
         Unify multiple code blocks.
@@ -118,6 +125,9 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                              to hygienically renamed names
             translation_keywords: The markers whose messages extraction reads,
                              which the blocks may not differ in
+            typing_forms: For each block, what its callees denote among the
+                             typing forms where its module binds them; without
+                             them every callee is the form its name spells
 
         Returns:
             Substitution mapping expressions to parameters, or None if unification fails
@@ -131,7 +141,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         # Reset per-unification state to avoid cross-pair contamination
         # Alpha-renamings and parameter counters must start fresh for each call
         self.alpha_renamings = {}
-        self._reset_unification_state(blocks, translation_keywords)
+        self._reset_unification_state(blocks, translation_keywords, typing_forms)
 
         self._collect_constant_positions(blocks)
 
@@ -1127,19 +1137,23 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self,
         blocks: Sequence[Sequence[ast.AST]],
         translation_keywords: TranslationKeywords = DEFAULT_TRANSLATION_KEYWORDS,
+        typing_forms: Optional[Sequence[TypingForms]] = None,
     ) -> None:
         self.param_counter = 0
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
         self.current_blocks = blocks
+        forms = typing_forms if typing_forms is not None else [TYPING_FORMS_BY_NAME] * len(blocks)
         # What each block's statements pin, looked up by node id.
         self._read_in_place = [
             {
                 node: pin
                 for statement in block
-                for node, pin in statically_read(statement, translation_keywords).items()
+                for node, pin in statically_read(
+                    statement, translation_keywords, block_forms
+                ).items()
             }
-            for block in blocks
+            for block, block_forms in zip(blocks, forms, strict=True)
         ]
         # A helper extracted on an earlier pass already binds names such as
         # ``__param_0``; a fresh parameter must not alias any identifier the

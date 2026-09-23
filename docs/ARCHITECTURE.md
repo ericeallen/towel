@@ -86,7 +86,7 @@ flowchart TD
       deletes or `except ... as`-binds a name bound before it is declined
       here;
    3. the shape check: both blocks value-producing or neither, complete
-      return coverage, not a trivial `return name`, structurally similar;
+      return coverage, structurally similar;
    4. unification (`unifier.py`, below) and alignment of the returned
       variables across the blocks;
    5. where the helper will be visible from, for hygienic naming;
@@ -97,11 +97,14 @@ flowchart TD
       rebinding-hazard guards, which decline the rest; `global`/`nonlocal`
       declarations; and any name the call site may not resolve becomes a
       thunk;
-   7. rendering the helper (`extractor.py`), and dropping one whose body
-      only forwards: a lone `raise`, a `return` of one call, a bare call, a
-      call whose result is bound and returned, or a body that only binds
-      parameters and literals to names and returns them
-      (`skip_trivial_helpers=False` keeps such helpers);
+   7. rendering the helper (`extractor.py`), and dropping one too trivial
+      to share, decided in one place (`_trivial_helper_reason`): one that
+      computes nothing, only handing back its parameters, literals, tuples of
+      them or its sites' thunks, and one that only calls generated helpers,
+      in every configuration; and one whose body only forwards: a lone
+      `raise`, a `return` of one call, a bare call, a call whose result is
+      bound and returned, or a body that only binds parameters and literals
+      to names and returns them (`skip_trivial_helpers=False` keeps these);
    8. the orphan check (`orphan_detector.py`, `definite_assignment.py`) on
       what the blocks leave behind;
    9. the call sites, each verified by instantiating the helper with its
@@ -204,7 +207,13 @@ The result is a `Substitution` (in `substitution.py`): the template, the ordered
 parameters, and, per parameter, the argument expression at each call site and
 its kind. `unifier.py` refuses to parameterize a node that is not an
 `ast.expr` (a slice, a starred item, a whole f-string), because those are
-container syntax, not values.
+container syntax, not values. Nor does it parameterize what a tool reads
+where it stands (`static_positions.py`): a translation marker's message, or
+what a checker reads of a typing form, such as `cast`'s type or a
+`TypeVar`'s name. A form is whatever the block's module binds to typing's
+object, however it is imported (`typing_forms.py`), so `t.cast(Alpha, v)`
+after `import typing as t` is one and sqlglot's own `exp.cast(column, to)`
+is not.
 
 ## The soundness invariant
 
@@ -1192,6 +1201,7 @@ but the ideas and their names are from the literature.
 | Parse/analyze cache, pair-processor protocol | `pipeline.py` |
 | Loggers and settings | `diagnostics.py` (at `src/towel/`) |
 | Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py` |
+| What a tool reads where it stands, and what a block's callees denote among the typing forms | `static_positions.py`, `typing_forms.py` |
 | Pair pre-filter | `block_signature.py` |
 | Per-statement facts and the weak per-node memo | `statement_facts.py` |
 | Verification | `instantiation.py` |

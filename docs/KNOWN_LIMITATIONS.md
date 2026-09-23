@@ -659,16 +659,27 @@ the proposals it built and did not apply, by reason:
 - Shape. `value_producing_mismatch`: one block returns a value and the
   other does not. `incomplete_return_coverage_block1`/`_block2`: a
   value-producing block does not leave by `return`, `raise`, `break` or
-  `continue` on every path. `trivial_return_blocks`: both blocks are a
-  one-line `return name` of a name bound before them.
-  `not_structurally_similar`: the blocks' per-statement node counts or
-  type histograms differ by more than the similarity threshold.
+  `continue` on every path. `not_structurally_similar`: the blocks'
+  per-statement node counts or type histograms differ by more than the
+  similarity threshold.
 - Unification. `unification_failed`: the blocks do not anti-unify, which
   includes a differing sub-expression that is a slice, a starred item, or
   a whole f-string (container syntax rather than values), a lambda with
   positional-only, keyword-only, or variadic parameters, an expression
   containing an assignment expression, and a substitution that would need
-  more than the configured maximum parameters (`--max-parameters`).
+  more than the configured maximum parameters (`--max-parameters`). It
+  also includes a difference a tool reads where it stands: a translation
+  marker's message, or the name, fields or type a checker reads of a typing
+  form. A form is what the block's module binds to typing's object,
+  however it is imported (`TV("T")` after `from typing import TypeVar as
+  TV`, `t.cast(Alpha, v)`, one re-exported by a module of the project); a
+  project's own `cast` is an ordinary call, and a binding Towel cannot
+  follow is taken to be the form its name spells. A form a module of the
+  project re-exports under a name of its own (`L` for `Literal`) is not
+  recognized, nor is one a module outside the project re-exports
+  (`hypothesis.internal.compat.TypedDict`), since such an import is taken
+  at its word, as it must be for SQLAlchemy's `cast`; where a checker is
+  configured it declines what either lets through.
   `return_variables_not_aligned`: a variable one block must return has no
   binding in the other. `mixed_return_and_variables`: a block both returns
   early and binds variables read afterwards, which one call statement
@@ -686,13 +697,21 @@ the proposals it built and did not apply, by reason:
   one site resolves the name at module scope.
 - Rendering. `impure_eager_parameter`: an argument that would be passed
   eagerly is not a literal, a resolvable name, or a tuple of those.
-  `trivial_forwarding_helper`: the helper body would be a single
-  forwarding statement (a lone `raise`, a `return` of one call, or a bare
-  call), a forwarding statement whose result is bound and returned
-  (`x = f(...)` then `return x`, or the tuple form), or a body that only
-  binds parameters and literals to names and returns them; such a helper
-  shares no logic, only a name, and is skipped by default
-  (`skip_trivial_helpers=False` keeps it).
+  `trivial_return_blocks`: the helper would compute nothing. Its one
+  statement returns nothing, or returns or evaluates only names, literals,
+  tuples of them and the thunks its sites pass, so each site would hand its
+  own expression to a helper that hands it back: two unrelated `return`
+  statements, such as rich's `Tag.markup` and `MofNCompleteColumn.render`,
+  unify that way, and so do two `return name` blocks. Declined whatever
+  `skip_trivial_helpers` says. `trivial_forwarding_helper`: the helper
+  body would be a single forwarding statement (a lone `raise`, a `return`
+  of one call, or a bare call), a forwarding statement whose result is
+  bound and returned (`x = f(...)` then `return x`, or the tuple form), or
+  a body that only binds parameters and literals to names and returns
+  them; such a helper shares no logic, only a name, and is skipped by
+  default (`skip_trivial_helpers=False` keeps it). One whose only
+  computation is calling helpers Towel generated is declined under this
+  reason whatever the setting.
 - Orphans. `orphaned_variables`: a name the block binds is read afterwards
   on a path that does not rebind it first, and the helper does not return
   it. A read after only a *conditional* rebinding is treated as orphaned

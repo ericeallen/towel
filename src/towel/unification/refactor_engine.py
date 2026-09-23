@@ -67,7 +67,7 @@ from .progress import (
 )
 from .parallel import ParallelEvaluation
 from .bounded_cache import BoundedCache
-from .engine_state import ClusteredSite, ClusterScanKey, GuardKey, HelperNameClaims
+from .engine_state import ClusteredSite, ClusterScanKey, GuardKey, HelperNameClaims, UnifyKey
 from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
@@ -379,12 +379,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # pass unifies one template against the same candidates for every pair
         # that shares it, so results are memoized per (block, block) within an
         # analysis; callers mutate substitutions, so a hit returns a copy.
-        # Keyed by the two blocks' structure, valued by positions: a hit
-        # serves any later block with the same structure, including the same
-        # code after a re-parse. Bounded and self-validating, so never evicted
-        # by path.
-        self._unify_cache: BoundedCache[Tuple[str, str], Optional[StoredSubstitution]] = (
-            BoundedCache(self.STRUCTURAL_CACHE_LIMIT)
+        # Keyed by the two blocks' structure and what their callees denote
+        # among the typing forms, valued by positions: a hit serves any later
+        # block with the same structure and forms, including the same code
+        # after a re-parse. Bounded and self-validating, so never evicted by
+        # path.
+        self._unify_cache: BoundedCache[UnifyKey, Optional[StoredSubstitution]] = BoundedCache(
+            self.STRUCTURAL_CACHE_LIMIT
         )
         # Every pair that yields one template scans the whole file for sites
         # that can share its helper; with N similar blocks that is N^2 pairs

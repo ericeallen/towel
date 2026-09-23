@@ -19,8 +19,9 @@ whether it reassigns a name it did not bind; which external names another
 function may rebind while it runs, and whether it reads module data a
 callback could rebind (exempting names the helper reads bare); which names
 must be declared
-global or nonlocal in a helper; and the filters that decline helpers which
-only forward, only rename, or only call helpers this tool generated. Every
+global or nonlocal in a helper; and the one filter (``_trivial_helper_reason``)
+that declines helpers which compute nothing, only forward, only rename, or
+only call helpers this tool generated. Every
 answer is memoized per block structure or per function, since the pair
 stages ask the same questions of the same blocks many times.
 """
@@ -64,8 +65,14 @@ from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import rebound_external_names, walk_own_scope
 from .statement_facts import memoized_per_node
-from .static_positions import TranslationKeywords, configured_translation_keywords
+from .static_positions import (
+    TYPING_FORMS_BY_NAME,
+    TranslationKeywords,
+    TypingForms,
+    configured_translation_keywords,
+)
 from .structural_memo import load_substitution, store_substitution
+from .typing_forms import ModuleText, typing_forms_of
 from .substitution import Substitution
 from .visitors import (
     AssignTargetVisitor,
@@ -75,7 +82,7 @@ from .visitors import (
 )
 from ..diagnostics import VALIDATION, debugging
 
-from .engine_state import EngineState, GuardKey
+from .engine_state import EngineState, GuardKey, UnifyKey
 from .function_index import FunctionIndex
 
 T = TypeVar("T")
@@ -230,18 +237,40 @@ class BlockAnalysis(EngineState):
         self._keywords_read_for = (paths, keywords)
         return keywords
 
+    def _typing_forms(self, block: Sequence[ast.stmt], module: Optional[ModuleText]) -> TypingForms:
+        """What the block's callees denote among the typing forms, as its module binds them.
+
+        A block whose module is not given is taken to call the forms its
+        callees' names spell.
+        """
+        if module is None:
+            return TYPING_FORMS_BY_NAME
+        return typing_forms_of(block, module, self.import_graph)
+
     def _unify_memoized(
         self,
         blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
+        modules: Optional[Sequence[ModuleText]] = None,
     ) -> Optional[Substitution]:
-        """Unify two blocks, reusing the result for any pair with the same structure."""
+        """Unify two blocks, reusing the result for any pair with the same structure.
+
+        ``modules`` holds each block's module, where its callees are resolved
+        to the typing forms they denote; the same structure calling other
+        objects is another pair, so the forms are part of the key.
+        """
         keywords = self._translation_keywords()
+        forms = tuple(
+            self._typing_forms(block, module)
+            for block, module in zip(
+                blocks, modules if modules is not None else [None] * len(blocks), strict=True
+            )
+        )
         if len(blocks) != 2:
             return self.unifier.unify_blocks(
-                blocks, hygienic_renames, translation_keywords=keywords
+                blocks, hygienic_renames, translation_keywords=keywords, typing_forms=forms
             )
-        key = (self._sid(blocks[0]), self._sid(blocks[1]))
+        key = UnifyKey(self._sid(blocks[0]), self._sid(blocks[1]), forms[0], forms[1])
         if key in self._unify_cache:
             stored = self._unify_cache[key]
             if stored is None:
@@ -251,7 +280,9 @@ class BlockAnalysis(EngineState):
                 target.clear()
                 target.update(source)
             return substitution
-        result = self.unifier.unify_blocks(blocks, hygienic_renames, translation_keywords=keywords)
+        result = self.unifier.unify_blocks(
+            blocks, hygienic_renames, translation_keywords=keywords, typing_forms=forms
+        )
         self._unify_cache[key] = (
             None if result is None else store_substitution(result, blocks, hygienic_renames)
         )
@@ -814,6 +845,59 @@ class BlockAnalysis(EngineState):
                         return True
         return False
 
+    def _trivial_helper_reason(self, func: ast.FunctionDef) -> Optional[RejectReason]:
+        """Why the rendered helper shares too little to be extracted; None when it shares logic.
+
+        The one place a helper is declined for being trivial:
+
+        - one that computes nothing (``_helper_computes_nothing``) shares only
+          its sites' ``return``, as blocks that each return a name they were
+          given always did, and is declined whatever ``skip_trivial_helpers``
+          says (``trivial_return_blocks``);
+        - one whose only computation is calling helpers this tool generated
+          shares nothing the user wrote, and is declined whatever the setting
+          too;
+        - one that only forwards, renames or unpacks shares a name and no
+          logic, and is declined unless ``skip_trivial_helpers`` is off.
+        """
+        if self._helper_computes_nothing(func):
+            return RejectReason.TRIVIAL_RETURN_BLOCKS
+        if self._helper_only_calls_generated_helpers(func) or (
+            self.skip_trivial_helpers and self._helper_is_trivial_forwarding(func)
+        ):
+            return RejectReason.TRIVIAL_FORWARDING_HELPER
+        return None
+
+    @staticmethod
+    def _helper_computes_nothing(func: ast.FunctionDef) -> bool:
+        """Whether the helper would run none of its sites' operations: it hands back what it gets.
+
+        Its one statement, beside ``global`` and ``nonlocal`` declarations,
+        returns nothing, or returns or evaluates what ``_hands_back`` accepts:
+        names, literals, tuples of them, and the thunks the sites pass, which
+        are their own code. Two ``return`` statements whose whole expressions
+        differ unify this way, as rich's ``Tag.markup`` and
+        ``MofNCompleteColumn.render`` did into ``return __param_0``; each site
+        then passes its own expression to be handed back. A body that binds
+        names first is ``_helper_only_renames``'s, which the setting governs.
+        """
+        body = [
+            statement
+            for statement in func.body
+            if not isinstance(statement, (ast.Global, ast.Nonlocal))
+        ]
+        if len(body) != 1:
+            return False
+        statement = body[0]
+        thunks = frozenset(
+            argument.arg
+            for argument in func.args.args
+            if argument.arg.startswith(GENERATED_PARAMETER_PREFIX)
+        )
+        if isinstance(statement, ast.Return):
+            return statement.value is None or _hands_back(statement.value, thunks)
+        return isinstance(statement, ast.Expr) and _hands_back(statement.value, thunks)
+
     @staticmethod
     def _helper_is_trivial_forwarding(func: ast.FunctionDef) -> bool:
         """Whether the helper body is a single forwarding statement with no logic.
@@ -968,6 +1052,27 @@ def _plain_names(node: ast.expr) -> Optional[List[str]]:
             names.extend(inner)
         return names
     return None
+
+
+def _hands_back(node: ast.expr, thunks: AbstractSet[str]) -> bool:
+    """Whether evaluating ``node`` runs none of the helper's own operations.
+
+    A name, a literal, a tuple of such values, or a call without arguments of
+    one of ``thunks``, the helper's own parameters, which evaluates code of
+    the call site's. Unpacking a starred value iterates it, and a list display
+    makes a new list, so neither is among them.
+    """
+    if isinstance(node, (ast.Name, ast.Constant)):
+        return True
+    if isinstance(node, ast.Tuple):
+        return all(_hands_back(element, thunks) for element in node.elts)
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in thunks
+        and not node.args
+        and not node.keywords
+    )
 
 
 def _calls_generated_helper(node: ast.AST) -> bool:

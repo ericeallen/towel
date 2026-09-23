@@ -64,6 +64,7 @@ from .models import (
     RejectReason,
     Replacement,
 )
+from .static_positions import TypingForms
 from .structural_memo import StoredSubstitution
 from .unifier import Unifier
 from .progress import DEFAULT_PROGRESS, ProgressMode
@@ -77,6 +78,20 @@ class GuardKey(NamedTuple):
     function_id: Optional[str]
     block_id: str
     module_digest: Optional[str]
+
+
+class UnifyKey(NamedTuple):
+    """What unifying two blocks depends on: their structure, and what their callees denote.
+
+    Two blocks of one structure are unified alike unless a callee of one is a
+    typing form where the other's is not, as ``cast`` from typing is and
+    sqlglot's ``exp.cast`` is not.
+    """
+
+    block1_id: str
+    block2_id: str
+    forms1: TypingForms
+    forms2: TypingForms
 
 
 class TemplateKey(NamedTuple):
@@ -243,7 +258,7 @@ class EngineState:
     # Bounded, path-registered caches: guards per (guard, function, block),
     # unification results per block-structure pair, and the per-block analyses.
     _block_guard_cache: BoundedCache["GuardKey", bool]
-    _unify_cache: BoundedCache[Tuple[str, str], Optional[StoredSubstitution]]
+    _unify_cache: BoundedCache[UnifyKey, Optional[StoredSubstitution]]
     # Per-block analyses of several result types; ``_per_block`` narrows each.
     _per_block_cache: BoundedCache[Tuple[str, str, str], object]
     # The last few parsed sources of the apply path, which parses each modified
