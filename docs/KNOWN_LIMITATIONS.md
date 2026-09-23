@@ -370,7 +370,15 @@ where the evidence comes from:
   unwritten and the parameter completed with `Any`. Any subscripted
   annotation that would not evaluate at definition time (`memoryview[int]`
   on an interpreter where `memoryview` is not generic) is written as a
-  string. Generic inference can also retain a foreign site's imported type when
+  string. So is any annotation using syntax younger than the oldest Python
+  the helper's module has to run on, in a module that does not postpone its
+  annotations: a union written with `|` before 3.10, a subscripted builtin or
+  `collections.abc` class before 3.9. That Python is the lower bound of the
+  project's `requires-python` (or setup.cfg's `python_requires`, or Poetry's
+  `python` dependency), else the older of mypy's `python_version` and pyright's
+  `pythonVersion`; where the project declares none, the oldest Python the
+  syntax could need, unless the module already evaluates that syntax in its
+  own top-level signatures, which it could not import without. Generic inference can also retain a foreign site's imported type when
   the helper's host binds the same canonical import; matching spellings alone
   are insufficient. Its annotations and TypeVar domains are quoted.
 - The typing guarantee is exactly as strong as the checker the project
