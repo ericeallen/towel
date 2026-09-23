@@ -229,7 +229,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             "\n\n\n", class_block, "Should not contain triple blank lines inside class body"
         )
 
-    def test_staticmethod_extraction_produces_static_helper(self):
+    def test_staticmethod_extraction_produces_module_helper(self):
+        # A static helper would have to be reached through the class's name,
+        # which a method cannot be sure of (a parameter, a decorator, ``del``,
+        # mangling); a module function is reached by a name nothing shadows.
         code = """
         class C:
             @staticmethod
@@ -246,8 +249,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.addCleanup(m.cleanup)
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
-        target = next((p for p in proposals if p.insert_into_class == "C"), None)
-        self.assertIsNotNone(target, "Expected a class-level extraction proposal")
+        self.assertFalse([p for p in proposals if p.insert_into_class == "C"])
+        target = next((p for p in proposals if p.insert_into_class is None), None)
+        self.assertIsNotNone(target, "Expected a module-level extraction proposal")
         assert target is not None
         out = engine.apply_refactoring(str(m.path), target)
         mod = ast.parse(out)
@@ -257,21 +261,15 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         helper = next(
             (
                 n
-                for n in cls.body
+                for n in mod.body
                 if isinstance(n, ast.FunctionDef)
                 and n.name.startswith(("_extracted_func", "__extracted_func"))
             ),
             None,
         )
-        self.assertIsNotNone(helper, "Extracted helper should be present inside the class")
+        self.assertIsNotNone(helper, "Extracted helper should be a module function")
         assert helper is not None
-        self.assertTrue(
-            any(
-                isinstance(dec, ast.Name) and dec.id == "staticmethod"
-                for dec in helper.decorator_list
-            ),
-            "Extracted helper must be decorated as @staticmethod",
-        )
+        self.assertEqual(helper.decorator_list, [])
         self.assertFalse(any(arg.arg == "self" for arg in helper.args.args))
 
         for method_name in ("a", "b"):
@@ -282,26 +280,24 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 call.func
                 for call in ast.walk(method)
                 if isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and call.func.attr.startswith(("_extracted_func", "__extracted_func"))
+                and isinstance(call.func, ast.Name)
+                and call.func.id == helper.name
             ]
             self.assertTrue(call_targets, f"Method {method_name} should call the helper")
-            for attr in call_targets:
-                self.assertIsInstance(attr.value, ast.Name)
-                assert isinstance(attr.value, ast.Name)
-                self.assertEqual(attr.value.id, "C")
 
     def test_classmethod_extraction_uses_cls_dispatch(self):
         code = """
         class C:
+            step = 1
+
             @classmethod
             def a(cls, x):
-                y = x + 1
+                y = x + cls.step
                 return y * 2
 
             @classmethod
             def b(cls, x):
-                y = x + 1
+                y = x + cls.step
                 return y * 2
         """
         m = TempModule(code)
@@ -371,7 +367,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             base_path.write_text(
                 textwrap.dedent("""
                     class Shared:
-                        pass
+                        step = 1
                     """).strip() + "\n",
                 encoding="utf-8",
             )
@@ -470,7 +466,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             base_path.write_text(
                 textwrap.dedent("""
                     class Shared:
-                        pass
+                        step = 1
                     """).strip() + "\n",
                 encoding="utf-8",
             )
@@ -481,7 +477,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                     class First(Shared):
                         @classmethod
                         def alpha(cls, value):
-                            tmp = value + 1
+                            tmp = value + cls.step
                             return tmp * 2
                     """).strip() + "\n",
                 encoding="utf-8",
@@ -493,7 +489,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                     class Second(Shared):
                         @classmethod
                         def beta(cls, value):
-                            tmp = value + 1
+                            tmp = value + cls.step
                             return tmp * 2
                     """).strip() + "\n",
                 encoding="utf-8",
@@ -574,7 +570,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             base_path.write_text(
                 textwrap.dedent("""
                     class Root:
-                        pass
+                        step = 1
 
                     class Intermediate(Root):
                         pass
@@ -587,7 +583,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
                     class LeafOne(Intermediate):
                         def alpha(self, value):
-                            tmp = value + 1
+                            tmp = value + self.step
                             return tmp * 2
                     """).strip() + "\n",
                 encoding="utf-8",
@@ -598,7 +594,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
                     class LeafTwo(Intermediate):
                         def beta(self, value):
-                            tmp = value + 1
+                            tmp = value + self.step
                             return tmp * 2
                     """).strip() + "\n",
                 encoding="utf-8",

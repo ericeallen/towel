@@ -17,7 +17,8 @@
 A helper is a method only when both blocks are methods of one unique
 module-level class, or of classes with a unique module-level common
 ancestor, every decorator on the source methods is known to preserve the
-receiver, and the receiver is the first parameter. Base classes are resolved
+receiver, the receiver is the first parameter, and both methods read an
+attribute of it. Base classes are resolved
 the way the referencing module resolves them at the point the class
 statement runs, through the module's own bindings and unconditional
 imports, never by name across the project. Everything else gets a
@@ -96,7 +97,8 @@ def _dispatches_on(func: FunctionNode, implicit_param: str) -> bool:
     ``Formatter.as_dollars(None, 1.5)`` is an ordinary call with ``self`` set
     to ``None``, and it works for as long as the body never reads an attribute
     of ``self``. Code does this to reuse a method's logic without building an
-    instance, most often in tests.
+    instance, most often in tests; a classmethod's function is reached the
+    same way through ``__func__``.
 
     A helper reached as ``self._extracted_func_0(...)`` would end that: the
     rewritten body demands a receiver the body it replaced did not, and the
@@ -104,11 +106,12 @@ def _dispatches_on(func: FunctionNode, implicit_param: str) -> bool:
     returning what it always did. A checker reports nothing, because the
     signature always said ``self`` was a ``Formatter``.
 
-    So a method that never dispatches gets a static helper reached through the
-    class, which asks for no receiver at all and is what the source method's
-    own contract already was. Reading an attribute is the condition, not
-    mentioning the name: a body that merely passes ``self`` on still works with
-    ``None``, and a static helper still receives it as an ordinary argument.
+    So a method that never dispatches gets a helper that asks for no receiver
+    at all, which is what the source method's own contract already was; see
+    :meth:`HelperPlacement._choose_class_insertion` for where it goes. Reading
+    an attribute is the condition, not mentioning the name: a body that merely
+    passes ``self`` on still works with ``None``, and the helper still
+    receives it as an ordinary argument.
     """
     return any(
         isinstance(node, ast.Attribute)
@@ -642,14 +645,9 @@ class HelperPlacement(EngineState):
             # parameter would call a method on an arbitrary object.
             if kind == "instance" and implicit_param != "self":
                 receiver_known = False
-            if (
-                kind == "instance"
-                and implicit_param is not None
-                and not _dispatches_on(func, implicit_param)
-            ):
+            if implicit_param is not None and not _dispatches_on(func, implicit_param):
                 # The method never asks anything of its receiver, so the helper
-                # must not either: it becomes a static method reached through
-                # the class. See :func:`_dispatches_on`.
+                # must not either. See :func:`_dispatches_on`.
                 kind, implicit_param = "staticmethod", None
 
         return MethodInfo(kind=kind, implicit_param=implicit_param, receiver_known=receiver_known)
@@ -857,15 +855,23 @@ class HelperPlacement(EngineState):
         # stays at module level even when the block lexically sits in a class.
         if k1 is None or k2 is None:
             return None
+        if "staticmethod" in (k1, k2):
+            # A helper that dispatches on nothing is a module-level function.
+            # As a static method it had to be reached through something, and
+            # nothing a method can spell is sure to be its class: the class's
+            # name may be a parameter, deleted, rebound by a ``global``,
+            # mangled (``class __C``), bound to whatever a decorator returned,
+            # or not bound yet while the class body calls the method; a
+            # metaclass sees the lookup; and ``__class__``, which is always the
+            # class, is a name mypy does not know. A module-level helper is
+            # defined before the first class, and its call is a plain name
+            # lookup the method's own names cannot shadow. When one method
+            # dispatches and the other does not, the static form still serves
+            # both, since a block that uses the receiver takes it as an
+            # ordinary argument.
+            return None
         if k1 != k2:
-            # One method dispatches on its receiver and the other never does,
-            # so only one of them has been given a static helper. The static
-            # form serves both: it asks for no receiver, and a block that uses
-            # one takes it as an ordinary argument. Demanding the same kind
-            # here sent the helper to module level instead.
-            if {k1, k2} != {"instance", "staticmethod"}:
-                return None
-            k1 = k2 = "staticmethod"
+            return None
         if pair.class1_name is None or pair.class2_name is None:
             return None
 

@@ -48,14 +48,25 @@ def _annotation(node: ast.expr | None) -> str:
 def _extract(
     path: Path, oracle: TypeOracle, host: str, method_kind: MethodKind
 ) -> tuple[str, ast.FunctionDef]:
+    """The rendered module and its helper: a method of ``host``, or a module function.
+
+    A helper that dispatches on nothing is a module-level function, since
+    nothing a method can spell is sure to reach its class; the type
+    relationships these tests are about must hold for it all the same.
+    """
     source = path.read_text()
     assert oracle.check(str(path), source) == CheckSuccess()
     engine = UnificationRefactorEngine(
         min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
-    proposal = next(proposal for proposal in proposals if proposal.insert_into_class == host)
-    assert proposal.method_kind == method_kind
+    static = method_kind == "staticmethod"
+    proposal = next(
+        proposal
+        for proposal in proposals
+        if proposal.insert_into_class == (None if static else host)
+    )
+    assert proposal.method_kind == (None if static else method_kind)
     original_proposal = ast.dump(proposal.extracted_function, include_attributes=True)
     rendered = engine.apply_refactoring(str(path), proposal)
     assert path.read_text() == source
@@ -65,15 +76,11 @@ def _extract(
     owner = next(
         node for node in module.body if isinstance(node, ast.ClassDef) and node.name == host
     )
-    helper = next(
+    module_helpers = [
         node
-        for node in owner.body
-        if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
-    )
-    assert not any(
-        isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
         for node in module.body
-    ), "This regression requires a method, not an independent module helper"
+        if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
+    ]
     original_assignments = {
         ast.dump(node) for node in ast.parse(source).body if isinstance(node, ast.Assign)
     }
@@ -82,6 +89,19 @@ def _extract(
         for node in module.body
         if isinstance(node, ast.Assign) and ast.dump(node) not in original_assignments
     ]
+    assert "Any" not in rendered
+    if static:
+        assert len(module_helpers) == 1, rendered
+        helper = module_helpers[0]
+        assert not helper.decorator_list, rendered
+        assert all(node.lineno < helper.lineno for node in declarations)
+        return rendered, helper
+    helper = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
+    )
+    assert not module_helpers, "This regression requires a method, not an independent module helper"
     assert declarations, "The method must have fresh type-variable declarations"
     assert all(node.lineno < owner.lineno for node in declarations)
     assert not any(
@@ -89,7 +109,6 @@ def _extract(
     ), "Method type variables belong in the module, not the class namespace"
     decorators = [ast.unparse(node) for node in helper.decorator_list]
     assert decorators == ([] if method_kind == "instance" else [method_kind])
-    assert "Any" not in rendered
     return rendered, helper
 
 
@@ -127,14 +146,19 @@ def test_constrained_generic_methods_preserve_dispatch_and_reject_mixed_argument
     assert _annotation(explicit[1].annotation) == binder
     assert _annotation(helper.returns) == binder
     assert binder not in {"int", "str", "int | str", "Any"}
+    # A method helper is called from a method appended to the class; a module
+    # helper, from a function appended to the module.
+    via, indent, receiver = (
+        ("", "", "") if method_kind == "staticmethod" else ("self.", "    ", "self")
+    )
     valid = rendered + (
-        "\n    def valid(self) -> None:\n"
-        f"        self.{helper.name}(1, 2)\n"
-        f'        self.{helper.name}("a", "b")\n'
+        f"\n{indent}def valid({receiver}) -> None:\n"
+        f"{indent}    {via}{helper.name}(1, 2)\n"
+        f'{indent}    {via}{helper.name}("a", "b")\n'
     )
     assert oracle.check(str(path), valid) == CheckSuccess()
     invalid = rendered + (
-        "\n    def invalid(self) -> None:\n" f'        self.{helper.name}(1, "x")\n'
+        f"\n{indent}def invalid({receiver}) -> None:\n" f'{indent}    {via}{helper.name}(1, "x")\n'
     )
     rejected = oracle.check(str(path), invalid)
     assert isinstance(rejected, CheckSuccess) and rejected.errors

@@ -119,6 +119,17 @@ TRANSFORMED = {
     "r137_x1c_x85_in_comment",
     "r138_u2028_comment_same_indent_neighbours",
     "r139_literal_roundtrip",
+    # Methods that never read their receiver: the helper is a module-level
+    # function, since nothing a method can spell is sure to reach its class.
+    "p01_static_helper_class_name_shadowed_by_parameter",
+    "p02_static_helper_class_deleted",
+    "p03_static_helper_mangled_class_name",
+    "p04_static_helper_class_decorator_returns_factory",
+    "p05_static_helper_class_global_rebound",
+    "p06_static_helper_called_while_class_body_runs",
+    "p07_static_methods_called_while_class_body_runs",
+    "p08_classmethod_never_using_cls",
+    "p09_static_helper_metaclass_hides_attribute",
 }
 # Every other fixture must come back byte-identical. One of them once changed:
 # r86_annotated_assignment_live left the set when the trivial-helper filter

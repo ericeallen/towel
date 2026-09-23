@@ -316,11 +316,15 @@ decides:
   known to preserve the receiver, and the first parameter is `self` (or the
   method is a `classmethod`), the helper becomes a method and the receiver is
   passed explicitly. A source method that never reads an attribute of its
-  receiver gets a `staticmethod` instead, reached through the class: such a
+  receiver, and a `staticmethod`, get a module-level helper instead: such a
   method runs when it is called through its class with anything in the
   receiver's place, and a helper reached through `self` would take that away
-  while no checker said so. Where one method of a pair dispatches and the other
-  does not, the static form serves both.
+  while no checker said so. A static method in the class would have to be
+  reached through something, and nothing a method can spell is sure to be its
+  class -- the class's name can be a parameter, deleted, rebound, mangled,
+  bound to what a decorator returned, or not bound yet while the class body
+  runs, and mypy does not know `__class__`. Where one method of a pair
+  dispatches and the other does not, the module function serves both.
 - **Common ancestor by the binding in effect.** A base-class name is resolved
   the way the referencing module resolves it *at the point the class statement
   runs*: the name must be bound there by an unconditional class statement of
@@ -532,8 +536,8 @@ two generic candidates. Unsupported or conflicting domains are declined rather
 than replaced with invented bounds. The helper body and calls decide whether
 these candidate relationships are valid through the project's checkers.
 
-Generic inference applies to new module-level helpers and instance, class, and
-static helper methods. An instance or class method keeps parameters bound by its
+Generic inference applies to new module-level helpers and instance and class
+helper methods. An instance or class method keeps parameters bound by its
 host class while freshening independent method parameters. The receiver is identified before
 method rendering reorders the arguments; its type is supplied by the host class,
 not inferred by joining the observed receivers. Explicit source `self`/`cls`
@@ -541,9 +545,10 @@ annotations currently decline generic method inference rather than losing their
 contract. The complete prospective project checks inherited helper bodies in
 their actual host class.
 
-Static helpers are called through the class name, which does not carry the
-caller's class specialization. They therefore receive fresh parameters for
-source class variables too, inferred from explicit arguments. The original
+A helper shared by static methods, or by methods that never read their
+receiver, is a module function, which does not carry the caller's class
+specialization. It therefore receives fresh parameters for source class
+variables too, inferred from explicit arguments. The original
 methods retain their class-bound signatures, and the new private helper must
 verify for its more general contract. No runtime class subscription or cast
 is introduced to force a specialization.

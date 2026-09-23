@@ -28,13 +28,16 @@ checker reports it, because the signature always said ``self`` was a
 ``Formatter`` and a caller passing ``None`` was already outside that promise --
 which is what makes it Towel's problem rather than the checker's.
 
-The helper is now a ``staticmethod`` reached through the class. A method that
-ignores its receiver has no dispatch to preserve, so nothing is lost by not
-dispatching: across fourteen installed packages the fix moved no helper out of
-its class (306 class-homed proposals against 305 before it, the one gained
-where two methods disagreed about needing a receiver and the pair had been
-refused for it). A block that does use the receiver takes it as an ordinary
-argument instead.
+The helper now asks for no receiver, and it is a module-level function. As a
+``staticmethod`` it had to be reached through something, and nothing a method
+can spell is sure to be its class: ``A._extracted_func_0(...)`` failed where the
+class's name was a parameter, deleted, rebound by ``global``, mangled
+(``class __A``), bound to what a decorator returned, or not yet bound while the
+class body called the method; ``__class__._extracted_func_0(...)`` is always the
+class, but mypy does not know the name. A module function is reached by a name
+the method cannot shadow. A method that ignores its receiver has no dispatch to
+preserve, so nothing is lost by not dispatching, and a block that does use the
+receiver takes it as an ordinary argument.
 """
 
 from __future__ import annotations
@@ -95,22 +98,21 @@ def test_a_method_reached_through_its_class_keeps_working(tmp_path: Path) -> Non
     assert after == (14, 17), written
 
 
-def test_the_helper_is_static_and_reached_through_the_class(tmp_path: Path) -> None:
-    """Why it works: no receiver is asked for, and the helper stays where it belongs."""
+def test_the_helper_is_a_module_function_that_asks_for_no_receiver(tmp_path: Path) -> None:
+    """Why it works: no receiver is asked for, and nothing names the class."""
     written, _ = _refactored(tmp_path, UNBOUND)
+    module = ast.parse(written)
     helper = next(
-        statement
-        for node in ast.parse(written).body
-        if isinstance(node, ast.ClassDef) and node.name == "A"
-        for statement in node.body
-        if isinstance(statement, ast.FunctionDef) and "extracted_func" in statement.name
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
     )
-    decorators = [
-        decorator.id for decorator in helper.decorator_list if isinstance(decorator, ast.Name)
-    ]
-    assert decorators == ["staticmethod"], written
+    assert not helper.decorator_list, written
     assert "self" not in [argument.arg for argument in helper.args.args], written
-    assert f"A.{helper.name}(" in written and f"self.{helper.name}(" not in written, written
+    assert f"A.{helper.name}(" not in written and f"self.{helper.name}(" not in written, written
+    assert f"{helper.name}(" in ast.unparse(
+        next(n for n in module.body if isinstance(n, ast.ClassDef))
+    )
 
 
 def test_a_method_that_uses_its_receiver_still_gets_an_instance_helper(tmp_path: Path) -> None:

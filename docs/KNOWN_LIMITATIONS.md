@@ -214,17 +214,19 @@ in a neutral module by hand when it matters.
 
 ## Method insertion
 
-A helper shared by methods that never read an attribute of their receiver is a
-`staticmethod`, reached through the class rather than through `self`. Such a
-method works when it is called through its class with anything in the
-receiver's place -- `Formatter.as_dollars(None, 1.5)` -- and a helper reached
-through `self` would end that. A method that ignores its receiver has no
-dispatch to preserve, so nothing is given up: the helper stays in the class,
-and a block that does use the receiver takes it as an ordinary argument.
-
-The class is named at the call site by the name the referencing module uses for
-it, so the same caveat applies as to any module-level helper: rebinding that
-name at run time, after the class is defined, is not something Towel can see.
+A helper shared by methods that never read an attribute of their receiver, or
+by static methods, is a module-level function. Such a method works when it is
+called through its class with anything in the receiver's place --
+`Formatter.as_dollars(None, 1.5)` -- and a helper reached through `self` would
+end that. A static method in the class would have to be reached through
+something, and nothing a method can spell is sure to be its class: its name
+may be a parameter of the method, deleted, rebound through `global`, mangled
+(`class __C`), bound to whatever a class decorator returned, or not bound yet
+while the class body calls the method, and a metaclass sees the lookup. The
+`__class__` cell is always the class, but mypy does not know the name. A
+method that ignores its receiver has no dispatch to preserve, so the only cost
+is that the helper sits before the class rather than inside it; a block that
+does use the receiver takes it as an ordinary argument.
 
 A base-class name is resolved as the binding in effect where the class
 statement runs, never by name across the project. It must be bound there by an
@@ -243,8 +245,9 @@ A helper becomes a method only when both blocks belong to functions defined
 directly in one unique module-level class, or in classes with a unique
 module-level common ancestor, every
 decorator on the source methods is known
-to preserve the receiver, and the methods have a first parameter named
-`self` (or the method is a `classmethod`). Local classes, duplicated class names, unknown
+to preserve the receiver, the methods have a first parameter named
+`self` (or the method is a `classmethod`), and both read an attribute of it.
+Local classes, duplicated class names, unknown
 decorators, functions nested inside methods, and class-body functions with
 no parameter or a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join
@@ -295,8 +298,9 @@ where the evidence comes from:
   are tried: unrestricted concrete disagreements, then constraints with two to
   four concrete alternatives. Every fresh helper type parameter must occur in an
   input. Instance and class helpers retain type parameters bound by their host
-  class, which can also appear only in the result. Static helpers freshen source
-  class parameters and must infer them from explicit arguments. Generic method
+  class, which can also appear only in the result. A module helper taken from
+  static methods freshens source class parameters and must infer them from
+  explicit arguments. Generic method
   inference currently requires implicit `self`/`cls` typing; explicit receiver
   contracts are not generalized.
   Inherited helpers must type-check in the chosen ancestor, without assuming
