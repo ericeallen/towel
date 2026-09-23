@@ -16,9 +16,11 @@
 Python builtins tracking.
 
 Tracks Python builtin functions and names that should never be treated
-as free variables or parameterized.
+as free variables or parameterized, and what a bare read finds in the
+builtins of the interpreter Towel runs in.
 """
 
+import builtins as _interpreter_builtins
 from typing import Set
 
 # Python builtin functions and constants
@@ -233,3 +235,27 @@ CALL_ARGUMENT_BUILTINS = frozenset(
     }
 )
 """Builtins a generated call may mention besides what the site binds and the free variables."""
+
+# Names every module's namespace defines for itself, each with that module's
+# own value: read bare in another module, each is the other module's.
+MODULE_OWN_NAMES = frozenset(
+    {
+        "__annotations__",
+        "__builtins__",
+        "__cached__",
+        "__doc__",
+        "__file__",
+        "__loader__",
+        "__name__",
+        "__package__",
+        "__path__",
+        "__spec__",
+    }
+)
+
+BUILTIN_NAMES = frozenset(vars(_interpreter_builtins)) - MODULE_OWN_NAMES
+"""What a bare read finds in the builtins when no namespace holds the name.
+
+Taken from the interpreter itself, so it includes the builtins
+``PYTHON_BUILTINS`` leaves out (``__import__``, ``__debug__``,
+``__build_class__``) and those a later Python adds."""

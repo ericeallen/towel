@@ -140,6 +140,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | Parameter | Default | Effect |
 |---|---|---|
 | `parameterize_constants` | `True` | Differing constants become helper parameters. |
+| `parameterize_builtins` | `False` | Where a builtin the duplicated code reads may differ between its sites (one site's function binds `len` and the other reads the builtin, or, across modules, a module may hold the name), pass it to the helper as a parameter, each site giving its own, instead of declining the pair (`--parameterize-builtins/--no-parameterize-builtins`). A builtin every site reads alike is still read bare, and blocks that differ in which builtin they use are still declined. In typed code such a parameter is annotated with what its body needs: `Callable[..., int]` for `len`, `type[str]` for `str`; a builtin whose overloads return different types (`open`, `sorted`) gets `Any`. |
 | `cross_module_helpers` | `False` | Also share a helper between duplicates in different modules, importing it into the others (`--cross-module/--no-cross-module`). Off, only duplicates within a module are paired and no import of a project module that runs is written. |
 | `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`); the program's import model reads nothing in them either. |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |

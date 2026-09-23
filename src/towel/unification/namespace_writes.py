@@ -57,7 +57,6 @@ outside the project does is not seen at all.
 from __future__ import annotations
 
 import ast
-import builtins
 import os
 import re
 from dataclasses import dataclass
@@ -67,6 +66,7 @@ from typing import Tuple, Union
 
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from .bounded_cache import BoundedCache
+from .builtins import BUILTIN_NAMES
 from .module_bindings import global_bindings
 
 ANY_NAME = "*"
@@ -74,26 +74,6 @@ ANY_NAME = "*"
 
 ANY_MODULE = "*"
 """The dotted name of a write into a module computed at run time: ``patch(prefix + ".open")``."""
-
-# Names every module's namespace defines for itself, each with that module's
-# own value: read bare in another module, each is the other module's.
-MODULE_OWN_NAMES = frozenset(
-    {
-        "__annotations__",
-        "__builtins__",
-        "__cached__",
-        "__doc__",
-        "__file__",
-        "__loader__",
-        "__name__",
-        "__package__",
-        "__path__",
-        "__spec__",
-    }
-)
-
-BUILTIN_NAMES = frozenset(vars(builtins)) - MODULE_OWN_NAMES
-"""What a bare read finds in the builtins when no module namespace holds it."""
 
 
 @dataclass(frozen=True)
@@ -836,32 +816,40 @@ def _spelled(statement: ast.ImportFrom) -> str:
 
 def builtin_rebinding(
     module: Path, source: str, names: AbstractSet[str], project: ProjectWrites
-) -> Optional[str]:
-    """Why ``module`` may hold one of the builtins ``names`` in its namespace; None when it cannot.
+) -> Dict[str, str]:
+    """Each builtin of ``names`` that ``module`` may hold in its namespace, with why.
 
     ``module`` is the module's resolved path below ``project.root`` and
-    ``source`` its text as the pair under evaluation read it.
+    ``source`` its text as the pair under evaluation read it. Empty when the
+    module can hold none of them.
     """
     shown = _shown(module, project.root)
+    found: Dict[str, str] = {}
+
+    def note(hit: Iterable[str], why: str) -> None:
+        for name in sorted(hit):
+            found.setdefault(name, why)
+
     table = global_bindings(source)
     tree = _parsed(source)
     if table is None or tree is None:
-        return f"{shown} does not parse"
+        note(names, f"{shown} does not parse")
+        return found
     if "__builtins__" in table.bindings or "__builtins__" in table.rebound_by_global:
-        return f"{shown} rebinds __builtins__"
+        note(names, f"{shown} rebinds __builtins__")
     for name in sorted(names):
         if name in table.bindings:
-            return f"{name}: {shown} binds it"
+            note([name], f"{name}: {shown} binds it")
         if name in table.rebound_by_global:
-            return f"{name}: a function of {shown} declares it global"
+            note([name], f"{name}: a function of {shown} declares it global")
     for statement in _star_imports(tree):
         reached = _star_bindings(module, statement, project.root, frozenset())
         hit = sorted(names) if reached is None else sorted(names & reached)
-        if hit:
-            return f"{hit[0]}: {shown} imports * from {_spelled(statement)}, which may bind it"
+        for name in hit:
+            note([name], f"{name}: {shown} imports * from {_spelled(statement)}, which may bind it")
     for write in project.into(module):
         if write.name == ANY_NAME:
-            return f"{write.site} may write any name into {shown}"
-        if write.name in names:
-            return f"{write.name}: {write.site} writes it into {shown}"
-    return None
+            note(names, f"{write.site} may write any name into {shown}")
+        elif write.name in names:
+            note([write.name], f"{write.name}: {write.site} writes it into {shown}")
+    return found

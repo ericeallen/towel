@@ -192,6 +192,9 @@ class EngineState:
     min_lines: int
     """Minimum source lines a duplicated block must span."""
 
+    parameterize_builtins: bool
+    """Whether a builtin that may differ between sites is passed as a parameter instead of declined."""
+
     max_candidate_pairs: int
     """Candidate pairs an analysis evaluates before it leaves the largest buckets out."""
 

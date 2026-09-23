@@ -297,6 +297,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         prefer_absolute_imports: Optional[bool] = None,
         pep420_namespace_packages: Optional[bool] = None,
         promote_equal_hof_literals: bool = False,
+        parameterize_builtins: bool = False,
         excluded_directories: Sequence[str] = (),
         cross_module_helpers: bool = False,
         skip_trivial_helpers: bool = True,
@@ -338,6 +339,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
             promote_equal_hof_literals: Expose literal arguments of higher-order
                 factory calls as parameters even when they are equal across blocks
                 (Option B policy); default False.
+            parameterize_builtins: Where a builtin the duplicated code reads may
+                differ between its sites -- one site's function binds ``len`` and
+                the other reads the builtin, or, across modules, the program shows
+                a participating module may hold the name -- pass it to the helper
+                as a parameter, each site giving its own, instead of declining
+                the pair (default: False). A builtin every site reads alike is
+                still read bare.
             excluded_directories: Directory names to skip in directory mode, such
                 as a package that carries its own test suite. The program's
                 import model reads nothing in them either, which is how a stray
@@ -424,6 +432,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.excluded_directories = tuple(excluded_directories)
         self.cross_module_helpers = cross_module_helpers
         self.parameterize_constants = parameterize_constants
+        self.parameterize_builtins = parameterize_builtins
         self.unifier = Unifier(
             max_parameters=max_parameters,
             parameterize_constants=parameterize_constants,

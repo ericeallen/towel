@@ -285,6 +285,24 @@ def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_parameterize_builtins_flag(parser: argparse.ArgumentParser) -> None:
+    """Add ``--parameterize-builtins``, shared by the commands that analyze a project.
+
+    Off by default: no helper takes a builtin as a parameter, since a call
+    such as ``helper(rows, len)`` would surprise its reader.
+    """
+    parser.add_argument(
+        "--parameterize-builtins",
+        dest="parameterize_builtins",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Where a builtin the duplicated code reads may differ between its sites (one "
+        "function binds len, the other reads the builtin; or, with --cross-module, a module "
+        "may hold the name), pass it to the helper as a parameter instead of declining the "
+        "pair. --no-parameterize-builtins, the default, gives no helper a builtin parameter.",
+    )
+
+
 def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add 'dry' subcommand parser."""
     parser = subparsers.add_parser(
@@ -315,6 +333,7 @@ Examples:
     )
     _add_exclude_flag(parser)
     _add_cross_module_flag(parser)
+    _add_parameterize_builtins_flag(parser)
 
     _add_import_layout_flags(parser)
 
@@ -416,6 +435,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     parser.add_argument("target", help="File or directory to analyze")
     _add_exclude_flag(parser)
     _add_cross_module_flag(parser)
+    _add_parameterize_builtins_flag(parser)
     _add_tuning_flags(parser)
     _add_progress_flag(
         parser,
@@ -801,6 +821,7 @@ class DryOptions:
     max_refactorings: int
     min_lines: int
     max_parameters: int
+    parameterize_builtins: bool
     max_pairs: int
     progress: ProgressMode
     types: bool
@@ -817,6 +838,7 @@ class DryOptions:
             max_refactorings=int(args.max_refactorings),
             min_lines=int(args.min_lines),
             max_parameters=int(args.max_parameters),
+            parameterize_builtins=bool(args.parameterize_builtins),
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
             types=bool(args.types),
@@ -833,6 +855,7 @@ class PreviewOptions:
     target: str
     min_lines: int
     max_parameters: int
+    parameterize_builtins: bool
     max_pairs: int
     progress: ProgressMode
     exclude: Tuple[str, ...] = ()
@@ -844,6 +867,7 @@ class PreviewOptions:
             target=str(args.target),
             min_lines=int(args.min_lines),
             max_parameters=int(args.max_parameters),
+            parameterize_builtins=bool(args.parameterize_builtins),
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
             exclude=tuple(args.exclude or ()),
@@ -932,6 +956,7 @@ def _run_dry(args: argparse.Namespace) -> None:
         engine = UnificationRefactorEngine(
             max_parameters=options.max_parameters,
             min_lines=options.min_lines,
+            parameterize_builtins=options.parameterize_builtins,
             max_candidate_pairs=options.max_pairs,
             settings=_settings(),
             parameterize_constants=True,
@@ -1216,6 +1241,7 @@ def _run_preview(args: argparse.Namespace) -> None:
     engine = UnificationRefactorEngine(
         max_parameters=options.max_parameters,
         min_lines=options.min_lines,
+        parameterize_builtins=options.parameterize_builtins,
         max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,

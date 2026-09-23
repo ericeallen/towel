@@ -55,9 +55,10 @@ from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
-from .builtins import CALL_ARGUMENT_BUILTINS
+from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
     available_argument_names,
+    builtins_passed,
     module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
@@ -72,12 +73,7 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .narrowing import narrowing_lost_at_call_site
-from .namespace_writes import (
-    BUILTIN_NAMES,
-    ProjectWrites,
-    builtin_rebinding,
-    scan_project_writes,
-)
+from .namespace_writes import ProjectWrites, builtin_rebinding, scan_project_writes
 from .models import (
     HelperHome,
     proposal_identity,
@@ -206,14 +202,23 @@ class _Placement:
 
 
 @dataclass(frozen=True)
+class _BuiltinSpellings:
+    """Stage 6, across modules: builtin spellings the helper reads bare, and those each site passes."""
+
+    read_bare: FrozenSet[str] = frozenset()
+    passed: FrozenSet[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class _Placed:
     """Stages 4 to 10: the unified pair, its rendered helper, and where it goes."""
 
     unified: _Unified
     rendered: _RenderedHelper
     placement: _Placement
-    # Module names the helper reads bare from its host's namespace that a site
-    # in another module resolves in its own (``_host_namespace_reads``).
+    # Names the helper reads bare from its host's namespace that a site in
+    # another module resolves in its own (``_host_namespace_reads``): module
+    # names, and with ``parameterize_builtins`` builtins a module may hold.
     differing_reads: FrozenSet[str] = frozenset()
 
 
@@ -413,10 +418,12 @@ class PairEvaluation(
             pair, setup, analysis, value_producing, functions, class_infos
         )
         if placed is not None and placed.differing_reads:
-            # The helper would read a module name bare in its host's namespace
-            # that a site in another module read in its own. Decide the pair
-            # again with those names parameters. Unification runs again
-            # because the later stages rewrite the substitution in place.
+            # The helper would read a name bare in its host's namespace that a
+            # site in another module read in its own: a module name, or a
+            # builtin a module may hold, which ``parameterize_builtins`` passes.
+            # Decide the pair again with those names parameters. Unification
+            # runs again because the later stages rewrite the substitution in
+            # place.
             placed = self._unify_and_place(
                 pair,
                 setup,
@@ -485,10 +492,15 @@ class PairEvaluation(
             return None
         differing, builtin_reads = reads
         evidence = self._builtin_evidence(pair, placement, builtin_reads)
-        if evidence is not None:
-            self._debug_reject(RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE, pair, detail=evidence)
+        if evidence and not self.parameterize_builtins:
+            self._debug_reject(
+                RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE, pair, detail=evidence[min(evidence)]
+            )
             return None
-        return _Placed(unified, rendered, placement, differing)
+        # With ``parameterize_builtins`` each builtin a module may hold is
+        # decided again as a parameter, which every site fills from its own
+        # module; one no module can hold is still read bare.
+        return _Placed(unified, rendered, placement, differing | frozenset(evidence))
 
     @staticmethod
     def _host_namespace_reads(
@@ -523,18 +535,19 @@ class PairEvaluation(
 
     def _builtin_evidence(
         self, pair: CodeBlockPair, placement: _Placement, names: FrozenSet[str]
-    ) -> Optional[str]:
-        """Why a builtin in ``names`` may not be the same lookup from every participating module.
+    ) -> Dict[str, str]:
+        """Each builtin in ``names`` that may not be the same lookup from every participating module, with why.
 
         Each participating module, the host included, is asked whether it
         may hold one in its namespace (``namespace_writes.builtin_rebinding``):
         by a statement of its own scope, a ``global``, a star import, a write
         at run time, or a patch anywhere in the project's own code. Each is
         read where the project stands, which for a copy being refactored is
-        the original's location. None when no module may.
+        the original's location. Empty when no module may.
         """
+        found: Dict[str, str] = {}
         if not names:
-            return None
+            return found
         host = placement.home.file_path
         paths = {host} | {replacement.file_path or host for replacement in placement.replacements}
         sources = {pair.file_path: pair.source1, pair.file_path2: pair.source2}
@@ -545,11 +558,12 @@ class PairEvaluation(
                 try:
                     source = read_source(path)
                 except (OSError, UnicodeError, ValueError):
-                    return f"{Path(path).name} cannot be read"
-            reason = builtin_rebinding(origin, source, names, self._project_writes(origin))
-            if reason is not None:
-                return reason
-        return None
+                    unreadable = f"{Path(path).name} cannot be read"
+                    found.update({name: unreadable for name in names if name not in found})
+                    continue
+            rebound = builtin_rebinding(origin, source, names, self._project_writes(origin))
+            found.update({name: why for name, why in rebound.items() if name not in found})
+        return found
 
     def _project_writes(self, module: Path) -> ProjectWrites:
         """The project's own writes into module namespaces, read once per engine and project."""
@@ -945,12 +959,17 @@ class PairEvaluation(
         substitution = unified.substitution
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
         self._strip_fstring_params(substitution)
-        read_bare = self._builtins_read_bare(pair, ctx, free_vars1 | free_vars2)
-        if read_bare is None:
+        spellings = self._builtin_spellings(pair, ctx, free_vars1 | free_vars2)
+        if spellings is None:
             return None
-        # The forced names are module names the rendered helper read bare.
-        free_vars1, free_vars2 = free_vars1 | forced_parameters, free_vars2 | forced_parameters
-        free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1) - read_bare
+        # The forced names are ones the rendered helper read bare from a host
+        # that a site in another module does not share; the passed builtins
+        # are ones only some sites' functions bind.
+        passed = forced_parameters | spellings.passed
+        free_vars1, free_vars2 = free_vars1 | passed, free_vars2 | passed
+        free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1) - (
+            spellings.read_bare - passed
+        )
         # A parameter cannot also be declared global or nonlocal in the helper.
         globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
             pair, scope_analyzer, free_vars
@@ -997,10 +1016,10 @@ class PairEvaluation(
             module_names,
         )
 
-    def _builtins_read_bare(
+    def _builtin_spellings(
         self, pair: CodeBlockPair, ctx: "_PairContext", free_names: Set[str]
-    ) -> Optional[FrozenSet[str]]:
-        """The builtin spellings among a cross-file pair's free names that the helper reads bare.
+    ) -> Optional[_BuiltinSpellings]:
+        """What becomes of the builtin spellings among a cross-file pair's free names.
 
         Each module's analysis lists a builtin spelling as free only where
         some scope of that module binds the name, so across modules the two
@@ -1010,15 +1029,18 @@ class PairEvaluation(
         it is placement's question (``_builtin_evidence``). One both sites'
         functions bind, as a local or a cell, stays an ordinary parameter, each
         site passing its own. One that only one site's function binds is what
-        a builtin parameter would have had to carry, and no helper takes a
-        builtin as a parameter: the pair is declined. A same-file pair's
-        helper shares its sites' module, and nothing here applies to it.
+        a builtin parameter would have to carry: the pair is declined, unless
+        ``parameterize_builtins`` permits it, and then every site passes the
+        name, its local or the builtin. A same-file pair's analysis lists the
+        spelling for both blocks, so it becomes a parameter, and the site that
+        would hand over the builtin is decided when its call is generated
+        (``builtins_passed``).
         """
         if not pair.is_cross_file:
-            return frozenset()
+            return _BuiltinSpellings()
         spellings = frozenset(name for name in free_names if name in BUILTIN_NAMES)
         if not spellings:
-            return frozenset()
+            return _BuiltinSpellings()
         sites = (
             (ctx.func1, ctx.scope_analyzer, pair.block1_nodes, pair.function1_name),
             (ctx.func2, ctx.scope_analyzer2, pair.block2_nodes, pair.function2_name),
@@ -1029,16 +1051,17 @@ class PairEvaluation(
             for (function, analyzer, _, _), names in zip(sites, read)
         ]
         local = [names - module for names, module in zip(read, at_module)]
-        for index, other in ((0, 1), (1, 0)):
-            mixed = sorted(local[index] & at_module[other])
-            if mixed:
-                self._debug_reject(
-                    RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE,
-                    pair,
-                    detail=f"{mixed[0]}: {sites[index][3]} binds it, {sites[other][3]} does not",
-                )
-                return None
-        return spellings - local[0] - local[1]
+        mixed = (local[0] & at_module[1]) | (local[1] & at_module[0])
+        if mixed and not self.parameterize_builtins:
+            name = min(mixed)
+            binder, reader = (0, 1) if name in local[0] else (1, 0)
+            self._debug_reject(
+                RejectReason.BUILTIN_ARGUMENT,
+                pair,
+                detail=f"{name}: {sites[binder][3]} binds it, {sites[reader][3]} does not",
+            )
+            return None
+        return _BuiltinSpellings(read_bare=spellings - local[0] - local[1], passed=frozenset(mixed))
 
     def _names_kept_free(
         self, pair: CodeBlockPair, ctx: "_PairContext", free_vars: Set[str]
@@ -1208,8 +1231,9 @@ class PairEvaluation(
 
         The call may name only what is bound before the block, the free
         variables, and a few builtins (a leaked placeholder or an invented
-        local would be an undefined name at the site), and instantiating the
-        helper with it must give back the block.
+        local would be an undefined name at the site), it may hand the helper
+        no builtin (``builtins_passed``), and instantiating the helper with it
+        must give back the block.
         """
         func_def = rendered.func_def
         if block_idx == 0:
@@ -1246,11 +1270,8 @@ class PairEvaluation(
             # callee the site resolves is passed as a thunk or inlined.
             self._debug_reject(RejectReason.FORWARDED_CALLEE, pair, detail=f"block{block_idx+1}")
             return None
-        if thunk_reads_possibly_unbound_local(
-            call_node,
-            setup.ctx.func1 if block_idx == 0 else setup.ctx.func2,
-            free.available_names[block_idx],
-        ):
+        function = setup.ctx.func1 if block_idx == 0 else setup.ctx.func2
+        if thunk_reads_possibly_unbound_local(call_node, function, free.available_names[block_idx]):
             # See :func:`thunk_reads_possibly_unbound_local`.
             self._debug_reject(
                 RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL, pair, detail=f"block{block_idx+1}"
@@ -1285,6 +1306,21 @@ class PairEvaluation(
         if mismatch is not None:
             self._debug_reject(
                 RejectReason.INSTANTIATION_MISMATCH, pair, detail=f"block{block_idx+1}: {mismatch}"
+            )
+            return None
+        analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
+        handed = builtins_passed(
+            call_node,
+            func_def.name,
+            function,
+            analyzer,
+            permitted=self._builtin_parameter_positions(rendered.param_order, unified.substitution),
+        )
+        if handed:
+            # Only a site whose function binds the name hands over its own
+            # local; a name the site reads from the builtins stays out.
+            self._debug_reject(
+                RejectReason.BUILTIN_ARGUMENT, pair, detail=f"block{block_idx+1}: {sorted(handed)}"
             )
             return None
         return Replacement(

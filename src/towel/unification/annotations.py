@@ -1114,7 +1114,10 @@ def infer_missing_annotations(
             _as_class_object(site, index, revealed.get((site.file_path, site.start_line, position)))
             for site in sites
         ]
-        parameters[index].annotation = _joined_revealed(texts, host, same_module, subtypes, allowed)
+        loosened = [_as_builtin_object(site, index, text) for site, text in zip(sites, texts)]
+        parameters[index].annotation = _joined_revealed(
+            texts, host, same_module, subtypes, allowed, fallbacks=loosened
+        )
     for index, parameter in enumerate(parameters):
         if index not in bare and parameter.annotation is not None:
             parameter.annotation = _renormalized(
@@ -1268,11 +1271,69 @@ def class_object_revealed(expression: str, revealed: str) -> str:
     return f"type[{constructed}]"
 
 
+def builtin_object_revealed(expression: str, revealed: str) -> str:
+    """``revealed`` loosened so an annotation can say it, where ``expression`` is spelled as a builtin.
+
+    Only ``parameterize_builtins`` passes a builtin to a helper, and a
+    builtin's signature is written in terms the helper's module seldom can
+    name: typeshed's protocols (``def (typing.Sized) -> int`` for ``len``)
+    or an ``Overload(...)`` of several (``print``, ``str``). The helper calls
+    what it is given, so the return type is what its body needs. A class
+    whose every constructor makes it is written ``type[str]``; a callable
+    whose overloads all return one type, or whose parameters name types the
+    host may lack, ``Callable[..., int]``; a signature over builtins alone
+    stays as it is (``Callable[[object], str]`` for ``repr``). Overloads
+    returning different types (``open``, ``sorted``) are left for
+    ``annotation_from_revealed`` to decline. It is a fallback: the checker's
+    own spelling is used wherever it can be written, so a local of the site
+    that is spelled as a builtin loses no precision to it.
+    """
+    if expression not in _BUILTIN_NAMES:
+        return revealed
+    text = revealed.strip()
+    if text.startswith("Overload(") and text.endswith(")"):
+        signatures = _split_top_level(text[len("Overload(") : -1])
+    elif text.startswith("def "):
+        signatures = [text]
+    else:
+        return revealed
+    if not all(signature.startswith("def ") for signature in signatures):
+        return revealed
+    returns = [_signature_return(signature) for signature in signatures]
+    if all(_generic_base(returned) == expression for returned in returns):
+        return f"type[{expression}]"
+    if len(set(returns)) != 1:
+        return revealed
+    parameters = signatures[0][: signatures[0].rfind(")")]
+    if len(signatures) == 1 and "." not in parameters:
+        return revealed
+    return f"def (*args: Any, **kwargs: Any) -> {returns[0]}"
+
+
+def _signature_return(signature: str) -> str:
+    """The return type of mypy's ``def (...) -> R``; mypy leaves out ``-> None``."""
+    arrow = signature.rfind(") -> ")
+    return signature[arrow + len(") -> ") :].strip() if arrow >= 0 else "None"
+
+
+def _generic_base(spelled: str) -> str:
+    """``list`` for ``builtins.list[_T]``: the class a type is an instance of, unqualified."""
+    return spelled.split("[", 1)[0].replace("builtins.", "").rsplit(".", 1)[-1]
+
+
 def _as_class_object(site: ApplySite, index: int, revealed: Optional[str]) -> Optional[str]:
     """``revealed`` for the argument at ``index``, respelled when it names a class."""
     if revealed is None:
         return None
     return class_object_revealed(ast.unparse(site.call.args[index]), revealed)
+
+
+def _as_builtin_object(site: ApplySite, index: int, revealed: Optional[str]) -> Optional[str]:
+    """What to write for the argument at ``index`` when ``revealed`` cannot be, if it is a builtin."""
+    if revealed is None:
+        return None
+    loosened = builtin_object_revealed(ast.unparse(site.call.args[index]), revealed)
+    return loosened if loosened != revealed else None
 
 
 def _joined_revealed(
@@ -1281,13 +1342,23 @@ def _joined_revealed(
     same_module: bool,
     subtypes: _Subtypes = _unknown_subtypes,
     allowed: Optional[Set[str]] = None,
+    fallbacks: Sequence[Optional[str]] = (),
 ) -> Optional[ast.expr]:
-    """The normalized union of what mypy revealed at every site, when all of it can be written."""
+    """The normalized union of what mypy revealed at every site, when all of it can be written.
+
+    A site's text that cannot be written is replaced by its entry in
+    ``fallbacks``, when it has one (``builtin_object_revealed``).
+    """
     present = [text for text in texts if text is not None]
     if not present or len(present) != len(texts):
         return None
     extra = allowed if allowed is not None else set(_TYPING_NAMES)
-    candidates = [annotation_from_revealed(text, host, same_module, extra) for text in present]
+    spare = list(fallbacks) + [None] * (len(present) - len(fallbacks))
+    candidates = [
+        annotation_from_revealed(text, host, same_module, extra)
+        or (annotation_from_revealed(other, host, same_module, extra) if other else None)
+        for text, other in zip(present, spare)
+    ]
     if any(candidate is None for candidate in candidates):
         return None
     return _joined(

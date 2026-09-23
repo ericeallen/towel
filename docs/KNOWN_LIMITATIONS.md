@@ -88,10 +88,11 @@ describe belong to that version.
   A same-file pair's helper, a method or a function, always lives in the
   pair's own module, so these names are always read there (oauthlib's
   `BearerToken`, fixture `xf15`, broke when a helper was hoisted into a base
-  class defined in another module). A builtin is never a parameter, since
-  a call such as `helper(rows, len)` would surprise every reader, so a
-  helper that a site in another module calls reads its builtins bare in its
-  host's namespace. That is the lookup each site made only while no
+  class defined in another module). By default a builtin is never a
+  parameter, since a call such as `helper(rows, len)` would surprise every
+  reader, so a helper that a site in another module calls, which only a
+  `--cross-module` run writes, reads its builtins bare in its host's
+  namespace. That is the lookup each site made only while no
   participating module holds the name, and the pair is declined
   (`builtin_may_differ_by_module`) wherever the program shows one may: a
   statement of the module's own scope binds the name, a function of it
@@ -113,19 +114,51 @@ describe belong to that version.
   the file a relative import names. A target is read through literals,
   f-strings, `+` and names bound once to a string, and one whose module part
   is computed at run time (`"pkg." + name + ".len"`) counts for every
-  module. A site whose function binds a builtin's name while the other site reads
-  the builtin is declined too; where both functions bind it, each passes
-  its own local. The names checked are the ones CPython's symbol table says
-  the rendered helper reads from its module, so reads inside its lambdas
-  and comprehensions count. Not seen: code outside the project that patches
-  a builtin into one of its modules (with `create=True`, or through `mock`,
+  module. The names checked are the ones CPython's symbol table says the
+  rendered helper reads from its module, so reads inside its lambdas and
+  comprehensions count. Not seen: code outside the project that patches a
+  builtin into one of its modules (with `create=True`, or through `mock`,
   which creates a builtin's name without being asked); a target computed
   whole, as by a wrapper that passes its argument to `patch`; and a module
   object reached other than by an import, `importlib.import_module`,
   `getattr` with a spelled name or `sys.modules`, such as a fixture's
   return value. A cross-module helper then reads that builtin in its host's
   namespace, and the patch reaches only the code the host itself runs. A
-  module `__getattr__` changes no bare lookup and is not consulted.
+  module `__getattr__` changes no bare lookup and is not consulted. In any
+  pair, same-module or not, no generated call hands its helper a builtin:
+  an argument, or what a lambda argument returns, that is a name its site
+  reads from the builtins, bare or in a literal tuple, list, set or dict,
+  declines the pair (`builtin_argument`), and a clustered block whose call
+  would hand one over keeps its code. So a pair is declined where one
+  site's function binds a builtin's name and the other reads the builtin,
+  and where the blocks differ in a builtin that Towel's own list of
+  builtins leaves out (`lambda: __import__`, `lambda: __debug__`) or in a
+  container of builtins against a plain name (`(int, str)`). Where both
+  functions bind the name, each passes its own local. A lambda that calls a
+  builtin (`lambda: len(rows)`) passes what the builtin computed, and an
+  attribute of one (`str.upper`) is not the builtin
+  (`tests/test_no_builtin_arguments.py`). With `--parameterize-builtins`
+  (`parameterize_builtins=True`), each of those declines that concerns a
+  builtin the sites may disagree about, one site's function binding the
+  name or a module that may hold it, passes the builtin as an ordinary
+  parameter instead, each site giving its own: eagerly, or as a thunk where
+  the site may not have bound it, as for any free variable. The rules for a
+  name rebound between the call and the read still apply, so a module whose
+  function declares the name `global` or writes its namespace at run time
+  (`rebound_external_binding`), or that assigns it at its top level
+  (`module_data_lookup`), is declined as before. A builtin every site reads
+  alike stays bare, and blocks that differ in which builtin they use
+  (`lambda: __import__`, `(int, str)`) are declined all the same. Such
+  a parameter is annotated from what the checker reveals of the builtin,
+  loosened to what the helper's body needs where the host could not spell
+  the signature: a class every constructor of which makes it is
+  `type[str]`, a callable whose overloads all return one type or whose
+  parameters name typeshed's protocols is `Callable[..., int]`, a signature
+  over builtins alone stays exact (`Callable[[object], str]`). A builtin
+  whose overloads return different types (`open`, `sorted`, `min`) or a
+  generic one (`abs`) has no such annotation and gets `Any`, which a strict
+  checker may then refuse where the helper returns what it computes
+  (`tests/test_parameterize_builtins.py`).
 - **Relative imports stay in their package.** A relative import in a block
   resolves in the package of the module that runs it, so a helper holding
   `from .sub import VAL` imports its host's `sub` for every caller. A block
@@ -824,7 +857,11 @@ the proposals it built and did not apply, by reason:
   where no frame reads the method's receiver and class cell.
   `forwarded_callee`: a differing expression in call position
   would be passed as `lambda *args, **kwargs: callee(*args, **kwargs)`,
-  which reads worse than the duplication it removes. `undefined_names_in_call`:
+  which reads worse than the duplication it removes. `builtin_argument`: the
+  call would hand the helper a builtin, directly, through a lambda, or in a
+  literal container, or one site's function binds a builtin's name that the
+  other reads as the builtin (*Module names stay module names*).
+  `undefined_names_in_call`:
   the generated call names something the site cannot resolve (a leaked
   placeholder, a name bound only inside the block).
   `instantiation_mismatch`: the helper applied to the call's arguments does
@@ -858,8 +895,7 @@ the proposals it built and did not apply, by reason:
   as parameters, the helper still reads bare a name that a site in another
   module could resolve differently. `builtin_may_differ_by_module`: the
   helper would read bare a builtin that a participating module may hold in
-  its namespace, or one site's function binds the builtin's name and the
-  other's does not (*Module names stay module names*).
+  its namespace (*Module names stay module names*).
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper
