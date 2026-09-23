@@ -97,7 +97,84 @@ methods that never read their receiver stays a module-level function, as
 ruled on 2026-09-21 for `A.a(None, 3)`, since that costs nothing.
 
 *Status: the receiver and metaclass conditions are being implemented on the
-`audit-1772` branch; the rest is implemented there. Not yet released.*
+`audit-1772` branch; the rest is implemented there. Not yet released. Where a
+helper may be hosted is narrowed the same day by the next entry.*
+
+## 2026-09-22: A method helper lives in the class that holds both duplicates
+
+This narrows the previous entry. A helper is placed in a class only when every
+duplicate it replaces is a method of that one class, and it gets a
+class-private name (`__extracted_func_0`, which Python stores as
+`_A__extracted_func_0`). Every other shared block becomes a module-level
+function that takes the receiver as a parameter. That includes blocks shared
+by sibling classes, by a parent and a child, or by classes in different
+modules. Towel never puts a helper into a class that did not already contain
+the duplicated code.
+
+The owner chose this over both alternatives: hosting helpers in a common
+ancestor as before, and never adding anything to a class. The justification:
+
+- **Subclasses.** A method added to a class is inherited by every subclass,
+  including subclasses outside the project that Towel cannot see. A subclass
+  defining the same name overrides it, and the class's own methods then call
+  the subclass's version. A class-private name removes that hazard. `__h`
+  defined in `A` is stored as `_A__h`, and `self.__h()` inside `A` looks up
+  `_A__h`, so no subclass can override it or collide with it. With a subclass
+  `B` defining its own `__h(self, n: str) -> str`, `A`'s methods still call
+  `A`'s helper, and mypy `--strict` and pyright strict both accept the pair.
+- **No choice of base.** Hoisting a helper into a common ancestor meant
+  choosing one. The choice may not be unique under multiple inheritance. The
+  base name may be bound differently where each class statement runs, which
+  was a defect found in the first audit round. And the ancestor may be a
+  public base class that other code subclasses. Over rich, click, packaging
+  and pygments, 13 of 49 class-homed helpers had been hoisted, into exactly
+  such classes: pygments' `Formatter` and `Lexer`, rich's `JupyterMixin`,
+  click's `UsageError`, packaging's `BaseSpecifier`. Several went into a
+  third module containing neither duplicate. Under this rule no class gains a
+  method unless the code it replaces was already in that class.
+- **Why not module functions everywhere.** Moving a method's code out of its
+  class writes code the checkers reject, and the owner does not want Towel to
+  write code that cannot be type-checked under any annotations. A private
+  attribute must then be spelled mangled (`a._A__x`); that runs, but mypy and
+  pyright both reject it. Strict pyright also rejects a module function
+  reading a protected `receiver._cache`, as `reportPrivateUsage`. Inside the
+  class, both are accepted. So are zero-argument `super()` and `__class__`,
+  because a helper defined in the same class body binds them to the same
+  class. Keeping same-class helpers as methods is what lets that code be
+  extracted at all.
+- **The receiver.** A method's receiver is typed as an instance of its class
+  unless the method declares otherwise. `A.m1(SimpleNamespace(v=10), 1)` is
+  rejected by both checkers, so it is outside the contract. A method that
+  declares another self type gets no helper reached through `self`.
+
+The conditions on the host class that remain concern only the class that
+already holds the code:
+
+- it is not a `Protocol`;
+- each of its class decorators is known to keep the namespace;
+- its metaclass, and any `__init_subclass__` in its hierarchy, is known to
+  leave plain functions alone;
+- its body is not written on its header line;
+- its methods declare no self type other than the class.
+
+The costs:
+
+- Blocks shared across classes become module functions with an explicit
+  receiver. That is sound but less idiomatic.
+- Such a block is declined when it uses private names. Zero-argument `super()`
+  or `__class__` in it is declined as before.
+- A pyright-strict project's own check will reject one that reads protected
+  attributes.
+- Across modules, such a block needs an import under the import rule below.
+- `rename-helpers`, which today refuses mangled names, must learn to rename
+  class-private helpers.
+
+Each fact about Python and the checkers in this entry is asserted by
+`tests/test_hosting_rationale.py`. A release of either checker that changes
+one fails that file and returns the decision for review.
+
+*Status: decided; implementation follows the fix branches now in progress.
+Not yet released.*
 
 ## 2026-09-22: Import names come from the program
 
