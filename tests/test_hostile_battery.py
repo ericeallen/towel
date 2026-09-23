@@ -136,6 +136,11 @@ TRANSFORMED = {
     "p12_one_line_body_after_a_split_header",
     "p13_protocol_default_methods",
     "p14_protocol_common_ancestor",
+    "p15_class_decorator_rebuilds_namespace",
+    "p16_class_decorator_wraps_every_function",
+    "p17_decorated_base_rebuilds_namespace",
+    # The positive control: every decorator here keeps the helper a method.
+    "p18_known_class_decorators_keep_the_helper",
 }
 # Every other fixture must come back byte-identical. One of them once changed:
 # r86_annotated_assignment_live left the set when the trivial-helper filter

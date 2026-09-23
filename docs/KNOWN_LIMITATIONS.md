@@ -178,9 +178,15 @@ addresses:
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
   usual descriptor protocol. Methods decorated with anything other than the
   recognized receiver-preserving decorators receive a module-level helper with
-  the receiver passed explicitly. Custom metaclasses that alter attribute
-  lookup, `__init_subclass__` hooks, and `__slots__` interactions with added
-  methods are not modeled beyond compilation.
+  the receiver passed explicitly. A class decorator is trusted to leave a
+  helper in place only when it is one of `dataclasses.dataclass`,
+  `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
+  `enum.unique`, reached through the module's own absolute imports; a class
+  carrying any other decorator takes no helper. What a custom metaclass or an
+  inherited `__init_subclass__` hook does to the namespace of a class that
+  takes a helper is not modeled: one that wraps or drops every function of
+  its classes reaches the helper too. `__slots__` interactions with added methods are not modeled beyond
+  compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
@@ -236,10 +242,12 @@ function, reachable through a star import, or bound in the same top-level
 statement as the class that uses it contributes no ancestor, and the helper is
 placed at module level instead. Rebinding the name between two subclasses --
 `Base = object` on a line of its own -- is therefore respected rather than
-overlooked, but a *decorated* base class is still trusted to be the class it
-wraps: `@register class Base:` may bind something else, and Towel does not
-evaluate the decorator to find out. `exec`, `globals()[name] = ...` and other
-reflection remain outside what any static rule here can see.
+overlooked. A *decorated* base contributes no ancestor either, unless each of
+its decorators is one of those known to keep the class and its namespace (see
+above): `@register class Base:` binds `Base` to whatever `register` returns,
+and Towel does not evaluate the decorator to find out. `exec`,
+`globals()[name] = ...` and other reflection remain outside what any static
+rule here can see.
 
 A helper becomes a method only when both blocks belong to functions defined
 directly in one unique module-level class, or in classes with a unique
@@ -250,11 +258,12 @@ to preserve the receiver, the methods have a first parameter named
 The class that takes the helper, whether the methods' own or their common
 ancestor, must also be able to hold it as an ordinary member: not a
 `Protocol` (a method there is one more member every structural implementer
-lacks, so a runtime-checkable `isinstance` turns false), and not written
-with its body on the header's line (`class Base: pass` takes no further
-statement). A base that could be `Protocol` on any path through its module,
-or is spelled `Protocol`, counts as one. When the nearest common ancestor is
-refused, a farther one that qualifies is used. Local classes, duplicated class names, unknown
+lacks, so a runtime-checkable `isinstance` turns false), not written with its
+body on the header's line (`class Base: pass` takes no further statement), and
+not decorated beyond the known namespace-preserving decorators. A base that
+could be `Protocol` on any path through its module, or is spelled
+`Protocol`, counts as one. When the nearest common ancestor is refused, a
+farther one that qualifies is used. Local classes, duplicated class names, unknown
 decorators, functions nested inside methods, and class-body functions with
 no parameter or a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join

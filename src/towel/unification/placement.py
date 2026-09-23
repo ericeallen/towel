@@ -174,11 +174,26 @@ class _GlobalBinding:
 class _ClassHost:
     """What a module-level class statement shows about taking a helper into its body."""
 
+    decorators: Tuple[Optional[str], ...]
+    """Each decorator's dotted name, a call's callee included; None for any other expression."""
     bases: Tuple[Optional[str], ...]
     """Each base's dotted name, a subscript's value included (``Protocol[T]``)."""
     body_on_header_line: bool
     """The body is written after the header's colon, where no statement can follow it."""
 
+
+# Class decorators known to return the class they are given, or (``slots=True``)
+# a class built from its namespace, with every function in that namespace
+# unwrapped. Anything else may drop, wrap, or replace a helper placed there.
+_NAMESPACE_PRESERVING_DECORATORS = frozenset(
+    {
+        "dataclasses.dataclass",
+        "functools.total_ordering",
+        "typing.final",
+        "typing_extensions.final",
+        "enum.unique",
+    }
+)
 
 _PROTOCOL_BASES = frozenset({"typing.Protocol", "typing_extensions.Protocol"})
 
@@ -255,10 +270,31 @@ class _ModuleBindings:
             )
         return frozenset(found)
 
+    def keeps_namespace(self, qualname: str) -> bool:
+        """Whether the class statement's name ends up bound to a class with its namespace.
+
+        True only when every decorator resolves, where the class statement
+        runs, to one known to return the class, or a copy of its namespace,
+        with every function in it unwrapped.
+        """
+        host = self.class_hosts.get(qualname)
+        order = self.class_orders.get(qualname)
+        return (
+            host is not None
+            and order is not None
+            and all(
+                decorator is not None
+                and self.resolve(decorator, order) in _NAMESPACE_PRESERVING_DECORATORS
+                for decorator in host.decorators
+            )
+        )
+
     def refuses_helper(self, qualname: str) -> Optional[str]:
         """Why the module-level class ``qualname`` cannot take a helper into its body, if it cannot.
 
-        A body on the header's line takes no statement after it. And a helper placed
+        A body on the header's line takes no statement after it. A decorator
+        not known to preserve the namespace may drop the helper, wrap it, or
+        bind the class's name to something else entirely. And a helper placed
         in a ``Protocol`` becomes one of its members, which every structural
         implementer lacks: an ``isinstance`` check against a runtime-checkable
         protocol turns false, and the checker stops accepting implementers
@@ -272,6 +308,8 @@ class _ModuleBindings:
             return "unknown class"
         if host.body_on_header_line:
             return "body on the header line"
+        if not self.keeps_namespace(qualname):
+            return "decorator"
         for base in host.bases:
             if base is None:
                 continue
@@ -378,6 +416,10 @@ class _GlobalBindingCollector:
             self._note_class(qualname)
             if not class_stack:
                 self._class_hosts[qualname] = _ClassHost(
+                    decorators=tuple(
+                        _dotted_name(d.func if isinstance(d, ast.Call) else d)
+                        for d in stmt.decorator_list
+                    ),
                     bases=tuple(
                         _dotted_name(b.value if isinstance(b, ast.Subscript) else b)
                         for b in stmt.bases
@@ -875,7 +917,21 @@ class HelperPlacement(EngineState):
                 if (self.import_graph.resolve(info.file_path), info.qualname) in sites
             ]
             found = matches[0] if len(matches) == 1 else None
+        if found is None or self._decorated_out_of_reach(found, sources):
+            return None
         return found
+
+    def _decorated_out_of_reach(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
+        """Whether a decorator may have bound the class's name to something other than it.
+
+        ``@register class Base:`` binds ``Base`` to whatever ``register``
+        returns, which a subclass then inherits from; only decorators known to
+        keep the class and its namespace let the class statement stand for it.
+        """
+        if "." in info.qualname:
+            return False  # A nested class is found through its module-level owner.
+        table = self._module_bindings(info.file_path, sources)
+        return table is None or not table.keeps_namespace(info.qualname)
 
     def _can_host(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
         """Whether a helper placed in ``info``'s body stays a plain member of the class.
