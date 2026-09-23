@@ -203,11 +203,18 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   refactorings found!" alone; a type-check refusal is no longer reported as
   "could not be rendered"; and the `.towel-helpers.json` sidecar lists only
   helpers present in the output.
-- A builtin that another participating module shadows or rebinds is passed
-  to a cross-module helper as a parameter, so it resolves as it did at each
-  call site; `len` shadowed only in the borrower had been read as the builtin
-  in the host. A relative import inside an extracted block stays within its
-  own package.
+- A cross-module helper no longer reads a builtin that one of its modules may
+  hold differently. The helper had read builtins in its host, so `len`
+  shadowed only in the borrower was read as the builtin, and a test patching
+  `open` into the borrower (`mock.patch("pkg.mod.open", ..., create=True)`,
+  the documented idiom) stopped reaching the moved code. The pair is now
+  declined when a participating module binds the name, may bind it through a
+  star import, rebinds `__builtins__` or writes its own namespace at run
+  time, or when the project's code or tests patch the name into one of them
+  (`mock.patch`, `patch.object`, `monkeypatch.setattr`, and targets they
+  compute). No helper takes a builtin as a parameter. A patch applied from
+  outside the project is not seen. A relative import inside an extracted
+  block stays within its own package.
 - One predicate now decides what importing a module runs, for choosing a
   host and for placing a helper. Decorators, defaults, annotations,
   metaclasses and `__init_subclass__` count as code; a `TYPE_CHECKING` block
