@@ -30,6 +30,13 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- `s = super; s()` shared by sibling classes was moved into a module
+  function, where it raised `RuntimeError: super(): __class__ cell not
+  found`; `super()` reached through another name now stays where it is.
+- A frame handle taken earlier in the loop body or branch that holds a
+  duplicated block (`frame = sys._getframe()`, read later as
+  `frame.f_locals`) no longer lets the block move; the check had stopped
+  walking at the block and never saw the handle.
 - A directory run ends when a proposal renders exactly the bytes its files
   already hold. The directory driver had counted such a proposal as applied,
   so the next analysis found it again and, with no iteration bound, the loop
@@ -383,6 +390,13 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   output is adopted into the place it was written for.
 
 ### Changed
+- Code that calls zero-argument `super()` is extracted into a method helper
+  of the class that holds both duplicates, where it resolves as it did,
+  diamonds and subclass overrides included: the helper has the class's own
+  `__class__` cell and the method's receiver. Where no such helper can be
+  written the pair is declined, never given a module function
+  (`needs_class_body`, `super_in_call`). Output over click, rich, packaging
+  and pygments is unchanged.
 - A long run says what it is doing. Verifying a proposal the project rejects
   advances no counter, so the progress bar could stand still for minutes,
   which is indistinguishable from a hung run; the display is now redrawn while
