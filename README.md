@@ -319,9 +319,9 @@ The check executes third-party code with your privileges, so it requires
 `--run-untrusted-code` (or `TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1`) and belongs on a
 disposable machine or container. It runs Towel as a user does, inside each
 project's own environment, where the project is installed from the tree under
-test beside Towel's `format` and `types` extras: one wheel of `--towel-src`,
-built when the run starts or named with `--towel-wheel`, and refused if its code
-differs from that source. Point `--towel-src` at a committed snapshot's `src` directory,
+test beside Towel's `format` and `types` extras and what the project declares
+its own type check needs: one wheel of `--towel-src`, built when the run starts
+or named with `--towel-wheel`, and refused if its code differs from that source. Point `--towel-src` at a committed snapshot's `src` directory,
 since the report names its commit. The harness reports the actual source
 revision and dirty state; source archives require an independently retained
 source manifest.
