@@ -348,7 +348,11 @@ def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
                 excluded = check.call_args_list[1].kwargs["excluded_paths"]
                 assert any("towel-stage-" in path for path in excluded)
                 assert not any(Path(path).exists() for path in excluded)
-        assert check.call_count == (1 if dirty else 2)
+        # Baseline, the candidate, and the cold confirmation of the finished run.
+        assert check.call_count == (1 if dirty else 3)
+        if not dirty:
+            confirmed = check.call_args_list[2].kwargs["excluded_paths"]
+            assert any("towel-stage-" in path for path in confirmed)
         assert str(path) in check.call_args_list[0].args[0]
         assert path.read_text() == _source()
         assert engine.type_oracle is oracle

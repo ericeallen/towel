@@ -28,12 +28,14 @@ import signal
 import sys
 import threading
 import time
-from typing import Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 from mypy import build
 from mypy.build import BuildSource
 from mypy.find_sources import create_source_list
+from mypy.fscache import FileSystemCache
 from mypy.main import process_options
+from mypy.modulefinder import matches_exclude
 from mypy.options import BuildType, Options
 from mypy.util import decode_python_encoding
 
@@ -361,6 +363,84 @@ def _build_sources(
     ]
 
 
+def _judged_by_the_project(options: Options, root: Path) -> Callable[[str], bool]:
+    """Whether the project's own mypy run would take a file as one of its targets.
+
+    With ``files`` configured, the files those name, found as mypy finds them;
+    otherwise every file under ``root`` that no ``exclude`` pattern matches,
+    tested as mypy's own walk tests it, on the file and on each directory above
+    it. ``options.exclude`` must still be the project's, before Towel adds to it.
+    """
+    if options.files:
+        targets = {
+            os.path.abspath(source.path)
+            for source in create_source_list(list(options.files), options, allow_empty_dir=True)
+            if source.path is not None
+        }
+        return lambda path: os.path.abspath(path) in targets
+    excludes = list(options.exclude)
+    cache = FileSystemCache()
+
+    def judged(path: str) -> bool:
+        candidate = Path(path)
+        if not excludes or not candidate.is_relative_to(root):
+            return True
+        walked = [candidate, *candidate.parents]
+        return not any(
+            matches_exclude(str(step), excludes, cache, False)
+            for step in walked[: len(candidate.relative_to(root).parts)]
+        )
+
+    return judged
+
+
+_MESSAGE_PATH = re.compile(r"^(?P<path>.*?):(?:\d+:)?(?:\d+:)? (?:error|note|warning): ")
+
+
+def _as_the_project_judges(
+    messages: Sequence[str],
+    result: build.BuildResult,
+    sources: Sequence[BuildSource],
+    judged: Callable[[str], bool],
+    options: Options,
+) -> list[str]:
+    """``messages`` without those about files the project's own mypy run never checks.
+
+    Towel analyses what it is pointed at, ``tests/`` included, and every file it
+    analyses is a source of the build; a configuration excluding ``tests/``, or
+    naming ``files`` without it, then had its tests checked here and nowhere
+    else, and a project whose mypy run is clean was refused. A file the project
+    does not name is still checked when a file it does name imports it, since
+    mypy follows that import and reports what it finds -- unless the
+    configuration silences followed imports, when it reports nothing there.
+    """
+    unjudged = {
+        source.module: os.path.abspath(source.path)
+        for source in sources
+        if source.path is not None and not judged(source.path)
+    }
+    if not unjudged:
+        return list(messages)
+    reached: set[str] = set()
+    if options.follow_imports not in {"silent", "skip"}:
+        pending = [source.module for source in sources if source.module not in unjudged]
+        while pending:
+            state = result.graph.get(pending.pop())
+            if state is None:
+                continue
+            for dependency in [*state.dependencies, *(state.ancestors or [])]:
+                if dependency not in reached:
+                    reached.add(dependency)
+                    pending.append(dependency)
+    unchecked = {path for module, path in unjudged.items() if module not in reached}
+
+    def about_unchecked(message: str) -> bool:
+        match = _MESSAGE_PATH.match(message)
+        return match is not None and os.path.abspath(match.group("path")) in unchecked
+
+    return [message for message in messages if not about_unchecked(message)]
+
+
 def _request(request: object, cache: str) -> list[str]:
     if not isinstance(request, dict):
         raise ValueError("Expected a request object")
@@ -371,6 +451,8 @@ def _request(request: object, cache: str) -> list[str]:
     root = Path(root_value)
     os.chdir(root)
     options = _options(root, config, cache, _strings(request.get("roots")))
+    complete = request.get("complete") is True
+    judged = _judged_by_the_project(options, root) if complete else None
     for excluded in _strings(request.get("excluded_paths")):
         path = Path(excluded)
         spellings = [str(path)]
@@ -383,11 +465,14 @@ def _request(request: object, cache: str) -> list[str]:
         _text_mypy_must_be_given(replacements, cache),
         options,
         root,
-        request.get("complete") is True,
+        complete,
         _sources(request.get("modules")),
         _strings(request.get("consumers") or []),
     )
-    return list(build.build(sources=sources, options=options).errors)
+    result = build.build(sources=sources, options=options)
+    if judged is None:
+        return list(result.errors)
+    return _as_the_project_judges(result.errors, result, sources, judged, options)
 
 
 def _answer(line: str, cache: str) -> str:

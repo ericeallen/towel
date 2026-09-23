@@ -57,9 +57,9 @@ import sys
 import tempfile
 from enum import Enum
 from typing import (
+    IO,
     Dict,
     Final,
-    FrozenSet,
     Iterable,
     Iterator,
     List,
@@ -80,8 +80,8 @@ from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFail
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
 from .consumers import (
+    ImportScan,
     ScanLimitExceeded,
-    consumers_of as consumers_of,
     module_prefixes,
     walked_package,
 )
@@ -197,6 +197,8 @@ class TypeOracle(Protocol):
 
 
 _ERROR = re.compile(r"^(?P<path>.*?):(?P<line>\d+):(?:\d+:)? error: ")
+_UNPLACED_ERROR = re.compile(r"^(?:(?P<path>(?:(?!: ).)+): )?error: ")
+"""An error mypy gives no line for, and sometimes no file: about a module, or the build."""
 _REVEALED = re.compile(
     r'^(?P<path>.*?):(?P<line>\d+):(?:\d+:)? note: Revealed type is "(?P<type>.*)"$'
 )
@@ -231,6 +233,29 @@ def _module_name_and_root(path: Path) -> Tuple[str, Path]:
         parts = parts[1:]
     root = packages[-1].parent if packages else path.parent
     return ".".join(reversed(parts)), root
+
+
+def _mypy_error(message: str, root: Path) -> Optional[TypeDiagnostic]:
+    """The error ``message`` reports, or ``None`` when it is not one.
+
+    An error without a line is still an error. Reading only ``path:line:``
+    dropped it as though it were a note, and a project mypy rejects was called
+    clean; one that names no file is attributed to the checked root.
+    """
+    placed = _ERROR.match(message)
+    if placed is not None:
+        path = str((root / placed.group("path")).resolve())
+        return TypeDiagnostic(path, message[placed.end() :].strip(), int(placed.group("line")))
+    unplaced = _UNPLACED_ERROR.match(message)
+    if unplaced is None:
+        return None
+    named = unplaced.group("path")
+    path = str((root / named).resolve()) if named else str(root)
+    return TypeDiagnostic(path, message[unplaced.end() :].strip())
+
+
+def _module_name(path: Path) -> str:
+    return _module_name_and_root(path)[0]
 
 
 def _with_probes(request: RevealRequest) -> Tuple[str, List[int]]:
@@ -353,6 +378,17 @@ def _source_groups(sources: Mapping[str, str], checker: str) -> Dict[Path, Dict[
     return groups
 
 
+_MYPY_WORKER = Path(__file__).with_name("_mypy_worker.py")
+_STDERR_TAIL_BYTES = 2000
+"""How much of a dying worker's standard error a failure quotes: a traceback's end."""
+
+
+def _with_stderr(failure: CheckFailure, said: str) -> CheckFailure:
+    if not said:
+        return failure
+    return CheckFailure(f"{failure.reason}. The mypy worker's standard error ended:\n{said}")
+
+
 class MypyInferrer:
     """A persistent, isolated mypy worker with an owned incremental cache.
 
@@ -365,6 +401,7 @@ class MypyInferrer:
         # Cleanup must be valid even if dependency detection/construction fails.
         self._lock = threading.RLock()
         self._process: Optional[subprocess.Popen[bytes]] = None
+        self._stderr: Optional[IO[bytes]] = None
         self._cache: Optional[tempfile.TemporaryDirectory[str]] = None
         self._closed = False
         self._owner_pid = os.getpid()
@@ -374,7 +411,9 @@ class MypyInferrer:
             self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
             cache_dir = Path(self._cache.name)
         self._cache_dir = cache_dir.resolve()
-        self._consumer_cache: Dict[Path, Tuple[FrozenSet[str], Sequence[str]]] = {}
+        self._import_scans: Dict[Path, ImportScan] = {}
+        # Whether a build has answered since the cache and scans were empty.
+        self.answered_from_warm_state = False
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
@@ -386,9 +425,31 @@ class MypyInferrer:
         with self._lock:
             self._closed = True
             self._stop_worker()
+            if self._stderr is not None:
+                self._stderr.close()
+                self._stderr = None
             if self._cache is not None:
                 self._cache.cleanup()
                 self._cache = None
+
+    def forget_warm_state(self) -> None:
+        """Start again from nothing: no worker, no incremental cache, no consumer scan.
+
+        Each is kept across a run because each makes a check cheaper, and each
+        is a way to answer for a project that is no longer there: a cache entry
+        written from supplied text, a scan that missed a change on disk. A check
+        made after this shares none of them with the checks made before it.
+        A cache directory the caller supplied is left alone; a new owned one
+        replaces it.
+        """
+        with self._lock:
+            self._stop_worker()
+            if self._cache is not None:
+                self._cache.cleanup()
+            self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
+            self._cache_dir = Path(self._cache.name).resolve()
+            self._import_scans = {}
+            self.answered_from_warm_state = False
 
     def _stop_worker(self) -> None:
         process, self._process = self._process, None
@@ -415,7 +476,7 @@ class MypyInferrer:
         self.close()
 
     def _consumers(self, root: Path, replacements: Mapping[str, str]) -> Sequence[str]:
-        """The unchanged modules that import this change, found once and kept.
+        """The unchanged modules that import this change, as the project now stands.
 
         A complete build walks the packages under refactoring, and mypy follows
         imports out of them. What imports *into* them is reached by neither, so
@@ -423,33 +484,19 @@ class MypyInferrer:
         the new helper collides with is unchanged, unimported and broken by the
         change, and the check that never looked at it reported clean.
 
-        The scan is one ``ast`` pass over the project, and it must stay one: a
-        prospective check happens hundreds of times in a run, and each names
-        only the few modules it is about. The answer is therefore kept against
-        the *modules asked about so far*, not against the set of a single
-        request, so those sparse checks reuse the scan the first complete one
-        paid for. A request naming a module never seen before -- a second
-        project under one oracle -- widens the set and scans once more.
+        One scan per project is kept for the oracle's life and follows the tree
+        (see :class:`towel.consumers.ImportScan`): a prospective check happens
+        hundreds of times in a run, and each costs a walk and a stat per file,
+        not a parse.
         """
-
-        def namer(path: Path) -> str:
-            return _module_name_and_root(path)[0]
-
-        wanted = module_prefixes(replacements, namer)
-        remembered = self._consumer_cache.get(root)
-        if remembered is not None and wanted <= remembered[0]:
-            return remembered[1]
-        if remembered is not None:
-            wanted |= remembered[0]
+        scan = self._import_scans.get(root)
+        if scan is None:
+            scan = self._import_scans[root] = ImportScan(root, _module_name)
         packages = {walked_package(Path(path)) or Path(path).resolve() for path in replacements}
-        found = consumers_of(
-            root,
-            wanted,
-            module_name=namer,
+        return scan.consumers(
+            module_prefixes(replacements, root, _module_name),
             exclude=[package for package in packages if package.is_dir()],
         )
-        self._consumer_cache[root] = (frozenset(wanted), found)
-        return found
 
     def _build_errors(
         self,
@@ -481,69 +528,105 @@ class MypyInferrer:
                 "modules": {str(Path(source.path).resolve()): source.module for source in sources},
             }
             try:
-                if self._process is None:
-                    self._process = subprocess.Popen(
-                        [
-                            sys.executable,
-                            "-I",
-                            str(Path(__file__).with_name("_mypy_worker.py")),
-                            str(self._cache_dir),
-                        ],
-                        bufsize=0,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                        cwd=tempfile.gettempdir(),
-                        env=python_tool_environment(),
-                    )
-                process = self._process
-                if process.stdin is None or process.stdout is None:
-                    return CheckFailure("mypy worker has no protocol pipes")
-                deadline = time.monotonic() + MYPY_TIMEOUT_SECONDS
-                pending = (json.dumps(request) + "\n").encode("utf-8")
-                written = 0
-                response = bytearray()
-                input_fd, output_fd = process.stdin.fileno(), process.stdout.fileno()
-                os.set_blocking(input_fd, False)
-                os.set_blocking(output_fd, False)
-                while not response.endswith(b"\n"):
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        self._stop_worker()
-                        return CheckFailure("mypy timed out")
-                    readable, writable, _ = select.select(
-                        [output_fd], [input_fd] if written < len(pending) else [], [], remaining
-                    )
-                    if writable:
-                        try:
-                            written += os.write(
-                                input_fd, memoryview(pending)[written : written + 65536]
-                            )
-                        except BlockingIOError:
-                            pass  # Another ready pipe can be consumed before trying again.
-                    if readable:
-                        try:
-                            chunk = os.read(output_fd, 65536)
-                        except BlockingIOError:
-                            continue
-                        if not chunk:
-                            self._stop_worker()
-                            return CheckFailure("mypy worker exited before returning diagnostics")
-                        response.extend(chunk)
-                payload = json.loads(response)
-            except (OSError, ValueError) as error:
-                self._stop_worker()
+                process = self._running_worker()
+            except OSError as error:
                 return CheckFailure(f"mypy worker failed: {error}")
-            if not isinstance(payload, dict):
-                return CheckFailure("mypy worker returned an invalid response")
-            failure, messages = payload.get("failure"), payload.get("messages")
-            if isinstance(failure, str):
-                return CheckFailure(failure)
-            if failure is not None:
-                return CheckFailure("mypy worker returned an invalid failure status")
-            if not isinstance(messages, list) or not all(isinstance(m, str) for m in messages):
-                return CheckFailure("mypy worker returned invalid diagnostics")
-            return _BuildMessages(tuple(m for m in messages if isinstance(m, str)))
+            said_before = self._stderr_size()
+            result = self._exchange(process, request)
+            if isinstance(result, CheckFailure):
+                return _with_stderr(result, self._stderr_since(said_before))
+            self.answered_from_warm_state = True
+            return result
+
+    def _running_worker(self) -> subprocess.Popen[bytes]:
+        if self._process is not None:
+            return self._process
+        # Its standard error is the only place a crash says why. A file, not a
+        # pipe: nothing reads it until something has gone wrong, and a pipe
+        # nobody reads fills and stops the worker.
+        if self._stderr is not None:
+            self._stderr.close()
+        self._stderr = tempfile.TemporaryFile(prefix="towel-mypy-stderr-")
+        self._process = subprocess.Popen(
+            [sys.executable, "-I", str(_MYPY_WORKER), str(self._cache_dir)],
+            bufsize=0,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._stderr,
+            cwd=tempfile.gettempdir(),
+            env=python_tool_environment(),
+        )
+        return self._process
+
+    def _stderr_size(self) -> int:
+        return os.fstat(self._stderr.fileno()).st_size if self._stderr is not None else 0
+
+    def _stderr_since(self, offset: int) -> str:
+        """The end of what the worker wrote to standard error after ``offset``.
+
+        Only this request's part: a message an earlier, successful request
+        wrote is not the reason this one failed. ``pread`` leaves the offset
+        the worker writes at where it was.
+        """
+        if self._stderr is None:
+            return ""
+        size = self._stderr_size()
+        start = max(offset, size - _STDERR_TAIL_BYTES)
+        written = os.pread(self._stderr.fileno(), size - start, start)
+        return written.decode("utf-8", "replace").strip()
+
+    def _exchange(
+        self, process: subprocess.Popen[bytes], request: Mapping[str, object]
+    ) -> _BuildMessages | CheckFailure:
+        """Send one request to the worker and read its answer, within the timeout."""
+        try:
+            if process.stdin is None or process.stdout is None:
+                return CheckFailure("mypy worker has no protocol pipes")
+            deadline = time.monotonic() + MYPY_TIMEOUT_SECONDS
+            pending = (json.dumps(request) + "\n").encode("utf-8")
+            written = 0
+            response = bytearray()
+            input_fd, output_fd = process.stdin.fileno(), process.stdout.fileno()
+            os.set_blocking(input_fd, False)
+            os.set_blocking(output_fd, False)
+            while not response.endswith(b"\n"):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._stop_worker()
+                    return CheckFailure("mypy timed out")
+                readable, writable, _ = select.select(
+                    [output_fd], [input_fd] if written < len(pending) else [], [], remaining
+                )
+                if writable:
+                    try:
+                        written += os.write(
+                            input_fd, memoryview(pending)[written : written + 65536]
+                        )
+                    except BlockingIOError:
+                        pass  # Another ready pipe can be consumed before trying again.
+                if readable:
+                    try:
+                        chunk = os.read(output_fd, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        self._stop_worker()
+                        return CheckFailure("mypy worker exited before returning diagnostics")
+                    response.extend(chunk)
+            payload = json.loads(response)
+        except (OSError, ValueError) as error:
+            self._stop_worker()
+            return CheckFailure(f"mypy worker failed: {error}")
+        if not isinstance(payload, dict):
+            return CheckFailure("mypy worker returned an invalid response")
+        failure, messages = payload.get("failure"), payload.get("messages")
+        if isinstance(failure, str):
+            return CheckFailure(failure)
+        if failure is not None:
+            return CheckFailure("mypy worker returned an invalid failure status")
+        if not isinstance(messages, list) or not all(isinstance(m, str) for m in messages):
+            return CheckFailure("mypy worker returned invalid diagnostics")
+        return _BuildMessages(tuple(m for m in messages if isinstance(m, str)))
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
@@ -594,15 +677,11 @@ class MypyInferrer:
             )
             if isinstance(result, CheckFailure):
                 return result
-            for message in result.messages:
-                match = _ERROR.match(message)
-                if match is not None:
-                    path = str((root / match.group("path")).resolve())
-                    errors.append(
-                        TypeDiagnostic(
-                            path, message[match.end() :].strip(), int(match.group("line"))
-                        )
-                    )
+            errors.extend(
+                diagnostic
+                for diagnostic in (_mypy_error(message, root) for message in result.messages)
+                if diagnostic is not None
+            )
         return CheckSuccess(tuple(errors))
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
@@ -1185,6 +1264,40 @@ def served_by_a_language_server(oracle: object) -> bool:
     if isinstance(oracle, _RelocatedOracle):
         return served_by_a_language_server(oracle.inner)
     return isinstance(oracle, PyrightOracle) and oracle.answered_from_a_session
+
+
+def holds_warm_state(oracle: object) -> bool:
+    """Whether any checker behind ``oracle`` has answered from state it kept.
+
+    A language server's session, or mypy's incremental cache and consumer scan:
+    each is kept across a run to make a check cheap, and each could answer for
+    a project that is no longer there. The pyright command line keeps nothing.
+    """
+    if isinstance(oracle, CombinedOracle):
+        return any(holds_warm_state(one) for one in oracle.checkers)
+    if isinstance(oracle, _RelocatedOracle):
+        return holds_warm_state(oracle.inner)
+    if isinstance(oracle, MypyInferrer):
+        return oracle.answered_from_warm_state
+    return served_by_a_language_server(oracle)
+
+
+def start_cold(oracle: object) -> None:
+    """Drop every piece of state kept behind ``oracle``; the next check starts from nothing.
+
+    As with :func:`stop_language_servers`, what the run gave the oracle -- its
+    relocation, its exclusions -- stays, so the next check is the same question
+    asked of checkers that have never seen the project.
+    """
+    if isinstance(oracle, CombinedOracle):
+        for one in oracle.checkers:
+            start_cold(one)
+    elif isinstance(oracle, _RelocatedOracle):
+        start_cold(oracle.inner)
+    elif isinstance(oracle, MypyInferrer):
+        oracle.forget_warm_state()
+    else:
+        stop_language_servers(oracle)
 
 
 class CombinedOracle:

@@ -49,9 +49,11 @@ it either. A dynamic import is invisible here, as it is to the checker.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Tuple
 
 ModuleNamer = Callable[[Path], str]
 """What names a file's module; supplied by the caller that owns the convention."""
@@ -89,7 +91,47 @@ class ScanLimitExceeded(RuntimeError):
     """
 
 
-def _imported_modules(tree: ast.Module, module: str, *, is_package: bool) -> Set[str]:
+@dataclass(frozen=True)
+class _ImportStatement:
+    """One import as written: ``level`` dots, then ``module``, naming ``names`` from it.
+
+    ``import a.b`` is ``(0, "a.b", ())``. Kept unresolved, because what a
+    relative import names depends on the file's module name, and that depends
+    on ``__init__`` files elsewhere in the tree, which can change while the
+    file itself does not.
+    """
+
+    level: int
+    module: Optional[str]
+    names: Tuple[str, ...]
+
+
+_Stamp = Tuple[int, int, int]
+"""``(st_mtime_ns, st_size, st_ino)``: Towel replaces a file atomically, so the inode moves."""
+
+
+@dataclass(frozen=True)
+class _ScannedFile:
+    stamp: _Stamp
+    statements: Optional[Tuple[_ImportStatement, ...]]
+    """``None`` when the file does not parse: it can import nothing, and no checker can build it."""
+
+
+def _statements(tree: ast.Module) -> Tuple[_ImportStatement, ...]:
+    found: List[_ImportStatement] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.extend(_ImportStatement(0, alias.name, ()) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            found.append(
+                _ImportStatement(node.level, node.module, tuple(a.name for a in node.names))
+            )
+    return tuple(found)
+
+
+def _imported_modules(
+    statements: Iterable[_ImportStatement], module: str, *, is_package: bool
+) -> Set[str]:
     """Every module name this file imports, relative imports resolved.
 
     A submodule import implies its parents: ``import a.b.c`` reads ``a`` and
@@ -99,24 +141,27 @@ def _imported_modules(tree: ast.Module, module: str, *, is_package: bool) -> Set
     package's ``__init__`` is the module itself: ``from .sub import y`` in
     ``app/__init__.py`` names ``app.sub``, not ``sub``. Taking the parent there
     missed every consumer that reaches a change through a re-export.
+
+    ``from app import helpers`` may import the module ``app.helpers``, and
+    whether it does is not visible here, so both are recorded. Recording only
+    ``app`` missed every file that reaches the change through ``helpers``, since
+    ``app/__init__`` itself need not consume it. A name that is not a module
+    only ever matches a module that does not exist.
     """
     package = module if is_package else module.rpartition(".")[0]
     names: Set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0:
-                if node.module:
-                    names.add(node.module)
-                continue
+    for statement in statements:
+        if statement.level == 0:
+            base = statement.module or ""
+        else:
             # ``from . import x`` inside ``a.b.c`` names ``a.b``; each further
             # dot drops one more component.
             parts = package.split(".") if package else []
-            climbed = parts[: len(parts) - (node.level - 1)] if node.level > 1 else parts
-            base = ".".join([*climbed, node.module] if node.module else climbed)
-            if base:
-                names.add(base)
+            climbed = parts[: len(parts) - (statement.level - 1)] if statement.level > 1 else parts
+            base = ".".join([*climbed, statement.module] if statement.module else climbed)
+        if base:
+            names.add(base)
+        names.update(f"{base}.{name}" if base else name for name in statement.names if name != "*")
     implied: Set[str] = set()
     for name in names:
         parts = name.split(".")
@@ -139,6 +184,155 @@ def _python_files(root: Path) -> List[Path]:
     return found
 
 
+@dataclass(frozen=True)
+class _ImportGraph:
+    """Which names each file defines, and which files import each name."""
+
+    defines: Mapping[Path, FrozenSet[str]]
+    importers: Mapping[str, FrozenSet[Path]]
+
+
+def module_names(path: Path, root: Path, module_name: ModuleNamer) -> FrozenSet[str]:
+    """Every dotted name ``path`` can be imported by, as far as the tree shows.
+
+    ``module_name`` gives the name the ``__init__`` files imply, and where the
+    outermost of those directories sits inside ``root`` without one of its own,
+    the directories above it may be PEP 420 namespace packages: ``nsp/lib.py``
+    is ``lib`` by its markers and ``nsp.lib`` to every file importing it. A scan
+    that knew only the first name found no consumers for such a module at all.
+
+    Whether a directory is a namespace package depends on the search path the
+    checker is given, which is not known here, so every such name is taken.
+    Over-including a consumer costs a little checking; missing one calls a
+    broken project clean. No name shorter than the markers imply is taken:
+    ``pkg/types.py`` in a regular package is never ``types``.
+    """
+    canonical = module_name(path)
+    try:
+        parts = list(path.relative_to(root).with_suffix("").parts)
+    except ValueError:
+        return frozenset({canonical})
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    shortest = len(canonical.split("."))
+    longer = {
+        ".".join(parts[start:])
+        for start in range(len(parts) - shortest + 1)
+        if all(part.isidentifier() for part in parts[start:])
+    }
+    return frozenset({canonical, *longer})
+
+
+def _graph(
+    files: Mapping[Path, _ScannedFile], root: Path, module_name: ModuleNamer
+) -> _ImportGraph:
+    defines: Dict[Path, FrozenSet[str]] = {}
+    importers: Dict[str, Set[Path]] = {}
+    for path, scanned in files.items():
+        if scanned.statements is None:
+            continue
+        names = module_names(path, root, module_name)
+        defines[path] = names
+        is_package = path.stem == "__init__"
+        # A relative import means one thing, but which of the file's names the
+        # checker uses is not known here; resolving against each over-includes.
+        for name in names:
+            for imported in _imported_modules(scanned.statements, name, is_package=is_package):
+                importers.setdefault(imported, set()).add(path)
+    return _ImportGraph(defines, {name: frozenset(paths) for name, paths in importers.items()})
+
+
+def _reached(graph: _ImportGraph, provided: Iterable[str]) -> Set[Path]:
+    """Every file importing a name in ``provided``, or a name such a file defines."""
+    # A consumer of a consumer is reached through it: a test helper importing
+    # the package, and the tests importing that.
+    pending = [name for name in provided if name]
+    seen = set(pending)
+    reached: Set[Path] = set()
+    while pending:
+        for path in graph.importers.get(pending.pop(), ()):
+            if path in reached:
+                continue
+            reached.add(path)
+            for name in graph.defines[path] - seen:
+                seen.add(name)
+                pending.append(name)
+    return reached
+
+
+class ImportScan:
+    """The import graph of the files under ``root``, following the tree as it changes.
+
+    A prospective check happens hundreds of times in a run, so the graph is
+    kept, and it has to be the graph of the project as it now stands: an
+    in-place run writes each refactoring it applies before the next candidate is
+    judged, and an applied refactoring can add an import. A graph kept from the
+    start of the run never learned that a file had become a consumer, and the
+    candidates that broke it were called clean.
+
+    So each question walks the tree again and compares stamps, which is cheap,
+    and parses only the files whose stamp moved, which is what costs. The graph
+    itself is rebuilt whenever any file moved, because a new ``__init__`` renames
+    the modules beside it without touching them.
+
+    The graph holds every file. Which of the consumers are already being checked
+    differs from one request to the next, so it is applied to the answer, never
+    to what is kept: a scan that left out the packages of the first request
+    answered every later request, whose packages were fewer, without them.
+    """
+
+    def __init__(self, root: Path, module_name: ModuleNamer) -> None:
+        self._root = root
+        self._module_name = module_name
+        self._files: Dict[Path, _ScannedFile] = {}
+        self._graph: Optional[_ImportGraph] = None
+
+    def _follow_tree(self) -> _ImportGraph:
+        current: Dict[Path, _ScannedFile] = {}
+        for path in _python_files(self._root):
+            resolved = path.resolve()
+            try:
+                status = path.stat()
+            except OSError:
+                continue  # Gone since the walk listed it; it imports nothing now.
+            stamp = (status.st_mtime_ns, status.st_size, status.st_ino)
+            known = self._files.get(resolved)
+            current[resolved] = (
+                known if known is not None and known.stamp == stamp else _scanned(path, stamp)
+            )
+        if self._graph is None or current != self._files:
+            self._graph = _graph(current, self._root, self._module_name)
+        self._files = current
+        return self._graph
+
+    def consumers(self, provided: Iterable[str], *, exclude: Sequence[Path] = ()) -> List[str]:
+        """Files that import a module of ``provided``, transitively, outside ``exclude``.
+
+        ``provided`` names the modules the packages under refactoring define, as
+        dotted prefixes: a file importing ``pkg.thing`` consumes ``pkg``.
+        ``exclude`` names directories already being checked, whose files are not
+        returned again; files inside them still carry the change onwards.
+        """
+        wanted = [name for name in provided if name]
+        if not wanted:
+            return []
+        excluded = [directory.resolve() for directory in exclude]
+        return sorted(
+            str(path)
+            for path in _reached(self._follow_tree(), wanted)
+            if not any(path.is_relative_to(directory) for directory in excluded)
+        )
+
+
+def _scanned(path: Path, stamp: _Stamp) -> _ScannedFile:
+    try:
+        tree = ast.parse(path.read_bytes(), filename=str(path))
+    except (OSError, SyntaxError, ValueError):
+        # It cannot import anything, and the checker could not build it.
+        return _ScannedFile(stamp, None)
+    return _ScannedFile(stamp, _statements(tree))
+
+
 def consumers_of(
     root: Path,
     provided: Iterable[str],
@@ -146,56 +340,22 @@ def consumers_of(
     module_name: ModuleNamer,
     exclude: Sequence[Path] = (),
 ) -> List[str]:
-    """Files under ``root`` that import a module of ``provided``, transitively.
-
-    ``provided`` names the modules the packages under refactoring define, as
-    dotted prefixes: a file importing ``pkg.thing`` consumes ``pkg``. ``exclude``
-    names directories already being checked, whose files are not returned again.
-    """
-    wanted = {name for name in provided if name}
-    if not wanted:
-        return []
-    excluded = [directory.resolve() for directory in exclude]
-    candidates: Dict[Path, Set[str]] = {}
-    defines: Dict[Path, str] = {}
-    for path in _python_files(root):
-        resolved = path.resolve()
-        if any(resolved.is_relative_to(directory) for directory in excluded):
-            continue
-        try:
-            tree = ast.parse(path.read_bytes(), filename=str(path))
-        except (OSError, SyntaxError, ValueError):
-            # It cannot import anything, and the checker could not build it.
-            continue
-        name = module_name(path)
-        defines[resolved] = name
-        candidates[resolved] = _imported_modules(tree, name, is_package=path.stem == "__init__")
-    reached: Set[Path] = set()
-    # A consumer of a consumer is reached through it, so the set grows until it
-    # stops: a test helper importing the package, and the tests importing that.
-    growing = True
-    while growing:
-        growing = False
-        for path, imports in candidates.items():
-            if path in reached or imports.isdisjoint(wanted):
-                continue
-            reached.add(path)
-            wanted.add(defines[path])
-            growing = True
-    return sorted(str(path) for path in reached)
+    """Files under ``root`` that import a module of ``provided``, transitively; one scan."""
+    return ImportScan(root, module_name).consumers(provided, exclude=exclude)
 
 
-def module_prefixes(paths: Iterable[str], module_name: ModuleNamer) -> Set[str]:
+def module_prefixes(paths: Iterable[str], root: Path, module_name: ModuleNamer) -> Set[str]:
     """The dotted names the analyzed files define, with the packages holding them.
 
     ``pkg/inner/m.py`` contributes ``pkg.inner.m``, ``pkg.inner`` and ``pkg``,
-    so a file importing any of them is a consumer of the change.
+    so a file importing any of them is a consumer of the change. Each of the
+    file's names contributes (see :func:`module_names`).
     """
     names: Set[str] = set()
     for path in paths:
-        module = module_name(Path(path))
-        parts = module.split(".")
-        names.update(".".join(parts[: index + 1]) for index in range(len(parts)))
+        for module in module_names(Path(path), root, module_name):
+            parts = module.split(".")
+            names.update(".".join(parts[: index + 1]) for index in range(len(parts)))
     return names
 
 
