@@ -589,16 +589,17 @@ class HelperPlacement(EngineState):
         table = self._module_bindings(info.file_path, sources)
         return table is not None and table.refuses_helper(info.qualname) is None
 
-    def _leaves_functions_alone(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
-        """Whether building the class leaves a helper placed in its body a plain member of it.
+    def _hosts_method_helpers(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
+        """Whether a helper placed in the class's body stays what its methods reach.
 
         A metaclass that wraps every callable of the namespace, or a base whose
         ``__init_subclass__`` registers them, would wrap or register the helper
-        too (:meth:`ImportTimeCode.leaves_functions_alone`); the helper then
-        stays at module level and takes the receiver as an argument.
+        too, and a ``__getattribute__`` on the class's method resolution order
+        intercepts ``self.__extracted_func_0`` itself: a forwarding proxy looks
+        it up on another object (:meth:`ImportTimeCode.hosts_method_helpers`).
+        The helper then stays at module level and takes the receiver as an
+        argument.
         """
-        if "." in info.qualname:
-            return False
         source = sources.get(info.file_path)
         try:
             code = ImportTimeCode(
@@ -608,7 +609,7 @@ class HelperPlacement(EngineState):
             )
         except (OSError, UnicodeError, SyntaxError, ValueError):
             return False
-        return code.leaves_functions_alone(info.qualname)
+        return code.hosts_method_helpers(info.qualname)
 
     def _choose_class_insertion(
         self,
@@ -668,7 +669,7 @@ class HelperPlacement(EngineState):
             # ordinary member any subclass may override.
             return None
         sources = {pair.file_path: pair.source1}
-        if not self._can_host(host, sources) or not self._leaves_functions_alone(host, sources):
+        if not self._can_host(host, sources) or not self._hosts_method_helpers(host, sources):
             return None
         return ClassInsertionPlan(
             class_name=class_name,

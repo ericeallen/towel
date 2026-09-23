@@ -8,13 +8,16 @@ holds only for receivers the class machinery built with the helper in place:
   that the method-form helper would break with ``AttributeError``;
 - a metaclass, or an ``__init_subclass__`` on the class's method resolution
   order, sees the class's namespace as it is built and may wrap, register or
-  drop the helper there.
+  drop the helper there;
+- a ``__getattribute__`` on that order intercepts the lookup of the helper
+  itself, and a proxy answers it from another object.
 
 Such blocks get the module-level helper that takes the receiver as an
 argument. ``type``, ``abc.ABCMeta``, the enum metaclass, ``typing.Generic``
-and ``object`` are known to leave plain functions alone, and keep the
-method form; the last tests check that of the running interpreter. Each other
-case runs the program before and after the refactoring.
+and ``object`` are known to leave plain functions alone, every builtin class
+but ``type`` and ``super`` looks attributes up as ``object`` does, and these
+keep the method form; the last tests check that of the running interpreter.
+Each other case runs the program before and after the refactoring.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from typing import Dict, Optional, Tuple
 import pytest
 
 from tests.test_helpers import refactor_to_fixed_point_silently
-from towel.unification.import_graph import _KEEPS_FUNCTIONS
+from towel.unification.import_graph import _HOSTS_METHOD_HELPERS, _OWN_ATTRIBUTE_LOOKUP
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 METHODS = """
@@ -256,6 +259,91 @@ def test_class_machinery_that_sees_the_namespace_gets_a_module_helper(
     assert "self.__extracted_func" not in final
 
 
+FORWARDING_PROXY = """
+class Target:
+    v = 10
+
+
+class Proxy:
+    \"\"\"Answers every attribute but its methods and its target from the target.\"\"\"
+
+    def __init__(self, target):
+        object.__setattr__(self, "_target", target)
+
+    def __getattribute__(self, name):
+        if name in ("first", "second", "_target", "__class__", "__dict__"):
+            return object.__getattribute__(self, name)
+        target = object.__getattribute__(self, "_target")
+        return getattr(target, name)
+"""
+
+
+@pytest.mark.parametrize(
+    "prelude, header",
+    [
+        (FORWARDING_PROXY, None),
+        (
+            FORWARDING_PROXY.replace("class Proxy:", "class ProxyBase:"),
+            "class Box(ProxyBase):\n",
+        ),
+    ],
+    ids=["own-getattribute", "inherited-getattribute"],
+)
+def test_a_class_that_intercepts_attribute_lookup_gets_a_module_helper(
+    tmp_path: Path, prelude: str, header: Optional[str]
+) -> None:
+    """``self.__extracted_func_0`` on a forwarding proxy asks the target, which has no such member.
+
+    The methods read ``self.v``, which the proxy answers from its target, and
+    work; a method helper would be looked up the same way and raise
+    ``AttributeError``. ``__getattr__`` is no reason to refuse, since it runs
+    only when normal lookup fails and nothing spells the helper's stored name.
+    """
+    if header is None:
+        source = (
+            textwrap.dedent(prelude).strip("\n")
+            + "\n"
+            + textwrap.indent(textwrap.dedent(METHODS).strip("\n"), "    ")
+            + "\n"
+        )
+        driver = "from box import Proxy, Target\nbox = Proxy(Target())\nprint(box.first(1), box.second(2))\n"
+    else:
+        source = _module(prelude, header.rstrip("\n") + "\n    pass\n")
+        driver = (
+            "from box import Box, Target\nbox = Box(Target())\n"
+            "print(box.first(1), box.second(2))\n"
+        )
+    before, after, final = _refactored(tmp_path, source, driver)
+    assert "AttributeError" not in before
+    assert after == before
+    assert "self.__extracted_func" not in final
+
+
+def test_a_class_whose_getattr_serves_missing_names_keeps_the_method_helper(tmp_path: Path) -> None:
+    source = _module(
+        "",
+        "class Box:\n    v = 1\n\n    def __getattr__(self, name):\n        return 'field ' + name\n",
+    )
+    driver = (
+        "from box import Box\nbox = Box()\nprint(box.first(1), box.second(2),"
+        " box._extracted_func_0, box.__extracted_func_0)\n"
+    )
+    before, after, final = _refactored(tmp_path, source, driver)
+    assert after == before
+    assert "self.__extracted_func" in final
+
+
+def test_a_metaclass_gets_a_module_helper(tmp_path: Path) -> None:
+    """A metaclass's instances are classes, and ``type`` looks their attributes up its own way."""
+    source = _module("", "class Meta(type):\n    v = 1\n")
+    driver = (
+        "from box import Meta\nKind = Meta('Kind', (), {})\nprint(Kind.first(1), Kind.second(2))\n"
+    )
+    before, after, final = _refactored(tmp_path, source, driver)
+    assert after == before
+    assert "self.__extracted_func" not in final
+
+
 def test_a_base_imported_from_the_project_is_followed_to_its_metaclass(tmp_path: Path) -> None:
     before, after, final = _refactored_project(
         tmp_path,
@@ -341,20 +429,20 @@ def _keeps_a_plain_function(bases: Tuple[object, ...], metaclass: Optional[type]
     return vars(built)["_extracted_func_0"] is helper and _only_quiet_init_subclass(built)
 
 
-@pytest.mark.parametrize("dotted", sorted(_KEEPS_FUNCTIONS.bases))
+@pytest.mark.parametrize("dotted", sorted(_HOSTS_METHOD_HELPERS.bases))
 def test_each_function_keeping_base_keeps_a_plain_function(dotted: str) -> None:
     base = _resolve(dotted)
     # A ReprEnum is only ever built mixed with the data type it represents.
     assert _keeps_a_plain_function((int, base) if base is enum.ReprEnum else (base,))
 
 
-@pytest.mark.parametrize("dotted", sorted(_KEEPS_FUNCTIONS.subscripted_bases))
+@pytest.mark.parametrize("dotted", sorted(_HOSTS_METHOD_HELPERS.subscripted_bases))
 def test_each_function_keeping_generic_base_keeps_a_plain_function(dotted: str) -> None:
     generic = typing.cast(typing.Any, _resolve(dotted))
     assert _keeps_a_plain_function((generic[typing.TypeVar("T")],))
 
 
-@pytest.mark.parametrize("dotted", sorted(_KEEPS_FUNCTIONS.metaclasses))
+@pytest.mark.parametrize("dotted", sorted(_HOSTS_METHOD_HELPERS.metaclasses))
 def test_each_function_keeping_metaclass_keeps_a_plain_function(dotted: str) -> None:
     metaclass = _resolve(dotted)
     assert isinstance(metaclass, type)
@@ -370,3 +458,42 @@ def test_every_builtin_class_keeps_a_plain_function() -> None:
     for cls in classes:
         assert type(cls) is type, cls
         assert _only_quiet_init_subclass(cls), cls
+
+
+def test_the_builtin_classes_a_method_helper_may_inherit_look_attributes_up_as_object_does() -> (
+    None
+):
+    """``_OWN_ATTRIBUTE_LOOKUP`` names every builtin class whose lookup is not ``object``'s.
+
+    Before CPython 3.14 many builtin classes carry a ``__getattribute__`` slot
+    of their own; each that can be subclassed and built without arguments is
+    checked to answer as the generic lookup does, the instance's dictionary
+    before the class's non-data members.
+    """
+    classes = {name: value for name, value in vars(builtins).items() if isinstance(value, type)}
+    assert _OWN_ATTRIBUTE_LOOKUP <= {f"builtins.{name}" for name in classes}
+    for name, cls in classes.items():
+        if f"builtins.{name}" in _OWN_ATTRIBUTE_LOOKUP:
+            assert "__getattribute__" in vars(cls), cls
+            continue
+        if "__getattribute__" not in vars(cls):
+            continue
+        try:
+            probe = type("Probe", (cls,), {"_Probe__helper": lambda self: "helper"})()
+        except TypeError:
+            continue
+        lookup = vars(cls)["__getattribute__"]
+        assert lookup(probe, "_Probe__helper")() == "helper", cls
+        vars(probe)["_Probe__helper"] = "shadow"
+        assert lookup(probe, "_Probe__helper") == "shadow", cls
+
+
+@pytest.mark.parametrize("dotted", sorted(_HOSTS_METHOD_HELPERS.metaclasses))
+def test_each_method_helper_metaclass_looks_class_attributes_up_as_type_does(dotted: str) -> None:
+    """A class-method helper is reached as ``cls.__extracted_func_0``, through the metaclass."""
+    metaclass = _resolve(dotted)
+    assert isinstance(metaclass, type)
+    assert not [
+        klass for klass in metaclass.__mro__[:-2] if "__getattribute__" in vars(klass)
+    ], metaclass.__mro__
+    assert metaclass.__mro__[-2:] == (type, object)
