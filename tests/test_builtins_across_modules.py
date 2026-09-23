@@ -388,6 +388,61 @@ PATCHES = {
 
         exports.len = lambda value: 100
         """,
+    "annotated_attribute_assignment": """
+        from typing import Callable
+        from pkg import exports
+
+        exports.len: Callable[[object], int] = lambda value: 100
+        """,
+    "unpacked_into_the_attribute": """
+        from pkg import exports
+
+        exports.len, spare = (lambda value: 100), None
+        """,
+    "target_spelled_from_a_constant": """
+        from unittest import mock
+        import pkg.exports
+
+        MODULE = "pkg.exports"
+
+        def test_size():
+            with mock.patch(f"{MODULE}.len", lambda value: 100, create=True):
+                assert pkg.exports.export_size([1, 2], "ab") == 10001
+        """,
+    "target_concatenated": """
+        from unittest import mock
+
+        PACKAGE = "pkg"
+        MODULE = PACKAGE + ".exports"
+
+        @mock.patch(MODULE + ".len", lambda value: 100, create=True)
+        def test_size():
+            pass
+        """,
+    "module_part_computed": """
+        import pytest
+        from unittest import mock
+
+        @pytest.mark.parametrize("module", ["exports", "reports"])
+        def test_size(module):
+            with mock.patch("pkg." + module + ".len", lambda value: 100, create=True):
+                pass
+        """,
+    "import_module_of_a_constant": """
+        import importlib
+
+        NAME = "pkg.exports"
+
+        def test_size(monkeypatch):
+            exports = importlib.import_module(NAME)
+            monkeypatch.setattr(exports, "len", lambda value: 100, raising=False)
+        """,
+    "getattr_of_the_package": """
+        import pkg.exports
+
+        def test_size(monkeypatch):
+            monkeypatch.setattr(getattr(pkg, "exports"), "len", lambda value: 100, raising=False)
+        """,
     "patching_the_host": """
         from unittest import mock
         import pkg.reports
@@ -425,6 +480,15 @@ NOT_EVIDENCE = {
     "another_name": 'from unittest import mock\nmock.patch("pkg.exports.width", create=True)\n',
     "the_builtins_module": 'from unittest import mock\nmock.patch("builtins.len", len)\n',
     "reading_the_namespace": 'import pkg.exports\nprint(sorted(vars(pkg.exports)), "len")\n',
+    "computed_module_another_name": (
+        "from unittest import mock\n"
+        'for module in ("exports", "reports"):\n'
+        '    mock.patch("pkg." + module + ".width", create=True)\n'
+    ),
+    "a_constant_rebound": (
+        'from unittest import mock\nMODULE = "pkg.exports"\nMODULE = "pkg.other"\n'
+        'mock.patch(MODULE + ".width", create=True)\n'
+    ),
 }
 
 

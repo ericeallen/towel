@@ -44,9 +44,14 @@ Code refers to a module by a dotted name (a patch target, an absolute import,
 import, ``sys.modules[__name__]``). A dotted name reaches a module when it is
 one of the names the module's path gives it below the project root
 (``src.pkg.mod``, ``pkg.mod``, ``mod``), and these include every name the
-program's own imports can give it. A module object reached any other way,
-such as a fixture that returns one, is not followed, and what code outside
-the project does is not seen at all.
+program's own imports can give it. A name is read through literals,
+f-strings, ``+`` and names bound once to such a string (``MODULE =
+"pkg.mod"``); a patch target whose module part is computed at run time,
+``"pkg." + name + ".open"``, counts for every module, since it may name any.
+A target computed whole, and a module object reached other than by an
+import, ``importlib.import_module``, ``getattr`` with a spelled name or
+``sys.modules`` (a fixture's return value), are not followed, and what code
+outside the project does is not seen at all.
 """
 
 from __future__ import annotations
@@ -66,6 +71,9 @@ from .module_bindings import global_bindings
 
 ANY_NAME = "*"
 """The name of a write that may bind any name: ``setattr(mod, name, value)``, ``exec(code)``."""
+
+ANY_MODULE = "*"
+"""The dotted name of a write into a module computed at run time: ``patch(prefix + ".open")``."""
 
 # Names every module's namespace defines for itself, each with that module's
 # own value: read bare in another module, each is the other module's.
@@ -117,7 +125,7 @@ class ProjectWrites:
         if not self.complete:
             return (NamespaceWrite(ANY_NAME, f"{self.root} is too large to read whole"),)
         found = list(self.by_path.get(module, ()))
-        for name in module_names(module, self.root):
+        for name in (*module_names(module, self.root), ANY_MODULE):
             found.extend(self.by_name.get(name, ()))
         return tuple(found)
 
@@ -145,14 +153,15 @@ def module_names(module: Path, root: Path) -> FrozenSet[str]:
 # -- the project scan ---------------------------------------------------------
 
 # A file that names none of these cannot write into a module's namespace by
-# any form the scan recognizes, so it is not parsed: an attribute store
-# counts only where the attribute is a builtin's name.
+# any form the scan recognizes, so it is not parsed. An attribute store counts
+# only where the attribute is a builtin's name, followed by an assignment, an
+# augmented one, an annotation, or the comma of an unpacking target.
 _MAY_WRITE = re.compile(
     r"patch|setattr|delattr|setitem|delitem|__dict__|\bvars\b|\bglobals\b|\blocals\b"
     r"|\bexec\b|\beval\b|\bmodules\b|import_module"
     r"|\.\s*(?:"
     + "|".join(sorted((re.escape(name) for name in BUILTIN_NAMES if name.isidentifier())))
-    + r")\s*(?:[-+*/%@&|^]|//|\*\*|<<|>>)?=(?!=)"
+    + r")\s*(?:(?:[-+*/%@&|^]|//|\*\*|<<|>>)?=(?!=)|[:,])"
     + r"|\bdel\b"
 )
 
@@ -241,19 +250,24 @@ _READING_CALLEES = frozenset(
     {"len", "list", "tuple", "set", "frozenset", "sorted", "iter", "reversed", "dict", "repr"}
     | {"str", "print", "id", "type", "isinstance", "bool", "any", "all", "next", "sum"}
 )
+# Callees that take a dotted target to patch: ``mock.patch``, ``monkeypatch.setattr``.
+_PATCHING_CALLEES = frozenset({"patch", "setattr", "delattr"})
 
 
 class _References:
-    """Which expressions of one file denote a module, found from its imports.
+    """Which expressions of one file denote a module, and which spell a string, found statically.
 
     Every import binds, whatever scope it is in, and so does a plain
     assignment of a module reference (``mod = importlib.import_module(...)``,
     ``me = sys.modules[__name__]``): a name bound to a module anywhere may be
-    one wherever it is read, which can only add evidence.
+    one wherever it is read, which can only add evidence. A string is read
+    through literals, f-strings and ``+``, and through a name the file binds
+    once, to such a string (``MODULE = "pkg.mod"``).
     """
 
     def __init__(self, path: Path, tree: ast.Module) -> None:
         self._path = path
+        self._strings = _string_names(tree)
         self._bound: Dict[str, Set[_ModuleRef]] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -292,6 +306,21 @@ class _References:
                 base = base.joinpath(*node.module.split("."))
             self._bind(local, _module_files(base / alias.name))
 
+    def text(self, node: ast.expr) -> Optional[str]:
+        """The string ``node`` spells, when every part of it is known."""
+        parts = _string_parts(node, self._strings)
+        return None if None in parts else "".join(part or "" for part in parts)
+
+    def tail(self, node: ast.expr) -> str:
+        """The known end of the string ``node`` spells, after its last part computed at run time."""
+        parts = _string_parts(node, self._strings)
+        known: List[str] = []
+        for part in reversed(parts):
+            if part is None:
+                break
+            known.append(part)
+        return "".join(reversed(known))
+
     def of(self, node: ast.expr) -> FrozenSet[_ModuleRef]:
         """The modules ``node`` may denote; empty when it denotes none that is known."""
         if isinstance(node, ast.Name):
@@ -302,6 +331,18 @@ class _References:
             )
         if isinstance(node, ast.Subscript) and "sys.modules" in self.of(node.value):
             return self._named(node.slice)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+        ):
+            attribute = self.text(node.args[1])
+            if attribute is None or not attribute.isidentifier():
+                return frozenset()
+            return frozenset(
+                reached for ref in self.of(node.args[0]) for reached in _attribute(ref, attribute)
+            )
         if isinstance(node, ast.Call) and node.args:
             callee = self.of(node.func)
             if "importlib.import_module" in callee:
@@ -316,8 +357,9 @@ class _References:
 
     def _named(self, node: ast.expr) -> FrozenSet[_ModuleRef]:
         """The module a ``sys.modules`` key or an ``import_module`` argument names."""
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return frozenset({node.value})
+        text = self.text(node)
+        if text is not None:
+            return frozenset({text})
         if isinstance(node, ast.Name) and node.id == "__name__":
             return frozenset({self._path})
         if (
@@ -328,6 +370,58 @@ class _References:
         ):
             return frozenset({self._path})
         return frozenset()
+
+
+def _string_parts(node: ast.expr, strings: Mapping[str, str]) -> List[Optional[str]]:
+    """The pieces of the string ``node`` spells, None for each piece known only at run time."""
+    if isinstance(node, ast.Constant):
+        return [node.value if isinstance(node.value, str) else None]
+    if isinstance(node, ast.Name):
+        return [strings.get(node.id)]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _string_parts(node.left, strings) + _string_parts(node.right, strings)
+    if isinstance(node, ast.JoinedStr):
+        parts: List[Optional[str]] = []
+        for value in node.values:
+            if isinstance(value, ast.FormattedValue):
+                plain = value.conversion == -1 and value.format_spec is None
+                parts.extend(_string_parts(value.value, strings) if plain else [None])
+            else:
+                parts.extend(_string_parts(value, strings))
+        return parts
+    return [None]
+
+
+def _string_names(tree: ast.Module) -> Dict[str, str]:
+    """The names ``tree`` binds exactly once, by an assignment of a string it spells statically."""
+    bindings: Dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names = [node.id]
+        elif isinstance(node, ast.arg):
+            names = [node.arg]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names = [node.name]
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [(alias.asname or alias.name).split(".")[0] for alias in node.names]
+        else:
+            continue
+        for name in names:
+            bindings[name] = bindings.get(name, 0) + 1
+    values = {
+        target.id: node.value
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None
+        for target in _targets(node)
+        if isinstance(target, ast.Name) and bindings.get(target.id) == 1
+    }
+    strings: Dict[str, str] = {}
+    for _ in range(3):  # a name spelled from a name spelled from literals
+        for name, value in values.items():
+            parts = _string_parts(value, strings)
+            if name not in strings and None not in parts:
+                strings[name] = "".join(part or "" for part in parts)
+    return strings
 
 
 def _climbed(directory: Path, steps: int) -> Path:
@@ -413,9 +507,17 @@ class _WriteScanner(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         callee = _callee(node.func)
         first = node.args[0] if node.args else None
-        if isinstance(first, ast.Constant) and isinstance(first.value, str):
-            self._dotted_target(node, callee, first.value)
+        text = self._references.text(first) if first is not None else None
+        if text is not None:
+            self._dotted_target(node, callee, text)
         elif first is not None:
+            if callee in _PATCHING_CALLEES:
+                # A target whose module part is computed (``"pkg." + name + ".open"``)
+                # may name any module; the attribute it spells is written there.
+                tail = self._references.tail(first)
+                attribute = tail.rpartition(".")[2]
+                if "." in tail and attribute.isidentifier():
+                    self._record({ANY_MODULE}, [attribute], node)
             modules = self._references.of(first)
             if callee in {"object", "setattr", "delattr"}:
                 second = node.args[1] if len(node.args) > 1 else None

@@ -106,23 +106,26 @@ describe belong to that version.
   `create=True`, `patch.object`, `patch.multiple`, `patch.dict` of its
   `__dict__`, pytest's `monkeypatch.setattr` in either form or
   `monkeypatch.setitem` of its `__dict__`, `setattr(mod, "len", ...)`, or
-  `mod.len = ...`. A module is matched by every dotted name its path gives
-  it below the project root, which include the names the program's imports
-  use, and by the file a relative import names
-  (`tests/test_builtins_across_modules.py`, fixtures `xf17`-`xf19` and
-  `xf22`; `xf21` shares what the other two modules can). A site whose
-  function binds a builtin's name while the other site reads the builtin is
-  declined too; where both functions bind it, each passes its own local.
-  The names checked are the ones CPython's symbol table says the rendered
-  helper reads from its module, so reads inside its lambdas and
-  comprehensions count. Not seen: code outside the project that patches a
-  builtin into one of its modules (with `create=True`, or through `mock`,
-  which creates a builtin's name without being asked), and a module object
-  reached other than by an import, `importlib.import_module` or
-  `sys.modules`, such as a fixture's return value. A cross-module helper
-  then reads that builtin in its host's namespace, and the patch reaches
-  only the code the host itself runs. A module `__getattr__` changes no
-  bare lookup and is not consulted.
+  `mod.len = ...` (`tests/test_builtins_across_modules.py`, fixtures
+  `xf17`-`xf19` and `xf22`; `xf21` shares what the other two modules can).
+  A module is matched by every dotted name its path gives it below the
+  project root, which include the names the program's imports use, and by
+  the file a relative import names. A target is read through literals,
+  f-strings, `+` and names bound once to a string, and one whose module part
+  is computed at run time (`"pkg." + name + ".len"`) counts for every
+  module. A site whose function binds a builtin's name while the other site reads
+  the builtin is declined too; where both functions bind it, each passes
+  its own local. The names checked are the ones CPython's symbol table says
+  the rendered helper reads from its module, so reads inside its lambdas
+  and comprehensions count. Not seen: code outside the project that patches
+  a builtin into one of its modules (with `create=True`, or through `mock`,
+  which creates a builtin's name without being asked); a target computed
+  whole, as by a wrapper that passes its argument to `patch`; and a module
+  object reached other than by an import, `importlib.import_module`,
+  `getattr` with a spelled name or `sys.modules`, such as a fixture's
+  return value. A cross-module helper then reads that builtin in its host's
+  namespace, and the patch reaches only the code the host itself runs. A
+  module `__getattr__` changes no bare lookup and is not consulted.
 - **Relative imports stay in their package.** A relative import in a block
   resolves in the package of the module that runs it, so a helper holding
   `from .sub import VAL` imports its host's `sub` for every caller. A block
