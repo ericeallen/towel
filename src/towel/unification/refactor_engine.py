@@ -42,6 +42,7 @@ from typing import (
     Optional,
     FrozenSet,
     Iterable,
+    Mapping,
     MutableMapping,
     Sequence,
 )
@@ -423,6 +424,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # Helper-shaped names anywhere in each project, scanned once per engine.
         self._project_helper_names: Dict[str, FrozenSet[str]] = {}
         self._seen_proposals: Set[Hashable] = set()
+        self._pair_rejection: Optional[RejectReason] = None
+        self._pair_rejections: Dict[str, int] = {}
+        self._checker_refusals = 0
         # Per-run record of what each applied extraction replaced: the original
         # block and the generated call, for the naming step's before/after view.
         self._change_log: List[AppliedChange] = []
@@ -438,10 +442,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
     def _debug_reject(
         self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
     ) -> None:
-        """Emit a concise rejection line when DEBUG_PROPOSAL_REJECTIONS is set.
+        """Note why the pair is declined, and trace it when DEBUG_PROPOSAL_REJECTIONS is set.
 
-        Includes function names and basic block ranges to help triage pruning gates.
+        The reason is kept for ``_judge_pair``, which counts it; the trace
+        includes function names and block ranges to help triage pruning gates.
         """
+        self._pair_rejection = reason
         if not debugging(REJECTIONS):
             return
         msg = (
@@ -641,6 +647,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         *,
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
+        self._pair_rejections = {}
         if not block_pairs:
             return []
 
@@ -656,6 +663,31 @@ class UnificationRefactorEngine(ParallelEvaluation):
             class_infos,
             progress=progress,
         )
+
+    def _judge_pair(
+        self,
+        pair: CodeBlockPair,
+        all_functions: Sequence[FunctionArtifact],
+        class_infos: List[ClassInfo],
+    ) -> Optional[RefactoringProposal]:
+        """The pair's proposal, counting the reason when it is declined.
+
+        A pair declined only because another pair already proposed the same
+        refactoring loses nothing, and forked evaluation deduplicates such
+        pairs differently, so it is not counted. A pair declined without a
+        traced reason is counted as ``other``.
+        """
+        self._pair_rejection = None
+        proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
+        if proposal is None and self._pair_rejection is not RejectReason.DUPLICATE_PROPOSAL:
+            key = "other" if self._pair_rejection is None else str(self._pair_rejection)
+            self._pair_rejections[key] = self._pair_rejections.get(key, 0) + 1
+        return proposal
+
+    @property
+    def declined_pairs(self) -> Mapping[str, int]:
+        """How many candidate pairs the latest analysis declined, by ``RejectReason``."""
+        return dict(self._pair_rejections)
 
     def _allocate_helper_name(
         self,

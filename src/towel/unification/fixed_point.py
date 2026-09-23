@@ -48,14 +48,15 @@ from typing import (
     Dict,
     FrozenSet,
     List,
+    Mapping,
     Optional,
     Sequence,
     Set,
     Tuple,
 )
 from .defaults import DEFAULT_MAX_ITERATIONS
-from .exceptions import CheckerUnavailableError, RefactoringError
-from .models import RefactoringProposal, TerminationReason
+from .exceptions import CheckerUnavailableError, RefactoringError, UnsupportedLayoutError
+from .models import RefactoringProposal, RejectReason, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
@@ -80,7 +81,7 @@ from ..filesystem import (
     staged_changes,
     staged_project,
 )
-from ..project_layout import find_project_root
+from ..project_layout import ProjectLayout, find_project_root
 from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
 
@@ -104,6 +105,52 @@ def _is_checker_failure(error: BaseException) -> bool:
     return isinstance(error, CheckerUnavailableError)
 
 
+DeclineReason = Literal[
+    "refused by the type checker",
+    "not judged: the type checker could not run",
+    "not representable in its file's encoding",
+    "could not be rendered",
+    "changed nothing",
+]
+"""Why a proposal the analysis built was not applied."""
+
+
+@dataclass(frozen=True)
+class RunReport:
+    """Why the last fixed-point run did not do more, as counts a reader can act on.
+
+    ``declined_pairs`` counts the candidate pairs the run's last whole analysis
+    declined, by ``RejectReason``; a pair that only repeated another pair's
+    proposal is not counted, since nothing was lost. ``declined_proposals``
+    counts the proposals built but not applied, by ``DeclineReason``, each
+    heard once however often the run reconsidered it. ``layout_refusal`` is
+    what the layout reader said when some pair was declined because the
+    project's packaging cannot be modeled, which leaves no helper that can be
+    shared across its modules.
+    """
+
+    declined_pairs: Mapping[str, int] = field(default_factory=dict)
+    declined_proposals: Mapping[DeclineReason, int] = field(default_factory=dict)
+    layout_refusal: Optional[str] = None
+
+
+def _counted(counts: Mapping[str, int]) -> str:
+    """``reason count`` for each reason, most frequent first: ``unknown_layout 1``."""
+    return ", ".join(
+        f"{reason} {count}"
+        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    )
+
+
+def _layout_refusal(path: Path) -> Optional[str]:
+    """What discovery says about the layout around ``path``, when it cannot model it."""
+    try:
+        ProjectLayout.discover(path)
+    except UnsupportedLayoutError as error:
+        return str(error)
+    return None
+
+
 class FixedPointDrivers(Materialization):
     """FixedPointDrivers methods of the engine; see the module docstring."""
 
@@ -111,6 +158,44 @@ class FixedPointDrivers(Materialization):
     # identity, and the last reason it gave.
     _unchecked: FrozenSet[str] = frozenset()
     _unchecked_reason: str = ""
+    # Every proposal the last run built and did not apply, by identity, with
+    # the latest reason; and what its last whole analysis declined.
+    _declined: Dict[str, DeclineReason] = {}
+    _last_declined_pairs: Dict[str, int] = {}
+    _layout_refused_in: Optional[Path] = None
+
+    @property
+    def run_report(self) -> RunReport:
+        """Why the last fixed-point run declined what it did; see ``RunReport``."""
+        proposals: Dict[DeclineReason, int] = {}
+        for reason in self._declined.values():
+            proposals[reason] = proposals.get(reason, 0) + 1
+        refused = self._layout_refused_in
+        return RunReport(
+            dict(self._last_declined_pairs),
+            proposals,
+            None if refused is None else _layout_refusal(refused),
+        )
+
+    def _note_analysis(self, analyzed: Path, reporter: Optional["_ApplyProgress"] = None) -> None:
+        """Keep what a whole analysis of ``analyzed`` declined, for the run's report."""
+        self._last_declined_pairs = dict(self._pair_rejections)
+        if self._last_declined_pairs.get(str(RejectReason.UNKNOWN_LAYOUT)):
+            self._layout_refused_in = Path(self._origin_of(str(analyzed)))
+        if reporter is not None and self._last_declined_pairs:
+            reporter.detail(
+                f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
+                f"{_counted(self._last_declined_pairs)}"
+            )
+
+    def _decline(self, proposal: RefactoringProposal, reason: DeclineReason) -> None:
+        self._declined = {**self._declined, _RejectedProposals.identity(proposal): reason}
+
+    def _applied(self, proposal: RefactoringProposal) -> None:
+        """A proposal declined earlier and applied since, at a rehearing, was not declined."""
+        identity = _RejectedProposals.identity(proposal)
+        if identity in self._declined:
+            self._declined = {key: why for key, why in self._declined.items() if key != identity}
 
     @property
     def checker_failures(self) -> int:
@@ -124,6 +209,7 @@ class FixedPointDrivers(Materialization):
 
     def _begin_counting_checker_failures(self) -> None:
         self._unchecked, self._unchecked_reason = frozenset(), ""
+        self._declined, self._last_declined_pairs, self._layout_refused_in = {}, {}, None
 
     def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
         """Raise when nothing was applied and the checker failed on some proposal.
@@ -247,6 +333,7 @@ class FixedPointDrivers(Materialization):
             proposals = self.analyze_files(
                 [file_path], invalidate_paths=[file_path], progress=analysis_progress
             )
+            self._note_analysis(Path(file_path))
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
@@ -263,6 +350,7 @@ class FixedPointDrivers(Materialization):
                     continue
                 if rendered == current_code:
                     self._forget_records_since(recorded)
+                    self._decline(proposal, "changed nothing")
                     continue
                 new_code = rendered
                 try:
@@ -272,6 +360,7 @@ class FixedPointDrivers(Materialization):
                 except BaseException:
                     self._forget_records_since(recorded)
                     raise
+                self._applied(proposal)
                 applied_one = True
                 break
             if not applied_one:
@@ -309,6 +398,7 @@ class FixedPointDrivers(Materialization):
         cannot hold.
         """
         recorded = len(self._change_log)
+        self._checker_refusals = 0
         try:
             new_code = self.apply_refactoring(file_path, proposal)
             compile(new_code, file_path, "exec")
@@ -330,20 +420,33 @@ class FixedPointDrivers(Materialization):
         del self._change_log[recorded:]
 
     def _report_dropped(self, proposal: RefactoringProposal, error: BaseException) -> None:
+        """Say why ``proposal`` was not applied, and count it under that reason.
+
+        Told apart by type, never by wording: a checker that could not run
+        judged nothing; one that refused a rendered variant judged the proposal
+        (``_checker_refusals`` counts those since the driver started it);
+        text its file's encoding cannot hold is a limit of that file; anything
+        else is a rendering Towel could not produce.
+        """
+        reason: DeclineReason
         if _is_checker_failure(error):
             self._unchecked = self._unchecked | {_RejectedProposals.identity(proposal)}
             self._unchecked_reason = str(error)
-            LOG.warning(
-                "Dropped a proposal the type checker could not check (%s): %s",
-                proposal.description,
-                error,
+            reason, said = (
+                "not judged: the type checker could not run",
+                "the type checker could not check",
+            )
+        elif isinstance(error, RefactoringError) and self._checker_refusals:
+            reason, said = "refused by the type checker", "the type checker refused"
+        elif isinstance(error, UnencodableText):
+            reason, said = (
+                "not representable in its file's encoding",
+                "its file's encoding cannot hold",
             )
         else:
-            LOG.warning(
-                "Dropped a proposal that could not be rendered (%s): %s",
-                proposal.description,
-                error,
-            )
+            reason, said = "could not be rendered", "could not be rendered"
+        self._decline(proposal, reason)
+        LOG.warning("Dropped a proposal %s (%s): %s", said, proposal.description, error)
         if debugging(REJECTIONS):
             REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
 
@@ -675,6 +778,7 @@ class FixedPointDrivers(Materialization):
             progress=reporter.analysis_mode,
             changed_files=restrict,
         )
+        self._note_analysis(output_path, reporter)
         run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:
@@ -705,6 +809,7 @@ class FixedPointDrivers(Materialization):
             }
         }
         recorded = len(self._change_log)
+        self._checker_refusals = 0
         try:
             modified_files = self.apply_refactoring_multi_file(proposal)
             plan = ChangePlan.from_sources(before, modified_files)
@@ -717,6 +822,7 @@ class FixedPointDrivers(Materialization):
             # is pointless.
             if not plan.changes:
                 self._forget_records_since(recorded)
+                self._decline(proposal, "changed nothing")
                 run.rejected.add(proposal)
                 reporter.detail(f"Proposal changed nothing: {proposal.description}")
                 return None
@@ -724,6 +830,7 @@ class FixedPointDrivers(Materialization):
         except BaseException:
             self._forget_records_since(recorded)
             raise
+        self._applied(proposal)
         # Every file the proposal rendered is re-analysed and recorded, not
         # only those whose bytes moved: a file rendered identically is still
         # one the proposal reached, and the localized pass that follows must

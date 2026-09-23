@@ -518,4 +518,8 @@ class HelperAnnotationWiring(EngineState):
             raise CheckerUnavailableError(f"Prospective project type check failed: {after.reason}")
         for diagnostic, count in Counter(after.errors).items():
             TYPES.debug("new error x%d in %s: %s", count, diagnostic.path, diagnostic.message)
+        if after.errors:
+            # Counted so a proposal no variant of which survives is reported as
+            # the checker's refusal, not as something that could not be rendered.
+            self._checker_refusals += 1
         return after.errors

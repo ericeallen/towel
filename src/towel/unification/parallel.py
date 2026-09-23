@@ -33,7 +33,7 @@ import sys
 import threading
 import time
 
-from typing import Dict, Hashable, List, Optional, Sequence, Tuple, Iterable
+from typing import Dict, FrozenSet, Hashable, List, Optional, Sequence, Tuple, Iterable
 from .models import (
     ClassInfo,
     CodeBlockPair,
@@ -67,6 +67,10 @@ _worker_class_infos: Optional[List[ClassInfo]] = None
 _worker_pairs: Optional[List[CodeBlockPair]] = None
 
 
+_worker_probed: FrozenSet[int] = frozenset()
+"""Pairs the parent's probe already judged and counted; a worker judges them again uncounted."""
+
+
 PARENT_WATCH_INTERVAL_SECONDS = 1.0
 
 
@@ -95,12 +99,16 @@ def _start_parent_watchdog() -> None:
     ).start()
 
 
-def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, RefactoringProposal]]:
+def _evaluate_pair_chunk(
+    bounds: Tuple[int, int],
+) -> Tuple[List[Tuple[int, RefactoringProposal]], Dict[str, int]]:
     """Evaluate ``_worker_pairs[start:end]`` in a forked worker.
 
     The worker inherited the parent's engine, function context, pairs and
     caches copy-on-write at fork time, so nothing is pickled in; only the
-    accepted proposals travel back.
+    accepted proposals travel back, with how many pairs were declined for
+    each reason. A pair the parent's probe already judged is judged again,
+    since chunks are contiguous, but counted only once, by the parent.
     """
     if _worker_engine is None or _worker_functions is None or _worker_class_infos is None:
         raise RuntimeError("Worker not initialized for pair processing")
@@ -110,14 +118,18 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, Refactoring
     # The parent's probe left identities behind at fork time; a chunk's
     # first-by-index copy must win, so the worker starts from none.
     _worker_engine._seen_proposals.clear()
+    _worker_engine._pair_rejections = {}
     accepted: List[Tuple[int, RefactoringProposal]] = []
     for index in range(start, end):
-        proposal = _worker_engine._try_refactor_pair_multi_file(
-            _worker_pairs[index], _worker_functions, _worker_class_infos
+        judge = (
+            _worker_engine._try_refactor_pair_multi_file
+            if index in _worker_probed
+            else _worker_engine._judge_pair
         )
+        proposal = judge(_worker_pairs[index], _worker_functions, _worker_class_infos)
         if proposal is not None:
             accepted.append((index, proposal))
-    return accepted
+    return accepted, dict(_worker_engine._pair_rejections)
 
 
 class _DistinctProposals:
@@ -222,7 +234,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             )
             try:
                 for index, pair in enumerate(block_pairs):
-                    proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
+                    proposal = self._judge_pair(pair, all_functions, class_infos)
                     if proposal:
                         proposals.add(index, proposal)
                     bar.update()
@@ -235,7 +247,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         start_inline_status("Analyzing pairs (unify):", use_inline_bar)
 
         for idx, pair in enumerate(block_pairs, 1):
-            proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
+            proposal = self._judge_pair(pair, all_functions, class_infos)
             if proposal:
                 proposals.add(idx - 1, proposal)
             if use_inline_bar:
@@ -263,6 +275,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         block land in one worker and hit that worker's own caches.
         """
         global _worker_engine, _worker_functions, _worker_class_infos, _worker_pairs
+        global _worker_probed
 
         # Every pair costs something even when its analyses are cached, and
         # most pairs are rejected before unification, so the probe samples the
@@ -283,9 +296,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         probe = cold[::stride][: self.PARALLEL_PROBE_PAIRS]
         started = time.monotonic()
         for index in probe:
-            probed = self._try_refactor_pair_multi_file(
-                block_pairs[index], all_functions, class_infos
-            )
+            probed = self._judge_pair(block_pairs[index], all_functions, class_infos)
             if probed is not None:
                 results.add(index, probed)
         per_pair = (time.monotonic() - started) / max(1, len(probe))
@@ -296,9 +307,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             # Pairs evaluated here may precede the probe's; let a lower index win.
             self._seen_proposals.clear()
             for index in indices:
-                serial_proposal = self._try_refactor_pair_multi_file(
-                    block_pairs[index], all_functions, class_infos
-                )
+                serial_proposal = self._judge_pair(block_pairs[index], all_functions, class_infos)
                 if serial_proposal is not None:
                     results.add(index, serial_proposal)
             return results.in_order()
@@ -320,14 +329,19 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             class_infos,
             block_pairs,
         )
+        _worker_probed = frozenset(probe)
         try:
             context = multiprocessing.get_context("fork")
             with ProcessPoolExecutor(
                 max_workers=workers, mp_context=context, initializer=_start_parent_watchdog
             ) as executor:
-                for bounds, accepted in zip(chunks, executor.map(_evaluate_pair_chunk, chunks)):
+                for bounds, (accepted, declined) in zip(
+                    chunks, executor.map(_evaluate_pair_chunk, chunks)
+                ):
                     for index, proposal in accepted:
                         results.add(index, proposal)
+                    for reason, count in declined.items():
+                        self._pair_rejections[reason] = self._pair_rejections.get(reason, 0) + count
                     evaluated.update(range(*bounds))
         except (BrokenProcessPool, OSError) as error:
             # A pool that cannot be started or that lost a worker; anything a
@@ -336,4 +350,5 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             return finish_serially([index for index in cold if index not in evaluated])
         finally:
             _worker_engine = _worker_functions = _worker_class_infos = _worker_pairs = None
+            _worker_probed = frozenset()
         return results.in_order()

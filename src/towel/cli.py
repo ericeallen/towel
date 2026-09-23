@@ -31,10 +31,12 @@ from typing import (
     TYPE_CHECKING,
     Tuple,
     TypedDict,
+    TypeVar,
 )
 
 if TYPE_CHECKING:
     from towel.type_inference import TypeOracle
+    from towel.unification.fixed_point import RunReport
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, recover
@@ -886,6 +888,7 @@ def _run_dry(args: argparse.Namespace) -> None:
                 progress=options.progress,
                 output_path=output_path,
             )
+            applied = num_applied
 
             if num_applied > 0:
                 print(f"\nApplied {num_applied} refactoring(s):")
@@ -901,9 +904,10 @@ def _run_dry(args: argparse.Namespace) -> None:
                 max_iterations=options.max_refactorings,
                 progress=options.progress,
             )
+            applied = sum(count for count, _ in results.values())
 
             if results:
-                total_refactorings = sum(count for count, _ in results.values())
+                total_refactorings = applied
                 print(
                     f"\nApplied {total_refactorings} refactoring(s) across {len(results)} file(s)"
                 )
@@ -923,10 +927,51 @@ def _run_dry(args: argparse.Namespace) -> None:
                 f"\n{engine.checker_failures} proposal(s) were dropped because the type checker"
                 " could not run for them (see the warnings above); they were not judged."
             )
+        _print_declined(engine.run_report, applied)
         _write_change_sidecar(engine, output_path)
     finally:
         if oracle is not None:
             oracle.close()
+
+
+_Reason = TypeVar("_Reason", bound=str)
+
+
+def _counts(counts: Mapping[_Reason, int]) -> str:
+    """``reason count`` for each reason, most frequent first."""
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return ", ".join(f"{reason} {count}" for reason, count in ordered)
+
+
+def _print_declined(report: "RunReport", applied: int) -> None:
+    """Say what the run declined, and why, so "No refactorings found!" is never the whole story.
+
+    Proposals that were built and then not applied are always counted. The
+    candidate pairs the analysis declined are counted when nothing was
+    applied, which is when a reader asks why; and a layout the project's
+    packaging does not let Towel model is always named, since it rules out
+    every helper shared across modules, however much else was found.
+    """
+    lines: List[str] = []
+    if report.declined_proposals:
+        lines.append(
+            f"  {sum(report.declined_proposals.values())} proposal(s) not applied: "
+            f"{_counts(report.declined_proposals)}"
+        )
+    if not applied and report.declined_pairs:
+        lines.append(
+            f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
+            f"{_counts(report.declined_pairs)}"
+        )
+    if report.layout_refusal:
+        lines.append(
+            "  No helper can be shared across modules: the project's packaging cannot be "
+            f"modeled ({report.layout_refusal})"
+        )
+    if lines:
+        print("\nDeclined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):")
+        for line in lines:
+            print(line)
 
 
 def _print_proposal(

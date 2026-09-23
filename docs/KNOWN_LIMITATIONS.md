@@ -450,7 +450,10 @@ where the evidence comes from:
 Towel prefers to leave code unchanged rather than transform it under
 uncertainty. Every declined pair is traced under one of the reasons of
 `RejectReason` (`src/towel/unification/models.py`), listed here in the order
-the pair decision raises them, grouped by stage:
+the pair decision raises them, grouped by stage; a `dry` run that applied
+nothing prints how many pairs its last analysis declined for each (a pair
+that only repeated another's proposal is not counted), and every run counts
+the proposals it built and did not apply, by reason:
 
 - Frame use. `frame_sensitive_block`: the block contains a suspension,
   a namespace read, a frame or stack read, a warning, a loop transfer

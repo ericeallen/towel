@@ -55,6 +55,7 @@ from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
 from .models import (
     AppliedChange,
+    ClassInfo,
     ClusterContext,
     CodeBlockPair,
     FunctionArtifact,
@@ -141,6 +142,12 @@ class EngineState:
     # proposal repeats one is declined before reuse, filtering and annotation.
     _seen_proposals: Set[Hashable]
     """Next helper number per file, so generated names are unique across a run."""
+    _pair_rejection: Optional[RejectReason]
+    """The reason the pair being decided was last declined for, or None."""
+    _pair_rejections: Dict[str, int]
+    """How many candidate pairs the latest analysis declined, by reason."""
+    _checker_refusals: int
+    """Rendered variants the checker refused since the driver last started a proposal."""
 
     incremental_global_passes: bool
     """Whether later global passes re-pair only the files rewritten since the last one."""
@@ -290,6 +297,15 @@ class EngineState:
     def _debug_reject(
         self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
     ) -> None:
+        """Provided by UnificationRefactorEngine."""
+        raise NotImplementedError
+
+    def _judge_pair(
+        self,
+        pair: "CodeBlockPair",
+        all_functions: Sequence[FunctionArtifact],
+        class_infos: List[ClassInfo],
+    ) -> Optional[RefactoringProposal]:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
