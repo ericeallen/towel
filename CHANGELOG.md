@@ -60,26 +60,31 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   would reach it, but mypy does not accept it. Over packaging, click and rich
   nothing is declined; click goes from 11 helpers to 10, one module function
   serving a third class.
-- An import Towel writes names a module the installed project has. Checked
-  against built wheels, the layout readers named 102 files of seven corpus
-  projects wrongly (a `setup.cfg` or `setup.py` src layout, never read, became
-  `src.foo.a`) and 937 more when a project directory shares its package's name
-  (`foo.src.foo.a`); without a project mypy configuration the checker names
-  modules from the same root, so it accepted them, and the adopted output
-  failed with `ModuleNotFoundError`. An absolute name is now written only when
-  the reader's answer equals the one the `__init__` markers imply, a second
-  derivation sharing none of that machinery; otherwise the import is relative,
-  and where neither holds the proposal is declined. A relative import no
-  longer climbs above the importer's top package, which Python refuses
-  (`..api.c` from `utils/v.py` with `api` and `utils` side by side). A Hatch
-  `include` without `sources` relocates nothing, so `/src/foo` ships as
-  `src.foo`; `--no-pep420` now does what it says; a layout table that is
-  present but not a table is refused rather than read as absent.
-  `[tool.setuptools.packages.find].where` is read (waitress'
-  `src/waitress/task.py` had been `src.waitress.task`, and its adopted package
-  unimportable), and a Hatch wheel `include` naming a package is evidence of
-  where it lives: beautifulsoup4 ships `bs4`, and goes from a refusal to 132
-  refactorings across 22 files.
+- An import Towel writes names a module the installed project has, because
+  its name is taken from the program's own imports instead of computed from
+  packaging metadata. Checked against built wheels, the old layout readers
+  named 102 files of seven corpus projects wrongly (a `setup.cfg` or
+  `setup.py` src layout, never read, became `src.foo.a`), 937 more when a
+  project directory shares its package's name (`foo.src.foo.a`), and
+  waitress' `src/waitress/task.py` as `src.waitress.task`. Without a project
+  mypy configuration the checker named modules from the same root, so it
+  accepted those imports, and the adopted output failed with
+  `ModuleNotFoundError`. Within a package Towel writes the spelling the
+  importing module already uses for its neighbours, or a relative import.
+  Across top-level packages it writes an import only where the importing
+  package already imports the other one, spelled as it spells it. It enters
+  a directory only where its own side already imports from it, so a library
+  never borrows from a test package its wheel leaves out. A relative import
+  never climbs above the importer's top package. What an import runs, for the
+  cycle guard and the import-time checks, is read the same way; the old
+  graph had matched filenames case-insensitively (`pygments/Lexer.py`) and
+  let eight pygments lexers import others at load time. An import into an
+  excluded directory, such as pip's `_vendor`, is treated as unknown rather
+  than empty. `rename-helpers` names modules the same way, so it works on src
+  layouts. The packaging readers are gone; `--prefer-absolute-imports`,
+  `--pep420` and their engine keywords are accepted as deprecated no-ops, and
+  `ProjectLayout` is removed. The new reject reason `unproven_import`
+  replaces `unknown_layout`.
 - `towel dry TARGET OUT` refactors TARGET inside a private copy of its whole
   project and writes only TARGET to OUT, when the run succeeds. It refactored a
   copy of TARGET alone, so everything read during the run saw a directory with
@@ -397,6 +402,18 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   output is adopted into the place it was written for.
 
 ### Changed
+- Helpers are shared across modules only with `--cross-module`
+  (`cross_module_helpers=True` for library use), because a user
+  deduplicating a package may not expect Towel to add imports between its
+  modules. By default duplicates pair only within a module, the pair budget
+  is spent only on pairs a run can form, and Towel writes no import between
+  the project's modules that runs; an annotation that needs another module's
+  type still gets a type-only import under `if TYPE_CHECKING:`. With
+  `--cross-module`, `dry` and `preview` name the import problems they meet,
+  with the `--exclude` remedy, and refuse a run when one concerns the package
+  being refactored, such as a stale `build/lib` copy of it; `preview` accepts
+  `--exclude`. Over click, rich, packaging and pygments, the default drops
+  exactly the cross-module helpers (0, 3, 5 and 13 of them).
 - Code that calls zero-argument `super()` is extracted into a method helper
   of the class that holds both duplicates, where it resolves as it did,
   diamonds and subclass overrides included: the helper has the class's own
