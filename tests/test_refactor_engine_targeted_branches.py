@@ -300,12 +300,14 @@ def consumer(data):
                     progress: ProgressMode = DEFAULT_PROGRESS,
                     changed_files: Optional[FrozenSet[str]] = None,
                 ) -> List[RefactoringProposal]:
-                    if Path(directory) == self.output_root and self._calls == 0:
+                    # The run refactors a private stage and publishes it to the
+                    # output afterwards, so the directory analysed is not the output.
+                    if Path(directory) != self.output_root and self._calls == 0:
                         self._calls += 1
                         func = ast.parse("def helper():\n    pass\n").body[0]
                         assert isinstance(func, ast.FunctionDef)
                         proposal = RefactoringProposal(
-                            file_path=str(self.output_root / "module.py"),
+                            file_path=str(Path(directory) / "module.py"),
                             extracted_function=func,
                             replacements=[],
                             description="stub",

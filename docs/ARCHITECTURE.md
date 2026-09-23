@@ -1027,18 +1027,41 @@ journal without a readable manifest blocks everything beneath it); recovery
 refuses detected conflicting edits and keeps the journal for resolution.
 Sources are decoded to LF text and split on LF alone
 (`source_text.source_lines`), so a form feed or U+2028 inside a comment or
-string does not shift a splice. Out-of-place refactoring stages the initial
-copy separately so a
-copy error leaves no partial output. A batch is atomic per file, not globally
+string does not shift a splice. An out-of-place run publishes its output with
+`filesystem.copy_project`, into a private sibling renamed into place, so neither
+a failed run nor a copy error leaves a partial output. A batch is atomic per file, not globally
 atomic to a concurrent reader, and apply/recover need exclusive write access:
 snapshot checks detect a racing writer but cannot prevent one. See
 [SECURITY.md](../SECURITY.md).
 
-For out-of-place runs, `relocate_oracle` preserves the input project's tool
-configuration and module identities. It overlays every current output source
-and stub, plus the prospective replacements, onto that logical project. This
-retains earlier applied changes and unchanged external consumers without
-scanning the copied output as a second module tree.
+An out-of-place run (`towel dry TARGET OUT`) is an in-place run on a private
+copy. Everything the analysis reads besides the target -- the import graph the
+cycle and import-time-effect guards walk, the packaging that names modules, the
+configuration -- comes from the rest of the project, and a copy of the target
+alone has none of it: a cycle `pkg.a -> other.c -> pkg.b` through a module
+outside the target went unseen, and the adopted output could not be imported,
+while the same run in place was right. So `filesystem.staged_project` copies the
+project root that `find_project_root` finds for the target into a temporary
+stage outside the project, at the same relative layout: the target whole (as
+the output will be), and of the rest its Python sources, stubs and configuration
+files, skipping what the checker copy skips (VCS metadata, caches, virtual
+environments, `node_modules`), with symlinks kept as links as `copytree` keeps
+them. A root holding more than `consumers.MAXIMUM_FILES` Python files is
+refused with a message rather than copied. The run refactors the target's
+counterpart in the stage; only when it succeeds is that counterpart published
+to `OUT` with `copy_project`. The stage is removed however the run ends. Every
+path the run reports -- progress and dropped-proposal messages, the per-file
+summary, the `.towel-helpers.json` sidecar -- is rewritten from the stage to
+`OUT` (or, outside the target, to the original project).
+
+During that run `relocate_oracle` maps the staged target back onto the
+original target, which preserves the input project's tool configuration and
+module identities. It overlays every current staged target source and stub,
+plus the prospective replacements, onto that logical project. This retains
+earlier applied changes and unchanged external consumers without scanning the
+stage as a second module tree. The rest of the stage is the original byte for
+byte, so it is not restated: overlaying it would hand the checker modules the
+project's configuration leaves out, whose errors the original check never saw.
 
 ## Helper naming
 

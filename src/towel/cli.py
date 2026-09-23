@@ -913,8 +913,14 @@ def _run_dry(args: argparse.Namespace) -> None:
                     if len(descriptions) > 3:
                         print(f"    ... and {len(descriptions) - 3} more")
             else:
-                print("\nNo refactorings found! Termination: fixed_point")
+                print(f"\nNo refactorings found! Termination: {termination_reason}")
 
+        if engine.checker_failures:
+            # Applied refactorings were verified; these were not judged at all.
+            print(
+                f"\n{engine.checker_failures} proposal(s) were dropped because the type checker"
+                " could not run for them (see the warnings above); they were not judged."
+            )
         _write_change_sidecar(engine, output_path)
     finally:
         if oracle is not None:

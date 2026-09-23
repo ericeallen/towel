@@ -84,3 +84,45 @@ def test_coding_cookie_file_is_written_back_in_its_encoding(tmp_path: Path) -> N
     data = (tmp_path / "out" / "m.py").read_bytes()
     assert b"caf\xe9" in data
     assert "__extracted_func_0" in decode_source(data)
+
+
+# The first pair prints an escape the file's encoding cannot hold once
+# rendering spells it as the character; the second pair is ordinary.
+UNENCODABLE = (
+    "# -*- coding: latin-1 -*-\n\n\n"
+    "def alpha(items):\n    total = 0\n    for item in items:\n        if item > 4:\n"
+    "            total += item * 2\n        else:\n            total -= item\n"
+    '    print("price \\u20ac", total)\n    return total + 1\n\n\n'
+    "def beta(items):\n    total = 0\n    for item in items:\n        if item > 5:\n"
+    "            total += item * 2\n        else:\n            total -= item\n"
+    '    print("price \\u20ac", total)\n    return total + 2\n\n\n' + DUPLICATES
+)
+
+
+@pytest.mark.parametrize("single_file", [False, True])
+def test_a_rendering_the_encoding_cannot_hold_is_declined_and_the_run_goes_on(
+    tmp_path: Path, single_file: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    module = source / "m.py"
+    module.write_bytes(UNENCODABLE.encode("latin-1"))
+    out = tmp_path / ("out.py" if single_file else "out")
+    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        if single_file:
+            _code, applied, _ = engine.refactor_to_fixed_point(
+                str(module), progress="none", output_path=str(out)
+            )
+            written = out.read_bytes()
+        else:
+            results, _ = engine.refactor_directory_to_fixed_point(
+                str(source), str(out), progress="none"
+            )
+            applied = sum(count for count, _ in results.values())
+            written = (out / "m.py").read_bytes()
+    assert applied == 1
+    assert "cannot represent '€' (U+20AC)" in caplog.text
+    text = written.decode("latin-1")
+    assert text.count('print("price \\u20ac", total)') == 2
+    assert "__extracted_func_0(b)" in text

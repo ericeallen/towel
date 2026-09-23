@@ -29,6 +29,9 @@ both), ``detail`` (a line per phase), or ``none``.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import dataclasses
+import logging
 import os
 from dataclasses import dataclass, field
 import textwrap
@@ -38,7 +41,18 @@ import time
 from pathlib import Path
 import ast
 import sys
-from typing import Literal, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Callable,
+    Iterator,
+    Literal,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import RefactoringError
 from .models import RefactoringProposal, TerminationReason
@@ -57,11 +71,14 @@ from .progress import (
 )
 from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangePlan, StaleSource, apply_changes
-from ..diagnostics import LOG, REJECTIONS, debugging
-from ..filesystem import copy_project
-from ..source_text import decode_source, encode_like, read_source
+from ..consumers import MAXIMUM_FILES
+from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
+from ..filesystem import StagedProject, copy_project, refuse_unusable_output, staged_project
+from ..project_layout import find_project_root
+from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
 
+from .annotation_wiring import UNTYPED_REMEDY
 from .materialize import Materialization
 
 _TQDM_NOTED = False
@@ -77,8 +94,53 @@ def _note_missing_tqdm() -> None:
         )
 
 
+_CHECKER_FAILURE = "Prospective project type check failed"
+"""How a candidate whose check could not run is refused, as against one the check refused.
+
+The two reach the driver as the same ``RefactoringError``; only the wording
+tells a checker that crashed or timed out from a verdict on the proposal.
+"""
+
+
+def _is_checker_failure(error: BaseException) -> bool:
+    return isinstance(error, RefactoringError) and str(error).startswith(_CHECKER_FAILURE)
+
+
 class FixedPointDrivers(Materialization):
     """FixedPointDrivers methods of the engine; see the module docstring."""
+
+    # Proposals the last run dropped because the checker could not run, by
+    # identity, and the last reason it gave.
+    _unchecked: FrozenSet[str] = frozenset()
+    _unchecked_reason: str = ""
+
+    @property
+    def checker_failures(self) -> int:
+        """How many proposals the last fixed-point run dropped because the checker could not run.
+
+        Such a proposal was not refused on its merits: nothing is known about
+        it. A run in which that happened and nothing was applied raises
+        instead of reporting a fixed point it never reached.
+        """
+        return len(self._unchecked)
+
+    def _begin_counting_checker_failures(self) -> None:
+        self._unchecked, self._unchecked_reason = frozenset(), ""
+
+    def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
+        """Raise when nothing was applied and the checker failed on some proposal.
+
+        Reporting "no refactorings found" there would read as a verdict on the
+        project, and exiting cleanly would hide a checker that timed out or
+        crashed on every candidate it was given.
+        """
+        if applied or not self._unchecked:
+            return
+        raise RefactoringError(
+            f"Nothing was applied, and the type checker could not run for "
+            f"{len(self._unchecked)} proposal(s), which were therefore not judged: "
+            f"{self._unchecked_reason}\nFix what stops the checker, or {UNTYPED_REMEDY}"
+        )
 
     @staticmethod
     def _pop_next_proposal(queue: List[RefactoringProposal]) -> Optional[RefactoringProposal]:
@@ -119,15 +181,17 @@ class FixedPointDrivers(Materialization):
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
                 installed), ``auto`` (that, or an inline bar), ``detail``
                 (a line per proposal), or ``none``.
-            output_path: An optional new copy to refactor. The original project
-                is checked before the output is created, and subsequent checks
-                retain its configuration and unchanged consumers.
+            output_path: An optional new file to write the result to. The
+                file is refactored inside a private copy of its whole project,
+                exactly as it would be in place, and written here only when
+                the run succeeds; the original is only read.
 
         Returns:
             The final source, the number of refactorings applied, and their
             descriptions in application order.
         """
         self._change_log = []
+        self._begin_counting_checker_failures()
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         current_bytes = Path(file_path).read_bytes()
         try:
@@ -137,15 +201,30 @@ class FixedPointDrivers(Materialization):
             raise ValueError(f"{file_path}: {error}") from error
         except SyntaxError as error:
             raise ValueError(f"{file_path}: line {error.lineno}: {error.msg}") from error
+        in_place = output_path is None or Path(output_path).resolve() == Path(file_path).resolve()
+        if not in_place:
+            refuse_unusable_output(Path(file_path), Path(str(output_path)))
         self.begin_refactoring_run([file_path])
-        if output_path is not None and Path(output_path).resolve() != Path(file_path).resolve():
-            source, destination = Path(file_path), Path(output_path)
-            copy_project(source, destination)
-            if self._type_run_oracle is not None:
-                self._type_run_oracle = relocate_oracle(self._type_run_oracle, source, destination)
-            self._output_origin = (source, destination)
-            file_path = output_path
-            self._analysis_paths = (file_path,)
+        if output_path is None or in_place:
+            return self._refactor_file_in_place(
+                file_path, current_bytes, current_code, max_iterations, analysis_progress
+            )
+        with self._staged_output(Path(file_path), Path(output_path)) as stage:
+            refactored = self._refactor_file_in_place(
+                str(stage.target), current_bytes, current_code, max_iterations, analysis_progress
+            )
+            copy_project(stage.target, stage.output)
+            return refactored
+
+    def _refactor_file_in_place(
+        self,
+        file_path: str,
+        current_bytes: bytes,
+        current_code: str,
+        max_iterations: int,
+        analysis_progress: ProgressMode,
+    ) -> Tuple[str, int, List[str]]:
+        """The single-file loop over ``file_path``, which holds ``current_bytes``."""
         self._warn_about_frame_sensitive_files(file_path)
         num_applied = 0
         descriptions = []
@@ -168,7 +247,7 @@ class FixedPointDrivers(Materialization):
             for proposal in proposals:
                 if proposal in rejected:
                     continue
-                rendered = self._rendered_or_none(file_path, proposal)
+                rendered = self._rendered_or_none(file_path, proposal, current_bytes)
                 if rendered is None:
                     rejected.add(proposal)
                     continue
@@ -200,29 +279,44 @@ class FixedPointDrivers(Materialization):
 
         if num_applied:
             self.confirm_run_with_a_cold_checker([file_path])
+        self._refuse_a_run_the_checker_emptied(num_applied)
         return current_code, num_applied, descriptions
 
-    def _rendered_or_none(self, file_path: str, proposal: RefactoringProposal) -> Optional[str]:
+    def _rendered_or_none(
+        self, file_path: str, proposal: RefactoringProposal, original: bytes
+    ) -> Optional[str]:
         """The file with ``proposal`` applied, or None when rendering it fails.
 
         A proposal the materializer or the compiler rejects is a defect in
         the rendering of that one extraction; it is dropped with a warning
         and the run goes on, rather than aborting after whatever was applied
-        before it.
+        before it. So is one whose text the file's encoding (``original``'s)
+        cannot hold.
         """
         try:
             new_code = self.apply_refactoring(file_path, proposal)
             compile(new_code, file_path, "exec")
+            encode_like(original, new_code)
         except (RefactoringError, SyntaxError, ValueError) as error:
             self._report_dropped(proposal, error)
             return None
         return new_code
 
-    @staticmethod
-    def _report_dropped(proposal: RefactoringProposal, error: BaseException) -> None:
-        LOG.warning(
-            "Dropped a proposal that could not be rendered (%s): %s", proposal.description, error
-        )
+    def _report_dropped(self, proposal: RefactoringProposal, error: BaseException) -> None:
+        if _is_checker_failure(error):
+            self._unchecked = self._unchecked | {_RejectedProposals.identity(proposal)}
+            self._unchecked_reason = str(error)
+            LOG.warning(
+                "Dropped a proposal the type checker could not check (%s): %s",
+                proposal.description,
+                error,
+            )
+        else:
+            LOG.warning(
+                "Dropped a proposal that could not be rendered (%s): %s",
+                proposal.description,
+                error,
+            )
         if debugging(REJECTIONS):
             REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
 
@@ -292,7 +386,11 @@ class FixedPointDrivers(Materialization):
         Args:
             input_dir: The directory to analyze.
             output_dir: The directory to write into (the same as ``input_dir``
-                to refactor in place).
+                to refactor in place). Otherwise ``input_dir`` is refactored
+                inside a private copy of its whole project, exactly as it would
+                be in place, and only its refactored counterpart is written
+                here, all at once, when the run succeeds; the returned paths
+                name files here.
             max_iterations: Stop after this many applied refactorings; 0 or
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
@@ -304,6 +402,7 @@ class FixedPointDrivers(Materialization):
             termination_reason ∈ {"fixed_point", "iteration_cap"}
         """
         self._change_log = []
+        self._begin_counting_checker_failures()
         reporter = _ApplyProgress(*self._resolve_progress_backend(progress))
 
         input_path = Path(input_dir)
@@ -321,30 +420,91 @@ class FixedPointDrivers(Materialization):
 
         if not input_path.is_dir():
             raise ValueError("Input directory does not exist")
-        self.begin_refactoring_run(self._find_python_files(input_dir))
         if resolved_input != resolved_output:
-            copy_project(input_path, output_path, allow_empty=True)
-            if self._type_run_oracle is not None:
-                self._type_run_oracle = relocate_oracle(
-                    self._type_run_oracle, input_path, output_path
-                )
-            self._output_origin = (input_path, output_path)
-            self._analysis_paths = tuple(self._find_python_files(output_dir))
+            refuse_unusable_output(input_path, output_path, allow_empty=True)
+        self.begin_refactoring_run(self._find_python_files(input_dir))
+        if resolved_input == resolved_output:
+            return self._refactor_directory_in_place(output_path, reporter, max_iterations)
+        with self._staged_output(input_path, output_path) as stage:
+            self._analysis_paths = tuple(self._find_python_files(str(stage.target)))
+            results, termination_reason = self._refactor_directory_in_place(
+                stage.target, reporter, max_iterations
+            )
+            copy_project(stage.target, stage.output, allow_empty=True)
+            return {stage.public(path): result for path, result in results.items()}, (
+                termination_reason
+            )
 
-        self._warn_about_frame_sensitive_files(output_dir)
+    def _refactor_directory_in_place(
+        self, directory: Path, reporter: "_ApplyProgress", max_iterations: int
+    ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
+        """The directory loop over ``directory``, then the cold confirmation of what it did."""
+        self._warn_about_frame_sensitive_files(str(directory))
 
         run = _DirectoryRun()
         termination_reason: TerminationReason = "fixed_point"
 
         try:
-            return self._apply_until_fixed_point(
-                output_path, run, reporter, max_iterations, termination_reason
+            outcome = self._apply_until_fixed_point(
+                directory, run, reporter, max_iterations, termination_reason
             )
         finally:
             # A display thread must not outlive the run, however it ended.
             reporter.close()
             if run.applied:
-                self.confirm_run_with_a_cold_checker(self._find_python_files(str(output_path)))
+                self.confirm_run_with_a_cold_checker(self._find_python_files(str(directory)))
+        self._refuse_a_run_the_checker_emptied(run.applied)
+        return outcome
+
+    @contextmanager
+    def _staged_output(self, origin: Path, output: Path) -> Iterator[StagedProject]:
+        """Refactor ``origin``'s counterpart in a private copy of its whole project.
+
+        An in-place run reads the rest of the project as it refactors: the
+        import graph that the cycle and import-time-effect guards walk, the
+        packaging that names modules, the configuration. A copy of the target
+        alone has none of it, so a cycle through a module outside the target
+        went unseen and the adopted output could not be imported, while the
+        same run in place was right. Staging the whole project makes the two
+        runs one run: the target's counterpart is refactored in place in the
+        stage, with the checker reading the stage under the original's names,
+        and the caller publishes it to ``output`` only once the run succeeds,
+        so a failed run leaves nothing behind. Every path the run reports
+        names the output (or, outside the target, the original), not the
+        stage, which is removed however the block ends.
+        """
+        inner_oracle = self._type_run_oracle
+        root = find_project_root(origin)
+        with staged_project(root, origin, output, limit=MAXIMUM_FILES) as stage:
+            if inner_oracle is not None:
+                # Only the target: the rest of the stage is the original, byte
+                # for byte, and restating it to the checker would make it
+                # check modules the project's configuration leaves out, whose
+                # errors the original check never saw.
+                self._type_run_oracle = relocate_oracle(
+                    inner_oracle, stage.origin_target, stage.target
+                )
+            self._output_origin = (stage.origin_root, stage.root)
+            self._analysis_paths = (str(stage.target),)
+            rewrite = _StagePathsInLogs(stage.public_text)
+            loggers = (LOG, REJECTIONS, VALIDATION, OVERLAP, TYPES, UNIFIER)
+            for logger in loggers:
+                logger.addFilter(rewrite)
+            try:
+                yield stage
+                self._change_log = [
+                    dataclasses.replace(change, path=stage.public(change.path))
+                    for change in self._change_log
+                ]
+            except (OSError, ValueError, RefactoringError) as error:
+                _name_public_paths(error, stage.public_text)
+                raise
+            finally:
+                for logger in loggers:
+                    logger.removeFilter(rewrite)
+                # The stage is about to go; nothing may keep checking against it.
+                self._type_run_oracle = inner_oracle
+                self._output_origin = None
 
     def _apply_until_fixed_point(
         self,
@@ -405,7 +565,7 @@ class FixedPointDrivers(Materialization):
                     # would earn a rehearing the project has not changed for.
                     continue
                 proposal_queue = refreshed
-            except (RefactoringError, SyntaxError) as error:
+            except (RefactoringError, SyntaxError, UnencodableText) as error:
                 run.deferred_paths.update(
                     os.path.abspath(path)
                     for path in {
@@ -554,6 +714,32 @@ class FixedPointDrivers(Materialization):
         return queue
 
 
+class _StagePathsInLogs(logging.Filter):
+    """Rewrite a record's stage paths to the ones the user knows, before any handler sees it."""
+
+    def __init__(self, rewrite: Callable[[str], str]) -> None:
+        super().__init__()
+        self._rewrite = rewrite
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        rewritten = self._rewrite(message)
+        if rewritten != message:
+            record.msg, record.args = rewritten, None
+        return True
+
+
+def _name_public_paths(error: BaseException, rewrite: Callable[[str], str]) -> None:
+    """Point a failure's message at the paths the user knows; the stage it names is gone."""
+    if isinstance(error, OSError):
+        for attribute in ("filename", "filename2"):
+            value = getattr(error, attribute)
+            if isinstance(value, str):
+                setattr(error, attribute, rewrite(value))
+    elif len(error.args) == 1 and isinstance(error.args[0], str):
+        error.args = (rewrite(error.args[0]),)
+
+
 class _RejectedProposals:
     """Proposals rejected since the project was last analyzed as a whole.
 
@@ -573,7 +759,7 @@ class _RejectedProposals:
         self._identities: Set[str] = set()
 
     @staticmethod
-    def _identity(proposal: RefactoringProposal) -> str:
+    def identity(proposal: RefactoringProposal) -> str:
         return repr(
             (
                 proposal.file_path,
@@ -589,10 +775,10 @@ class _RejectedProposals:
         )
 
     def add(self, proposal: RefactoringProposal) -> None:
-        self._identities.add(self._identity(proposal))
+        self._identities.add(self.identity(proposal))
 
     def __contains__(self, proposal: RefactoringProposal) -> bool:
-        return self._identity(proposal) in self._identities
+        return self.identity(proposal) in self._identities
 
     def __bool__(self) -> bool:
         return bool(self._identities)
