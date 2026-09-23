@@ -256,16 +256,22 @@ class FixedPointDrivers(Materialization):
             for proposal in proposals:
                 if proposal in rejected:
                     continue
+                recorded = len(self._change_log)
                 rendered = self._rendered_or_none(file_path, proposal, current_bytes)
                 if rendered is None:
                     rejected.add(proposal)
                     continue
                 if rendered == current_code:
+                    self._forget_records_since(recorded)
                     continue
                 new_code = rendered
-                apply_changes(
-                    ChangePlan.from_sources({file_path: current_bytes}, {file_path: new_code})
-                )
+                try:
+                    apply_changes(
+                        ChangePlan.from_sources({file_path: current_bytes}, {file_path: new_code})
+                    )
+                except BaseException:
+                    self._forget_records_since(recorded)
+                    raise
                 applied_one = True
                 break
             if not applied_one:
@@ -302,14 +308,26 @@ class FixedPointDrivers(Materialization):
         before it. So is one whose text the file's encoding (``original``'s)
         cannot hold.
         """
+        recorded = len(self._change_log)
         try:
             new_code = self.apply_refactoring(file_path, proposal)
             compile(new_code, file_path, "exec")
             encode_like(original, new_code)
         except (RefactoringError, SyntaxError, ValueError) as error:
+            self._forget_records_since(recorded)
             self._report_dropped(proposal, error)
             return None
         return new_code
+
+    def _forget_records_since(self, recorded: int) -> None:
+        """Drop the call-site records of a proposal that was rendered but not applied.
+
+        Rendering records each call site it rewrites, because a name is only
+        final once rendered; whether the result is written is decided after
+        that. A record left behind describes a helper that is not in the output,
+        and the sidecar offered it to the naming step as though it were.
+        """
+        del self._change_log[recorded:]
 
     def _report_dropped(self, proposal: RefactoringProposal, error: BaseException) -> None:
         if _is_checker_failure(error):
@@ -686,24 +704,31 @@ class FixedPointDrivers(Materialization):
                 *(rep.file_path or proposal.file_path for rep in proposal.replacements),
             }
         }
-        modified_files = self.apply_refactoring_multi_file(proposal)
-        plan = ChangePlan.from_sources(before, modified_files)
-        # A plan is empty when every file renders the bytes it already holds.
-        # Counting that as applied would advance the run's revision without
-        # changing the project, so the next analysis would find the proposal
-        # again, render the same bytes, and the run would never end. It is
-        # remembered as declined instead: the same input renders the same
-        # output, so hearing it again before the project changes is pointless.
-        if not plan.changes:
-            run.rejected.add(proposal)
-            reporter.detail(f"Proposal changed nothing: {proposal.description}")
-            return None
+        recorded = len(self._change_log)
+        try:
+            modified_files = self.apply_refactoring_multi_file(proposal)
+            plan = ChangePlan.from_sources(before, modified_files)
+            # A plan is empty when every file renders the bytes it already
+            # holds. Counting that as applied would advance the run's revision
+            # without changing the project, so the next analysis would find the
+            # proposal again, render the same bytes, and the run would never
+            # end. It is remembered as declined instead: the same input renders
+            # the same output, so hearing it again before the project changes
+            # is pointless.
+            if not plan.changes:
+                self._forget_records_since(recorded)
+                run.rejected.add(proposal)
+                reporter.detail(f"Proposal changed nothing: {proposal.description}")
+                return None
+            apply_changes(plan)
+        except BaseException:
+            self._forget_records_since(recorded)
+            raise
         # Every file the proposal rendered is re-analysed and recorded, not
         # only those whose bytes moved: a file rendered identically is still
         # one the proposal reached, and the localized pass that follows must
         # look at all of them.
         changed_paths = list(modified_files.keys())
-        apply_changes(plan)
         for fpath in modified_files:
             run.record(fpath, proposal.description)
         self.invalidate_paths(changed_paths)
