@@ -13,8 +13,11 @@ As in ``test_hostile_battery``, ``TRANSFORMED`` pins which packages the
 current engine rewrites, so a lost cross-file extraction fails as loudly as
 a wrong one. Every package is in exactly one state. Rejected today:
 ``xf13_import_time_effects``, whose helper import would run a module that
-prints at import time, which the borrower's own import never ran; and the
-four whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``).
+prints at import time, which the borrower's own import never ran; the four
+whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
+``xf23_relative_import_in_another_package``, whose subpackages ``pkg.x`` and
+``pkg.y`` never import each other, so neither may gain an import of the
+other (docs/DECISIONS.md, "Import names come from the program").
 """
 
 from __future__ import annotations
@@ -48,7 +51,6 @@ TRANSFORMED = {
     "xf16_consumer_outside_target_owns_helper_name",
     "xf20_builtin_shadowed_in_ancestor_module",
     "xf21_builtin_shadowed_in_third_module",
-    "xf23_relative_import_in_another_package",
     "xf24_relative_import_climbs_elsewhere",
     "xf25_relative_import_in_the_same_package",
     "xf26_relative_import_ancestor_in_another_package",
@@ -64,6 +66,7 @@ REJECTED = {
     "xf18_builtin_shadowed_by_star_import",
     "xf19_builtin_shadowed_by_borrower_local",
     "xf22_borrower_rebinds_builtins_namespace",
+    "xf23_relative_import_in_another_package",
 }
 
 
@@ -82,7 +85,7 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
         after = Path(directory) / "after"
         shutil.copytree(CASES / case, before)
         shutil.copytree(CASES / case, after)
-        engine = UnificationRefactorEngine(min_lines=3)
+        engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             results, _ = engine.refactor_directory_to_fixed_point(
                 str(after / "pkg"), str(after / "pkg"), progress="none"

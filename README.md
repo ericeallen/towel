@@ -177,19 +177,24 @@ towel dry example.py cleaned.py --no-interactive --max-refactorings 10
 
 # Leave helpers unannotated, or insert code as rendered without formatting
 towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-format
+
+# Also share helpers between duplicates in different modules
+towel dry path/to/project path/to/cleaned --no-interactive --cross-module
 ```
+
+By default Towel extracts only duplicates within one module, and adds no import between the project's modules that runs. `--cross-module` also shares a helper between duplicates in different modules: the helper lives in one module and the others import it, a new dependency between those modules, which is why it has to be asked for. The import is spelled the way the program's own imports show it works wherever the program runs: relatively between modules of one package, and across packages only where the importing package already imports the other; anything else is declined. Before writing anything, a `--cross-module` run names every place where the program's imports do not name its modules unambiguously (a stale `build/lib` copy beside the package, a broken import in the test data), and refuses the run when one concerns the package being refactored; `--exclude build`, or the directory holding the stray copy, is the remedy.
 
 A separate output must not already exist or overlap the input. Cancellation leaves the filesystem unchanged. Symlinked Python files are excluded from directory analysis. The API accepts an empty output directory for fixture and integration workflows. Every run, in place or not, refactors a private copy of the whole project and writes nothing until it has succeeded, its final type-check confirmation included; an in-place run then writes every file it changed as one batch. Each file is replaced atomically; caught application failures roll back, and interrupted batches retain a recovery journal. Readers can observe a partially applied batch. Keep exclusive write access to the project and its parent while applying or recovering: snapshot checks detect stale files but cannot prevent a noncooperating editor from writing in the final check/replace interval.
 
 To roll back an interrupted batch, use `towel recover /path/to/.towel-transaction-<id>` (the name the run reported). Recovery refuses detected conflicting edits and keeps the journal for resolution. Review local journals before recovery; they contain original source bytes. Do not delete a journal before resolving the interrupted operation. A run refactors the target inside a private copy of its whole project, so import cycles and import-time effects through modules outside the target are seen, and the result is written only when the run succeeds: all at once to an output directory, or, in place, as one journaled batch of the files it changed, checked first against what each held when the run began. A failed or interrupted run leaves the project and the output path as they were, and a file edited while the run was working refuses the write rather than lose the edit. A project root holding more than 20,000 Python files is refused rather than copied; give the code its own `pyproject.toml`, `setup.cfg` or `setup.py`, or move it out of the larger tree.
 
-A `dry` run ends by counting what it declined, by reason: the proposals it built and did not apply (refused by the type checker, not representable in their file's encoding, and so on) and, when it applied nothing, the candidate pairs it declined; a project whose packaging Towel cannot model is named with the layout reader's message, since no helper can then be shared across its modules. For each candidate pair's reason, set `DEBUG_PROPOSAL_REJECTIONS=1`. `TOWEL_DEBUG_TYPES=1` prints what the type checker answered for each probed expression and the errors that make a helper's annotations fall back; `DEBUG_VALIDATION=1` and `DEBUG_OVERLAP_FILTER=1` trace the pair stages and the overlap filter. These, and `TOWEL_WORKERS`, are read once at startup.
+A `dry` run ends by counting what it declined, by reason: the proposals it built and did not apply (refused by the type checker, not representable in their file's encoding, and so on) and, when it applied nothing, the candidate pairs it declined. For each candidate pair's reason, set `DEBUG_PROPOSAL_REJECTIONS=1`. `TOWEL_DEBUG_TYPES=1` prints what the type checker answered for each probed expression and the errors that make a helper's annotations fall back; `DEBUG_VALIDATION=1` and `DEBUG_OVERLAP_FILTER=1` trace the pair stages and the overlap filter. These, and `TOWEL_WORKERS`, are read once at startup.
 
-Run `towel dry --help` for the import-layout, typing, formatting, refactoring-count, block-size, parameter-limit, pair-budget, and progress options. Every boolean option is a `--x/--no-x` pair; the `--help` text names the default.
+Run `towel dry --help` for the cross-module, exclusion, typing, formatting, refactoring-count, block-size, parameter-limit, pair-budget, and progress options. Every boolean option is a `--x/--no-x` pair; the `--help` text names the default.
 
 ## What is analyzed
 
-The pipeline parses modules, analyzes scopes, collects functions and classes, compares candidate blocks, and constructs extraction proposals. It supports same-file and cross-file candidates, parameter differences, return propagation, and selected class-method extractions. Directory mode skips hidden directories, `__pycache__`, `venv`, `env`, `node_modules`, any directory holding a `pyvenv.cfg`, the names given by `--exclude`, and symlinked files.
+The pipeline parses modules, analyzes scopes, collects functions and classes, compares candidate blocks, and constructs extraction proposals. It supports same-file candidates and, with `--cross-module`, cross-file ones, parameter differences, return propagation, and selected class-method extractions. Directory mode skips hidden directories, `__pycache__`, `venv`, `env`, `node_modules`, any directory holding a `pyvenv.cfg`, the names given by `--exclude`, and symlinked files.
 
 Differing sub-expressions become helper parameters. Literals, names the call site resolves on every path, and tuples of those are passed eagerly; a name the site may not resolve is passed as a thunk. A name that every site resolves at module scope (a class, an import, a helper defined below its callers) is not a parameter of a same-module helper at all: the helper reads it bare, as the block did; a cross-file helper still takes it as a parameter. No helper takes a builtin as a parameter: where a builtin the blocks read may differ between their sites (one function binds `len` and the other reads the builtin, or, across modules, a module may hold the name, as a test's `mock.patch("pkg.mod.len")` makes it), the pair is declined. `--parameterize-builtins` passes such a builtin as an ordinary parameter instead, each site giving its own, so a patch of either module still reaches that module's code; a builtin every site reads alike is still read bare. Any other expression is passed as a zero-argument thunk and evaluated inside the helper where the original expression stood, so evaluation order, count, and conditionality are preserved. Expressions that read names bound inside the block are lambda-lifted with those names as arguments. A thunk the helper would evaluate first, once, and unconditionally is passed eagerly instead, since nothing can observe the difference. Before a proposal is offered, the helper is instantiated with each call's arguments and must reproduce the original block up to renamed binders.
 
@@ -297,7 +302,7 @@ uv run --frozen python -m build
 
 Alternatively, create `.venv`, activate it, and install `pip install -e '.[dev]'`. `just check` checks formatting, lint, typing, and Bandit; `just test` runs the tests. These commands propagate failures. The pre-commit hooks call `python` from the environment, so activate it (or prefix `PATH="$PWD/.venv/bin:$PATH"`) before installing or running them; the mypy hook checks the whole tree, so files in progress must type-check too. The tests for formatting and typing need the `dev` extra's Black, ruff, isort, mypy, and pyright; the mypy and pyright tests skip when those are absent.
 
-`towel dry PKG PKG --exclude tests` leaves a directory name out of directory mode (repeatable); use it for packages that carry their test suite inside themselves. Large analyses fork worker processes after parsing when a timed probe projects enough work; set `TOWEL_WORKERS=1` to stay on one core or another value to cap the workers. Set `TOWEL_CHECK_AST_IMMUTABLE=1` to verify on every cache reuse that analysis left the module's AST untouched.
+`towel dry PKG PKG --exclude tests` leaves a directory name out of directory mode (repeatable, and accepted by `preview` too); use it for packages that carry their test suite inside themselves, and for a stray copy of a package that makes its imports ambiguous: the program's import model reads nothing there either. Large analyses fork worker processes after parsing when a timed probe projects enough work; set `TOWEL_WORKERS=1` to stay on one core or another value to cap the workers. Set `TOWEL_CHECK_AST_IMMUTABLE=1` to verify on every cache reuse that analysis left the module's AST untouched.
 
 `just ecosystem --run-untrusted-code --no-types` runs the standing ecosystem
 check (`scripts/ecosystem_check.py`). It tests each of the 141 entries in
@@ -317,10 +322,14 @@ with the corpus results in [Production readiness](https://github.com/ericeallen/
 
 The check executes third-party code with your privileges, so it requires
 `--run-untrusted-code` (or `TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1`) and belongs on a
-disposable machine or container. It imports Towel from `--towel-src` throughout
-the run. To keep editing, point that option at a committed snapshot's `src`
-directory. The harness reports the actual source revision and dirty state;
-source archives require an independently retained source manifest.
+disposable machine or container. It runs Towel as a user does, inside each
+project's own environment, where the project is installed from the tree under
+test beside Towel's `format` and `types` extras and what the project declares
+its own type check needs: one wheel of `--towel-src`, built when the run starts
+or named with `--towel-wheel`, and refused if its code differs from that source. Point `--towel-src` at a committed snapshot's `src` directory,
+since the report names its commit. The harness reports the actual source
+revision and dirty state; source archives require an independently retained
+source manifest.
 
 Behavioral tests compare sampled return values and types, exceptions, output, and argument mutations. Cross-file tests isolate imports for each execution. Empty selections, unsupported class construction, and cross-file returned closures do not count as success. Single-file callable comparison samples one returned-callable layer; deeper returned callables are not validated. These checks are regression evidence, not proof of equivalence for arbitrary programs.
 

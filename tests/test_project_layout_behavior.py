@@ -1,323 +1,95 @@
+"""Where a project's configuration lives: its root, its pyproject.toml, its package chain."""
+
+from __future__ import annotations
+
+import logging
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
-import textwrap
-import unittest
 
-from towel.project_layout import ProjectLayout, is_package_dir
+import pytest
 
-
-class TestProjectLayoutBehavior(unittest.TestCase):
-    def test_conventional_setuptools_src_layout_imports_without_src_prefix(self) -> None:
-        for backend in ("", '\n[build-system]\nbuild-backend = "setuptools.build_meta"\n'):
-            with self.subTest(backend=backend), tempfile.TemporaryDirectory() as td:
-                root = Path(td)
-                (root / "pyproject.toml").write_text(
-                    '[project]\nname = "conventional-layout-fixture"\nversion = "1.0"\n' + backend
-                )
-                package = root / "src" / "conventional_layout_fixture"
-                package.mkdir(parents=True)
-                (package / "__init__.py").write_text("")
-                module = package / "example.py"
-                module.write_text("VALUE = 37\n")
-                layout = ProjectLayout.discover(module)
-                name = layout.module_name_for(module)
-                self.assertEqual(name, "conventional_layout_fixture.example")
-                assert name is not None
-                self.assertEqual(layout.source_roots, [(root / "src").resolve()])
-                result = subprocess.run(
-                    [
-                        sys.executable,
-                        "-I",
-                        "-c",
-                        "import importlib, sys; sys.path.insert(0, sys.argv[1]); "
-                        "print(importlib.import_module(sys.argv[2]).VALUE)",
-                        str(root / "src"),
-                        name,
-                    ],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-                self.assertEqual(result.stdout.strip(), "37")
-
-    def test_conventional_discovery_does_not_override_explicit_configuration(self) -> None:
-        configurations = (
-            '\n[tool.setuptools]\npackages = ["src.pkg"]\n',
-            "\n[tool.setuptools]\npy-modules = []\n",
-            '\n[tool.setuptools.packages.find]\nwhere = ["."]\n',
-            '\n[tool.setuptools]\npackage-dir = {"" = "."}\n',
-        )
-        for configuration in configurations:
-            with self.subTest(configuration=configuration), tempfile.TemporaryDirectory() as td:
-                root = Path(td)
-                (root / "pyproject.toml").write_text(
-                    '[project]\nname = "configured-project"\nversion = "1.0"\n' + configuration
-                )
-                package = root / "src" / "pkg"
-                package.mkdir(parents=True)
-                (package / "__init__.py").write_text("")
-                module = package / "example.py"
-                module.write_text("VALUE = 37\n")
-                layout = ProjectLayout.discover(module)
-                self.assertEqual(layout.source_roots, [root.resolve()])
-                self.assertEqual(layout.module_name_for(module), "src.pkg.example")
-
-    def test_conventional_discovery_requires_unambiguous_project_metadata(self) -> None:
-        for conflict in ("setup.py", "setup.cfg", "src/__init__.py", "missing-name"):
-            with self.subTest(conflict=conflict), tempfile.TemporaryDirectory() as td:
-                root = Path(td)
-                metadata = '[project]\nname = "configured-project"\nversion = "1.0"\n'
-                (root / "pyproject.toml").write_text(
-                    "[project]\nversion = '1.0'\n" if conflict == "missing-name" else metadata
-                )
-                package = root / "src" / "pkg"
-                package.mkdir(parents=True)
-                (package / "__init__.py").write_text("")
-                if conflict != "missing-name":
-                    (root / conflict).write_text("")
-                module = package / "example.py"
-                module.write_text("VALUE = 37\n")
-                layout = ProjectLayout.discover(module)
-                self.assertEqual(layout.module_name_for(module), "src.pkg.example")
-
-    def test_default_layout_no_pyproject(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # Create a simple tree without pyproject
-            (root / "src" / "pkg").mkdir(parents=True)
-            mod = root / "src" / "pkg" / "mod.py"
-            mod.write_text("x = 1\n")
-
-            layout = ProjectLayout.discover(root)
-            self.assertEqual(layout.project_root, root.resolve())
-            self.assertEqual(layout.source_roots, [root.resolve()])
-
-            name = layout.module_name_for(mod)
-            # Without package-dir mapping, we intentionally keep 'src' in the name
-            self.assertEqual(name, "src.pkg.mod")
-
-            nonpy = root / "src" / "pkg" / "data.txt"
-            nonpy.write_text("data")
-            self.assertIsNone(layout.module_name_for(nonpy))
-
-    def test_with_pyproject_mapping_src(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # Write pyproject mapping "" -> "src"
-            (root / "pyproject.toml").write_text(textwrap.dedent("""
-                    [tool.setuptools]
-                    package-dir = {"" = "src"}
-                    """).strip())
-            (root / "src" / "pkg").mkdir(parents=True)
-            mod = root / "src" / "pkg" / "mod.py"
-            mod.write_text("x = 1\n")
-
-            layout = ProjectLayout.discover(root)
-            # Should pick src as the sole source root
-            self.assertEqual(layout.source_roots, [(root / "src").resolve()])
-
-            name = layout.module_name_for(mod)
-            self.assertEqual(name, "pkg.mod")
-
-            # A file outside the source root should fall back to project-root-relative
-            other_dir = root / "other"
-            other_dir.mkdir()
-            other = other_dir / "file.py"
-            other.write_text("pass\n")
-            self.assertEqual(layout.module_name_for(other), "other.file")
-
-    def test_pep420_toggle_and_nonpackages(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # No pyproject mapping: default source_root is project root
-            pkgdir = root / "ns" / "sub"
-            pkgdir.mkdir(parents=True)
-            mod = pkgdir / "mod.py"
-            mod.write_text("x = 1\n")
-
-            # pep420 True (default): directories are considered packages implicitly
-            layout_ns = ProjectLayout.discover(root, pep420_namespace_packages=True)
-            self.assertEqual(layout_ns.module_name_for(mod), "ns.sub.mod")
-
-            # pep420 False: a bare directory is not a package, so no name passes through one
-            layout_no_ns = ProjectLayout.discover(root, pep420_namespace_packages=False)
-            self.assertIsNone(layout_no_ns.module_name_for(mod))
-
-            # Add __init__.py and ensure the same result (covers the classic package path)
-            (root / "ns" / "__init__.py").write_text("")
-            (root / "ns" / "sub" / "__init__.py").write_text("")
-            self.assertEqual(layout_no_ns.module_name_for(mod), "ns.sub.mod")
-
-    def test_discover_from_file_path(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            nested = root / "nested"
-            nested.mkdir()
-            f = nested / "child.py"
-            f.write_text("pass\n")
-
-            # Discover starting from a file path chooses its directory as project_root
-            layout = ProjectLayout.discover(f)
-            self.assertEqual(layout.project_root, nested.resolve())
-            self.assertEqual(layout.module_name_for(f), "child")
-
-    def test_malformed_pyproject_and_outside_paths(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # Malformed TOML should be handled gracefully (treated as no mapping)
-            (root / "pyproject.toml").write_text("this = not = valid [[\n")
-            (root / "src" / "pkg").mkdir(parents=True)
-            mod = root / "src" / "pkg" / "mod.py"
-            mod.write_text("x = 1\n")
-
-            layout = ProjectLayout.discover(root)
-            # Falls back to project root as source root due to parsing failure
-            self.assertEqual(layout.source_roots, [root.resolve()])
-            self.assertEqual(layout.module_name_for(mod), "src.pkg.mod")
-
-            # File completely outside the project should return None
-            with tempfile.TemporaryDirectory() as other_td:
-                outside = Path(other_td) / "ext.py"
-                outside.write_text("pass\n")
-                self.assertIsNone(layout.module_name_for(outside))
-
-    def testis_package_dir_direct_and_fallback_non_py(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # Create a file (not directory) to test is_package_dir False path
-            file_path = root / "not_a_dir.py"
-            file_path.write_text("pass\n")
-            self.assertFalse(is_package_dir(file_path))
-            # A bare directory is not a regular package; one with __init__.py is.
-            pkg_dir = root / "pkg"
-            pkg_dir.mkdir()
-            self.assertFalse(is_package_dir(pkg_dir))
-            (pkg_dir / "__init__.py").write_text("")
-            self.assertTrue(is_package_dir(pkg_dir))
-
-            # With mapping to 'src', ensure fallback handles non-.py under project root
-            (root / "pyproject.toml").write_text(textwrap.dedent("""
-                    [tool.setuptools]
-                    package-dir = {"" = "src"}
-                    """).strip())
-            (root / "src").mkdir(parents=True)
-            (root / "other").mkdir(parents=True)
-            data = root / "other" / "data.txt"
-            data.write_text("x\n")
-            layout = ProjectLayout.discover(root)
-            self.assertIsNone(layout.module_name_for(data))
-
-    def test_mapping_values_type_error_path(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # package-dir values include a non-string to trigger TypeError in path join
-            (root / "pyproject.toml").write_text(textwrap.dedent("""
-                    [tool.setuptools]
-                    package-dir = {"" = 1, "pkg" = "lib"}
-                    """).strip())
-            layout = ProjectLayout.discover(root)
-            # Should fallback to project_root only due to exception
-            self.assertEqual(layout.source_roots, [root.resolve()])
-
-    def test_module_name_for_empty_parts_via_fake_path(self) -> None:
-        # Create a layout with default source root
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            layout = ProjectLayout.discover(root)
-
-            class FakeRel:
-                suffix = ".py"
-
-                def with_suffix(self, _s: str):
-                    return self
-
-                @property
-                def parts(self):
-                    return ()  # empty, triggers `if not parts:` branch
-
-            class FakePath:
-                def resolve(self):
-                    return self
-
-                def relative_to(self, _other):
-                    return FakeRel()
-
-            # Should return None, but importantly executes the `if not parts:` line
-            self.assertIsNone(
-                layout.module_name_for(FakePath())  # type: ignore[arg-type]  # deliberate fake
-            )
-
-    def test_multiple_source_roots_mixed_mapping(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # Mixed mapping: default '' -> src, plus named package 'pkg2' in lib2
-            (root / "pyproject.toml").write_text(textwrap.dedent("""
-                    [tool.setuptools]
-                    package-dir = {"" = "src", "pkg2" = "lib2"}
-                    """).strip())
-            (root / "src" / "alpha").mkdir(parents=True)
-            (root / "lib2" / "pkg2").mkdir(parents=True)
-            f1 = root / "src" / "alpha" / "beta.py"
-            f2 = root / "lib2" / "pkg2" / "mod.py"
-            f1.write_text("pass\n")
-            f2.write_text("pass\n")
-
-            layout = ProjectLayout.discover(root)
-            # Ensure both source roots recognized
-            self.assertTrue((root / "src").resolve() in layout.source_roots)
-            self.assertTrue((root / "lib2").resolve() in layout.source_roots)
-
-            # module names relative to their respective roots
-            self.assertEqual(layout.module_name_for(f1), "alpha.beta")
-            self.assertEqual(layout.module_name_for(f2), "pkg2.pkg2.mod")
-
-    def test_source_root_fallback_on_copy(self) -> None:
-        """
-        Test that ProjectLayout correctly identifies the source root when running on a copy
-        of the source tree (e.g. 'cleaned' dir) that mirrors the structure of a configured
-        source root (e.g. 'src'), even when pyproject.toml points to the original 'src'.
-        """
-        import shutil
-
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # Setup standard src-layout project
-            (root / "pyproject.toml").write_text(textwrap.dedent("""
-                    [tool.setuptools]
-                    package-dir = {"" = "src"}
-                    """).strip())
-
-            src_dir = root / "src"
-            pkg_dir = src_dir / "my_pkg"
-            pkg_dir.mkdir(parents=True)
-            (pkg_dir / "__init__.py").touch()
-
-            # Create a module in src
-            mod_src = pkg_dir / "module.py"
-            mod_src.write_text("x = 1\n")
-
-            # Create a 'cleaned' directory that mirrors src (simulating towel dry output)
-            cleaned_dir = root / "cleaned"
-            shutil.copytree(src_dir, cleaned_dir)
-
-            # The file we are analyzing is in the cleaned directory
-            mod_cleaned = cleaned_dir / "my_pkg" / "module.py"
-
-            # Discover layout starting from the cleaned file
-            # This should find the project root (via pyproject.toml)
-            # And then realize that 'cleaned' corresponds to the 'src' source root
-            layout = ProjectLayout.discover(mod_cleaned)
-
-            # Verify project root is correct
-            self.assertEqual(layout.project_root, root.resolve())
-
-            # Verify module name is correct (should be my_pkg.module, NOT module)
-            # If fallback fails, it might treat cleaned/my_pkg as the root and return 'module'
-            name = layout.module_name_for(mod_cleaned)
-            self.assertEqual(name, "my_pkg.module")
+from towel.changes import apply_changes
+from towel.project_layout import find_project_root, is_package_dir, load_pyproject, package_chain
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_the_nearest_packaging_marker_is_the_root(tmp_path: Path) -> None:
+    for marker in ("pyproject.toml", "setup.cfg", "setup.py"):
+        project = tmp_path / marker.replace(".", "_")
+        module = project / "src" / "pkg" / "mod.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("x = 1\n")
+        (project / marker).write_text("")
+        assert find_project_root(module) == project.resolve()
+        assert find_project_root(module.parent) == project.resolve()
+
+
+def test_without_a_marker_a_package_is_rooted_above_its_top(tmp_path: Path) -> None:
+    """A VCS root does not establish ``sys.path``; classic package ancestry does."""
+    (tmp_path / ".git").mkdir()
+    package = tmp_path / "work" / "pkg" / "sub"
+    package.mkdir(parents=True)
+    for directory in (package, package.parent):
+        (directory / "__init__.py").write_text("")
+    (package / "m.py").write_text("x = 1\n")
+    assert find_project_root(package / "m.py") == (tmp_path / "work").resolve()
+    plain = tmp_path / "scripts"
+    plain.mkdir()
+    assert find_project_root(plain) == plain.resolve()
+
+
+def test_a_malformed_pyproject_is_read_as_empty_and_said_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert load_pyproject(tmp_path) == {}
+    (tmp_path / "pyproject.toml").write_text("this = not = valid [[\n")
+    with caplog.at_level(logging.WARNING, logger="towel"):
+        assert load_pyproject(tmp_path) == {}
+    assert "could not be parsed" in caplog.text
+    (tmp_path / "pyproject.toml").write_text("[tool.black]\nline-length = 79\n")
+    assert load_pyproject(tmp_path) == {"tool": {"black": {"line-length": 79}}}
+
+
+def test_a_package_is_a_directory_holding_an_initializer(tmp_path: Path) -> None:
+    file_path = tmp_path / "not_a_dir.py"
+    file_path.write_text("pass\n")
+    assert not is_package_dir(file_path)
+    package = tmp_path / "pkg"
+    package.mkdir()
+    assert not is_package_dir(package)
+    (package / "__init__.py").write_text("")
+    assert is_package_dir(package)
+    inner = package / "inner"
+    inner.mkdir()
+    (inner / "__init__.py").write_text("")
+    assert package_chain(inner / "m.py") == [inner, package]
+    assert package_chain(tmp_path / "m.py") == []
+
+
+@pytest.mark.parametrize("packaged", [False, True])
+def test_vcs_root_does_not_control_crossfile_imports(tmp_path: Path, packaged: bool) -> None:
+    (tmp_path / ".git").mkdir()
+    target = tmp_path / "consumer"
+    target.mkdir()
+    if packaged:
+        (target / "__init__.py").write_text("")
+    body = "    y=x+1\n    z=y*2\n    return z\n"
+    a, b = target / "a.py", target / "b.py"
+    a.write_text("def first(x):\n" + body)
+    # Two top-level modules share nothing that ships them together unless
+    # one already imports the other.
+    b.write_text(("" if packaged else "import a\n") + "def second(x):\n" + body)
+    imports = (
+        "from consumer.a import first; from consumer.b import second"
+        if packaged
+        else "from a import first; from b import second"
+    )
+    command = [sys.executable, "-c", imports + "; print(first(2),second(2))"]
+    cwd = tmp_path if packaged else target
+    before = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)
+    engine = UnificationRefactorEngine(min_lines=2, cross_module_helpers=True)
+    proposal = engine.analyze_files([str(a), str(b)], progress="none")[0]
+    apply_changes(engine.plan_refactoring(proposal))
+    after = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)
+    assert before.stdout == after.stdout == "6 6\n"

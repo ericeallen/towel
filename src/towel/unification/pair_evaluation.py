@@ -108,7 +108,6 @@ from .import_graph import (
     ImportChange,
     host_has_stub,
     import_change,
-    layout_is_known,
     relative_import_levels,
     relative_imports_resolve_alike,
     would_create_import_cycle,
@@ -1443,9 +1442,10 @@ class PairEvaluation(
         A helper shared across modules is refused when a participating module
         declares a global, when a relative import the helper runs would name
         a different module from some participating module
-        (``relative_imports_resolve_alike``), when the project's layout is
-        unknown, or when the import would close a cycle that no other
-        participating module can host instead.
+        (``relative_imports_resolve_alike``), when no participating module can
+        be imported by all the others as the program's own imports show
+        (``ImportModel.spelling``), or when the import would close a cycle
+        that no other participating module can host instead.
         """
         canonical_file = home.file_path
         participating = {canonical_file} | {
@@ -1464,9 +1464,6 @@ class PairEvaluation(
         ):
             self._debug_reject(RejectReason.RELATIVE_IMPORT_ACROSS_PACKAGES, pair)
             return None
-        if not layout_is_known(canonical_file, self.import_graph):
-            self._debug_reject(RejectReason.UNKNOWN_LAYOUT, pair)
-            return None
         # The helper lives in ``canonical_file`` and every other participating
         # module imports it. When that closes an import cycle, a plain
         # module-level helper may move to another participating module that
@@ -1474,8 +1471,24 @@ class PairEvaluation(
         candidates = [canonical_file]
         if home.insert_into_class is None and home.insert_into_function is None:
             candidates += sorted(participating - {canonical_file})
+        # Each other module must import the host by a name the program's own
+        # imports show to work where the program runs (docs/DECISIONS.md,
+        # "Import names come from the program"); a host no import is known to
+        # reach from every borrower is never taken.
+        program = self.import_graph.program_for(Path(canonical_file))
+        importable = [
+            candidate
+            for candidate in candidates
+            if all(
+                program.spelling(Path(borrower), Path(candidate)) is not None
+                for borrower in participating - {candidate}
+            )
+        ]
+        if not importable:
+            self._debug_reject(RejectReason.UNPROVEN_IMPORT, pair)
+            return None
         refusal: Optional[RejectReason] = None
-        for candidate in candidates:
+        for candidate in importable:
             if would_create_import_cycle(candidate, participating, self.import_graph):
                 continue
             # The other modules would import the helper through the host's

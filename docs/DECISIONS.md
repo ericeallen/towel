@@ -254,6 +254,186 @@ The costs, accepted:
 
 *Status: being implemented on the `audit-1772` branch; not yet released.*
 
+## 2026-09-23: How the import model decides, and when a problem refuses
+
+This refines the previous entry, which is now implemented as
+`src/towel/import_model.py`. Measured against runtime oracles, the literal
+rules reproduced some of the defects they were written to prevent, so the
+model follows the import system's own rules:
+
+- A built-in or frozen module cannot be shadowed by a project file of its
+  name, and a regular package or module anywhere on the path beats a
+  namespace directory of the same name.
+- A stray `src/__init__.py` does not make `src` a package unless some import
+  uses it as one.
+- Only an import that actually runs attests a name. Imports under
+  `TYPE_CHECKING`, inside `try`/`except ImportError`, or in a file that
+  changes `sys.path` do not count.
+- A package's `__main__.py` is never offered as a host, since importing it
+  runs the program. Nor is a module below a directory without `__init__.py`
+  inside a regular package, which setuptools' `find_packages` leaves out of
+  the wheel.
+
+**Import problems refuse the run only where they touch the code being
+refactored.** Read literally, "Well-formed input" refuses every run whose
+program has an import problem. Over the 141-project corpus that refuses 27
+projects, almost all over files outside the code being refactored:
+
+- a stale `build/lib/anyio` beside anyio's source;
+- deliberately odd test data in sphinx's `tests/roots` and black's
+  `tests/data`;
+- an example importing a module that no longer exists.
+
+Soundness does not need that. The model declines exactly the names a
+problem involves, and a problem in test data cannot change how the package
+being refactored is named. So a problem that involves the package being
+refactored refuses the run before anything is written: anyio's stale copy
+of itself must be excluded or deleted first. A problem anywhere else is
+listed with its `--exclude` remedy, and the run continues. The owner chose
+this as the friendliest policy that keeps soundness.
+
+**The directory rule stays strict.** A new import may enter a directory only
+where its own side already imports from it. beautifulsoup4's wheel leaves out
+`bs4/tests`: without the rule, 10 of 40 sampled import pairs broke the
+installed wheel, and with it none did. The price, as the share of candidate
+module pairs that would otherwise have been spelled, is 44% for networkx,
+31% for tornado, 27% for beautifulsoup4, 7% for sphinx, and none for
+waitress, attrs or pytest. Most of it is test code borrowing across test
+directories inside a package. Relaxing the rule for test code would accept
+the risk that only part of a test tree ships, and the owner kept it strict.
+
+*Status: the model is implemented; wiring it into import naming, host
+choice, the cycle and import-effect checks, renaming and the CLI is in
+progress on the `audit-1772` branch. Not yet released.*
+
+## 2026-09-23: Cross-module extraction stays on for the third audit
+
+Most of the P1s the first two audit rounds found were in cross-module
+extraction: import naming, cycles and import-time effects, hosts that need a
+dependency or do not ship, stubs, shadowed builtins, relative imports inside
+moved code, and scripts run by path. The latest is a builtin patched into
+the borrower alone (`mock.patch("m.len", create=True)`), which a helper
+hosted elsewhere does not see. Cross-module helpers are about 14% of the
+helpers on click, rich, packaging and pygments.
+
+The owner kept cross-module extraction on by default. The stop rule of
+2026-09-22 stands: if the third from-scratch audit finds cross-module P1s,
+1.772 ships with cross-module extraction off by default, behind a flag. The
+builtin case is being fixed by passing the builtins that moved code reads to
+a cross-module helper from each call site, so each is looked up where the
+original code looked it up. *Superseded the same day; see
+"Cross-module extraction is opt-in" below.*
+
+## 2026-09-23: Cross-module extraction is opt-in
+
+This supersedes the previous entry. Cross-module extraction is enabled only
+by an explicit flag, `--cross-module` (a matching engine option for library
+use). The owner's reason is the user's point of view. Someone who runs
+Towel to deduplicate a package may be surprised when it starts adding
+imports between their modules, and an explicit opt-in removes the surprise.
+It also confines the machinery behind most of the first two rounds' P1s
+(import naming, cycles and import-time effects, hosts that must ship, stubs,
+shadowed and patched builtins, scripts run by path) to runs that asked for
+it.
+
+Without the flag, a helper always lives in the module whose code it
+replaces, and Towel writes no import of a project module that runs. It still
+adds a type-only import under `if TYPE_CHECKING:` when a helper's annotation
+needs a type another module defines. The owner kept those, in a
+same-day amendment to this entry, because they never run and so cannot
+change behaviour, while dropping them would cost annotations their
+precision. The import model spells them, built only when one is needed.
+Where it cannot spell a name, the annotation leaves the name written out or
+falls back, and Towel never guesses. Without the flag an import problem never
+refuses a run and is not reported, since nothing that runs depends on it.
+
+The release corpus runs with the flag on for every project, to catch bugs in
+the mode that needs it most. A project may turn it off only through its
+manifest entry, with the reason recorded there, and the corpus report lists
+every such exception. The third from-scratch audit covers both modes. The
+stop rule applies to what it probes in each; what to do about a P1 found
+only with the flag on is for the owner to decide when it arises.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-23: A helper never takes a builtin as a parameter
+
+A builtin that moved code reads resolves in the namespace of the module the
+code runs in. A cross-module helper therefore reads `len` in its host, while
+the original read it in the borrower. The difference shows only where the
+two modules' `len` can differ. It can differ if one module shadows or
+rebinds the name, or if a test patches it into one module alone:
+`mock.patch("pkg.exports.len", ..., create=True)` is the documented `mock`
+idiom for a builtin. Passing each builtin into the helper would preserve
+that, but a helper that takes `len` or `print` as a parameter would surprise
+anyone reading it, and the owner ruled it out.
+
+A cross-module pair is declined instead, wherever the program gives evidence
+that a builtin its moved code reads can differ between the participating
+modules. The evidence is either of two things:
+
+- the name is shadowed or rebound in one of them, statically (a definition,
+  import, assignment, `global` rebinding, or a star import that could bind
+  it) or through the module's own namespace (`globals()`, `vars()`, or
+  `setattr` on the module);
+- the project's own code or tests patch that builtin into one of them, by
+  `mock.patch` or `patch.object` (with or without `create=True`), or by
+  pytest's `monkeypatch.setattr` or `setitem`.
+
+Otherwise the helper reads the builtin in its host, as any function does,
+and takes no builtin parameter. This applies only with `--cross-module`. A
+helper in the module whose code it replaces reads the same namespace the
+code always did.
+
+What remains is an assumption of the opt-in mode, stated in the
+limitations: code outside the project that patches a builtin into one of its
+modules is not seen.
+
+*Status: implemented on the `audit-1772` branch; not yet released. The same
+day the owner made this the default rather than a prohibition; see "A name
+is its binding, not its spelling" below.*
+
+## 2026-09-23: A name is its binding, not its spelling
+
+Extraction moves code between environments, so every free variable of a
+pair is a question of what it is bound to at each site and whether the
+helper would see the same binding. The owner adopted this rule as the
+default:
+
+- **The same binding everywhere, the helper included.** The helper reads
+  the name directly. Examples are a global of the same module, read by a
+  helper in that module, and a builtin that no participating module shadows,
+  rebinds or has patched.
+- **Bound at each site to the corresponding thing.** This covers each
+  enclosing function's own local, parameter or closure variable, and a
+  module name in two different modules. The helper takes the name as an
+  ordinary parameter, and each call site passes its own. This is how
+  extraction treats free variables: sound, and unsurprising, since a helper
+  takes the variables it uses. A parameter is evaluated at the call, while
+  the original read the name where it used it, so the existing checks for
+  rebinding in between (thunks, `module_data_lookup`, the closure guards)
+  choose between eager, lazy and declining.
+- **Bound to different kinds of thing at the two sites**, such as local at
+  one and global at the other. The blocks differ at that name, and it is
+  treated as any difference is: parameterized where that is safe, declined
+  otherwise. A user global at one site against a local at the other is
+  declined today, as `module_data_lookup`.
+
+Builtins differ only in the second and third cases. Passing one is correct
+but surprising, so by default a builtin is read directly only where it is
+the builtin at every site and nothing says it may differ; otherwise the pair
+is declined. A builtin at one site against a local of the same spelling at
+the other (`len` in `first`, a parameter `len` in `second`) is such a
+difference, and is declined.
+
+**`--parameterize-builtins` opts out of that default.** With it, in exactly
+the cases the default declines, each call site passes its own binding of the
+builtin as a parameter, so behaviour is preserved. It never makes a builtin
+a parameter where reading it directly is already sound. The owner asked for
+it so that a user who wants those extractions can have them explicitly.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
+
 ## 2026-09-22: Checked with the project's own checker, as configured
 
 A candidate is verified by the checker the project configures, exactly as the

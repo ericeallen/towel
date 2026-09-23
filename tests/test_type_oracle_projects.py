@@ -177,7 +177,7 @@ def test_cross_file_extraction_keeps_verified_annotations(
             f"    return total * {multiplier}\n"
         )
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        min_lines=2, reuse_existing_functions=False, type_oracle=oracle, cross_module_helpers=True
     )
     proposals = engine.analyze_directory(str(package), progress="none")
     assert proposals

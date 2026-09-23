@@ -126,6 +126,7 @@ def _dry(target: Path, output: Path) -> subprocess.CompletedProcess[str]:
             "none",
             "--no-types",
             "--no-format",
+            "--cross-module",
         ],
         capture_output=True,
         text=True,
@@ -235,7 +236,15 @@ def test_a_checked_run_out_of_place_accepts_what_the_run_in_place_accepts(tmp_pa
     )
     in_place = tmp_path / "in_place"
     shutil.copytree(original, in_place)
-    typed = ["--no-interactive", "--progress", "none", "--no-format", "--min-lines", "3"]
+    typed = [
+        "--no-interactive",
+        "--progress",
+        "none",
+        "--no-format",
+        "--cross-module",
+        "--min-lines",
+        "3",
+    ]
     command = [sys.executable, "-m", "towel.cli", "dry"]
     ran = subprocess.run(
         [*command, str(in_place / "pkg"), str(in_place / "pkg"), *typed],

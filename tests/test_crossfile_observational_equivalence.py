@@ -13,7 +13,7 @@ class TestCrossfileObservationalEquivalence(unittest.TestCase):
         from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
         from towel.unification.refactor_engine import UnificationRefactorEngine
 
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=4, cross_module_helpers=True)
         tester = CrossFileEquivalenceTester(engine)
         results = tester.test_all_projects("test_examples_crossfile", verbose=False)
 

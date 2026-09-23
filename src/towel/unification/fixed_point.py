@@ -56,8 +56,8 @@ from typing import (
     TypeVar,
 )
 from .defaults import DEFAULT_MAX_ITERATIONS
-from .exceptions import CheckerUnavailableError, RefactoringError, UnsupportedLayoutError
-from .models import RefactoringProposal, RejectReason, TerminationReason
+from .exceptions import CheckerUnavailableError, RefactoringError
+from .models import RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
@@ -82,7 +82,7 @@ from ..filesystem import (
     staged_changes,
     staged_project,
 )
-from ..project_layout import ProjectLayout, find_project_root
+from ..project_layout import find_project_root
 from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
 
@@ -124,35 +124,22 @@ class RunReport:
     declined, by ``RejectReason``; a pair that only repeated another pair's
     proposal is not counted, since nothing was lost. ``declined_proposals``
     counts the proposals built but not applied, by ``DeclineReason``, each
-    heard once however often the run reconsidered it. ``layout_refusal`` is
-    what the layout reader said when some pair was declined because the
-    project's packaging cannot be modeled, which leaves no helper that can be
-    shared across its modules.
+    heard once however often the run reconsidered it.
     """
 
     declined_pairs: Mapping[str, int] = field(default_factory=dict)
     declined_proposals: Mapping[DeclineReason, int] = field(default_factory=dict)
-    layout_refusal: Optional[str] = None
 
 
 _Reason = TypeVar("_Reason", bound=str)
 
 
 def counted_reasons(counts: Mapping[_Reason, int]) -> str:
-    """``reason count`` for each reason, most frequent first: ``unknown_layout 1``."""
+    """``reason count`` for each reason, most frequent first: ``import_cycle 1``."""
     return ", ".join(
         f"{reason} {count}"
         for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     )
-
-
-def _layout_refusal(path: Path) -> Optional[str]:
-    """What discovery says about the layout around ``path``, when it cannot model it."""
-    try:
-        ProjectLayout.discover(path)
-    except UnsupportedLayoutError as error:
-        return str(error)
-    return None
 
 
 class FixedPointDrivers(Materialization):
@@ -166,7 +153,6 @@ class FixedPointDrivers(Materialization):
     # the latest reason; and what its last whole analysis declined.
     _declined: Dict[str, DeclineReason] = {}
     _last_declined_pairs: Dict[str, int] = {}
-    _layout_refused_in: Optional[Path] = None
 
     @property
     def run_report(self) -> RunReport:
@@ -174,18 +160,11 @@ class FixedPointDrivers(Materialization):
         proposals: Dict[DeclineReason, int] = {}
         for reason in self._declined.values():
             proposals[reason] = proposals.get(reason, 0) + 1
-        refused = self._layout_refused_in
-        return RunReport(
-            dict(self._last_declined_pairs),
-            proposals,
-            None if refused is None else _layout_refusal(refused),
-        )
+        return RunReport(dict(self._last_declined_pairs), proposals)
 
     def _note_analysis(self, analyzed: Path, reporter: Optional["_ApplyProgress"] = None) -> None:
         """Keep what a whole analysis of ``analyzed`` declined, for the run's report."""
         self._last_declined_pairs = dict(self._pair_rejections)
-        if self._last_declined_pairs.get(str(RejectReason.UNKNOWN_LAYOUT)):
-            self._layout_refused_in = Path(self._origin_of(str(analyzed)))
         if reporter is not None and self._last_declined_pairs:
             reporter.detail(
                 f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
@@ -213,7 +192,7 @@ class FixedPointDrivers(Materialization):
 
     def _begin_counting_checker_failures(self) -> None:
         self._unchecked, self._unchecked_reason = frozenset(), ""
-        self._declined, self._last_declined_pairs, self._layout_refused_in = {}, {}, None
+        self._declined, self._last_declined_pairs = {}, {}
 
     def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
         """Raise when nothing was applied and the checker failed on some proposal.
@@ -614,6 +593,15 @@ class FixedPointDrivers(Materialization):
         inner_oracle = self._type_run_oracle
         root = find_project_root(origin)
         with staged_project(root, origin, output, limit=MAXIMUM_FILES) as stage:
+            # Names are the program's, read from the project itself rather
+            # than from its copy (``ProgramImports``). A run that may share a
+            # helper across modules reads them now, before any pair is judged
+            # or a worker forked; one that may not, only when a question needs
+            # them: what an existing import binds, or how to spell the
+            # type-only import a helper's annotation needs.
+            self.import_graph.begin_run(stage.origin_root, stage.root)
+            if self.cross_module_helpers:
+                self.import_graph.program_for(stage.target)
             if inner_oracle is not None:
                 # Only the target: the rest of the stage is the original, byte
                 # for byte, and restating it to the checker would make it
@@ -643,6 +631,7 @@ class FixedPointDrivers(Materialization):
                 # The stage is about to go; nothing may keep checking against it.
                 self._type_run_oracle = inner_oracle
                 self._output_origin = None
+                self.import_graph.begin_run()
 
     def _apply_until_fixed_point(
         self,

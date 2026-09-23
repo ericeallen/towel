@@ -53,8 +53,12 @@ def _python_files(root: Path) -> Dict[str, str]:
 
 
 def _refactor(target: Path) -> Tuple[int, Mapping[str, int]]:
-    """Refactor ``target`` in place, a module or a package; applied count and declines by reason."""
-    engine = UnificationRefactorEngine(min_lines=3)
+    """Refactor ``target`` in place, a module or a package; applied count and declines by reason.
+
+    A package's modules share helpers only on request (``cross_module_helpers``),
+    which its cases make; a module is refactored in the default mode.
+    """
+    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=target.is_dir())
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         if target.is_dir():
             results, _ = engine.refactor_directory_to_fixed_point(

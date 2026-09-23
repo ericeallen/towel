@@ -42,8 +42,19 @@ class CheckerUnavailableError(RefactoringError):
 class UnsupportedLayoutError(TowelError, ValueError):
     """The project's packaging layout is one Towel does not model.
 
-    Raised by layout discovery for a configuration whose import names it
-    cannot infer safely. Still a ``ValueError`` for callers that catch that.
+    Nothing raises it since 1.772: module names come from the program's own
+    imports (``towel.import_model``), and no packaging layout is read. It is
+    kept so that callers catching it keep working, and will be removed in a
+    later release. Still a ``ValueError`` for callers that catch that.
+    """
+
+
+class AmbiguousImportsError(TowelError):
+    """The program's imports do not name the modules of the refactoring target unambiguously.
+
+    A helper shared across modules is imported by the name the program's own
+    imports give its host, so a run that may share one refuses before it
+    writes anything when those imports leave the target's names in doubt.
     """
 
 

@@ -12,6 +12,7 @@ This module ensures that the refactoring output remains stable over time by:
 import sys
 import ast
 import unittest
+import shutil
 import tempfile
 import re
 from pathlib import Path
@@ -342,7 +343,9 @@ class TestCrossFileRegression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test fixtures."""
-        cls.engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        cls.engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=3, cross_module_helpers=True
+        )
         cls.tester = CrossFileEquivalenceTester(cls.engine)
         cls.crossfile_examples = project_root / "test_examples_crossfile"
         cls.expected_output = project_root / "test_examples_crossfile_expected_output"
@@ -421,9 +424,15 @@ class TestCrossFileRegression(unittest.TestCase):
             self.assertTrue(golden_dir.is_dir(), f"no cross-file golden for {project_dir.name}")
             with tempfile.TemporaryDirectory(prefix="towel-regression-") as directory:
                 out = Path(directory) / project_dir.name
-                engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+                # A directory of its own, as a user's project sits: here the
+                # golden copy beside it would make every name ambiguous.
+                source = Path(directory) / "source" / project_dir.name
+                shutil.copytree(project_dir, source)
+                engine = UnificationRefactorEngine(
+                    max_parameters=5, min_lines=3, cross_module_helpers=True
+                )
                 results, reason = engine.refactor_directory_to_fixed_point(
-                    str(project_dir), str(out), progress="none"
+                    str(source), str(out), progress="none"
                 )
                 self.assertEqual(reason, "fixed_point", project_dir.name)
                 self.assertTrue(results, f"{project_dir.name}: nothing was refactored")

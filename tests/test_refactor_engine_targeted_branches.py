@@ -247,7 +247,9 @@ def consumer(data):
                 encoding="utf-8",
             )
 
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+            engine = UnificationRefactorEngine(
+                max_parameters=5, min_lines=1, cross_module_helpers=True
+            )
 
             helper_func = ast.parse("def helper(value):\n    return value\n").body[0]
             assert isinstance(helper_func, ast.FunctionDef)

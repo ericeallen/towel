@@ -238,11 +238,14 @@ def test_invalid_rename_file_has_failure_status(tmp_path: Path, contents: str) -
     assert source.read_text() == HELPER
 
 
-def test_import_layout_flags_shared_by_dry_and_preview() -> None:
-    """Both subcommands expose the shared --prefer-absolute-imports / --pep420 toggles.
+def test_the_retired_import_layout_flags_still_parse_and_say_they_do_nothing(
+    tmp_path: Path,
+) -> None:
+    """--prefer-absolute-imports and --pep420 chose an import's spelling from packaging metadata.
 
-    Guards the _add_import_layout_flags extraction: a regression in the shared
-    helper (or a missing call) would drop the flags from one subcommand.
+    Every import is now spelled as the program's own imports show it works,
+    so they decide nothing. Scripts that pass them keep working; the help no
+    longer lists them, and a run given one says it had no effect.
     """
     import argparse
 
@@ -257,12 +260,19 @@ def test_import_layout_flags_shared_by_dry_and_preview() -> None:
     assert parser.parse_args(["--pep420"]).pep420 is True
     assert parser.parse_args(["--no-pep420"]).pep420 is False
 
-    # And both real subcommands accept them (they call the shared helper).
     for command in ("dry", "preview"):
         args = [command, "src"] + (["out"] if command == "dry" else [])
         result = invoke(args + ["--pep420", "--no-prefer-absolute-imports", "--help"])
-        assert "--prefer-absolute-imports" in result.stdout
-        assert "--pep420" in result.stdout
+        assert result.status == 0
+        assert "--prefer-absolute-imports" not in result.stdout
+        assert "--pep420" not in result.stdout
+
+    module = tmp_path / "m.py"
+    module.write_text("x = 1\n", encoding="utf-8")
+    result = invoke(["preview", str(module), "--pep420", "--progress", "none"])
+    assert result.status == 0, result
+    assert "--pep420 no longer has any effect" in result.stderr
+    assert "no longer has any effect" not in invoke(["preview", str(module)]).stderr
 
 
 @pytest.mark.parametrize(

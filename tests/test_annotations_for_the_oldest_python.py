@@ -226,7 +226,9 @@ def test_a_project_declaring_python_39_imports_on_python_39_after_a_typed_run(
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "a.py").write_text(A.lstrip(), encoding="utf-8")
     (package / "b.py").write_text(B.lstrip(), encoding="utf-8")
-    result = invoke(["dry", str(root), str(root), "--no-interactive", "--progress", "none"])
+    result = invoke(
+        ["dry", str(root), str(root), "--no-interactive", "--cross-module", "--progress", "none"]
+    )
     assert result.status == 0, result
     assert "__extracted_func_0" in (package / "a.py").read_text(encoding="utf-8")
     environment = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}

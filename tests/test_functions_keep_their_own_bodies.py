@@ -85,7 +85,7 @@ def _refactor_module(path: Path) -> int:
 
 
 def _refactor_directory(target: Path) -> int:
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(target), str(target), progress="none"

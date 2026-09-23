@@ -56,6 +56,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             min_lines=min_lines,
             parameterize_constants=True,
             reuse_existing_functions=reuse_existing_functions,
+            cross_module_helpers=True,
         )
 
     def test_value_producing_mismatch_is_rejected(self):
@@ -1163,6 +1164,7 @@ class TestCrossFileImports(unittest.TestCase):
                 parameterize_constants=True,
                 prefer_absolute_imports=True,
                 reuse_existing_functions=False,  # the helper import is under test
+                cross_module_helpers=True,
             )
             props = engine.analyze_directory(str(pkg), recursive=False)
             self.assertTrue(props, "Expected a cross-file proposal between a.py and b.py")
@@ -1210,7 +1212,10 @@ class TestCrossFileImports(unittest.TestCase):
                 orig_b = [b_mod.fb(i) for i in (0, 1, 5)]
 
                 engine = UnificationRefactorEngine(
-                    max_parameters=5, min_lines=2, parameterize_constants=True
+                    max_parameters=5,
+                    min_lines=2,
+                    parameterize_constants=True,
+                    cross_module_helpers=True,
                 )
                 props = engine.analyze_directory(str(base), recursive=False)
                 self.assertTrue(

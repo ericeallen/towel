@@ -90,8 +90,9 @@ describe belong to that version.
   `BearerToken`, fixture `xf15`, broke when a helper was hoisted into a base
   class defined in another module). By default a builtin is never a
   parameter, since a call such as `helper(rows, len)` would surprise every
-  reader, so a helper that a site in another module calls reads its
-  builtins bare in its host's namespace. That is the lookup each site made only while no
+  reader, so a helper that a site in another module calls, which only a
+  `--cross-module` run writes, reads its builtins bare in its host's
+  namespace. That is the lookup each site made only while no
   participating module holds the name, and the pair is declined
   (`builtin_may_differ_by_module`) wherever the program shows one may: a
   statement of the module's own scope binds the name, a function of it
@@ -323,10 +324,46 @@ addresses:
 
 ### A cross-file helper adds an import of its host module
 
-A helper shared across modules lives in one of them and the others import it.
+Sharing a helper across modules is opt-in (`--cross-module`,
+`cross_module_helpers`). By default only duplicates within one module are
+paired, pairs across modules are neither formed nor counted against the pair
+budget, and no import between the project's modules that runs is ever
+written. The one import of a project module the default writes is the
+type-only one a helper's annotation needs, under `if TYPE_CHECKING:`, which
+never runs; it is spelled by the rules below, and where none applies the
+annotation keeps the checker's full name.
+
+With `--cross-module`, a helper shared across modules lives in one of them
+and the others import it, spelled as the program's own imports show that
+import works (docs/DECISIONS.md, "Import names come from the program"):
+between two modules of one package the relative import, or the absolute one
+where the importing module already spells its own package absolutely; across
+top-level packages an absolute import only where the importing package
+already imports the other; and into a directory only where the importing
+side already imports from it, so `bs4` never borrows from `bs4/tests`, which
+its wheel leaves out. A candidate host some borrower cannot import that way
+is never taken, and a pair none survives is declined (`unproven_import`).
+Names are read from every Python file under the project root, but not from a
+directory `--exclude` names, which is how a stray copy is set aside, nor from
+the directories every scan skips or behind a symbolic link; what an import
+that enters one runs is then unknown, and a host whose import would enter
+one is not taken. The costs, accepted by the owner: sibling packages that
+never import each other share nothing, and nor do subpackages that never
+import from each other (hostile fixture `xf23`); a directory of scripts that
+import nothing local gets no cross-file helpers; and a name the tree leaves
+ambiguous, such as a stale `build/lib/alpha` beside `src/alpha`, or a
+package this interpreter can import from elsewhere, gets none until the
+stray copy is excluded. Towel runs with the interpreter it was started with,
+which stands for the project's: run it in the project's own environment.
+Before it writes anything, a `--cross-module` run of `dry` or `preview`
+names every such problem with that remedy, and refuses the run when one
+concerns the package being refactored: a file it names lies under the
+target, or it concerns a top-level name located at or around the target.
+
 The host is chosen so that no import cycle closes, preferring a module the
 borrowers already import; when none qualifies, one borrower gains a new
-import edge. Towel does not know whether importing that module has
+import edge. Every import on the way is resolved as the program's import
+model resolves it, an ambiguous name to every place it could be. Towel does not know whether importing that module has
 requirements of its own: gunicorn's `workers/gtornado.py` raises at import
 time unless tornado is installed, and a helper hosted there made
 `workers/sync.py` import it, so environments without tornado could no longer
@@ -353,12 +390,14 @@ made by `importlib` or `__import__` is not seen at all.
 
 A distribution ships the packages its metadata names, not the repository, so
 a host is refused as well when its import would load a module of a
-top-level package the borrower's import does not already load, its own
-included (`new_top_level_package`): a helper hosted in `tests/test_b.py` that
-`zeta/a.py` imported made the installed `zeta.a` raise `ModuleNotFoundError`.
-Another participating module is then tried as host, so a test module that
-imports the package under test takes the helper from it, and a pair between
-the package and a module that never imports it is declined. What a
+top-level package the borrower does not already rely on
+(`new_top_level_package`): its own, one its import already loads, or one its
+package already imports at run time, the rule new imports are spelled by. A
+helper hosted in `tests/test_b.py` that `zeta/a.py` imported made the
+installed `zeta.a` raise `ModuleNotFoundError`. Another participating module
+is then tried as host, so a test module that imports the package under test
+takes the helper from it, and a pair between the package and a module that
+never imports it is declined. What a
 borrower "already loads" counts only the imports its top level certainly
 runs: an import in a function body, a branch or a `try` makes nothing
 present, and a borrower whose function imports the host lazily no longer
@@ -369,8 +408,9 @@ a module whose first line is a `#!` interpreter line, and one with a main
 guard anywhere in its own scope, `__name__ == "__main__"` either way round
 or opening an `and`. A module that runs code at import with no such sign
 of being a script is taken to be imported only. Run by path, the module's own
-directory is on `sys.path` in place of the source root above it: `python
-pkg/tool_b.py` finds `pkg` only where something else put it on the path.
+directory is on `sys.path` in place of the directory its package is imported
+from: `python pkg/tool_b.py` finds `pkg` only where something else put it on
+the path.
 Such a borrower gains an import only when a run by path already needed
 what it needs (`run_by_path_import`): when the imports it runs before its
 first definition already import that top-level package absolutely, or its
@@ -383,7 +423,9 @@ A type checker reads a module's stub in its place, so a host is refused as
 well when it has one (`host_has_stub`): a `.pyi` beside it, its stub under
 the project's `typings` directory, or a `<package>-stubs` directory for its
 top-level package that holds its stub, or that is not partial and so hides
-every module it omits. `from alpha.a import __extracted_func_0` against
+every module it omits. The stub is looked for under the name the program's
+imports give the host and under the one its package chain gives it, since
+mypy resolves even a relative import to an absolute name. `from alpha.a import __extracted_func_0` against
 `alpha/a.pyi` was an unknown symbol to pyright and a missing attribute to
 mypy (audit `k30`). Stub directories named only in a checker's
 configuration (`mypy_path`, pyright's `stubPath`) are not read.
@@ -832,8 +874,9 @@ the proposals it built and did not apply, by reason:
   `__private` name and the helper would live in another class, which
   changes name mangling. `cross_module_global_declaration`: a cross-file
   helper's participating modules include one whose functions declare
-  `global`. `unknown_layout`: the project's packaging layout cannot be
-  modeled, so no import can be written. `import_cycle`: every candidate
+  `global`. `unproven_import`: no participating module can be imported by
+  every other one in a way the program's own imports show to work (*A
+  cross-file helper adds an import of its host module*). `import_cycle`: every candidate
   host closes a static import cycle. `import_time_effects`: a cross-file
   helper's host module, which the borrower's import does not already
   load, would run code at import (*Import-time behavior*: a module that
@@ -901,13 +944,10 @@ formed pair:
   (networkx needs 9.25 million pairs, sphinx 8.45 million); the 2,000,000
   the release candidate first shipped cut both, and sphinx made 346
   refactorings instead of 413.
-- setuptools, Hatch, Flit, Poetry, and pdm layouts are read from their own
-  configuration. Any other build backend (for example ``flit_scm``) falls back
-  to conventional inference: a package or module named after the distribution,
-  in the project root or under ``src``. A project whose layout cannot be
-  resolved either way is refused for directory mode, and the ecosystem check
-  reports it as `UNSUPPORTED`. Poetry ``packages`` entries with ``to`` or glob
-  patterns, and a pdm ``package-dir`` pattern, are refused likewise.
+- No packaging configuration is read to name a module: setuptools, Hatch,
+  Flit, Poetry and pdm projects are named alike, from the imports their
+  modules and tests already make. A module no import reaches has no absolute
+  name, and is reached only by the relative imports of its own package.
 
 Set `DEBUG_PROPOSAL_REJECTIONS=1` to log the reason for each rejected pair
 (the `towel.rejections` logger, at DEBUG, on stderr).

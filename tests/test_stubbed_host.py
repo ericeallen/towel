@@ -97,7 +97,9 @@ def test_the_typed_project_still_checks_after_the_extraction(
         **{path: stub if text == "STUB" else text for path, text in stubs.items()},
     }
     _write(tmp_path, files)
-    engine = UnificationRefactorEngine(min_lines=3, annotate_helpers=False)
+    engine = UnificationRefactorEngine(
+        min_lines=3, annotate_helpers=False, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(tmp_path / "src" / "alpha"), str(tmp_path / "src" / "alpha"), progress="none"

@@ -55,20 +55,3 @@ def test_a_cycle_through_the_hosts_package_initializer_is_seen(tmp_path: Path) -
     tool = str(package / "vendor" / "tool.py")
     assert would_create_import_cycle(leaf, {tool}, ImportGraphCache())
     assert not would_create_import_cycle(tool, {leaf}, ImportGraphCache())
-
-
-def test_a_relocated_copy_resolves_its_own_absolute_imports_in_tree(tmp_path: Path) -> None:
-    # The refactored copy ``pkg-cleaned`` sits beside the original ``pkg``
-    # (an out-of-place output). ``from pkg.sub import X`` inside the copy
-    # must be an edge to the copy's own ``sub/__init__``, not the original's,
-    # where the helper import that closes the cycle does not exist.
-    for name in ("pkg", "pkg-cleaned"):
-        package = tmp_path / name
-        (package / "sub").mkdir(parents=True)
-        (package / "__init__.py").write_text("")
-        (package / "sub" / "__init__.py").write_text("class X: ...\n")
-        (package / "sub" / "mod.py").write_text("from pkg.sub import X\n")
-    copy = tmp_path / "pkg-cleaned"
-    assert would_create_import_cycle(
-        str(copy / "sub" / "mod.py"), {str(copy / "sub" / "__init__.py")}, ImportGraphCache()
-    )

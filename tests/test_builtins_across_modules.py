@@ -76,7 +76,8 @@ def _python_files(root: Path) -> Dict[str, bytes]:
 
 def _refactor(project: Path) -> Tuple[int, Mapping[str, int]]:
     """Refactor ``project/pkg`` in place; how many refactorings applied, and why pairs were declined."""
-    engine = UnificationRefactorEngine(min_lines=3)
+    # Every pair here spans modules, which is opt-in (docs/DECISIONS.md).
+    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(project / "pkg"), str(project / "pkg"), progress="none"
