@@ -513,6 +513,17 @@ where the evidence comes from:
   destinations are never used. Each mypy build imports the plugins afresh in a
   forked child, so a plugin that is slow to import (django-stubs sets Django
   up) costs that much on every check.
+- A project that configures no mypy is checked with mypy's defaults, as its
+  own `mypy` would check the same files: the bodies of functions without
+  annotations are not checked, an import mypy finds no types for (not
+  installed, or installed without stubs or `py.typed`) is an error, and a
+  module is named by its packages, not from explicit package bases. Two
+  files in directories that are not packages and share a name (a `conftest.py`
+  in each of two test directories) therefore refuse the typed run with mypy's
+  own message, as they refuse `mypy` itself; configuring mypy
+  (`explicit_package_bases`, `ignore_missing_imports`) is how such a project
+  says otherwise. Only the probes that infer a helper's types check untyped
+  function bodies, in a cache of their own.
 - A module that ships its own stub (`a.pyi` beside `a.py`) is checked through
   the stub, as mypy checks it: its importers see the stub, and the
   implementation itself is not checked by mypy unless the configuration's

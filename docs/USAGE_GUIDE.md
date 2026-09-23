@@ -176,7 +176,12 @@ that is not installed. The checker is the exception: a project that configures
 mypy or pyright is checked by that checker or not at all, so
 `type_oracle_for_project` raises `CheckerNotInstalled` when a configured one is
 not installed, rather than substitute another checker or none (pass
-`type_oracle=None` and `annotate_helpers=False` for an unverified run). Without a formatter the rendering is `ast.unparse`'s: one
+`type_oracle=None` and `annotate_helpers=False` for an unverified run). A
+project that configures neither is checked by mypy when it is installed, with
+mypy's defaults: the check is the one `mypy` itself makes of the same files,
+and only the probes that infer a helper's types also check the bodies of
+functions without annotations, where mypy otherwise reveals nothing but `Any`.
+Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
 
 The engine checks the original project before using its type oracle. If that

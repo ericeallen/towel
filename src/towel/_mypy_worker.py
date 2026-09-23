@@ -42,8 +42,48 @@ from mypy.modulefinder import matches_exclude
 from mypy.options import BuildType, Options
 from mypy.util import decode_python_encoding
 
+_PROBE_CACHE = "probes"
+"""The cache, inside the owned one, of the probes that check untyped defs.
 
-def _options(root: Path, config: str | None, cache: str, roots: Sequence[str]) -> Options:
+mypy abandons a module's cache entry when the options it was written under
+differ from the build's, and ``check_untyped_defs`` is an option of every
+module, ``builtins`` included. Checks and probes taking turns in one cache
+each rebuilt everything the other had built: six rounds of a revealed type, a
+subtype question and a candidate check over Towel's own source, without its
+configuration, took 12.9 s in one cache and 5.7 s in two.
+"""
+
+
+def _options(
+    root: Path, config: str | None, cache: str, roots: Sequence[str], *, probe: bool
+) -> Options:
+    """The options of one build: the project's own, but for what a probe needs beyond them.
+
+    A check (a complete build: the baseline, a candidate, the cold
+    confirmation) answers for the project, so it runs with the project's
+    options -- its configuration, or, where it configures no mypy, mypy's
+    defaults, which is what its own ``mypy`` says about the same files. Such a
+    project used to be checked with three settings forced on that inference
+    had wanted, and each changed the verdict. ``check_untyped_defs`` reported
+    errors inside functions without annotations and gave typed code the types
+    their assignments infer, where mypy sees ``Any``: dacite, clean under its
+    own ``mypy``, was refused for 53 errors in its tests.
+    ``ignore_missing_imports`` silenced the imports mypy finds no types for.
+    ``explicit_package_bases`` named each module from the project root rather
+    than from its packages, ``src/pkg/core.py`` as ``src.pkg.core`` and a test
+    as ``tests.test_core``, so neither a test's ``import pkg`` nor its import
+    of a helper module beside it found anything, and with the imports
+    silenced, an error in that test went unreported.
+
+    A probe (a sparse build: a revealed type, a subtype question) asks what
+    type an expression has, not whether the project checks. Inside a function
+    without annotations mypy answers ``Any`` for everything unless it checks
+    untyped defs, and so it does for an attribute such a function assigns,
+    wherever it is read: ``self.items = [1]`` in an unannotated ``__init__`` is
+    ``Any`` to every method. A probe of a project that configures no mypy
+    therefore checks them, in a cache of its own (see ``_PROBE_CACHE``). A
+    configured project's probes run with its own options, as its checks do.
+    """
     errors = io.StringIO()
     # A synthetic module target suppresses target discovery while parsing the
     # project's options. This API is present throughout mypy 1.x and 2.x. No
@@ -65,10 +105,9 @@ def _options(root: Path, config: str | None, cache: str, roots: Sequence[str]) -
     if errors.getvalue():
         raise ValueError(errors.getvalue().strip())
     options.build_type = BuildType.STANDARD
-    if config is None:
-        options.ignore_missing_imports = True
+    if probe and config is None:
         options.check_untyped_defs = True
-        options.explicit_package_bases = True
+        cache = os.path.join(cache, _PROBE_CACHE)
     # These settings describe where/how to execute or write, not type rules.
     # The checker is owned by Towel even when its rules come from the project.
     # A plugin is a type rule, not one of these, and stays configured.
@@ -90,11 +129,17 @@ def _options(root: Path, config: str | None, cache: str, roots: Sequence[str]) -
     # Pretty diagnostics read snippets from disk, but prospective sources and
     # probes exist only in memory and can extend beyond the physical file.
     options.pretty = False
+    # A check's sources come with the directories mypy searches for what they
+    # import, and the root is the working directory, searched after them, as
+    # in the project's own run. Searched first, the root answered a test's
+    # ``import helpers`` with a ``helpers.py`` of its own instead of the one
+    # beside the test. A probed module is given as text alone, so a probe is
+    # also given the root its module imports from.
     options.mypy_path = list(
         dict.fromkeys(
             [
                 *(str((root / path).resolve()) for path in options.mypy_path),
-                *roots,
+                *(roots if probe else ()),
             ]
         )
     )
@@ -214,6 +259,8 @@ def _record_paths(record: Path, paths: Sequence[str]) -> None:
         existing = b""
     if existing and not existing.endswith(b"\n"):
         record.write_bytes(existing[: existing.rfind(b"\n") + 1])
+    # A probe cache is made by the first build in it, which this precedes.
+    record.parent.mkdir(parents=True, exist_ok=True)
     with record.open("a", encoding="utf-8") as handle:
         handle.write("".join(json.dumps(path) + "\n" for path in paths))
 
@@ -510,8 +557,8 @@ def _request(request: object, cache: str) -> list[str]:
         raise ValueError("Invalid checker root or config")
     root = Path(root_value)
     os.chdir(root)
-    options = _options(root, config, cache, _strings(request.get("roots")))
     complete = request.get("complete") is True
+    options = _options(root, config, cache, _strings(request.get("roots")), probe=not complete)
     judged = _judged_by_the_project(options, root) if complete else None
     for excluded in _strings(request.get("excluded_paths")):
         path = Path(excluded)
@@ -523,7 +570,8 @@ def _request(request: object, cache: str) -> list[str]:
     replacements = _sources(request.get("sources"))
     sources = _build_sources(
         replacements,
-        _text_mypy_must_be_given(replacements, cache),
+        # The record describes the entries of the cache this build uses.
+        _text_mypy_must_be_given(replacements, options.cache_dir),
         options,
         root,
         complete,
