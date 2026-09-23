@@ -62,6 +62,7 @@ from .semantic_safety import (
     unbinds_external_name,
 )
 from .thunk_inlining import inline_leading_thunks
+from .typing_forms import ModuleText
 from .visitors import body_without_docstring
 
 from .builtins import CALL_ARGUMENT_BUILTINS
@@ -105,9 +106,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         """
         pair = template.pair
         cluster_renames: List[Dict[str, str]] = [{}, {}]
+        # Clustering scans the pair's own file, so both blocks are in its module.
+        module = ModuleText(pair.file_path, pair.source1)
         subst2 = self._unify_memoized(
-            [pair.block1_nodes, candidate.nodes],
-            cluster_renames,
+            [pair.block1_nodes, candidate.nodes], cluster_renames, (module, module)
         )
         if not subst2:
             return None

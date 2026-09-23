@@ -111,6 +111,7 @@ from .import_graph import (
     would_create_import_cycle,
 )
 from .thunk_inlining import inline_leading_thunks
+from .typing_forms import ModuleText
 from .substitution import Substitution
 from .visitors import FreeNameCollector, body_without_docstring
 
@@ -847,7 +848,11 @@ class PairEvaluation(
         hygienic_renames: List[Dict[str, str]] = [{}, {}]
         if debug_enabled:
             VALIDATION.debug("  Attempting unification...")
-        substitution = self._unify_memoized(blocks, hygienic_renames)
+        substitution = self._unify_memoized(
+            blocks,
+            hygienic_renames,
+            (ModuleText(pair.file_path, pair.source1), ModuleText(pair.file_path2, pair.source2)),
+        )
         if not substitution:
             self._reject(
                 pair,

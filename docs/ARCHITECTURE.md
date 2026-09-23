@@ -205,7 +205,13 @@ The result is a `Substitution` (in `substitution.py`): the template, the ordered
 parameters, and, per parameter, the argument expression at each call site and
 its kind. `unifier.py` refuses to parameterize a node that is not an
 `ast.expr` (a slice, a starred item, a whole f-string), because those are
-container syntax, not values.
+container syntax, not values. Nor does it parameterize what a tool reads
+where it stands (`static_positions.py`): a translation marker's message, or
+what a checker reads of a typing form, such as `cast`'s type or a
+`TypeVar`'s name. A form is whatever the block's module binds to typing's
+object, however it is imported (`typing_forms.py`), so `t.cast(Alpha, v)`
+after `import typing as t` is one and sqlglot's own `exp.cast(column, to)`
+is not.
 
 ## The soundness invariant
 
@@ -1178,6 +1184,7 @@ but the ideas and their names are from the literature.
 | Parse/analyze cache, pair-processor protocol | `pipeline.py` |
 | Loggers and settings | `diagnostics.py` (at `src/towel/`) |
 | Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py` |
+| What a tool reads where it stands, and what a block's callees denote among the typing forms | `static_positions.py`, `typing_forms.py` |
 | Pair pre-filter | `block_signature.py` |
 | Per-statement facts and the weak per-node memo | `statement_facts.py` |
 | Verification | `instantiation.py` |

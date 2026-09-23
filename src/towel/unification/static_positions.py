@@ -20,9 +20,10 @@ takes the message as ``__param_1`` and calls ``_(__param_1)`` leaves the
 catalogue without it, and the message is never translated again. Type
 checkers read typing forms the same way: ``TypeVar(__param_0)``,
 ``NamedTuple(__param_0, ...)``, ``cast(__param_0, value)`` in place of
-``cast("int", value)``, and ``Literal[__param_0]`` are rejected by mypy or
-pyright however the parameter is annotated. So a sub-expression a tool reads where it stands may
-not become a parameter, and blocks that differ in one are not duplicates.
+``cast("int", value)`` or ``cast(Alpha, value)``, and ``Literal[__param_0]``
+are rejected by mypy or pyright however the parameter is annotated. So a
+sub-expression a tool reads where it stands may not become a parameter, and
+blocks that differ in one are not duplicates.
 
 ``statically_read`` answers, per statement, which nodes are read that way
 and how strictly (``Pin``). Markers are recognized by the callee's name,
@@ -32,6 +33,13 @@ arguments, then keyword arguments, in order; a starred or ``**`` argument
 makes the count unknowable, and then every argument is read. The keywords
 are Babel's defaults, Django's and Flask-Babel's, plus any the project
 configures for pybabel (``configured_translation_keywords``).
+
+Typing forms are recognized the way a checker recognizes them, by what the
+callee is bound to: ``TV("T")`` defines a type variable after ``from typing
+import TypeVar as TV``, and sqlglot's ``exp.cast(column, to)`` is no cast at
+all. ``TypingForms`` carries what each callee of a block denotes, resolved
+through its module's bindings (``typing_forms``); a block whose module is
+unknown falls back to the callee's last name, which can only pin more.
 """
 
 from __future__ import annotations
@@ -56,6 +64,8 @@ from typing import (
     Tuple,
 )
 from weakref import WeakKeyDictionary
+
+from .module_bindings import dotted_name
 
 
 class Pin(enum.Enum):
@@ -191,15 +201,19 @@ call in from the site would leave the helper assigning a parameter.
 _TYPE_ARGUMENTS = {"cast": (1, "typ"), "assert_type": (2, "typ")}
 """Calls one argument of which a checker reads as a type, by position and by keyword.
 
-Only a type spelled as a string is pinned. Other libraries reuse the name
-with a value in that place (sqlglot's ``exp.cast(column, to)``, SQLAlchemy's
-``cast(column, Integer)``), and telling a type from a value there takes the
-module's imports, which a block does not carry; a type written as an
-expression is left to the project's checker.
+The argument is read as a type however it is written: ``cast("int", v)``
+and ``cast(List[Alpha], v)`` alike, since ``cast(__param_0, v)`` checks
+under no annotation of ``__param_0``. Only typing's own functions are
+meant; other libraries reuse the names with a value in that place (sqlglot's
+``exp.cast(column, to)``, SQLAlchemy's ``cast(column, Integer)``), which is
+why forms are resolved through the module's bindings rather than by name.
 """
 
 _LITERAL_TYPES = frozenset({"Literal"})
 """Subscripted forms whose subscript a checker reads as values."""
+
+TYPING_FORM_NAMES = _TYPE_DEFINITIONS | frozenset(_TYPE_ARGUMENTS) | _LITERAL_TYPES
+"""Every typing form, by the name the module defining it gives it."""
 
 
 def _callee_name(callee: ast.expr) -> Optional[str]:
@@ -209,6 +223,75 @@ def _callee_name(callee: ast.expr) -> Optional[str]:
     if isinstance(callee, ast.Attribute):
         return callee.attr
     return None
+
+
+def _compute_callee_spellings(statement: ast.AST) -> FrozenSet[str]:
+    spellings: List[str] = []
+    for node in ast.walk(statement):
+        callee = (
+            node.func
+            if isinstance(node, ast.Call)
+            else node.value if isinstance(node, ast.Subscript) else None
+        )
+        spelled = dotted_name(callee) if callee is not None else None
+        if spelled is not None:
+            spellings.append(spelled)
+    return frozenset(spellings)
+
+
+_CALLEE_SPELLINGS: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def callee_spellings(statement: ast.AST) -> FrozenSet[str]:
+    """The dotted spellings ``statement`` calls or subscripts: where a typing form may stand.
+
+    Memoized per statement, as a function of its structure alone.
+    """
+    cached = _CALLEE_SPELLINGS.get(statement)
+    if cached is None:
+        cached = _compute_callee_spellings(statement)
+        try:
+            _CALLEE_SPELLINGS[statement] = cached
+        except TypeError:  # a node type that cannot be weakly referenced
+            pass
+    return cached
+
+
+@dataclass(frozen=True)
+class TypingForms:
+    """What the callees of one block denote among the typing forms, as its module binds them.
+
+    ``denoted`` pairs a callee's dotted spelling (``cast``, ``t.cast``,
+    ``TV``) with a form it may denote, named as the defining module names it;
+    a spelling that may denote none is absent. ``by_name`` stands for a
+    block whose module is unknown: every callee is then taken to be the form
+    its last name spells, bare or dotted, which can only pin more. Hashable,
+    so a unification can be memoized per pair of blocks and their forms.
+    """
+
+    denoted: FrozenSet[Tuple[str, str]] = frozenset()
+    by_name: bool = False
+
+    def of(self, callee: ast.expr) -> FrozenSet[str]:
+        """The forms ``callee``, a call's function or a subscripted value, may denote."""
+        if self.by_name:
+            name = _callee_name(callee)
+            return TYPING_FORM_NAMES & {name} if name is not None else frozenset()
+        if not self.denoted:
+            return frozenset()
+        spelled = dotted_name(callee)
+        return frozenset(form for spelling, form in self.denoted if spelling == spelled)
+
+    def within(self, statement: ast.AST) -> "TypingForms":
+        """These forms, restricted to the spellings ``statement`` uses."""
+        if self.by_name or not self.denoted:
+            return self
+        used = callee_spellings(statement)
+        return TypingForms(frozenset(entry for entry in self.denoted if entry[0] in used))
+
+
+TYPING_FORMS_BY_NAME = TypingForms(by_name=True)
+"""The forms of a block whose module is unknown: whatever its callees' names spell."""
 
 
 def _arguments_at(call: ast.Call, positions: FrozenSet[int]) -> Iterator[ast.expr]:
@@ -232,7 +315,9 @@ def _type_argument(call: ast.Call, position: int, keyword: str) -> Iterator[ast.
             yield passed.value
 
 
-def _compute_pins(statement: ast.AST, keywords: TranslationKeywords) -> Mapping[int, Pin]:
+def _compute_pins(
+    statement: ast.AST, keywords: TranslationKeywords, forms: TypingForms
+) -> Mapping[int, Pin]:
     pins: Dict[int, Pin] = {}
 
     def pin(node: ast.AST, how: Pin) -> None:
@@ -243,45 +328,53 @@ def _compute_pins(statement: ast.AST, keywords: TranslationKeywords) -> Mapping[
     for node in ast.walk(statement):
         if isinstance(node, ast.Call):
             name = _callee_name(node.func)
-            if name is None:
-                continue
-            read = keywords.positions(name)
+            read = keywords.positions(name) if name is not None else None
             if read is not None:
                 # The name is what extraction recognizes; the receiver of
                 # ``self._`` is not read and may still differ.
                 pins[id(node.func)] = Pin.WHOLE
                 for argument in _arguments_at(node, read):
                     pin(argument, Pin.LITERALS)
-            elif name in _TYPE_DEFINITIONS:
-                pin(node, Pin.WHOLE)
-            elif name in _TYPE_ARGUMENTS:
-                for argument in _type_argument(node, *_TYPE_ARGUMENTS[name]):
-                    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-                        pins[id(node.func)] = Pin.WHOLE
+            for form in forms.of(node.func):
+                if form in _TYPE_DEFINITIONS:
+                    pin(node, Pin.WHOLE)
+                elif form in _TYPE_ARGUMENTS:
+                    # A checker knows the form only by what its callee is
+                    # bound to, so the callee stays too, receiver and all.
+                    pin(node.func, Pin.WHOLE)
+                    for argument in _type_argument(node, *_TYPE_ARGUMENTS[form]):
                         pin(argument, Pin.WHOLE)
-        elif isinstance(node, ast.Subscript) and _callee_name(node.value) in _LITERAL_TYPES:
-            pins[id(node.value)] = Pin.WHOLE
+        elif isinstance(node, ast.Subscript) and forms.of(node.value) & _LITERAL_TYPES:
+            pin(node.value, Pin.WHOLE)
             pin(node.slice, Pin.WHOLE)
     return MappingProxyType(pins)
 
 
-_PINS: "WeakKeyDictionary[ast.AST, Tuple[TranslationKeywords, Mapping[int, Pin]]]" = (
+_PINS: "WeakKeyDictionary[ast.AST, Tuple[TranslationKeywords, TypingForms, Mapping[int, Pin]]]" = (
     WeakKeyDictionary()
 )
 
 
-def statically_read(statement: ast.AST, keywords: TranslationKeywords) -> Mapping[int, Pin]:
+def statically_read(
+    statement: ast.AST,
+    keywords: TranslationKeywords,
+    forms: TypingForms = TYPING_FORMS_BY_NAME,
+) -> Mapping[int, Pin]:
     """The nodes of ``statement`` a tool reads where they stand, by ``id``, with how strictly.
 
-    Memoized per statement for one configuration of keywords: every
-    unification of a block asks this of each of its statements.
+    ``forms`` says what the block's callees denote among the typing forms;
+    without it every callee is taken to be the form its name spells.
+    Memoized per statement for one configuration of keywords and what the
+    statement's own callees denote: every unification of a block asks this
+    of each of its statements.
     """
+    forms = forms.within(statement)
     cached = _PINS.get(statement)
-    if cached is not None and cached[0] == keywords:
-        return cached[1]
-    pins = _compute_pins(statement, keywords)
+    if cached is not None and cached[0] == keywords and cached[1] == forms:
+        return cached[2]
+    pins = _compute_pins(statement, keywords, forms)
     try:
-        _PINS[statement] = (keywords, pins)
+        _PINS[statement] = (keywords, forms, pins)
     except TypeError:  # a node type that cannot be weakly referenced
         pass
     return pins

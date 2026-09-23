@@ -64,8 +64,14 @@ from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import rebound_external_names, walk_own_scope
 from .statement_facts import memoized_per_node
-from .static_positions import TranslationKeywords, configured_translation_keywords
+from .static_positions import (
+    TYPING_FORMS_BY_NAME,
+    TranslationKeywords,
+    TypingForms,
+    configured_translation_keywords,
+)
 from .structural_memo import load_substitution, store_substitution
+from .typing_forms import ModuleText, typing_forms_of
 from .substitution import Substitution
 from .visitors import (
     AssignTargetVisitor,
@@ -75,7 +81,7 @@ from .visitors import (
 )
 from ..diagnostics import VALIDATION, debugging
 
-from .engine_state import EngineState, GuardKey
+from .engine_state import EngineState, GuardKey, UnifyKey
 from .function_index import FunctionIndex
 
 T = TypeVar("T")
@@ -230,18 +236,40 @@ class BlockAnalysis(EngineState):
         self._keywords_read_for = (paths, keywords)
         return keywords
 
+    def _typing_forms(self, block: Sequence[ast.stmt], module: Optional[ModuleText]) -> TypingForms:
+        """What the block's callees denote among the typing forms, as its module binds them.
+
+        A block whose module is not given is taken to call the forms its
+        callees' names spell.
+        """
+        if module is None:
+            return TYPING_FORMS_BY_NAME
+        return typing_forms_of(block, module, self.import_graph)
+
     def _unify_memoized(
         self,
         blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
+        modules: Optional[Sequence[ModuleText]] = None,
     ) -> Optional[Substitution]:
-        """Unify two blocks, reusing the result for any pair with the same structure."""
+        """Unify two blocks, reusing the result for any pair with the same structure.
+
+        ``modules`` holds each block's module, where its callees are resolved
+        to the typing forms they denote; the same structure calling other
+        objects is another pair, so the forms are part of the key.
+        """
         keywords = self._translation_keywords()
+        forms = tuple(
+            self._typing_forms(block, module)
+            for block, module in zip(
+                blocks, modules if modules is not None else [None] * len(blocks), strict=True
+            )
+        )
         if len(blocks) != 2:
             return self.unifier.unify_blocks(
-                blocks, hygienic_renames, translation_keywords=keywords
+                blocks, hygienic_renames, translation_keywords=keywords, typing_forms=forms
             )
-        key = (self._sid(blocks[0]), self._sid(blocks[1]))
+        key = UnifyKey(self._sid(blocks[0]), self._sid(blocks[1]), forms[0], forms[1])
         if key in self._unify_cache:
             stored = self._unify_cache[key]
             if stored is None:
@@ -251,7 +279,9 @@ class BlockAnalysis(EngineState):
                 target.clear()
                 target.update(source)
             return substitution
-        result = self.unifier.unify_blocks(blocks, hygienic_renames, translation_keywords=keywords)
+        result = self.unifier.unify_blocks(
+            blocks, hygienic_renames, translation_keywords=keywords, typing_forms=forms
+        )
         self._unify_cache[key] = (
             None if result is None else store_substitution(result, blocks, hygienic_renames)
         )

@@ -612,7 +612,17 @@ the proposals it built and did not apply, by reason:
   a whole f-string (container syntax rather than values), a lambda with
   positional-only, keyword-only, or variadic parameters, an expression
   containing an assignment expression, and a substitution that would need
-  more than the configured maximum parameters (`--max-parameters`).
+  more than the configured maximum parameters (`--max-parameters`). It
+  also includes a difference a tool reads where it stands: a translation
+  marker's message, or the name, fields or type a checker reads of a typing
+  form. A form is what the block's module binds to typing's object,
+  however it is imported (`TV("T")` after `from typing import TypeVar as
+  TV`, `t.cast(Alpha, v)`, one re-exported by a module of the project); a
+  project's own `cast` is an ordinary call, and a binding Towel cannot
+  follow is taken to be the form its name spells. A form a module of the
+  project re-exports under a name of its own (`L` for `Literal`) is not
+  recognized, and where a checker is configured it declines what that
+  lets through.
   `return_variables_not_aligned`: a variable one block must return has no
   binding in the other. `mixed_return_and_variables`: a block both returns
   early and binds variables read afterwards, which one call statement

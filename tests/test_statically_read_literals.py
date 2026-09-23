@@ -10,7 +10,9 @@ the same way: ``TypeVar(__param_0)``, ``cast(__param_0, v)`` or
 differ in such a literal are therefore not duplicates. The positions are the
 ones Babel and the checkers read, verified against pybabel 2.18, mypy and
 pyright; a literal elsewhere in the call, and a name in a message position,
-may still become a parameter.
+may still become a parameter. These blocks carry no module, so a callee is
+taken to be the typing form its name spells; test_typing_forms_resolved
+covers forms resolved through the module's imports.
 """
 
 from __future__ import annotations
@@ -168,6 +170,10 @@ NOT_DUPLICATES: List[Tuple[str, str]] = [
     ('value = cast("int", raw)', 'value = cast("str", raw)'),
     ('value = t.cast("Alpha", raw)', 'value = t.cast("Beta", raw)'),
     ('value = typing.cast(Literal["a"], raw)', 'value = typing.cast(Literal["b"], raw)'),
+    # A type written as an expression is read as surely as one in a string.
+    ("value = cast(Alpha, raw)", "value = cast(Beta, raw)"),
+    ("value = t.cast(List[Alpha], raw)", "value = t.cast(List[Beta], raw)"),
+    ("assert_type(value, Alpha)", "assert_type(value, Beta)"),
     ('kind = Literal["a", "b"]', 'kind = Literal["a", "c"]'),
     ('assert_type(value, "Alpha")', 'assert_type(value, "Beta")'),
     # The defining call stays where the checker looks for it, assigned to its name.
@@ -186,10 +192,9 @@ def test_blocks_differing_where_a_checker_reads_are_not_duplicates(first: str, s
     [
         ("value = cast(int, first)", "value = cast(int, second)"),
         ("assert_type(first, int)", "assert_type(second, int)"),
-        # sqlglot's expression builder takes a value where typing.cast takes
-        # a type; only a type spelled as a string is known to be one.
-        ("node = exp.cast(first, 'INT')", "node = exp.cast(second, 'INT')"),
-        ("value = cast(first, Integer)", "value = cast(second, Integer)"),
+        # sqlglot's ``exp.cast(first, 'INT')`` and SQLAlchemy's ``cast(first,
+        # Integer)`` take a value where typing's cast takes a type; which one
+        # a call is takes its module's imports (test_typing_forms_resolved).
         (
             'T = TypeVar("T")\nregister(T, 1)',
             'T = TypeVar("T")\nregister(T, 2)',
