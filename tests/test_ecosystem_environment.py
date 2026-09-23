@@ -503,6 +503,8 @@ def test_a_towel_whose_help_fails_is_a_setup_failure(tmp_path: Path) -> None:
     towel = _fake_towel(tmp_path / "bin", "Traceback: broken", status=1)
     with pytest.raises(ecosystem.EnvironmentFailure, match="dry --help failed"):
         ecosystem.accepts_cross_module(towel, tmp_path, {"PATH": "/usr/bin:/bin"})
+    with pytest.raises(ecosystem.EnvironmentFailure, match="could not be started"):
+        ecosystem.accepts_cross_module(tmp_path / "absent/towel", tmp_path, {"PATH": "/bin"})
 
 
 @pytest.mark.parametrize(

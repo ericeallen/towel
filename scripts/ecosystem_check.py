@@ -1105,15 +1105,18 @@ _CROSS_MODULE_OPTION = re.compile(rf"(?<![\w-]){re.escape(CROSS_MODULE_FLAG)}(?!
 
 def accepts_cross_module(towel: Path, cwd: Path, env: Mapping[str, str]) -> bool:
     """Whether this ``towel dry`` takes ``--cross-module``, by its own help, run as a refactor."""
-    completed = subprocess.run(
-        [str(towel), "dry", "--help"],
-        cwd=cwd,
-        env=dict(env),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [str(towel), "dry", "--help"],
+            cwd=cwd,
+            env=dict(env),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except OSError as error:
+        raise EnvironmentFailure(f"{towel} could not be started: {error}") from error
     if completed.returncode != 0:
         raise EnvironmentFailure(
             f"{towel} dry --help failed (exit {completed.returncode}): {completed.stderr[-300:]}"
