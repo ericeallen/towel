@@ -47,14 +47,42 @@ interpreter/tool versions, exit statuses, and retained evidence paths.
 ### Consumer and typing evidence
 
 Run the ecosystem harness from a committed snapshot (`--towel-src` names that
-snapshot's `src` directory). The harness imports it throughout the run, so do
-not change that source while it executes. It runs third-party setup and tests
-with your privileges; use a disposable machine or container and the explicit
-`--run-untrusted-code` opt-in. Refresh upstream pins only after reviewing them.
+snapshot's `src` directory). What runs is one wheel of that source, the one
+`--towel-wheel` names or one the harness builds from the snapshot when none is
+named, and the harness refuses a wheel whose Python files differ from
+`--towel-src`, so the commit it records is the code that ran. It runs
+third-party setup and tests with your privileges; use a disposable machine or
+container and the explicit `--run-untrusted-code` opt-in. Refresh upstream pins
+only after reviewing them.
 
-The manifest provides runtime test environments. Run the corpus with the
-default type policy, which is what a user gets, and record the reported
-`typing_mode` alongside the verdict counts.
+Towel runs in each project's own environment, as a user runs it. The
+environment holds the manifest's test dependencies; the project itself,
+installed editable from the tree under test; the mypy and pyright of Towel's
+`types` extra, at the version the project's `uv.lock`, `poetry.lock` or
+`pdm.lock` pins where it pins one, and not at all where the project's own
+requirements installed one already; and the candidate, installed with
+`--no-deps` and then compared file by file with the wheel. The checkers
+therefore see the project's dependencies, and Towel's import model sees the
+project installed from the tree it refactors rather than an installed copy
+elsewhere, which it would count as a second provider of the project's names.
+The editable install follows the tree each test run exercises: the clone for
+the baseline, the refactored copy for Towel and the run after it, and the
+original package again for each retest of the original, so a regression in a
+test that imports the installed copy cannot pass as a flaky difference. Every
+project is installed except where its manifest entry says why not: wrapt,
+whose compiled extension replaces the Python wrappers in every test, and
+html5lib, whose `setup.py` cannot be built in isolation.
+
+Run the corpus with the default type policy, which is what a user gets. Each
+result records the interpreter, the candidate's version, each checker's
+version and who chose it (`project`, the lock file, or `towel[types]`), the
+tree the project was installed from, and whether its refactor extracted across
+modules; record those and the reported `typing_mode` alongside the verdict
+counts. Every refactor passes `--cross-module` where the Towel under test has
+that option. A Towel without it extracts across modules by default, and the
+result says so. A manifest entry may turn cross-module extraction off only with
+a `cross_module_reason`, and the summary lists every project that ran without
+it, with its reason.
 
 A project whose own sources do not type-check under the checker it configures
 is declined rather than refactored unverified, which is the documented
@@ -81,18 +109,22 @@ evidence about the other.
 #### Running the corpus in a container
 
 The harness clones and executes third-party code, so it belongs in a container.
-Five details will each stop the run, and none of them is obvious from the
-failure it produces:
+Six details matter, and none of them is obvious from the failure it produces:
 
 - **Install `uv` in the image.** The harness builds a per-project environment
   with it, and its absence surfaces as `FileNotFoundError` on every project.
-- **Install the candidate distribution system-wide, not into a user
-  directory.** `cli.py` reads its own version through `importlib.metadata`, and
-  the harness hands each subprocess a scratch `HOME`, so a `--user` install is
-  invisible to the refactor even though the parent process can see it. Build
-  the wheel first and install it with `--no-deps`; installing from the mounted
-  source instead fails, because the build backend writes `egg-info` into the
-  source tree and that mount is read-only.
+- **Give the harness the candidate wheel, and install nothing of Towel's into
+  the image's interpreter.** The harness installs the wheel into every
+  project's environment itself (`--towel-wheel`, the wheel or a directory
+  holding only it). Towel's tools in the interpreter that runs the harness are
+  what used to stand in for the project's environment, hiding its dependencies
+  from the type checker and putting their own copies of click, packaging and
+  the rest in front of the projects of those names. Build the wheel on the
+  host: building it from the mounted source fails, because the build backend
+  writes `egg-info` into the source tree and that mount is read-only.
+- **Put `node` on the image's `PATH`.** Without one, pyright's wrapper
+  downloads a Node of about 460 MB into `HOME` on first use, and the harness
+  gives every worker a scratch `HOME`.
 - **Give the harness a standalone clone detached at the release commit**, not a
   git worktree. A worktree's `.git` is a file pointing outside the mount, so
   the harness cannot read the revision and aborts. With a real clone it records
@@ -102,22 +134,26 @@ failure it produces:
   several workers share one. Give that volume to the container's own user, or
   the harness cannot take its lock.
 - **Mount the source read-only** so the run cannot change the code it is
-  testing, and pass `--towel-src` the mounted path.
+  testing, and pass `--towel-src` the mounted path; the harness compares the
+  wheel with it before any project starts.
 
-`scripts/ecosystem/Dockerfile` builds an image with those pieces in place. A
-working shape:
+`scripts/ecosystem/Dockerfile` builds an image with those pieces in place, the
+candidate at `/opt/towel`. A working shape, with the wheel built from the clone
+under test and its copy removed once the image has it:
 
 ```sh
-python -m build && cp dist/code_towel-*.whl scripts/ecosystem/
-docker build -t "$IMAGE" scripts/ecosystem
-
 git clone --no-hardlinks . "$CLONE" && git -C "$CLONE" checkout --detach "$COMMIT"
+uv build --wheel --out-dir "$CLONE/dist" "$CLONE"
+cp "$CLONE"/dist/code_towel-*.whl "$CLONE/scripts/ecosystem/"
+docker build -t "$IMAGE" "$CLONE/scripts/ecosystem"
+rm "$CLONE"/scripts/ecosystem/code_towel-*.whl
+
 docker volume create towel-eco-work
 docker run --rm --user root -v towel-eco-work:/work "$IMAGE" chown -R runner:runner /work
 docker run -d --name towel-eco -e TOWEL_WORKERS=1 \
     -v "$CLONE":/snapshot:ro -v towel-eco-work:/work -w /snapshot "$IMAGE" \
     python scripts/ecosystem_check.py --run-untrusted-code \
-        --towel-src /snapshot/src --work /work --workers 4
+        --towel-src /snapshot/src --towel-wheel /opt/towel --work /work --workers 4
 ```
 
 Verify the default policy separately: dirty original projects abort before
