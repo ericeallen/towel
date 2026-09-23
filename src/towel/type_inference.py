@@ -436,7 +436,7 @@ class MypyInferrer:
             scan = self._import_scans[root] = ImportScan(root, _module_name)
         packages = {walked_package(Path(path)) or Path(path).resolve() for path in replacements}
         return scan.consumers(
-            module_prefixes(replacements, _module_name),
+            module_prefixes(replacements, root, _module_name),
             exclude=[package for package in packages if package.is_dir()],
         )
 

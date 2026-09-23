@@ -192,17 +192,53 @@ class _ImportGraph:
     importers: Mapping[str, FrozenSet[Path]]
 
 
-def _graph(files: Mapping[Path, _ScannedFile], module_name: ModuleNamer) -> _ImportGraph:
+def module_names(path: Path, root: Path, module_name: ModuleNamer) -> FrozenSet[str]:
+    """Every dotted name ``path`` can be imported by, as far as the tree shows.
+
+    ``module_name`` gives the name the ``__init__`` files imply, and where the
+    outermost of those directories sits inside ``root`` without one of its own,
+    the directories above it may be PEP 420 namespace packages: ``nsp/lib.py``
+    is ``lib`` by its markers and ``nsp.lib`` to every file importing it. A scan
+    that knew only the first name found no consumers for such a module at all.
+
+    Whether a directory is a namespace package depends on the search path the
+    checker is given, which is not known here, so every such name is taken.
+    Over-including a consumer costs a little checking; missing one calls a
+    broken project clean. No name shorter than the markers imply is taken:
+    ``pkg/types.py`` in a regular package is never ``types``.
+    """
+    canonical = module_name(path)
+    try:
+        parts = list(path.relative_to(root).with_suffix("").parts)
+    except ValueError:
+        return frozenset({canonical})
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    shortest = len(canonical.split("."))
+    longer = {
+        ".".join(parts[start:])
+        for start in range(len(parts) - shortest + 1)
+        if all(part.isidentifier() for part in parts[start:])
+    }
+    return frozenset({canonical, *longer})
+
+
+def _graph(
+    files: Mapping[Path, _ScannedFile], root: Path, module_name: ModuleNamer
+) -> _ImportGraph:
     defines: Dict[Path, FrozenSet[str]] = {}
     importers: Dict[str, Set[Path]] = {}
     for path, scanned in files.items():
         if scanned.statements is None:
             continue
-        name = module_name(path)
-        defines[path] = frozenset({name})
+        names = module_names(path, root, module_name)
+        defines[path] = names
         is_package = path.stem == "__init__"
-        for imported in _imported_modules(scanned.statements, name, is_package=is_package):
-            importers.setdefault(imported, set()).add(path)
+        # A relative import means one thing, but which of the file's names the
+        # checker uses is not known here; resolving against each over-includes.
+        for name in names:
+            for imported in _imported_modules(scanned.statements, name, is_package=is_package):
+                importers.setdefault(imported, set()).add(path)
     return _ImportGraph(defines, {name: frozenset(paths) for name, paths in importers.items()})
 
 
@@ -265,7 +301,7 @@ class ImportScan:
                 known if known is not None and known.stamp == stamp else _scanned(path, stamp)
             )
         if self._graph is None or current != self._files:
-            self._graph = _graph(current, self._module_name)
+            self._graph = _graph(current, self._root, self._module_name)
         self._files = current
         return self._graph
 
@@ -308,17 +344,18 @@ def consumers_of(
     return ImportScan(root, module_name).consumers(provided, exclude=exclude)
 
 
-def module_prefixes(paths: Iterable[str], module_name: ModuleNamer) -> Set[str]:
+def module_prefixes(paths: Iterable[str], root: Path, module_name: ModuleNamer) -> Set[str]:
     """The dotted names the analyzed files define, with the packages holding them.
 
     ``pkg/inner/m.py`` contributes ``pkg.inner.m``, ``pkg.inner`` and ``pkg``,
-    so a file importing any of them is a consumer of the change.
+    so a file importing any of them is a consumer of the change. Each of the
+    file's names contributes (see :func:`module_names`).
     """
     names: Set[str] = set()
     for path in paths:
-        module = module_name(Path(path))
-        parts = module.split(".")
-        names.update(".".join(parts[: index + 1]) for index in range(len(parts)))
+        for module in module_names(Path(path), root, module_name):
+            parts = module.split(".")
+            names.update(".".join(parts[: index + 1]) for index in range(len(parts)))
     return names
 
 

@@ -33,7 +33,7 @@ from typing import Dict, List, Mapping
 import pytest
 
 from towel import consumers
-from towel.type_inference import CheckSuccess, MypyInferrer
+from towel.type_inference import CheckSuccess, MypyInferrer, _module_name
 
 pytestmark = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
@@ -162,6 +162,54 @@ def test_following_the_project_reads_only_the_files_that_changed(
         str((tmp_path / name).resolve()) for name in ("a.py", "b.py")
     )
     assert parsed == ["b.py"]
+
+
+@pytest.mark.parametrize(
+    "files, provider",
+    [
+        (
+            {"nsp/lib.py": RETURNS_INT, "app.py": "from nsp.lib import f\nx: int = f()\n"},
+            "nsp/lib.py",
+        ),
+        (
+            {
+                "nsp/inner/lib.py": RETURNS_INT,
+                "nsp/other/app.py": "from nsp.inner.lib import f\nx: int = f()\n",
+            },
+            "nsp/inner/lib.py",
+        ),
+    ],
+    ids=["top-level", "nested"],
+)
+def test_a_consumer_of_a_namespace_package_module_is_checked(
+    tmp_path: Path, files: Mapping[str, str], provider: str
+) -> None:
+    """``nsp/lib.py`` with no ``__init__`` is named ``lib``; its consumers import ``nsp.lib``.
+
+    The scan matched importers against the first name only, so a PEP 420
+    package's modules had no consumers at all.
+    """
+    _write(tmp_path, {"pyproject.toml": STRICT + "explicit_package_bases = true\n", **files})
+    consumer = next(name for name in files if name != provider)
+    oracle = MypyInferrer()
+    try:
+        assert _flagged(oracle, tmp_path, {provider: RETURNS_STR}) == [consumer]
+    finally:
+        oracle.close()
+
+
+def test_a_module_is_known_by_its_namespace_names_and_never_by_a_shorter_one(
+    tmp_path: Path,
+) -> None:
+    """Longer names over-include a little; a shorter one would match ``import types``."""
+    _write(tmp_path, {"src/pkg/__init__.py": "", "src/pkg/types.py": "", "nsp/inner/lib.py": ""})
+
+    def named(name: str) -> object:
+        return consumers.module_names(tmp_path / name, tmp_path, _module_name)
+
+    assert named("src/pkg/types.py") == {"pkg.types", "src.pkg.types"}
+    assert named("src/pkg/__init__.py") == {"pkg", "src.pkg"}
+    assert named("nsp/inner/lib.py") == {"lib", "inner.lib", "nsp.inner.lib"}
 
 
 @pytest.mark.parametrize(
