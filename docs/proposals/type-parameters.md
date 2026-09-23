@@ -218,7 +218,10 @@ restricted to two subclasses, which mypy rejected. This establishes a receiver
 and placement obligation, not a general prohibition on generic methods. Every
 inherited helper must type-check in its actual host with all callers, including
 accesses to receiver attributes. Anti-unification does not grant the ancestor
-attributes belonging only to its subclasses.
+attributes belonging only to its subclasses. Since 2026-09-22 no helper is
+placed in an ancestor at all: a method helper goes only into the class that
+holds both duplicates (docs/DECISIONS.md), and blocks two classes share get a
+module-level function that takes the receiver.
 
 ## Containers, callables, and narrowing
 

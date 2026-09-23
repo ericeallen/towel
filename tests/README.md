@@ -82,10 +82,18 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
 - **Application & recovery** — `test_change_transactions.py`,
   `test_copy_preservation.py`: atomic byte plans, rollback, and interruption
   recovery.
-- **Reuse of existing functions** — `test_reuse_existing_function.py`: a
-  whole-body duplicate calls the existing function, the fallbacks
-  (decorated, async, variadic, shadowed, rebound), and the cross-file
-  cycle refusal.
+- **Whole-body duplicates** — `test_reuse_existing_function.py`: a duplicate
+  that is the whole body of a function calls one new helper like any other
+  copy, never another existing function, whatever the deprecated
+  `reuse_existing_functions` says; decorated, async and rebound functions,
+  and the cross-file host that closes no cycle.
+- **Where a method helper goes** — `test_method_helper_hosting.py`,
+  `test_class_private_helpers.py`, `test_method_host_machinery.py`: only
+  into the class holding both duplicates, class-private, and never into a
+  class whose machinery or attribute lookup would change what its methods
+  reach; blocks shared across classes become module functions taking the
+  receiver. `test_rename_class_private_helpers.py` renames such helpers by
+  their class.
 - **Generated-code formatting** — `test_generated_code_formatting.py`:
   Black and ruff snippet formatting, the declared line length, the
   syntax-tree check, and the import-sorter guard.

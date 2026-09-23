@@ -39,11 +39,19 @@ import textwrap
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterator, List, Optional, Set, Tuple
+from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
+from .engine_state import HelperNameClaims
 from .exceptions import ProjectScanLimitError, RefactoringError
 from .import_graph import ImportTimeCode, fails_run_by_path, runs_as_script
 from .insertion import reindent, relative_import_module
-from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
+from .models import (
+    AppliedChange,
+    MethodKind,
+    RefactoringProposal,
+    Replacement,
+    is_generated_helper_name,
+)
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from ..project_layout import (
     ProjectLayout,
@@ -281,6 +289,8 @@ class Materialization(
         # even when every call site is elsewhere.
         replacements_by_file.setdefault(proposal.file_path, [])
 
+        if proposal.insert_into_class is not None:
+            self._refuse_calls_outside_the_host(proposal)
         naming = self._settle_helper_name(proposal, list(replacements_by_file))
         modified_files = {
             file_path: self._materialize_file(proposal, naming, file_path, replacements)
@@ -301,30 +311,38 @@ class Materialization(
         """Fix the helper's final name once, before any file is rendered.
 
         A generated name is allocated against every file the proposal touches
-        so it stays unique across them; a user-provided name is kept, made
-        non-public inside a class; a reused function keeps the name the calls
-        already use.
+        so it stays unique across them, and against the names the project's
+        other sources already define where the helper would live
+        (``HelperNameClaims``). A method helper is class-private
+        (:meth:`_method_helper_name`). A module-level helper called from
+        inside a class body cannot start with two underscores, which the body
+        would mangle into another name. A user-provided name is kept, made
+        class-private for a method helper; a reused function keeps the name the
+        calls already use.
         """
         original_name = proposal.extracted_function.name
         declaration_names = self._type_declaration_names(proposal)
-        class_context = bool(proposal.insert_into_class) or any(
+        called_in_a_class = any(
             replacement.class_name is not None for replacement in proposal.replacements
         )
         if proposal.reused_function is not None:
             pass  # the calls already name an existing function; it keeps its name
-        elif original_name == "__extracted_func" or (
-            class_context and re.fullmatch(r"__extracted_func(?:_\d+)?", original_name)
-        ):
-            proposal.extracted_function.name = self._allocate_helper_name(
-                proposal.file_path, class_context=class_context, related_paths=related_paths
+        elif proposal.insert_into_class is not None:
+            proposal.extracted_function.name = self._method_helper_name(
+                proposal, proposal.insert_into_class, related_paths, declaration_names
             )
-            taken = declaration_names | self._helper_names_in_project(proposal.file_path)
+        elif original_name == "__extracted_func" or (
+            called_in_a_class and re.fullmatch(r"__extracted_func(?:_\d+)?", original_name)
+        ):
+            prefix = "_extracted_func" if called_in_a_class else "__extracted_func"
+            taken = declaration_names | self._helper_names_in_project(proposal.file_path).namespace
+            proposal.extracted_function.name = self._allocate_helper_name(
+                proposal.file_path, prefix=prefix, related_paths=related_paths
+            )
             while proposal.extracted_function.name in taken:
                 proposal.extracted_function.name = self._allocate_helper_name(
-                    proposal.file_path, class_context=class_context, related_paths=related_paths
+                    proposal.file_path, prefix=prefix, related_paths=related_paths
                 )
-        elif proposal.insert_into_class and not original_name.startswith("_"):
-            proposal.extracted_function.name = f"_{original_name}"
         if proposal.extracted_function.name in declaration_names:
             raise RefactoringError("The helper name conflicts with its type declarations")
         receiver_name = proposal.method_param_name or (
@@ -340,23 +358,102 @@ class Materialization(
             parameter_count=len(parameters),
         )
 
-    def _helper_names_in_project(self, file_path: str) -> FrozenSet[str]:
-        """Every helper-shaped identifier the project around ``file_path`` already spells.
+    def _method_helper_name(
+        self,
+        proposal: RefactoringProposal,
+        host: str,
+        related_paths: List[str],
+        declaration_names: Set[str],
+    ) -> str:
+        """A class-private name for a method helper of ``host``: ``__extracted_func_N``.
+
+        ``host`` stores it as ``_Host__extracted_func_N`` and its methods call
+        it as ``self.__extracted_func_N()``, which the compiler rewrites the
+        same way, so no subclass, in the project or outside it, can override
+        it or collide with it: a subclass's own ``__extracted_func_N`` is
+        stored under the subclass's name. The name must be free only in that
+        stored form, among the members the project's sources already define
+        (``HelperNameClaims.members``); a same-named class elsewhere that
+        defines the unmangled name claims it too, because Python mangles by
+        name and not by class. A class named only with underscores mangles
+        nothing, so pair evaluation never gives it a method helper.
+        """
+        prefix = mangling_prefix(host)
+        if prefix is None:
+            raise RefactoringError(
+                f"Class {host} is named only with underscores, so no name in it is private"
+                " and it cannot take a method helper"
+            )
+        original = proposal.extracted_function.name
+        if not is_generated_helper_name(original):
+            # A caller's own name, made class-private as every method helper is.
+            private = original if is_class_private(original) else "__" + original.lstrip("_")
+            if not is_class_private(private):
+                raise RefactoringError(f"The method helper name {original!r} cannot be private")
+            return private
+        claimed = self._helper_names_in_project(proposal.file_path).members
+        while True:
+            name = self._allocate_helper_name(
+                proposal.file_path, prefix="__extracted_func", related_paths=related_paths
+            )
+            if name not in declaration_names and prefix + name not in claimed:
+                return name
+
+    def _refuse_calls_outside_the_host(self, proposal: RefactoringProposal) -> None:
+        """Refuse a method helper any of whose calls lies outside its own class's body.
+
+        ``self.__extracted_func_0()`` reaches ``_A__extracted_func_0`` only when
+        it is written in ``A``'s body, not in a class nested there nor in
+        another module; anywhere else the compiler rewrites it to another
+        name, or none. Pair evaluation calls a method helper only from methods
+        of its class, so a site elsewhere is a proposal built by other means,
+        whose output would raise ``AttributeError`` where it ran.
+        """
+        host = next(
+            (
+                node
+                for node in self._parse_source("".join(self._source_lines(proposal.file_path))).body
+                if isinstance(node, ast.ClassDef) and node.name == proposal.insert_into_class
+            ),
+            None,
+        )
+        for replacement in proposal.replacements:
+            start, end = replacement.line_range
+            outside = (
+                host is None
+                or (replacement.file_path or proposal.file_path) != proposal.file_path
+                or not (host.body[0].lineno <= start and end <= (host.end_lineno or host.lineno))
+                or any(
+                    node is not host
+                    and isinstance(node, ast.ClassDef)
+                    and node.lineno <= start
+                    and end <= (node.end_lineno or node.lineno)
+                    for node in ast.walk(host)
+                )
+            )
+            if outside:
+                raise RefactoringError(
+                    f"A method helper of {proposal.insert_into_class} is class-private and can be"
+                    f" called only from that class's own body, not from line {start}"
+                )
+
+    def _helper_names_in_project(self, file_path: str) -> HelperNameClaims:
+        """What the project around ``file_path`` already defines under helper-shaped names.
 
         Names are allocated against the files under analysis, and a file
-        outside them can still own one: a subclass in another package that
-        defines ``_extracted_func_0`` overrides a helper of that name placed in
-        its base, and every call its instances make is hijacked. So the whole
-        project is read, once per engine, for identifiers of the helper's
-        shape, in the same directories the consumer scan reads. The project is
-        found from the file's original location, since an output directory is
-        only a copy of part of it.
+        outside them can still own one: an assignment ``lib._extracted_func_0
+        = ...`` there would replace a module-level helper of that name, and a
+        class member stored as ``_A__extracted_func_0`` would override a method
+        helper of ``A``. So the whole project is read, once per engine, in the
+        same directories the consumer scan reads. The project is found from
+        the file's original location, since an output directory is only a copy
+        of part of it.
         """
         root = find_project_root(Path(self._origin_of(file_path)))
         key = str(root)
         names = self._project_helper_names.get(key)
         if names is None:
-            names = self._project_helper_names[key] = _helper_shaped_identifiers(root)
+            names = self._project_helper_names[key] = _claimed_helper_names(root)
         return names
 
     def _materialize_file(
@@ -777,24 +874,29 @@ def _postpones_annotations(source: str) -> bool:
     )
 
 
-_HELPER_SHAPED = re.compile(r"(?<!\w)_{1,2}extracted_func(?:_\d+)?(?!\w)")
+_HELPER_SHAPED = re.compile(r"(?<!\w)\w*extracted_func(?:_\d+)?(?!\w)")
+"""A word a helper name could be: a generated name, or one a class body mangled."""
 
 
-def _helper_shaped_identifiers(root: Path) -> FrozenSet[str]:
-    """The helper-shaped names that sources under ``root`` could make override a helper.
+def _claimed_helper_names(root: Path) -> HelperNameClaims:
+    """The helper-shaped names that sources under ``root`` define where a helper could be.
 
-    A helper is reached as a method or as a module attribute, so another file
-    can take its place only by giving a class a member of that name or by
-    assigning the attribute: a ``def`` or assignment in a class body, an
-    attribute store anywhere, or the name as a string given to ``setattr``,
-    stored by subscript into a namespace, or keyed in a ``type(...)``
-    namespace. A mere call or mention takes nothing. A file that does not parse cannot be told
-    apart, so every helper-shaped word in it counts. Past the consumer scan's
-    limit the project cannot be read whole, and the run stops, as a typed
-    run's consumer scan does, rather than choose a name some unread file may
-    own.
+    A module-level helper is reached as an attribute of its module, so another
+    file takes its place only by assigning that attribute: an attribute store,
+    or the name as a string given to ``setattr`` or stored by subscript into a
+    namespace. A method helper is class-private and reached as ``_A__name``,
+    so another file takes its place only by defining a member stored under
+    that name, in a class body, by an attribute store, a ``setattr``, a
+    subscript into a namespace, or a ``type(...)`` namespace; a subclass's
+    ``_extracted_func_0``, which once had to be kept clear of, can no longer
+    reach it. A mere call or mention takes nothing. A file that does not parse
+    cannot be told apart, so every helper-shaped word in it counts, spelled
+    as it stands and under every class's name. Past the consumer scan's limit
+    the project cannot be read whole, and the run stops, as a typed run's
+    consumer scan does, rather than choose a name some unread file may own.
     """
-    found: Set[str] = set()
+    namespace: Set[str] = set()
+    members: Set[str] = set()
     count = 0
     for parent, directories, files in os.walk(root, onerror=lambda _: None):
         directories[:] = [name for name in directories if name not in SKIPPED_DIRECTORIES]
@@ -814,42 +916,69 @@ def _helper_shaped_identifiers(root: Path) -> FrozenSet[str]:
                 text = Path(parent, name).read_bytes().decode("utf-8", errors="replace")
             except OSError:
                 continue
-            words = set(_HELPER_SHAPED.findall(text))
-            if words:
-                found.update(_overriding_names(text, words))
-    return frozenset(found)
+            if "extracted_func" not in text:
+                continue
+            claims = _claims_in(text)
+            namespace |= claims.namespace
+            members |= claims.members
+    return HelperNameClaims(frozenset(namespace), frozenset(members))
 
 
-def _overriding_names(text: str, words: Set[str]) -> Set[str]:
-    """Of the helper-shaped ``words`` in ``text``, those it defines where a helper could be."""
+def _claims_in(text: str) -> HelperNameClaims:
+    """Of the helper-shaped names ``text`` defines, those it defines where a helper could be.
+
+    Each is the name as stored: a class member or an attribute stored inside
+    a class body is mangled with the innermost class whose body holds it.
+    """
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):
-        return words
-    defined: Set[str] = set()
+        return _claims_of_unreadable_source(text)
+    owners = mangling_classes(tree)
+    namespace: Set[str] = set()
+    members: Set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
-            pending: List[ast.AST] = list(node.body)
-            while pending:
-                member = pending.pop()
-                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    defined.add(member.name)
-                    continue
-                if isinstance(member, ast.Name) and isinstance(member.ctx, ast.Store):
-                    defined.add(member.id)
-                pending.extend(ast.iter_child_nodes(member))
+            members.update(_member_names(node))
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            defined.add(node.attr)
+            owner = owners.get(node)
+            namespace.add(mangled(node.attr, owner.name if owner is not None else None))
         elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
-            defined.update(_string_constants([node.slice]))  # namespace["name"] = ...
+            namespace.update(_string_constants([node.slice]))  # namespace["name"] = ...
         elif isinstance(node, ast.Call):
             callee = node.func
             called = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
             if called in {"setattr", "__setattr__"} and len(node.args) >= 2:
-                defined.update(_string_constants([node.args[1]]))
+                namespace.update(_string_constants([node.args[1]]))
             elif called == "type" and len(node.args) == 3 and isinstance(node.args[2], ast.Dict):
-                defined.update(_string_constants([k for k in node.args[2].keys if k]))
-    return defined & words
+                members.update(_string_constants([k for k in node.args[2].keys if k]))
+    shaped = {name for name in namespace | members if _HELPER_SHAPED.fullmatch(name)}
+    return HelperNameClaims(
+        frozenset(shaped & namespace), frozenset(shaped & (members | namespace))
+    )
+
+
+def _claims_of_unreadable_source(text: str) -> HelperNameClaims:
+    """Every helper-shaped word of a file that does not parse, as it stands and in every class."""
+    words = set(_HELPER_SHAPED.findall(text))
+    classes = {match.lstrip("_") for match in re.findall(r"\bclass\s+(\w+)", text)}
+    private = {mangled(word, owner) for word in words for owner in classes if owner}
+    return HelperNameClaims(frozenset(words), frozenset(words | private))
+
+
+def _member_names(node: ast.ClassDef) -> Set[str]:
+    """Every name ``node``'s body binds, as the class stores it (``__x`` in ``A`` is ``_A__x``)."""
+    defined: Set[str] = set()
+    pending: List[ast.AST] = list(node.body)
+    while pending:
+        member = pending.pop()
+        if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(mangled(member.name, node.name))
+            continue
+        if isinstance(member, ast.Name) and isinstance(member.ctx, ast.Store):
+            defined.add(mangled(member.id, node.name))
+        pending.extend(ast.iter_child_nodes(member))
+    return defined
 
 
 def _string_constants(nodes: List[ast.expr]) -> Set[str]:

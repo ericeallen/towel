@@ -92,14 +92,14 @@ class Ledger:
         self.entries = list(values)
 
     def balance(self, opening: int = 0) -> tuple[int, int]:
-        lowest, running = self._extracted_func_1(opening)
+        lowest, running = self.__extracted_func_1(opening)
         return running, lowest
 
     def overdrawn(self, opening: int = 0) -> bool:
-        lowest, running = self._extracted_func_1(opening)
+        lowest, running = self.__extracted_func_1(opening)
         return lowest < 0
 
-    def _extracted_func_1(self, opening: int) -> tuple[int, int]:
+    def __extracted_func_1(self, opening: int) -> tuple[int, int]:
         running: int = opening
         lowest: int = opening
         for entry in self.entries:

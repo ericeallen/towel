@@ -1,11 +1,14 @@
 """Plan helper renames lexically, without rewriting unrelated identifier tokens.
 
 A module-level helper is renamed together with the importers that bind it;
-a class-level helper defined once is renamed with every attribute reference;
-a helper's parameter is renamed within the helper's own scope. Only
-statically resolved names are supported: renaming needs every consumer in
-the selected source tree, and dynamic lookup or an escaping module object
-is rejected where it is visible in that tree.
+a class-private helper (``__extracted_func_0`` in a class body, stored as
+``_Box__extracted_func_0``) is named by its class, ``Box.__extracted_func_0``,
+and renamed with its references in that class's body, to a name that is
+class-private too; an older class-level helper defined once is renamed with
+every attribute reference; a helper's parameter is renamed within the
+helper's own scope. Only statically resolved names are supported: renaming
+needs every consumer in the selected source tree, and dynamic lookup or an
+escaping module object is rejected where it is visible in that tree.
 """
 
 from __future__ import annotations
@@ -17,12 +20,19 @@ import keyword
 from pathlib import Path
 import tokenize
 import unicodedata
-from typing import Iterable, Literal, Sequence, cast
+from typing import Iterable, Literal, NamedTuple, Sequence, cast
 
 from .changes import ChangePlan
 from .project_layout import ProjectLayout
 from .source_text import decode_source
 from .source_files import python_sources
+from .unification.class_private import (
+    class_qualnames,
+    is_class_private,
+    mangled,
+    mangling_classes,
+    mangling_prefix,
+)
 from .unification.models import GENERATED_HELPER_NAME, FunctionNode
 from .unification.statement_facts import import_binding_names, imported_binding_name
 from .unification.visitors import (
@@ -420,6 +430,22 @@ def _module_name(layout: ProjectLayout, path: Path) -> str:
     return name.removesuffix(".__init__") if name != "__init__" else ""
 
 
+class _ParameterSpec(NamedTuple):
+    """A ``helper.parameter`` rename; ``owner`` is set when a class-private helper is meant."""
+
+    helper: str
+    parameter: str
+    new: str
+    file_filter: Path | None
+    owner: _PrivateHelper | None = None
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """How the specification names its helper and parameter, for the missing-parameter report."""
+        qualified = self.helper if self.owner is None else f"{self.owner.qualname}.{self.helper}"
+        return qualified, self.parameter
+
+
 def plan_renames(
     target: Path, specifications: Sequence[tuple[str, str, Path | None]]
 ) -> tuple[ChangePlan, int]:
@@ -427,20 +453,35 @@ def plan_renames(
 
     A specification ``(old, new, file)`` renames a helper function. When
     ``old`` is ``helper.parameter`` it renames that parameter within the
-    helper's own scope instead. Module-level helpers are renamed with their
-    static importers; a helper defined inside a class is renamed together
-    with every attribute reference to it, which is sound only because
-    generated helper names are unique across the project.
+    helper's own scope instead. ``Class.helper`` names a class-private
+    helper by its class (a nested class by its dotted qualname), and
+    ``Class.helper.parameter`` one of its parameters. Module-level helpers
+    are renamed with their static importers; a class-private helper with its
+    references in its class's body, to a name that must be class-private too
+    (:func:`_validate_private_renames`); an older class-level helper is
+    renamed together with every attribute reference to it, which is sound
+    only because generated helper names are unique across the project.
     """
-    function_specifications, parameter_specifications = _split_specifications(specifications)
+    for old, new, _ in specifications:
+        _validate_names((*old.split("."), new))
     modules = _load_rename_modules(target)
+    private, specifications = _class_private_specifications(modules, specifications)
+    function_specifications, parameter_specifications = _split_specifications(specifications)
+    parameter_specifications += [
+        _ParameterSpec(helper.name, parameter, new, helper.module.path, helper)
+        for helper, parameter, new in private
+        if parameter is not None
+    ]
     parameter_calls = _ParameterCallsites(modules, parameter_specifications)
     by_name = {module.name: module for module in modules}
     selected, method_specifications = _select_definitions(modules, function_specifications)
     _extend_to_generated_importers(modules, selected)
     _refuse_unresolved_helper_imports(modules, selected)
     method_renames = _validate_method_renames(modules, method_specifications)
-    if not selected and not method_renames and not parameter_specifications:
+    private_renames = _validate_private_renames(
+        modules, [(helper, new) for helper, parameter, new in private if parameter is None]
+    )
+    if not selected and not method_renames and not private_renames and not parameter_specifications:
         return ChangePlan(()), 0
     destinations: set[tuple[str, str]] = set()
     for (module_name, _), new in selected.items():
@@ -454,6 +495,7 @@ def plan_renames(
     for module in modules:
         edits = _plan_module(module, selected, by_name)
         _plan_method_renames(module, method_renames, edits)
+        _plan_private_renames(module, private_renames, edits)
         parameters_found |= _plan_parameter_renames(module, parameter_specifications, edits)
         parameter_calls.plan(module, edits)
         content = edits.render()
@@ -461,37 +503,243 @@ def plan_renames(
             before[str(module.path)] = module.original
             after[str(module.path)] = content.decode("utf-8")
             count += len(edits.changes)
-    missing = {
-        (helper, parameter)
-        for helper, parameter, _, _ in parameter_specifications
-        if (helper, parameter) not in parameters_found
-    }
+    missing = {spec.key for spec in parameter_specifications if spec.key not in parameters_found}
     if missing:
         raise ValueError(f"No helper defines these parameters: {sorted(missing)}")
     return ChangePlan.from_sources(before, after), count
 
 
+def _validate_names(names: Iterable[str]) -> None:
+    """Refuse a name that is not a normalized, non-keyword Python identifier."""
+    if any(
+        not name.isidentifier()
+        or keyword.iskeyword(name)
+        or unicodedata.normalize("NFKC", name) != name
+        for name in names
+    ):
+        raise ValueError("Renamings require normalized, non-keyword Python identifiers")
+
+
 def _split_specifications(
     specifications: Sequence[tuple[str, str, Path | None]],
-) -> tuple[list[tuple[str, str, Path | None]], list[tuple[str, str, str, Path | None]]]:
-    """Validate every name and separate helper renames from ``helper.parameter`` renames."""
-    parameter_specifications: list[tuple[str, str, str, Path | None]] = []
+) -> tuple[list[tuple[str, str, Path | None]], list[_ParameterSpec]]:
+    """Separate helper renames from ``helper.parameter`` renames."""
+    parameter_specifications: list[_ParameterSpec] = []
     function_specifications: list[tuple[str, str, Path | None]] = []
     for old, new, file_filter in specifications:
         helper, _, parameter = old.partition(".")
-        names = (helper, parameter, new) if parameter else (helper, new)
-        if any(
-            not name.isidentifier()
-            or keyword.iskeyword(name)
-            or unicodedata.normalize("NFKC", name) != name
-            for name in names
-        ):
-            raise ValueError("Renamings require normalized, non-keyword Python identifiers")
+        if "." in parameter:
+            raise ValueError(f"{old} names no class-private helper defined in that class")
         if parameter:
-            parameter_specifications.append((helper, parameter, new, file_filter))
+            parameter_specifications.append(_ParameterSpec(helper, parameter, new, file_filter))
         else:
             function_specifications.append((old, new, file_filter))
     return function_specifications, parameter_specifications
+
+
+@dataclass(frozen=True, eq=False)
+class _PrivateHelper:
+    """A class-private helper named by its class: ``Box.__extracted_func_0`` in ``module``."""
+
+    module: _Module
+    owner: ast.ClassDef
+    qualname: str
+    function: FunctionNode
+
+    @property
+    def name(self) -> str:
+        return self.function.name
+
+    @property
+    def stored(self) -> str:
+        """The name the class stores it under, ``_Box__extracted_func_0``."""
+        return mangled(self.function.name, self.owner.name)
+
+
+def _class_private_specifications(
+    modules: Sequence[_Module], specifications: Sequence[tuple[str, str, Path | None]]
+) -> tuple[list[tuple[_PrivateHelper, str | None, str]], list[tuple[str, str, Path | None]]]:
+    """The specifications naming a class-private helper by its class, and the others.
+
+    ``Box.__extracted_func_0`` and ``Box.__extracted_func_0.__param_0`` are
+    read against the modules: a key names a class-private helper when a class
+    of that qualname defines a function of that class-private name directly
+    in its body. It must name exactly one; a key read no such way is left for
+    the other kinds of rename.
+    """
+    private: list[tuple[_PrivateHelper, str | None, str]] = []
+    remaining: list[tuple[str, str, Path | None]] = []
+    for old, new, file_filter in specifications:
+        parts = old.split(".")
+        found: list[tuple[_PrivateHelper, str | None]] = []
+        for split in range(1, len(parts)):
+            qualname, helper, rest = ".".join(parts[:split]), parts[split], parts[split + 1 :]
+            if len(rest) > 1 or not is_class_private(helper):
+                continue
+            for module in modules:
+                if file_filter is not None and module.path.resolve() != file_filter.resolve():
+                    continue
+                for owner, class_qualname in class_qualnames(module.tree).items():
+                    if class_qualname != qualname:
+                        continue
+                    found.extend(
+                        (_PrivateHelper(module, owner, qualname, item), rest[0] if rest else None)
+                        for item in owner.body
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and item.name == helper
+                    )
+        if not found:
+            remaining.append((old, new, file_filter))
+            continue
+        if len(found) > 1:
+            raise ValueError(
+                f"{old} names more than one class-private helper; name the file as"
+                f" 'path.py:{old}', and define the helper once in its class"
+            )
+        helper_found, parameter = found[0]
+        private.append((helper_found, parameter, new))
+    return private, remaining
+
+
+def _spelled_names(node: ast.AST) -> tuple[str, ...]:
+    """The identifiers ``node`` itself spells, each of which a class body would mangle."""
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, ast.Attribute):
+        return (node.attr,)
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return (node.name,)
+    if isinstance(node, ast.arg):
+        return (node.arg,)
+    if isinstance(node, ast.keyword):
+        return (node.arg,) if node.arg else ()
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return tuple(node.names)
+    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+        return (node.name,) if node.name else ()
+    if isinstance(node, ast.MatchMapping):
+        return (node.rest,) if node.rest else ()
+    if isinstance(node, ast.alias):
+        bound = imported_binding_name(node)
+        return (bound,) if bound else ()
+    return ()
+
+
+def _validate_private_renames(
+    modules: Sequence[_Module], renames: Sequence[tuple[_PrivateHelper, str]]
+) -> list[tuple[_PrivateHelper, str]]:
+    """Check each class-private rename against every spelling of both stored names.
+
+    A class-private helper is safe because no subclass can reach it, so the
+    new name must be class-private too: ``__name``, not ending in ``__``.
+    What the class stores it under, ``_Box__old``, may be spelled nowhere but
+    as the definition and as ``obj.__old`` in the class's own body, which the
+    rename rewrites: an explicit ``obj._Box__old`` anywhere, an unmangled
+    ``__old`` in another class of the same name, a bare ``__old`` or the
+    stored name as a string all refuse the batch, as does a lookup by a
+    computed name or a namespace read in the class's body, which could build
+    the stored name. The new stored name, ``_Box__new``, must be spelled
+    nowhere at all.
+    """
+    if not renames:
+        return []
+    stored_spellings: dict[str, list[tuple[_Module, ast.AST, ast.ClassDef | None]]] = {}
+    strings: set[str] = set()
+    dynamic: set[int] = set()
+    for module in modules:
+        owners = mangling_classes(module.tree)
+        builtins = _BuiltinReferences(module)
+        for node in ast.walk(module.tree):
+            owner = owners.get(node)
+            for name in _spelled_names(node):
+                stored = mangled(name, owner.name if owner is not None else None)
+                stored_spellings.setdefault(stored, []).append((module, node, owner))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                strings.add(node.value)
+            if owner is not None and (
+                builtins.namespace_read(node)
+                or isinstance(node, ast.Call)
+                and builtins.looks_up(node, ())
+            ):
+                dynamic.add(id(owner))
+    accepted: list[tuple[_PrivateHelper, str]] = []
+    destinations: set[tuple[int, str]] = set()
+    for helper, new in renames:
+        if new == helper.name:
+            continue
+        prefix = mangling_prefix(helper.owner.name)
+        where = f"{helper.module.path}:{helper.qualname}.{helper.name}"
+        if prefix is None:
+            raise ValueError(f"Class {helper.qualname} mangles no name, so {where} is not private")
+        if not is_class_private(new):
+            raise ValueError(
+                f"{where} is class-private, which is what keeps every subclass from"
+                f" overriding it, so its new name must be too: start {new!r} with '__'"
+                " and do not end it with '__'"
+            )
+        for module, node, owner in stored_spellings.get(helper.stored, []):
+            if node is helper.function or (
+                isinstance(node, ast.Attribute) and owner is helper.owner
+            ):
+                continue
+            if owner is not None and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # Mangling goes by name, so a class of the same name that is a
+                # subclass or base of this one would share the attribute.
+                raise ValueError(
+                    f"{where}: another class named {owner.name} also defines {helper.stored}"
+                    f" at {module.path}:{node.lineno}, and would share it if one derived from"
+                    " the other; rename it manually"
+                )
+            raise ValueError(
+                f"{where} is referenced as {helper.stored} outside the attribute references"
+                f" in its class's body: {module.path}:{getattr(node, 'lineno', '?')};"
+                " rename it manually"
+            )
+        if helper.stored in strings:
+            raise ValueError(
+                f"{where} is spelled {helper.stored!r} in a string; rename it manually"
+            )
+        if id(helper.owner) in dynamic:
+            raise ValueError(
+                f"Dynamic attribute lookup in {helper.qualname}'s body prevents renaming {where}"
+            )
+        new_stored = prefix + new
+        if new_stored in stored_spellings or new_stored in strings:
+            raise ValueError(
+                f"New method name {new} in {helper.qualname} already appears in the project"
+            )
+        if (id(helper.owner), new) in destinations:
+            raise ValueError(f"Several helpers of {helper.qualname} would share the new name {new}")
+        destinations.add((id(helper.owner), new))
+        accepted.append((helper, new))
+    return accepted
+
+
+def _plan_private_renames(
+    module: _Module, renames: Sequence[tuple[_PrivateHelper, str]], edits: _Edits
+) -> None:
+    """Rename each class-private helper of ``module``: its definition and ``obj.__old`` in its class."""
+    mine = [(helper, new) for helper, new in renames if helper.module is module]
+    if not mine:
+        return
+    owners = mangling_classes(module.tree)
+    for helper, new in mine:
+        edits.identifier(helper.function, helper.name, new)
+        for node in ast.walk(module.tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == helper.name
+                and owners.get(node) is helper.owner
+            ):
+                if node.end_lineno is None or node.end_col_offset is None:
+                    raise ValueError("a parsed node carries its end position")
+                edits.add(
+                    node.end_lineno,
+                    node.end_col_offset - len(node.attr.encode("utf-8")),
+                    node.end_lineno,
+                    node.end_col_offset,
+                    new,
+                )
 
 
 def _load_rename_modules(target: Path) -> list[_Module]:
@@ -690,8 +938,15 @@ def _validate_method_renames(
                 dynamic_calls.append((builtins, node))
     renames: dict[str, str] = {}
     for old, new in specifications:
-        if _mangled(old) or _mangled(new):
-            raise ValueError(f"Class-private name mangling prevents safe rename: {old} -> {new}")
+        if is_class_private(old) or is_class_private(new):
+            # Mangling ties a class-private name to its class, which a bare key
+            # does not name; the helper's key is ``path.py:Class.name``.
+            raise ValueError(
+                f"Class-private name mangling ties {old} to its class: rename it by its"
+                f" class-qualified key, path.py:Class.{old}, to a name that starts with '__'"
+                if is_class_private(old)
+                else f"Class-private name mangling prevents safe rename: {old} -> {new}"
+            )
         if any(name.startswith("__") and name.endswith("__") for name in (old, new)):
             raise ValueError(f"Special method behavior prevents safe rename: {old} -> {new}")
         if definitions.get(old, 0) != 1:
@@ -708,10 +963,6 @@ def _validate_method_renames(
     if len(set(renames.values())) != len(renames):
         raise ValueError("Several class helpers would share the same new name")
     return renames
-
-
-def _mangled(name: str) -> bool:
-    return name.startswith("__") and not name.endswith("__")
 
 
 def _plan_method_renames(module: _Module, renames: dict[str, str], edits: _Edits) -> None:
@@ -732,20 +983,32 @@ def _plan_method_renames(module: _Module, renames: dict[str, str], edits: _Edits
 
 def _plan_parameter_renames(
     module: _Module,
-    specifications: Sequence[tuple[str, str, str, Path | None]],
+    specifications: Sequence[_ParameterSpec],
     edits: _Edits,
 ) -> set[tuple[str, str]]:
-    """Rename a helper's parameter throughout that helper's own scope."""
+    """Rename a helper's parameter throughout that helper's own scope.
+
+    A class-private helper's specification names its one definition; any
+    other names every function of the helper's name in the files it selects.
+    """
     found: set[tuple[str, str]] = set()
     scopes = module.scopes
     builtins = _BuiltinReferences(module)
-    for helper, parameter, new, file_filter in specifications:
+    for spec in specifications:
+        helper, parameter, new, file_filter = (
+            spec.helper,
+            spec.parameter,
+            spec.new,
+            spec.file_filter,
+        )
         if file_filter is not None and module.path.resolve() != file_filter.resolve():
             continue
         for function in ast.walk(module.tree):
             if (
                 not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
                 or function.name != helper
+                or spec.owner is not None
+                and function is not spec.owner.function
             ):
                 continue
             arguments = [
@@ -757,7 +1020,7 @@ def _plan_parameter_renames(
             matching = [arg for arg in arguments if arg.arg == parameter]
             if not matching:
                 continue
-            found.add((helper, parameter))
+            found.add(spec.key)
             if parameter == new:
                 continue
             if new in _identifiers_in(function) or _private_in_class(scopes.nodes[function], new):
@@ -814,34 +1077,44 @@ class _ParameterRename:
 class _ParameterCallsites:
     """Rename keyword arguments only at resolved calls, refusing callable escapes.
 
-    Imports and re-exports carry a function's identity across modules. A method
-    uses the same globally unique helper-name contract as method renaming.
-    Aliases or dynamic keyword dictionaries that cannot be rewritten safely are
-    declined before any files are changed.
+    Imports and re-exports carry a function's identity across modules. A
+    method is known by the name its class stores it under (a class-private
+    ``__h`` in ``Box`` is ``_Box__h``, and so is ``obj.__h`` written in
+    ``Box``'s body), which must be defined once in the project, as method
+    renaming requires. Aliases or dynamic keyword dictionaries that cannot be
+    rewritten safely are declined before any files are changed.
     """
 
     def __init__(
         self,
         modules: Sequence[_Module],
-        specifications: Sequence[tuple[str, str, str, Path | None]],
+        specifications: Sequence[_ParameterSpec],
     ) -> None:
         self.symbols: dict[tuple[_Scope, str], tuple[_ParameterRename, ...]] = {}
         self.methods: dict[str, tuple[_ParameterRename, ...]] = {}
         self.modules = {module.name: module for module in modules}
         self.module_targets: set[str] = set()
+        self.owners = {module.name: mangling_classes(module.tree) for module in modules}
         definitions: dict[str, int] = {}
         for module in modules:
+            owners = self.owners[module.name]
             for node in ast.walk(module.tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    definitions[node.name] = definitions.get(node.name, 0) + 1
+                    stored = self._stored(node.name, owners.get(node))
+                    definitions[stored] = definitions.get(stored, 0) + 1
         for module in modules:
+            owners = self.owners[module.name]
             for node in ast.walk(module.tree):
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
                 arguments = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
-                for helper, parameter, new, file_filter in specifications:
+                for spec in specifications:
+                    helper, parameter, new = spec.helper, spec.parameter, spec.new
                     if helper != node.name or parameter == new:
                         continue
+                    if spec.owner is not None and node is not spec.owner.function:
+                        continue
+                    file_filter = spec.file_filter
                     if file_filter is not None and module.path.resolve() != file_filter.resolve():
                         continue
                     if not any(arg.arg == parameter for arg in arguments):
@@ -866,11 +1139,12 @@ class _ParameterCallsites:
                     )
                     scope = module.scopes.nodes[node]
                     if scope.kind == "class":
-                        if definitions[helper] != 1:
+                        stored = self._stored(helper, owners.get(node))
+                        if definitions[stored] != 1:
                             raise ValueError(
                                 f"Class helper {helper} must be unique for parameter renaming"
                             )
-                        self.methods[helper] = (*self.methods.get(helper, ()), target)
+                        self.methods[stored] = (*self.methods.get(stored, ()), target)
                     else:
                         key = (scope, helper)
                         self.symbols[key] = (*self.symbols.get(key, ()), target)
@@ -901,21 +1175,17 @@ class _ParameterCallsites:
                             grew = True
 
     @staticmethod
-    def _keyword_name(module: _Module, function: FunctionNode, name: str) -> str:
-        if not _mangled(name):
-            return name
-        parents = {
-            child: parent
-            for parent in ast.walk(module.tree)
-            for child in ast.iter_child_nodes(parent)
-        }
-        node: ast.AST = function
-        while node in parents:
-            node = parents[node]
-            if isinstance(node, ast.ClassDef):
-                owner = node.name.lstrip("_")
-                return f"_{owner}{name}" if owner else name
-        return name
+    def _stored(name: str, owner: ast.ClassDef | None) -> str:
+        """What ``name`` written in ``owner``'s body (None: in no class) is stored as."""
+        return mangled(name, owner.name if owner is not None else None)
+
+    def _keyword_name(self, module: _Module, function: FunctionNode, name: str) -> str:
+        """The keyword that reaches ``function``'s parameter ``name``: its stored name.
+
+        A parameter ``__x`` of a method of ``Box`` is stored as ``_Box__x``, and
+        a call's keywords are never mangled, so only ``_Box__x=`` reaches it.
+        """
+        return self._stored(name, self.owners[module.name].get(function))
 
     def _check_bindings(self, module: _Module) -> None:
         """Each tracked callable binding has one statically known definition."""
@@ -999,7 +1269,8 @@ class _ParameterCallsites:
                     (_resolve(module.scopes.nodes[node], node.id), node.id), ()
                 )
             elif isinstance(node, ast.Attribute):
-                targets = self.methods.get(node.attr, ())
+                owner = self.owners[module.name].get(node)
+                targets = self.methods.get(self._stored(node.attr, owner), ())
                 origin_name = resolver._referenced_module(node.value)
                 origin = self.modules.get(origin_name) if origin_name is not None else None
                 if origin is not None:
@@ -1022,6 +1293,13 @@ class _ParameterCallsites:
 
     @staticmethod
     def _keywords(call: ast.Call, targets: Sequence[_ParameterRename], edits: _Edits) -> None:
+        """Rename each keyword of ``call`` that passes a renamed parameter.
+
+        CPython rewrites a private parameter name but never a call's keyword,
+        so ``__param_0=`` passes ``__param_0`` wherever it is written, and only
+        a keyword spelled as the parameter is stored, ``_Box__param_0=``,
+        reaches ``Box``'s ``__param_0``.
+        """
         replacements = {
             target.parameter: target.replacement for target in targets if not target.positional_only
         }

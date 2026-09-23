@@ -213,8 +213,10 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
         modified = engine.apply_refactoring_multi_file(proposal)
         updated_code = modified[path]
 
-        self.assertIn("def _helper(self, value):", updated_code)
-        self.assertIn("return self._helper(value)", updated_code)
+        # A caller's own name for a method helper is made class-private, as
+        # every method helper's is.
+        self.assertIn("def __helper(self, value):", updated_code)
+        self.assertIn("return self.__helper(value)", updated_code)
         namespace: dict[str, Any] = {}
         exec(compile(updated_code, path, "exec"), namespace)
         self.assertEqual(namespace["Example"]().method(10), 11)

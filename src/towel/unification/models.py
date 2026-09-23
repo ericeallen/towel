@@ -91,17 +91,16 @@ class MethodInfo:
 
 @dataclass
 class ClassInfo:
-    """Summarizes class definitions discovered during analysis."""
+    """A class statement found during analysis: its name, dotted qualname, and file."""
 
     name: str
     qualname: str
     file_path: str
-    bases: List[str]
 
 
 @dataclass
 class ClassInsertionPlan:
-    """Describes where an extracted helper should be inserted within a class hierarchy."""
+    """The class holding both duplicates that takes the helper, and how it binds the receiver."""
 
     class_name: str
     file_path: str

@@ -43,6 +43,12 @@ from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
 from towel.source_files import python_sources
+from towel.unification.class_private import (
+    class_qualnames,
+    is_class_private,
+    mangling_classes,
+    mangling_prefix,
+)
 from towel.unification.models import GENERATED_HELPER_NAME, ParameterKind
 from towel.unification.defaults import (
     DEFAULT_MAX_CANDIDATE_PAIRS,
@@ -504,7 +510,10 @@ class ParameterRecord(TypedDict):
 
 
 HelperScopeKind = Literal["module", "class", "function"]
-"""Where a helper was placed; the inventory's ``scope`` is this, then ``:<name>`` unless module."""
+"""Where a helper was placed; the inventory's ``scope`` is this, then ``:<name>`` unless module.
+
+A class's name is its dotted qualname within the module.
+"""
 
 
 class HelperRecord(TypedDict):
@@ -1311,6 +1320,37 @@ def _helper_calls(
     return calls
 
 
+def _private_helper_calls(
+    source: str, tree: ast.Module, owner: ast.ClassDef, name: str, relative: str
+) -> List[CallRecord]:
+    """Every call of a class-private helper: an attribute call in its own class's body.
+
+    ``obj.__h()`` written anywhere else names another stored attribute, so a
+    same-named helper of another class is not counted as a call of this one.
+    """
+    owners = mangling_classes(tree)
+    statements = {
+        child: statement
+        for statement in ast.walk(tree)
+        if isinstance(statement, ast.stmt)
+        for child in ast.walk(statement)
+    }
+    return [
+        {
+            "file": relative,
+            "line": node.lineno,
+            "bound": True,
+            "statement": ast.get_source_segment(source, statements.get(node, node)) or "",
+            "arguments": [ast.get_source_segment(source, arg) or "" for arg in node.args],
+        }
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == name
+        and owners.get(node) is owner
+    ]
+
+
 def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) -> HelperInventory:
     """Describe every generated helper for a naming assistant.
 
@@ -1319,7 +1359,9 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
     helper, ``lifted`` ones are called with block variables, ``receiver`` is
     the bound instance or class), every call site with the argument
     expression bound to each parameter, and the exact mapping keys that
-    rename the helper or one of its parameters.
+    rename the helper or one of its parameters. A class-private helper is
+    keyed by its class, ``path.py:Class.__helper``, because its name means
+    something only there: the class stores it as ``_Class__helper``.
     """
 
     changes_by_helper = _read_change_sidecar(_change_sidecar_path(target))
@@ -1333,18 +1375,30 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
         parents = {
             child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
         }
+        qualnames = class_qualnames(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef) or node.name != name or node.lineno != lineno:
                 continue
             enclosing = parents.get(node)
             scope_kind: HelperScopeKind
             if isinstance(enclosing, ast.ClassDef):
-                scope_kind, scope_name = "class", enclosing.name
+                scope_kind, scope_name = "class", qualnames.get(enclosing, enclosing.name)
             elif isinstance(enclosing, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 scope_kind, scope_name = "function", enclosing.name
             else:
                 scope_kind, scope_name = "module", None
             scope = scope_kind if scope_name is None else f"{scope_kind}:{scope_name}"
+            relative = str(path.relative_to(target))
+            private = (
+                isinstance(enclosing, ast.ClassDef)
+                and is_class_private(name)
+                and mangling_prefix(enclosing.name) is not None
+            )
+            helper_calls = (
+                _private_helper_calls(source, tree, enclosing, name, relative)
+                if private and isinstance(enclosing, ast.ClassDef)
+                else calls[name]
+            )
             decorators = {
                 (d.id if isinstance(d, ast.Name) else getattr(d, "attr", ""))
                 for d in node.decorator_list
@@ -1356,7 +1410,12 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                     if child.func.id in names:
                         kinds[child.func.id] = "thunk" if not child.args else "lifted"
             has_receiver = scope_kind == "class" and "staticmethod" not in decorators
-            relative = str(path.relative_to(target))
+            if private:
+                key = f"{relative}:{scope_name}.{name}"
+            elif scope_kind == "module":
+                key = f"{relative}:{name}"
+            else:
+                key = name
             parameters: List[ParameterRecord] = []
             for index, parameter in enumerate(names):
                 kind: ParameterKind
@@ -1365,7 +1424,7 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                 else:
                     kind = kinds.get(parameter, "value")
                 bindings: List[BindingRecord] = []
-                for call in calls[name]:
+                for call in helper_calls:
                     arguments = call["arguments"]
                     offset = index - (1 if has_receiver and call["bound"] else 0)
                     if 0 <= offset < len(arguments):
@@ -1379,33 +1438,49 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
                     {
                         "name": parameter,
                         "kind": kind,
-                        "rename_key": f"{relative}:{name}.{parameter}",
+                        "rename_key": (
+                            f"{key}.{parameter}" if private else f"{relative}:{name}.{parameter}"
+                        ),
                         "bindings": bindings,
                     }
                 )
+            changes = changes_by_helper.get(name, [])
             entries.append(
                 {
                     "file": relative,
                     "line": lineno,
                     "name": name,
                     "scope": scope,
-                    "rename_key": f"{relative}:{name}" if scope_kind == "module" else name,
+                    "rename_key": key,
                     "renameable": scope_kind == "module"
-                    or (scope_kind == "class" and not name.startswith("__")),
+                    or (scope_kind == "class" and (private or not name.startswith("__"))),
                     "parameters": parameters,
                     "source": ast.get_source_segment(source, node) or "",
-                    "calls": calls[name],
-                    "changes": changes_by_helper.get(name, []),
+                    "calls": helper_calls,
+                    "changes": (
+                        [change for change in changes if change["file"] == relative]
+                        if private
+                        else changes
+                    ),
                 }
             )
     return {
         "target": str(target),
         "mapping_format": {
-            "helper": '"path.py:helper" or "helper" -> new function name',
-            "parameter": '"path.py:helper.parameter" or "helper.parameter" -> new parameter name',
+            "helper": (
+                '"path.py:helper", "path.py:Class.__helper" for a class-private helper,'
+                ' or "helper" -> new function name'
+            ),
+            "parameter": (
+                '"path.py:helper.parameter", "path.py:Class.__helper.parameter",'
+                ' or "helper.parameter" -> new parameter name'
+            ),
             "notes": (
                 "Thunk parameters are called inside the helper, so name them for the value they yield "
-                "(the helper reads name()). Keys are applied as one batch; any invalid entry aborts all."
+                "(the helper reads name()). A class-private helper (a name starting with '__' in a "
+                "class) must get a new name that starts with '__' too, and does not end with '__': "
+                "privacy keeps subclasses from overriding it. Keys are applied as one batch; any "
+                "invalid entry aborts all."
             ),
         },
         "helpers": entries,
@@ -1489,7 +1564,14 @@ def _apply_rename_mappings(
         if selected_helpers is None:
             specifications.append((name, new_name, file_filter))
         else:
-            helper_name = name.partition(".")[0]
+            # ``helper``, ``helper.parameter``, or a class-private
+            # ``Class.helper[.parameter]``: the helper is the first part that
+            # names a selected one.
+            selected_names = {helper for _, helper, _, _ in selected_helpers}
+            helper_name = next(
+                (part for part in name.split(".") if part in selected_names),
+                name.partition(".")[0],
+            )
             matched = {
                 path.resolve()
                 for path, helper, _, _ in selected_helpers
@@ -1549,11 +1631,13 @@ def _run_interactive_llm_mode(
     print("The response should be a JSON object mapping old names to new names.")
     print("You can use file-qualified names (e.g., 'path/to/file.py:func_name') to")
     print("rename functions only in specific files, or just the function name to rename")
-    print("across all files.")
+    print("across all files. A class-private helper, '__...' in a class, is named by its")
+    print("class ('path/to/file.py:Class.__func_name') and keeps a name starting with '__'.")
     print()
     print("Example:")
     print('  {"__extracted_func_1": "calculate_total"}')
     print('  {"src/utils.py:__extracted_func_2": "validate_input"}')
+    print('  {"src/box.py:Box.__extracted_func_3": "__scaled_width"}')
     print()
     print(
         "Paste the JSON response below, then press ENTER followed by Ctrl+D (or Ctrl+Z on Windows):"
@@ -1617,10 +1701,15 @@ Here are the extracted functions:
 
 """
 
+    keys = {
+        (entry["file"], entry["name"], entry["line"]): entry["rename_key"]
+        for entry in helper_inventory(target, helpers)["helpers"]
+    }
     functions_section = ""
     for i, (file_path, func_name, lineno, source_preview) in enumerate(helpers, 1):
         rel_path = file_path.relative_to(target)
-        functions_section += f"\n{i}. {func_name} ({rel_path}:{lineno})\n"
+        key = keys.get((str(rel_path), func_name, lineno), func_name)
+        functions_section += f"\n{i}. {func_name} ({rel_path}:{lineno}), rename key {key!r}\n"
         if source_preview:
             functions_section += "```python\n"
             functions_section += source_preview + "\n"
@@ -1632,6 +1721,9 @@ Please provide your suggestions as a JSON object mapping old names to new names.
 
 If the same function name appears in multiple files, use file-qualified names (path:function_name)
 to rename them individually. Otherwise, you can use just the function name to rename across all files.
+A helper whose rename key names a class ("path.py:Class.__name") is class-private: use that key, and
+give it a new name that also starts with two underscores (and does not end with two), such as
+"__scaled_width", because the privacy is what keeps subclasses from overriding it.
 
 For example:
 

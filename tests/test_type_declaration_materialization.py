@@ -17,9 +17,15 @@ from towel.unification.models import RefactoringProposal, Replacement, ReusedFun
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
-def _proposal(path: Path, declarations: str, *, parameter_name: str = "_T") -> RefactoringProposal:
+def _proposal(
+    path: Path,
+    declarations: str,
+    *,
+    parameter_name: str = "_T",
+    source_function: ast.FunctionDef | None = None,
+) -> RefactoringProposal:
     source = ast.parse(path.read_text())
-    function = next(
+    function = source_function or next(
         node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "first"
     )
     statement = function.body[0]
@@ -155,40 +161,62 @@ def test_type_declarations_require_a_fresh_module_or_class_helper(
     assert path.read_text() == original
 
 
+def _host_proposal(path: Path, declarations: str) -> RefactoringProposal:
+    """``_proposal``'s helper as a static method of ``Host``, called from ``Host.first``.
+
+    A method helper is class-private, so its call must be written in its
+    class's own body for the compiler to spell it as the class stores it.
+    """
+    host = next(
+        node
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.ClassDef) and node.name == "Host"
+    )
+    first = next(node for node in host.body if isinstance(node, ast.FunctionDef))
+    statement = first.body[0]
+    proposal = _proposal(path, declarations, source_function=first)
+    return replace(
+        proposal,
+        insert_into_class="Host",
+        method_kind="staticmethod",
+        replacements=[
+            Replacement(
+                (statement.lineno, statement.end_lineno or statement.lineno),
+                ast.parse("return __extracted_func(value)").body[0],
+                class_name="Host",
+                method_kind="staticmethod",
+            )
+        ],
+    )
+
+
 @pytest.mark.parametrize("bound_before_host", [True, False])
 def test_method_declarations_respect_module_dependencies_and_host_decorators(
     tmp_path: Path, bound_before_host: bool
 ) -> None:
     path = tmp_path / "module.py"
     bound = "class Bound:\n    pass\n\n"
-    source = (
-        '"""Example."""\nfrom __future__ import annotations\n\n'
-        "def first(value):\n    return value\n\n"
-        "def decorate(cls):\n    return cls\n\n"
-        + (bound if bound_before_host else "")
-        + "@decorate\nclass Host:\n    pass\n\n"
-        + ("" if bound_before_host else bound)
+    source = '"""Example."""\nfrom __future__ import annotations\n\n' "def decorate(cls):\n    return cls\n\n" + (
+        bound if bound_before_host else ""
+    ) + "@decorate\nclass Host:\n    @staticmethod\n    def first(value):\n        return value\n\n" + (
+        "" if bound_before_host else bound
     )
     path.write_text(source)
-    proposal = _proposal(path, "from typing import TypeVar as _TV\n_T = _TV('_T', bound=Bound)\n")
-    proposal = replace(
-        proposal,
-        insert_into_class="Host",
-        method_kind="staticmethod",
-        replacements=[
-            replace(item, class_name="Host", method_kind="staticmethod")
-            for item in proposal.replacements
-        ],
+    proposal = _host_proposal(
+        path, "from typing import TypeVar as _TV\n_T = _TV('_T', bound=Bound)\n"
     )
     engine = _engine()
     if bound_before_host:
         rendered = engine.apply_refactoring(str(path), proposal)
         assert rendered.index("class Bound:") < rendered.index("_T =") < rendered.index("@decorate")
         assert "@decorate\nclass Host:" in rendered
+        assert "return Host.__extracted_func_0(value)" in rendered
         namespace: dict[str, object] = {}
         exec(
             compile(
-                rendered + "\nvalue = Bound()\nassert first(value) is value\n", str(path), "exec"
+                rendered + "\nvalue = Bound()\nassert Host.first(value) is value\n",
+                str(path),
+                "exec",
             ),
             namespace,
         )
@@ -200,6 +228,31 @@ def test_method_declarations_respect_module_dependencies_and_host_decorators(
             engine.apply_refactoring(str(path), proposal)
         assert engine.change_log == ()
     assert path.read_text() == source
+
+
+def test_a_method_helper_called_outside_its_class_is_refused(tmp_path: Path) -> None:
+    """``Host.__extracted_func_0`` written outside ``Host`` names no attribute ``Host`` has.
+
+    The compiler rewrites the private name only inside the class's own body,
+    where the helper is stored as ``_Host__extracted_func_0``; a proposal that
+    calls it from anywhere else would write code raising ``AttributeError``.
+    """
+    path = tmp_path / "module.py"
+    original = "def first(value):\n    return value\n\n\nclass Host:\n    pass\n"
+    path.write_text(original)
+    proposal = _proposal(path, "")
+    proposal = replace(
+        proposal,
+        insert_into_class="Host",
+        method_kind="staticmethod",
+        replacements=[
+            replace(item, class_name="Host", method_kind="staticmethod")
+            for item in proposal.replacements
+        ],
+    )
+    with pytest.raises(RefactoringError, match="class-private"):
+        _engine().apply_refactoring(str(path), proposal)
+    assert path.read_text() == original
 
 
 def test_helper_name_allocation_avoids_its_own_type_declarations(tmp_path: Path) -> None:

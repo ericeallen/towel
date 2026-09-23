@@ -82,10 +82,15 @@ def quote_summary(quote):
     return f"Quote {quote.id}: ${total}"
 ```
 
-When a duplicate is the whole body of an existing function, Towel does not
-extract a helper that would only restate it: the function is kept and the other
-copies call it, so two identical functions become one function and one
-one-line forwarder.
+When a duplicate is the whole body of an existing function, that function gets
+a call of the new helper like every other copy; it is never rewritten to call
+another function that restates it, since patching or rebinding that one would
+then change both. A block that methods of one class share becomes a method of
+that class with a class-private name (`self.__extracted_func_0(...)`), which no
+subclass can override; a block shared across classes becomes a module-level
+function that takes the receiver, and whether it belongs in a class is left to
+your review: Towel never adds a method to a class that did not already hold the
+code.
 
 Towel checks each proposed extraction by instantiating the helper with each
 call's arguments and comparing it with the block it replaces. It also checks
@@ -266,7 +271,7 @@ The JSON inventory gives the assistant what it needs to name well: every helper 
 
 Each helper also carries a `changes` list: for every call site of a generated helper, the exact original block it replaced (`before`) next to the generated call (`after`); sites redirected to an existing function are not listed, since no helper was inserted for them. Seeing what the code did before extraction is what lets an assistant finish good names, write a docstring, and infer parameter and return types. This comes from a small `.towel-helpers.json` that `towel dry` writes next to its output; it is only for the naming step and is safe to delete afterward.
 
-Each inventory entry carries the exact mapping key to use as a rename target: `"path.py:helper"` renames a module-level helper together with its importers, `"helper"` renames a unique class-level helper together with every attribute reference, and `"path.py:helper.__param_0"` renames a parameter within the helper's scope. The rename is applied as one atomic batch with scope and importer checks; a name collision, a mangled name, or a dynamic reference aborts the whole batch and reports the reason, so a bad suggestion changes nothing. Rename after adopting an out-of-place output into its project: the output directory is named for the output, not the package, so an import naming the package cannot be matched there, and the batch is refused. `--preview` reports what would change without writing,
+Each inventory entry carries the exact mapping key to use as a rename target: `"path.py:helper"` renames a module-level helper together with its importers, `"path.py:Class.__helper"` renames a class-private method helper together with its references in that class's body, and `"path.py:helper.__param_0"` (or `"path.py:Class.__helper.__param_0"`) renames a parameter within the helper's scope. A method helper is class-private, `__extracted_func_0`, so that no subclass can override it, and its new name must be class-private too: it starts with two underscores and does not end with two, or the batch is refused. An older class-level helper without the leading double underscore is still renamed by its bare name, `"helper"`, together with every attribute reference. The rename is applied as one atomic batch with scope and importer checks; a name collision, a class-private helper spelled out elsewhere (`obj._Class__helper`), or a dynamic reference aborts the whole batch and reports the reason, so a bad suggestion changes nothing. Rename after adopting an out-of-place output into its project: the output directory is named for the output, not the package, so an import naming the package cannot be matched there, and the batch is refused. `--preview` reports what would change without writing,
 as the same JSON when `--json` is given. `--file` and `--function` (each repeatable) limit
 the inventory to particular modules or helpers, and `--llm claude|gpt|copilot|generic`
 phrases the interactive prompt for a particular assistant.
