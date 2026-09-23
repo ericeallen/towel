@@ -14,7 +14,7 @@
 #
 # Fields: name, url, rev (full commit SHA; "HEAD" only for towel-main),
 # package (path refactored, relative to the project root), pythonpath (for
-# the test run), deps (test-only requirements installed into a private
+# the test run), deps (test requirements installed into the project's own
 # environment), test (command run from the project root; {python} is the
 # environment interpreter), failure_exit_codes (default [1]; a recorded custom
 # runner contract for completed failing suites only; successful suites always
@@ -24,7 +24,13 @@
 # id substrings; the verdict is BROKEN_KNOWN only when every new failure
 # matches one, otherwise BROKEN), timeout (seconds per phase for this project,
 # overriding --timeout), exclude (directory names left out of the refactor,
-# passed to `towel dry --exclude`).
+# passed to `towel dry --exclude`), install (default true: the project is
+# installed, editable, from the tree under test, as its developers have it, which
+# supplies the metadata and generated modules its tests read and the installation
+# Towel's import model expects; false only where an editable install cannot be
+# built or compiles an extension module into the tree, which the suite would then
+# exercise in place of the Python code the refactoring changes, and each such
+# entry says which).
 
 [[project]]
 name = "tabulate"
@@ -75,7 +81,6 @@ package = "src/humanize"
 pythonpath = "src"
 deps = ["freezegun", "pytest-benchmark"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--benchmark-disable"]
-install = true
 
 [[project]]
 name = "attrs"
@@ -99,7 +104,6 @@ url = "https://github.com/pallets/click.git"
 rev = "6aabf099bfdd4c1e75fe8d0e0d4241372b988ab1"
 package = "src/click"
 pythonpath = "src"
-install = true
 
 [[project]]
 name = "marshmallow"
@@ -288,7 +292,6 @@ rev = "c5ef1edbb41eb7ad8aea2e75627ae474e796484c"
 package = "src/platformdirs"
 pythonpath = "src"
 deps = ["appdirs", "pytest-mock"]
-install = true
 
 [[project]]
 name = "filelock"
@@ -297,7 +300,6 @@ rev = "4efd93e0482e8095a0b6949fb337206e7f67495d"
 package = "src/filelock"
 pythonpath = "src"
 deps = ["pytest-timeout", "pytest-mock", "virtualenv", "pytest-asyncio"]
-install = true
 
 [[project]]
 name = "python-dateutil"
@@ -336,6 +338,8 @@ url = "https://github.com/GrahamDumpleton/wrapt.git"
 rev = "f1586a5e48e79024e45bf9139b6a4293798aee1b"
 package = "src/wrapt"
 pythonpath = "src"
+# Installing compiles `wrapt._wrappers`, which replaces the Python wrappers.
+install = false
 
 # --- Second batch (September 13, 2026): larger and application-shaped projects ---
 
@@ -346,7 +350,6 @@ rev = "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35"
 package = "src/flask"
 pythonpath = "src"
 deps = ["asgiref", "python-dotenv"]
-install = true
 
 [[project]]
 name = "werkzeug"
@@ -355,7 +358,6 @@ rev = "6a604e005d95af8129ee314863be8ad6b240dead"
 package = "src/werkzeug"
 pythonpath = "src"
 deps = ["cryptography", "ephemeral-port-reserve", "pytest-timeout", "watchdog"]
-install = true
 
 [[project]]
 name = "httpx"
@@ -363,7 +365,6 @@ url = "https://github.com/encode/httpx.git"
 rev = "b5addb64f0161ff6bfe94c124ef76f6a1fba5254"
 package = "httpx"
 deps = ["chardet", "trio", "trustme", "uvicorn", "cryptography", "h2", "socksio", "zstandard", "brotli", "click", "pygments", "rich"]
-install = true
 
 [[project]]
 name = "starlette"
@@ -371,7 +372,6 @@ url = "https://github.com/encode/starlette.git"
 rev = "03f12b7fcf0a3e21a8da648ca0900c79472e9efe"
 package = "starlette"
 deps = ["httpx", "httpx2[zstd]", "trio", "blockbuster", "itsdangerous", "jinja2", "python-multipart", "pyyaml", "opentelemetry-api", "opentelemetry-sdk", "importlib-metadata"]
-install = true
 
 [[project]]
 name = "anyio"
@@ -380,7 +380,6 @@ rev = "9e2b5924e54ce5fa6aacc0640846c1a360a45178"
 package = "src/anyio"
 pythonpath = "src"
 deps = ["blockbuster", "hypothesis", "psutil", "pytest-mock", "pytest-timeout", "trustme", "truststore", "uvloop", "trio", "coverage"]
-install = true
 
 [[project]]
 name = "jsonschema"
@@ -388,7 +387,6 @@ url = "https://github.com/python-jsonschema/jsonschema.git"
 rev = "15f8613be518d9e5f563efa643213d1962d3c5b7"
 package = "jsonschema"
 deps = ["virtue", "jsonpath-ng"]
-install = true
 
 [[project]]
 name = "virtualenv"
@@ -397,7 +395,6 @@ rev = "e13bb213aa649baab1c0bf70374421bac0083853"
 package = "src/virtualenv"
 pythonpath = "src"
 deps = ["covdefaults", "coverage", "coverage-enable-subprocess", "flaky", "packaging", "pytest-env", "pytest-mock", "pytest-timeout", "pytest-xdist", "setuptools", "time-machine"]
-install = true
 
 [[project]]
 name = "nox"
@@ -405,7 +402,6 @@ url = "https://github.com/wntrblm/nox.git"
 rev = "fe279740b775a632f1b567b45c7d131c00a4f174"
 package = "nox"
 deps = ["pytest-xdist", "coverage"]
-install = true
 
 [[project]]
 name = "markdown"
@@ -421,7 +417,6 @@ url = "https://github.com/tqdm/tqdm.git"
 rev = "9cf5a12b1f955468a17f0ba3c59092b23e4258ac"
 package = "tqdm"
 deps = ["pytest-timeout", "pytest-asyncio", "nbval", "ipywidgets"]
-install = true
 
 [[project]]
 name = "lark"
@@ -429,7 +424,6 @@ url = "https://github.com/lark-parser/lark.git"
 rev = "9a4fb9c7458e8155636773a3cded0016d52516da"
 package = "lark"
 deps = ["regex", "interegular", "atomicwrites"]
-install = true
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
 expect_broken = "source-observing: lark.tools.standalone copies marked regions of named source files into one artifact, so a helper moved to another file is absent from it"
 known_failures = ["tests/__main__.py::TestStandalone::"]
@@ -442,6 +436,8 @@ package = "peewee.py"
 test = ["{python}", "runtests.py"]
 # This pinned unittest runner exits 2 for completed suites containing errors.
 failure_exit_codes = [1, 2]
+# Installing compiles `playhouse._sqlite_udf`, which replaces Python functions.
+install = false
 
 [[project]]
 name = "python-prompt-toolkit"
@@ -450,7 +446,6 @@ rev = "583b3412c792a5cc9f01adde603679f3824a88f3"
 package = "src/prompt_toolkit"
 pythonpath = "src"
 deps = ["pytest-mock", "asyncssh"]
-install = true
 
 [[project]]
 name = "astroid"
@@ -458,7 +453,6 @@ url = "https://github.com/pylint-dev/astroid.git"
 rev = "6011e6c31e5ccf486303c51a1423e7b37081debd"
 package = "astroid"
 deps = ["typing-extensions"]
-install = true
 
 [[project]]
 name = "networkx"
@@ -466,7 +460,6 @@ url = "https://github.com/networkx/networkx.git"
 rev = "8977f1cfbae61ed7f33a33d19a40fd2c3f16c05c"
 package = "networkx"
 deps = ["numpy", "scipy", "pandas", "matplotlib"]
-install = true
 timeout = 7200
 exclude = ["tests"]
 
@@ -477,7 +470,6 @@ rev = "99ab2acccff15f757260a1e1fbb0d2a47fc01041"
 package = "src/_pytest"
 pythonpath = "src"
 deps = ["attrs", "hypothesis", "mock", "pygments", "requests", "setuptools", "xmlschema", "argcomplete"]
-install = true
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "testing"]
 
 [[project]]
@@ -486,7 +478,6 @@ url = "https://github.com/sphinx-doc/sphinx.git"
 rev = "e44a40eb2f810558ccd9da1425421270ccb81351"
 package = "sphinx"
 deps = ["pytest-xdist", "defusedxml", "typing_extensions", "cython", "setuptools"]
-install = true
 timeout = 5400
 
 [[project]]
@@ -496,7 +487,6 @@ rev = "acd6198877ced2d8126b9b3958bb17f4a65ef0d1"
 package = "src/black"
 pythonpath = "src"
 deps = ["pytest-xdist", "aiohttp", "tokenize-rt"]
-install = true
 
 [[project]]
 name = "django-utils"
@@ -554,7 +544,6 @@ url = "https://github.com/PyCQA/isort.git"
 rev = "131f4adcd5582bfc53928ab0d740eceb8b506b6c"
 package = "isort"
 deps = ["colorama", "hypothesis", "hypothesmith", "mypy-extensions", "black"]
-install = true
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/unit"]
 
 [[project]]
@@ -592,6 +581,8 @@ url = "https://github.com/tornadoweb/tornado.git"
 rev = "85b6917d05a84a6d26b7488b2b56d0b52c107a0f"
 package = "tornado"
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tornado/test"]
+# Installing compiles `tornado.speedups`, which replaces the Python websocket mask.
+install = false
 
 [[project]]
 name = "trio"
@@ -600,7 +591,6 @@ rev = "59d94d7ae0dc8af4c9736425c278b04ecd8b1a47"
 package = "src/trio"
 pythonpath = "src"
 deps = ["attrs", "sortedcontainers", "idna", "outcome", "sniffio", "trustme", "pytest-trio", "exceptiongroup", "astor", "pyopenssl", "pyyaml", "jedi", "isort"]
-install = true
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "src/trio/_tests"]
 expect_broken = "line-relative: test_deprecate.py asserts the exact line number a warning is issued from inside the test module, which a helper inserted above it shifts"
 known_failures = ["test_module_with_deprecations"]
@@ -646,6 +636,8 @@ url = "https://github.com/pallets/markupsafe.git"
 rev = "b2e4d9c7687be25695fffbe93a37622302b24fb1"
 package = "src/markupsafe"
 pythonpath = "src"
+# Installing compiles `markupsafe._speedups`, which replaces the Python escaping.
+install = false
 
 [[project]]
 name = "sniffio"
@@ -676,6 +668,9 @@ url = "https://github.com/html5lib/html5lib-python.git"
 rev = "fd4f032bc090d44fb11a84b352dad7cbee0a4745"
 package = "html5lib"
 deps = ["six", "webencodings", "mock", "setuptools<81", "pytest-expect", "pytest<8"]
+# An editable install cannot be built: setup.py imports pkg_resources, which the
+# setuptools an isolated build gets no longer has.
+install = false
 
 [[project]]
 name = "bleach"
@@ -713,7 +708,6 @@ name = "prettytable"
 url = "https://github.com/prettytable/prettytable.git"
 rev = "2a6cd4fb41bc6754eac57b43fc6dbd43b08ae368"
 package = "src/prettytable"
-install = true
 pythonpath = "src"
 deps = ["wcwidth", "pytest-lazy-fixtures"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
@@ -738,6 +732,8 @@ rev = "0c0b7aec8cd25b1d2d8ba07b10acdefd0f38f2c7"
 package = "pyrsistent"
 deps = ["hypothesis", "typing-extensions"]
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+# Installing compiles `pvectorc`, which replaces the Python persistent vector.
+install = false
 
 [[project]]
 name = "jsonpatch"
@@ -755,7 +751,6 @@ url = "https://github.com/lepture/mistune.git"
 rev = "a1b50bc12e066e5707ff797f821829bfcdab03b5"
 package = "src/mistune"
 pythonpath = "src"
-install = true
 
 [[project]]
 name = "blinker"
@@ -764,7 +759,6 @@ rev = "c3364059663df1ddce32799d6b1922af89a345f6"
 package = "src/blinker"
 pythonpath = "src"
 deps = ["pytest-asyncio"]
-install = true
 
 [[project]]
 name = "pycparser"
@@ -779,7 +773,6 @@ url = "https://github.com/pyinvoke/invoke.git"
 rev = "6a71e680c535ba6520e935c497099fbca011d03c"
 package = "invoke"
 deps = ["pytest-relaxed", "pytest-cov", "icecream", "lexicon"]
-install = true
 
 [[project]]
 name = "python-fire"
@@ -802,7 +795,6 @@ rev = "016eea527dd4a3eb4a18d6dca4d0bfe32039e470"
 package = "src/waitress"
 pythonpath = "src"
 deps = ["pytest-cov"]
-install = true
 
 [[project]]
 name = "gunicorn"
@@ -810,7 +802,6 @@ url = "https://github.com/benoitc/gunicorn.git"
 rev = "afc7d2fd5dd9f1de455b1be6c10044030c0adf8e"
 package = "gunicorn"
 deps = ["packaging", "coverage", "pytest-cov", "tornado", "pytest-asyncio"]
-install = true
 
 [[project]]
 name = "wsproto"
@@ -819,7 +810,6 @@ rev = "5e0685d0740ec30716897442f336de1118f5f40a"
 package = "src/wsproto"
 pythonpath = "src"
 deps = ["h11"]
-install = true
 
 [[project]]
 name = "hpack"
@@ -828,7 +818,6 @@ rev = "d05cff4cd462658847f67c48700aab40b2ba8cf1"
 package = "src/hpack"
 pythonpath = "src"
 deps = ["hypothesis"]
-install = true
 
 [[project]]
 name = "hyperframe"
@@ -836,7 +825,6 @@ url = "https://github.com/python-hyper/hyperframe.git"
 rev = "632e309bf6d76d6a3cd04e3cbc0b006eddbf7056"
 package = "src/hyperframe"
 pythonpath = "src"
-install = true
 
 [[project]]
 name = "h2"
@@ -845,7 +833,6 @@ rev = "bc239af1d1b85bc70482804f30a0e0e587d90a08"
 package = "src/h2"
 pythonpath = "src"
 deps = ["hypothesis", "hpack", "hyperframe"]
-install = true
 
 [[project]]
 name = "pyupgrade"
@@ -853,7 +840,6 @@ url = "https://github.com/asottile/pyupgrade.git"
 rev = "fbad673bb8f149f3c6022a7dd9c616d39ad8a5e2"
 package = "pyupgrade"
 deps = ["tokenize-rt"]
-install = true
 
 [[project]]
 name = "python-dotenv"
@@ -862,7 +848,6 @@ rev = "a00cb2eed0704cd6d2071b2004c37e95ccc86ee5"
 package = "src/dotenv"
 pythonpath = "src"
 deps = ["click", "sh"]
-install = true
 
 [[project]]
 name = "backoff"
@@ -883,7 +868,6 @@ url = "https://github.com/ipython/traitlets.git"
 rev = "c4f12477747b9592d01dae5ff8fcdd2a7cdffd0b"
 package = "traitlets"
 deps = ["argcomplete", "pytest-mock", "mypy", "pytest-mypy-testing"]
-install = true
 
 [[project]]
 name = "soupsieve"
@@ -905,7 +889,6 @@ url = "https://github.com/mkdocs/mkdocs.git"
 rev = "2862536793b3c67d9d83c33e0dd6d50a791928f8"
 package = "mkdocs"
 deps = ["click", "jinja2", "markdown", "pyyaml", "watchdog", "ghp-import", "pyyaml-env-tag", "mergedeep", "pathspec", "packaging", "babel", "mkdocs-get-deps", "importlib-metadata"]
-install = true
 exclude = ["tests"]
 test = ["{python}", "-m", "unittest", "discover", "-q", "-p", "*tests.py", "mkdocs"]
 
@@ -916,7 +899,6 @@ rev = "e9603fad69cdc5d34d03616682650acd4891eb5d"
 package = "src/chardet"
 pythonpath = "src"
 deps = ["hypothesis"]
-install = true
 
 [[project]]
 name = "pyasn1"
@@ -932,7 +914,6 @@ rev = "bff40c6cf2340148d410d5b3def0e949c547caf1"
 package = "src/ecdsa"
 pythonpath = "src"
 deps = ["hypothesis", "six"]
-install = true
 
 [[project]]
 name = "rsa"
@@ -956,7 +937,6 @@ url = "https://github.com/jaraco/inflect.git"
 rev = "262a247d2d99a47a520cdb2d46adb90df88b4326"
 package = "inflect"
 deps = ["typeguard", "more-itertools", "pytest-enabler"]
-install = true
 
 [[project]]
 name = "unidecode"
@@ -976,7 +956,6 @@ name = "docopt-ng"
 url = "https://github.com/jazzband/docopt-ng.git"
 rev = "587f41a61437b680b4215de1874fb6975d8a49d6"
 package = "docopt"
-install = true
 
 [[project]]
 name = "yapf"
@@ -984,7 +963,6 @@ url = "https://github.com/google/yapf.git"
 rev = "12005095296072751e3e4c1f33a047d41b0ce18d"
 package = "yapf"
 deps = ["platformdirs", "tomli"]
-install = true
 
 [[project]]
 name = "mccabe"
@@ -1000,7 +978,6 @@ rev = "efe6750405be77b661f64e60002c4ef8e922daf5"
 package = "src/flake8"
 pythonpath = "src"
 deps = ["mccabe", "pycodestyle", "pyflakes"]
-install = true
 
 [[project]]
 name = "jsonpointer"
@@ -1015,7 +992,6 @@ url = "https://github.com/python-hyper/rfc3986.git"
 rev = "2248a185cb3961ce5df418c733e79f350f588f66"
 package = "src/rfc3986"
 pythonpath = "src"
-install = true
 
 [[project]]
 name = "uritemplate"
@@ -1030,7 +1006,6 @@ rev = "1210bb6f5708a4dc084cc3deb4a3a3e3939f4d6d"
 package = "src/tomli_w"
 pythonpath = "src"
 deps = ["tomli"]
-install = true
 
 [[project]]
 name = "wheel"
@@ -1039,7 +1014,6 @@ rev = "b25c3c2ef5c789116b0545889aea68f5f65185a7"
 package = "src/wheel"
 pythonpath = "src"
 deps = ["setuptools", "pytest-timeout"]
-install = true
 
 [[project]]
 name = "installer"
@@ -1048,7 +1022,6 @@ rev = "59f0a65af99246566f7462429dbd5964363a2e35"
 package = "src/installer"
 pythonpath = "src"
 deps = ["pytest-mock"]
-install = true
 
 [[project]]
 name = "pyproject-hooks"
@@ -1057,7 +1030,6 @@ rev = "184c9f56a87ede1276a5b33f5024204adb792cd2"
 package = "src/pyproject_hooks"
 pythonpath = "src"
 deps = ["testpath", "setuptools"]
-install = true
 
 [[project]]
 name = "simpy"
@@ -1066,7 +1038,6 @@ rev = "f43816490c6f76f336ad6e457d3cab9f386894af"
 package = "src/simpy"
 pythonpath = "src"
 deps = ["pytest-benchmark"]
-install = true
 test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
 
 [[project]]
@@ -1075,7 +1046,6 @@ url = "https://github.com/termcolor/termcolor.git"
 rev = "4ce05dda98e006cdcacb7c855857c5cf8ff0e1e5"
 package = "src/termcolor"
 pythonpath = "src"
-install = true
 
 [[project]]
 name = "typing_extensions"
@@ -1108,7 +1078,6 @@ rev = "4e57a32ffecb64b7c6df06748086987d3bc8c86e"
 package = "src/environs"
 pythonpath = "src"
 deps = ["marshmallow", "python-dotenv", "dj-database-url", "dj-email-url", "django-cache-url"]
-install = true
 
 [[project]]
 name = "apispec"
@@ -1117,7 +1086,6 @@ rev = "bfac55c9bfbc4edbdde505d29d8c20c62133fc10"
 package = "src/apispec"
 pythonpath = "src"
 deps = ["marshmallow", "pyyaml", "packaging", "openapi-spec-validator"]
-install = true
 
 [[project]]
 name = "webargs"
@@ -1126,15 +1094,15 @@ rev = "abe0d763aeb4158764b8be3e19e36ce49c95ec8c"
 package = "src/webargs"
 pythonpath = "src"
 deps = ["marshmallow", "packaging", "webtest", "webtest-aiohttp", "flask", "django", "bottle", "tornado", "pytest-aiohttp", "aiohttp", "falcon", "pyramid"]
-install = true
 timeout = 3600
 
 # --- Towel itself, at each released version --------------------------------
 # Towel refactoring its own engine, whose tests then verify the engine still
-# produces the recorded output on every example. `install` supplies the
-# distribution metadata the version test reads; the dev tools are needed
-# because the CLI formats with Black when it is present and the suite invokes
-# them in places.
+# produces the recorded output on every example. A checkout's distribution is
+# Towel's own, which the candidate holds in the environment, so the checkout is
+# not installed and its version test reads the candidate's metadata. The dev
+# tools are needed because the CLI formats with Black when it is present and
+# the suite invokes them in places.
 
 [[project]]
 name = "towel-v1.414"
@@ -1143,7 +1111,6 @@ rev = "4bb390b8a4e2a867b09e880290e8af777b62b37a"  # tag v1.414
 package = "src/towel"
 pythonpath = "src"
 deps = ["tqdm", "black", "tomli", "hypothesis"]
-install = true
 timeout = 3600
 
 [[project]]
@@ -1153,7 +1120,6 @@ rev = "21500b5bf6d7107e2e8f9d3f21303090190736b4"  # tag v1.618
 package = "src/towel"
 pythonpath = "src"
 deps = ["tqdm", "black", "tomli", "hypothesis"]
-install = true
 timeout = 3600
 
 [[project]]
@@ -1163,5 +1129,4 @@ rev = "HEAD"  # on purpose: this entry tracks current main, never a fixed commit
 package = "src/towel"
 pythonpath = "src"
 deps = ["tqdm", "black", "tomli", "hypothesis"]
-install = true
 timeout = 3600

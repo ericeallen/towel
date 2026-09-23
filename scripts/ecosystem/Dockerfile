@@ -2,28 +2,26 @@
 # user's privileges. It belongs in a container, not on a workstation.
 FROM python:3.12-slim
 
+# pyright runs on Node. Without a node on PATH its wrapper downloads one into
+# HOME on first use, and the harness gives every worker a scratch HOME.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git build-essential curl ca-certificates pkg-config \
+        git build-essential curl ca-certificates pkg-config nodejs \
         libxml2-dev libxslt1-dev zlib1g-dev libjpeg-dev libfreetype6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-
-# The harness builds a per-project environment with uv.
+# The harness builds each project's environment with uv, and runs Towel there.
+# Nothing of Towel's goes into this interpreter, which only runs the harness:
+# Towel's tools here would stand in for the project's environment, keeping the
+# project's dependencies from the type checker and putting their own copies of
+# click, packaging and the rest in front of the projects of those names.
 RUN pip install --no-cache-dir uv
 
-# Towel's own dependencies, so the harness can import it from the mounted source.
-RUN pip install --no-cache-dir "mypy" "pyright" "black" "isort" "tomli" "tqdm"
-
-# The candidate itself, for its metadata only: the harness runs Towel from the
-# source it is given and hands each subprocess a scratch HOME, so the package
-# must be on the system path rather than a user one. `cli.py` reads its own
-# version through importlib.metadata and cannot start without it.
-# Build the wheel first and copy it in beside this file:
-#     python -m build && cp dist/code_towel-*.whl scripts/ecosystem/
+# The candidate, which the harness installs into every project's environment
+# (--towel-wheel /opt/towel) after checking that it is the source under
+# --towel-src. Build the wheel first and copy it in beside this file:
+#     uv build --wheel --out-dir dist && cp dist/code_towel-*.whl scripts/ecosystem/
 ARG WHEEL=code_towel-*.whl
-COPY ${WHEEL} /tmp/
-RUN pip install --no-cache-dir --no-deps /tmp/*.whl && rm /tmp/*.whl
+COPY ${WHEEL} /opt/towel/
 
 RUN useradd --create-home --shell /bin/bash runner
 USER runner

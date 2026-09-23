@@ -18,6 +18,20 @@ import pytest
 
 from scripts import ecosystem_check as ecosystem
 
+CANDIDATE = ecosystem.Candidate(
+    Path("code_towel-0-py3-none-any.whl"), "code-towel", "0", "0", ("mypy", "pyright"), ()
+)
+"""A candidate for runs whose environment is stubbed: nothing installs or verifies it."""
+ENVIRONMENT = ecosystem.ProjectEnvironment(
+    Path(sys.executable), None, ecosystem.Environment("3", "0", ())
+)
+"""The running interpreter standing in for a project environment that does not install it."""
+
+
+def _is_refactor(command: Sequence[str]) -> bool:
+    """Whether ``command`` is the harness's ``towel dry`` run, as opposed to a test run."""
+    return Path(command[0]).name == "towel" and command[1:2] == ["dry"]
+
 
 def _phase(path: Path, code: int, output: str) -> ecosystem.Phase:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,6 +68,7 @@ def test_main_exit_status_requires_an_accepted_verdict(
         ecosystem, "check_project", lambda *_: ecosystem.Result("fixture", verdict or "PENDING")
     )
     monkeypatch.setattr(ecosystem, "_lock_work_directory", lambda _: 0)
+    monkeypatch.setattr(ecosystem, "prepare_candidate", lambda *_: CANDIDATE)
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -114,7 +129,7 @@ def _check(
     source.mkdir()
     (source / "package.py").write_text("value = 1\n")
     monkeypatch.setattr(ecosystem, "clone", lambda *_: "pinned")
-    monkeypatch.setattr(ecosystem, "environment", lambda *_: Path(sys.executable))
+    monkeypatch.setattr(ecosystem, "environment", lambda *_: ENVIRONMENT)
     monkeypatch.setattr(ecosystem, "base_env", lambda *_: {})
     monkeypatch.setattr(ecosystem, "changed", lambda *_: (int(changed), "fixture"))
     phases = iter([before, after])
@@ -124,7 +139,7 @@ def _check(
         command: Sequence[str], cwd: Path, env: dict[str, str], timeout: int, log: Path
     ) -> ecosystem.Phase:
         nonlocal refactor_calls
-        if "towel.cli" in command:
+        if _is_refactor(command):
             refactor_calls += 1
             outcome = refactor
             if refactor_calls == 1:
@@ -148,7 +163,7 @@ def _check(
         return _phase(log, code, output)
 
     monkeypatch.setattr(ecosystem, "run", run)
-    monkeypatch.setattr(ecosystem, "_retest_agrees", lambda *_: retest_agrees)
+    monkeypatch.setattr(ecosystem, "_retest_agrees", lambda *_, **__: retest_agrees)
     project = ecosystem.Project(
         "fixture",
         "unused",
@@ -159,7 +174,7 @@ def _check(
         failure_exit_codes=failure_exit_codes,
         test=test,
     )
-    return ecosystem.check_project(project, root, root / "towel-src", 10, no_types)
+    return ecosystem.check_project(project, root, CANDIDATE, 10, no_types)
 
 
 @pytest.mark.parametrize(
@@ -775,6 +790,7 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
     project = ecosystem.Project("fixture", "unused", "pinned", "package.py")
     monkeypatch.setattr(ecosystem, "load_manifest", lambda *_: [project])
     monkeypatch.setattr(ecosystem, "_lock_work_directory", lambda _: 0)
+    monkeypatch.setattr(ecosystem, "prepare_candidate", lambda *_: CANDIDATE)
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -784,10 +800,11 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
     def check_project(
         project: ecosystem.Project,
         work: Path,
-        source: Path,
+        candidate: ecosystem.Candidate,
         timeout: int,
         requested_no_types: bool = False,
     ) -> ecosystem.Result:
+        assert candidate is CANDIDATE
         assert requested_no_types is no_types
         if worker_fails:
             raise RuntimeError("fixture worker failed")
@@ -1267,7 +1284,7 @@ def test_check_project_requires_full_context_before_accepting_isolated_agreement
         ["git", "-C", str(source), "rev-parse", "HEAD"], text=True, timeout=20
     ).strip()
     monkeypatch.setattr(ecosystem, "clone", lambda *_: commit)
-    monkeypatch.setattr(ecosystem, "environment", lambda *_: Path(sys.executable))
+    monkeypatch.setattr(ecosystem, "environment", lambda *_: ENVIRONMENT)
     actual_run = ecosystem.run
     refactor_calls = 0
 
@@ -1275,15 +1292,15 @@ def test_check_project_requires_full_context_before_accepting_isolated_agreement
         command: Sequence[str], cwd: Path, env: dict[str, str], timeout: int, log: Path
     ) -> ecosystem.Phase:
         nonlocal refactor_calls
-        if "towel.cli" not in command:
+        if not _is_refactor(command):
             return actual_run(
                 command, cwd, dict(env, PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"), timeout, log
             )
         refactor_calls += 1
-        assert command[3:5] == ["dry", "package/original.py"]
+        assert command[1:3] == ["dry", "package/original.py"]
         assert cwd == tmp_path / "repository-ready"
         body = "return 0 if armed else 42" if regression else "return 40 + 2"
-        Path(command[5]).write_text(common + f"def result():\n    {body}\n")
+        Path(command[3]).write_text(common + f"def result():\n    {body}\n")
         return _phase(log, 0, "Applied 1 refactoring\n")
 
     monkeypatch.setattr(ecosystem, "run", generate_refactoring_or_run_tests)
@@ -1294,7 +1311,7 @@ def test_check_project_requires_full_context_before_accepting_isolated_agreement
         "package/original.py",
         test=("{python}", "-m", "pytest", "test_state.py", "-q", "-p", "no:cacheprovider"),
     )
-    result = ecosystem.check_project(project, tmp_path, tmp_path / "unused-towel-src", 20)
+    result = ecosystem.check_project(project, tmp_path, CANDIDATE, 20)
     assert result.verdict == ("BROKEN" if regression else "PASS")
     assert result.commit == commit and result.changed_files == 1 and refactor_calls == 1
     assert (source / "package/original.py").read_text() == original

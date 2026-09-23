@@ -22,6 +22,13 @@ import pytest
 from scripts import ecosystem_check as ecosystem
 from towel.changes import ChangePlan, FileChange, RecoveryRequired, apply_changes
 
+CANDIDATE = ecosystem.Candidate(
+    Path("code_towel-0-py3-none-any.whl"), "code-towel", "0", "0", ("mypy", "pyright"), ()
+)
+ENVIRONMENT = ecosystem.ProjectEnvironment(
+    Path(sys.executable), None, ecosystem.Environment("3", "0", ())
+)
+
 
 def _module_project(name: str) -> ecosystem.Project:
     """A one-module project, the shape whose output file sits in its parent."""
@@ -36,7 +43,7 @@ def _refactor_output(
     source.mkdir(parents=True)
     (source / "package.py").write_text("value = 1\n")
     monkeypatch.setattr(ecosystem, "clone", lambda *_: "pinned")
-    monkeypatch.setattr(ecosystem, "environment", lambda *_: Path(sys.executable))
+    monkeypatch.setattr(ecosystem, "environment", lambda *_: ENVIRONMENT)
     monkeypatch.setattr(ecosystem, "base_env", lambda *_: {})
     monkeypatch.setattr(ecosystem, "changed", lambda *_: (0, "fixture"))
     captured: list[Path] = []
@@ -46,7 +53,7 @@ def _refactor_output(
     ) -> ecosystem.Phase:
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text("1 passed\n")
-        if "towel.cli" in command:
+        if Path(command[0]).name == "towel":
             output = Path(command[command.index("dry") + 2])
             captured.append(output)
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -55,7 +62,7 @@ def _refactor_output(
         return ecosystem.Phase(0, 0.0, ecosystem.summarize("1 passed\n"), str(log))
 
     monkeypatch.setattr(ecosystem, "run", run)
-    ecosystem.check_project(project, root, root / "towel-src", 10, True)
+    ecosystem.check_project(project, root, CANDIDATE, 10, True)
     assert captured, "check_project never invoked the refactor"
     return captured[0]
 

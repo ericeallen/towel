@@ -1,18 +1,33 @@
 #!/usr/bin/env python3
 """Run public projects' own test suites before and after Towel refactors them.
 
-For every project in the manifest: clone at its requested revision, install its
-test dependencies into a private environment, run its suite as a baseline,
-copy it, refactor the package out of place with the requested typing mode, adopt the
-cleaned copy back over the package (the documented workflow, which exercises
-import paths that survive relocation), run the suite again, and compare. A
-project qualifies when both runs have recognized, nonempty pytest or unittest
-outcomes that agree in exit status and normalized summary. Matching pre-existing
-test failures are allowed. Progress is printed as each phase completes; only
-PASS, NO_CHANGE and explicitly matched BROKEN_KNOWN verdicts satisfy the gate.
-Setup failures, incomplete test runs and unknown verdicts make it fail.
-An isolated retest match requires matching full-suite confirmations with the
-original test count before it can qualify.
+For every project in the manifest: clone at its requested revision, build its
+own environment, run its suite as a baseline, copy it, refactor the package out
+of place with the requested typing mode, adopt the cleaned copy back over the
+package (the documented workflow, which exercises import paths that survive
+relocation), run the suite again, and compare. A project qualifies when both
+runs have recognized, nonempty pytest or unittest outcomes that agree in exit
+status and normalized summary. Matching pre-existing test failures are allowed.
+Progress is printed as each phase completes; only PASS, NO_CHANGE and
+explicitly matched BROKEN_KNOWN verdicts satisfy the gate. Setup failures,
+incomplete test runs and unknown verdicts make it fail. An isolated retest
+match requires matching full-suite confirmations with the original test count
+before it can qualify.
+
+Towel runs the way a user runs it: inside the project's own environment. That
+environment holds the project's test dependencies, the project itself installed
+editable from the tree under test, Towel's types extra (mypy and pyright, unless
+the project's own requirements already installed one), and the candidate: one
+wheel, built from ``--towel-src`` or named by ``--towel-wheel``, verified to be
+that source, and verified again in every environment it is installed into. The
+type checkers therefore see the project's dependencies, and Towel's import model
+sees the project installed from the tree it refactors, not an installed copy
+elsewhere. The editable install follows the tree each test run exercises -- the
+clone for the baseline, the refactored copy for Towel and the run after it, the
+original package again whenever a retest runs the original -- so a test that
+imports the project other than through ``PYTHONPATH`` tests the same code as the
+rest of its run. Each report records the interpreter, the candidate, and the
+mypy and pyright that were there, and who installed them.
 
 Types stay enabled unless the caller explicitly requests ``--no-types``. A
 project whose own sources do not type-check is declined by Towel rather than
@@ -42,8 +57,12 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import dataclasses
+import email.message
+import email.parser
 import fcntl
+import hashlib
 import json
 import functools
 import os
@@ -58,8 +77,22 @@ import sys
 import time
 import tomllib
 import traceback
+import urllib.parse
+import zipfile
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
+from typing import (
+    Callable,
+    ContextManager,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_TEST = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
@@ -70,6 +103,11 @@ SUMMARY_PATTERNS = (
     re.compile(r"^Ran \d+ tests? in .*$"),
 )
 TypingMode = Literal["default", "no-types"]
+CheckerSource = Literal["project", "towel[types]"]
+TOWEL_PACKAGE = "towel"
+"""The import package the candidate wheel provides."""
+ENVIRONMENT_LAYOUT = 2
+"""What a project environment holds; raised when that changes, so an older one is rebuilt."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,7 +120,8 @@ class Project:
     deps: Tuple[str, ...] = ()
     test: Tuple[str, ...] = tuple(DEFAULT_TEST)
     prepare: str = ""
-    install: bool = False
+    install: bool = True
+    """Install the project editable from the tree under test, as its developers have it."""
     expect_broken: str = ""
     known_failures: Tuple[str, ...] = ()
     timeout: Optional[int] = None
@@ -123,6 +162,27 @@ class RetestEvidence:
     full: Optional[FullRetestEvidence] = None
 
 
+@dataclasses.dataclass(frozen=True)
+class Checker:
+    """A type checker in a project's environment, and who put it there."""
+
+    name: str
+    version: str
+    source: CheckerSource
+    """``project`` when the project's own requirements installed it, else Towel's types extra."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Environment:
+    """The environment Towel ran in for one project, as the report records it."""
+
+    python: str
+    towel: str
+    checkers: Tuple[Checker, ...]
+    installed_from: str = ""
+    """The tree the project was installed from, editable, when Towel ran; empty if it was not."""
+
+
 @dataclasses.dataclass
 class Result:
     name: str
@@ -137,6 +197,8 @@ class Result:
     typing_mode: TypingMode = "default"
     fallback: str = ""
     """Why the typed attempt was declined, when the verdict came from a retry without types."""
+    environment: Optional[Environment] = None
+    """What Towel ran with; absent only when the environment could not be built."""
 
 
 def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
@@ -152,7 +214,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             deps=tuple(entry.get("deps", ())),
             test=tuple(entry.get("test", DEFAULT_TEST)),
             prepare=entry.get("prepare", ""),
-            install=bool(entry.get("install", False)),
+            install=bool(entry.get("install", True)),
             expect_broken=entry.get("expect_broken", ""),
             known_failures=tuple(entry.get("known_failures", [])),
             timeout=entry.get("timeout"),
@@ -384,30 +446,425 @@ def clone(project: Project, source: Path, log_dir: Path) -> str:
     ).stdout.strip()
 
 
-def environment(project: Project, work: Path, source: Path) -> Path:
+class EnvironmentFailure(Exception):
+    """A project environment that is not what the harness built it to hold."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Candidate:
+    """The Towel under test: one wheel, installed into every project's own environment."""
+
+    wheel: Path
+    distribution: str
+    version: str
+    sha256: str
+    types_requirements: Tuple[str, ...]
+    """What the wheel's ``types`` extra installs (mypy and pyright), as the wheel declares it."""
+    files: Tuple[Tuple[str, str], ...]
+    """Each file of the ``towel`` package in the wheel, relative to the package, and its SHA-256."""
+
+
+_TYPES_EXTRA = re.compile(r"""^\s*extra\s*==\s*["']types["']\s*$""")
+_REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
+
+
+def _canonical(name: str) -> str:
+    """A distribution name as installers compare them (PEP 503)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def requirement_name(requirement: str) -> str:
+    """The distribution a requirement names, canonically: ``mypy`` for ``mypy>=1.0.0``."""
+    match = _REQUIREMENT_NAME.match(requirement)
+    if match is None:
+        raise ValueError(f"not a requirement: {requirement!r}")
+    return _canonical(match[1])
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _header(metadata: email.message.Message, name: str) -> str:
+    value = metadata.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"package metadata has no {name}")
+    return value.strip()
+
+
+def load_candidate(path: Path) -> Candidate:
+    """The candidate in the wheel ``path``, or in the only wheel in the directory ``path``."""
+    wheels = sorted(path.glob("*.whl")) if path.is_dir() else [path]
+    if len(wheels) != 1:
+        raise ValueError(f"{path} holds {len(wheels)} wheels; name the candidate itself")
+    wheel = wheels[0].resolve(strict=True)
+    prefix = f"{TOWEL_PACKAGE}/"
+    with zipfile.ZipFile(wheel) as archive:
+        members = archive.namelist()
+        records = [name for name in members if re.fullmatch(r"[^/]+\.dist-info/METADATA", name)]
+        if len(records) != 1:
+            raise ValueError(f"{wheel.name} holds {len(records)} METADATA files, not one")
+        metadata = email.parser.Parser().parsestr(archive.read(records[0]).decode("utf-8"))
+        files = tuple(
+            sorted(
+                (name[len(prefix) :], _digest(archive.read(name)))
+                for name in members
+                if name.startswith(prefix) and not name.endswith("/")
+            )
+        )
+    declared = (str(value).partition(";") for value in metadata.get_all("Requires-Dist", []))
+    types = tuple(
+        requirement.strip() for requirement, _, marker in declared if _TYPES_EXTRA.match(marker)
+    )
+    if not files:
+        raise ValueError(f"{wheel.name} holds no {TOWEL_PACKAGE} package")
+    if not types:
+        raise ValueError(f"{wheel.name} declares no types extra, so nothing names its checkers")
+    return Candidate(
+        wheel,
+        _header(metadata, "Name"),
+        _header(metadata, "Version"),
+        _digest(wheel.read_bytes()),
+        types,
+        files,
+    )
+
+
+def candidate_differences(candidate: Candidate, towel_src: Path) -> List[str]:
+    """How the candidate's Python files differ from those under ``towel_src``; empty if none do.
+
+    The report names the commit of ``--towel-src`` as the Towel that ran, so the wheel has to
+    be that source: one built from another checkout, from a stale ``build`` directory, or
+    before a later edit is evidence about code that no commit describes.
+    """
+    package = towel_src / TOWEL_PACKAGE
+    source = {
+        path.relative_to(package).as_posix(): _digest(path.read_bytes())
+        for path in package.rglob("*.py")
+        if path.is_file()
+    }
+    wheel = {path: digest for path, digest in candidate.files if path.endswith(".py")}
+    only_source = sorted(source.keys() - wheel.keys())
+    only_wheel = sorted(wheel.keys() - source.keys())
+    changed = sorted(path for path in source.keys() & wheel.keys() if source[path] != wheel[path])
+    return [
+        *(f"{TOWEL_PACKAGE}/{path} is in the source but not in the wheel" for path in only_source),
+        *(f"{TOWEL_PACKAGE}/{path} is in the wheel but not in the source" for path in only_wheel),
+        *(f"{TOWEL_PACKAGE}/{path} differs" for path in changed),
+    ]
+
+
+def build_candidate(towel_src: Path, out: Path, log: Path) -> Path:
+    """Build the candidate wheel from the checkout that holds ``towel_src``, into ``out``."""
+    root = towel_src.resolve().parent
+    if not (root / "pyproject.toml").is_file():
+        raise ValueError(f"{root} has no pyproject.toml to build a candidate from")
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    command = ["uv", "build", "--wheel", "--out-dir", str(out), str(root)]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    log.write_text(f"$ {shlex.join(command)}\n{completed.stdout}{completed.stderr}", "utf-8")
+    if completed.returncode != 0:
+        raise ValueError(
+            f"building a candidate from {root} failed (exit {completed.returncode}, see {log})"
+        )
+    return out
+
+
+def _uv(command: Sequence[str], log: Path) -> None:
+    """Run one ``uv`` command, keeping what it said in ``log``, and fail loudly."""
+    completed = subprocess.run(list(command), capture_output=True, text=True, check=False)
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(f"$ {shlex.join(command)}\n{completed.stdout}{completed.stderr}\n")
+    completed.check_returncode()
+
+
+def _install(python: Path, log: Path, *arguments: str) -> None:
+    _uv(["uv", "pip", "install", "-p", str(python), *arguments], log)
+
+
+def _site_packages(python: Path) -> Path:
+    found = sorted((python.parent.parent / "lib").glob("python*/site-packages"))
+    if len(found) != 1:
+        raise EnvironmentFailure(f"{python.parent.parent} has {len(found)} site-packages, not one")
+    return found[0]
+
+
+def editable_installs(python: Path) -> Dict[str, Path]:
+    """Each distribution installed editable in ``python``'s environment, and its tree.
+
+    An editable install records its tree in ``direct_url.json`` whatever its build
+    backend does to make it importable -- a ``.pth`` path, a finder, a redirect.
+    """
+    installs: Dict[str, Path] = {}
+    for record in sorted(_site_packages(python).glob("*.dist-info/direct_url.json")):
+        data = json.loads(record.read_text(encoding="utf-8"))
+        url = urllib.parse.urlparse(str(data.get("url", "")))
+        editable = isinstance(data.get("dir_info"), dict) and data["dir_info"].get("editable")
+        if url.scheme == "file" and editable:
+            metadata = email.parser.Parser().parsestr(
+                (record.parent / "METADATA").read_text(encoding="utf-8"), headersonly=True
+            )
+            installs[_canonical(_header(metadata, "Name"))] = Path(urllib.parse.unquote(url.path))
+    return installs
+
+
+def _install_editable(python: Path, tree: Path, log: Path, *, dependencies: bool) -> str:
+    """Install the project editable from ``tree``; the distribution it was installed as."""
+    _install(python, log, *([] if dependencies else ["--no-deps"]), "-e", str(tree))
+    names = [
+        name
+        for name, location in editable_installs(python).items()
+        if location.resolve() == tree.resolve()
+    ]
+    if len(names) != 1:
+        raise EnvironmentFailure(
+            f"installing {tree} left {len(names)} distributions installed from it"
+        )
+    return names[0]
+
+
+_ENVIRONMENT_PROBE = """\
+import hashlib, importlib.metadata, importlib.util, json, os, sys
+
+package, *names = sys.argv[1:]
+versions = {}
+for name in names:
+    try:
+        versions[name] = importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        versions[name] = None
+spec = importlib.util.find_spec(package)
+files = {}
+for root in (spec.submodule_search_locations or []) if spec is not None else []:
+    for directory, subdirectories, found in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if name != "__pycache__"]
+        for file in found:
+            path = os.path.join(directory, file)
+            with open(path, "rb") as handle:
+                digest = hashlib.sha256(handle.read()).hexdigest()
+            files[os.path.relpath(path, root).replace(os.sep, "/")] = digest
+print(json.dumps({"python": sys.version.split()[0], "versions": versions, "files": files}))
+"""
+"""Run by an environment's own interpreter: what it would import, without importing any of it."""
+
+
+@dataclasses.dataclass(frozen=True)
+class EnvironmentProbe:
+    """What one environment's interpreter sees."""
+
+    python: str
+    versions: Mapping[str, Optional[str]]
+    """The installed version of each distribution asked about, or ``None``."""
+    files: Tuple[Tuple[str, str], ...]
+    """Each file of the ``towel`` package it would import, with its SHA-256."""
+
+
+def probe_environment(python: Path, names: Sequence[str]) -> EnvironmentProbe:
+    """Ask ``python`` what it sees, isolated as Towel isolates the checkers it starts."""
+    completed = subprocess.run(
+        [str(python), "-I", "-c", _ENVIRONMENT_PROBE, TOWEL_PACKAGE, *names],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+        cwd=python.parent,
+    )
+    data = json.loads(completed.stdout)
+    return EnvironmentProbe(
+        str(data["python"]),
+        {
+            str(name): None if value is None else str(value)
+            for name, value in data["versions"].items()
+        },
+        tuple(sorted((str(path), str(digest)) for path, digest in data["files"].items())),
+    )
+
+
+def _verified(python: Path, candidate: Candidate, names: Sequence[str]) -> EnvironmentProbe:
+    """What ``python`` sees, once it is confirmed that the Towel it runs is the candidate."""
+    distribution = _canonical(candidate.distribution)
+    probe = probe_environment(python, [distribution, *names])
+    installed = probe.versions.get(distribution)
+    if installed != candidate.version or probe.files != candidate.files:
+        differing = len(set(probe.files) ^ set(candidate.files))
+        raise EnvironmentFailure(
+            f"the Towel that {python} runs is not the candidate {candidate.wheel.name}: "
+            f"{candidate.distribution} is {installed or 'not installed'}, "
+            f"and {differing} of its files differ from the wheel's"
+        )
+    return probe
+
+
+def _install_checkers(python: Path, candidate: Candidate, log: Path) -> Dict[str, CheckerSource]:
+    """Install the types extra's checkers that the project's own requirements did not."""
+    names = [requirement_name(requirement) for requirement in candidate.types_requirements]
+    present = probe_environment(python, names).versions
+    missing = [
+        requirement
+        for requirement, name in zip(candidate.types_requirements, names)
+        if present.get(name) is None
+    ]
+    if missing:
+        _install(python, log, *missing)
+    provenance: Dict[str, CheckerSource] = {}
+    for name in names:
+        provenance[name] = "project" if present.get(name) is not None else "towel[types]"
+    return provenance
+
+
+def _read_provenance(path: Path) -> Optional[Dict[str, CheckerSource]]:
+    """The recorded source of each checker in an environment, or ``None`` if unreadable."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    provenance: Dict[str, CheckerSource] = {}
+    for name, source in data.items():
+        if source == "project":
+            provenance[str(name)] = "project"
+        elif source == "towel[types]":
+            provenance[str(name)] = "towel[types]"
+        else:
+            return None
+    return provenance
+
+
+@dataclasses.dataclass(frozen=True)
+class ProjectEnvironment:
+    """One project's environment as the harness drives it."""
+
+    python: Path
+    distribution: Optional[str]
+    """The project's own distribution when it is installed editable, else ``None``."""
+    record: Environment
+
+
+def environment(
+    project: Project, work: Path, source: Path, candidate: Candidate, log: Path
+) -> ProjectEnvironment:
+    """The project's own environment, with the project installed from ``source``.
+
+    It holds pytest and the manifest's dependencies, the project installed editable,
+    the types extra's checkers that the project did not bring itself, and the
+    candidate, installed with ``--no-deps`` and then verified. It is built once and
+    reused while the manifest entry and the types extra are unchanged. The candidate
+    is reinstalled on every use, and a reused environment is pointed back at
+    ``source``: the last run left the project installed from its refactored copy.
+    """
     env_dir = work / f"{project.name}-env"
     python = env_dir / "bin" / "python"
     fingerprint = env_dir / "towel-deps.txt"
-    wanted = "\n".join([*sorted(project.deps), f"install={project.install}"])
-    if python.exists() and (not fingerprint.exists() or fingerprint.read_text() != wanted):
-        shutil.rmtree(env_dir)  # the manifest changed; rebuild the environment
-    if not python.exists():
-        subprocess.run(["uv", "venv", "-q", "-p", sys.executable, str(env_dir)], check=True)
-        subprocess.run(
-            ["uv", "pip", "install", "-q", "-p", str(python), "pytest", *project.deps],
-            check=True,
-            capture_output=True,
-        )
-        if project.install:
-            # Editable install supplies package metadata and generated version
-            # modules; PYTHONPATH still selects the copy under test.
-            subprocess.run(
-                ["uv", "pip", "install", "-q", "-p", str(python), "-e", str(source)],
-                check=True,
-                capture_output=True,
-            )
+    provenance_file = env_dir / "towel-checkers.json"
+    wanted = "\n".join(
+        [
+            *sorted(project.deps),
+            f"install={project.install}",
+            *candidate.types_requirements,
+            f"layout={ENVIRONMENT_LAYOUT}",
+        ]
+    )
+    provenance = _read_provenance(provenance_file)
+    reusable = (
+        python.exists()
+        and fingerprint.exists()
+        and fingerprint.read_text() == wanted
+        and provenance is not None
+    )
+    if not reusable and env_dir.exists():
+        # The manifest or the layout changed, or an earlier build never finished.
+        shutil.rmtree(env_dir)
+    if not reusable:
+        _uv(["uv", "venv", "-p", sys.executable, str(env_dir)], log)
+        _install(python, log, "pytest", *project.deps)
+    # The editable install is how the project's developers have it, and it supplies
+    # package metadata and generated version modules; PYTHONPATH still selects the
+    # copy under test.
+    distribution = (
+        _install_editable(python, source, log, dependencies=not reusable)
+        if project.install
+        else None
+    )
+    # After the project and its own requirements, so a checker they install is theirs.
+    if not reusable or provenance is None:
+        provenance = _install_checkers(python, candidate, log)
+        provenance_file.write_text(json.dumps(provenance), encoding="utf-8")
+        # Written last: an environment without it is one whose build never finished.
         fingerprint.write_text(wanted)
-    return python
+    _install(
+        python,
+        log,
+        "--no-deps",
+        "--reinstall-package",
+        candidate.distribution,
+        str(candidate.wheel),
+    )
+    probe = _verified(python, candidate, list(provenance))
+    checkers = []
+    for name, installer in provenance.items():
+        version = probe.versions.get(name)
+        if version is None:
+            raise EnvironmentFailure(f"{name} is not installed in {env_dir}")
+        checkers.append(Checker(name, version, installer))
+    if distribution == _canonical(candidate.distribution):
+        # One of Towel's own checkouts: its distribution is the candidate's, and the
+        # candidate now holds it, so the checkout is not installed.
+        distribution = None
+    return ProjectEnvironment(
+        python,
+        distribution,
+        Environment(
+            probe.python,
+            candidate.version,
+            tuple(checkers),
+            str(source) if distribution is not None else "",
+        ),
+    )
+
+
+def install_from(
+    installed: ProjectEnvironment,
+    distribution: str,
+    tree: Path,
+    candidate: Candidate,
+    log: Path,
+) -> Environment:
+    """Point the project's editable install at ``tree``; the candidate must be untouched."""
+    moved = _install_editable(installed.python, tree, log, dependencies=False)
+    if moved != distribution:
+        raise EnvironmentFailure(f"{tree} installed as {moved}, not as {distribution}")
+    _verified(installed.python, candidate, [checker.name for checker in installed.record.checkers])
+    return dataclasses.replace(installed.record, installed_from=str(tree))
+
+
+@contextlib.contextmanager
+def original_installed(installed: Path, original: Path, aside: Path) -> Iterator[None]:
+    """Hold the original package where the project is installed from, while the original runs.
+
+    The editable install names the tree Towel refactored, which holds Towel's output
+    once it is adopted. A test that imports the project other than through
+    ``PYTHONPATH`` -- a subprocess started in another directory, or given an
+    environment of its own -- gets that installed copy. A retest of the original would
+    therefore run Towel's output in exactly those tests, and a regression there would
+    fail on both sides and pass as a flaky difference. Towel's output is set aside,
+    not copied, and put back however the run ends.
+    """
+    os.rename(installed, aside)
+    try:
+        if original.is_dir():
+            shutil.copytree(original, installed, symlinks=True)
+        else:
+            shutil.copy2(original, installed)
+        yield
+    finally:
+        if installed.is_dir() and not installed.is_symlink():
+            shutil.rmtree(installed)
+        elif installed.is_symlink() or installed.exists():
+            installed.unlink()
+        os.rename(aside, installed)
 
 
 def changed(ready: Path, package: str) -> Tuple[int, str]:
@@ -502,8 +959,18 @@ def _prepare_test_command(command: Sequence[str]) -> List[str]:
     return prepared
 
 
+def _setup_failed(result: Result, error: Exception) -> Result:
+    """Record that the project's clone or environment could not be made what it must be."""
+    result.verdict = "SETUP_ERROR"
+    said = error.stderr if isinstance(error, subprocess.CalledProcessError) else None
+    if isinstance(said, bytes):
+        said = said.decode("utf-8", "replace")
+    result.detail = (said or str(error))[-500:]
+    return result
+
+
 def check_project(
-    project: Project, work: Path, towel_src: Path, timeout: int, no_types: bool = False
+    project: Project, work: Path, candidate: Candidate, timeout: int, no_types: bool = False
 ) -> Result:
     # A project may carry its own per-phase budget when it is far larger
     # than the rest of the corpus (networkx: 198k lines with its tests).
@@ -511,18 +978,15 @@ def check_project(
     logs = work / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     source = work / project.name
+    setup_log = logs / f"{project.name}-environment.log"
     result = Result(project.name, "PENDING", typing_mode="no-types" if no_types else "default")
     try:
         result.commit = clone(project, source, logs)
-        python = environment(project, work, source)
-    except subprocess.CalledProcessError as error:
-        result.verdict = "SETUP_ERROR"
-        result.detail = (
-            (error.stderr or b"").decode("utf-8", "replace")[-500:]
-            if isinstance(error.stderr, bytes)
-            else str(error.stderr)[-500:]
-        )
-        return result
+        installed = environment(project, work, source, candidate, setup_log)
+    except (subprocess.CalledProcessError, EnvironmentFailure) as error:
+        return _setup_failed(result, error)
+    result.environment = installed.record
+    python = installed.python
     test = _prepare_test_command([part.format(python=python) for part in project.test])
     env = base_env(project.pythonpath, python.parent)
     result.baseline = run(test, source, env, timeout, logs / f"{project.name}-before.log")
@@ -537,7 +1001,22 @@ def check_project(
     if ready.exists():
         shutil.rmtree(ready)
     shutil.copytree(source, ready, symlinks=True)
-    towel_env = dict(env, PYTHONPATH=str(towel_src))
+    if installed.distribution is not None:
+        # Towel refactors this copy, so this is where the project is installed from
+        # while it does, as a developer's own checkout is: Towel's import model counts
+        # an installed copy anywhere else as a second provider of the project's names.
+        # The run after tests the adopted output here too, installed copy included.
+        try:
+            result.environment = install_from(
+                installed, installed.distribution, ready, candidate, setup_log
+            )
+        except (subprocess.CalledProcessError, EnvironmentFailure) as error:
+            return _setup_failed(result, error)
+    # Towel runs as its user runs it: the environment's own ``towel`` from the
+    # project root, with nothing on PYTHONPATH, so the checkers it starts see the
+    # project's dependencies and its import model sees the project's installation.
+    towel = python.parent / "towel"
+    towel_env = {name: value for name, value in env.items() if name != "PYTHONPATH"}
     # Each refactor may fork workers for a large analysis; with several
     # projects in flight the caller caps that through TOWEL_WORKERS.
     if "TOWEL_WORKERS" in os.environ:
@@ -567,9 +1046,7 @@ def check_project(
         cleaned_root.mkdir(parents=True)
         return run(
             [
-                sys.executable,
-                "-m",
-                "towel.cli",
+                str(towel),
                 "dry",
                 project.package,
                 str(cleaned),
@@ -654,8 +1131,27 @@ def check_project(
         )
         return result
     differing = sorted(before_failed ^ after_failed)
+    # A retest runs the original again, and it must find the original wherever the
+    # project is installed from (see ``original_installed``).
+    original: Callable[[], ContextManager[None]] = (
+        functools.partial(
+            original_installed, package_path, source / project.package, cleaned_root / "adopted"
+        )
+        if installed.distribution is not None
+        else contextlib.nullcontext
+    )
     if differing and _retest_agrees(
-        test, differing, source, ready, env, timeout, logs, project, result.baseline, result.after
+        test,
+        differing,
+        source,
+        ready,
+        env,
+        timeout,
+        logs,
+        project,
+        result.baseline,
+        result.after,
+        original_installed=original,
     ):
         # Removing earlier tests can hide a deterministic stateful regression.
         # Both isolated and full-suite confirmations must agree.
@@ -776,8 +1272,14 @@ def _retest_agrees(
     project: Project,
     initial_before: Phase,
     initial_after: Phase,
+    original_installed: Callable[[], ContextManager[None]] = contextlib.nullcontext,
 ) -> bool:
-    """Confirm a difference disappears both alone and in its original suite."""
+    """Confirm a difference disappears both alone and in its original suite.
+
+    Each run of the original is made inside ``original_installed``, which holds the
+    original package wherever the project is installed from (see ``original_installed``
+    at module level); a project that is not installed needs nothing.
+    """
     if _pytest_arguments_start(test) is None or any(
         test_id.startswith("unittest:") for test_id in test_ids
     ):
@@ -795,7 +1297,8 @@ def _retest_agrees(
         or initial_before_outcome.collected != initial_after_outcome.collected
     ):
         return False
-    before = run(command, source, env, timeout, logs / f"{project.name}-retest-before.log")
+    with original_installed():
+        before = run(command, source, env, timeout, logs / f"{project.name}-retest-before.log")
     after = run(command, ready, env, timeout, logs / f"{project.name}-retest-after.log")
     evidence = RetestEvidence(
         tuple(command), tuple(test_ids), project.failure_exit_codes, before, after
@@ -815,9 +1318,10 @@ def _retest_agrees(
     if before_failed != failed_tests(after.log) or not before_failed <= set(test_ids):
         return False
     full_command = _prepare_test_command(test)
-    full_before = run(
-        full_command, source, env, timeout, logs / f"{project.name}-retest-full-before.log"
-    )
+    with original_installed():
+        full_before = run(
+            full_command, source, env, timeout, logs / f"{project.name}-retest-full-before.log"
+        )
     full_after = run(
         full_command, ready, env, timeout, logs / f"{project.name}-retest-full-after.log"
     )
@@ -998,8 +1502,8 @@ REFUSAL_MESSAGE = f"""\
 refusing to run: this script executes code it does not review.
 
 It clones the public repositories named in the manifest, runs each entry's
-`prepare` command, installs the projects' test dependencies, and runs their
-test suites, all with your privileges and your environment. A hijacked or
+`prepare` command, installs the projects and their test dependencies, and runs
+their test suites, all with your privileges and your environment. A hijacked or
 malicious upstream could do anything you can do from this account.
 
 Run it only on a disposable machine, a container, or an ephemeral CI runner,
@@ -1029,6 +1533,35 @@ def print_pins(report_dir: Path) -> int:
     return 0
 
 
+def prepare_candidate(towel_src: Path, wheel: Optional[Path], work: Path) -> Candidate:
+    """The candidate: the wheel named, or one built from ``towel_src``'s checkout.
+
+    Raises ``ValueError`` when there is no usable wheel, or when the wheel is not
+    the source under ``towel_src``, whose commit the report names.
+    """
+    if wheel is None:
+        wheel = build_candidate(towel_src, work / "candidate", work / "logs" / "candidate.log")
+    candidate = load_candidate(wheel)
+    differences = candidate_differences(candidate, towel_src)
+    if differences:
+        shown = "; ".join(differences[:5])
+        more = f" and {len(differences) - 5} more" if len(differences) > 5 else ""
+        raise ValueError(
+            f"{candidate.wheel.name} is not the source under {towel_src}: {shown}{more}"
+        )
+    return candidate
+
+
+def _checkers_cell(environment: Optional[Environment]) -> str:
+    """``mypy 1.19.1 (project), pyright 1.1.414`` for one row of the summary."""
+    if environment is None:
+        return ""
+    return ", ".join(
+        f"{checker.name} {checker.version}" + (" (project)" if checker.source == "project" else "")
+        for checker in environment.checkers
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1046,7 +1579,21 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--only", nargs="*", default=[])
     parser.add_argument("--timeout", type=int, default=1800, help="seconds per phase")
-    parser.add_argument("--towel-src", type=Path, default=REPO / "src")
+    parser.add_argument(
+        "--towel-src",
+        type=Path,
+        default=REPO / "src",
+        help="the Towel source under test, whose commit the report names (default: this "
+        "checkout's src)",
+    )
+    parser.add_argument(
+        "--towel-wheel",
+        type=Path,
+        default=None,
+        help="the candidate wheel, or a directory holding only it, installed into every "
+        "project's environment; it must be the source under --towel-src (default: build "
+        "one from the checkout that holds --towel-src)",
+    )
     parser.add_argument(
         "--no-types",
         action="store_true",
@@ -1075,7 +1622,10 @@ def main() -> int:
     if not untrusted_code_allowed(args.run_untrusted_code, dict(os.environ)):
         print(REFUSAL_MESSAGE, file=sys.stderr, end="")
         return 2
-    projects = load_manifest(args.manifest, args.only)
+    try:
+        projects = load_manifest(args.manifest, args.only)
+    except ValueError as error:
+        parser.error(f"{args.manifest}: {error}")
     missing = set(args.only) - {project.name for project in projects}
     if missing:
         parser.error(f"unknown projects: {', '.join(sorted(missing))}")
@@ -1088,17 +1638,23 @@ def main() -> int:
     _lock_work_directory(args.work)
     report_dir = args.work / "report"
     report_dir.mkdir(exist_ok=True)
+    (args.work / "logs").mkdir(exist_ok=True)
     towel_commit, dirty = source_revision(args.towel_src)
     displayed_commit = towel_commit[:12] if towel_commit else "unavailable (source archive)"
+    try:
+        candidate = prepare_candidate(args.towel_src, args.towel_wheel, args.work)
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        print(f"refusing to run: no candidate to test: {error}", file=sys.stderr)
+        return 2
     print(
         f"ecosystem check: {len(projects)} projects, towel {displayed_commit}, "
+        f"candidate {candidate.wheel.name} (sha256 {candidate.sha256[:12]}), "
         f"typing mode: {typing_mode}",
         flush=True,
     )
-    # Workers import Towel from ``--towel-src`` for the whole run, so an edit or a
-    # commit (pre-commit stashes the tree) in that checkout changes the subject
-    # mid-run and invalidates the results. Say so up front when the tree is dirty,
-    # and recommend a detached worktree for the source under test.
+    # Every project runs the candidate wheel, fixed before the first one starts, so
+    # a later edit to --towel-src cannot change the subject mid-run. What a dirty
+    # tree still changes is the provenance: the wheel holds edits no commit names.
     if dirty is None:
         print(
             "WARNING: Towel source is outside a Git checkout; revision and dirty-state "
@@ -1107,8 +1663,8 @@ def main() -> int:
         )
     elif dirty:
         print(
-            "WARNING: the Towel checkout under test has uncommitted changes; edits or "
-            "commits during the run will change what the workers import. Prefer a "
+            "WARNING: the Towel checkout under test has uncommitted changes, which the "
+            "candidate holds, so the recorded commit does not describe what ran. Prefer a "
             "detached worktree: git worktree add --detach <dir> <commit> and "
             "--towel-src <dir>/src.",
             flush=True,
@@ -1119,7 +1675,7 @@ def main() -> int:
     ) as pool:
         futures = {
             pool.submit(
-                check_project, project, args.work, args.towel_src, args.timeout, args.no_types
+                check_project, project, args.work, candidate, args.timeout, args.no_types
             ): project
             for project in projects
         }
@@ -1160,19 +1716,26 @@ def main() -> int:
     lines = [
         f"# Ecosystem check — towel `{towel_commit or 'unavailable (source archive)'}`",
         "",
+        f"Candidate: `{candidate.wheel.name}` ({candidate.distribution} {candidate.version}, "
+        f"sha256 `{candidate.sha256}`), installed into each project's own environment "
+        "with the project installed editable from the tree under test. The Checkers "
+        "column names the mypy and pyright there; `(project)` marks one the project's "
+        "own requirements installed, the rest came from the candidate's types extra.",
+        "",
         f"Typing mode requested: `{typing_mode}`. A project whose own sources do not "
         "check is declined by Towel and rerun here without types; its row says so, and "
         "its verdict is evidence about the untyped path only. Runtime test outcomes do "
         "not establish type-checking coverage either way.",
         "",
-        "| Project | Commit | Verdict | Typing | Changed files | Refactor s | Before | After |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Project | Commit | Verdict | Typing | Checkers | Changed files | Refactor s | Before "
+        "| After |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for result in results:
         typing = result.typing_mode + (f" (declined: {result.fallback})" if result.fallback else "")
         lines.append(
             f"| {result.name} | `{result.commit[:10]}` | {result.verdict} | {typing} | "
-            f"{result.changed_files} | "
+            f"{_checkers_cell(result.environment)} | {result.changed_files} | "
             f"{result.refactor.seconds if result.refactor else 0:.0f} | "
             f"{result.baseline.summary if result.baseline else ''} | "
             f"{result.after.summary if result.after else ''} |"
@@ -1189,6 +1752,12 @@ def main() -> int:
         json.dumps(
             {
                 "towel": towel_commit,
+                "candidate": {
+                    "wheel": candidate.wheel.name,
+                    "distribution": candidate.distribution,
+                    "version": candidate.version,
+                    "sha256": candidate.sha256,
+                },
                 "typing_mode": typing_mode,
                 "counts": counts,
                 "declined_typed_path": fallbacks,
