@@ -434,6 +434,48 @@ it so that a user who wants those extractions can have them explicitly.
 
 *Status: being implemented on the `audit-1772` branch; not yet released.*
 
+## 2026-09-23: A typed run compares against its baseline
+
+This supersedes the clean-baseline requirement of "Well-formed input".
+Typed mode had refused a project unless Towel's baseline check of it was
+clean. A study of 20 corpus projects in their own environments found all 17
+that type-check passing their own check as their CI runs it, while Towel's
+baseline was clean for 6. None of the errors Towel's baseline reported was
+also reported by the project's own check. Towel checked something different:
+
+- tests, benchmarks and docs outside the CI's targets;
+- a configured pyright that no CI step runs;
+- without the CI's flags or its typing dependencies.
+
+The owner chose a **differential baseline**:
+
+- Typed mode proceeds on a project whose baseline has errors, and rejects a
+  candidate only if the check reports an error the baseline did not have.
+- Errors are compared by file and message, ignoring line numbers. A message
+  that embeds a line number reappears as new after a line shift, so it
+  rejects rather than masks.
+- The final cold confirmation compares the same way.
+- A checker that cannot run at all still refuses the run.
+- The run reports the pre-existing errors, and where they may hide new ones:
+  an unresolved import or a missing stub turns types into `Any` downstream.
+
+This checks strictly more than `--no-types`, the advice it replaces.
+
+Making Towel's check agree with the project's own is recorded as a
+proposal, not adopted: `docs/proposals/project-own-check.md`. It would
+discover the check from tox, pre-commit, nox, Makefiles and workflows, and
+use its targets, flags and checkers, always including the package being
+refactored. On the same 20 projects it would agree exactly with the CI for
+13, and the differential baseline would cover the rest.
+
+The same day the owner confirmed that the default mode may consult the
+import model for read-only questions about the program's own imports:
+whether a callee is `typing.cast` or a project's own `cast`, and where an
+absolutely imported base class is defined. It never prints or refuses
+there, and it writes no import that runs.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
+
 ## 2026-09-22: Checked with the project's own checker, as configured
 
 A candidate is verified by the checker the project configures, exactly as the
