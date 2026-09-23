@@ -301,8 +301,11 @@ runs: an import in a function body, a branch or a `try` makes nothing
 present, and a borrower whose function imports the host lazily no longer
 counts as running the host's import-time code already.
 
-A module written to run as a program, `__main__.py` or one with an `if
-__name__ == "__main__":` guard, may be run by its path, and then its own
+A module written to run as a program may be run by its path: `__main__.py`,
+a module whose first line is a `#!` interpreter line, and one with a main
+guard anywhere in its own scope, `__name__ == "__main__"` either way round
+or opening an `and`. A module that runs code at import with no such sign
+of being a script is taken to be imported only. Run by path, the module's own
 directory is on `sys.path` in place of the source root above it: `python
 pkg/tool_b.py` finds `pkg` only where something else put it on the path.
 Such a borrower gains an import only when a run by path already needed

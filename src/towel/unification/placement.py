@@ -57,6 +57,7 @@ from .module_bindings import ModuleBindings, dotted_name, global_bindings, impor
 from .import_graph import (
     ImportTimeCode,
     imported_definition_sites,
+    module_scope_statements,
     relative_import_levels,
     relative_imports_resolve_alike,
 )
@@ -264,9 +265,7 @@ def _module_scope_bindings(module: ast.Module, name: str) -> List[ast.stmt]:
     anything within it stores the name, which can only over-count.
     """
     found: List[ast.stmt] = []
-    pending: List[ast.stmt] = list(module.body)
-    while pending:
-        statement = pending.pop()
+    for statement in module_scope_statements(module):
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             binds = statement.name == name
         elif isinstance(statement, (ast.Import, ast.ImportFrom)):
@@ -276,22 +275,9 @@ def _module_scope_bindings(module: ast.Module, name: str) -> List[ast.stmt]:
                 isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Store)
                 for node in ast.walk(statement)
             )
-            pending.extend(_nested_statements(statement))
         if binds:
             found.append(statement)
     return found
-
-
-def _nested_statements(statement: ast.stmt) -> List[ast.stmt]:
-    """The statements a compound statement runs in the scope it runs in."""
-    nested: List[ast.stmt] = []
-    for field in ("body", "orelse", "finalbody", "handlers", "cases"):
-        for item in getattr(statement, field, ()):
-            if isinstance(item, (ast.ExceptHandler, ast.match_case)):
-                nested.extend(item.body)
-            elif isinstance(item, ast.stmt):
-                nested.append(item)
-    return nested
 
 
 def _preserves_receiver(decorator: ast.expr) -> bool:

@@ -22,6 +22,7 @@ from typing import (
     Dict,
     FrozenSet,
     Iterable,
+    Iterator,
     List,
     Literal,
     Mapping,
@@ -1223,17 +1224,47 @@ def _is_constant(node: ast.expr) -> bool:
 
 
 def _is_main_guard(test: ast.expr) -> bool:
-    """``__name__ == "__main__"``, true only for the module Python runs as the program."""
-    return (
+    """A test false wherever the module is imported, before it evaluates anything else.
+
+    ``__name__ == "__main__"`` either way round, or a conjunction that opens
+    with one and so stops there: true only for the module Python runs as the
+    program.
+    """
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        return _is_main_guard(test.values[0])
+    if not (
         isinstance(test, ast.Compare)
-        and isinstance(test.left, ast.Name)
-        and test.left.id == "__name__"
         and len(test.ops) == 1
         and isinstance(test.ops[0], ast.Eq)
         and len(test.comparators) == 1
-        and isinstance(test.comparators[0], ast.Constant)
-        and test.comparators[0].value == "__main__"
+    ):
+        return False
+    sides = (test.left, test.comparators[0])
+    return any(
+        isinstance(name, ast.Name)
+        and name.id == "__name__"
+        and isinstance(value, ast.Constant)
+        and value.value == "__main__"
+        for name, value in (sides, sides[::-1])
     )
+
+
+def module_scope_statements(tree: ast.Module) -> Iterator[ast.stmt]:
+    """Every statement the module runs in its own scope, in order: into compound statements, not definitions."""
+    pending: List[ast.stmt] = list(reversed(tree.body))
+    while pending:
+        statement = pending.pop()
+        yield statement
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        nested: List[ast.stmt] = []
+        for field in ("body", "orelse", "finalbody", "handlers", "cases"):
+            for item in getattr(statement, field, ()):
+                if isinstance(item, (ast.ExceptHandler, ast.match_case)):
+                    nested.extend(item.body)
+                elif isinstance(item, ast.stmt):
+                    nested.append(item)
+        pending.extend(reversed(nested))
 
 
 def _defines_init_subclass(node: ast.ClassDef) -> bool:
@@ -1383,10 +1414,20 @@ def _stub_file(base: Path, parts: Sequence[str]) -> bool:
     return (bool(parts) and stub.with_suffix(".pyi").is_file()) or (stub / "__init__.pyi").is_file()
 
 
-def runs_as_script(tree: ast.Module, path: Path) -> bool:
-    """Whether the module is written to run as a program: ``__main__.py``, or one with a main guard."""
-    return path.name == "__main__.py" or any(
-        isinstance(statement, ast.If) and _is_main_guard(statement.test) for statement in tree.body
+def runs_as_script(source: str, tree: ast.Module, path: Path) -> bool:
+    """Whether the module is written to run as a program, and so may be run by its path.
+
+    ``__main__.py`` is, and so is a module whose first line is a ``#!``
+    interpreter line, guard or no guard, and one with a main guard anywhere
+    in its own scope, however it is spelled (:func:`_is_main_guard`).
+    """
+    return (
+        path.name == "__main__.py"
+        or source.startswith("#!")
+        or any(
+            isinstance(statement, ast.If) and _is_main_guard(statement.test)
+            for statement in module_scope_statements(tree)
+        )
     )
 
 
@@ -1429,10 +1470,11 @@ def _breaks_run_by_path(borrower: Path, loaded: Set[Path], source_roots: Sequenc
     import must then be absolute too, which materialization checks.
     """
     try:
-        tree = ast.parse(read_source(borrower))
+        source = read_source(borrower)
+        tree = ast.parse(source)
     except (OSError, UnicodeError, SyntaxError, ValueError):
         return True
-    if not runs_as_script(tree, borrower) or fails_run_by_path(tree):
+    if not runs_as_script(source, tree, borrower) or fails_run_by_path(tree):
         return False
     required = {
         alias.name.split(".")[0]

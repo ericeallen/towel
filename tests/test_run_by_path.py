@@ -45,8 +45,14 @@ if __name__ == '__main__':
 """
 
 
-def _tool(tag: str, imports: str) -> str:
-    return textwrap.dedent(TOOL.format(tag=tag, imports=imports)).lstrip("\n")
+MAIN_GUARD = "if __name__ == '__main__':\n    print(main(sys.argv[1:]))\n"
+
+
+def _tool(tag: str, imports: str, guard: str = MAIN_GUARD) -> str:
+    """A tool whose ``main`` is the duplicate, run under ``guard`` in place of the usual one."""
+    source = textwrap.dedent(TOOL.format(tag=tag, imports=imports)).lstrip("\n")
+    assert source.endswith(MAIN_GUARD)
+    return source[: -len(MAIN_GUARD)] + guard
 
 
 def _write(root: Path, files: Dict[str, str]) -> None:
@@ -56,10 +62,12 @@ def _write(root: Path, files: Dict[str, str]) -> None:
         path.write_text(text)
 
 
-def _observe(root: Path) -> List[Tuple[str, int, str, List[str]]]:
+def _observe(
+    root: Path, tools: Tuple[str, ...] = ("tool_a", "tool_b")
+) -> List[Tuple[str, int, str, List[str]]]:
     """Run each tool by path, by path with the project importable, and with ``-m``."""
     observed = []
-    for tool in ("tool_a", "tool_b"):
+    for tool in tools:
         for label, command, extra_path in (
             ("path", [sys.executable, f"pkg/{tool}.py", "xx"], None),
             ("path+root", [sys.executable, f"pkg/{tool}.py", "xx"], str(root)),
@@ -148,3 +156,55 @@ def test_a_script_that_already_fails_by_path_may_borrow(tmp_path: Path) -> None:
         in (tmp_path / "pkg" / "tool_b.py").read_text()
         + (tmp_path / "pkg" / "tool_a.py").read_text()
     )
+
+
+def _observe_library(root: Path) -> Tuple[int, str, List[str]]:
+    """Import the library the scripts share code with, and call it."""
+    completed = subprocess.run(
+        [sys.executable, "-c", "import pkg.util; print(pkg.util.scaled(['xx']))"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
+    )
+    return completed.returncode, completed.stdout, completed.stderr.strip().splitlines()[-1:]
+
+
+LIBRARY = _tool("u", "", "").replace("def main(argv):", "def scaled(argv):")
+
+
+@pytest.mark.parametrize(
+    "shebang, guard",
+    [
+        ("", "if '__main__' == __name__:\n    print(main(sys.argv[1:]))\n"),
+        ("", "if __name__ == '__main__' and sys.argv:\n    print(main(sys.argv[1:]))\n"),
+        (
+            "",
+            "try:\n    if __name__ == '__main__':\n        print(main(sys.argv[1:]))\n"
+            "except KeyboardInterrupt:\n    pass\n",
+        ),
+        ("#!/usr/bin/env python3\n", "print(main(sys.argv[1:]))\n"),
+    ],
+    ids=["reversed-guard", "guard-in-a-conjunction", "guard-inside-try", "interpreter-line"],
+)
+def test_every_way_of_writing_a_script_counts(tmp_path: Path, shebang: str, guard: str) -> None:
+    """A guard either way round, opening a conjunction, or nested, or a ``#!`` line and none.
+
+    Two such scripts share their code with each other and with a library
+    module of their package, which neither imports; running them by path
+    must still work.
+    """
+    files = {
+        "pyproject.toml": PYPROJECT,
+        "pkg/__init__.py": "",
+        "pkg/util.py": LIBRARY,
+        "pkg/tool_a.py": shebang + _tool("a", "import sys", guard),
+        "pkg/tool_b.py": shebang + _tool("b", "import sys", guard),
+    }
+    before, after = tmp_path / "before", tmp_path / "after"
+    _write(before, files)
+    _write(after, files)
+    _refactor(after)
+    assert _observe(after) == _observe(before)
+    assert _observe_library(after) == _observe_library(before)

@@ -374,7 +374,7 @@ class Materialization(
         elif file_path == proposal.file_path:
             self._insert_helper(proposal, file_path, lines)
         elif not proposal.insert_into_class:
-            before = self._parse_source("".join(lines))
+            before = "".join(lines)
             self._insert_helper_import(proposal, file_path, lines)
             self._refuse_relative_import_in_a_script(
                 before, "".join(lines), file_path, proposal.extracted_function.name
@@ -624,7 +624,7 @@ class Materialization(
         return insert_line
 
     def _refuse_relative_import_in_a_script(
-        self, before: ast.Module, after: str, file_path: str, helper_name: str
+        self, before: str, after: str, file_path: str, helper_name: str
     ) -> None:
         """Refuse a relative helper import in a module that still runs as a script by path.
 
@@ -634,7 +634,8 @@ class Materialization(
         (``import_graph._breaks_run_by_path``). One whose leading imports are
         already relative fails by path anyway, at that import.
         """
-        if not runs_as_script(before, Path(file_path)) or fails_run_by_path(before):
+        tree = self._parse_source(before)
+        if not runs_as_script(before, tree, Path(file_path)) or fails_run_by_path(tree):
             return
         if any(
             isinstance(node, ast.ImportFrom)
