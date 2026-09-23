@@ -398,8 +398,14 @@ where the evidence comes from:
 - Verification first requires a clean original project, then checks complete
   prospective project graphs, overlaying all changed files together. A newly
   imported helper therefore exists in its host while its consumers are checked.
-  Safe project checking rules are honored; project
-  plugins, configured executables and report destinations are not executed.
+  Project checking rules are honored, and so are configured mypy plugins,
+  which are loaded and run as in the project's own mypy run (a plugin module
+  must be importable from the interpreter Towel runs; a `.py` path is resolved
+  from the configuration file). A plugin that cannot be loaded refuses the
+  typed run before anything is written. Configured executables and report
+  destinations are never used. Each mypy build imports the plugins afresh in a
+  forked child, so a plugin that is slow to import (django-stubs sets Django
+  up) costs that much on every check.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration, made once per run, kept in step with the
   project as it is refactored, and watched by one long-lived language server.

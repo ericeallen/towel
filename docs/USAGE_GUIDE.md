@@ -185,6 +185,15 @@ same behavior with `type_oracle=None` and `annotate_helpers=False`. A checker
 crash or timeout remains a distinct verification failure. A clean baseline
 keeps prospective-project verification enabled throughout the run.
 
+mypy runs with the project's configured plugins, loaded exactly as the
+project's own mypy loads them: a plugin module from the environment Towel runs
+in, a `.py` plugin path relative to the configuration file. Plugins decide what
+expressions' types are, so a check without them would not be the project's;
+they execute as they do in the project's own mypy run. A plugin that cannot be
+loaded there (not installed where Towel runs, or unable to import the project
+itself) fails the baseline check, so the run is refused before anything is
+written, with mypy's own message.
+
 For new module-level helpers and helper methods, Towel also anti-unifies the
 corresponding argument and result types. For example, `list[int] -> int` and `list[str] -> str` can become
 `list[T] -> T`. Already-generic callers receive fresh helper binders with their

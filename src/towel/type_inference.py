@@ -396,7 +396,9 @@ class MypyInferrer:
 
     Builds run serially in an owned process. mypy's GC, imports and mutable
     globals cannot change this application's state or race between callers.
-    Project checking options apply; project plugins and executables do not.
+    Project checking options and plugins apply, as in the project's own mypy
+    run; a plugin that cannot be loaded fails every check, and a configured
+    executable is never run.
     """
 
     def __init__(self, cache_dir: Optional[Path] = None) -> None:
@@ -550,7 +552,7 @@ class MypyInferrer:
             self._stderr.close()
         self._stderr = tempfile.TemporaryFile(prefix="towel-mypy-stderr-")
         self._process = subprocess.Popen(
-            [sys.executable, "-I", str(_MYPY_WORKER), str(self._cache_dir)],
+            [sys.executable, "-I", "-B", str(_MYPY_WORKER), str(self._cache_dir)],
             bufsize=0,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

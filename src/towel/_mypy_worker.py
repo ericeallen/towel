@@ -1,8 +1,10 @@
 """Run mypy in an owned process so its global state cannot change the caller.
 
 The line-delimited protocol contains source text and checker diagnostics only.
-Project plugins and configured executables are never loaded. This file is
-launched by its absolute installed path with ``python -I``.
+The project's configured plugins are loaded as its own mypy loads them (see
+``_load_configured_plugins``); configured executables and report destinations
+are never used. This file is launched by its absolute installed path with
+``python -I -B``, so nothing a plugin imports writes bytecode into the project.
 
 Each request builds in a forked child that exits when it has answered. Nothing
 a build allocates outlives it, so the thousandth request costs what the first
@@ -32,6 +34,7 @@ from typing import Callable, Mapping, Optional, Sequence
 
 from mypy import build
 from mypy.build import BuildSource
+from mypy.errors import CompileError, Errors
 from mypy.find_sources import create_source_list
 from mypy.fscache import FileSystemCache
 from mypy.main import process_options
@@ -44,7 +47,8 @@ def _options(root: Path, config: str | None, cache: str, roots: Sequence[str]) -
     errors = io.StringIO()
     # A synthetic module target suppresses target discovery while parsing the
     # project's options. This API is present throughout mypy 1.x and 2.x. No
-    # plugin is loaded until build(), after the unsafe options below are removed.
+    # plugin is loaded until ``_load_configured_plugins``, after the options
+    # below that would execute or write something have been taken away.
     _, options = process_options(
         [
             "--config-file",
@@ -67,7 +71,7 @@ def _options(root: Path, config: str | None, cache: str, roots: Sequence[str]) -
         options.explicit_package_bases = True
     # These settings describe where/how to execute or write, not type rules.
     # The checker is owned by Towel even when its rules come from the project.
-    options.plugins = []
+    # A plugin is a type rule, not one of these, and stays configured.
     if hasattr(options, "num_workers"):
         options.num_workers = 0  # Own one process; do not leave project-local worker status files.
     options.python_executable = sys.executable
@@ -95,6 +99,50 @@ def _options(root: Path, config: str | None, cache: str, roots: Sequence[str]) -
         )
     )
     return options
+
+
+class _PluginUnavailable(Exception):
+    """A plugin the project configures cannot be loaded, so no check would be the project's."""
+
+
+def _load_configured_plugins(options: Options) -> None:
+    """Load the project's plugins as its own mypy run loads them, or refuse to check.
+
+    A plugin is a type rule: django-stubs, pydantic and SQLAlchemy each decide
+    what an expression's type is. A build without the project's plugins
+    answers a question the project never asks, and accepts code its mypy
+    rejects. So they are loaded through mypy's own loader, exactly as the
+    project's run loads them: a module from this interpreter's environment, a
+    ``.py`` path relative to the configuration file, each plugin's entry point
+    called with this mypy's version. ``build`` then finds every module already
+    imported, and records each plugin's digest in the cache as it always does,
+    so a changed plugin invalidates what was concluded under the old one.
+
+    A plugin that cannot be loaded leaves the project's own mypy unable to
+    start, and this check refuses in mypy's words rather than check without
+    it. Each build is a forked child, so nothing a plugin does at import
+    outlives the build it served.
+
+    This is the single place that decides what configured plugins do here.
+    """
+    if not options.plugins:
+        return
+    said = io.StringIO()
+    try:
+        build.load_plugins_from_config(options, Errors(options), said)
+    except CompileError as error:
+        reason = "; ".join(error.messages) or str(error)
+    except Exception as error:  # a plugin's own entry point or constructor raised
+        printed = said.getvalue().strip()
+        reason = f"{printed + ': ' if printed else ''}{type(error).__name__}: {error}"
+    else:
+        return
+    raise _PluginUnavailable(
+        f"mypy could not load a plugin the project configures: {reason}. The project's"
+        " mypy loads its plugins before it checks anything, so no check without this one"
+        " would be the project's. Make the plugin importable from the interpreter Towel"
+        f" runs ({sys.executable}) to check this project."
+    )
 
 
 def _strings(value: object) -> list[str]:
@@ -459,6 +507,7 @@ def _request(request: object, cache: str) -> list[str]:
         if path.is_relative_to(root):
             spellings.append(str(path.relative_to(root)))
         options.exclude += ["^" + re.escape(spelling) + r"(?:/|$)" for spelling in spellings]
+    _load_configured_plugins(options)
     replacements = _sources(request.get("sources"))
     sources = _build_sources(
         replacements,
@@ -482,6 +531,8 @@ def _answer(line: str, cache: str) -> str:
     try:
         with redirect_stdout(captured), redirect_stderr(captured):
             messages = _request(json.loads(line), cache)
+    except _PluginUnavailable as error:
+        failure = str(error)
     except (Exception, SystemExit) as error:
         failure = f"{type(error).__name__}: {error}"
     return json.dumps({"messages": messages, "failure": failure}) + "\n"

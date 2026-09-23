@@ -409,7 +409,11 @@ site's module in an owned worker process, each build in a forked child of it
 that exits once it has answered, with `reveal_type(...)` probes inserted where the
 call will stand, so names resolve as they do at the call, and asks
 subtyping through probe functions `def _probe(v: narrow) -> wide: return v`
-appended to the module, so the relation is mypy's own. `PyrightOracle`
+appended to the module, so the relation is mypy's own. The build runs with
+the project's configured plugins, loaded by mypy's own loader in each forked
+build (`_load_configured_plugins` in `_mypy_worker.py` is the one place that
+decides this), since a plugin changes what an expression's type is; one that
+cannot be loaded fails the check, so the baseline refuses the run. `PyrightOracle`
 does the same through one long-lived `pyright-langserver` per project,
 watching a private copy that follows the project; the pyright command line is
 the fallback when no server can be started.
@@ -431,7 +435,7 @@ flowchart LR
     subgraph proc["processes"]
         direction TB
         towel["towel"]
-        worker["owned mypy worker<br/>python -I _mypy_worker.py"]
+        worker["owned mypy worker<br/>python -I -B _mypy_worker.py"]
         build["forked build<br/>one per request, exits on answer"]
         server["pyright-langserver<br/>one per project root"]
         towel --> worker

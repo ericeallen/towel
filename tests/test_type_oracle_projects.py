@@ -239,31 +239,6 @@ def test_project_any_rule_triggers_annotation_fallback(tmp_path: Path) -> None:
         checker.close()
 
 
-@pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
-def test_project_plugins_and_configured_interpreter_never_execute(tmp_path: Path) -> None:
-    marker = tmp_path / "executed"
-    plugin = tmp_path / "plugin.py"
-    plugin.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
-    executable = tmp_path / "python"
-    executable.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
-    executable.chmod(0o700)
-    (tmp_path / "mypy.ini").write_text(
-        f"[mypy]\nplugins = {plugin}\npython_executable = {executable}\n"
-        "disallow_any_explicit = True\n"
-    )
-    path = tmp_path / "example.py"
-    source = "from typing import Any\ndef f(x: Any) -> Any:\n    return x\n"
-    path.write_text(source)
-    checker = MypyInferrer()
-    try:
-        result = checker.check(str(path), source)
-        assert isinstance(result, CheckSuccess)
-        assert any('Explicit "Any"' in error.message for error in result.errors)
-        assert not marker.exists()
-    finally:
-        checker.close()
-
-
 def test_missing_optional_mypy_has_no_unraisable_destructor(tmp_path: Path) -> None:
     source_root = Path(type_inference.__file__).resolve().parents[1]
     code = (
