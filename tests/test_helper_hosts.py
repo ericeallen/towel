@@ -14,9 +14,10 @@
 
 """Which classes can take a helper into their body.
 
-A helper placed in a class is one more statement of its body, which a body
-written on the header's line cannot take. The hostile battery runs each
-refused shape and compares the program's output (``p10`` to ``p12`` in
+A helper placed in a class is one more member of it: a body written on the
+header's line cannot take the statement, and a ``Protocol`` treats every
+member as part of its contract. The hostile battery runs each refused shape
+and compares the program's output (``p10`` to ``p14`` in
 ``tests/hostile_cases``); these tests pin down the rule that decides.
 """
 
@@ -53,3 +54,30 @@ def test_a_body_on_the_header_line_takes_no_helper(source: str) -> None:
 def test_a_body_below_the_header_takes_one() -> None:
     assert _refusal("class Base:\n    k = 0\n", "Base") is None
     assert _refusal("class Base(\n    object,\n):\n    k = 0\n", "Base") is None
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "from typing import Protocol\nclass P(Protocol):",
+        "import typing\nclass P(typing.Protocol):",
+        "import typing as t\nclass P(t.Protocol):",
+        "from typing import Protocol, TypeVar\nT = TypeVar('T')\nclass P(Protocol[T]):",
+        "from typing_extensions import Protocol as Proto\nclass P(Proto):",
+        # Whichever import ran, the name is a protocol.
+        "try:\n    from typing import Protocol as Proto\n"
+        "except ImportError:\n    from typing_extensions import Protocol as Proto\n"
+        "class P(Proto):",
+        "import typing\nAlias = typing.Protocol\nclass P(Alias):",
+        # Spelled like one and bound out of sight: a star import.
+        "from typing import *\nclass P(Protocol):",
+    ],
+)
+def test_a_protocol_takes_no_helper(header: str) -> None:
+    assert _refusal(header + "\n    k: int\n", "P") == "protocol"
+
+
+def test_an_implementation_of_a_protocol_takes_one() -> None:
+    # A subclass that does not list Protocol again is an ordinary class.
+    source = "from typing import Protocol\nclass P(Protocol):\n    k: int\nclass C(P):\n    k = 0\n"
+    assert _refusal(source, "C") is None

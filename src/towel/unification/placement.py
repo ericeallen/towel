@@ -43,6 +43,7 @@ from typing import (
     Sequence,
     Set,
     Tuple,
+    Union,
     cast,
 )
 from .bounded_cache import BoundedCache
@@ -56,7 +57,7 @@ from .models import (
 )
 from .scope_analyzer import ScopeAnalyzer
 from .import_graph import imported_definition_sites
-from .statement_facts import import_binding_names
+from .statement_facts import imported_binding_name
 from .visitors import MethodCallRewriter, body_shares_header_line, visit_as
 from ..source_text import read_source, source_lines
 
@@ -163,14 +164,23 @@ class _GlobalBinding:
     """The class the statement defines, when the binding is a ``class`` statement."""
     is_import: bool
     """Whether the statement is an import."""
+    origin: Optional[str] = None
+    """What the binding copies, as a dotted name: the imported ``module.name``
+    of an absolute import, or the dotted name a plain ``alias = a.b`` assigns,
+    which is spelled in the module and resolved where the assignment runs."""
 
 
 @dataclass(frozen=True)
 class _ClassHost:
     """What a module-level class statement shows about taking a helper into its body."""
 
+    bases: Tuple[Optional[str], ...]
+    """Each base's dotted name, a subscript's value included (``Protocol[T]``)."""
     body_on_header_line: bool
     """The body is written after the header's colon, where no statement can follow it."""
+
+
+_PROTOCOL_BASES = frozenset({"typing.Protocol", "typing_extensions.Protocol"})
 
 
 @dataclass(frozen=True)
@@ -217,10 +227,44 @@ class _ModuleBindings:
             return None
         return binding
 
+    def resolve(self, dotted: str, order: int, depth: int = 0) -> Optional[str]:
+        """The absolute dotted name ``dotted`` denotes where statement ``order`` runs.
+
+        Only a name the module certainly binds there by an absolute import, or
+        by a plain assignment of such a name, resolves; anything else is None.
+        """
+        head, _, rest = dotted.partition(".")
+        binding = self.in_effect(head, order)
+        if binding is None or binding.origin is None or depth > 8:
+            return None
+        target = f"{binding.origin}.{rest}" if rest else binding.origin
+        if binding.is_import:
+            return target
+        return self.resolve(target, binding.order, depth + 1)
+
+    def possible_origins(self, dotted: str, depth: int = 0) -> FrozenSet[str]:
+        """Every absolute name ``dotted`` could denote, whatever path the module took."""
+        head, _, rest = dotted.partition(".")
+        found: Set[str] = set()
+        for binding in self.bindings.get(head, ()):
+            if binding.origin is None or depth > 8:
+                continue
+            target = f"{binding.origin}.{rest}" if rest else binding.origin
+            found.update(
+                {target} if binding.is_import else self.possible_origins(target, depth + 1)
+            )
+        return frozenset(found)
+
     def refuses_helper(self, qualname: str) -> Optional[str]:
         """Why the module-level class ``qualname`` cannot take a helper into its body, if it cannot.
 
-        A body on the header's line takes no statement after it.
+        A body on the header's line takes no statement after it. And a helper placed
+        in a ``Protocol`` becomes one of its members, which every structural
+        implementer lacks: an ``isinstance`` check against a runtime-checkable
+        protocol turns false, and the checker stops accepting implementers
+        that conformed. The protocol test is conservative: a base that could
+        be ``Protocol`` on any path through the module, or is spelled so,
+        counts.
         """
         host = self.class_hosts.get(qualname)
         order = self.class_orders.get(qualname)
@@ -228,6 +272,15 @@ class _ModuleBindings:
             return "unknown class"
         if host.body_on_header_line:
             return "body on the header line"
+        for base in host.bases:
+            if base is None:
+                continue
+            if (
+                base.rsplit(".", 1)[-1] == "Protocol"
+                or self.resolve(base, order) in _PROTOCOL_BASES
+                or self.possible_origins(base) & _PROTOCOL_BASES
+            ):
+                return "protocol"
         return None
 
 
@@ -302,6 +355,7 @@ class _GlobalBindingCollector:
         *,
         class_qualname: Optional[str] = None,
         is_import: bool = False,
+        origin: Optional[str] = None,
     ) -> None:
         self._bindings.setdefault(name, []).append(
             _GlobalBinding(
@@ -309,6 +363,7 @@ class _GlobalBindingCollector:
                 certain=certain,
                 class_qualname=class_qualname,
                 is_import=is_import,
+                origin=origin,
             )
         )
 
@@ -323,6 +378,10 @@ class _GlobalBindingCollector:
             self._note_class(qualname)
             if not class_stack:
                 self._class_hosts[qualname] = _ClassHost(
+                    bases=tuple(
+                        _dotted_name(b.value if isinstance(b, ast.Subscript) else b)
+                        for b in stmt.bases
+                    ),
                     body_on_header_line=body_shares_header_line(self._lines, stmt),
                 )
             for expr in (*stmt.decorator_list, *stmt.bases, *(kw.value for kw in stmt.keywords)):
@@ -339,8 +398,18 @@ class _GlobalBindingCollector:
         if isinstance(stmt, (ast.Import, ast.ImportFrom)):
             if any(alias.name == "*" for alias in stmt.names):
                 self._star_imports.append(self._order)
-            for name in import_binding_names(stmt):
-                self._bind(name, certain, is_import=True)
+            for alias in stmt.names:
+                name = imported_binding_name(alias)
+                if name is not None:
+                    self._bind(name, certain, is_import=True, origin=_import_origin(stmt, alias))
+            return
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and (alias_of := _dotted_name(stmt.value)) is not None
+        ):
+            self._bind(stmt.targets[0].id, certain, origin=alias_of)
             return
         if isinstance(stmt, (ast.Global, ast.Nonlocal)):
             return  # Both are declarations about other scopes, and bind nothing.
@@ -412,6 +481,31 @@ class _GlobalBindingCollector:
                         self._nested_scope([child], class_stack)
                     elif isinstance(child, (ast.ExceptHandler, ast.match_case)):
                         self._nested_scope(child.body, class_stack)
+
+
+def _dotted_name(node: ast.expr) -> Optional[str]:
+    """``a.b.c`` for a chain of attributes on a name, None for any other expression."""
+    parts: List[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _import_origin(stmt: Union[ast.Import, ast.ImportFrom], alias: ast.alias) -> Optional[str]:
+    """The absolute dotted name an import alias binds; None for a relative import.
+
+    ``import a.b`` binds ``a``, so its origin is ``a``; ``import a.b as c``
+    binds ``a.b`` itself.
+    """
+    if isinstance(stmt, ast.Import):
+        return alias.name if alias.asname else alias.name.split(".")[0]
+    if stmt.level or not stmt.module:
+        return None
+    return f"{stmt.module}.{alias.name}"
 
 
 def _global_bindings(source: str) -> Optional[_ModuleBindings]:
@@ -768,18 +862,20 @@ class HelperPlacement(EngineState):
                 for info in class_infos
                 if info.file_path == referencing_file and info.qualname == base_name
             ]
-            return local[0] if len(local) == 1 else None
-        if not binding.is_import:
+            found = local[0] if len(local) == 1 else None
+        elif not binding.is_import:
             return None
-        sites = imported_definition_sites(referencing_file, base_name, self.import_graph)
-        if not sites:
-            return None
-        matches = [
-            info
-            for info in class_infos
-            if (self.import_graph.resolve(info.file_path), info.qualname) in sites
-        ]
-        return matches[0] if len(matches) == 1 else None
+        else:
+            sites = imported_definition_sites(referencing_file, base_name, self.import_graph)
+            if not sites:
+                return None
+            matches = [
+                info
+                for info in class_infos
+                if (self.import_graph.resolve(info.file_path), info.qualname) in sites
+            ]
+            found = matches[0] if len(matches) == 1 else None
+        return found
 
     def _can_host(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
         """Whether a helper placed in ``info``'s body stays a plain member of the class.

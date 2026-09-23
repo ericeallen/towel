@@ -134,6 +134,8 @@ TRANSFORMED = {
     "p10_one_line_exception_base",
     "p11_one_line_base_docstring_and_assignment",
     "p12_one_line_body_after_a_split_header",
+    "p13_protocol_default_methods",
+    "p14_protocol_common_ancestor",
 }
 # Every other fixture must come back byte-identical. One of them once changed:
 # r86_annotated_assignment_live left the set when the trivial-helper filter

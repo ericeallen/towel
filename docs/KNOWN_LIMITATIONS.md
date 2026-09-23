@@ -248,10 +248,13 @@ decorator on the source methods is known
 to preserve the receiver, the methods have a first parameter named
 `self` (or the method is a `classmethod`), and both read an attribute of it.
 The class that takes the helper, whether the methods' own or their common
-ancestor, must also be able to hold it as an ordinary member: not written
+ancestor, must also be able to hold it as an ordinary member: not a
+`Protocol` (a method there is one more member every structural implementer
+lacks, so a runtime-checkable `isinstance` turns false), and not written
 with its body on the header's line (`class Base: pass` takes no further
-statement). When the nearest common ancestor is refused, a farther one that
-qualifies is used. Local classes, duplicated class names, unknown
+statement). A base that could be `Protocol` on any path through its module,
+or is spelled `Protocol`, counts as one. When the nearest common ancestor is
+refused, a farther one that qualifies is used. Local classes, duplicated class names, unknown
 decorators, functions nested inside methods, and class-body functions with
 no parameter or a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join
