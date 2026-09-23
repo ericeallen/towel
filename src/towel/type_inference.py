@@ -57,6 +57,7 @@ import sys
 import tempfile
 from enum import Enum
 from typing import (
+    IO,
     Dict,
     Final,
     Iterable,
@@ -377,6 +378,17 @@ def _source_groups(sources: Mapping[str, str], checker: str) -> Dict[Path, Dict[
     return groups
 
 
+_MYPY_WORKER = Path(__file__).with_name("_mypy_worker.py")
+_STDERR_TAIL_BYTES = 2000
+"""How much of a dying worker's standard error a failure quotes: a traceback's end."""
+
+
+def _with_stderr(failure: CheckFailure, said: str) -> CheckFailure:
+    if not said:
+        return failure
+    return CheckFailure(f"{failure.reason}. The mypy worker's standard error ended:\n{said}")
+
+
 class MypyInferrer:
     """A persistent, isolated mypy worker with an owned incremental cache.
 
@@ -389,6 +401,7 @@ class MypyInferrer:
         # Cleanup must be valid even if dependency detection/construction fails.
         self._lock = threading.RLock()
         self._process: Optional[subprocess.Popen[bytes]] = None
+        self._stderr: Optional[IO[bytes]] = None
         self._cache: Optional[tempfile.TemporaryDirectory[str]] = None
         self._closed = False
         self._owner_pid = os.getpid()
@@ -410,6 +423,9 @@ class MypyInferrer:
         with self._lock:
             self._closed = True
             self._stop_worker()
+            if self._stderr is not None:
+                self._stderr.close()
+                self._stderr = None
             if self._cache is not None:
                 self._cache.cleanup()
                 self._cache = None
@@ -491,69 +507,104 @@ class MypyInferrer:
                 "modules": {str(Path(source.path).resolve()): source.module for source in sources},
             }
             try:
-                if self._process is None:
-                    self._process = subprocess.Popen(
-                        [
-                            sys.executable,
-                            "-I",
-                            str(Path(__file__).with_name("_mypy_worker.py")),
-                            str(self._cache_dir),
-                        ],
-                        bufsize=0,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                        cwd=tempfile.gettempdir(),
-                        env=python_tool_environment(),
-                    )
-                process = self._process
-                if process.stdin is None or process.stdout is None:
-                    return CheckFailure("mypy worker has no protocol pipes")
-                deadline = time.monotonic() + MYPY_TIMEOUT_SECONDS
-                pending = (json.dumps(request) + "\n").encode("utf-8")
-                written = 0
-                response = bytearray()
-                input_fd, output_fd = process.stdin.fileno(), process.stdout.fileno()
-                os.set_blocking(input_fd, False)
-                os.set_blocking(output_fd, False)
-                while not response.endswith(b"\n"):
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        self._stop_worker()
-                        return CheckFailure("mypy timed out")
-                    readable, writable, _ = select.select(
-                        [output_fd], [input_fd] if written < len(pending) else [], [], remaining
-                    )
-                    if writable:
-                        try:
-                            written += os.write(
-                                input_fd, memoryview(pending)[written : written + 65536]
-                            )
-                        except BlockingIOError:
-                            pass  # Another ready pipe can be consumed before trying again.
-                    if readable:
-                        try:
-                            chunk = os.read(output_fd, 65536)
-                        except BlockingIOError:
-                            continue
-                        if not chunk:
-                            self._stop_worker()
-                            return CheckFailure("mypy worker exited before returning diagnostics")
-                        response.extend(chunk)
-                payload = json.loads(response)
-            except (OSError, ValueError) as error:
-                self._stop_worker()
+                process = self._running_worker()
+            except OSError as error:
                 return CheckFailure(f"mypy worker failed: {error}")
-            if not isinstance(payload, dict):
-                return CheckFailure("mypy worker returned an invalid response")
-            failure, messages = payload.get("failure"), payload.get("messages")
-            if isinstance(failure, str):
-                return CheckFailure(failure)
-            if failure is not None:
-                return CheckFailure("mypy worker returned an invalid failure status")
-            if not isinstance(messages, list) or not all(isinstance(m, str) for m in messages):
-                return CheckFailure("mypy worker returned invalid diagnostics")
-            return _BuildMessages(tuple(m for m in messages if isinstance(m, str)))
+            said_before = self._stderr_size()
+            result = self._exchange(process, request)
+            if isinstance(result, CheckFailure):
+                return _with_stderr(result, self._stderr_since(said_before))
+            return result
+
+    def _running_worker(self) -> subprocess.Popen[bytes]:
+        if self._process is not None:
+            return self._process
+        # Its standard error is the only place a crash says why. A file, not a
+        # pipe: nothing reads it until something has gone wrong, and a pipe
+        # nobody reads fills and stops the worker.
+        if self._stderr is not None:
+            self._stderr.close()
+        self._stderr = tempfile.TemporaryFile(prefix="towel-mypy-stderr-")
+        self._process = subprocess.Popen(
+            [sys.executable, "-I", str(_MYPY_WORKER), str(self._cache_dir)],
+            bufsize=0,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._stderr,
+            cwd=tempfile.gettempdir(),
+            env=python_tool_environment(),
+        )
+        return self._process
+
+    def _stderr_size(self) -> int:
+        return os.fstat(self._stderr.fileno()).st_size if self._stderr is not None else 0
+
+    def _stderr_since(self, offset: int) -> str:
+        """The end of what the worker wrote to standard error after ``offset``.
+
+        Only this request's part: a message an earlier, successful request
+        wrote is not the reason this one failed. ``pread`` leaves the offset
+        the worker writes at where it was.
+        """
+        if self._stderr is None:
+            return ""
+        size = self._stderr_size()
+        start = max(offset, size - _STDERR_TAIL_BYTES)
+        written = os.pread(self._stderr.fileno(), size - start, start)
+        return written.decode("utf-8", "replace").strip()
+
+    def _exchange(
+        self, process: subprocess.Popen[bytes], request: Mapping[str, object]
+    ) -> _BuildMessages | CheckFailure:
+        """Send one request to the worker and read its answer, within the timeout."""
+        try:
+            if process.stdin is None or process.stdout is None:
+                return CheckFailure("mypy worker has no protocol pipes")
+            deadline = time.monotonic() + MYPY_TIMEOUT_SECONDS
+            pending = (json.dumps(request) + "\n").encode("utf-8")
+            written = 0
+            response = bytearray()
+            input_fd, output_fd = process.stdin.fileno(), process.stdout.fileno()
+            os.set_blocking(input_fd, False)
+            os.set_blocking(output_fd, False)
+            while not response.endswith(b"\n"):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._stop_worker()
+                    return CheckFailure("mypy timed out")
+                readable, writable, _ = select.select(
+                    [output_fd], [input_fd] if written < len(pending) else [], [], remaining
+                )
+                if writable:
+                    try:
+                        written += os.write(
+                            input_fd, memoryview(pending)[written : written + 65536]
+                        )
+                    except BlockingIOError:
+                        pass  # Another ready pipe can be consumed before trying again.
+                if readable:
+                    try:
+                        chunk = os.read(output_fd, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        self._stop_worker()
+                        return CheckFailure("mypy worker exited before returning diagnostics")
+                    response.extend(chunk)
+            payload = json.loads(response)
+        except (OSError, ValueError) as error:
+            self._stop_worker()
+            return CheckFailure(f"mypy worker failed: {error}")
+        if not isinstance(payload, dict):
+            return CheckFailure("mypy worker returned an invalid response")
+        failure, messages = payload.get("failure"), payload.get("messages")
+        if isinstance(failure, str):
+            return CheckFailure(failure)
+        if failure is not None:
+            return CheckFailure("mypy worker returned an invalid failure status")
+        if not isinstance(messages, list) or not all(isinstance(m, str) for m in messages):
+            return CheckFailure("mypy worker returned invalid diagnostics")
+        return _BuildMessages(tuple(m for m in messages if isinstance(m, str)))
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
