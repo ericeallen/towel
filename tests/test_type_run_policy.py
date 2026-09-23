@@ -344,7 +344,10 @@ def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
                 assert sum(count for count, _ in results.values()) == 1
                 assert "return first(value)" in (output / "program.py").read_text()
                 assert str(output) in check.call_args_list[1].kwargs["excluded_paths"]
-        assert check.call_count == (1 if dirty else 2)
+        # Baseline, the candidate, and the cold confirmation of the finished run.
+        assert check.call_count == (1 if dirty else 3)
+        if not dirty:
+            assert str(output) in check.call_args_list[2].kwargs["excluded_paths"]
         assert str(path) in check.call_args_list[0].args[0]
         assert path.read_text() == _source()
         assert engine.type_oracle is oracle
