@@ -620,8 +620,10 @@ the proposals it built and did not apply, by reason:
   project's own `cast` is an ordinary call, and a binding Towel cannot
   follow is taken to be the form its name spells. A form a module of the
   project re-exports under a name of its own (`L` for `Literal`) is not
-  recognized, and where a checker is configured it declines what that
-  lets through.
+  recognized, nor is one a module outside the project re-exports
+  (`hypothesis.internal.compat.TypedDict`), since such an import is taken
+  at its word, as it must be for SQLAlchemy's `cast`; where a checker is
+  configured it declines what either lets through.
   `return_variables_not_aligned`: a variable one block must return has no
   binding in the other. `mixed_return_and_variables`: a block both returns
   early and binds variables read afterwards, which one call statement
