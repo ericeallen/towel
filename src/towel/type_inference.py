@@ -397,7 +397,10 @@ class MypyInferrer:
     globals cannot change this application's state or race between callers.
     Project checking options and plugins apply, as in the project's own mypy
     run; a plugin that cannot be loaded fails every check, and a configured
-    executable is never run.
+    executable is never run. A project that configures no mypy is checked
+    with mypy's defaults, and only its probes (``reveal``, ``is_subtype``)
+    also check the bodies of functions without annotations, in a cache of
+    their own (see ``_options`` in ``_mypy_worker.py``).
     """
 
     def __init__(self, cache_dir: Optional[Path] = None) -> None:
@@ -525,6 +528,7 @@ class MypyInferrer:
                 "config": _mypy_config(root),
                 "roots": list(roots),
                 "sources": {str(Path(source.path).resolve()): source.text for source in sources},
+                # A complete build is a check of the project, any other a probe.
                 "complete": complete,
                 "excluded_paths": list(excluded_paths),
                 "consumers": list(consumers),
