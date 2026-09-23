@@ -337,12 +337,15 @@ shadowed and patched builtins, scripts run by path) to runs that asked for
 it.
 
 Without the flag, a helper always lives in the module whose code it
-replaces, and Towel writes no import of a project module at all. That
-includes the type-only `if TYPE_CHECKING:` imports it used to add for helper
-annotations: they never run, but they are still new imports, and spelling
-them needs the import model. An annotation then names another module's type
-only where the module already binds it. Without the flag the import model
-is neither built nor consulted, so an import problem never refuses a run.
+replaces, and Towel writes no import of a project module that runs. It still
+adds a type-only import under `if TYPE_CHECKING:` when a helper's annotation
+needs a type another module defines. The owner kept those, in a
+same-day amendment to this entry, because they never run and so cannot
+change behaviour, while dropping them would cost annotations their
+precision. The import model spells them, built only when one is needed.
+Where it cannot spell a name, the annotation leaves the name written out or
+falls back, and Towel never guesses. Without the flag an import problem never
+refuses a run and is not reported, since nothing that runs depends on it.
 
 The release corpus runs with the flag on for every project, to catch bugs in
 the mode that needs it most. A project may turn it off only through its
