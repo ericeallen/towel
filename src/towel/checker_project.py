@@ -16,13 +16,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
-import json
 import os
 import tomllib
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Dict, Iterator, Literal, Mapping, Sequence, Tuple
+from typing import Dict, Iterator, List, Literal, Mapping, Sequence, Tuple
 
 from .source_files import is_probe_file
 from .source_text import encode_like
@@ -246,7 +245,7 @@ def _copy_input(source: Path, destination: Path, layout: _Layout) -> None:
     if source in layout.configs:
         rebased = {str(layout.root): str(layout.target)}
         rebased.update({str(config): str(layout.copy_of(config)) for config in layout.configs})
-        text = source.read_text(encoding="utf-8-sig")
+        text = source.read_text(encoding="utf-8")
         for original_prefix, replacement_prefix in sorted(
             rebased.items(), key=lambda item: -len(item[0])
         ):
@@ -322,57 +321,223 @@ def _inputs(
             yield entry, destination
 
 
+class UnusableConfiguration(ValueError):
+    """A pyright configuration pyright itself rejects, so no check of the project is its own.
+
+    pyright's command line exits on such a file, and its language server goes on
+    checking with default settings instead; either way the verdict would not be
+    the project's, so the check is refused, naming the file and the place.
+    """
+
+
+_JSON_BLANKS = frozenset(" \t\r\n")
+_JSON_WORD_ENDS = frozenset(' \t\r\n{}[]:,"/')
+_JSON_ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r"}
+_JSON_ESCAPES["t"] = "\t"
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_DECIMAL_DIGITS = frozenset("0123456789")
+_JSON_LITERALS: Dict[str, object] = {"true": True, "false": False, "null": None}
+
+
+class _PyrightJson:
+    """A reader for exactly the text pyright's configuration parser accepts.
+
+    pyright reads ``pyrightconfig.json`` with jsonc-parser, ``parse(text,
+    errors, {allowTrailingComma: true})``, and treats any reported error as a
+    file it cannot use. That grammar is JSON with three differences, each
+    checked against pyright 1.1.414 over a corpus of hand-written and mutated
+    files: ``//`` and ``/* */`` comments, where an unterminated one is an
+    error; one comma, and only one, may close an object or an array; and
+    whitespace is a space, a tab, a line feed or a carriage return and nothing
+    else, so a byte-order mark, a form feed or a no-break space is an error.
+    Strings admit the eight escapes and ``\\uXXXX`` with four digits, and no
+    control character; numbers are JSON's.
+    """
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self._at = 0
+
+    def _error(self, what: str, index: int) -> ValueError:
+        line = self._text.count("\n", 0, index) + 1
+        column = index - (self._text.rfind("\n", 0, index) + 1) + 1
+        return ValueError(f"{what} at line {line}, column {column}")
+
+    def _peek(self) -> str:
+        """The next significant character, past blanks and comments; "" at the end."""
+        text = self._text
+        while self._at < len(text):
+            if text[self._at] in _JSON_BLANKS:
+                self._at += 1
+            elif text.startswith("//", self._at):
+                while self._at < len(text) and text[self._at] not in "\r\n":
+                    self._at += 1
+            elif text.startswith("/*", self._at):
+                end = text.find("*/", self._at + 2)
+                if end < 0:
+                    raise self._error("unterminated comment", self._at)
+                self._at = end + 2
+            else:
+                return text[self._at]
+        return ""
+
+    def document(self) -> object:
+        value = self._value()
+        if self._peek() != "":
+            raise self._error("end of file expected", self._at)
+        return value
+
+    def _value(self) -> object:
+        char = self._peek()
+        if char == "{":
+            return self._object()
+        if char == "[":
+            return self._array()
+        if char == '"':
+            return self._string()
+        if char == "-" or char in _DECIMAL_DIGITS:
+            return self._number()
+        start = end = self._at
+        while end < len(self._text) and self._text[end] not in _JSON_WORD_ENDS:
+            end += 1
+        word = self._text[start:end]
+        if word in _JSON_LITERALS:
+            self._at = end
+            return _JSON_LITERALS[word]
+        raise self._error("a value is expected", start)
+
+    def _next_member(self, close: str, first: bool) -> bool:
+        """Move to the next member, or past ``close`` (returning False): one trailing comma."""
+        char = self._peek()
+        if char == "":
+            raise self._error(f"'{close}' expected", self._at)
+        if not first and char != close:
+            if char != ",":
+                raise self._error("a comma is expected", self._at)
+            self._at += 1
+            char = self._peek()
+        if char == close:
+            self._at += 1
+            return False
+        if char == ",":
+            raise self._error("a value is expected", self._at)
+        return True
+
+    def _object(self) -> Dict[str, object]:
+        self._at += 1
+        result: Dict[str, object] = {}
+        while self._next_member("}", not result):
+            if self._peek() != '"':
+                raise self._error("a property name is expected", self._at)
+            key = self._string()
+            if self._peek() != ":":
+                raise self._error("a colon is expected", self._at)
+            self._at += 1
+            result[key] = self._value()
+        return result
+
+    def _array(self) -> List[object]:
+        self._at += 1
+        items: List[object] = []
+        while self._next_member("]", not items):
+            items.append(self._value())
+        return items
+
+    def _string(self) -> str:
+        text = self._text
+        start = self._at
+        self._at += 1
+        parts: List[str] = []
+        while True:
+            if self._at >= len(text):
+                raise self._error("unterminated string", start)
+            char = text[self._at]
+            if char == '"':
+                self._at += 1
+                return "".join(parts)
+            if char == "\\":
+                escape = text[self._at + 1 : self._at + 2]
+                if escape in _JSON_ESCAPES:
+                    parts.append(_JSON_ESCAPES[escape])
+                    self._at += 2
+                    continue
+                digits = text[self._at + 2 : self._at + 6]
+                if escape != "u" or len(digits) != 4 or not set(digits) <= _HEX_DIGITS:
+                    raise self._error("invalid escape", self._at)
+                parts.append(chr(int(digits, 16)))
+                self._at += 6
+                continue
+            if ord(char) < 0x20:
+                raise self._error("a control character in a string", self._at)
+            parts.append(char)
+            self._at += 1
+
+    def _digits(self) -> int:
+        begun = self._at
+        while self._at < len(self._text) and self._text[self._at] in _DECIMAL_DIGITS:
+            self._at += 1
+        return self._at - begun
+
+    def _number(self) -> object:
+        text = self._text
+        start = self._at
+        if text[self._at] == "-":
+            self._at += 1
+        if text.startswith("0", self._at):
+            self._at += 1
+        elif not self._digits():
+            raise self._error("a value is expected", start)
+        whole = True
+        if text.startswith(".", self._at):
+            self._at += 1
+            whole = False
+            if not self._digits():
+                raise self._error("a digit is expected", self._at)
+        if text.startswith(("e", "E"), self._at):
+            self._at += 1
+            whole = False
+            if text.startswith(("+", "-"), self._at):
+                self._at += 1
+            if not self._digits():
+                raise self._error("a digit is expected", self._at)
+        literal = text[start : self._at]
+        return int(literal) if whole else float(literal)
+
+
 def _json_config(text: str) -> dict[str, object]:
-    """Read pyright's JSON-with-comments without treating string contents as syntax."""
-    cleaned: list[str] = []
-    index = 0
-    quoted = False
-    while index < len(text):
-        char = text[index]
-        if quoted:
-            cleaned.append(char)
-            if char == "\\" and index + 1 < len(text):
-                index += 1
-                cleaned.append(text[index])
-            elif char == '"':
-                quoted = False
-        elif char == '"':
-            quoted = True
-            cleaned.append(char)
-        elif text.startswith("//", index):
-            end = text.find("\n", index + 2)
-            index = len(text) if end < 0 else end
-            cleaned.append("\n")
-            continue
-        elif text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            if end < 0:
-                raise ValueError("Unterminated comment in pyright configuration")
-            cleaned.append(" ")
-            index = end + 2
-            continue
-        elif char == "," and text[index + 1 :].lstrip().startswith(("}", "]")):
-            pass
-        else:
-            cleaned.append(char)
-        index += 1
-    # Remove trailing commas after comments have been stripped, still respecting
-    # strings. The first pass handles plain trailing commas; this pass handles
-    # a comma followed by a comment before the closing bracket.
-    without_comments = "".join(cleaned)
-    if without_comments != text:
-        return _json_config(without_comments)
-    value = json.loads(without_comments)
+    """A ``pyrightconfig.json``'s settings, read as pyright reads them; ValueError where it cannot.
+
+    A top-level value that is not an object is refused too, although pyright
+    reads one (an array's ``length`` becomes a setting): nothing that shape
+    configures anything, and refusing costs a run, never a false verdict.
+    """
+    value = _PyrightJson(text).document()
     if not isinstance(value, dict):
         raise ValueError("Pyright configuration must be an object")
     return {str(key): item for key, item in value.items()}
+
+
+def _read_json_config(path: Path) -> dict[str, object]:
+    """``path``'s settings, or ``UnusableConfiguration`` naming it and what pyright would reject.
+
+    Read as UTF-8 with any byte-order mark kept, as pyright reads it: the mark
+    is not whitespace to pyright, which rejects the file.
+    """
+    try:
+        return _json_config(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise UnusableConfiguration(
+            f"pyright cannot use its configuration {path}: {error}. pyright rejects the file"
+            " and checks the project with its default settings instead, so no check of it"
+            " would be the project's; fix the file to check this project."
+        ) from error
 
 
 def _pyright_config_inputs(root: Path) -> tuple[Path, ...]:
     """The extends chain; external checker source roots must not be silently omitted."""
     initial = root / "pyrightconfig.json"
     if initial.is_file():
-        data = _json_config(initial.read_text(encoding="utf-8-sig"))
+        data = _read_json_config(initial)
     else:
         initial = root / "pyproject.toml"
         if not initial.is_file():
@@ -398,7 +563,7 @@ def _pyright_config_inputs(root: Path) -> tuple[Path, ...]:
         if initial in found:
             raise ValueError("Cyclic pyright configuration extends")
         found.append(initial)
-        data = _json_config(initial.read_text(encoding="utf-8-sig"))
+        data = _read_json_config(initial)
 
 
 def _check_config_source_paths(data: Mapping[str, object], directory: Path, root: Path) -> None:

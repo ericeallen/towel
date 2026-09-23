@@ -25,8 +25,10 @@ so names resolve as they do at the call, and asks subtyping through probe
 functions ``def _probe(v: narrow) -> wide: return v`` appended to the copy,
 so the relation is mypy's own; nothing is written to disk except mypy's
 cache, which lives for the inferrer's lifetime so later proposals in the
-same run rebuild incrementally. :class:`PyrightOracle` infers through
-the pyright command on a temporary sibling file. Verification uses a complete
+same run rebuild incrementally. :class:`PyrightOracle` infers through a
+language server, or the pyright command, watching a private copy of the
+project in which the probed text stands in for its module; nothing is ever
+written beside the project's own files. Verification uses a complete
 private project snapshot so changed hosts and unchanged consumers agree. :class:`CombinedOracle`
 infers with one checker and verifies with several, and
 :func:`type_oracle_for_project` picks them from the project's configuration.
@@ -39,10 +41,8 @@ name in them resolves where the helper is defined.
 from __future__ import annotations
 
 import configparser
-from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 import json
-import atexit
 import hashlib
 import importlib.util
 import select
@@ -61,7 +61,6 @@ from typing import (
     Dict,
     Final,
     Iterable,
-    Iterator,
     List,
     Mapping,
     Optional,
@@ -74,7 +73,8 @@ from typing import (
 
 from .diagnostics import LOG
 from .project_tools import ToolChoice, python_tool_environment
-from .checker_project import CheckerSnapshot, checker_snapshot
+from .unification.exceptions import TowelError
+from .checker_project import CheckerSnapshot, UnusableConfiguration, checker_snapshot
 from .unification.bounded_cache import BoundedCache
 from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
 from .source_text import read_source, source_lines
@@ -90,6 +90,7 @@ from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_prob
 
 __all__ = [
     "CheckFailure",
+    "CheckerNotInstalled",
     "CheckResult",
     "CheckSuccess",
     "CombinedOracle",
@@ -394,7 +395,9 @@ class MypyInferrer:
 
     Builds run serially in an owned process. mypy's GC, imports and mutable
     globals cannot change this application's state or race between callers.
-    Project checking options apply; project plugins and executables do not.
+    Project checking options and plugins apply, as in the project's own mypy
+    run; a plugin that cannot be loaded fails every check, and a configured
+    executable is never run.
     """
 
     def __init__(self, cache_dir: Optional[Path] = None) -> None:
@@ -548,7 +551,7 @@ class MypyInferrer:
             self._stderr.close()
         self._stderr = tempfile.TemporaryFile(prefix="towel-mypy-stderr-")
         self._process = subprocess.Popen(
-            [sys.executable, "-I", str(_MYPY_WORKER), str(self._cache_dir)],
+            [sys.executable, "-I", "-B", str(_MYPY_WORKER), str(self._cache_dir)],
             bufsize=0,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -748,52 +751,7 @@ class MypyInferrer:
         return revealed
 
 
-_PENDING_PROBES: "set[Path]" = set()
-"""Probe files not yet removed; an interpreter exit removes them, a kill cannot."""
-
-
 MYPY_TIMEOUT_SECONDS = 600.0
-
-
-def _unlink_quietly(path: Path) -> None:
-    """Remove ``path`` if it is still there; a probe that is already gone is fine."""
-    try:
-        path.unlink()
-    except OSError:
-        pass
-
-
-def _remove_pending_probes() -> None:
-    for probe in list(_PENDING_PROBES):
-        _unlink_quietly(probe)
-        _PENDING_PROBES.discard(probe)
-
-
-atexit.register(_remove_pending_probes)
-
-
-@contextmanager
-def _probe_file(original: Path, text: str) -> Iterator[Path]:
-    """A sibling of ``original`` holding ``text`` for the duration of the block.
-
-    Pyright reads files, so the probed module must exist on disk in its own
-    package for imports to resolve. The file is created exclusively with a
-    unique name and owner-only permissions, so it never follows a symlink or
-    collides with a concurrent run, and it is removed when the block ends or
-    at interpreter exit, whichever comes first.
-    """
-    descriptor, name = tempfile.mkstemp(
-        prefix=f"{PROBE_PREFIX}{original.stem}_", suffix=".py", dir=original.parent, text=True
-    )
-    probe = Path(name)
-    _PENDING_PROBES.add(probe)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        yield probe
-    finally:
-        _unlink_quietly(probe)
-        _PENDING_PROBES.discard(probe)
 
 
 class _PyrightPosition(TypedDict, total=False):
@@ -826,12 +784,17 @@ class _PyrightDiagnostics:
 
 
 class PyrightOracle:
-    """A ``TypeOracle`` backed by the pyright command.
+    """A ``TypeOracle`` backed by pyright's language server, or its command line.
 
-    Pyright reads files, so a probed copy of the module is written as a
-    temporary sibling (same package, so its imports resolve) and removed
-    afterwards. Raises ``ImportError`` at construction when pyright is not
-    installed; it is part of the ``types`` extra.
+    Pyright reads files, so a probed module has to exist on disk, in its own
+    package so that its imports resolve. It is written only into a private copy
+    of the project that follows the project (see ``CheckerSnapshot``), where the
+    probed text stands in for the module: the copy a language server watches,
+    or one kept for the command line when no server can run. The probe used to
+    be written beside the module in the user's tree, so an out-of-place run
+    wrote into the input it promised only to read, and a kill between writing
+    and removing it left it there. Raises ``ImportError`` at construction when
+    pyright is not installed; it is part of the ``types`` extra.
     """
 
     def __init__(self, *, language_server: bool = True) -> None:
@@ -846,6 +809,8 @@ class PyrightOracle:
             _pyright_langserver_command() if language_server else None
         )
         self._warmed: Dict[Tuple[Path, Tuple[str, ...]], _WarmProject] = {}
+        # Private copies the command line probes modules in, one per project.
+        self._probe_copies: Dict[Path, CheckerSnapshot] = {}
         # Whether a session ever answered, which abandoning one does not undo.
         self.answered_from_a_session = False
 
@@ -854,6 +819,23 @@ class PyrightOracle:
         for warm in self._warmed.values():
             warm.close()
         self._warmed.clear()
+        for copy in self._probe_copies.values():
+            copy.close()
+        self._probe_copies.clear()
+
+    def _probe_copy(self, root: Path) -> CheckerSnapshot | CheckFailure:
+        """The private copy of ``root`` the command line probes modules in, made on first use."""
+        existing = self._probe_copies.get(root)
+        if existing is not None:
+            return existing
+        try:
+            copy = CheckerSnapshot(root)
+        except UnusableConfiguration as error:
+            return CheckFailure(str(error))
+        except (OSError, ValueError, UnicodeError) as error:
+            return CheckFailure(f"Could not copy the project for a pyright probe: {error}")
+        self._probe_copies[root] = copy
+        return copy
 
     def _warm(self, root: Path, excluded_paths: Sequence[str]) -> Optional[_WarmProject]:
         """The copy and live server for ``root``, made on first use.
@@ -872,6 +854,8 @@ class PyrightOracle:
             return existing
         try:
             snapshot = CheckerSnapshot(root, excluded_paths=excluded_paths)
+        except UnusableConfiguration:
+            return None  # The command line refuses the check, saying why.
         except (OSError, ValueError, UnicodeError) as error:
             LOG.warning("could not copy %s for pyright (%s); using the command line", root, error)
             return None
@@ -921,11 +905,17 @@ class PyrightOracle:
                 return _PyrightDiagnostics(
                     tuple(_as_entry(entry) for entry in published.get(str(original), ()))
                 )
+        copy = self._probe_copy(root)
+        if isinstance(copy, CheckFailure):
+            return copy
         try:
-            with _probe_file(original, text) as probe:
-                return self._run_diagnostics([str(probe)], original.parent)
-        except OSError as error:
-            return CheckFailure(f"Could not create a pyright probe: {error}")
+            # The copy follows the project, then shows the probe as the module
+            # itself, where every import it makes resolves as it would there.
+            copy.apply({str(original): text})
+        except (OSError, ValueError, UnicodeError) as error:
+            return CheckFailure(f"Could not write a pyright probe into Towel's copy: {error}")
+        probe = copy.path_of(str(original))
+        return self._run_diagnostics([str(probe)], probe.parent)
 
     def _run_diagnostics(
         self, paths: Sequence[str], directory: Path, *, project: bool = False
@@ -957,20 +947,24 @@ class PyrightOracle:
             LOG.warning("%s; checker result unavailable", reason)
             return CheckFailure(reason)
         output = completed.stdout
+        said = _what_pyright_said(completed.stderr)
         start, end = output.find("{"), output.rfind("}")
         if start < 0 or end < 0:
-            reason = f"pyright produced no JSON: {completed.stderr.strip()}"
+            reason = f"pyright produced no JSON{said}"
             LOG.warning(reason)
             return CheckFailure(reason)
         try:
             data = json.loads(output[start : end + 1])
         except json.JSONDecodeError as error:
-            reason = f"pyright output is not JSON: {error}"
+            reason = f"pyright output is not JSON: {error}{said}"
             LOG.warning(reason)
             return CheckFailure(reason)
         diagnostics = data.get("generalDiagnostics") if isinstance(data, dict) else None
         if completed.returncode not in {0, 1} or not isinstance(diagnostics, list):
-            reason = f"pyright failed or returned an unexpected shape (exit {completed.returncode})"
+            reason = (
+                "pyright failed or returned an unexpected shape "
+                f"(exit {completed.returncode}){said}"
+            )
             LOG.warning(reason)
             return CheckFailure(reason)
         validated: List[_PyrightDiagnostic] = []
@@ -1002,7 +996,7 @@ class PyrightOracle:
             validated.append(cast(_PyrightDiagnostic, diagnostic))
         has_errors = any(item.get("severity") == "error" for item in validated)
         if (completed.returncode == 1) != has_errors:
-            return CheckFailure("pyright exit status disagrees with its diagnostics")
+            return CheckFailure(f"pyright exit status disagrees with its diagnostics{said}")
         return _PyrightDiagnostics(tuple(validated))
 
     @staticmethod
@@ -1012,7 +1006,7 @@ class PyrightOracle:
         return start.get("line", -1) + 1 if start is not None else 0
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        """Reveal each request by running pyright on a probe copy of its module."""
+        """Reveal each request by having pyright check a probed copy of its module."""
         revealed: Dict[RevealKey, str] = {}
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
@@ -1110,6 +1104,8 @@ class PyrightOracle:
                                 None if start is None else start + 1,
                             )
                         )
+            except UnusableConfiguration as error:
+                return CheckFailure(str(error))
             except (OSError, ValueError, UnicodeError) as error:
                 return CheckFailure(f"Could not snapshot the project for pyright: {error}")
         return CheckSuccess(tuple(errors))
@@ -1137,6 +1133,19 @@ class PyrightOracle:
 
 PYRIGHT_TIMEOUT_SECONDS = 600.0
 """How long one pyright run may take before Towel proceeds without its answer."""
+
+
+def _what_pyright_said(stderr: str) -> str:
+    """The end of pyright's standard error, as a clause a failure's reason ends with.
+
+    A failure is only as useful as its reason: "exit 3" alone told the user
+    nothing, while pyright had said which configuration file it could not parse.
+    """
+    said = stderr.strip()
+    if not said:
+        return ""
+    return f"; pyright said: {said[-_STDERR_TAIL_BYTES:]}"
+
 
 _PYRIGHT_REVEALED = re.compile(r'^Type of ".*" is "(?P<type>.*)"$', re.DOTALL)
 
@@ -1488,39 +1497,77 @@ def _has_ini_section(path: Path, section: str) -> bool:
     return parser.has_section(section)
 
 
+class CheckerNotInstalled(TowelError):
+    """A checker the project configures cannot be run where Towel runs.
+
+    A typed run promises that the project's own check still passes, and only
+    the configured checker can keep that promise. Another checker in its place
+    answers a question the project never asked, and none at all is silence,
+    so the run is refused, naming the checker and the two ways on: install it,
+    or ask for an unverified run explicitly.
+    """
+
+
+def _configuration_file(root: Path, checker: str) -> Path:
+    """The file at ``root`` that configures ``checker``, for naming it to the user."""
+    if checker == "mypy":
+        return Path(_mypy_config(root) or root)
+    configured = root / "pyrightconfig.json"
+    return configured if configured.is_file() else root / "pyproject.toml"
+
+
+def _refuse_missing_checkers(missing: Sequence[Tuple[str, Path]]) -> CheckerNotInstalled:
+    names = " and ".join(name for name, _ in missing)
+    where = ", ".join(str(_configuration_file(root, name)) for name, root in missing)
+    return CheckerNotInstalled(
+        f"{names} {'is' if len(missing) == 1 else 'are'} configured ({where}) but not "
+        f"installed where Towel runs ({sys.executable}), so the project's own type check "
+        "cannot run and nothing Towel writes could be verified by it. Install "
+        f"{'it' if len(missing) == 1 else 'them'} into that environment "
+        '(pip install "code-towel[types]" installs mypy and pyright), or rerun with '
+        "--no-types to refactor without type verification."
+    )
+
+
 def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
     """The checker the project configures, and a note on what was chosen.
 
     A project that configures mypy gets mypy; one that configures pyright
     gets pyright; one that configures both infers with mypy and verifies
     with both, so its own check stays green; one that configures neither
-    gets mypy when installed, else pyright. The note names any configured
-    checker that is not installed.
+    gets mypy when installed, else pyright, else no checker and a note saying
+    so. A configured checker that is not installed raises
+    :class:`CheckerNotInstalled`: substituting another, or none, would verify
+    against a check the project does not run.
     """
-    wants_mypy = _configured_root(path, "mypy") is not None
-    wants_pyright = _configured_root(path, "pyright") is not None
+    mypy_root = _configured_root(path, "mypy")
+    pyright_root = _configured_root(path, "pyright")
     mypy: Optional[TypeOracle] = None
     pyright: Optional[TypeOracle] = None
-    notes: List[str] = []
-    if wants_mypy or not wants_pyright:
+    missing: List[Tuple[str, Path]] = []
+    if mypy_root is not None or pyright_root is None:
         try:
             mypy = MypyInferrer()
         except ImportError:
-            if wants_mypy:
-                notes.append("mypy is configured but not installed")
-    if wants_pyright or mypy is None:
+            if mypy_root is not None:
+                missing.append(("mypy", mypy_root))
+    if pyright_root is not None or mypy is None:
         try:
             pyright = PyrightOracle()
         except ImportError:
-            if wants_pyright:
-                notes.append("pyright is configured but not installed")
+            if pyright_root is not None:
+                missing.append(("pyright", pyright_root))
+    if missing:
+        for started in (mypy, pyright):
+            if started is not None:
+                started.close()
+        raise _refuse_missing_checkers(missing)
     if mypy is not None and pyright is not None:
         return ToolChoice(
-            CombinedOracle(mypy, [pyright]),
-            "; ".join(["mypy for inference, mypy and pyright for verification", *notes]),
+            CombinedOracle(mypy, [pyright]), "mypy for inference, mypy and pyright for verification"
         )
     if mypy is not None:
-        return ToolChoice(mypy, "; ".join(["mypy", *notes]))
+        return ToolChoice(mypy, "mypy")
     if pyright is not None:
-        return ToolChoice(pyright, "; ".join(["pyright", *notes]))
-    return ToolChoice(None, "; ".join(notes) if notes else "neither mypy nor pyright is installed")
+        return ToolChoice(pyright, "pyright")
+    return ToolChoice(None, "neither mypy nor pyright is installed")

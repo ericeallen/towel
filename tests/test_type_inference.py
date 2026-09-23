@@ -175,6 +175,8 @@ def test_inferrer_names_a_non_identifier_package_with_a_placeholder(tmp_path: Pa
 
 @requires_mypy
 def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> None:
+    # The project declares 3.10, so the revealed type is written as it is spelled.
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "m"\nrequires-python = ">=3.10"\n')
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
             import json
@@ -605,6 +607,8 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
 @requires_mypy
 def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) -> None:
     """A helper returning two variables is annotated with the tuple of their revealed types."""
+    # The project declares 3.10, so the revealed type is written as it is spelled.
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "m"\nrequires-python = ">=3.10"\n')
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
             class Box:

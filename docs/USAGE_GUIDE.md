@@ -109,10 +109,12 @@ towel dry src/ src_cleaned/ --no-interactive
 
 `preview` lists each opportunity with the extracted helper and, per call site,
 the original block next to the generated call; `dry` writes the refactored copy.
-An out-of-place `dry` refactors the target inside a private temporary copy of its
-whole project, so it makes exactly the decisions an in-place run would (an import
-cycle through a module outside the target is seen), and writes only the target to
-the output directory, all at once, when the run succeeds.
+`dry` refactors the target inside a private temporary copy of its whole project,
+in place or not, so every decision sees the modules around the target (an import
+cycle through a module outside the target is seen), and writes nothing until the
+run has succeeded, its final type-check confirmation included: the target to the
+output directory all at once, or, in place, every file it changed as one
+journaled batch. A failed or interrupted run leaves the project as it was.
 See the [README](../README.md) and [Quick start](QUICKSTART.md) for the full CLI.
 
 ## Configuration
@@ -170,7 +172,11 @@ engine = UnificationRefactorEngine(
 
 Each result is a `ToolChoice`: its `tool` is None when nothing suitable is
 installed, and its `note` says what was chosen and names a configured tool
-that is not installed. Without a formatter the rendering is `ast.unparse`'s: one
+that is not installed. The checker is the exception: a project that configures
+mypy or pyright is checked by that checker or not at all, so
+`type_oracle_for_project` raises `CheckerNotInstalled` when a configured one is
+not installed, rather than substitute another checker or none (pass
+`type_oracle=None` and `annotate_helpers=False` for an unverified run). Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
 
 The engine checks the original project before using its type oracle. If that
@@ -180,6 +186,15 @@ annotations but generates unannotated helpers; library callers obtain the
 same behavior with `type_oracle=None` and `annotate_helpers=False`. A checker
 crash or timeout remains a distinct verification failure. A clean baseline
 keeps prospective-project verification enabled throughout the run.
+
+mypy runs with the project's configured plugins, loaded exactly as the
+project's own mypy loads them: a plugin module from the environment Towel runs
+in, a `.py` plugin path relative to the configuration file. Plugins decide what
+expressions' types are, so a check without them would not be the project's;
+they execute as they do in the project's own mypy run. A plugin that cannot be
+loaded there (not installed where Towel runs, or unable to import the project
+itself) fails the baseline check, so the run is refused before anything is
+written, with mypy's own message.
 
 For new module-level helpers and helper methods, Towel also anti-unifies the
 corresponding argument and result types. For example, `list[int] -> int` and `list[str] -> str` can become

@@ -209,10 +209,13 @@ addresses:
   imports keeps it first. Static local import cycles are rejected
   (including cycles through a package's `__init__`, which `from . import
   name` runs), dynamic ones are not detected.
-- **Concurrency of application.** Files are replaced atomically one at a time;
-  a batch is not atomic across files. Application requires exclusive write
-  access; a concurrent editor writing in the check/replace interval is not
-  prevented. Interrupted batches leave a recovery journal.
+- **Concurrency of application.** A run refactors a private copy of the
+  project and writes back only when it has succeeded, as one batch; a file
+  edited during the run refuses the batch, nothing written. Files are replaced
+  atomically one at a time; a batch is not atomic across files to a concurrent
+  reader. Application requires exclusive write access; a concurrent editor
+  writing in the check/replace interval is not prevented. Interrupted batches
+  leave a recovery journal.
 
 ### A cross-file helper adds an import of its host module
 
@@ -367,7 +370,15 @@ where the evidence comes from:
   unwritten and the parameter completed with `Any`. Any subscripted
   annotation that would not evaluate at definition time (`memoryview[int]`
   on an interpreter where `memoryview` is not generic) is written as a
-  string. Generic inference can also retain a foreign site's imported type when
+  string. So is any annotation using syntax younger than the oldest Python
+  the helper's module has to run on, in a module that does not postpone its
+  annotations: a union written with `|` before 3.10, a subscripted builtin or
+  `collections.abc` class before 3.9. That Python is the lower bound of the
+  project's `requires-python` (or setup.cfg's `python_requires`, or Poetry's
+  `python` dependency), else the older of mypy's `python_version` and pyright's
+  `pythonVersion`; where the project declares none, the oldest Python the
+  syntax could need, unless the module already evaluates that syntax in its
+  own top-level signatures, which it could not import without. Generic inference can also retain a foreign site's imported type when
   the helper's host binds the same canonical import; matching spellings alone
   are insufficient. Its annotations and TypeVar domains are quoted.
 - The typing guarantee is exactly as strong as the checker the project
@@ -376,7 +387,9 @@ where the evidence comes from:
   about a checker the project does not configure, even one that happens to be
   installed. A project that configures mypy alone can therefore accept output
   that Pyright would reject, and the reverse. Configure both to be checked by
-  both.
+  both. A configured checker that is not installed where Towel runs refuses the
+  typed run before anything is written; it is never replaced by the other
+  checker or by none, so `--no-types` is the only way to proceed without it.
 
   A type guard shows how this bites. Moving `if not isinstance(x, list): raise
   ...` into a helper leaves the caller's `x` at its declared type, so a
@@ -396,8 +409,20 @@ where the evidence comes from:
 - Verification first requires a clean original project, then checks complete
   prospective project graphs, overlaying all changed files together. A newly
   imported helper therefore exists in its host while its consumers are checked.
-  Safe project checking rules are honored; project
-  plugins, configured executables and report destinations are not executed.
+  Project checking rules are honored, and so are configured mypy plugins,
+  which are loaded and run as in the project's own mypy run (a plugin module
+  must be importable from the interpreter Towel runs; a `.py` path is resolved
+  from the configuration file). A plugin that cannot be loaded refuses the
+  typed run before anything is written. Configured executables and report
+  destinations are never used. Each mypy build imports the plugins afresh in a
+  forked child, so a plugin that is slow to import (django-stubs sets Django
+  up) costs that much on every check.
+- A module that ships its own stub (`a.pyi` beside `a.py`) is checked through
+  the stub, as mypy checks it: its importers see the stub, and the
+  implementation itself is not checked by mypy unless the configuration's
+  `files` names it. A change inside such an implementation is therefore not
+  verified by mypy, exactly as the project's own mypy run never checks it;
+  Pyright, when configured, still checks the implementation as a file.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration, made once per run, kept in step with the
   project as it is refactored, and watched by one long-lived language server.
@@ -405,7 +430,14 @@ where the evidence comes from:
   timestamp does, so an edit by something other than Towel cannot leave a
   verdict standing against a project the copy no longer matches. A checker
   configuration whose bytes are not UTF-8 is refused rather than copied
-  without rewriting the absolute paths in it. Cyclic or external source symlinks and
+  without rewriting the absolute paths in it. A `pyrightconfig.json` (or a
+  file it extends) that pyright itself cannot parse refuses the typed run
+  before anything is written, naming the file and the position: pyright's
+  grammar is JSON with `//` and `/* */` comments and one trailing comma per
+  object or array, and a byte-order mark, a form feed or a no-break space is
+  an error to it. pyright's language server would otherwise go on checking
+  with default settings. A pyright command line that fails is reported with
+  the end of what it printed to standard error. Cyclic or external source symlinks and
   configured source or stub search roots outside the project cannot be
   represented safely and cause verification to decline the proposal.
   Project include/exclude settings still determine the checker's coverage.
@@ -413,18 +445,23 @@ where the evidence comes from:
   collector. Library users should call the oracle's `close()` when finished;
   `CombinedOracle.close()` closes both checkers. The CLI closes its oracle on
   both success and failure.
-- Pyright reads files, so while it is consulted a probe copy of the module
-  exists beside it in the package, created exclusively with owner-only
-  permissions under a unique `_towel_probe_` name and removed afterwards,
-  or at interpreter exit if a crash skipped the cleanup. A kill signal can
-  leave it behind; it imports nothing the module does not.
+- Pyright reads files, so a module whose types are asked about is written,
+  with its probes, into Towel's private copy of the project, in place of the
+  module's own copy there: the copy a language server watches, or one kept
+  for the command line when no server runs. Nothing is written beside the
+  project's files. The copies live in the system temporary directory and go
+  when the oracle is closed; a kill signal can leave one there, never in the
+  project.
 
 ## Conservative rejections
 
 Towel prefers to leave code unchanged rather than transform it under
 uncertainty. Every declined pair is traced under one of the reasons of
 `RejectReason` (`src/towel/unification/models.py`), listed here in the order
-the pair decision raises them, grouped by stage:
+the pair decision raises them, grouped by stage; a `dry` run that applied
+nothing prints how many pairs its last analysis declined for each (a pair
+that only repeated another's proposal is not counted), and every run counts
+the proposals it built and did not apply, by reason:
 
 - Frame use. `frame_sensitive_block`: the block contains a suspension,
   a namespace read, a frame or stack read, a warning, a loop transfer

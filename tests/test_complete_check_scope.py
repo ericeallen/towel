@@ -124,8 +124,15 @@ def test_a_package_shipping_its_own_stub_is_checked_not_refused(tmp_path: Path) 
 
 
 @requires_mypy
-def test_the_file_being_changed_is_the_one_checked_even_under_a_stub(tmp_path: Path) -> None:
-    """Dropping the implementation for its stub would check nothing Towel changes."""
+def test_an_implementation_behind_its_stub_is_read_as_the_projects_mypy_reads_it(
+    tmp_path: Path,
+) -> None:
+    """mypy's walk keeps the stub and never reads the implementation; neither does the check.
+
+    Checking the implementation instead is what made every importer see it, so
+    a name the implementation gained and the stub lacked was accepted while the
+    project's own mypy reported it missing (see ``test_stub_resolution``).
+    """
     _write(
         tmp_path,
         {
@@ -135,8 +142,24 @@ def test_the_file_being_changed_is_the_one_checked_even_under_a_stub(tmp_path: P
         },
     )
     result = _check(tmp_path, "pkg/__init__.py")
+    assert result == CheckSuccess(), result
+
+
+@requires_mypy
+def test_an_implementation_the_configuration_names_is_checked_under_its_stub(
+    tmp_path: Path,
+) -> None:
+    """Naming the file itself is how a project has mypy check the implementation."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[tool.mypy]\nstrict = true\nfiles = ["pkg/__init__.py"]\n',
+            "pkg/__init__.pyi": "def tag(name: str) -> str: ...\n",
+            "pkg/__init__.py": "def tag(name: str) -> str:\n    return name.bogus_attribute\n",
+        },
+    )
+    result = _check(tmp_path, "pkg/__init__.py")
     assert isinstance(result, CheckSuccess), result
-    assert result.errors, "the stub answered for the module and nothing was checked"
     assert {error.path for error in result.errors} == {str(tmp_path / "pkg" / "__init__.py")}
 
 

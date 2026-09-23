@@ -523,6 +523,142 @@ def _referenced_names(expression: ast.expr) -> Set[str]:
     return {node.id for node in ast.walk(expression) if isinstance(node, ast.Name)}
 
 
+PythonVersion = Tuple[int, int]
+"""A Python release to the minor version: ``(3, 9)``."""
+
+OLDEST_PYTHON: PythonVersion = (3, 0)
+"""Assumed where nothing says otherwise: every syntax younger than Python 3 is written as a string."""
+
+_SUBSCRIPTED_CLASSES_SINCE: PythonVersion = (3, 9)
+"""PEP 585: ``list[int]``, ``type[C]``, ``collections.abc.Sequence[int]`` at run time."""
+_UNION_OPERATOR_SINCE: PythonVersion = (3, 10)
+"""PEP 604: ``int | None`` at run time."""
+_UNPACKED_SUBSCRIPT_SINCE: PythonVersion = (3, 11)
+"""PEP 646: ``tuple[*Ts]``, which older interpreters cannot even parse."""
+
+
+def _collections_abc_spellings(host: Optional[ast.Module]) -> Tuple[Set[str], Set[str]]:
+    """The names ``host`` binds to ``collections.abc`` classes, and to the module itself."""
+    names: Set[str] = set()
+    modules: Set[str] = {"collections.abc"}
+    for node in host.body if host is not None else ():
+        if isinstance(node, ast.ImportFrom) and node.module == "collections.abc":
+            names.update(import_binding_names(node))
+        elif isinstance(node, ast.ImportFrom) and node.module == "collections":
+            modules.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "abc"
+            )
+        elif isinstance(node, ast.Import):
+            modules.update(
+                alias.asname
+                for alias in node.names
+                if alias.name == "collections.abc" and alias.asname
+            )
+    return names, modules
+
+
+def syntax_needs(expression: ast.expr, host: Optional[ast.Module]) -> PythonVersion:
+    """The oldest Python on which evaluating ``expression`` cannot fail for its syntax.
+
+    Towel writes annotations out of three sources -- what the call sites
+    declare, how the checker spells what it reveals, and the unions and tuples
+    it joins them into -- and a checker spells types the way the newest Python
+    does, whatever the project supports. Three forms are younger than the
+    rest: a class subscripted, whether a builtin or one of ``collections.abc``
+    (3.9); a union written with ``|`` (3.10); and a subscript that unpacks
+    (3.11). ``typing``'s own generics, ``Optional`` and ``Union`` work on every
+    Python 3 that has ``typing``, and a string is never evaluated at all.
+    """
+    abc_names, abc_modules = _collections_abc_spellings(host)
+    needed = OLDEST_PYTHON
+    for node in ast.walk(expression):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            needed = max(needed, _UNION_OPERATOR_SINCE)
+        elif isinstance(node, ast.Subscript):
+            head = node.value
+            if isinstance(head, ast.Name) and (
+                head.id in _RUNTIME_GENERICS or head.id in abc_names
+            ):
+                needed = max(needed, _SUBSCRIPTED_CLASSES_SINCE)
+            elif isinstance(head, ast.Attribute) and _dotted_name(head.value) in abc_modules:
+                needed = max(needed, _SUBSCRIPTED_CLASSES_SINCE)
+            if any(isinstance(item, ast.Starred) for item in ast.walk(node.slice)):
+                needed = max(needed, _UNPACKED_SUBSCRIPT_SINCE)
+    return needed
+
+
+def _annotations_run_by(statement: ast.stmt, *, into_classes: bool) -> Iterator[ast.expr]:
+    """The annotations executing ``statement`` evaluates, when annotations are not postponed."""
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        arguments = statement.args
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            arguments.vararg,
+            arguments.kwarg,
+        ):
+            if argument is not None and argument.annotation is not None:
+                yield argument.annotation
+        if statement.returns is not None:
+            yield statement.returns
+    elif isinstance(statement, ast.AnnAssign):
+        yield statement.annotation
+    elif isinstance(statement, ast.ClassDef) and into_classes:
+        for member in statement.body:
+            yield from _annotations_run_by(member, into_classes=False)
+
+
+def evaluated_syntax(host: ast.Module) -> PythonVersion:
+    """The youngest annotation syntax ``host`` already evaluates every time it is imported.
+
+    A module that evaluates ``int | None`` in its own top-level signatures
+    raises on any Python before 3.10 as it is imported, so it runs only where
+    the same syntax in a helper works too. Only what every import executes is
+    evidence: the module's own top-level definitions and annotated names, and
+    those of its top-level classes; a definition under an ``if`` or a ``try``
+    may never run where the syntax does not work.
+    """
+    if _defers_annotations(host):
+        return OLDEST_PYTHON
+    needed = OLDEST_PYTHON
+    for statement in host.body:
+        for annotation in _annotations_run_by(statement, into_classes=True):
+            needed = max(needed, syntax_needs(annotation, host))
+    return needed
+
+
+def written_for_python(
+    helper: ast.FunctionDef, host: Optional[ast.Module], oldest: PythonVersion
+) -> ast.FunctionDef:
+    """A copy of ``helper`` whose annotations each evaluate on ``oldest``, or are strings.
+
+    A module that does not postpone annotations evaluates a function's when
+    the function is defined, so ``v: int | None`` in a helper made the whole
+    module raise ``TypeError`` on import under Python 3.9, however clean the
+    checker, which runs on a newer interpreter, found it. A string is never
+    evaluated and a checker reads it as the type it spells: the quotation that
+    keeps an annotation's calls from running (``_is_inert``) is the whole cure.
+    """
+    written = copy.deepcopy(helper)
+    if host is not None and _defers_annotations(host):
+        return written
+
+    def evaluable(annotation: Optional[ast.expr]) -> Optional[ast.expr]:
+        if annotation is None or syntax_needs(annotation, host) <= oldest:
+            return annotation
+        return ast.copy_location(ast.Constant(value=ast.unparse(annotation)), annotation)
+
+    arguments = written.args
+    for parameter in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs):
+        parameter.annotation = evaluable(parameter.annotation)
+    for variadic in (arguments.vararg, arguments.kwarg):
+        if variadic is not None:
+            variadic.annotation = evaluable(variadic.annotation)
+    written.returns = evaluable(written.returns)
+    return written
+
+
 def _defers_annotations(module: ast.Module) -> bool:
     return any(
         isinstance(node, ast.ImportFrom)

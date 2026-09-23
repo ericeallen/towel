@@ -80,6 +80,7 @@ def _oracle_without_pyright() -> type_inference.PyrightOracle:
     oracle._command = ["pyright-stand-in"]
     oracle._server = None
     oracle._warmed = {}
+    oracle._probe_copies = {}
     return oracle
 
 
@@ -108,23 +109,17 @@ def test_pyright_output_that_is_not_json_yields_no_diagnostics_and_a_warning(
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    oracle = _oracle_without_pyright()
     with caplog.at_level(logging.WARNING, logger="towel"):
-        diagnostics = _oracle_without_pyright()._diagnostics(str(module), "x: int = 1\n")
+        diagnostics = oracle._diagnostics(str(module), "x: int = 1\n")
     assert isinstance(diagnostics, type_inference.CheckFailure)
     assert commands[0][:2] == ["pyright-stand-in", "--outputjson"]
     assert any(warning in r.getMessage() for r in caplog.records), caplog.text
-    assert not Path(commands[0][-1]).exists(), "the probe is removed after the run"
+    probe = Path(commands[0][-1])
+    assert not probe.is_relative_to(tmp_path), "the probe is written in Towel's copy"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["m.py"]
-
-
-def test_atexit_cleanup_removes_pending_probes_and_tolerates_missing_ones(tmp_path: Path) -> None:
-    probe = tmp_path / "_towel_probe_m_abc.py"
-    probe.write_text("")
-    missing = tmp_path / "_towel_probe_m_gone.py"
-    type_inference._PENDING_PROBES.update({probe, missing})
-    type_inference._remove_pending_probes()
-    assert not probe.exists()
-    assert not type_inference._PENDING_PROBES & {probe, missing}
+    oracle.close()
+    assert not probe.exists(), "the copy goes when the oracle is closed"
 
 
 # ---------------------------------------------------------------------------

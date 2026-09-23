@@ -7,6 +7,10 @@ declared return type, from annotated locals the helper returns, or as ``None``
 for a helper that returns nothing. Annotations are inserted unquoted only
 where they cannot fail to resolve; otherwise as strings; across modules only
 builtin names are used. An unannotated project stays unannotated.
+
+The fixture project declares Python 3.10, so a union written with ``|`` and a
+subscripted builtin evaluate where the helper is defined; what an older or an
+undeclared Python gets is test_annotations_for_the_oldest_python's subject.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ YES, NO, UNKNOWN = Subtyping.YES, Subtyping.NO, Subtyping.UNKNOWN
 
 def _refactor(tmp_path: Path, code: str, **engine_options: Unpack[EngineOptions]) -> str:
     """Extract from ``code``; reuse is off so a helper is always produced."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "m"\nrequires-python = ">=3.10"\n')
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent(code))
     options: EngineOptions = {"reuse_existing_functions": False, **engine_options}

@@ -92,8 +92,15 @@ def test_a_class_argument_reaches_isinstance_with_its_type(tmp_path: Path) -> No
             for node in ast.walk(ast.parse(result))
             if isinstance(node, ast.FunctionDef) and "extracted" in node.name
         )
+        # A string spells the same type; this project declares no Python, so
+        # a union of classes is quoted for the oldest one.
         written = [
-            ast.unparse(argument.annotation)
+            (
+                argument.annotation.value
+                if isinstance(argument.annotation, ast.Constant)
+                and isinstance(argument.annotation.value, str)
+                else ast.unparse(argument.annotation)
+            )
             for argument in helper.args.posonlyargs + helper.args.args
             if argument.annotation is not None
         ]

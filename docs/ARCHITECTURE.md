@@ -409,7 +409,11 @@ site's module in an owned worker process, each build in a forked child of it
 that exits once it has answered, with `reveal_type(...)` probes inserted where the
 call will stand, so names resolve as they do at the call, and asks
 subtyping through probe functions `def _probe(v: narrow) -> wide: return v`
-appended to the module, so the relation is mypy's own. `PyrightOracle`
+appended to the module, so the relation is mypy's own. The build runs with
+the project's configured plugins, loaded by mypy's own loader in each forked
+build (`_load_configured_plugins` in `_mypy_worker.py` is the one place that
+decides this), since a plugin changes what an expression's type is; one that
+cannot be loaded fails the check, so the baseline refuses the run. `PyrightOracle`
 does the same through one long-lived `pyright-langserver` per project,
 watching a private copy that follows the project; the pyright command line is
 the fallback when no server can be started.
@@ -431,7 +435,7 @@ flowchart LR
     subgraph proc["processes"]
         direction TB
         towel["towel"]
-        worker["owned mypy worker<br/>python -I _mypy_worker.py"]
+        worker["owned mypy worker<br/>python -I -B _mypy_worker.py"]
         build["forked build<br/>one per request, exits on answer"]
         server["pyright-langserver<br/>one per project root"]
         towel --> worker
@@ -474,6 +478,17 @@ test data written to be invalid, two demo scripts sharing a module name, a stub
 directory beside the package it describes — and one of them fails the build and
 refuses the project. None of them imports the package, so none is a consumer,
 and none is selected.
+
+*Stubs beside their modules.* Every file Towel changes, and every consumer it
+scanned for, is named to mypy one by one, and mypy checks a named `a.py` even
+where `a.pyi` sits beside it. The project's own run does not: its walk of a
+directory keeps the stub and never reads the implementation, and an import of
+the module finds the stub first. So a named implementation whose stub is beside
+it is replaced in the build by that stub, unless the project's `files` names the
+implementation itself, which is the one way its own mypy checks it. An importer
+of a name the implementation gained and the stub lacks is then refused, as the
+project's mypy refuses it; the implementation behind a stub is not checked by
+mypy, as in the project's own run.
 
 *Speculative text.* Nearly every candidate is rejected and nothing it proposed
 reaches disk, but its text was checked, and mypy wrote a cache entry for each
@@ -1034,30 +1049,37 @@ Sources are decoded to LF text and split on LF alone
 (`source_text.source_lines`), so a form feed or U+2028 inside a comment or
 string does not shift a splice. An out-of-place run publishes its output with
 `filesystem.copy_project`, into a private sibling renamed into place, so neither
-a failed run nor a copy error leaves a partial output. A batch is atomic per file, not globally
+a failed run nor a copy error leaves a partial output; an in-place run publishes
+`filesystem.staged_changes`, the whole run as one such plan. A batch is atomic per file, not globally
 atomic to a concurrent reader, and apply/recover need exclusive write access:
 snapshot checks detect a racing writer but cannot prevent one. See
 [SECURITY.md](../SECURITY.md).
 
-An out-of-place run (`towel dry TARGET OUT`) is an in-place run on a private
-copy. Everything the analysis reads besides the target -- the import graph the
-cycle and import-time-effect guards walk, the packaging that names modules, the
-configuration -- comes from the rest of the project, and a copy of the target
-alone has none of it: a cycle `pkg.a -> other.c -> pkg.b` through a module
-outside the target went unseen, and the adopted output could not be imported,
-while the same run in place was right. So `filesystem.staged_project` copies the
-project root that `find_project_root` finds for the target into a temporary
-stage outside the project, at the same relative layout: the target whole (as
-the output will be), and of the rest its Python sources, stubs and configuration
-files, skipping what the checker copy skips (VCS metadata, caches, virtual
-environments, `node_modules`), with symlinks kept as links as `copytree` keeps
-them. A root holding more than `consumers.MAXIMUM_FILES` Python files is
-refused with a message rather than copied. The run refactors the target's
-counterpart in the stage; only when it succeeds is that counterpart published
-to `OUT` with `copy_project`. The stage is removed however the run ends. Every
-path the run reports -- progress and dropped-proposal messages, the per-file
-summary, the `.towel-helpers.json` sidecar -- is rewritten from the stage to
-`OUT` (or, outside the target, to the original project).
+Every run, `towel dry TARGET OUT` and `towel dry TARGET TARGET` alike,
+refactors a private copy. Everything the analysis reads besides the target --
+the import graph the cycle and import-time-effect guards walk, the packaging
+that names modules, the configuration -- comes from the rest of the project,
+and a copy of the target alone has none of it: a cycle `pkg.a -> other.c ->
+pkg.b` through a module outside the target went unseen, and the adopted output
+could not be imported. So `filesystem.staged_project` copies the project root
+that `find_project_root` finds for the target into a temporary stage outside
+the project, at the same relative layout: its Python sources, stubs and
+configuration files, skipping what the checker copy skips (VCS metadata,
+caches, virtual environments, `node_modules`), with symlinks kept as links as
+`copytree` keeps them, and for an output elsewhere the target whole, as the
+output will be. A root holding more than `consumers.MAXIMUM_FILES` Python files
+is refused with a message rather than copied. The run refactors the target's
+counterpart in the stage, and the cold confirmation checks it there; only when
+both succeed is anything published: the counterpart to `OUT` with
+`copy_project`, or, in place, `staged_changes` -- each staged file the run
+rewrote, from the bytes it held when staged to the stage's, applied as one
+journaled plan. A file the project no longer holds as staged was edited during
+the run, and the plan is refused rather than overwrite the edit. In-place runs
+used to write each refactoring as it was applied, so a confirmation that then
+refused the result left it in the project. The stage is removed however the
+run ends. Every path the run reports -- progress and dropped-proposal messages,
+the per-file summary, the `.towel-helpers.json` sidecar -- is rewritten from
+the stage to `OUT` (or, outside the target, to the original project).
 
 During that run `relocate_oracle` maps the staged target back onto the
 original target, which preserves the input project's tool configuration and

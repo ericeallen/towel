@@ -48,14 +48,16 @@ from typing import (
     Dict,
     FrozenSet,
     List,
+    Mapping,
     Optional,
     Sequence,
     Set,
     Tuple,
+    TypeVar,
 )
 from .defaults import DEFAULT_MAX_ITERATIONS
-from .exceptions import CheckerUnavailableError, RefactoringError
-from .models import RefactoringProposal, TerminationReason
+from .exceptions import CheckerUnavailableError, RefactoringError, UnsupportedLayoutError
+from .models import RefactoringProposal, RejectReason, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
@@ -73,8 +75,14 @@ from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
 from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
-from ..filesystem import StagedProject, copy_project, refuse_unusable_output, staged_project
-from ..project_layout import find_project_root
+from ..filesystem import (
+    StagedProject,
+    copy_project,
+    refuse_unusable_output,
+    staged_changes,
+    staged_project,
+)
+from ..project_layout import ProjectLayout, find_project_root
 from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
 
@@ -98,6 +106,55 @@ def _is_checker_failure(error: BaseException) -> bool:
     return isinstance(error, CheckerUnavailableError)
 
 
+DeclineReason = Literal[
+    "refused by the type checker",
+    "not judged: the type checker could not run",
+    "not representable in its file's encoding",
+    "could not be rendered",
+    "changed nothing",
+]
+"""Why a proposal the analysis built was not applied."""
+
+
+@dataclass(frozen=True)
+class RunReport:
+    """Why the last fixed-point run did not do more, as counts a reader can act on.
+
+    ``declined_pairs`` counts the candidate pairs the run's last whole analysis
+    declined, by ``RejectReason``; a pair that only repeated another pair's
+    proposal is not counted, since nothing was lost. ``declined_proposals``
+    counts the proposals built but not applied, by ``DeclineReason``, each
+    heard once however often the run reconsidered it. ``layout_refusal`` is
+    what the layout reader said when some pair was declined because the
+    project's packaging cannot be modeled, which leaves no helper that can be
+    shared across its modules.
+    """
+
+    declined_pairs: Mapping[str, int] = field(default_factory=dict)
+    declined_proposals: Mapping[DeclineReason, int] = field(default_factory=dict)
+    layout_refusal: Optional[str] = None
+
+
+_Reason = TypeVar("_Reason", bound=str)
+
+
+def counted_reasons(counts: Mapping[_Reason, int]) -> str:
+    """``reason count`` for each reason, most frequent first: ``unknown_layout 1``."""
+    return ", ".join(
+        f"{reason} {count}"
+        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    )
+
+
+def _layout_refusal(path: Path) -> Optional[str]:
+    """What discovery says about the layout around ``path``, when it cannot model it."""
+    try:
+        ProjectLayout.discover(path)
+    except UnsupportedLayoutError as error:
+        return str(error)
+    return None
+
+
 class FixedPointDrivers(Materialization):
     """FixedPointDrivers methods of the engine; see the module docstring."""
 
@@ -105,6 +162,44 @@ class FixedPointDrivers(Materialization):
     # identity, and the last reason it gave.
     _unchecked: FrozenSet[str] = frozenset()
     _unchecked_reason: str = ""
+    # Every proposal the last run built and did not apply, by identity, with
+    # the latest reason; and what its last whole analysis declined.
+    _declined: Dict[str, DeclineReason] = {}
+    _last_declined_pairs: Dict[str, int] = {}
+    _layout_refused_in: Optional[Path] = None
+
+    @property
+    def run_report(self) -> RunReport:
+        """Why the last fixed-point run declined what it did; see ``RunReport``."""
+        proposals: Dict[DeclineReason, int] = {}
+        for reason in self._declined.values():
+            proposals[reason] = proposals.get(reason, 0) + 1
+        refused = self._layout_refused_in
+        return RunReport(
+            dict(self._last_declined_pairs),
+            proposals,
+            None if refused is None else _layout_refusal(refused),
+        )
+
+    def _note_analysis(self, analyzed: Path, reporter: Optional["_ApplyProgress"] = None) -> None:
+        """Keep what a whole analysis of ``analyzed`` declined, for the run's report."""
+        self._last_declined_pairs = dict(self._pair_rejections)
+        if self._last_declined_pairs.get(str(RejectReason.UNKNOWN_LAYOUT)):
+            self._layout_refused_in = Path(self._origin_of(str(analyzed)))
+        if reporter is not None and self._last_declined_pairs:
+            reporter.detail(
+                f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
+                f"{counted_reasons(self._last_declined_pairs)}"
+            )
+
+    def _decline(self, proposal: RefactoringProposal, reason: DeclineReason) -> None:
+        self._declined = {**self._declined, _RejectedProposals.identity(proposal): reason}
+
+    def _applied(self, proposal: RefactoringProposal) -> None:
+        """A proposal declined earlier and applied since, at a rehearing, was not declined."""
+        identity = _RejectedProposals.identity(proposal)
+        if identity in self._declined:
+            self._declined = {key: why for key, why in self._declined.items() if key != identity}
 
     @property
     def checker_failures(self) -> int:
@@ -118,6 +213,7 @@ class FixedPointDrivers(Materialization):
 
     def _begin_counting_checker_failures(self) -> None:
         self._unchecked, self._unchecked_reason = frozenset(), ""
+        self._declined, self._last_declined_pairs, self._layout_refused_in = {}, {}, None
 
     def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
         """Raise when nothing was applied and the checker failed on some proposal.
@@ -167,16 +263,17 @@ class FixedPointDrivers(Materialization):
         reported as a ``ValueError`` naming it.
 
         Args:
-            file_path: The file to refactor in place.
+            file_path: The file to refactor. It is refactored inside a
+                private copy of its whole project, and rewritten, as one
+                journaled change, only once the run has succeeded; a run that
+                fails or is interrupted leaves it as it was.
             max_iterations: Stop after this many applied refactorings; 0 or
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
                 installed), ``auto`` (that, or an inline bar), ``detail``
                 (a line per proposal), or ``none``.
-            output_path: An optional new file to write the result to. The
-                file is refactored inside a private copy of its whole project,
-                exactly as it would be in place, and written here only when
-                the run succeeds; the original is only read.
+            output_path: An optional new file to write the result to instead,
+                when the run succeeds; the original is then only read.
 
         Returns:
             The final source, the number of refactorings applied, and their
@@ -197,16 +294,26 @@ class FixedPointDrivers(Materialization):
         if not in_place:
             refuse_unusable_output(Path(file_path), Path(str(output_path)))
         self.begin_refactoring_run([file_path])
-        if output_path is None or in_place:
-            return self._refactor_file_in_place(
-                file_path, current_bytes, current_code, max_iterations, analysis_progress
-            )
-        with self._staged_output(Path(file_path), Path(output_path)) as stage:
+        destination = Path(file_path) if in_place else Path(str(output_path))
+        with self._staged_output(Path(file_path), destination) as stage:
             refactored = self._refactor_file_in_place(
                 str(stage.target), current_bytes, current_code, max_iterations, analysis_progress
             )
-            copy_project(stage.target, stage.output)
+            self._publish(stage)
             return refactored
+
+    @staticmethod
+    def _publish(stage: StagedProject, *, allow_empty: bool = False) -> None:
+        """Hand a finished, confirmed run to the user: the output, or the project itself.
+
+        Nothing the user owns has been touched before this. An in-place run's
+        combined change is one journaled plan, so an interruption part way
+        through it is rolled back or recoverable with ``towel recover``.
+        """
+        if stage.in_place:
+            apply_changes(staged_changes(stage))
+        else:
+            copy_project(stage.target, stage.output, allow_empty=allow_empty)
 
     def _refactor_file_in_place(
         self,
@@ -230,6 +337,7 @@ class FixedPointDrivers(Materialization):
             proposals = self.analyze_files(
                 [file_path], invalidate_paths=[file_path], progress=analysis_progress
             )
+            self._note_analysis(Path(file_path))
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
@@ -239,16 +347,24 @@ class FixedPointDrivers(Materialization):
             for proposal in proposals:
                 if proposal in rejected:
                     continue
+                recorded = len(self._change_log)
                 rendered = self._rendered_or_none(file_path, proposal, current_bytes)
                 if rendered is None:
                     rejected.add(proposal)
                     continue
                 if rendered == current_code:
+                    self._forget_records_since(recorded)
+                    self._decline(proposal, "changed nothing")
                     continue
                 new_code = rendered
-                apply_changes(
-                    ChangePlan.from_sources({file_path: current_bytes}, {file_path: new_code})
-                )
+                try:
+                    apply_changes(
+                        ChangePlan.from_sources({file_path: current_bytes}, {file_path: new_code})
+                    )
+                except BaseException:
+                    self._forget_records_since(recorded)
+                    raise
+                self._applied(proposal)
                 applied_one = True
                 break
             if not applied_one:
@@ -285,30 +401,56 @@ class FixedPointDrivers(Materialization):
         before it. So is one whose text the file's encoding (``original``'s)
         cannot hold.
         """
+        recorded = len(self._change_log)
+        self._checker_refusals = 0
         try:
             new_code = self.apply_refactoring(file_path, proposal)
             compile(new_code, file_path, "exec")
             encode_like(original, new_code)
         except (RefactoringError, SyntaxError, ValueError) as error:
+            self._forget_records_since(recorded)
             self._report_dropped(proposal, error)
             return None
         return new_code
 
+    def _forget_records_since(self, recorded: int) -> None:
+        """Drop the call-site records of a proposal that was rendered but not applied.
+
+        Rendering records each call site it rewrites, because a name is only
+        final once rendered; whether the result is written is decided after
+        that. A record left behind describes a helper that is not in the output,
+        and the sidecar offered it to the naming step as though it were.
+        """
+        del self._change_log[recorded:]
+
     def _report_dropped(self, proposal: RefactoringProposal, error: BaseException) -> None:
+        """Say why ``proposal`` was not applied, and count it under that reason.
+
+        Told apart by type, never by wording: a checker that could not run
+        judged nothing; one that refused a rendered variant judged the proposal
+        (``_checker_refusals`` counts those since the driver started it);
+        text its file's encoding cannot hold is a limit of that file; anything
+        else is a rendering Towel could not produce.
+        """
+        reason: DeclineReason
         if _is_checker_failure(error):
             self._unchecked = self._unchecked | {_RejectedProposals.identity(proposal)}
             self._unchecked_reason = str(error)
-            LOG.warning(
-                "Dropped a proposal the type checker could not check (%s): %s",
-                proposal.description,
-                error,
+            reason, said = (
+                "not judged: the type checker could not run",
+                "the type checker could not check",
+            )
+        elif isinstance(error, RefactoringError) and self._checker_refusals:
+            reason, said = "refused by the type checker", "the type checker refused"
+        elif isinstance(error, UnencodableText):
+            reason, said = (
+                "not representable in its file's encoding",
+                "its file's encoding cannot hold",
             )
         else:
-            LOG.warning(
-                "Dropped a proposal that could not be rendered (%s): %s",
-                proposal.description,
-                error,
-            )
+            reason, said = "could not be rendered", "could not be rendered"
+        self._decline(proposal, reason)
+        LOG.warning("Dropped a proposal %s (%s): %s", said, proposal.description, error)
         if debugging(REJECTIONS):
             REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
 
@@ -377,12 +519,13 @@ class FixedPointDrivers(Materialization):
 
         Args:
             input_dir: The directory to analyze.
-            output_dir: The directory to write into (the same as ``input_dir``
-                to refactor in place). Otherwise ``input_dir`` is refactored
-                inside a private copy of its whole project, exactly as it would
-                be in place, and only its refactored counterpart is written
-                here, all at once, when the run succeeds; the returned paths
-                name files here.
+            output_dir: The directory to write into, or ``input_dir`` itself
+                to refactor in place. Either way ``input_dir`` is refactored
+                inside a private copy of its whole project, and nothing is
+                written until the run has succeeded: then its refactored
+                counterpart is written here all at once, or, in place, every
+                file it rewrote is changed as one journaled plan. The returned
+                paths name files here.
             max_iterations: Stop after this many applied refactorings; 0 or
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (a bar when tqdm is
@@ -415,14 +558,13 @@ class FixedPointDrivers(Materialization):
         if resolved_input != resolved_output:
             refuse_unusable_output(input_path, output_path, allow_empty=True)
         self.begin_refactoring_run(self._find_python_files(input_dir))
-        if resolved_input == resolved_output:
-            return self._refactor_directory_in_place(output_path, reporter, max_iterations)
-        with self._staged_output(input_path, output_path) as stage:
+        destination = input_path if resolved_input == resolved_output else output_path
+        with self._staged_output(input_path, destination) as stage:
             self._analysis_paths = tuple(self._find_python_files(str(stage.target)))
             results, termination_reason = self._refactor_directory_in_place(
                 stage.target, reporter, max_iterations
             )
-            copy_project(stage.target, stage.output, allow_empty=True)
+            self._publish(stage, allow_empty=True)
             return {stage.public(path): result for path, result in results.items()}, (
                 termination_reason
             )
@@ -443,8 +585,10 @@ class FixedPointDrivers(Materialization):
         finally:
             # A display thread must not outlive the run, however it ended.
             reporter.close()
-            if run.applied:
-                self.confirm_run_with_a_cold_checker(self._find_python_files(str(directory)))
+        # Only a run that finished is confirmed: one that failed is published
+        # nowhere, and nothing it applied reached the user.
+        if run.applied:
+            self.confirm_run_with_a_cold_checker(self._find_python_files(str(directory)))
         self._refuse_a_run_the_checker_emptied(run.applied)
         return outcome
 
@@ -452,18 +596,20 @@ class FixedPointDrivers(Materialization):
     def _staged_output(self, origin: Path, output: Path) -> Iterator[StagedProject]:
         """Refactor ``origin``'s counterpart in a private copy of its whole project.
 
-        An in-place run reads the rest of the project as it refactors: the
-        import graph that the cycle and import-time-effect guards walk, the
-        packaging that names modules, the configuration. A copy of the target
-        alone has none of it, so a cycle through a module outside the target
-        went unseen and the adopted output could not be imported, while the
-        same run in place was right. Staging the whole project makes the two
-        runs one run: the target's counterpart is refactored in place in the
-        stage, with the checker reading the stage under the original's names,
-        and the caller publishes it to ``output`` only once the run succeeds,
-        so a failed run leaves nothing behind. Every path the run reports
-        names the output (or, outside the target, the original), not the
-        stage, which is removed however the block ends.
+        A run reads the rest of the project as it refactors: the import graph
+        that the cycle and import-time-effect guards walk, the packaging that
+        names modules, the configuration. A copy of the target alone has none
+        of it, so a cycle through a module outside the target went unseen and
+        the adopted output could not be imported. Staging the whole project
+        gives every run the same view: the target's counterpart is refactored
+        in the stage, with the checker reading the stage under the original's
+        names, and the caller publishes it -- to ``output``, or, when
+        ``output`` is ``origin``, back over the project -- only once the run
+        and its cold confirmation have succeeded, so a failed run leaves
+        nothing behind. An in-place run used to write each refactoring as it
+        went, and a confirmation that then refused the result left it written.
+        Every path the run reports names the output (or, outside the target,
+        the original), not the stage, which is removed however the block ends.
         """
         inner_oracle = self._type_run_oracle
         root = find_project_root(origin)
@@ -636,6 +782,7 @@ class FixedPointDrivers(Materialization):
             progress=reporter.analysis_mode,
             changed_files=restrict,
         )
+        self._note_analysis(output_path, reporter)
         run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:
@@ -665,24 +812,34 @@ class FixedPointDrivers(Materialization):
                 *(rep.file_path or proposal.file_path for rep in proposal.replacements),
             }
         }
-        modified_files = self.apply_refactoring_multi_file(proposal)
-        plan = ChangePlan.from_sources(before, modified_files)
-        # A plan is empty when every file renders the bytes it already holds.
-        # Counting that as applied would advance the run's revision without
-        # changing the project, so the next analysis would find the proposal
-        # again, render the same bytes, and the run would never end. It is
-        # remembered as declined instead: the same input renders the same
-        # output, so hearing it again before the project changes is pointless.
-        if not plan.changes:
-            run.rejected.add(proposal)
-            reporter.detail(f"Proposal changed nothing: {proposal.description}")
-            return None
+        recorded = len(self._change_log)
+        self._checker_refusals = 0
+        try:
+            modified_files = self.apply_refactoring_multi_file(proposal)
+            plan = ChangePlan.from_sources(before, modified_files)
+            # A plan is empty when every file renders the bytes it already
+            # holds. Counting that as applied would advance the run's revision
+            # without changing the project, so the next analysis would find the
+            # proposal again, render the same bytes, and the run would never
+            # end. It is remembered as declined instead: the same input renders
+            # the same output, so hearing it again before the project changes
+            # is pointless.
+            if not plan.changes:
+                self._forget_records_since(recorded)
+                self._decline(proposal, "changed nothing")
+                run.rejected.add(proposal)
+                reporter.detail(f"Proposal changed nothing: {proposal.description}")
+                return None
+            apply_changes(plan)
+        except BaseException:
+            self._forget_records_since(recorded)
+            raise
+        self._applied(proposal)
         # Every file the proposal rendered is re-analysed and recorded, not
         # only those whose bytes moved: a file rendered identically is still
         # one the proposal reached, and the localized pass that follows must
         # look at all of them.
         changed_paths = list(modified_files.keys())
-        apply_changes(plan)
         for fpath in modified_files:
             run.record(fpath, proposal.description)
         self.invalidate_paths(changed_paths)

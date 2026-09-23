@@ -27,14 +27,18 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
+import configparser
 import copy
 import dataclasses
 from pathlib import Path
+import re
 
-from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from .annotations import (
+    OLDEST_PYTHON,
     ApplySite,
     CallSite,
+    PythonVersion,
     annotate_helper,
     call_in_statement,
     complete_with_any,
@@ -45,16 +49,22 @@ from .annotations import (
     qualified_names_in_annotations,
     shorten_qualified_names,
     defers_annotations,
+    evaluated_syntax,
+    written_for_python,
     _import_bound_names,
     _defined_names,
 )
 from .exceptions import CheckerUnavailableError, RefactoringError
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
+from ..checker_project import _read_json_config
+from ..project_layout import find_project_root, load_pyproject
 from ..type_inference import (
     CheckFailure,
     TypeDiagnostic,
     TypeOracle,
+    _configured_root,
+    _mypy_config,
     holds_warm_state,
     start_cold,
 )
@@ -69,8 +79,113 @@ UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_hel
 """The way out of every refusal to verify: the one thing such a user can act on."""
 
 
+def python_lower_bound(specifier: str) -> Optional[PythonVersion]:
+    """The oldest Python a version requirement admits, to the minor version; None if unbounded.
+
+    PEP 440 clauses, comma-separated, as ``requires-python`` spells them, and
+    Poetry's ``^3.9`` and ``~3.9``: ``>=``, ``~=``, ``==``, ``===``, ``^`` and
+    ``~`` bound from below at their version, ``>`` at the same minor version
+    (``>3.8`` admits 3.8.1), and the tightest bound wins. ``<``, ``<=`` and
+    ``!=`` bound nothing below. Anything unreadable makes the whole answer
+    None, which the caller takes as the oldest Python there is.
+    """
+    bounds: List[PythonVersion] = []
+    for clause in (part.strip() for part in specifier.split(",")):
+        if not clause:
+            continue
+        match = _VERSION_CLAUSE.fullmatch(clause)
+        if match is None:
+            return None
+        if match.group("operator") in {"<", "<=", "!="}:
+            continue
+        bounds.append((int(match.group("major")), int(match.group("minor") or 0)))
+    return max(bounds) if bounds else None
+
+
+_VERSION_CLAUSE = re.compile(
+    r"(?P<operator>===|==|~=|>=|<=|!=|>|<|\^|~)\s*v?(?P<major>\d+)"
+    r"(?:\.(?P<minor>\d+))?(?:\.(?:\d+|\*))*(?:[a-z]+\d*)?(?:\.\*)?"
+)
+
+
+def _table(document: Mapping[str, object], *keys: str) -> Mapping[str, object]:
+    """``document[keys[0]][keys[1]]...``, or an empty table where any step is not one."""
+    node: object = document
+    for key in keys:
+        node = node.get(key, {}) if isinstance(node, dict) else {}
+    return node if isinstance(node, dict) else {}
+
+
+def _checker_python(value: object) -> Optional[PythonVersion]:
+    """``python_version``/``pythonVersion`` as a version: ``"3.9"``, or TOML's ``3.9``."""
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\.\d+)?", str(value).strip())
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def _ini_option(path: Path, section: str, option: str) -> Optional[str]:
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(path, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeError):
+        return None
+    return parser.get(section, option, fallback=None)
+
+
+def _checker_targets(path: Path) -> List[PythonVersion]:
+    """The Python versions the project's mypy and pyright configurations target."""
+    targets: List[Optional[PythonVersion]] = []
+    mypy_root = _configured_root(path, "mypy")
+    config = _mypy_config(mypy_root) if mypy_root is not None else None
+    if config is not None and mypy_root is not None:
+        if config.endswith("pyproject.toml"):
+            mypy = _table(load_pyproject(mypy_root), "tool", "mypy")
+            targets.append(_checker_python(mypy.get("python_version", "")))
+        else:
+            targets.append(_checker_python(_ini_option(Path(config), "mypy", "python_version")))
+    pyright_root = _configured_root(path, "pyright")
+    if pyright_root is not None:
+        settings: Mapping[str, object]
+        try:
+            settings = (
+                _read_json_config(pyright_root / "pyrightconfig.json")
+                if (pyright_root / "pyrightconfig.json").is_file()
+                else _table(load_pyproject(pyright_root), "tool", "pyright")
+            )
+        except ValueError:
+            settings = {}  # A configuration pyright rejects refuses the run elsewhere.
+        targets.append(_checker_python(settings.get("pythonVersion", "")))
+    return [target for target in targets if target is not None]
+
+
+def declared_oldest_python(path: Path) -> Optional[PythonVersion]:
+    """The oldest Python the project around ``path`` says it supports, or None when it says nothing.
+
+    ``requires-python`` first (``[project]`` in pyproject.toml, else setup.cfg's
+    ``python_requires``, else Poetry's ``python`` dependency), since that is the
+    promise the package makes to whoever installs it. Failing that, the older
+    of the versions mypy and pyright are configured to check for: a project
+    whose checker targets 3.9 means its code to run there.
+    """
+    root = find_project_root(path)
+    pyproject = load_pyproject(root)
+    requirement: object = _table(pyproject, "project").get("requires-python")
+    if not isinstance(requirement, str) and (root / "setup.cfg").is_file():
+        requirement = _ini_option(root / "setup.cfg", "options", "python_requires")
+    if not isinstance(requirement, str):
+        requirement = _table(pyproject, "tool", "poetry", "dependencies").get("python")
+    if isinstance(requirement, str):
+        bound = python_lower_bound(requirement)
+        if bound is not None:
+            return bound
+    targets = _checker_targets(path)
+    return min(targets) if targets else None
+
+
 class HelperAnnotationWiring(EngineState):
     """Helper AnnotationWiring methods of the engine; see the module docstring."""
+
+    # The oldest Python each project root declares, read once per engine.
+    _declared_pythons: Mapping[str, Optional[PythonVersion]] = {}
 
     def begin_refactoring_run(self, file_paths: Sequence[str]) -> None:
         """Establish a new run's original project before inference or changes.
@@ -243,10 +358,37 @@ class HelperAnnotationWiring(EngineState):
         ``Any`` on whatever is still bare, so its signature is complete. Runs
         once per applied proposal, on the files as they stand, so the cost is
         one incremental type-check per application rather than one per
-        candidate.
+        candidate. Last, an annotation the project's oldest Python could not
+        evaluate is written as a string (see :meth:`_oldest_python_for`).
         """
         if not proposal.wants_type_inference or proposal.reused_function is not None:
             return
+        self._complete_helper_annotations(proposal)
+        host = self._parsed_host(proposal.file_path)
+        proposal.extracted_function = written_for_python(
+            proposal.extracted_function, host, self._oldest_python_for(proposal.file_path, host)
+        )
+
+    def _oldest_python_for(self, file_path: str, host: Optional[ast.Module]) -> PythonVersion:
+        """The oldest Python the helper's module has to import on.
+
+        What the project declares (:func:`declared_oldest_python`), or, where it
+        declares nothing, the oldest Python the syntax could need. A module
+        that already evaluates younger syntax on every import needs that Python
+        anyway, so its own evidence raises the floor
+        (:func:`~towel.unification.annotations.evaluated_syntax`).
+        """
+        root = str(find_project_root(Path(self._origin_of(file_path))))
+        if root not in self._declared_pythons:
+            self._declared_pythons = {
+                **self._declared_pythons,
+                root: declared_oldest_python(Path(self._origin_of(file_path))),
+            }
+        declared = self._declared_pythons[root] or OLDEST_PYTHON
+        return max(declared, evaluated_syntax(host)) if host is not None else declared
+
+    def _complete_helper_annotations(self, proposal: RefactoringProposal) -> None:
+        """Copied annotations respelled, the rest inferred or completed with ``Any``."""
         module_level = proposal.insert_into_class is None and proposal.insert_into_function is None
         host_source = self._read_source(proposal.file_path)
         bare_ok = self.placeable_after(host_source) if module_level and host_source else set()
@@ -474,7 +616,9 @@ class HelperAnnotationWiring(EngineState):
         from a silent wrong answer into a loud one. It costs a single cold
         check per run, about what the run's own baseline cost, and is done
         whenever a run applied anything, since that is exactly when the promise
-        being kept is that the project still checks.
+        being kept is that the project still checks. The drivers ask this of
+        the private stage the run refactored, before anything is published, so
+        a refusal here leaves the project and the output as they were.
         """
         oracle = self._type_run_oracle
         if oracle is None or not holds_warm_state(oracle):
@@ -495,16 +639,15 @@ class HelperAnnotationWiring(EngineState):
             # be the same silence it was built to remove.
             raise RefactoringError(
                 "The finished project could not be confirmed by a checker started from "
-                f"nothing: {result.reason}. The refactorings that were applied are listed "
-                "above; check the project yourself before relying on them."
+                f"nothing: {result.reason}\nNothing was written."
             )
         if result.errors:
             details = "\n".join(f"  {error.path}: {error.message}" for error in result.errors[:3])
             raise RefactoringError(
                 f"The finished project reports {len(result.errors)} type error(s) that the "
                 f"checker did not report while the run was in progress:\n{details}\n"
-                "This is a defect in Towel's verification, not in the project. "
-                "Please report it; the refactorings that were applied are listed above."
+                "This is a defect in Towel's verification, not in the project; please report "
+                "it. Nothing was written."
             )
 
     def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:
@@ -517,4 +660,8 @@ class HelperAnnotationWiring(EngineState):
             raise CheckerUnavailableError(f"Prospective project type check failed: {after.reason}")
         for diagnostic, count in Counter(after.errors).items():
             TYPES.debug("new error x%d in %s: %s", count, diagnostic.path, diagnostic.message)
+        if after.errors:
+            # Counted so a proposal no variant of which survives is reported as
+            # the checker's refusal, not as something that could not be rendered.
+            self._checker_refusals += 1
         return after.errors
