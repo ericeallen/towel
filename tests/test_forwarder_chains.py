@@ -524,17 +524,23 @@ def test_a_call_whose_results_are_computed_on_is_not_forwarding(body: str) -> No
     assert not BlockAnalysis._helper_is_trivial_forwarding(helper)
 
 
+_GENERATED_CALLER = "def helper(self, __param_0, __param_1, e, rest, callback):\n"
+
+
 @pytest.mark.parametrize(
     "body",
     [
-        "a, b, c = self._extracted_func_3(p, q, e)\nreturn (c, a, b)",
-        "return __extracted_func_0(lambda: __param_0(), p, 'key', *rest)",
-        "x = __extracted_func_0(p)\ny = __extracted_func_1(x, key=q)\nreturn (y, x)",
-        "__extracted_func_2(__extracted_func_1(p), lambda: q)",
+        "a, b, c = self._extracted_func_3(__param_0, __param_1, e)\nreturn (c, a, b)",
+        "return __extracted_func_0(lambda: __param_0(), __param_1, 'key', *rest)",
+        "x = __extracted_func_0(__param_0)\ny = __extracted_func_1(x, key=__param_1)\nreturn (y, x)",
+        "__extracted_func_2(__extracted_func_1(__param_0), lambda: __param_1)",
+        # sqlglot with the escape guard off: a thunk the site passes is
+        # evaluated beside the call, which is still the site's code.
+        "a, b = self._extracted_func_0(__param_0, e)\nc = __param_1()\nreturn (a, b, c)",
     ],
 )
 def test_a_helper_that_only_calls_generated_helpers_shares_nothing(body: str) -> None:
-    helper = function_def("def helper(self, p, q, e, rest):\n" + textwrap.indent(body, "    "))
+    helper = function_def(_GENERATED_CALLER + textwrap.indent(body, "    "))
     assert BlockAnalysis._helper_only_calls_generated_helpers(helper)
 
 
@@ -542,16 +548,19 @@ def test_a_helper_that_only_calls_generated_helpers_shares_nothing(body: str) ->
     "body",
     [
         # The user's own code: an attribute read, an operator, another call.
-        "a, b = self._extracted_func_3(p.key, q)\nreturn (b, a)",
-        "return __extracted_func_0(p) + 1",
-        "x = __extracted_func_0(p)\nreturn self.func(x)",
-        "return __extracted_func_0(lambda: e.args.get(p))",
+        "a, b = self._extracted_func_3(__param_0.key, __param_1)\nreturn (b, a)",
+        "return __extracted_func_0(__param_0) + 1",
+        "x = __extracted_func_0(__param_0)\nreturn self.func(x)",
+        "return __extracted_func_0(lambda: e.args.get(__param_0))",
+        # A list display makes a new list; a free name the user calls is theirs.
+        "x = __extracted_func_0(__param_0)\nitems = []\nreturn (x, items)",
+        "x = __extracted_func_0(__param_0)\ny = callback()\nreturn (x, y)",
         # No generated helper at all: the forwarding filter's concern.
-        "return forward(p, q)",
+        "return forward(__param_0, __param_1)",
     ],
 )
 def test_a_helper_with_code_of_its_own_is_not_plumbing(body: str) -> None:
-    helper = function_def("def helper(self, p, q, e):\n" + textwrap.indent(body, "    "))
+    helper = function_def(_GENERATED_CALLER + textwrap.indent(body, "    "))
     assert not BlockAnalysis._helper_only_calls_generated_helpers(helper)
 
 

@@ -60,7 +60,7 @@ from .models import (
     encloses,
     is_generated_helper_name,
 )
-from .parameters import parameter_names
+from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import rebound_external_names, walk_own_scope
 from .statement_facts import memoized_per_node
@@ -919,17 +919,24 @@ class BlockAnalysis(EngineState):
     def _helper_only_calls_generated_helpers(func: ast.FunctionDef) -> bool:
         """Whether all the helper would compute is calls of helpers this tool generated.
 
-        Each statement binds, returns or evaluates such calls and re-packs
-        what they return, and every argument is a name, a literal, a thunk
-        that only forwards a name, or another such call. The blocks it came
-        from differ only in what they pass to an earlier helper, which
-        already holds everything the user wrote there, so the helper would
-        share nothing, and its call sites would have the same shape again.
-        Declining it is what makes the fixed point end: every extraction
-        that remains leaves one copy of some code the user wrote where there
-        were several, and there is only so much of it. So it is declined
-        whatever ``skip_trivial_helpers`` says.
+        Each statement binds, returns or evaluates such calls, evaluates a
+        thunk the call site passes, or re-packs what they return, and every
+        argument is a name, a literal, a thunk, or another such call. The
+        blocks it came from differ only in what they pass to an earlier
+        helper, which already holds everything they share that the user
+        wrote, so this helper would share nothing, and its call sites would
+        have the same shape again. Declining it is what makes the fixed point
+        end: every other extraction replaces something the user wrote in at
+        least two places, a computation or at least a statement, with one
+        copy in a helper, and there is only so much of it; a call of a
+        generated helper, and the thunks it is passed, are not the user's.
+        So it is declined whatever ``skip_trivial_helpers`` says.
         """
+        thunks = frozenset(
+            argument.arg
+            for argument in func.args.args
+            if argument.arg.startswith(GENERATED_PARAMETER_PREFIX)
+        )
         values: List[ast.expr] = []
         for statement in func.body:
             if isinstance(statement, (ast.Global, ast.Nonlocal)):
@@ -943,9 +950,9 @@ class BlockAnalysis(EngineState):
                     values.append(statement.value)
             else:
                 return False
-        return any(_calls_generated_helper(value) for value in values) and all(
-            _is_plumbing(value) for value in values
-        )
+        return any(
+            _calls_generated_helper(node) for value in values for node in ast.walk(value)
+        ) and all(_is_plumbing(value, thunks) for value in values)
 
 
 def _plain_names(node: ast.expr) -> Optional[List[str]]:
@@ -963,7 +970,7 @@ def _plain_names(node: ast.expr) -> Optional[List[str]]:
     return None
 
 
-def _calls_generated_helper(node: ast.expr) -> bool:
+def _calls_generated_helper(node: ast.AST) -> bool:
     """Whether ``node`` is a call of a helper this tool generated, bare or through a receiver."""
     if not isinstance(node, ast.Call):
         return False
@@ -977,39 +984,35 @@ def _calls_generated_helper(node: ast.expr) -> bool:
     )
 
 
-def _is_plumbing(node: ast.expr) -> bool:
-    """Whether ``node`` computes nothing beyond calls of generated helpers.
+def _is_plumbing(node: ast.expr, thunks: AbstractSet[str]) -> bool:
+    """Whether ``node`` computes nothing of its own: it only moves values between calls.
 
-    A name, a literal, a tuple or list of such values, a starred one, a
-    thunk that takes nothing and only reads or calls a name (the extractor's
-    ``lambda: __param_0()``), or a call of a generated helper with such
-    arguments.
+    A name, a literal, a tuple of such values or a starred one; a lambda that
+    takes nothing and returns such a value (the extractor's ``lambda:
+    __param_0()`` forwarding a thunk); or a call, with such arguments, of a
+    generated helper or of one of ``thunks``, the helper's own parameters,
+    which evaluates code of the call site's. A list display is not among
+    them: it makes a new list each time.
     """
     if isinstance(node, (ast.Name, ast.Constant)):
         return True
-    if isinstance(node, (ast.Tuple, ast.List)):
-        return all(_is_plumbing(element) for element in node.elts)
+    if isinstance(node, ast.Tuple):
+        return all(_is_plumbing(element, thunks) for element in node.elts)
     if isinstance(node, ast.Starred):
-        return _is_plumbing(node.value)
+        return _is_plumbing(node.value, thunks)
     if isinstance(node, ast.Lambda):
         arguments = node.args
-        body = node.body
         return (
             not (arguments.posonlyargs or arguments.args or arguments.kwonlyargs)
             and arguments.vararg is None
             and arguments.kwarg is None
-            and (
-                isinstance(body, ast.Name)
-                or (
-                    isinstance(body, ast.Call)
-                    and isinstance(body.func, ast.Name)
-                    and not body.args
-                    and not body.keywords
-                )
-            )
+            and _is_plumbing(node.body, thunks)
         )
-    if isinstance(node, ast.Call) and _calls_generated_helper(node):
-        return all(_is_plumbing(argument) for argument in node.args) and all(
-            _is_plumbing(keyword.value) for keyword in node.keywords
+    if isinstance(node, ast.Call) and (
+        _calls_generated_helper(node)
+        or (isinstance(node.func, ast.Name) and node.func.id in thunks)
+    ):
+        return all(_is_plumbing(argument, thunks) for argument in node.args) and all(
+            _is_plumbing(keyword.value, thunks) for keyword in node.keywords
         )
     return False
