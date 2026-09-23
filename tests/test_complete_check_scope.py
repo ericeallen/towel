@@ -387,3 +387,59 @@ def test_a_tree_beyond_the_scan_limit_is_refused_not_scanned_in_part(
     _write(tmp_path, {"lib/__init__.py": "", "a.py": "import lib\n", "b.py": "", "c.py": ""})
     with pytest.raises(consumers.ScanLimitExceeded):
         consumers_of(tmp_path, {"lib"}, module_name=lambda path: path.stem)
+
+
+TWIN_FUNCTIONS = "def tag(name: str) -> str:\n    return name.upper()\n"
+UNCHECKED_TEST = "from pkg.m import tag\n\n\ndef test_tag():\n    x: int = 'wrong'\n"
+
+
+@requires_mypy
+@pytest.mark.parametrize("config", ['exclude = ["^tests/"]', 'files = ["pkg"]'])
+def test_a_file_the_project_does_not_check_is_not_held_against_it(
+    tmp_path: Path, config: str
+) -> None:
+    """The project's own mypy is clean; the baseline must be too.
+
+    ``towel dry . .`` analyses ``tests/`` as well, and every analysed file was
+    checked whatever the configuration said, so a project whose mypy run is
+    clean was refused for errors in files that run never looks at.
+    """
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": f"[tool.mypy]\nstrict = true\n{config}\n",
+            "pkg/__init__.py": "",
+            "pkg/m.py": TWIN_FUNCTIONS,
+            "tests/test_m.py": UNCHECKED_TEST,
+        },
+    )
+    result = _check(tmp_path, "pkg/__init__.py", "pkg/m.py", "tests/test_m.py")
+    assert isinstance(result, CheckSuccess), result
+    assert result.errors == ()
+
+
+@requires_mypy
+def test_an_excluded_module_the_checked_code_imports_is_still_checked(tmp_path: Path) -> None:
+    """mypy follows an import into an excluded file and reports it, and so must this."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[tool.mypy]\nstrict = true\nexclude = ["^pkg/_vendor/"]\n',
+            "pkg/__init__.py": "",
+            "pkg/_vendor/__init__.py": "",
+            "pkg/_vendor/v.py": "VALUE: int = 1\n",
+            "pkg/m.py": "from pkg._vendor.v import VALUE\n\nUSED: int = VALUE\n",
+        },
+    )
+    oracle = MypyInferrer()
+    try:
+        result = oracle.check_project(
+            {
+                str(tmp_path / "pkg" / "m.py"): (tmp_path / "pkg" / "m.py").read_text(),
+                str(tmp_path / "pkg" / "_vendor" / "v.py"): "VALUE: int = 'broken'\n",
+            }
+        )
+    finally:
+        oracle.close()
+    assert isinstance(result, CheckSuccess), result
+    assert [error.path for error in result.errors] == [str(tmp_path / "pkg" / "_vendor" / "v.py")]
