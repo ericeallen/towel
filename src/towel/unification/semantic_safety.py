@@ -50,7 +50,7 @@ from .statement_facts import (
     pattern_capture_names,
 )
 from .structural_memo import structural_id
-from .visitors import FreeNameCollector, OwnScopeVisitor
+from .visitors import FreeNameCollector, OwnScopeVisitor, type_parameter_expressions
 
 if TYPE_CHECKING:
     from .substitution import Substitution
@@ -732,6 +732,34 @@ def unbinds_external_name(
 
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.GeneratorExp)
 
+_TYPE_ALIAS: Optional[type] = getattr(ast, "TypeAlias", None)
+"""``type X = ...`` (Python 3.12+), whose value is evaluated lazily, like a lambda's body."""
+
+
+def _lazily_read_names(node: ast.AST) -> Optional[FrozenSet[str]]:
+    """The names ``node`` reads when something later asks, not where it stands, if it is such a scope.
+
+    A function, lambda or generator reads its free names when it runs. A
+    ``type`` statement's value and the bounds, constraints and defaults of
+    PEP 695 type parameters are evaluated only when ``__value__``,
+    ``__bound__`` or ``__default__`` is first read, and so is, from Python
+    3.14, the annotation of a class attribute: each reads the variable's
+    binding at that moment, a closure like any other. A class body and its
+    bases run once, where the class stands, and are not.
+    """
+    if isinstance(node, _NESTED_SCOPE_TYPES):
+        return frozenset(loaded_names(node))
+    if _TYPE_ALIAS is not None and isinstance(node, _TYPE_ALIAS):
+        # Its own type parameters are bound in its annotation scope.
+        return frozenset(loaded_names(node) - type_parameter_names(node))
+    if isinstance(node, ast.ClassDef):
+        lazy: List[ast.AST] = [*type_parameter_expressions(node)]
+        lazy.extend(
+            statement.annotation for statement in node.body if isinstance(statement, ast.AnnAssign)
+        )
+        return frozenset(name for expression in lazy for name in loaded_names(expression))
+    return None
+
 
 class _ScopeFacts:
     """Nested scopes and top-level bindings of one function, computed once.
@@ -742,9 +770,9 @@ class _ScopeFacts:
 
     def __init__(self, function: FunctionNode) -> None:
         self.nested: Tuple[Tuple[ast.AST, FrozenSet[str]], ...] = tuple(
-            (node, frozenset(loaded_names(node)))
+            (node, lazy)
             for node in ast.walk(function)
-            if isinstance(node, _NESTED_SCOPE_TYPES) and node is not function
+            if node is not function and (lazy := _lazily_read_names(node)) is not None
         )
         self.top_level: Tuple[Tuple[ast.stmt, FrozenSet[str]], ...] = tuple(
             (statement, frozenset(bound_names([statement]))) for statement in function.body
@@ -766,7 +794,8 @@ def nested_scopes_cross_block_boundary(function: FunctionNode, nodes: Iterable[a
     """Reject extraction when a closure and the block share a mutable binding.
 
     A nested function, lambda or generator reads its free names when it runs,
-    not when it is defined. If it is defined outside the block and the block
+    not when it is defined, and a ``type`` statement or a type parameter's
+    bound reads them when first asked (``_lazily_read_names``). If it is defined outside the block and the block
     rebinds one of those names, the helper rebinds its own local instead of the
     caller's cell. If it is defined inside the block and the caller rebinds one
     of its free names after the block, the closure keeps the helper's cell
