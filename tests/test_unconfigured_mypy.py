@@ -161,6 +161,17 @@ class Shape:
 
 
 PACKAGE = ("pkg/__init__.py", "pkg/core.py")
+SHADOWED_HELPER = {
+    "pkg/__init__.py": "",
+    "pkg/core.py": ADD,
+    "helpers.py": "def make() -> str:\n    return 'root'\n",
+    "tests/helpers.py": "def make() -> int:\n    return 1\n",
+    "tests/test_core.py": (
+        "from helpers import make\nfrom pkg.core import add\n\n\n"
+        "def test_add() -> None:\n    x: str = make()\n    add(1, 2)\n"
+    ),
+}
+"""mypy's ``import helpers`` from the test finds the module beside it, whose ``make`` is an int."""
 SHAPES = {
     "an error in an unannotated test function": Shape(
         {"pyproject.toml": PACKAGING, "pkg/__init__.py": "", "pkg/core.py": TWINS}
@@ -240,7 +251,18 @@ SHAPES = {
         ("app.py", "util.py"),
         (".",),
     ),
+    "a helper module beside a test, and one of its name at the root": Shape(
+        {"pyproject.toml": PACKAGING} | SHADOWED_HELPER,
+        PACKAGE,
+        ("pkg", "tests/test_core.py"),
+    ),
     # Configured projects keep their own settings, the forced ones included.
+    "a configuration, a helper module beside a test, and one of its name at the root": Shape(
+        {"pyproject.toml": PACKAGING + "[tool.mypy]\nwarn_unused_ignores = true\n"}
+        | SHADOWED_HELPER,
+        PACKAGE,
+        ("pkg", "tests/test_core.py"),
+    ),
     "a configuration checking unannotated functions": Shape(
         {"pyproject.toml": PACKAGING + "[tool.mypy]\ncheck_untyped_defs = true\n"}
         | {"pkg/__init__.py": "", "pkg/core.py": TWINS, "tests/test_core.py": UNCHECKED_TEST},

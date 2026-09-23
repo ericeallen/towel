@@ -129,11 +129,17 @@ def _options(
     # Pretty diagnostics read snippets from disk, but prospective sources and
     # probes exist only in memory and can extend beyond the physical file.
     options.pretty = False
+    # A check's sources come with the directories mypy searches for what they
+    # import, and the root is the working directory, searched after them, as
+    # in the project's own run. Searched first, the root answered a test's
+    # ``import helpers`` with a ``helpers.py`` of its own instead of the one
+    # beside the test. A probed module is given as text alone, so a probe is
+    # also given the root its module imports from.
     options.mypy_path = list(
         dict.fromkeys(
             [
                 *(str((root / path).resolve()) for path in options.mypy_path),
-                *roots,
+                *(roots if probe else ()),
             ]
         )
     )
