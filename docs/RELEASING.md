@@ -69,10 +69,27 @@ as installing the extra replaces it, and the result names the pin it overrode:
 rich's `poetry.lock` pins Black 22.12.0, below `black>=26.3.1`. Which formatter
 formats a project is still Towel's choice from the project's configuration,
 ruff where it configures ruff and Black otherwise; the harness only makes the
-tools available. The checkers therefore see the project's dependencies, and
-Towel's import model sees the project installed from the tree it refactors
-rather than an installed copy elsewhere, which it would count as a second
-provider of the project's names.
+tools available.
+
+The environment also holds what the project declares its own type check needs:
+stub packages, mypy plugins, and whatever its checked code imports beyond its
+runtime dependencies. The harness reads these where projects declare them:
+PEP 735 dependency groups and `[project.optional-dependencies]` extras whose
+names say typing, types, mypy, pyright, lint or check; the `deps`,
+`dependency_groups` and `extras` of the tox environments (`tox.ini`,
+`tox.toml`, `[tool.tox]`) whose commands run mypy or pyright, with their factor
+conditions applied; what nox sessions that run them install; the
+`additional_dependencies` of `.pre-commit-config.yaml`'s mypy and pyright
+hooks; and requirements files named for typing. Each is installed at the
+version the project's lock file pins where it pins one. The install only adds:
+everything already in the environment is held at its version by a constraints
+file, so the test dependencies, the checkers and formatters chosen above, and
+the project itself cannot change, and a requirement naming one of them is left
+as it is. A requirement the installer cannot add beside them is refused and
+recorded, not resolved around. The checkers therefore see what the project's
+own type check sees, and Towel's import model sees the project installed from
+the tree it refactors rather than an installed copy elsewhere, which it would
+count as a second provider of the project's names.
 The editable install follows the tree each test run exercises: the clone for
 the baseline, the refactored copy for Towel and the run after it, and the
 original package again for each retest of the original, so a regression in a
@@ -84,9 +101,12 @@ html5lib, whose `setup.py` cannot be built in isolation.
 Run the corpus with the default type policy, which is what a user gets. Each
 result records the interpreter, the candidate's version, each checker's and
 formatter's version and who chose it (`project`, the lock file, or the extra,
-`towel[types]` or `towel[format]`, with any pin it overrode), the tree the
-project was installed from, and whether its refactor extracted across modules;
-record those and the reported `typing_mode` alongside the verdict counts. Every refactor passes `--cross-module` where the Towel under test has
+`towel[types]` or `towel[format]`, with any pin it overrode), every typing
+requirement the project declares with where it declares it and what became of
+it (installed as, pinned by, or why not), the distributions the installer
+added for them, the tree the project was installed from, and whether its
+refactor extracted across modules; record those and the reported `typing_mode`
+alongside the verdict counts. Every refactor passes `--cross-module` where the Towel under test has
 that option. A Towel without it extracts across modules by default, and the
 result says so. A manifest entry may turn cross-module extraction off only with
 a `cross_module_reason`, and the summary lists every project that ran without

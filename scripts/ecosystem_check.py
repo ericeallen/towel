@@ -23,15 +23,22 @@ at the version the project's lock file pins, unless that version fails the
 extra's requirement, and the candidate: one wheel, built from ``--towel-src`` or
 named by ``--towel-wheel``, verified to be that source, and verified again in
 every environment it is installed into. Towel still picks the formatter from
-the project's configuration. The type checkers therefore see the project's
-dependencies, and Towel's import model sees the project installed from the tree
-it refactors, not an installed copy elsewhere. The editable install follows the
-tree each test run exercises -- the clone for the baseline, the refactored copy
-for Towel and the run after it, the original package again whenever a retest
-runs the original -- so a test that imports the project other than through
-``PYTHONPATH`` tests the same code as the rest of its run. Each report records
-the interpreter, the candidate, and each checker and formatter that was there,
-at what version, and who chose it.
+the project's configuration. Beside them go the requirements the project
+declares for its own type check -- dependency groups and extras named for
+typing, what its tox environments and nox sessions that run mypy or pyright
+install, its pre-commit mypy and pyright hooks' additional dependencies, and
+requirements files named for typing -- at its lock file's pins, adding to the
+environment without changing anything in it. The type checkers therefore see
+what the project's own type check sees, and Towel's import model sees the
+project installed from the tree it refactors, not an installed copy elsewhere.
+The editable install follows the tree each test run exercises -- the clone for
+the baseline, the refactored copy for Towel and the run after it, the original
+package again whenever a retest runs the original -- so a test that imports the
+project other than through ``PYTHONPATH`` tests the same code as the rest of its
+run. Each report records the interpreter, the candidate, each checker and
+formatter that was there, at what version and who chose it, and each typing
+requirement the project declares, where it declares it, and what the installer
+added for it or why it did not.
 
 Every refactor extracts across modules, where the corpus finds the most bugs:
 the harness passes ``--cross-module`` wherever the Towel under test has that
@@ -66,7 +73,9 @@ refreshed after review.
 from __future__ import annotations
 
 import argparse
+import ast
 import concurrent.futures
+import configparser
 import contextlib
 import dataclasses
 import email.message
@@ -94,6 +103,7 @@ from typing import (
     Callable,
     ContextManager,
     Dict,
+    FrozenSet,
     Iterator,
     List,
     Literal,
@@ -120,7 +130,7 @@ LOCK_FILES: Tuple[LockFile, ...] = ("uv.lock", "poetry.lock", "pdm.lock")
 """The lock files whose pins describe a project's own environment, in the order they are read."""
 TOWEL_PACKAGE = "towel"
 """The import package the candidate wheel provides."""
-ENVIRONMENT_LAYOUT = 4
+ENVIRONMENT_LAYOUT = 5
 """What a project environment holds; raised when that changes, so an older one is rebuilt."""
 CROSS_MODULE_FLAG = "--cross-module"
 """The option that turns on extraction across modules, where the Towel under test has it."""
@@ -210,6 +220,33 @@ class Tool:
 
 
 @dataclasses.dataclass(frozen=True)
+class TypingRequirement:
+    """One requirement a project declares for its own type check, and what became of it."""
+
+    declared: str
+    """As the project wrote it."""
+    source: str
+    """Where: ``pyproject.toml [dependency-groups] typing``, ``tox.ini [testenv:mypy]``..."""
+    installed_as: str = ""
+    """What the installer was asked for, at the project's lock pin where it has one."""
+    pinned_by: str = ""
+    """The lock file whose pin that is."""
+    skipped: str = ""
+    """Why the installer was not asked for it, or why it refused."""
+
+
+@dataclasses.dataclass(frozen=True)
+class TypingDependencies:
+    """The project's own typing dependencies, found where it declares them, and installed."""
+
+    requirements: Tuple[TypingRequirement, ...] = ()
+    added: Tuple[str, ...] = ()
+    """``name==version`` of each distribution the installer reported adding."""
+    removed: Tuple[str, ...] = ()
+    """And of each it reported removing; nothing already there may change, so none should."""
+
+
+@dataclasses.dataclass(frozen=True)
 class Environment:
     """The environment Towel ran in for one project, as the report records it."""
 
@@ -219,6 +256,8 @@ class Environment:
     formatters: Tuple[Tool, ...]
     installed_from: str = ""
     """The tree the project was installed from, editable, when Towel ran; empty if it was not."""
+    typing: TypingDependencies = TypingDependencies()
+    """What the project declares its own type check needs, and what of it was installed."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -635,16 +674,17 @@ def build_candidate(towel_src: Path, out: Path, log: Path) -> Path:
     return out
 
 
-def _uv(command: Sequence[str], log: Path) -> None:
+def _uv(command: Sequence[str], log: Path) -> str:
     """Run one ``uv`` command, keeping what it said in ``log``, and fail loudly."""
     completed = subprocess.run(list(command), capture_output=True, text=True, check=False)
     with log.open("a", encoding="utf-8") as handle:
         handle.write(f"$ {shlex.join(command)}\n{completed.stdout}{completed.stderr}\n")
     completed.check_returncode()
+    return completed.stdout + completed.stderr
 
 
-def _install(python: Path, log: Path, *arguments: str) -> None:
-    _uv(["uv", "pip", "install", "-p", str(python), *arguments], log)
+def _install(python: Path, log: Path, *arguments: str) -> str:
+    return _uv(["uv", "pip", "install", "-p", str(python), *arguments], log)
 
 
 def _site_packages(python: Path) -> Path:
@@ -815,20 +855,65 @@ satisfies = [
     Requirement(requirement).specifier.contains(version, prereleases=True)
     for requirement, version in question["requirements"]
 ]
-print(json.dumps({"applies": applies, "satisfies": satisfies}))
+parsed = []
+for text in question["parse"]:
+    try:
+        requirement = Requirement(text)
+    except Exception:
+        parsed.append(None)
+        continue
+    marker = requirement.marker
+    parsed.append({
+        "name": requirement.name,
+        "extras": sorted(requirement.extras),
+        "specifier": str(requirement.specifier),
+        "marker": "" if marker is None else str(marker),
+        "url": requirement.url or "",
+        "applies": marker is None or marker.evaluate({"extra": ""}),
+    })
+print(json.dumps({"applies": applies, "satisfies": satisfies, "parsed": parsed}))
 """
 """Asked of an environment's own ``packaging``, which pytest brings: which marker sets
-describe its interpreter, and which versions satisfy which requirements."""
+describe its interpreter, which versions satisfy which requirements, and what each
+requirement a project declares says."""
+
+
+@dataclasses.dataclass(frozen=True)
+class ParsedRequirement:
+    """A PEP 508 requirement as an environment's ``packaging`` reads it."""
+
+    name: str
+    extras: Tuple[str, ...]
+    specifier: str
+    marker: str
+    url: str
+    applies: bool
+    """Whether its marker holds for the environment's interpreter."""
+
+    def pinned(self, version: str) -> str:
+        """This requirement at exactly ``version``, extras and marker kept."""
+        extras = f"[{','.join(self.extras)}]" if self.extras else ""
+        marker = f"; {self.marker}" if self.marker else ""
+        return f"{self.name}{extras}=={version}{marker}"
+
+
+@dataclasses.dataclass(frozen=True)
+class PackagingAnswer:
+    applies: Tuple[bool, ...]
+    satisfies: Tuple[bool, ...]
+    parsed: Tuple[Optional[ParsedRequirement], ...]
 
 
 def _ask_packaging(
     python: Path,
     markers: Sequence[Sequence[str]] = (),
     requirements: Sequence[Tuple[str, str]] = (),
-) -> Tuple[List[bool], List[bool]]:
+    parse: Sequence[str] = (),
+) -> PackagingAnswer:
     question = {
         "markers": [list(marker_set) for marker_set in markers],
         "requirements": [list(pair) for pair in requirements],
+        "parse": list(parse),
     }
     completed = subprocess.run(
         [str(python), "-I", "-c", _PACKAGING_PROBE, json.dumps(question)],
@@ -839,7 +924,25 @@ def _ask_packaging(
         cwd=python.parent,
     )
     answer = json.loads(completed.stdout)
-    return [bool(item) for item in answer["applies"]], [bool(item) for item in answer["satisfies"]]
+    return PackagingAnswer(
+        tuple(bool(item) for item in answer["applies"]),
+        tuple(bool(item) for item in answer["satisfies"]),
+        tuple(
+            (
+                None
+                if item is None
+                else ParsedRequirement(
+                    _canonical(str(item["name"])),
+                    tuple(str(extra) for extra in item["extras"]),
+                    str(item["specifier"]),
+                    str(item["marker"]),
+                    str(item["url"]),
+                    bool(item["applies"]),
+                )
+            )
+            for item in answer["parsed"]
+        ),
+    )
 
 
 def applicable_version(
@@ -848,7 +951,7 @@ def applicable_version(
     """The one locked version of ``name`` meant for ``python``, or ``None`` if none is."""
     if len(versions) == 1 and not versions[0].markers:
         return versions[0].version
-    applies, _ = _ask_packaging(python, markers=[version.markers for version in versions])
+    applies = _ask_packaging(python, markers=[version.markers for version in versions]).applies
     matches = [version.version for version, match in zip(versions, applies) if match]
     if len(matches) > 1:
         raise EnvironmentFailure(f"{lock} locks {name} at {', '.join(matches)} for {python}")
@@ -891,12 +994,12 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
             if pinned is not None:
                 offered[name] = (lock, pinned)
     judged = [(name, requirement) for name, requirement, _ in requested if name in offered]
-    _, satisfied = (
+    satisfied = (
         _ask_packaging(
             python, requirements=[(requirement, offered[name][1]) for name, requirement in judged]
-        )
+        ).satisfies
         if judged
-        else ([], [])
+        else ()
     )
     acceptable = {name for (name, _), fits in zip(judged, satisfied) if fits}
     choices: Dict[str, Choice] = {}
@@ -946,6 +1049,851 @@ def _read_provenance(path: Path) -> Optional[Dict[str, Choice]]:
     return choices
 
 
+# -- The project's own typing dependencies ---------------------------------------
+
+TYPING_WORDS = frozenset(
+    {
+        "typing",
+        "types",
+        "type",
+        "typecheck",
+        "typechecking",
+        "mypy",
+        "pyright",
+        "lint",
+        "linting",
+        "check",
+        "checks",
+    }
+)
+"""Words that name a dependency group, extra or requirements file for type checking."""
+
+CHECKER_COMMANDS = frozenset({"mypy", "dmypy", "pyright"})
+"""The commands whose running makes a tox environment or nox session a type check."""
+
+PYTHON_FACTORS = frozenset(
+    {
+        "py",
+        "py3",
+        f"py3{sys.version_info.minor}",
+        f"3.{sys.version_info.minor}",
+        f"py3.{sys.version_info.minor}",
+    }
+)
+"""The tox factors of the interpreter every project environment is built with."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Declaration:
+    """A requirement a project declares for its own type check, and where it declares it."""
+
+    requirement: str
+    source: str
+
+
+def _named_for_typing(name: str) -> bool:
+    return any(word in TYPING_WORDS for word in re.split(r"[^a-z0-9]+", name.lower()))
+
+
+def _runs_checker(command: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    return any(token.rsplit("/", 1)[-1] in CHECKER_COMMANDS for token in tokens)
+
+
+_LEADING_NAME = re.compile(r"^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\s*(?:\[([^\]]*)\])?")
+
+
+def _read_toml(path: Path) -> Mapping[str, object]:
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def _table(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _strings(value: object) -> List[str]:
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+@dataclasses.dataclass(frozen=True)
+class _Declarer:
+    """A project tree, read for what it declares its own type check needs."""
+
+    tree: Path
+    name: Optional[str]
+    """The project's own distribution, which it can name only to reach its extras."""
+    pyproject: Mapping[str, object]
+
+    def _groups(self) -> Dict[str, object]:
+        declared = _table(self.pyproject.get("dependency-groups"))
+        return {_canonical(name): value for name, value in declared.items()}
+
+    def group(self, name: str, seen: FrozenSet[str] = frozenset()) -> List[str]:
+        """A dependency group's requirements, its included groups' among them (PEP 735)."""
+        key = _canonical(name)
+        entries = self._groups().get(key)
+        if key in seen or not isinstance(entries, list):
+            return []
+        requirements: List[str] = []
+        for entry in entries:
+            if isinstance(entry, str):
+                requirements.append(entry)
+            elif isinstance(entry, dict) and isinstance(entry.get("include-group"), str):
+                requirements += self.group(entry["include-group"], seen | {key})
+        return requirements
+
+    def _extras(self) -> Dict[str, List[str]]:
+        project = _table(self.pyproject.get("project"))
+        declared = _table(project.get("optional-dependencies"))
+        return {_canonical(name): _strings(value) for name, value in declared.items()}
+
+    def extra(self, name: str) -> List[str]:
+        return self._extras().get(_canonical(name), [])
+
+    def declared(
+        self,
+        source: str,
+        requirements: Sequence[str] = (),
+        groups: Sequence[str] = (),
+        extras: Sequence[str] = (),
+        files: Sequence[Path] = (),
+    ) -> List[Declaration]:
+        """Everything one source declares, its groups, extras and files resolved."""
+        found: List[Declaration] = []
+        for requirement in requirements:
+            found += self._expanded(requirement, source, frozenset())
+        for group in groups:
+            for requirement in self.group(group):
+                found += self._expanded(requirement, f"{source}, group {group}", frozenset())
+        for extra in extras:
+            for requirement in self.extra(extra):
+                found += self._expanded(
+                    requirement, f"{source}, through {self.name}[{extra}]", frozenset()
+                )
+        for path in files:
+            label = f"{source}, {path.relative_to(self.tree).as_posix()}"
+            for requirement in _requirements_file(path, self.tree, frozenset()):
+                found += self._expanded(requirement, label, frozenset())
+        return found
+
+    def _expanded(self, requirement: str, source: str, seen: FrozenSet[str]) -> List[Declaration]:
+        """The requirement, and, when it names the project with extras, what they hold."""
+        found = [Declaration(requirement, source)]
+        match = _LEADING_NAME.match(requirement)
+        if self.name is None or match is None or _canonical(match[1]) != self.name:
+            return found
+        for extra in (part.strip() for part in (match[2] or "").split(",")):
+            if extra and _canonical(extra) not in seen:
+                for inner in self.extra(extra):
+                    found += self._expanded(
+                        inner,
+                        f"{source}, through {self.name}[{extra}]",
+                        seen | {_canonical(extra)},
+                    )
+        return found
+
+    def pip_arguments(self, source: str, arguments: Sequence[str]) -> List[Declaration]:
+        """What a command line of pip-style arguments installs: requirements, ``-r``
+        files, ``--group`` groups and the project's own ``.[extras]``."""
+        requirements: List[str] = []
+        groups: List[str] = []
+        extras: List[str] = []
+        files: List[Path] = []
+        values = list(arguments)
+        index = 0
+        while index < len(values):
+            argument = values[index]
+            following = values[index + 1] if index + 1 < len(values) else ""
+            if argument in (
+                "-r",
+                "--requirement",
+                "--group",
+                "-e",
+                "--editable",
+                "-c",
+                "--constraint",
+            ):
+                index += 2
+            else:
+                index += 1
+            if argument in ("-r", "--requirement"):
+                files.append((self.tree / following).resolve())
+            elif argument.startswith("--requirement=") or (
+                argument.startswith("-r") and len(argument) > 2
+            ):
+                files.append((self.tree / argument.split("=", 1)[-1].removeprefix("-r")).resolve())
+            elif argument == "--group" or argument.startswith("--group="):
+                name = following if argument == "--group" else argument.split("=", 1)[1]
+                groups.append(name.rsplit(":", 1)[-1])
+            elif argument in ("-e", "--editable") or argument.startswith(("-e", ".")):
+                target = following if argument in ("-e", "--editable") else argument
+                target = target.removeprefix("-e").strip()
+                if target.startswith("."):
+                    extras += [
+                        part for part in target.partition("[")[2].rstrip("]").split(",") if part
+                    ]
+            elif not argument.startswith("-"):
+                requirements.append(argument)
+        existing = [path for path in files if path.is_file() and path.is_relative_to(self.tree)]
+        return self.declared(source, requirements, groups, extras, existing)
+
+
+def _requirements_file(path: Path, root: Path, seen: FrozenSet[Path]) -> List[str]:
+    """The requirements a pip requirements file names, with those of every ``-r`` it includes."""
+    if path in seen or not path.is_file():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return []
+    requirements: List[str] = []
+    for line in text.replace("\\\n", " ").splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", line).strip()
+        if not line:
+            continue
+        if line.startswith(("-r", "--requirement")):
+            target = line.split(None, 1)[-1] if " " in line else line[2:]
+            included = (path.parent / target.split("=", 1)[-1]).resolve()
+            if included.is_relative_to(root):
+                requirements += _requirements_file(included, root, seen | {path})
+        elif not line.startswith("-"):
+            requirements.append(re.split(r"\s+--?\w", line, maxsplit=1)[0].strip())
+    return requirements
+
+
+def _group_declarations(declarer: _Declarer) -> List[Declaration]:
+    groups = _table(declarer.pyproject.get("dependency-groups"))
+    return [
+        declaration
+        for name in groups
+        if _named_for_typing(name)
+        for declaration in declarer.declared(
+            f"pyproject.toml [dependency-groups] {name}", declarer.group(name)
+        )
+    ]
+
+
+def _extra_declarations(declarer: _Declarer) -> List[Declaration]:
+    extras = _table(_table(declarer.pyproject.get("project")).get("optional-dependencies"))
+    return [
+        declaration
+        for name in extras
+        if _named_for_typing(name)
+        for declaration in declarer.declared(
+            f"pyproject.toml [project.optional-dependencies] {name}", declarer.extra(name)
+        )
+    ]
+
+
+_CONDITION = re.compile(r"^\s*([A-Za-z0-9_.!{},-]+):\s+(.*)$")
+
+
+def _conditioned(line: str) -> Tuple[Optional[str], str]:
+    """A tox line's factor condition, if it has one (``mypy: mypy src``), and the rest."""
+    match = _CONDITION.match(line)
+    return (match[1], match[2].strip()) if match else (None, line.strip())
+
+
+def _alternatives(condition: str) -> List[str]:
+    """``3.1{0,1}-mypy,lint`` as tox's alternatives: ``3.10-mypy``, ``3.11-mypy``, ``lint``."""
+    brace = re.search(r"\{([^{}]*)\}", condition)
+    if brace is None:
+        return [part for part in condition.split(",") if part]
+    inner = brace[1]
+    span = re.fullmatch(r"(\d+)-(\d+)", inner)
+    choices = (
+        [str(number) for number in range(int(span[1]), int(span[2]) + 1)]
+        if span
+        else inner.split(",")
+    )
+    head, tail = condition[: brace.start()], condition[brace.end() :]
+    return [
+        alternative for choice in choices for alternative in _alternatives(head + choice + tail)
+    ]
+
+
+def _factors(condition: Optional[str]) -> FrozenSet[str]:
+    if condition is None:
+        return frozenset()
+    return frozenset(
+        part
+        for alternative in _alternatives(condition)
+        for part in alternative.split("-")
+        if part and not part.startswith("!")
+    )
+
+
+def _applies(condition: Optional[str], factors: FrozenSet[str]) -> bool:
+    """Whether a line with ``condition`` applies to an environment of ``factors``."""
+    if condition is None:
+        return True
+    for alternative in _alternatives(condition):
+        parts = [part for part in alternative.split("-") if part]
+        positive = {part for part in parts if not part.startswith("!")}
+        negative = {part[1:] for part in parts if part.startswith("!")}
+        if positive <= factors and not negative & factors:
+            return True
+    return False
+
+
+class _CaseKeepingParser(configparser.ConfigParser):
+    def optionxform(self, optionstr: str) -> str:
+        return optionstr
+
+
+def _ini_lines(value: str) -> List[str]:
+    return [line for line in value.splitlines() if line.strip()]
+
+
+def _tox_ini_declarations(declarer: _Declarer, text: str, label: str) -> List[Declaration]:
+    """What tox environments that run mypy or pyright install, read from a ``tox.ini``."""
+    parser = _CaseKeepingParser(interpolation=None, strict=False, delimiters=("=",))
+    try:
+        parser.read_string(text)
+    except configparser.Error:
+        return []
+    sections = {name: dict(parser[name]) for name in parser.sections()}
+    base = sections.get("testenv", {})
+
+    def substituted(value: str, depth: int = 0) -> Optional[str]:
+        value = value.replace("{toxinidir}", str(declarer.tree))
+        reference = re.fullmatch(r"\{\[([^\]]+)\]([\w-]+)\}", value.strip())
+        if reference is not None and depth < 5:
+            section = sections.get(reference[1], {})
+            joined = "\n".join(
+                resolved
+                for line in _ini_lines(section.get(reference[2], ""))
+                if (resolved := substituted(line, depth + 1)) is not None
+            )
+            return joined
+        return None if "{" in value else value
+
+    found: List[Declaration] = []
+    base_qualifies = False
+    for name, values in sections.items():
+        if name != "testenv" and not name.startswith("testenv:"):
+            continue
+        own = "commands" in values
+        if name != "testenv" and not own and base_qualifies:
+            continue  # inherits the base environment's check, recorded once there
+        environment_factors = frozenset(name.partition(":")[2].split("-")) - {""}
+        factors: FrozenSet[str] = frozenset()
+        runs = False
+        for line in _ini_lines(values.get("commands", base.get("commands", ""))):
+            condition, command = _conditioned(line)
+            candidate = environment_factors | PYTHON_FACTORS | _factors(condition)
+            if _runs_checker(command) and _applies(condition, candidate):
+                runs = True
+                factors |= candidate
+        if not runs:
+            continue
+        if name == "testenv":
+            base_qualifies = True
+        requirements: List[str] = []
+        groups: List[str] = []
+        extras: List[str] = []
+        options: List[str] = []
+        for key in ("deps", "dependency_groups", "extras"):
+            for line in _ini_lines(values.get(key, base.get(key, ""))):
+                condition, value = _conditioned(line)
+                if not _applies(condition, factors):
+                    continue
+                for resolved_line in _ini_lines(substituted(value) or ""):
+                    # A substitution brings its section's lines as written, conditions
+                    # and all, and tox then reads them for this environment.
+                    inner_condition, resolved_line = _conditioned(resolved_line)
+                    if not _applies(inner_condition, factors):
+                        continue
+                    if key == "deps":
+                        if resolved_line.startswith("-"):
+                            options += shlex.split(resolved_line)
+                        else:
+                            requirements.append(resolved_line)
+                    else:
+                        names = [part for part in re.split(r"[\s,]+", resolved_line) if part]
+                        (groups if key == "dependency_groups" else extras).extend(names)
+        source = f"{label} [{name}]"
+        found += declarer.declared(source, requirements, groups, extras)
+        found += declarer.pip_arguments(source, options)
+    return found
+
+
+def _tox_toml_declarations(
+    declarer: _Declarer, config: Mapping[str, object], label: str
+) -> List[Declaration]:
+    """The same for tox's TOML configuration (``tox.toml`` or ``[tool.tox]``)."""
+    base = _table(config.get("env_run_base"))
+    environments = {"env_run_base": base}
+    environments.update(
+        {name: {**base, **_table(table)} for name, table in _table(config.get("env")).items()}
+    )
+    found: List[Declaration] = []
+    base_qualifies = False
+    for name, table in environments.items():
+        commands = table.get("commands", [])
+        lines = [
+            " ".join(str(token) for token in command)
+            for command in (commands if isinstance(commands, list) else [])
+            if isinstance(command, list)
+        ]
+        if not any(_runs_checker(line) for line in lines):
+            continue
+        if name == "env_run_base":
+            base_qualifies = True
+        elif base_qualifies and "commands" not in _table(_table(config.get("env")).get(name)):
+            continue
+        deps = _strings(table.get("deps"))
+        source = f"{label} env {name}"
+        found += declarer.declared(
+            source,
+            [dep for dep in deps if not dep.startswith("-")],
+            _strings(table.get("dependency_groups")),
+            _strings(table.get("extras")),
+        )
+        found += declarer.pip_arguments(
+            source, [part for dep in deps if dep.startswith("-") for part in shlex.split(dep)]
+        )
+    return found
+
+
+def _tox_declarations(declarer: _Declarer) -> List[Declaration]:
+    found: List[Declaration] = []
+    ini = declarer.tree / "tox.ini"
+    if ini.is_file():
+        try:
+            found += _tox_ini_declarations(declarer, ini.read_text(encoding="utf-8"), "tox.ini")
+        except (OSError, UnicodeError):
+            pass
+    tox = _table(_table(declarer.pyproject.get("tool")).get("tox"))
+    legacy = tox.get("legacy_tox_ini")
+    if isinstance(legacy, str):
+        found += _tox_ini_declarations(declarer, legacy, "pyproject.toml legacy_tox_ini")
+    if tox:
+        found += _tox_toml_declarations(declarer, tox, "pyproject.toml [tool.tox]")
+    native = declarer.tree / "tox.toml"
+    if native.is_file():
+        found += _tox_toml_declarations(declarer, _read_toml(native), "tox.toml")
+    return found
+
+
+def _nox_declarations(declarer: _Declarer) -> List[Declaration]:
+    """What nox sessions that run mypy or pyright install, read from ``noxfile.py``'s syntax."""
+    path = declarer.tree / "noxfile.py"
+    try:
+        module = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, SyntaxError, ValueError):
+        return []
+    constants: Dict[str, List[str]] = {}
+    for statement in module.body:
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target] if isinstance(statement, ast.AnnAssign) else []
+        )
+        value = getattr(statement, "value", None)
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            continue
+        listed = [
+            item.value
+            for item in value.elts
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+        ]
+        if len(listed) == len(value.elts):
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    constants[target.id] = listed
+
+    def arguments(call: ast.Call) -> Tuple[List[str], List[str]]:
+        """The call's string arguments, and the dependency groups it names."""
+        strings: List[str] = []
+        groups: List[str] = []
+        for argument in call.args:
+            node = argument.value if isinstance(argument, ast.Starred) else argument
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                strings.append(node.value)
+            elif isinstance(node, ast.Name):
+                strings += constants.get(node.id, [])
+            elif isinstance(node, (ast.List, ast.Tuple)):
+                strings += [
+                    item.value
+                    for item in node.elts
+                    if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                ]
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "dependency_groups"
+            ):
+                groups += [
+                    item.value
+                    for item in node.args[1:]
+                    if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                ]
+        return strings, groups
+
+    def is_session(decorator: ast.expr) -> bool:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+        return name == "session"
+
+    found: List[Declaration] = []
+    for function in module.body:
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) or not any(
+            is_session(decorator) for decorator in function.decorator_list
+        ):
+            continue
+        calls = [
+            (node.func.attr, node)
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ]
+        runners = [call for method, call in calls if method in ("run", "run_always", "run_install")]
+        if not any(_runs_checker(shlex.join(arguments(call)[0])) for call in runners):
+            continue
+        source = f"noxfile.py session {function.name}"
+        for method, call in calls:
+            strings, groups = arguments(call)
+            if method == "install":
+                found += declarer.pip_arguments(source, strings)
+                found += declarer.declared(source, groups=groups)
+            elif method in ("run", "run_install") and strings[:2] == ["uv", "sync"]:
+                found += declarer.pip_arguments(source, strings[2:])
+    return found
+
+
+_PRE_COMMIT_CHECKER_REPOSITORIES = ("mirrors-mypy", "pyright-python")
+
+
+def _yaml_scalar(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    return text
+
+
+def _yaml_flow_list(text: str) -> List[str]:
+    """``[a, 'b>=1', "c"]`` as its items."""
+    inner = text.strip()[1:-1]
+    items: List[str] = []
+    current = ""
+    quote = ""
+    for character in inner:
+        if quote:
+            current += character
+            quote = "" if character == quote else quote
+        elif character in "'\"":
+            quote = character
+            current += character
+        elif character == ",":
+            items.append(current)
+            current = ""
+        else:
+            current += character
+    items.append(current)
+    return [_yaml_scalar(item) for item in items if item.strip()]
+
+
+def _without_comment(line: str) -> str:
+    quote = ""
+    for index, character in enumerate(line):
+        if quote:
+            quote = "" if character == quote else quote
+        elif character in "'\"":
+            quote = character
+        elif character == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index].rstrip()
+    return line.rstrip()
+
+
+def pre_commit_dependencies(text: str) -> List[Tuple[str, List[str]]]:
+    """Each mypy or pyright hook's label and its ``additional_dependencies``.
+
+    Pre-commit configurations are YAML, but written in a small part of it: block
+    mappings and sequences, flow sequences, quoted scalars, and anchors with aliases
+    for a list shared between hooks. That part is read here, since the harness runs
+    on the standard library alone; anything else in a hook's list is left unread.
+    """
+    lines = [_without_comment(line) for line in text.splitlines()]
+    anchors: Dict[str, List[str]] = {}
+    hooks: List[Tuple[str, List[str]]] = []
+    repository = ""
+    hook_id = ""
+    hook_indent = -1
+    pending: Optional[Tuple[int, str]] = None
+    """An ``additional_dependencies`` key whose block list is being read: its indent, anchor."""
+    collected: List[str] = []
+
+    def finish_list() -> None:
+        nonlocal pending, collected
+        if pending is not None:
+            if pending[1]:
+                anchors[pending[1]] = list(collected)
+            if hook_id:
+                hooks.append((hook_id, list(collected)))
+        pending, collected = None, []
+
+    for line in lines:
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        if pending is not None:
+            if stripped.startswith("- ") and indent >= pending[0]:
+                collected.append(_yaml_scalar(stripped[2:]))
+                continue
+            finish_list()
+        item = re.match(r"^-\s+(\w[\w-]*):\s*(.*)$", stripped)
+        key, _, value = (item[1], "", item[2]) if item else stripped.partition(":")
+        key, value = key.strip(), value.strip()
+        if item is not None and key == "repo":
+            repository, hook_id, hook_indent = value, "", -1
+            continue
+        if item is not None:
+            hook_id, hook_indent = "", indent
+        if key == "id" and (item is not None or indent > hook_indent):
+            hook_id = (
+                value
+                if (
+                    value in CHECKER_COMMANDS
+                    or any(name in repository for name in _PRE_COMMIT_CHECKER_REPOSITORIES)
+                )
+                else ""
+            )
+            continue
+        if key != "additional_dependencies" or not hook_id:
+            anchor = re.match(r"^&([\w-]+)\s*(.*)$", value)
+            if anchor is not None and anchor[2].startswith("["):
+                anchors[anchor[1]] = _yaml_flow_list(anchor[2])
+            continue
+        anchor = re.match(r"^&([\w-]+)\s*(.*)$", value)
+        name, value = (anchor[1], anchor[2]) if anchor else ("", value)
+        if value.startswith("*"):
+            hooks.append((hook_id, list(anchors.get(value[1:], []))))
+        elif value.startswith("["):
+            listed = _yaml_flow_list(value)
+            if name:
+                anchors[name] = listed
+            hooks.append((hook_id, listed))
+        elif not value:
+            pending, collected = (indent, name), []
+    finish_list()
+    return [(f"hook {hook}", dependencies) for hook, dependencies in hooks]
+
+
+def _pre_commit_declarations(declarer: _Declarer) -> List[Declaration]:
+    path = declarer.tree / ".pre-commit-config.yaml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return []
+    return [
+        declaration
+        for hook, dependencies in pre_commit_dependencies(text)
+        for declaration in declarer.declared(f".pre-commit-config.yaml {hook}", dependencies)
+    ]
+
+
+_REQUIREMENT_DIRECTORIES = ("requirements", "requirements.d", "reqs")
+
+
+def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
+    """Requirements files named for typing, at the root or in a requirements directory."""
+    root = declarer.tree
+    candidates = [
+        path
+        for path in (root.iterdir() if root.is_dir() else [])
+        if path.is_file() and "req" in path.name.lower() and path.suffix in (".txt", ".in")
+    ]
+    for directory in _REQUIREMENT_DIRECTORIES:
+        if (root / directory).is_dir():
+            candidates += [
+                path
+                for path in (root / directory).rglob("*")
+                if path.is_file() and path.suffix in (".txt", ".in")
+            ]
+    named = sorted(
+        path
+        for path in candidates
+        if _named_for_typing(path.relative_to(root).with_suffix("").as_posix())
+        # A compiled requirements.txt beside its .in pins what the .in names.
+        and not (path.suffix == ".in" and path.with_suffix(".txt").is_file())
+    )
+    return [
+        declaration
+        for path in named
+        for declaration in declarer.declared(
+            path.relative_to(root).as_posix(), _requirements_file(path, root, frozenset())
+        )
+    ]
+
+
+def typing_declarations(tree: Path, project: Optional[str]) -> List[Declaration]:
+    """Every requirement ``tree`` declares for its own type check, and where.
+
+    PEP 735 dependency groups and extras named for typing, the environments of tox
+    and the sessions of nox that run mypy or pyright, pre-commit's mypy and pyright
+    hooks, and requirements files named for typing, in that order.
+    """
+    pyproject = _read_toml(tree / "pyproject.toml")
+    if project is None:
+        declared = _table(pyproject.get("project")).get("name")
+        project = _canonical(declared) if isinstance(declared, str) else None
+    declarer = _Declarer(tree, project, pyproject)
+    return [
+        *_group_declarations(declarer),
+        *_extra_declarations(declarer),
+        *_tox_declarations(declarer),
+        *_nox_declarations(declarer),
+        *_pre_commit_declarations(declarer),
+        *_requirement_file_declarations(declarer),
+    ]
+
+
+_INSTALL_REPORT = re.compile(r"^\s*([+-])\s+([A-Za-z0-9][A-Za-z0-9._-]*)==(\S+)", re.M)
+"""A distribution ``uv pip install`` reports adding (``+``) or removing (``-``)."""
+
+
+def _reported(output: str, sign: str) -> List[str]:
+    return [
+        f"{match[2]}=={match[3]}" for match in _INSTALL_REPORT.finditer(output) if match[1] == sign
+    ]
+
+
+def _install_typing(
+    python: Path, tree: Path, distribution: Optional[str], tools: Sequence[str], log: Path
+) -> TypingDependencies:
+    """Install what the project declares its own type check needs, adding only.
+
+    Each requirement it declares (see ``typing_declarations``) is installed at the
+    version the project's lock file pins where it pins one. Nothing already in the
+    environment may change: not the test dependencies the manifest installed, not the
+    checkers and formatters chosen for Towel, not the project itself. A requirement
+    naming one of them is left as it is, and everything installed is constrained to
+    the versions the environment already has, so a requirement that would need
+    another is refused by the installer and recorded, rather than resolved around.
+    """
+    declarations = typing_declarations(tree, distribution)
+    if not declarations:
+        return TypingDependencies()
+    parsed = _ask_packaging(
+        python, parse=[declaration.requirement for declaration in declarations]
+    ).parsed
+    project = distribution or _canonical(
+        str(_table(_read_toml(tree / "pyproject.toml").get("project")).get("name", ""))
+    )
+    names = sorted({requirement.name for requirement in parsed if requirement is not None})
+    present = probe_environment(python, names).versions
+    lock, pins = lock_pins(
+        tree, [name for name in names if present.get(name) is None and name != project]
+    )
+    records: List[TypingRequirement] = []
+    requests: Dict[str, None] = {}
+    for declaration, requirement in zip(declarations, parsed):
+        record = TypingRequirement(declaration.requirement, declaration.source)
+        installed = present.get(requirement.name) if requirement is not None else None
+        if requirement is None:
+            record = dataclasses.replace(record, skipped="not a requirement an installer takes")
+        elif requirement.name == project:
+            record = dataclasses.replace(
+                record, skipped="the project itself, installed from its tree"
+            )
+        elif not requirement.applies:
+            record = dataclasses.replace(record, skipped="its marker excludes this environment")
+        elif installed is not None:
+            held = (
+                "Towel's tool selection holds"
+                if requirement.name in tools
+                else "already installed at"
+            )
+            record = dataclasses.replace(record, skipped=f"{held} {requirement.name} {installed}")
+        else:
+            pinned = (
+                applicable_version(python, lock, requirement.name, pins[requirement.name])
+                if lock is not None and requirement.name in pins and not requirement.url
+                else None
+            )
+            asked = requirement.pinned(pinned) if pinned else declaration.requirement
+            record = dataclasses.replace(
+                record, installed_as=asked, pinned_by=lock if pinned and lock else ""
+            )
+            requests[asked] = None
+        records.append(record)
+    if not requests:
+        return TypingDependencies(tuple(records))
+    frozen = subprocess.run(
+        ["uv", "pip", "freeze", "-p", str(python), "--exclude-editable"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    constraints = python.parent.parent / "towel-typing-constraints.txt"
+    constraints.write_text(frozen, encoding="utf-8")
+    added: List[str] = []
+    removed: List[str] = []
+    refused: Dict[str, str] = {}
+    try:
+        output = _install(python, log, "-c", str(constraints), *requests)
+        added, removed = _reported(output, "+"), _reported(output, "-")
+    except subprocess.CalledProcessError:
+        # One that cannot be installed beside what is there must not cost the rest.
+        for asked in requests:
+            try:
+                output = _install(python, log, "-c", str(constraints), asked)
+            except subprocess.CalledProcessError as error:
+                said = [line for line in str(error.stderr or "").splitlines() if line.strip()]
+                refused[asked] = said[-1].strip() if said else f"exit {error.returncode}"
+                continue
+            added += _reported(output, "+")
+            removed += _reported(output, "-")
+    if distribution is not None and tree.resolve() not in {
+        location.resolve() for location in editable_installs(python).values()
+    }:
+        raise EnvironmentFailure(f"installing typing dependencies moved {distribution} off {tree}")
+    return TypingDependencies(
+        tuple(
+            (
+                dataclasses.replace(
+                    record, skipped=f"the installer refused it: {refused[record.installed_as]}"
+                )
+                if record.installed_as in refused
+                else record
+            )
+            for record in records
+        ),
+        tuple(added),
+        tuple(removed),
+    )
+
+
+def _read_typing(path: Path) -> Optional[TypingDependencies]:
+    """What an environment's build recorded of the project's typing dependencies."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        requirements = tuple(
+            TypingRequirement(
+                str(entry["declared"]),
+                str(entry["source"]),
+                str(entry.get("installed_as", "")),
+                str(entry.get("pinned_by", "")),
+                str(entry.get("skipped", "")),
+            )
+            for entry in data["requirements"]
+        )
+        return TypingDependencies(
+            requirements,
+            tuple(str(item) for item in data["added"]),
+            tuple(str(item) for item in data["removed"]),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 @dataclasses.dataclass(frozen=True)
 class ProjectEnvironment:
     """One project's environment as the harness drives it."""
@@ -962,7 +1910,8 @@ def environment(
     """The project's own environment, with the project installed from ``source``.
 
     It holds pytest and the manifest's dependencies, the project installed editable,
-    the checkers and formatters of Towel's extras (see ``_install_tools``), and the
+    the checkers and formatters of Towel's extras (see ``_install_tools``), what the
+    project declares its own type check needs (see ``_install_typing``), and the
     candidate, installed with ``--no-deps`` and then verified. It is built once and
     reused while the manifest entry and the extras are unchanged. The candidate
     is reinstalled on every use, and a reused environment is pointed back at
@@ -972,6 +1921,7 @@ def environment(
     python = env_dir / "bin" / "python"
     fingerprint = env_dir / "towel-deps.txt"
     provenance_file = env_dir / "towel-tools.json"
+    typing_file = env_dir / "towel-typing.json"
     requirements = (*candidate.types_requirements, *candidate.format_requirements)
     wanted = "\n".join(
         [
@@ -982,12 +1932,14 @@ def environment(
         ]
     )
     provenance = _read_provenance(provenance_file)
+    typing = _read_typing(typing_file)
     reusable = (
         python.exists()
         and fingerprint.exists()
         and fingerprint.read_text() == wanted
         and provenance is not None
         and set(provenance) == {requirement_name(requirement) for requirement in requirements}
+        and typing is not None
     )
     if not reusable and env_dir.exists():
         # The manifest or the layout changed, or an earlier build never finished.
@@ -1004,12 +1956,15 @@ def environment(
         else None
     )
     # After the project and its own requirements, so a tool they install is theirs.
-    if not reusable or provenance is None:
+    if not reusable or provenance is None or typing is None:
         provenance = _install_tools(python, candidate, source, log)
         provenance_file.write_text(
             json.dumps({name: dataclasses.asdict(choice) for name, choice in provenance.items()}),
             encoding="utf-8",
         )
+        # After Towel's tools, so what the project declares cannot displace them.
+        typing = _install_typing(python, source, distribution, list(provenance), log)
+        typing_file.write_text(json.dumps(dataclasses.asdict(typing)), encoding="utf-8")
         # Written last: an environment without it is one whose build never finished.
         fingerprint.write_text(wanted)
     _install(
@@ -1040,6 +1995,7 @@ def environment(
             tuple(tools[requirement_name(r)] for r in candidate.types_requirements),
             tuple(tools[requirement_name(r)] for r in candidate.format_requirements),
             str(source) if distribution is not None else "",
+            typing,
         ),
     )
 
@@ -1841,6 +2797,20 @@ def _tools_cell(tools: Sequence[Tool]) -> str:
     return ", ".join(cells)
 
 
+def _typing_cell(typing: TypingDependencies) -> str:
+    """``3 of 7 (.pre-commit-config.yaml hook mypy)`` for one row of the summary."""
+    if not typing.requirements:
+        return "none declared"
+    installed = {
+        requirement.installed_as
+        for requirement in typing.requirements
+        if requirement.installed_as and not requirement.skipped
+    }
+    declared = {requirement.declared for requirement in typing.requirements}
+    sources = sorted({requirement.source.split(",")[0] for requirement in typing.requirements})
+    return f"{len(installed)} of {len(declared)} ({'; '.join(sources)})"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -2018,7 +2988,9 @@ def main() -> int:
         "pins, `(over ...)` one whose chosen version failed the extra's requirement and "
         "was replaced as installing the extra replaces it, and the rest came from the "
         "candidate's `types` and `format` extras. Which formatter a project gets is its "
-        "configuration's choice, as it is for any user.",
+        "configuration's choice, as it is for any user. Typing deps counts the "
+        "requirements the project declares for its own type check that were installed, "
+        "of those it declares, and where it declares them; each result lists them all.",
         "",
         f"Typing mode requested: `{typing_mode}`. A project whose own sources do not "
         "check is declined by Towel and rerun here without types; its row says so, and "
@@ -2029,9 +3001,9 @@ def main() -> int:
         "Towel without that option) unless its manifest entry turns that off with a "
         "reason; each such project is listed below the table.",
         "",
-        "| Project | Commit | Verdict | Typing | Checkers | Formatters | Changed files "
-        "| Refactor s | Before | After |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Project | Commit | Verdict | Typing | Checkers | Formatters | Typing deps "
+        "| Changed files | Refactor s | Before | After |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for result in results:
         typing = result.typing_mode + (f" (declined: {result.fallback})" if result.fallback else "")
@@ -2040,6 +3012,7 @@ def main() -> int:
             f"| {result.name} | `{result.commit[:10]}` | {result.verdict} | {typing} | "
             f"{_tools_cell(environment.checkers if environment else ())} | "
             f"{_tools_cell(environment.formatters if environment else ())} | "
+            f"{_typing_cell(environment.typing) if environment else ''} | "
             f"{result.changed_files} | "
             f"{result.refactor.seconds if result.refactor else 0:.0f} | "
             f"{result.baseline.summary if result.baseline else ''} | "
