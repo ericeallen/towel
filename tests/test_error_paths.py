@@ -83,6 +83,7 @@ def _oracle_without_pyright() -> type_inference.PyrightOracle:
     oracle._warmed = {}
     oracle._probe_copies = {}
     oracle._interpreter = sys.executable
+    oracle._search_path = ()
     return oracle
 
 

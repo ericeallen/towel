@@ -454,7 +454,11 @@ above all `autoSearchPaths`, without which a `src` layout's consumers resolved
 the package to the environment's installed copy, the user's own tree, and a
 candidate that broke them read as clean. Both paths resolve imports through
 the same interpreter, and the command line is told the project's root rather
-than left to find it from a working directory.
+than left to find it from a working directory. Where that interpreter's
+search path reaches into the project, as an editable install's does, both are
+given the copy's counterpart ahead of it, so a consumer that imports its
+package through the install is judged against the candidate wherever the
+package lives.
 `type_oracle_for_project` picks the checker the project configures: mypy
 for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
 `pyrightconfig.json`, and for a project configuring both, mypy infers

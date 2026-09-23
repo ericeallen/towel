@@ -453,6 +453,7 @@ def test_invalid_pyright_results_do_not_certify_subtypes(
     checker._warmed = {}
     checker._probe_copies = {}
     checker._interpreter = sys.executable
+    checker._search_path = ()
     path = tmp_path / "m.py"
     path.write_text("x = 1\n")
     payload = json.dumps({"generalDiagnostics": [] if diagnostic is None else [diagnostic]})
