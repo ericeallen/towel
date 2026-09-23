@@ -87,8 +87,30 @@ def dominant_newline(data: bytes) -> bytes:
     return best[1] if best[0] else b"\n"
 
 
+class UnencodableText(ValueError):
+    """New text holds a character its file's own encoding cannot represent.
+
+    Rendering writes a string constant by value, so an escape such as
+    ``"\\u20ac"`` in a Latin-1 file comes back as the character itself. The
+    file cannot hold that text, and the refactoring that produced it cannot
+    be written; nothing else about the run is wrong.
+    """
+
+
 def encode_like(original: bytes, text: str) -> bytes:
-    """``text`` (LF) as bytes in ``original``'s encoding, BOM and newline convention."""
-    encoded = text.encode(source_encoding(original))
+    """``text`` (LF) as bytes in ``original``'s encoding, BOM and newline convention.
+
+    Raises ``UnencodableText`` when that encoding cannot represent ``text``.
+    """
+    encoding = source_encoding(original)
+    try:
+        encoded = text.encode(encoding)
+    except UnicodeEncodeError as error:
+        character = error.object[error.start]
+        line = error.object.count("\n", 0, error.start) + 1
+        raise UnencodableText(
+            f"the file's encoding, {encoding}, cannot represent {character!r}"
+            f" (U+{ord(character):04X}) on line {line} of the new text"
+        ) from error
     newline = dominant_newline(original)
     return encoded if newline == b"\n" else encoded.replace(b"\n", newline)

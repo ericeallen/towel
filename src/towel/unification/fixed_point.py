@@ -75,7 +75,7 @@ from ..consumers import MAXIMUM_FILES
 from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
 from ..filesystem import StagedProject, copy_project, refuse_unusable_output, staged_project
 from ..project_layout import find_project_root
-from ..source_text import decode_source, encode_like, read_source
+from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
 
 from .materialize import Materialization
@@ -200,7 +200,7 @@ class FixedPointDrivers(Materialization):
             for proposal in proposals:
                 if proposal in rejected:
                     continue
-                rendered = self._rendered_or_none(file_path, proposal)
+                rendered = self._rendered_or_none(file_path, proposal, current_bytes)
                 if rendered is None:
                     rejected.add(proposal)
                     continue
@@ -234,17 +234,21 @@ class FixedPointDrivers(Materialization):
             self.confirm_run_with_a_cold_checker([file_path])
         return current_code, num_applied, descriptions
 
-    def _rendered_or_none(self, file_path: str, proposal: RefactoringProposal) -> Optional[str]:
+    def _rendered_or_none(
+        self, file_path: str, proposal: RefactoringProposal, original: bytes
+    ) -> Optional[str]:
         """The file with ``proposal`` applied, or None when rendering it fails.
 
         A proposal the materializer or the compiler rejects is a defect in
         the rendering of that one extraction; it is dropped with a warning
         and the run goes on, rather than aborting after whatever was applied
-        before it.
+        before it. So is one whose text the file's encoding (``original``'s)
+        cannot hold.
         """
         try:
             new_code = self.apply_refactoring(file_path, proposal)
             compile(new_code, file_path, "exec")
+            encode_like(original, new_code)
         except (RefactoringError, SyntaxError, ValueError) as error:
             self._report_dropped(proposal, error)
             return None
@@ -500,7 +504,7 @@ class FixedPointDrivers(Materialization):
                     # would earn a rehearing the project has not changed for.
                     continue
                 proposal_queue = refreshed
-            except (RefactoringError, SyntaxError) as error:
+            except (RefactoringError, SyntaxError, UnencodableText) as error:
                 run.deferred_paths.update(
                     os.path.abspath(path)
                     for path in {
