@@ -86,3 +86,20 @@ def mangling_classes(tree: ast.AST) -> Dict[ast.AST, Optional[ast.ClassDef]]:
         else:
             pending.extend((child, owner) for child in ast.iter_child_nodes(node))
     return owners
+
+
+def class_qualnames(tree: ast.Module) -> Dict[ast.ClassDef, str]:
+    """Every class reached through class bodies from the module's top level, by dotted qualname.
+
+    A class-private helper is named by the class that stores it, and that
+    class by its qualname in the module (``Outer.Inner``); a class defined in
+    a function body has none that is stable, and is left out.
+    """
+    found: Dict[ast.ClassDef, str] = {}
+    pending: List[Tuple[ast.stmt, str]] = [(statement, "") for statement in tree.body]
+    while pending:
+        node, prefix = pending.pop()
+        if isinstance(node, ast.ClassDef):
+            found[node] = prefix + node.name
+            pending.extend((child, found[node] + ".") for child in node.body)
+    return found

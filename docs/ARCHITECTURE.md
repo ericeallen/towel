@@ -1099,7 +1099,15 @@ sites, and per-parameter evaluation kind and argument expressions — the
 material a coding assistant reads to choose names. `--rename-file` applies a
 mapping as one atomic batch with scope and importer checks; a collision, a
 mangled name, or a dynamic reference aborts the whole batch and reports why, so
-a bad suggestion changes nothing. See the README for the end-to-end workflow.
+a bad suggestion changes nothing. A class-private method helper is keyed by its
+class, `path.py:Class.__extracted_func_0`, because the name means something
+only in that class's body, where the compiler stores it as
+`_Class__extracted_func_0`; `renaming.py` renames it with the references
+written there, to a name that must be class-private too, and refuses the batch
+when the stored name is spelled anywhere else (explicitly, as a string, or as
+`__extracted_func_0` in another class of the same name) or when the class's
+body looks attributes up by a computed name. See the README for the end-to-end
+workflow.
 
 ## Verification and evidence
 
