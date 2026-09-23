@@ -34,6 +34,7 @@ import ast
 from collections import deque
 from dataclasses import dataclass
 from typing import (
+    Callable,
     Dict,
     FrozenSet,
     Iterator,
@@ -56,7 +57,11 @@ from .models import (
     MethodKind,
 )
 from .scope_analyzer import ScopeAnalyzer
-from .import_graph import imported_definition_sites
+from .import_graph import (
+    imported_definition_sites,
+    relative_import_levels,
+    relative_imports_resolve_alike,
+)
 from .statement_facts import imported_binding_name
 from .visitors import MethodCallRewriter, body_shares_header_line, visit_as
 from ..source_text import read_source, source_lines
@@ -998,6 +1003,7 @@ class HelperPlacement(EngineState):
         class2: Tuple[str, str],
         class_infos: List[ClassInfo],
         sources: Mapping[str, str],
+        admits: Callable[[ClassInfo], bool] = lambda info: True,
     ) -> Optional[ClassInfo]:
         """The shared ancestor nearest to both classes, or None when they share none.
 
@@ -1011,7 +1017,8 @@ class HelperPlacement(EngineState):
         that exposes more of what the body may use. So the candidates are
         ranked by their greatest distance from either class, then by their
         total distance, then by where they are defined, which is an order both
-        sides agree on.
+        sides agree on. An ancestor ``admits`` refuses is passed over like one
+        that cannot host, and a farther one may still serve.
         """
         file1, name1 = class1
         file2, name2 = class2
@@ -1033,7 +1040,7 @@ class HelperPlacement(EngineState):
             depth1 = reachable1.get(key)
             if depth1 is None or (key == key1 and key == key2):
                 continue  # Identical class; handled elsewhere.
-            if not self._can_host(info, sources):
+            if not self._can_host(info, sources) or not admits(info):
                 # A farther ancestor is on both method resolution orders too.
                 continue
             shared.append((max(depth1, depth2), depth1 + depth2, key, info))
@@ -1106,9 +1113,18 @@ class HelperPlacement(EngineState):
 
         # The modules the pair was parsed from answer for their own bindings
         # without being read again, and answer for the text the class index
-        # describes rather than for whatever is on disk now.
+        # describes rather than for whatever is on disk now. A method helper
+        # runs the template's relative imports in the ancestor's module, so
+        # an ancestor in another package would import other modules.
+        levels = relative_import_levels(pair.block1_nodes)
         ancestor = self._find_common_ancestor(
-            (file1, pair.class1_name), (file2, pair.class2_name), class_infos, sources
+            (file1, pair.class1_name),
+            (file2, pair.class2_name),
+            class_infos,
+            sources,
+            admits=lambda info: relative_imports_resolve_alike(
+                (info.file_path, file1, file2), levels
+            ),
         )
         if ancestor is None or not _unique_module_level_class(
             class_infos, ancestor.file_path, ancestor.name

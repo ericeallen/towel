@@ -73,6 +73,40 @@ class ImportGraphCache:
         return resolved
 
 
+def relative_import_levels(nodes: Iterable[ast.AST]) -> FrozenSet[int]:
+    """The level of every relative import anywhere in ``nodes``, nested functions included."""
+    return frozenset(
+        node.level
+        for statement in nodes
+        for node in ast.walk(statement)
+        if isinstance(node, ast.ImportFrom) and node.level
+    )
+
+
+def relative_imports_resolve_alike(files: Iterable[str], levels: Iterable[int]) -> bool:
+    """Whether a relative import of each of ``levels`` names one module from every one of ``files``.
+
+    A relative import resolves in the package of the module whose code runs
+    it: ``from .sub import VAL`` in ``pkg/x/a.py`` reads ``pkg.x.sub``, and
+    the same statement moved into a helper that ``pkg/y/b.py`` calls still
+    reads ``pkg.x.sub`` for it, where the block read ``pkg.y.sub``. That
+    package is the module's directory, climbed once per dot after the
+    first, so the files agree exactly when those directories coincide;
+    where the climb leaves the top-level package, the import raises there
+    and nowhere else.
+    """
+    directories = {Path(path).resolve().parent for path in files}
+    for level in levels:
+        bases = set()
+        for directory in directories:
+            for _ in range(level - 1):
+                directory = directory.parent
+            bases.add(directory)
+        if len(bases) > 1:
+            return False
+    return True
+
+
 def layout_is_known(canonical_file: str, cache: ImportGraphCache) -> bool:
     """Whether the project around ``canonical_file`` has a layout Towel can model.
 

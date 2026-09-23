@@ -96,6 +96,15 @@ describe belong to that version.
   says the rendered helper reads from its module, so reads inside its
   lambdas and comprehensions count. A module `__getattr__` changes no bare
   lookup and is not consulted.
+- **Relative imports stay in their package.** A relative import in a block
+  resolves in the package of the module that runs it, so a helper holding
+  `from .sub import VAL` imports its host's `sub` for every caller. A block
+  with a relative import is shared across modules only when every
+  participating module resolves each of its relative imports in the same
+  package (fixtures `xf23`-`xf25`); the part of the block after the import
+  may still be shared, taking the imported name as a parameter. An ancestor
+  class in another package is passed over as a host, and a same-file pair
+  then gets a module-level helper beside its sites (`xf26`).
 - **Forwarded callees.** A differing expression in call position would be
   passed as `lambda *args, **kwargs: callee(*args, **kwargs)`; such a call
   site reads worse than the duplication it removes, so the pair is declined

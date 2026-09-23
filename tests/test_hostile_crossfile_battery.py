@@ -50,6 +50,10 @@ TRANSFORMED = {
     "xf20_builtin_shadowed_in_ancestor_module",
     "xf21_builtin_shadowed_in_third_module",
     "xf22_borrower_rebinds_builtins_namespace",
+    "xf23_relative_import_in_another_package",
+    "xf24_relative_import_climbs_elsewhere",
+    "xf25_relative_import_in_the_same_package",
+    "xf26_relative_import_ancestor_in_another_package",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.

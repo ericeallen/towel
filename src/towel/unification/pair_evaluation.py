@@ -100,7 +100,13 @@ from .semantic_safety import (
     unbinds_external_name,
     uses_class_private_names,
 )
-from .import_graph import import_runs_new_code, layout_is_known, would_create_import_cycle
+from .import_graph import (
+    import_runs_new_code,
+    layout_is_known,
+    relative_import_levels,
+    relative_imports_resolve_alike,
+    would_create_import_cycle,
+)
 from .thunk_inlining import inline_leading_thunks
 from .substitution import Substitution
 from .visitors import FreeNameCollector, body_without_docstring
@@ -1372,9 +1378,11 @@ class PairEvaluation(
         """The module the helper is defined in once every participating module can import it.
 
         A helper shared across modules is refused when a participating module
-        declares a global, when the project's layout is unknown, or when the
-        import would close a cycle that no other participating module can
-        host instead.
+        declares a global, when a relative import the helper runs would name
+        a different module from some participating module
+        (``relative_imports_resolve_alike``), when the project's layout is
+        unknown, or when the import would close a cycle that no other
+        participating module can host instead.
         """
         canonical_file = home.file_path
         participating = {canonical_file} | {
@@ -1384,6 +1392,14 @@ class PairEvaluation(
             return canonical_file
         if any(functions.declares_global(path) for path in participating):
             self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
+            return None
+        # The helper runs the template's imports in whichever module hosts
+        # it, and every participating module is a candidate host, so each
+        # must resolve them alike.
+        if not relative_imports_resolve_alike(
+            participating, relative_import_levels(pair.block1_nodes)
+        ):
+            self._debug_reject(RejectReason.RELATIVE_IMPORT_ACROSS_PACKAGES, pair)
             return None
         if not layout_is_known(canonical_file, self.import_graph):
             self._debug_reject(RejectReason.UNKNOWN_LAYOUT, pair)
