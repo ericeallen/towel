@@ -51,14 +51,14 @@ def test_detail_progress_lists_proposals(tmp_path: Path, caplog: pytest.LogCaptu
     assert "[towel] Discovered 2 proposal(s)" in messages
     listed = [message.strip() for message in messages if message.strip()[:2] in {"1.", "2."}]
     assert listed == [
-        "1. Reuse f1 (sample.py) for duplicated code in f2",
-        "2. Reuse g1 (sample.py) for duplicated code in g2",
+        "1. Extract common code from f1 and f2",
+        "2. Extract common code from g1 and g2",
     ]
     # One iteration applies only the first proposal, so the cap ends the run
     # with the second still pending.
     assert termination == "iteration_cap"
     applied = [description for _, descriptions in results.values() for description in descriptions]
-    assert applied == ["Reuse f1 (sample.py) for duplicated code in f2"]
+    assert applied == ["Extract common code from f1 and f2"]
 
 
 def test_termination_reason_fixed_point(tmp_path: Path) -> None:
@@ -97,12 +97,13 @@ def _two_round_project(root: Path) -> None:
         "        names.append(record.name.strip().lower())\n"
         '    print(names, "alpha_two")\n    return names\n'
     )
+    # Two top-level modules share a helper only when the borrower imports the host.
     (root / "b.py").write_text(
-        "def beta(values):\n    total = 0\n    for value in values:\n        total += value * 3\n"
+        "import a\n\n\ndef beta(values):\n    total = 0\n    for value in values:\n        total += value * 3\n"
         '    print(total, "beta")\n    return total\n'
     )
     (root / "c.py").write_text(
-        "def gamma(entries):\n    names = []\n    for entry in entries:\n"
+        "import a\n\n\ndef gamma(entries):\n    names = []\n    for entry in entries:\n"
         "        names.append(entry.name.strip().lower())\n"
         '    print(names, "gamma")\n    return names\n'
     )

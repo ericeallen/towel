@@ -305,7 +305,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             # Where the candidate sits decides, once the helper's home is
             # known, whether it can share a method call.
             candidate_class = self._method_class(fn, entry.class_name, entry.scope_analyzer)
-            candidate_info = self._get_method_context(fn, candidate_class)
+            analyzed = entry.scope_analyzer.analyzed_tree
+            candidate_info = self._get_method_context(
+                fn, candidate_class, analyzed if isinstance(analyzed, ast.Module) else None
+            )
             context = ClusterContext(candidate_class, candidate_info)
             fn_id = self._sid([fn])
             for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):

@@ -15,7 +15,7 @@ from towel.unification.exceptions import UnsupportedLayoutError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # ``compute`` is defined below its callers: the helper reads it as a bare
-# module name, so the whole-body reuse of ``f1`` still applies.
+# module name, so the same-file extraction still applies.
 SAME_FILE = (
     "def f1(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n\n"
     "def f2(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n\n"
@@ -80,5 +80,7 @@ def test_the_command_line_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         main()
     rewritten = (tmp_path / "out" / "pkg" / "a.py").read_text()
-    assert "def f2(b):\n    return f1(b)\n" in rewritten  # the same-file pair, by reuse
+    # The same-file pair: both functions call one helper.
+    assert "def f1(a):\n    return __extracted_func_0(a)\n" in rewritten
+    assert "def f2(b):\n    return __extracted_func_0(b)\n" in rewritten
     assert (tmp_path / "out" / "pkg" / "b.py").read_text() == CROSS_B

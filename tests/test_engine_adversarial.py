@@ -1303,8 +1303,12 @@ class TestCrossFileImports(unittest.TestCase):
                 """).strip() + "\n",
                 encoding="utf-8",
             )
+            # A top-level module borrows only from one it already imports.
             b.write_text(
                 textwrap.dedent("""
+                import a
+
+
                 def fb(x):
                     y = x + 1
                     z = y * 2

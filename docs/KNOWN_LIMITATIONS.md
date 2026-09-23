@@ -85,7 +85,26 @@ describe belong to that version.
   The same holds when a same-file pair's helper becomes a method of a
   shared ancestor class defined in another module: the pair is decided
   again with every name a parameter (oauthlib's `BearerToken`, fixture
-  `xf15`).
+  `xf15`). A builtin is the same lookup from every module only while no
+  module involved can bind its name, so a helper that a site in another
+  module calls takes a builtin spelling as a parameter when either site's
+  function or module binds it, or when any participating module, the
+  helper's host included, may bind it at all: by any statement of its own
+  scope, a `global` declaration, a star import, or a rebound
+  `__builtins__`, whichever module the pair names first (fixtures
+  `xf17`-`xf22`). The names checked are the ones CPython's symbol table
+  says the rendered helper reads from its module, so reads inside its
+  lambdas and comprehensions count. A module `__getattr__` changes no bare
+  lookup and is not consulted.
+- **Relative imports stay in their package.** A relative import in a block
+  resolves in the package of the module that runs it, so a helper holding
+  `from .sub import VAL` imports its host's `sub` for every caller. A block
+  with a relative import is shared across modules only when every
+  participating module resolves each of its relative imports in the same
+  package (fixtures `xf23`-`xf25`); the part of the block after the import
+  may still be shared, taking the imported name as a parameter. An ancestor
+  class in another package is passed over as a host, and a same-file pair
+  then gets a module-level helper beside its sites (`xf26`).
 - **Forwarded callees.** A differing expression in call position would be
   passed as `lambda *args, **kwargs: callee(*args, **kwargs)`; such a call
   site reads worse than the duplication it removes, so the pair is declined
@@ -188,19 +207,44 @@ addresses:
   helper in place only when it is one of `dataclasses.dataclass`,
   `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
   `enum.unique`, reached through the module's own absolute imports; a class
-  carrying any other decorator takes no helper. What a custom metaclass or an
-  inherited `__init_subclass__` hook does to the namespace of a class that
-  takes a helper is not modeled: one that wraps or drops every function of
-  its classes reaches the helper too. `__slots__` interactions with added methods are not modeled beyond
-  compilation.
+  carrying any other decorator takes no helper. A metaclass, and every
+  `__init_subclass__` on the class's method resolution order, sees the
+  namespace a method helper joins and may wrap, register or drop it, so the
+  class holding both duplicates takes one only when all of that is known to
+  leave a plain function alone: its metaclass is `type`, `abc.ABCMeta` or the
+  enum metaclass, it defines no `__init_subclass__` itself, and each base is
+  a builtin class, `abc.ABC`, `typing.Generic[...]`, an enum, or a class of
+  the project that qualifies in turn, resolved through the module's imports.
+  Any other class (pygments' lexers, whose metaclass is the project's own; a
+  base reached through a star import or built by a call such as
+  `with_metaclass(...)`; `NamedTuple`; a library's base class) gets the
+  module-level helper that takes the receiver as an argument. A common
+  ancestor that takes the helper for methods of two different classes is not
+  judged this way. `__slots__` interactions with added methods are not
+  modeled beyond compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
   names can be written bare, when no statement before that point could run
-  code at import time. A statement counts as running code when anything it
-  evaluates as the module loads is a call: an assignment such as `Y = f()`, a
-  decorator, a default, a base or class keyword, or a statement of a class
-  body; what a base's `__init_subclass__` runs is not seen. When a name the
+  code at import time. One judgment decides that here and for a cross-file
+  host below (`ImportTimeCode`): a statement runs code when anything it
+  evaluates as the module loads can run code other than Python's own, which
+  a call, a decorator, a default, an evaluated annotation, an attribute
+  access or an operator on a name, and a base class whose metaclass or
+  `__init_subclass__` is not Python's all can. A base of the project is
+  followed through its bases, into the module that defines it. The
+  exceptions are a short list of callables, resolved through the module's
+  own imports, that build a value and touch nothing else: `property`,
+  `staticmethod` and `classmethod`, `abc.abstractmethod`, the `functools`
+  caches, `contextlib` context managers, `typing.final` and `override`, the
+  namespace-preserving class decorators, `TypeVar` and its kin, `NewType`,
+  `dataclasses.field`, builtin constructors over constants, and
+  `re.compile` of a constant pattern that compiles here without a warning;
+  `typing.overload` records a registry and `logging.getLogger` a logger a
+  later `dictConfig` would disable, so both count as code. Nothing under a
+  `TYPE_CHECKING` resolved through the imports runs, however it branches,
+  and a condition comparing `sys.version_info`, `sys.platform` or `os.name`
+  with constants runs nothing. When a name the
   annotations need is defined only after such code, the helper goes before
   it anyway where annotations are postponed (`from __future__ import
   annotations`), and is declined elsewhere. Cross-file helpers add a module import; a helper
@@ -227,16 +271,62 @@ requirements of its own: gunicorn's `workers/gtornado.py` raises at import
 time unless tornado is installed, and a helper hosted there made
 `workers/sync.py` import it, so environments without tornado could no longer
 import the sync worker. Towel now refuses a host whose import would run
-module-level statements beyond definitions, imports and literal assignments
-that the borrower's own imports do not already run (`import_time_effects`),
-and one whose import would require a module the borrower does not already
+code (the judgment of *Import-time behavior* above) in a module the
+borrower's own imports do not already run (`import_time_effects`): a
+registration decorator there would register wherever the borrower is
+imported (fixtures `xf27`, `xf28`). A module whose classes derive from a
+base with a metaclass of the project's own counts as running code even when
+that metaclass only builds the class, since nothing shows it registers
+nothing; most of Pygments' lexer modules are such, which costs Pygments 12
+of its 23 cross-module helpers. Towel also refuses a host
+whose import would require a module the borrower does not already
 import: an unconditional import, including one inside a module-level `if`,
 of anything outside the project, the standard library and the project's
-declared `[project].dependencies`. An import inside `try` is taken as an
+declared dependencies: PEP 621's `[project].dependencies`, Poetry's
+`[tool.poetry.dependencies]` less the optional ones an extra installs, and
+setup.cfg's `install_requires`; a setup.py is not run, so dependencies it
+alone declares are not known. An import inside `try` is taken as an
 optional dependency and requires nothing. A dependency declared under a
 distribution name that differs from its import name (`PyYAML` for `yaml`) is
 not recognized, which refuses a host rather than accepting one; an import
 made by `importlib` or `__import__` is not seen at all.
+
+A distribution ships the packages its metadata names, not the repository, so
+a host is refused as well when its import would load a module of a
+top-level package the borrower's import does not already load, its own
+included (`new_top_level_package`): a helper hosted in `tests/test_b.py` that
+`zeta/a.py` imported made the installed `zeta.a` raise `ModuleNotFoundError`.
+Another participating module is then tried as host, so a test module that
+imports the package under test takes the helper from it, and a pair between
+the package and a module that never imports it is declined. What a
+borrower "already loads" counts only the imports its top level certainly
+runs: an import in a function body, a branch or a `try` makes nothing
+present, and a borrower whose function imports the host lazily no longer
+counts as running the host's import-time code already.
+
+A module written to run as a program may be run by its path: `__main__.py`,
+a module whose first line is a `#!` interpreter line, and one with a main
+guard anywhere in its own scope, `__name__ == "__main__"` either way round
+or opening an `and`. A module that runs code at import with no such sign
+of being a script is taken to be imported only. Run by path, the module's own
+directory is on `sys.path` in place of the source root above it: `python
+pkg/tool_b.py` finds `pkg` only where something else put it on the path.
+Such a borrower gains an import only when a run by path already needed
+what it needs (`run_by_path_import`): when the imports it runs before its
+first definition already import that top-level package absolutely, or its
+own directory holds the host's package; or when one of those leading
+imports is relative, so a run by path already fails there. The import it
+gains must then be absolute, and a relative one is declined when it is
+written (`r08`; `tests/test_run_by_path.py`).
+
+A type checker reads a module's stub in its place, so a host is refused as
+well when it has one (`host_has_stub`): a `.pyi` beside it, its stub under
+the project's `typings` directory, or a `<package>-stubs` directory for its
+top-level package that holds its stub, or that is not partial and so hides
+every module it omits. `from alpha.a import __extracted_func_0` against
+`alpha/a.pyi` was an unknown symbol to pyright and a missing attribute to
+mypy (audit `k30`). Stub directories named only in a checker's
+configuration (`mypy_path`, pyright's `stubPath`) are not read.
 
 ## Method insertion
 
@@ -283,6 +373,12 @@ module-level common ancestor, every
 decorator on the source methods is known
 to preserve the receiver, the methods have a first parameter named
 `self` (or the method is a `classmethod`), and both read an attribute of it.
+That parameter's annotation, if it has one, must name only the class: the
+class itself, `Self`, or a type variable bound to the class, or `type[...]`
+of one of those for a class method. `def m(self: HasV)` declares that any
+object with the protocol's attributes may be passed, as `Box.m(other)`, and
+`self._extracted_func_0()` would raise `AttributeError` on it, so such a
+method gets the module-level helper that takes the receiver as an argument.
 The class that takes the helper, whether the methods' own or their common
 ancestor, must also be able to hold it as an ordinary member: not a
 `Protocol` (a method there is one more member every structural implementer
@@ -554,25 +650,42 @@ the proposals it built and did not apply, by reason:
   `global`. `unknown_layout`: the project's packaging layout cannot be
   modeled, so no import can be written. `import_cycle`: every candidate
   host closes a static import cycle. `import_time_effects`: a cross-file
-  helper's host module, which the borrower does not already import, would
-  run module code beyond definitions, imports and literal assignments at
-  import (a module that prints, registers or connects at import time); a
-  module-level helper may move to a participating module that hosts it
-  without that, and the pair is declined only when none does.
+  helper's host module, which the borrower's import does not already
+  load, would run code at import (*Import-time behavior*: a module that
+  prints, registers or connects at import time); `new_import_requirement`:
+  it would require a package outside the project, the standard library and
+  the declared dependencies; `new_top_level_package`: it would load a
+  top-level package of the project the borrower's import does not;
+  `run_by_path_import`: the borrower runs as a program, and run by its path
+  it could not resolve the import; `host_has_stub`: a type checker would
+  read the host's stub, which lacks the helper, in its place. In each
+  case a module-level helper may move to a participating module that hosts
+  it without the change, and the pair is declined only when none does.
+  `relative_import_across_packages`: the block runs a relative import that
+  some participating module resolves in another package.
+  `bare_name_differs_by_module`: after the pair was decided again with them
+  as parameters, the helper still reads bare a name that a site in another
+  module could resolve differently.
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper
-  an earlier pass inserted, which would keep only the new call.
+  an earlier pass inserted, which would keep only the new call, while
+  another site is not a whole body. When every site is the whole body of its
+  function, each of them, an earlier helper included, becomes a call of the
+  new helper, since no function is ever redirected to another.
 
 Other behaviors that leave a duplicate in place are not rejections of a
 formed pair:
 
-- A duplicate that is the whole body of an existing function is redirected
-  to that function rather than extracted, but only when the function is a
-  plain module-level `def`: a decorated, async, variadic, shadowed, or
-  rebound function, or one whose call across files would close an import
-  cycle, falls back to ordinary extraction (which the trivial-helper filter
-  then usually declines, since the helper would restate the function).
+- A duplicate that is the whole body of an existing function is extracted
+  like any other, and the function becomes a call of the new helper; it is
+  never rewritten to call another existing function that restates it. Such
+  a call looks the other function up in its module every time, so
+  `mock.patch("mod.f1")`, or any other rebinding of `mod.f1`, changed `f2`
+  as well (audit `r06`). The `reuse_existing_functions` setting no longer
+  changes anything. A site that duplicates an earlier pass's helper, where
+  the other site is only part of its function, is left in place rather than
+  reduced to a call of it or chained through it.
 - A block that begins at an `elif` is never extracted, because its call
   would have to be rendered inside the preceding branch's `else`; the
   `elif`'s own body and further branches remain candidates. This gives up a
@@ -678,7 +791,7 @@ it tractable, all exact: they change no proposal.
   nothing further. A precise ordinary signature that passes means no generic
   candidate is ever built or checked, which is the cheapest order as well as
   the documented one.
-- The reuse redirect finds a function whose body starts where a site does
+- The forwarder check finds a function whose body starts where a site does
   through an index, instead of scanning every function of the file for
   every replacement of every proposal.
 - Three pure per-block analyses (orphan detection, the instantiation check's

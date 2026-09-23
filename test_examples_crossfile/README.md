@@ -6,6 +6,8 @@ This directory contains test projects for verifying cross-file refactoring corre
 
 Each subdirectory is a **test project** containing multiple Python files with duplicate code across nested directory structures. The `CrossFileEquivalenceTester` analyzes these projects, applies cross-file refactorings, and verifies that the refactored code preserves the original behavior.
 
+In every project the module that borrows a helper already imports the module that hosts it: a module may gain an import only of a top-level package it already imports, since nothing else is known to ship with it (see `docs/KNOWN_LIMITATIONS.md`).
+
 ## Test Projects
 
 ### 1. simple_crossfile

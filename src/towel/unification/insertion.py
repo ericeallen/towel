@@ -16,7 +16,8 @@
 
 A module-level helper is placed before the first definition, after the
 docstring and imports, or after the last definition its annotations name
-when nothing before that point runs code at import; a method helper goes at
+when nothing before that point can run code at import (``ImportTimeCode``);
+a method helper goes at
 the end of its class body; a function-local helper goes before the first
 executable statement of its function. The positions are found from the
 parsed module, never from text, so imports inside strings and comments are
@@ -30,6 +31,7 @@ import ast
 
 from pathlib import Path
 from typing import List, Optional, Sequence, Set, Tuple
+from .import_graph import ImportGraphCache, ImportTimeCode
 from .visitors import ClassLocator, FuncLocator, body_without_docstring
 
 from .engine_state import EngineState
@@ -80,20 +82,6 @@ def relative_import_module(from_path: Path, to_path: Path) -> Optional[str]:
     if parts and parts[-1] == "__init__":
         parts.pop()
     return "." * dots + ".".join(parts)
-
-
-def _calls_in(nodes: Sequence[ast.AST]) -> bool:
-    """Whether evaluating any of ``nodes`` calls something; a lambda's body is not evaluated."""
-    pending: List[ast.AST] = list(nodes)
-    while pending:
-        node = pending.pop()
-        if isinstance(node, (ast.Call, ast.Await)):
-            return True
-        if isinstance(node, ast.Lambda):
-            pending.extend([*node.args.defaults, *filter(None, node.args.kw_defaults)])
-            continue
-        pending.extend(ast.iter_child_nodes(node))
-    return False
 
 
 class InsertionPoints(EngineState):
@@ -168,65 +156,32 @@ class InsertionPoints(EngineState):
         return line[: len(line) - len(line.lstrip())]
 
     @classmethod
-    def _is_definition_like(cls, statement: ast.stmt) -> bool:
-        """Whether a module-level statement runs no code of the module's own at import.
-
-        Imports, docstrings, and definitions and assignments that call
-        nothing while they run; an ``if`` or ``try`` made only of such
-        statements (``TYPE_CHECKING`` guards, optional imports). A call is
-        what could reach a function whose block went into the helper: an
-        assignment ``Y = f()``, a decorator (itself a call, and free to
-        instantiate the class), a default, a base expression, a class
-        keyword such as ``metaclass=``, or a class body statement all run as
-        the module is imported, so a helper must be defined before any of
-        them. What a base class's ``__init_subclass__`` runs is not seen.
-        """
-        if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)):
-            return True
-        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
-            return True
-        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            evaluated: List[ast.AST] = [
-                *statement.args.defaults,
-                *(default for default in statement.args.kw_defaults if default is not None),
-            ]
-            return not statement.decorator_list and not _calls_in(evaluated)
-        if isinstance(statement, ast.ClassDef):
-            return (
-                not statement.decorator_list
-                and not statement.keywords
-                and not _calls_in(statement.bases)
-                and all(cls._is_definition_like(s) for s in statement.body)
-            )
-        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-            return not _calls_in([statement])
-        if isinstance(statement, ast.If):
-            return not _calls_in([statement.test]) and all(
-                cls._is_definition_like(s) for s in statement.body + statement.orelse
-            )
-        if isinstance(statement, ast.Try):
-            nested = statement.body + statement.orelse + statement.finalbody
-            nested += [s for handler in statement.handlers for s in handler.body]
-            handlers = [handler.type for handler in statement.handlers if handler.type]
-            return not _calls_in(handlers) and all(cls._is_definition_like(s) for s in nested)
-        return False
-
-    @classmethod
-    def placeable_after(cls, source: str) -> Set[str]:
+    def placeable_after(
+        cls,
+        source: str,
+        *,
+        path: Optional[Path] = None,
+        cache: Optional[ImportGraphCache] = None,
+    ) -> Set[str]:
         """Names of module-level definitions a helper can safely be placed after.
 
         A helper placed after the definitions its annotations name can spell
-        them bare. It may move past a definition only if everything from the
-        top of the module to that definition is definition-like, so no code
-        that could call the helper runs before it is defined.
+        them bare. It may move past a definition only if nothing from the top
+        of the module to that definition can run code at import
+        (``ImportTimeCode``, the same judgment that decides whether importing
+        a helper's host runs code): a decorator, a default, an evaluated
+        annotation, a base class's metaclass or ``__init_subclass__``, or any
+        call could reach a function whose block went into the helper before
+        the helper is defined. ``path`` and ``cache`` let a base class imported
+        from another module of the project be judged there.
         """
         try:
-            tree = ast.parse(source)
-        except SyntaxError:
+            code = ImportTimeCode(source, path=path, cache=cache)
+        except (SyntaxError, ValueError):
             return set()
         names: Set[str] = set()
-        for statement in tree.body:
-            if not cls._is_definition_like(statement):
+        for statement, runs_code in zip(code.tree.body, code.statements()):
+            if runs_code:
                 break
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 names.add(statement.name)

@@ -2,6 +2,8 @@
 Data processing module.
 """
 
+from lib import report_generator
+
 
 def calculate_statistics(values):
     """Calculate statistics for a list of values."""

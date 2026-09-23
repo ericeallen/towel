@@ -229,7 +229,7 @@ class TestScopingEdgeCases(unittest.TestCase):
         function: the unifier alpha-renames the parameters and the
         instantiation check renames them within their lambda, so the whole
         pair unifies, lambda included; here that makes the two bodies
-        identical and the second function is redirected to the first.
+        identical, and both functions call one helper.
         """
         proposals = self._analyze_source(
             "def first(items):\n"
@@ -247,12 +247,10 @@ class TestScopingEdgeCases(unittest.TestCase):
             "    return out\n"
         )
         self.assertEqual(len(proposals), 1, [p.description for p in proposals])
-        # The whole bodies match, so the second function simply calls the first.
+        # The whole bodies match, so both become calls of the helper.
         proposal = proposals[0]
-        self.assertIsNotNone(proposal.reused_function)
-        assert proposal.reused_function is not None
-        self.assertEqual(proposal.reused_function.name, "first")
-        self.assertEqual([r.line_range for r in proposal.replacements], [(9, 13)])
+        self.assertIsNone(proposal.reused_function)
+        self.assertEqual(sorted(r.line_range for r in proposal.replacements), [(2, 6), (9, 13)])
 
 
 if __name__ == "__main__":

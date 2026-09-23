@@ -2,6 +2,8 @@
 Payment service.
 """
 
+from api import checkout
+
 
 def validate_payment_amount(amount, currency):
     """Validate payment amount."""

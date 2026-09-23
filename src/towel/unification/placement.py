@@ -32,21 +32,18 @@ from __future__ import annotations
 import ast
 
 from collections import deque
-from dataclasses import dataclass
+from pathlib import Path
 from typing import (
-    Dict,
+    Callable,
     FrozenSet,
-    Iterator,
     List,
     Mapping,
     Optional,
     Sequence,
     Set,
     Tuple,
-    Union,
     cast,
 )
-from .bounded_cache import BoundedCache
 from .models import (
     ClassInfo,
     ClassInsertionPlan,
@@ -56,10 +53,17 @@ from .models import (
     MethodKind,
 )
 from .scope_analyzer import ScopeAnalyzer
-from .import_graph import imported_definition_sites
+from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
+from .import_graph import (
+    ImportTimeCode,
+    imported_definition_sites,
+    module_scope_statements,
+    relative_import_levels,
+    relative_imports_resolve_alike,
+)
 from .statement_facts import imported_binding_name
-from .visitors import MethodCallRewriter, body_shares_header_line, visit_as
-from ..source_text import read_source, source_lines
+from .visitors import MethodCallRewriter, visit_as
+from ..source_text import read_source
 
 from .engine_state import EngineState
 
@@ -136,6 +140,146 @@ def _implicit_param_for(kind: MethodKind, first: MethodInfo, second: MethodInfo)
     )
 
 
+# What a receiver annotation may spell for the class, ``Self``, and a type variable.
+_CLASS_OF = frozenset({"type", "Type", "typing.Type", "typing_extensions.Type"})
+_SELF_TYPES = frozenset({"typing.Self", "typing_extensions.Self"})
+_TYPE_VARIABLES = frozenset({"typing.TypeVar", "typing_extensions.TypeVar"})
+
+
+def _admits_other_receivers(
+    func: FunctionNode, kind: MethodKind, class_name: str, module: Optional[ast.Module]
+) -> bool:
+    """Whether the receiver's annotation declares receivers other than instances of the class.
+
+    ``def m(self: HasV, n)`` declares that anything with a ``v`` may be the
+    receiver, so ``Box.m(SimpleNamespace(v=10), 1)`` is a well-typed call, and a
+    helper reached as ``self._extracted_func_0(...)`` would raise
+    ``AttributeError`` there. No annotation, the class itself (subscripted or
+    not), ``Self``, or a type variable bound to the class declares instances
+    alone; so does ``type[...]`` of one of them for a class method. Anything
+    else is taken to admit others.
+    """
+    positional = [*func.args.posonlyargs, *func.args.args]
+    if not positional or positional[0].annotation is None:
+        return False
+    annotation = _unquoted(positional[0].annotation)
+    if kind == "classmethod":
+        if not (
+            isinstance(annotation, ast.Subscript) and dotted_name(annotation.value) in _CLASS_OF
+        ):
+            return True
+        annotation = _unquoted(annotation.slice)
+    return annotation is None or not _denotes_the_class(annotation, class_name, func, module, 0)
+
+
+def _unquoted(annotation: ast.expr) -> Optional[ast.expr]:
+    """The expression a string annotation spells, or the annotation itself; None if unparsable."""
+    if not (isinstance(annotation, ast.Constant) and isinstance(annotation.value, str)):
+        return annotation
+    try:
+        return ast.parse(annotation.value.strip(), mode="eval").body
+    except SyntaxError:
+        return None
+
+
+def _denotes_the_class(
+    annotation: ast.expr,
+    class_name: str,
+    func: FunctionNode,
+    module: Optional[ast.Module],
+    depth: int,
+) -> bool:
+    """Whether a receiver annotation names only the class: itself, ``Self``, or a bound type variable."""
+    if depth > 4:
+        return False
+    if isinstance(annotation, ast.Subscript):
+        # ``Box[T]`` is an instance of the class, whatever its type arguments.
+        return dotted_name(annotation.value) == class_name
+    spelled = dotted_name(annotation)
+    if spelled is None or module is None:
+        return spelled == class_name
+    if spelled == class_name or _names_one_of(spelled, module, _SELF_TYPES):
+        return True
+    bound = _type_variable_bound(spelled, func, module)
+    return bound is not None and _denotes_the_class(bound, class_name, func, module, depth + 1)
+
+
+def _type_variable_bound(name: str, func: FunctionNode, module: ast.Module) -> Optional[ast.expr]:
+    """The bound of ``name`` where it names a type variable: the function's own, or the module's.
+
+    A type parameter of the function shadows the module's names. A module's
+    type variable counts only when ``name = TypeVar(...)`` is the one way the
+    module binds ``name``. The type-parameter nodes are inspected by
+    attribute, since Python 3.11's AST has no ``ast.TypeVar``.
+    """
+    parameters: object = getattr(func, "type_params", ())
+    for parameter in parameters if isinstance(parameters, list) else ():
+        if getattr(parameter, "name", None) == name:
+            bound: object = getattr(parameter, "bound", None)
+            is_variable = type(parameter).__name__ == "TypeVar"
+            return _unquoted(bound) if is_variable and isinstance(bound, ast.expr) else None
+    statements = _module_scope_bindings(module, name)
+    if len(statements) != 1 or not isinstance(statements[0], ast.Assign):
+        return None
+    call = statements[0].value
+    if not (
+        isinstance(call, ast.Call)
+        and _names_one_of(dotted_name(call.func) or "", module, _TYPE_VARIABLES)
+    ):
+        return None
+    bound = next((keyword.value for keyword in call.keywords if keyword.arg == "bound"), None)
+    return None if bound is None else _unquoted(bound)
+
+
+def _names_one_of(spelled: str, module: ast.Module, targets: FrozenSet[str]) -> bool:
+    """Whether ``spelled`` names one of ``targets`` however the module runs.
+
+    Every statement of the module's own scope that may bind its first name
+    must be an absolute import that makes it one of them.
+    """
+    head, _, rest = spelled.partition(".")
+    statements = _module_scope_bindings(module, head)
+    return bool(statements) and all(
+        (origin := _imported_origin(statement, head)) is not None
+        and (f"{origin}.{rest}" if rest else origin) in targets
+        for statement in statements
+    )
+
+
+def _imported_origin(statement: ast.stmt, name: str) -> Optional[str]:
+    """What an absolute import statement binds ``name`` to, as a dotted name; None for anything else."""
+    if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return None
+    origins = {
+        import_origin(statement, alias)
+        for alias in statement.names
+        if imported_binding_name(alias) == name
+    }
+    return origins.pop() if len(origins) == 1 else None
+
+
+def _module_scope_bindings(module: ast.Module, name: str) -> List[ast.stmt]:
+    """Every statement of the module's own scope that may bind ``name``, however conditionally.
+
+    A star import may bind any name. A compound statement counts when
+    anything within it stores the name, which can only over-count.
+    """
+    found: List[ast.stmt] = []
+    for statement in module_scope_statements(module):
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            binds = statement.name == name
+        elif isinstance(statement, (ast.Import, ast.ImportFrom)):
+            binds = any(imported_binding_name(alias) in {name, None} for alias in statement.names)
+        else:
+            binds = any(
+                isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Store)
+                for node in ast.walk(statement)
+            )
+        if binds:
+            found.append(statement)
+    return found
+
+
 def _preserves_receiver(decorator: ast.expr) -> bool:
     """Whether a decorator is known to pass the receiver through unchanged."""
     target = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -150,415 +294,6 @@ def _unique_module_level_class(class_infos: Sequence[ClassInfo], file_path: str,
     """Whether ``name`` names exactly one class in ``file_path`` and it is module-level."""
     matches = [info for info in class_infos if info.file_path == file_path and info.name == name]
     return len(matches) == 1 and matches[0].qualname == name
-
-
-@dataclass(frozen=True)
-class _GlobalBinding:
-    """One top-level statement of a module binding one of the module's globals."""
-
-    order: int
-    """Index within the module body of the top-level statement that binds it."""
-    certain: bool
-    """False when the statement sits inside a branch, a loop, a ``with``, or a ``try``."""
-    class_qualname: Optional[str]
-    """The class the statement defines, when the binding is a ``class`` statement."""
-    is_import: bool
-    """Whether the statement is an import."""
-    origin: Optional[str] = None
-    """What the binding copies, as a dotted name: the imported ``module.name``
-    of an absolute import, or the dotted name a plain ``alias = a.b`` assigns,
-    which is spelled in the module and resolved where the assignment runs."""
-
-
-@dataclass(frozen=True)
-class _ClassHost:
-    """What a module-level class statement shows about taking a helper into its body."""
-
-    decorators: Tuple[Optional[str], ...]
-    """Each decorator's dotted name, a call's callee included; None for any other expression."""
-    bases: Tuple[Optional[str], ...]
-    """Each base's dotted name, a subscript's value included (``Protocol[T]``)."""
-    body_on_header_line: bool
-    """The body is written after the header's colon, where no statement can follow it."""
-
-
-# Class decorators known to return the class they are given, or (``slots=True``)
-# a class built from its namespace, with every function in that namespace
-# unwrapped. Anything else may drop, wrap, or replace a helper placed there.
-_NAMESPACE_PRESERVING_DECORATORS = frozenset(
-    {
-        "dataclasses.dataclass",
-        "functools.total_ordering",
-        "typing.final",
-        "typing_extensions.final",
-        "enum.unique",
-    }
-)
-
-_PROTOCOL_BASES = frozenset({"typing.Protocol", "typing_extensions.Protocol"})
-
-
-@dataclass(frozen=True)
-class _ModuleBindings:
-    """How one module binds its global names, in the order it binds them.
-
-    A module's globals are bound as it runs, so what a name denotes is a
-    question about a position in the module, not about the module as a
-    whole. Each name maps to the top-level statements that bind it, in
-    order; ``class_orders`` places every class of the module among those
-    statements, so a base-class reference can be resolved where the class
-    statement making it runs. A name a function declares ``global`` is left
-    out of every answer, because any call may rebind it, and a ``from m
-    import *`` is recorded as a point past which no name is known.
-    """
-
-    bindings: Mapping[str, Tuple[_GlobalBinding, ...]]
-    class_orders: Mapping[str, int]
-    rebound_by_global: FrozenSet[str]
-    star_imports: Tuple[int, ...]
-    class_hosts: Mapping[str, _ClassHost]
-
-    def in_effect(self, name: str, order: int) -> Optional[_GlobalBinding]:
-        """The binding ``name`` holds where top-level statement ``order`` runs.
-
-        None whenever that cannot be established: the name is never bound
-        before that point, a function may rebind it through ``global``, the
-        last binding before it is conditional, a star import since could
-        have replaced it, or the binding shares a top-level statement with
-        the reference, whose internal order this does not model.
-        """
-        if name in self.rebound_by_global:
-            return None
-        events = self.bindings.get(name, ())
-        if any(event.order == order for event in events):
-            return None
-        earlier = [event for event in events if event.order < order]
-        if not earlier:
-            return None
-        binding = earlier[-1]
-        if not binding.certain:
-            return None
-        if any(binding.order <= star <= order for star in self.star_imports):
-            return None
-        return binding
-
-    def resolve(self, dotted: str, order: int, depth: int = 0) -> Optional[str]:
-        """The absolute dotted name ``dotted`` denotes where statement ``order`` runs.
-
-        Only a name the module certainly binds there by an absolute import, or
-        by a plain assignment of such a name, resolves; anything else is None.
-        """
-        head, _, rest = dotted.partition(".")
-        binding = self.in_effect(head, order)
-        if binding is None or binding.origin is None or depth > 8:
-            return None
-        target = f"{binding.origin}.{rest}" if rest else binding.origin
-        if binding.is_import:
-            return target
-        return self.resolve(target, binding.order, depth + 1)
-
-    def possible_origins(self, dotted: str, depth: int = 0) -> FrozenSet[str]:
-        """Every absolute name ``dotted`` could denote, whatever path the module took."""
-        head, _, rest = dotted.partition(".")
-        found: Set[str] = set()
-        for binding in self.bindings.get(head, ()):
-            if binding.origin is None or depth > 8:
-                continue
-            target = f"{binding.origin}.{rest}" if rest else binding.origin
-            found.update(
-                {target} if binding.is_import else self.possible_origins(target, depth + 1)
-            )
-        return frozenset(found)
-
-    def keeps_namespace(self, qualname: str) -> bool:
-        """Whether the class statement's name ends up bound to a class with its namespace.
-
-        True only when every decorator resolves, where the class statement
-        runs, to one known to return the class, or a copy of its namespace,
-        with every function in it unwrapped.
-        """
-        host = self.class_hosts.get(qualname)
-        order = self.class_orders.get(qualname)
-        return (
-            host is not None
-            and order is not None
-            and all(
-                decorator is not None
-                and self.resolve(decorator, order) in _NAMESPACE_PRESERVING_DECORATORS
-                for decorator in host.decorators
-            )
-        )
-
-    def refuses_helper(self, qualname: str) -> Optional[str]:
-        """Why the module-level class ``qualname`` cannot take a helper into its body, if it cannot.
-
-        A body on the header's line takes no statement after it. A decorator
-        not known to preserve the namespace may drop the helper, wrap it, or
-        bind the class's name to something else entirely. And a helper placed
-        in a ``Protocol`` becomes one of its members, which every structural
-        implementer lacks: an ``isinstance`` check against a runtime-checkable
-        protocol turns false, and the checker stops accepting implementers
-        that conformed. The protocol test is conservative: a base that could
-        be ``Protocol`` on any path through the module, or is spelled so,
-        counts.
-        """
-        host = self.class_hosts.get(qualname)
-        order = self.class_orders.get(qualname)
-        if host is None or order is None:
-            return "unknown class"
-        if host.body_on_header_line:
-            return "body on the header line"
-        if not self.keeps_namespace(qualname):
-            return "decorator"
-        for base in host.bases:
-            if base is None:
-                continue
-            if (
-                base.rsplit(".", 1)[-1] == "Protocol"
-                or self.resolve(base, order) in _PROTOCOL_BASES
-                or self.possible_origins(base) & _PROTOCOL_BASES
-            ):
-                return "protocol"
-        return None
-
-
-# Suites: the fields whose statements a compound statement may or may not run.
-_SUITE_FIELDS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"})
-
-# One module's bindings, keyed by its source rather than its path, so a
-# rewritten module never answers from the version it replaced. Placement asks
-# the same few modules once per candidate helper home, and each answer is a
-# pure function of the text it was built from.
-_MODULE_BINDINGS: BoundedCache[str, Optional[_ModuleBindings]] = BoundedCache(128)
-
-
-def _child_nodes(value: object) -> Iterator[ast.AST]:
-    """The AST nodes an ``iter_fields`` value holds, whether it holds one, many, or none."""
-    if isinstance(value, ast.AST):
-        yield value
-    elif isinstance(value, list):
-        for item in value:
-            if isinstance(item, ast.AST):
-                yield item
-
-
-class _GlobalBindingCollector:
-    """Builds a module's :class:`_ModuleBindings` by walking its top level.
-
-    Only the module's own scope binds its globals, so the walk descends into
-    a function or class body for two things alone: the classes defined there,
-    which the class index must agree with the analysis about, and any
-    ``global`` declaration, which puts a name out of reach because a call
-    anywhere may rebind it. Within the module's scope a binding is certain
-    only on the unconditional spine; anything a branch, loop, ``with``, or
-    ``try`` holds is recorded as a binding that may or may not have happened.
-    """
-
-    def __init__(self, lines: Sequence[str]) -> None:
-        self._lines = lines
-        self._class_hosts: Dict[str, _ClassHost] = {}
-        self._bindings: Dict[str, List[_GlobalBinding]] = {}
-        self._class_orders: Dict[str, int] = {}
-        self._class_counts: Dict[str, int] = {}
-        self._rebound_by_global: Set[str] = set()
-        self._star_imports: List[int] = []
-        self._order = 0
-
-    def collect(self, tree: ast.Module) -> _ModuleBindings:
-        """Walk ``tree`` and return what its top level binds."""
-        for order, stmt in enumerate(tree.body):
-            self._order = order
-            self._statement(stmt, True, ())
-        return _ModuleBindings(
-            bindings={name: tuple(events) for name, events in self._bindings.items()},
-            # A qualname two classes share identifies neither of them.
-            class_orders={
-                qualname: order
-                for qualname, order in self._class_orders.items()
-                if self._class_counts[qualname] == 1
-            },
-            rebound_by_global=frozenset(self._rebound_by_global),
-            star_imports=tuple(self._star_imports),
-            class_hosts={
-                qualname: host
-                for qualname, host in self._class_hosts.items()
-                if self._class_counts[qualname] == 1
-            },
-        )
-
-    def _bind(
-        self,
-        name: str,
-        certain: bool,
-        *,
-        class_qualname: Optional[str] = None,
-        is_import: bool = False,
-        origin: Optional[str] = None,
-    ) -> None:
-        self._bindings.setdefault(name, []).append(
-            _GlobalBinding(
-                order=self._order,
-                certain=certain,
-                class_qualname=class_qualname,
-                is_import=is_import,
-                origin=origin,
-            )
-        )
-
-    def _note_class(self, qualname: str) -> None:
-        self._class_counts[qualname] = self._class_counts.get(qualname, 0) + 1
-        self._class_orders[qualname] = self._order
-
-    def _statement(self, stmt: ast.stmt, certain: bool, class_stack: Tuple[str, ...]) -> None:
-        """Record what ``stmt``, running in the module's own scope, binds."""
-        if isinstance(stmt, ast.ClassDef):
-            qualname = ".".join((*class_stack, stmt.name))
-            self._note_class(qualname)
-            if not class_stack:
-                self._class_hosts[qualname] = _ClassHost(
-                    decorators=tuple(
-                        _dotted_name(d.func if isinstance(d, ast.Call) else d)
-                        for d in stmt.decorator_list
-                    ),
-                    bases=tuple(
-                        _dotted_name(b.value if isinstance(b, ast.Subscript) else b)
-                        for b in stmt.bases
-                    ),
-                    body_on_header_line=body_shares_header_line(self._lines, stmt),
-                )
-            for expr in (*stmt.decorator_list, *stmt.bases, *(kw.value for kw in stmt.keywords)):
-                self._expression(expr, certain)
-            self._nested_scope(stmt.body, (*class_stack, stmt.name))
-            self._bind(stmt.name, certain, class_qualname=qualname)
-            return
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for decorator in stmt.decorator_list:
-                self._expression(decorator, certain)
-            self._nested_scope(stmt.body, class_stack)
-            self._bind(stmt.name, certain)
-            return
-        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
-            if any(alias.name == "*" for alias in stmt.names):
-                self._star_imports.append(self._order)
-            for alias in stmt.names:
-                name = imported_binding_name(alias)
-                if name is not None:
-                    self._bind(name, certain, is_import=True, origin=_import_origin(stmt, alias))
-            return
-        if (
-            isinstance(stmt, ast.Assign)
-            and len(stmt.targets) == 1
-            and isinstance(stmt.targets[0], ast.Name)
-            and (alias_of := _dotted_name(stmt.value)) is not None
-        ):
-            self._bind(stmt.targets[0].id, certain, origin=alias_of)
-            return
-        if isinstance(stmt, (ast.Global, ast.Nonlocal)):
-            return  # Both are declarations about other scopes, and bind nothing.
-        branching = any(field in _SUITE_FIELDS for field, _ in ast.iter_fields(stmt))
-        for field, value in ast.iter_fields(stmt):
-            if field in _SUITE_FIELDS:
-                for child in _child_nodes(value):
-                    self._clause(child, class_stack)
-                continue
-            for child in _child_nodes(value):
-                self._expression(child, certain and not branching)
-
-    def _clause(self, node: ast.AST, class_stack: Tuple[str, ...]) -> None:
-        """A member of a suite: a statement, an ``except`` clause, or a ``match`` case."""
-        if isinstance(node, ast.stmt):
-            self._statement(node, False, class_stack)
-            return
-        if isinstance(node, ast.ExceptHandler):
-            if node.name:
-                self._bind(node.name, False)
-            if node.type is not None:
-                self._expression(node.type, False)
-            for inner in node.body:
-                self._statement(inner, False, class_stack)
-            return
-        if isinstance(node, ast.match_case):
-            self._expression(node.pattern, False)
-            if node.guard is not None:
-                self._expression(node.guard, False)
-            for inner in node.body:
-                self._statement(inner, False, class_stack)
-
-    def _expression(self, node: ast.AST, certain: bool) -> None:
-        """Record the names an expression stores into the scope it is evaluated in."""
-        if isinstance(node, ast.Name):
-            if isinstance(node.ctx, (ast.Store, ast.Del)):
-                self._bind(node.id, certain)
-            return
-        if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            return  # Whatever their bodies bind belongs to a scope of their own.
-        if isinstance(node, (ast.MatchAs, ast.MatchStar)):
-            if node.name:
-                self._bind(node.name, certain)
-        elif isinstance(node, ast.MatchMapping):
-            if node.rest:
-                self._bind(node.rest, certain)
-        for field, value in ast.iter_fields(node):
-            if isinstance(node, ast.comprehension) and field == "target":
-                continue  # A comprehension's loop variable lives in its own scope.
-            for child in _child_nodes(value):
-                self._expression(child, certain)
-
-    def _nested_scope(self, body: Sequence[ast.stmt], class_stack: Tuple[str, ...]) -> None:
-        """Take from a function or class body only what the module's own scope must know."""
-        for stmt in body:
-            if isinstance(stmt, ast.ClassDef):
-                self._note_class(".".join((*class_stack, stmt.name)))
-                self._nested_scope(stmt.body, (*class_stack, stmt.name))
-                continue
-            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self._nested_scope(stmt.body, class_stack)
-                continue
-            if isinstance(stmt, ast.Global):
-                self._rebound_by_global.update(stmt.names)
-                continue
-            for _field, value in ast.iter_fields(stmt):
-                for child in _child_nodes(value):
-                    if isinstance(child, ast.stmt):
-                        self._nested_scope([child], class_stack)
-                    elif isinstance(child, (ast.ExceptHandler, ast.match_case)):
-                        self._nested_scope(child.body, class_stack)
-
-
-def _dotted_name(node: ast.expr) -> Optional[str]:
-    """``a.b.c`` for a chain of attributes on a name, None for any other expression."""
-    parts: List[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if not isinstance(node, ast.Name):
-        return None
-    parts.append(node.id)
-    return ".".join(reversed(parts))
-
-
-def _import_origin(stmt: Union[ast.Import, ast.ImportFrom], alias: ast.alias) -> Optional[str]:
-    """The absolute dotted name an import alias binds; None for a relative import.
-
-    ``import a.b`` binds ``a``, so its origin is ``a``; ``import a.b as c``
-    binds ``a.b`` itself.
-    """
-    if isinstance(stmt, ast.Import):
-        return alias.name if alias.asname else alias.name.split(".")[0]
-    if stmt.level or not stmt.module:
-        return None
-    return f"{stmt.module}.{alias.name}"
-
-
-def _global_bindings(source: str) -> Optional[_ModuleBindings]:
-    """What ``source`` binds at its top level, or None when it will not parse."""
-    if source in _MODULE_BINDINGS:
-        return _MODULE_BINDINGS[source]
-    try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError):
-        return _MODULE_BINDINGS.put(source, None)
-    return _MODULE_BINDINGS.put(source, _GlobalBindingCollector(source_lines(source)).collect(tree))
 
 
 class _CallRenamer(ast.NodeTransformer):
@@ -771,9 +506,16 @@ class HelperPlacement(EngineState):
         return class_name
 
     def _get_method_context(
-        self, func: Optional[FunctionNode], class_name: Optional[str]
+        self,
+        func: Optional[FunctionNode],
+        class_name: Optional[str],
+        module: Optional[ast.Module] = None,
     ) -> MethodInfo:
-        """Return method metadata for ``func`` when it is defined inside ``class_name``."""
+        """Return method metadata for ``func`` when it is defined inside ``class_name``.
+
+        ``module`` is the module ``func`` is defined in, where a type variable
+        or ``Self`` its receiver is annotated with is looked up.
+        """
 
         if func is None or class_name is None:
             return MethodInfo(kind=None, implicit_param=None)
@@ -814,6 +556,10 @@ class HelperPlacement(EngineState):
             # parameter would call a method on an arbitrary object.
             if kind == "instance" and implicit_param != "self":
                 receiver_known = False
+            # A receiver annotated to admit other objects is one the helper
+            # must take as an argument, as for an unknown receiver.
+            if _admits_other_receivers(func, kind, class_name, module):
+                receiver_known = False
             if implicit_param is not None and not _dispatches_on(func, implicit_param):
                 # The method never asks anything of its receiver, so the helper
                 # must not either. See :func:`_dispatches_on`.
@@ -845,7 +591,7 @@ class HelperPlacement(EngineState):
         return matches[0]
 
     @staticmethod
-    def _module_bindings(file_path: str, sources: Mapping[str, str]) -> Optional[_ModuleBindings]:
+    def _module_bindings(file_path: str, sources: Mapping[str, str]) -> Optional[ModuleBindings]:
         """What ``file_path`` binds at its top level, read from ``sources`` or from disk.
 
         The pair under evaluation carries the text its own modules were
@@ -859,7 +605,7 @@ class HelperPlacement(EngineState):
                 source = read_source(file_path)
             except (OSError, UnicodeError, ValueError):
                 return None
-        return _global_bindings(source)
+        return global_bindings(source)
 
     def _find_class_info_for_base(
         self,
@@ -936,10 +682,31 @@ class HelperPlacement(EngineState):
     def _can_host(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
         """Whether a helper placed in ``info``'s body stays a plain member of the class.
 
-        See :meth:`_ModuleBindings.refuses_helper` for what rules a class out.
+        See :meth:`ModuleBindings.refuses_helper` for what rules a class out.
         """
         table = self._module_bindings(info.file_path, sources)
         return table is not None and table.refuses_helper(info.qualname) is None
+
+    def _leaves_functions_alone(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
+        """Whether building the class leaves a helper placed in its body a plain member of it.
+
+        A metaclass that wraps every callable of the namespace, or a base whose
+        ``__init_subclass__`` registers them, would wrap or register the helper
+        too (:meth:`ImportTimeCode.leaves_functions_alone`); the helper then
+        stays at module level and takes the receiver as an argument.
+        """
+        if "." in info.qualname:
+            return False
+        source = sources.get(info.file_path)
+        try:
+            code = ImportTimeCode(
+                source if source is not None else read_source(info.file_path),
+                path=Path(info.file_path),
+                cache=self.import_graph,
+            )
+        except (OSError, UnicodeError, SyntaxError, ValueError):
+            return False
+        return code.leaves_functions_alone(info.qualname)
 
     def _ancestor_depths(
         self,
@@ -983,6 +750,7 @@ class HelperPlacement(EngineState):
         class2: Tuple[str, str],
         class_infos: List[ClassInfo],
         sources: Mapping[str, str],
+        admits: Callable[[ClassInfo], bool] = lambda info: True,
     ) -> Optional[ClassInfo]:
         """The shared ancestor nearest to both classes, or None when they share none.
 
@@ -996,7 +764,8 @@ class HelperPlacement(EngineState):
         that exposes more of what the body may use. So the candidates are
         ranked by their greatest distance from either class, then by their
         total distance, then by where they are defined, which is an order both
-        sides agree on.
+        sides agree on. An ancestor ``admits`` refuses is passed over like one
+        that cannot host, and a farther one may still serve.
         """
         file1, name1 = class1
         file2, name2 = class2
@@ -1018,7 +787,7 @@ class HelperPlacement(EngineState):
             depth1 = reachable1.get(key)
             if depth1 is None or (key == key1 and key == key2):
                 continue  # Identical class; handled elsewhere.
-            if not self._can_host(info, sources):
+            if not self._can_host(info, sources) or not admits(info):
                 # A farther ancestor is on both method resolution orders too.
                 continue
             shared.append((max(depth1, depth2), depth1 + depth2, key, info))
@@ -1079,7 +848,11 @@ class HelperPlacement(EngineState):
         sources = {file1: pair.source1, file2: pair.source2}
         if file1 == file2 and pair.class1_name == pair.class2_name:
             own = self._find_class_info_by_name(class_infos, file1, pair.class1_name)
-            if own is None or not self._can_host(own, sources):
+            if (
+                own is None
+                or not self._can_host(own, sources)
+                or not self._leaves_functions_alone(own, sources)
+            ):
                 return None
             implicit_param = _implicit_param_for(effective_kind, method_info1, method_info2)
             return ClassInsertionPlan(
@@ -1091,9 +864,18 @@ class HelperPlacement(EngineState):
 
         # The modules the pair was parsed from answer for their own bindings
         # without being read again, and answer for the text the class index
-        # describes rather than for whatever is on disk now.
+        # describes rather than for whatever is on disk now. A method helper
+        # runs the template's relative imports in the ancestor's module, so
+        # an ancestor in another package would import other modules.
+        levels = relative_import_levels(pair.block1_nodes)
         ancestor = self._find_common_ancestor(
-            (file1, pair.class1_name), (file2, pair.class2_name), class_infos, sources
+            (file1, pair.class1_name),
+            (file2, pair.class2_name),
+            class_infos,
+            sources,
+            admits=lambda info: relative_imports_resolve_alike(
+                (info.file_path, file1, file2), levels
+            ),
         )
         if ancestor is None or not _unique_module_level_class(
             class_infos, ancestor.file_path, ancestor.name

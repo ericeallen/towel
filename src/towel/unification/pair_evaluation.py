@@ -34,25 +34,28 @@ None for a rejection that was already traced through ``_debug_reject``:
 8. the orphan check on what the blocks leave behind;
 9. the call sites, each verified by instantiation, plus clustered sites;
 10. placement: function, class, or module, and a host that closes no cycle;
-11. the proposal: reuse of an existing function, the filter that declines
-    reducing an earlier pass's helper to a forwarder, and annotations.
+11. the proposal: the filter that declines reducing an earlier pass's
+    helper to a forwarder, and annotations.
 """
 
 from __future__ import annotations
 
 import ast
+import builtins
 import dataclasses
 import os
+import symtable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
+from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Set, Tuple, FrozenSet
 
 from ..diagnostics import VALIDATION, debugging
+from ..source_text import read_source
 from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
-from .builtins import CALL_ARGUMENT_BUILTINS
+from .builtins import CALL_ARGUMENT_BUILTINS, is_builtin
 from .semantic_safety import (
     available_argument_names,
     module_resolved_names,
@@ -98,7 +101,15 @@ from .semantic_safety import (
     unbinds_external_name,
     uses_class_private_names,
 )
-from .import_graph import import_runs_new_code, layout_is_known, would_create_import_cycle
+from .import_graph import (
+    ImportChange,
+    host_has_stub,
+    import_change,
+    layout_is_known,
+    relative_import_levels,
+    relative_imports_resolve_alike,
+    would_create_import_cycle,
+)
 from .thunk_inlining import inline_leading_thunks
 from .substitution import Substitution
 from .visitors import FreeNameCollector, body_without_docstring
@@ -194,6 +205,75 @@ class _Placed:
     # The helper reads module names bare (stage 6) but placement put it in a
     # module other than the one both sites resolved them in.
     reads_bare_elsewhere: bool
+    # Names the helper reads bare from its host module's namespace that a site
+    # in another module may resolve differently (``_reads_differing_by_module``).
+    differing_reads: FrozenSet[str] = frozenset()
+
+
+# Names every module's namespace defines for itself, each with that module's
+# own value; read bare in another module, each is the other module's.
+_MODULE_OWN_NAMES = frozenset(
+    {
+        "__annotations__",
+        "__builtins__",
+        "__cached__",
+        "__doc__",
+        "__file__",
+        "__loader__",
+        "__name__",
+        "__package__",
+        "__path__",
+        "__spec__",
+    }
+)
+
+# What a bare read finds in the builtins when no namespace between binds it:
+# the one lookup that can be the same from every module.
+_BUILTIN_NAMES = frozenset(vars(builtins)) - _MODULE_OWN_NAMES
+
+
+def _module_namespace_names(
+    helper: ast.FunctionDef,
+) -> Optional[Tuple[FrozenSet[str], FrozenSet[str]]]:
+    """The names the helper uses from its module's namespace, and those it declares ``global``.
+
+    CPython's own symbol table answers, so a name read inside a lambda or a
+    comprehension of the helper that nothing in the helper binds is among
+    them, and a parameter or a local is not. None when the helper does not
+    compile to a table.
+    """
+    try:
+        table = symtable.symtable(ast.unparse(helper), "<helper>", "exec")
+    except SyntaxError:
+        return None
+    names: Set[str] = set()
+    declared: Set[str] = set()
+    pending = list(table.get_children())
+    while pending:
+        scope = pending.pop()
+        for symbol in scope.get_symbols():
+            if symbol.is_global():
+                names.add(symbol.get_name())
+                if symbol.is_declared_global():
+                    declared.add(symbol.get_name())
+        pending.extend(scope.get_children())
+    return frozenset(names), frozenset(declared)
+
+
+# How a refused host is reported, by what its import would change.
+_IMPORT_CHANGE_REASONS = {
+    ImportChange.UNKNOWN: RejectReason.IMPORT_TIME_EFFECTS,
+    ImportChange.RUNS_CODE: RejectReason.IMPORT_TIME_EFFECTS,
+    ImportChange.NEW_REQUIREMENT: RejectReason.NEW_IMPORT_REQUIREMENT,
+    ImportChange.NEW_TOP_LEVEL_PACKAGE: RejectReason.NEW_TOP_LEVEL_PACKAGE,
+    ImportChange.RUN_BY_PATH: RejectReason.RUN_BY_PATH_IMPORT,
+}
+
+
+def _analyzed_module(analyzer: Optional[ScopeAnalyzer]) -> Optional[ast.Module]:
+    """The module ``analyzer`` analyzed, when it analyzed a whole module."""
+    tree = analyzer.analyzed_tree if analyzer is not None else None
+    return tree if isinstance(tree, ast.Module) else None
 
 
 def _is_trivial_return_of_bound_name(
@@ -362,12 +442,15 @@ class PairEvaluation(
         placed = self._unify_and_place(
             pair, setup, analysis, value_producing, functions, class_infos, keep_module_names=True
         )
-        if placed is not None and placed.reads_bare_elsewhere:
+        if placed is not None and (placed.reads_bare_elsewhere or placed.differing_reads):
             # The names are the same lookup only from the sites' own module;
             # a helper hosted in an ancestor class defined elsewhere would
-            # resolve them in that module. Decide the pair again with every
-            # name a parameter. Unification runs again because the later
-            # stages rewrite the substitution in place.
+            # resolve them in that module, and a builtin that one of the
+            # modules rebinds is not the same lookup from the others. Decide
+            # the pair again with those names parameters, and with every
+            # module name one when the helper left the sites' module.
+            # Unification runs again because the later stages rewrite the
+            # substitution in place.
             placed = self._unify_and_place(
                 pair,
                 setup,
@@ -375,8 +458,16 @@ class PairEvaluation(
                 value_producing,
                 functions,
                 class_infos,
-                keep_module_names=False,
+                keep_module_names=not placed.reads_bare_elsewhere,
+                forced_parameters=placed.differing_reads,
             )
+            if placed is not None and (placed.reads_bare_elsewhere or placed.differing_reads):
+                self._debug_reject(
+                    RejectReason.BARE_NAME_DIFFERS_BY_MODULE,
+                    pair,
+                    detail=str(sorted(placed.differing_reads)),
+                )
+                return None
         if placed is None:
             return None
         return self._finish_proposal(
@@ -393,15 +484,24 @@ class PairEvaluation(
         class_infos: List[ClassInfo],
         *,
         keep_module_names: bool,
+        forced_parameters: FrozenSet[str] = frozenset(),
     ) -> Optional[_Placed]:
-        """Stages 4 to 10, with or without reading shared module names bare."""
+        """Stages 4 to 10, with or without reading shared module names bare.
+
+        Every name in ``forced_parameters`` the template reads is a parameter.
+        """
         ctx = setup.ctx
         unified = self._unify_pair(pair, analysis)
         if unified is None:
             return None
         scope = self._helper_scope(pair, ctx, functions)
         free = self._free_variables(
-            pair, ctx, analysis, unified, keep_module_names=keep_module_names
+            pair,
+            ctx,
+            analysis,
+            unified,
+            keep_module_names=keep_module_names,
+            forced_parameters=forced_parameters,
         )
         if free is None:
             return None
@@ -421,7 +521,79 @@ class PairEvaluation(
         elsewhere = bool(free.module_names) and os.path.abspath(
             placement.home.file_path
         ) != os.path.abspath(pair.file_path)
-        return _Placed(unified, rendered, placement, elsewhere)
+        differing = self._reads_differing_by_module(pair, placement, rendered.func_def, functions)
+        if differing is None:
+            self._debug_reject(RejectReason.BARE_NAME_DIFFERS_BY_MODULE, pair)
+            return None
+        return _Placed(unified, rendered, placement, elsewhere, differing)
+
+    def _reads_differing_by_module(
+        self,
+        pair: CodeBlockPair,
+        placement: _Placement,
+        helper: ast.FunctionDef,
+        functions: FunctionIndex,
+    ) -> Optional[FrozenSet[str]]:
+        """The names the helper reads bare that a site in another module may not resolve alike.
+
+        A bare read in the helper looks in its host module's namespace, then
+        the builtins; the block it replaced looked in its own module's. From
+        a site in another module that is the same lookup only for a builtin
+        that no participating module may bind (``ModuleBindings.may_bind``)
+        and whose namespace no reflection may rebind: a module's own
+        function, class or import of that name, a star import, or a
+        ``global`` declaration makes the host's answer differ from the
+        site's. Anything else read bare, a module name or a dunder every
+        module defines for itself, differs too. None when the helper's
+        names cannot be listed, or when a differing name is one the helper
+        declares ``global`` and so cannot take as a parameter.
+        """
+        host = placement.home.file_path
+        paths = {host} | {replacement.file_path or host for replacement in placement.replacements}
+        if len({os.path.abspath(path) for path in paths}) == 1:
+            return frozenset()
+        found = _module_namespace_names(helper)
+        if found is None:
+            return None
+        names, declared = found
+        sources = {pair.file_path: pair.source1, pair.file_path2: pair.source2}
+        tables = [self._module_bindings(path, sources) for path in sorted(paths)]
+        unreliable = any(table is None for table in tables) or any(
+            self._namespace_is_reflective(path, sources, functions) for path in paths
+        )
+        differing = frozenset(
+            name
+            for name in names
+            if name not in _BUILTIN_NAMES
+            or unreliable
+            or any(table is not None and table.may_bind(name) for table in tables)
+        )
+        if differing & declared:
+            return None
+        return differing
+
+    @staticmethod
+    def _namespace_is_reflective(
+        path: str, sources: Mapping[str, str], functions: FunctionIndex
+    ) -> bool:
+        """Whether the module reaches its namespace through reflection (``globals()``, ``exec``, ...).
+
+        Its scope analysis says so (``external_binding_hazards``); a module
+        with no analyzed function is analyzed here, and one that cannot be
+        read or parsed counts as reflective.
+        """
+        artifacts = functions.in_file(path)
+        analyzer = artifacts[0].scope_analyzer if artifacts else None
+        if analyzer is None:
+            source = sources.get(path)
+            try:
+                tree = ast.parse(source if source is not None else read_source(path))
+            except (OSError, UnicodeError, ValueError, SyntaxError):
+                return True
+            analyzer = ScopeAnalyzer()
+            analyzer.analyze(tree)
+        hazards = analyzer.external_binding_hazards
+        return hazards is None or hazards.reflective
 
     # -- 1 ---------------------------------------------------------------------
 
@@ -477,10 +649,14 @@ class PairEvaluation(
         # but has no receiver; only a function defined directly in the class
         # body dispatches as a method.
         method_info1 = self._get_method_context(
-            func1, self._method_class(func1, pair.class1_name, scope_analyzer)
+            func1,
+            self._method_class(func1, pair.class1_name, scope_analyzer),
+            _analyzed_module(scope_analyzer),
         )
         method_info2 = self._get_method_context(
-            func2, self._method_class(func2, pair.class2_name, scope_analyzer2)
+            func2,
+            self._method_class(func2, pair.class2_name, scope_analyzer2),
+            _analyzed_module(scope_analyzer2),
         )
 
         for guard, reason in (
@@ -756,11 +932,13 @@ class PairEvaluation(
         unified: _Unified,
         *,
         keep_module_names: bool = True,
+        forced_parameters: FrozenSet[str] = frozenset(),
     ) -> Optional[_FreeVariables]:
         """The helper's free variables, checked for lifetime, declared, and thunked as needed.
 
         With ``keep_module_names`` false every shared free name is a parameter,
-        as for a helper whose module is not the sites' own.
+        as for a helper whose module is not the sites' own; a name in
+        ``forced_parameters`` that the template reads is one either way.
         """
         debug_enabled = debugging(VALIDATION)
         scope_analyzer, scope_analyzer2 = ctx.scope_analyzer, ctx.scope_analyzer2
@@ -806,13 +984,25 @@ class PairEvaluation(
         substitution = unified.substitution
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
         self._strip_fstring_params(substitution)
+        # The template's free variables come from block 1's module, which
+        # keeps a builtin spelling only where it binds the name; block 2's
+        # module or function may bind it where block 1's does not. The forced
+        # names are ones the rendered helper read bare.
+        also_free = set(forced_parameters)
+        if pair.is_cross_file:
+            also_free |= {
+                name for name in free_vars2 - free_vars1 if is_builtin(name)
+            } & self._template_reads(pair)
+        free_vars1, free_vars2 = free_vars1 | also_free, free_vars2 | also_free
         free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1)
         # A parameter cannot also be declared global or nonlocal in the helper.
         globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
             pair, scope_analyzer, free_vars
         )
         module_names = (
-            self._names_kept_free(pair, ctx, free_vars) if keep_module_names else frozenset()
+            self._names_kept_free(pair, ctx, free_vars - forced_parameters)
+            if keep_module_names
+            else frozenset()
         )
         free_vars -= module_names
         if self._rejects_module_data_lookup(
@@ -852,6 +1042,14 @@ class PairEvaluation(
             available,
             module_names,
         )
+
+    @staticmethod
+    def _template_reads(pair: CodeBlockPair) -> FrozenSet[str]:
+        """The names the template block reads outside the functions it defines."""
+        collector = FreeNameCollector()
+        for statement in pair.block1_nodes:
+            collector.visit(statement)
+        return frozenset(collector.used)
 
     def _names_kept_free(
         self, pair: CodeBlockPair, ctx: "_PairContext", free_vars: Set[str]
@@ -1213,9 +1411,11 @@ class PairEvaluation(
         """The module the helper is defined in once every participating module can import it.
 
         A helper shared across modules is refused when a participating module
-        declares a global, when the project's layout is unknown, or when the
-        import would close a cycle that no other participating module can
-        host instead.
+        declares a global, when a relative import the helper runs would name
+        a different module from some participating module
+        (``relative_imports_resolve_alike``), when the project's layout is
+        unknown, or when the import would close a cycle that no other
+        participating module can host instead.
         """
         canonical_file = home.file_path
         participating = {canonical_file} | {
@@ -1225,6 +1425,14 @@ class PairEvaluation(
             return canonical_file
         if any(functions.declares_global(path) for path in participating):
             self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
+            return None
+        # The helper runs the template's imports in whichever module hosts
+        # it, and every participating module is a candidate host, so each
+        # must resolve them alike.
+        if not relative_imports_resolve_alike(
+            participating, relative_import_levels(pair.block1_nodes)
+        ):
+            self._debug_reject(RejectReason.RELATIVE_IMPORT_ACROSS_PACKAGES, pair)
             return None
         if not layout_is_known(canonical_file, self.import_graph):
             self._debug_reject(RejectReason.UNKNOWN_LAYOUT, pair)
@@ -1236,23 +1444,29 @@ class PairEvaluation(
         candidates = [canonical_file]
         if home.insert_into_class is None and home.insert_into_function is None:
             candidates += sorted(participating - {canonical_file})
-        effects = False
+        refusal: Optional[RejectReason] = None
         for candidate in candidates:
             if would_create_import_cycle(candidate, participating, self.import_graph):
                 continue
-            # The new import must not run module code the borrower's import does
-            # not already run: a host that prints or registers at import time
-            # would do so wherever the borrower is imported.
-            if any(
-                import_runs_new_code(candidate, borrower, self.import_graph)
-                for borrower in participating - {candidate}
-            ):
-                effects = True
+            # The other modules would import the helper through the host's
+            # stub, which a type checker reads in its place and lacks it.
+            if host_has_stub(candidate, self.import_graph):
+                refusal = refusal or RejectReason.HOST_HAS_STUB
+                continue
+            # The new import must not change what importing a borrower does: a
+            # host that prints or registers at import time would do so wherever
+            # the borrower is imported, one that needs an absent package or one
+            # that does not ship with the borrower would stop its import.
+            changes = [
+                change
+                for borrower in sorted(participating - {candidate})
+                if (change := import_change(candidate, borrower, self.import_graph)) is not None
+            ]
+            if changes:
+                refusal = refusal or _IMPORT_CHANGE_REASONS[changes[0]]
                 continue
             return candidate
-        self._debug_reject(
-            RejectReason.IMPORT_TIME_EFFECTS if effects else RejectReason.IMPORT_CYCLE, pair
-        )
+        self._debug_reject(refusal or RejectReason.IMPORT_CYCLE, pair)
         return None
 
     # -- 11 --------------------------------------------------------------------
@@ -1265,11 +1479,15 @@ class PairEvaluation(
         placement: _Placement,
         functions: FunctionIndex,
     ) -> Optional[RefactoringProposal]:
-        """The proposal, redirected to an existing function or annotated as configured.
+        """The proposal, annotated as configured.
 
-        Declined when a site is the whole body of a helper an earlier pass
-        inserted and no redirect was possible: the helper would keep only the
-        new call, one more layer of indirection with no logic of its own.
+        A site that is the whole body of an existing function is never
+        redirected to call another existing function: that call would look
+        the other up in its module at every call, so patching or rebinding it
+        would change this one too. Declined when a site is the whole body of
+        a helper an earlier pass inserted while another site is not a whole
+        body (``_helper_reduced_to_forwarder``): the helper would keep only
+        the new call, one more layer of indirection with no logic of its own.
         """
         is_cross_file = pair.is_cross_file
         desc = f"Extract common code from {pair.function1_name}"
@@ -1314,10 +1532,6 @@ class PairEvaluation(
             self._debug_reject(RejectReason.DUPLICATE_PROPOSAL, pair)
             return None
         self._seen_proposals.add(identity)
-        if self.reuse_existing_functions:
-            redirected = self._redirect_to_existing_function(proposal, functions)
-            if redirected is not None:
-                return redirected
         if self.skip_trivial_helpers:
             forwarder = self._helper_reduced_to_forwarder(proposal, functions)
             if forwarder is not None:

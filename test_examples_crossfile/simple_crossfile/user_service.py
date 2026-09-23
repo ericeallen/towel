@@ -2,6 +2,8 @@
 User service module.
 """
 
+import admin_service
+
 
 def validate_user_email(email):
     """Validate user email format."""

@@ -205,13 +205,10 @@ def process_data_b(x):
 
         proposals = self.engine.analyze_file(temp_path)
         # The docstrings are skipped, so the two bodies are whole-function
-        # duplicates and the second is rewritten to call the first.
+        # duplicates, and both become calls of one helper.
         self.assertEqual(
             [p.description for p in proposals],
-            [
-                f"Reuse process_data_a ({os.path.basename(temp_path)}) for duplicated "
-                "code in process_data_b"
-            ],
+            ["Extract common code from process_data_a and process_data_b"],
         )
 
     def test_find_python_files_excludes_hidden(self):

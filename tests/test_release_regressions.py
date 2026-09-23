@@ -78,9 +78,7 @@ def test_helper_available_during_module_initialization(tmp_path: Path) -> None:
     path.write_text(source)
     engine = UnificationRefactorEngine()
     proposals = engine.analyze_file(str(path))
-    assert [p.description for p in proposals] == [
-        "Reuse first (example.py) for duplicated code in second"
-    ]
+    assert [p.description for p in proposals] == ["Extract common code from first and second"]
     namespace: dict[str, object] = {}
     exec(engine.apply_refactoring(str(path), proposals[0]), namespace)
     assert namespace["RESULT"] == 7

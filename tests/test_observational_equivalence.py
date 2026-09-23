@@ -670,10 +670,10 @@ def calculate_b(y):
 
         proposals = self.engine.analyze_file(temp_file)
         # calculate_b duplicates the whole body of calculate_a, so the one
-        # proposal rewrites it to call calculate_a.
+        # proposal makes both call a new helper.
         self.assertEqual(
             [p.description for p in proposals],
-            ["Reuse calculate_a (m.py) for duplicated code in calculate_b"],
+            ["Extract common code from calculate_a and calculate_b"],
         )
 
         refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])

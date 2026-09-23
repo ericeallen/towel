@@ -2,6 +2,8 @@
 Validation utilities.
 """
 
+from api import checkout
+
 
 def validate_transaction_amount(amount, currency):
     """Validate transaction amount."""

@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
 from .exceptions import ProjectScanLimitError, RefactoringError
+from .import_graph import ImportTimeCode, fails_run_by_path, runs_as_script
 from .insertion import reindent, relative_import_module
 from .models import AppliedChange, MethodKind, RefactoringProposal, Replacement
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
@@ -373,7 +374,11 @@ class Materialization(
         elif file_path == proposal.file_path:
             self._insert_helper(proposal, file_path, lines)
         elif not proposal.insert_into_class:
+            before = "".join(lines)
             self._insert_helper_import(proposal, file_path, lines)
+            self._refuse_relative_import_in_a_script(
+                before, "".join(lines), file_path, proposal.extracted_function.name
+            )
         assembled = "".join(lines)
         if self.file_finisher is not None:
             assembled = self.file_finisher(file_path, assembled)
@@ -505,7 +510,9 @@ class Materialization(
     ) -> None:
         node: ast.AST = proposal.extracted_function
         dependencies = self._placeable_dependencies(
-            "".join(lines), self._annotation_names(proposal.extracted_function)
+            "".join(lines),
+            self._annotation_names(proposal.extracted_function),
+            Path(proposal.file_path),
         )
         if proposal.helper_type_declarations:
             node = ast.Module(
@@ -530,7 +537,7 @@ class Materialization(
         lines_to_insert.extend(["\n", "\n"])
         lines[insert_line:insert_line] = lines_to_insert
 
-    def _placeable_dependencies(self, source: str, names: Set[str]) -> Set[str]:
+    def _placeable_dependencies(self, source: str, names: Set[str], path: Path) -> Set[str]:
         """The annotation names the helper may be placed after; refuse when one it needs is not.
 
         A helper placed after a definition its annotations name can spell it
@@ -552,7 +559,7 @@ class Materialization(
             elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
                 module_names.add(statement.target.id)
         ordered = names & module_names
-        blocked = ordered - self.placeable_after(source)
+        blocked = ordered - self.placeable_after(source, path=path, cache=self.import_graph)
         if blocked and not _postpones_annotations(source):
             raise RefactoringError(
                 f"The helper's annotations name {sorted(blocked)}, defined after code that"
@@ -603,10 +610,10 @@ class Materialization(
         self, lines: List[str], dependencies: Set[str], insert_line: int
     ) -> int:
         """Keep eager declaration dependencies available before the helper can be called."""
-        body = self._parse_source("".join(lines)).body
+        code = ImportTimeCode("".join(lines))
         movable = True
-        for statement in body:
-            movable = movable and self._is_definition_like(statement)
+        for statement, runs_code in zip(code.tree.body, code.statements()):
+            movable = movable and not runs_code
             if not dependencies.intersection(bindings_of(statement, into_nested_scopes=False)):
                 continue
             if not movable or isinstance(statement, (ast.If, ast.Try)):
@@ -615,6 +622,31 @@ class Materialization(
                 )
             insert_line = max(insert_line, statement.end_lineno or statement.lineno)
         return insert_line
+
+    def _refuse_relative_import_in_a_script(
+        self, before: str, after: str, file_path: str, helper_name: str
+    ) -> None:
+        """Refuse a relative helper import in a module that still runs as a script by path.
+
+        Run by its path, a module has no package, so ``from .host import
+        helper`` raises there; pair evaluation admitted the borrower only for an
+        absolute import its leading imports already make resolvable
+        (``import_graph._breaks_run_by_path``). One whose leading imports are
+        already relative fails by path anyway, at that import.
+        """
+        tree = self._parse_source(before)
+        if not runs_as_script(before, tree, Path(file_path)) or fails_run_by_path(tree):
+            return
+        if any(
+            isinstance(node, ast.ImportFrom)
+            and node.level
+            and any(alias.name == helper_name for alias in node.names)
+            for node in self._parse_source(after).body
+        ):
+            raise RefactoringError(
+                f"{file_path} runs as a script by its path, where the relative import of"
+                f" {helper_name} could not resolve"
+            )
 
     def _insert_helper_import(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]
