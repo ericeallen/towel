@@ -23,10 +23,16 @@ from scripts import ecosystem_check as ecosystem
 from towel.changes import ChangePlan, FileChange, RecoveryRequired, apply_changes
 
 CANDIDATE = ecosystem.Candidate(
-    Path("code_towel-0-py3-none-any.whl"), "code-towel", "0", "0", ("mypy", "pyright"), ()
+    Path("code_towel-0-py3-none-any.whl"),
+    "code-towel",
+    "0",
+    "0",
+    ("mypy", "pyright"),
+    ("black", "isort", "ruff"),
+    (),
 )
 ENVIRONMENT = ecosystem.ProjectEnvironment(
-    Path(sys.executable), None, ecosystem.Environment("3", "0", ())
+    Path(sys.executable), None, ecosystem.Environment("3", "0", (), ())
 )
 
 
