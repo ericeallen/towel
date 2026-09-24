@@ -66,6 +66,9 @@ end, and are refined where they do; each refinement is argued where it is made:
   ``click`` imports that distribution under the name wherever it is installed,
   so a directory ``click/`` sharing one module with the library is in doubt
   even where this interpreter lacks the library (:func:`_required_elsewhere`).
+  An environment inside the root, the project's own ``.venv``, is outside the
+  project: what is installed there is a distribution, not the tree
+  (:func:`_in_installation`).
 - An import of a module a name's location lacks says nothing about where the
   name lives. sphinx's test data imports ``sphinx.missing_module4``, which its
   tests mock, and every other import of ``sphinx`` still places it; so only
@@ -87,8 +90,9 @@ What the model assumes, and cannot check:
 
 - the program's existing imports work in every environment it is used in, and
   its packages are imported from this tree. An installed copy this
-  interpreter can see makes the name ambiguous, and so does a distribution the
-  project declares it requires. One that only the project's own environment holds,
+  interpreter can see makes the name ambiguous, wherever it is installed, the
+  project's own ``.venv`` included, and so does a distribution the project
+  declares it requires. One that only the project's own environment holds,
   and that no declaration names by its import name, is invisible here, so the
   interpreter Towel runs in stands for the project's (as it already does for
   the type checker);
@@ -113,9 +117,11 @@ from __future__ import annotations
 
 import ast
 import enum
+import functools
 import importlib.machinery
 import os
 import sys
+import sysconfig
 import warnings
 from dataclasses import dataclass, replace
 from keyword import iskeyword
@@ -1883,10 +1889,12 @@ def installed_outside(name: str, root: Path) -> Optional[OutsideProvider]:
     of entry set aside: the project's own, since a copy of the project on the
     path (an editable install) is the project and may hide another copy
     behind it, and the working directory, which is where Towel was started
-    and no part of the environment the project runs in. Only a top-level
-    name is asked, so no package's ``__init__`` runs: finders only look. A
-    lookup that fails is an answer too, since nothing is then known about
-    the name.
+    and no part of the environment the project runs in. An environment inside
+    the root, such as the project's own ``.venv``, is not the project's: what
+    is installed there is outside it (:func:`_in_installation`). Only a
+    top-level name is asked, so no package's ``__init__`` runs: finders only
+    look. A lookup that fails is an answer too, since nothing is then known
+    about the name.
     """
     if name in sys.builtin_module_names:
         return OutsideProvider(ProviderKind.UNSHADOWABLE, "a module built into the interpreter")
@@ -1917,7 +1925,7 @@ def _found_outside(name: str, root: Path) -> Optional[OutsideProvider]:
     entries = [
         entry
         for entry in sys.path
-        if not _within(Path(entry or os.curdir).resolve(), root)
+        if not _projects_own(Path(entry or os.curdir).resolve(), root)
         and Path(entry or os.curdir).resolve() != working
     ]
     for finder in sys.meta_path:
@@ -1942,11 +1950,57 @@ def _outside(spec: importlib.machinery.ModuleSpec, root: Path) -> Optional[Outsi
         return OutsideProvider(ProviderKind.UNSHADOWABLE, f"a {origin} module")
     if origin is not None:
         path = Path(origin).resolve()
-        return None if _within(path, root) else OutsideProvider(ProviderKind.MODULE, str(path))
+        if _projects_own(path, root):
+            return None
+        return OutsideProvider(ProviderKind.MODULE, str(path))
     portions = [Path(location).resolve() for location in spec.submodule_search_locations or ()]
-    outside = [str(portion) for portion in portions if not _within(portion, root)]
+    outside = [str(portion) for portion in portions if not _projects_own(portion, root)]
     return OutsideProvider(ProviderKind.NAMESPACE, ", ".join(outside)) if outside else None
 
 
 def _within(path: Path, root: Path) -> bool:
     return path == root or path.is_relative_to(root)
+
+
+def _projects_own(path: Path, root: Path) -> bool:
+    """Whether ``path`` is part of the project at ``root``: inside it, and not in an environment there."""
+    return _within(path, root) and not _in_installation(path, root)
+
+
+def _in_installation(path: Path, root: Path) -> bool:
+    """Whether ``path``, inside ``root``, lies in an environment installed there rather than in its source.
+
+    The project's own ``.venv`` is the usual one, and what is installed in it
+    is a distribution, not the project's tree: the project installed there
+    without ``-e``, or a library a project directory is named like. It is
+    recognized as the tree walk recognizes it, which never reads it: a
+    ``site-packages`` or ``dist-packages`` directory, or a directory holding
+    ``pyvenv.cfg`` or ``conda-meta`` below the root; and also by this
+    interpreter's own installation paths when they lie below the root. The
+    root itself is not asked: a project kept in the directory of its own
+    environment still has its source there.
+    """
+    if any(
+        _within(path, place)
+        for place in _interpreter_places()
+        if place != root and _within(place, root)
+    ):
+        return True
+    directory = root
+    for part in path.relative_to(root).parts:
+        directory = directory / part
+        if part in _INSTALLATIONS or any(
+            (directory / marker).exists() for marker in _ENVIRONMENT_MARKERS
+        ):
+            return True
+    return False
+
+
+@functools.lru_cache(maxsize=1)
+def _interpreter_places() -> FrozenSet[Path]:
+    """This interpreter's prefixes and the directories it installs into, resolved; fixed for a process."""
+    places = {sys.prefix, sys.exec_prefix, sys.base_prefix, sys.base_exec_prefix}
+    places.update(
+        sysconfig.get_paths().get(key, "") for key in ("stdlib", "platstdlib", "purelib", "platlib")
+    )
+    return frozenset(Path(place).resolve() for place in places if place)
