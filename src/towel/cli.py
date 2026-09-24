@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from towel.unification.fixed_point import RunReport
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
-from towel.changes import apply_changes, recover
+from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
@@ -677,9 +677,17 @@ def _write_atomically(target: Path, text: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _pending_journal(target: Path) -> Optional[Path]:
-    """A transaction journal an interrupted run left under ``target``, if any."""
-    return next(target.rglob(".towel-transaction-*"), None) if target.is_dir() else None
+def _pending_journal(target: Path, excluded: Sequence[str] = ()) -> Optional[Path]:
+    """A journal an interrupted run left that may name a file a run on ``target`` changes.
+
+    Those files are ``target`` itself or the sources it holds. A journal
+    names files relative to the directory it sits in, and one whose manifest
+    cannot be read names everything beneath it (``journals_covering``); any
+    other, under ``target`` or not, concerns nothing the run changes.
+    """
+    files = [target] if target.is_file() else python_sources(target, excluded=excluded)
+    journals = journals_covering({path.resolve() for path in files})
+    return journals[0] if journals else None
 
 
 _COST_NOTE_FILES = 25
@@ -948,9 +956,12 @@ def _run_dry(args: argparse.Namespace) -> None:
             return
 
     if source == destination:
-        journal = _pending_journal(destination)
+        journal = _pending_journal(destination, options.exclude)
         if journal is not None:
-            raise ValueError(f"Recover the interrupted transaction first: towel recover {journal}")
+            raise ValueError(
+                "Refusing to refactor in place: "
+                + pending_journal_remedy(journal, "this run would change")
+            )
 
     oracle = _type_oracle(Path(input_path)) if options.types else None
     try:
@@ -1307,9 +1318,9 @@ def _run_preview(args: argparse.Namespace) -> None:
     target = options.target
 
     is_file, is_dir = _existing_target(target)
-    journal = _pending_journal(Path(target))
+    journal = _pending_journal(Path(target), options.exclude)
     if journal is not None:
-        LOG.warning("An interrupted transaction is pending; recover it first: %s", journal)
+        LOG.warning("%s", pending_journal_remedy(journal, "a run here would change"))
     if options.cross_module and is_dir:
         _judge_import_problems(Path(target).resolve(), options.exclude)
 
@@ -1382,7 +1393,7 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
         sys.exit(1)
     journal = _pending_journal(target)
     if journal is not None:
-        LOG.warning("An interrupted transaction is pending; recover it first: %s", journal)
+        LOG.warning("%s", pending_journal_remedy(journal, "a rename here would change"))
 
     helpers = _find_extracted_helpers(
         target,

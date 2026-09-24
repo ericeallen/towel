@@ -1297,8 +1297,10 @@ back caught failures. A durable journal, `.towel-transaction-<id>` at the
 common parent of the batch's files with a name unique per run, records the
 original bytes so `towel recover` can restore an interrupted batch; a pending
 journal blocks only a run that would change a file its manifest names (a
-journal without a readable manifest blocks everything beneath it); recovery
-refuses detected conflicting edits and keeps the journal for resolution.
+journal without a readable manifest blocks everything beneath it), which
+`changes.journals_covering` decides both for a batch and, before an
+in-place run starts, for the files it would analyze; recovery refuses
+detected conflicting edits and keeps the journal for resolution.
 Sources are decoded to LF text and split on LF alone
 (`source_text.source_lines`), so a form feed or U+2028 inside a comment or
 string does not shift a splice. An out-of-place run publishes its output with
