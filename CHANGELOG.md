@@ -30,6 +30,48 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- The fallback annotations of a typed run are built from the checker's
+  answer. Under strict mypy, the rung that made every annotation `Any` had
+  verified 4 times in 46, and 32 of its refusals were "Returning Any". Now
+  `Any` goes only where the errors point:
+  - a parameter read on a failing line;
+  - `Callable[[...], Any]` for a thunk whose result is at fault;
+  - the parameter an "Argument N" error names.
+
+  A return is loosened least, to `<declared> | Any`, which is also how a
+  helper returning `NotImplemented` is typed. Under mypy's
+  `warn_return_any`, the every-`Any` rung is not tried. The unannotated
+  helper is not tried under `disallow_untyped_defs`, or in a module whose
+  every function is annotated. Such a proposal is declined saying so;
+  before, idna's output failed its `mypy --strict` CI with 4 errors.
+- An extraction that no helper signature can type is declined early, under
+  a named reason in the run's summary:
+  - it narrows what its caller reads after the call;
+  - it narrows what a call-site lambda reads;
+  - it declares its class's attributes;
+  - it completes its caller's partial type.
+
+  Two of these are decided from the proposal alone, without asking the
+  checker.
+- A declined proposal is replayed at a rehearing, rather than checked
+  again, only while nothing it could depend on has changed: its rendered
+  files, the files its errors lie in and what they import, and the
+  baseline's record of known errors. On packaging, checks that exactly
+  repeated an earlier one went from 16 to 0.
+- A number of annotation fixes:
+  - outside a class, a `Self` the sites revealed becomes a type variable
+    bound to their classes;
+  - no annotation is written as the string `"None"`, which mypy 2 rejects
+    under `native_parser`;
+  - a site revealed as `Any` no longer erases another site's type in a
+    join;
+  - a copied declaration gives way to the narrower type the block saw;
+  - a method helper is placed where the attributes it assigns keep their
+    declarations;
+  - every rung writes only the type-only imports its own annotations use.
+- A class name shortened inside a subscripted annotation (`dict[Item, int]`)
+  was left unquoted while `Item` was imported only under `TYPE_CHECKING`.
+  mypy accepted it, but the module raised `NameError` on import.
 - Coverage exclusions set in a project's configuration now count the way a
   `# pragma: no cover` comment does. Examples are `if __name__ ==
   .__main__.:`, `raise NotImplementedError` and `@overload` in
