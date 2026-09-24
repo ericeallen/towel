@@ -39,6 +39,17 @@ class CheckerUnavailableError(RefactoringError):
     """
 
 
+class UntypeableExtraction(RefactoringError):
+    """The checker refused a candidate signature for a reason no signature of the helper can answer.
+
+    The block narrowed something the code after it relied on, or declared its
+    class's attributes, and the extraction takes that away from the caller
+    whatever the helper accepts or returns. The ladder stops at the first such
+    refusal rather than checking its remaining rungs, and the proposal is
+    reported under that reason rather than as an ordinary refusal.
+    """
+
+
 class UnsupportedLayoutError(TowelError, ValueError):
     """The project's packaging layout is one Towel does not model.
 

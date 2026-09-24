@@ -56,7 +56,7 @@ from typing import (
     TypeVar,
 )
 from .defaults import DEFAULT_MAX_ITERATIONS
-from .exceptions import CheckerUnavailableError, RefactoringError
+from .exceptions import CheckerUnavailableError, RefactoringError, UntypeableExtraction
 from .models import RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
@@ -108,6 +108,7 @@ def _is_checker_failure(error: BaseException) -> bool:
 
 DeclineReason = Literal[
     "refused by the type checker",
+    "no helper signature can type it",
     "not judged: the type checker could not run",
     "not representable in its file's encoding",
     "could not be rendered",
@@ -406,7 +407,9 @@ class FixedPointDrivers(Materialization):
         """Say why ``proposal`` was not applied, and count it under that reason.
 
         Told apart by type, never by wording: a checker that could not run
-        judged nothing; one that refused a rendered variant judged the proposal
+        judged nothing; a refusal no signature of the helper could answer
+        (``UntypeableExtraction``) says the extraction itself cannot be typed;
+        one that refused a rendered variant judged the proposal
         (``_checker_refusals`` counts those since the driver started it);
         text its file's encoding cannot hold is a limit of that file; anything
         else is a rendering Towel could not produce.
@@ -418,6 +421,11 @@ class FixedPointDrivers(Materialization):
             reason, said = (
                 "not judged: the type checker could not run",
                 "the type checker could not check",
+            )
+        elif isinstance(error, UntypeableExtraction):
+            reason, said = (
+                "no helper signature can type it",
+                "no helper signature can type",
             )
         elif isinstance(error, RefactoringError) and self._checker_refusals:
             reason, said = "refused by the type checker", "the type checker refused"

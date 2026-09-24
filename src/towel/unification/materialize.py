@@ -39,10 +39,10 @@ import textwrap
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
 from .engine_state import HelperNameClaims
-from .exceptions import ProjectScanLimitError, RefactoringError
+from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
 from .import_graph import ImportTimeCode, fails_run_by_path, runs_as_script
 from .insertion import reindent
 from .models import (
@@ -56,9 +56,9 @@ from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from ..project_layout import find_project_root
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
-from ..type_inference import TypeDiagnostic
 
 from .reuse import ExistingFunctionReuse
+from .annotation_ladder import Hearing, Rejection, Verified
 from .annotation_wiring import HelperAnnotationWiring
 from .insertion import InsertionPoints
 from .placement import HelperPlacement
@@ -73,51 +73,6 @@ class _HelperNaming:
     final_name: str
     receiver_parameter_index: Optional[int]
     parameter_count: int
-
-
-@dataclass(frozen=True)
-class _Verified:
-    """A variant the project accepted, with the files it would write."""
-
-    files: Dict[str, str]
-
-
-@dataclass(frozen=True)
-class _Rejection:
-    """The errors a checked variant introduced, and where its helper was rendered."""
-
-    errors: Tuple[TypeDiagnostic, ...]
-    helper_path: str
-    helper_name: str
-    helper_module: str
-
-    def confined_to_helper(self) -> bool:
-        """Whether every error lies within the helper's own definition.
-
-        Asked of the all-``Any`` helper, this decides whether the unannotated one
-        is worth a project check. To a caller the two are the same function: every
-        parameter accepts anything and the result constrains nothing. They differ
-        only on the helper's own lines, where a project may forbid explicit
-        ``Any`` or leave an unannotated body unchecked. An error anywhere else
-        survives the change, so the project would reject that helper too. An
-        error the checker did not locate is taken to lie inside, which costs a
-        check rather than a refactoring.
-        """
-        spans = [
-            (
-                min([node.lineno] + [decorator.lineno for decorator in node.decorator_list]),
-                node.end_lineno or node.lineno,
-            )
-            for node in ast.walk(ast.parse(self.helper_module))
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == self.helper_name
-        ]
-        return all(
-            error.line is None
-            or os.path.realpath(error.path) == os.path.realpath(self.helper_path)
-            and any(first <= error.line <= last for first, last in spans)
-            for error in self.errors
-        )
 
 
 def _padded(lines: List[str], insert_at: int, block: List[str]) -> List[str]:
@@ -203,29 +158,22 @@ class Materialization(
         self._infer_helper_annotations(proposal)
         check_types = self._active_type_oracle() is not None
         counters = dict(self._helper_name_counters)
-        rejection: Optional[_Rejection] = None
-        for variant in self._annotation_variants(proposal, check_types):
+        hearing = Hearing(self._judge_for(proposal))
+        for variant in self._annotation_ladder(proposal, check_types, hearing):
             outcome = self._attempt(variant, counters, check_types)
-            if isinstance(outcome, _Verified):
+            if isinstance(outcome, Verified):
                 return outcome.files
-            rejection = outcome
-        if (
-            rejection is not None
-            and rejection.confined_to_helper()
-            and check_types
-            and proposal.reused_function is None
-            and self._helper_has_annotations(proposal)
-        ):
-            outcome = self._attempt(self._without_annotations(proposal), counters, check_types)
-            if isinstance(outcome, _Verified):
-                return outcome.files
+            hearing.refused(variant, outcome)
+        settled = hearing.settled_by()
+        if settled is not None:
+            raise UntypeableExtraction(f"No helper signature can type this extraction: {settled}")
         if proposal.reused_function is not None:
             raise RefactoringError("Reusing the existing function introduces project type errors")
         raise RefactoringError("Every helper annotation variant introduces project type errors")
 
     def _attempt(
         self, variant: RefactoringProposal, counters: Dict[str, int], check_types: bool
-    ) -> "_Verified | _Rejection":
+    ) -> "Verified | Rejection":
         """The files with ``variant`` applied, or why the project rejects them."""
         mark = len(self._change_log)
         # Each attempt allocates the helper's name; restore the counters so
@@ -237,38 +185,22 @@ class Materialization(
         rendered = copy.deepcopy(variant)
         try:
             files = self._materialize_once(rendered)
-            errors = self._new_type_errors(files) if check_types else ()
+            errors = (
+                self._project_errors(files, rendered.extracted_function.name) if check_types else ()
+            )
         except Exception:
             del self._change_log[mark:]
             raise
         if not errors:
-            return _Verified(files)
+            return Verified(files)
         del self._change_log[mark:]
-        return _Rejection(
-            errors, rendered.file_path, rendered.extracted_function.name, files[rendered.file_path]
+        return Rejection(
+            errors,
+            rendered.file_path,
+            rendered.extracted_function.name,
+            files[rendered.file_path],
+            files,
         )
-
-    def _annotation_variants(
-        self, proposal: RefactoringProposal, check_types: bool
-    ) -> Iterator[RefactoringProposal]:
-        """Keep a precise ordinary signature; try generics before losing annotations.
-
-        Generation is lazy: successful concrete signatures need no additional
-        checker probes. An ordinary signature containing Any is already lossy,
-        so a parametric signature takes precedence when one can be verified.
-        """
-        if not check_types or proposal.reused_function is not None:
-            yield proposal
-            return
-        lossy = self._helper_uses_any(proposal)
-        if lossy:
-            yield from self._generic_helper_variants(proposal)
-        yield proposal
-        if not lossy:
-            yield from self._generic_helper_variants(proposal)
-        if self._helper_has_annotations(proposal):
-            # The unannotated helper follows only when it could help; see ``_Rejection``.
-            yield self._with_every_annotation_any(proposal)
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
