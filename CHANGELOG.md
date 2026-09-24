@@ -30,6 +30,17 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- Coverage exclusions set in a project's configuration now count the way a
+  `# pragma: no cover` comment does. Examples are `if __name__ ==
+  .__main__.:`, `raise NotImplementedError` and `@overload` in
+  `exclude_lines` or `exclude_also`. Before, only the comment counted, so
+  such an entry could move excluded code into a helper that coverage
+  measures. Towel reads the configuration as coverage.py 7.16 does: from
+  `COVERAGE_RCFILE`, `.coveragerc`, `.coveragerc.toml`, `setup.cfg` or
+  `tox.ini` `[coverage:report]`, or `pyproject.toml`
+  `[tool.coverage.report]`. Its three default patterns count as well. Where
+  `exclude_lines` leaves the pragma out, a `# pragma: no cover` comment
+  excludes nothing, so it no longer declines a pair.
 - A type-only import now joins the module's existing `TYPE_CHECKING` guard,
   recognised by binding as the import graph recognises it. Towel had found
   the guard by its exact text, and indented the new import four spaces:
@@ -580,6 +591,8 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   output is adopted into the place it was written for.
 
 ### Changed
+- A coverage configuration that coverage.py could not read is reported once
+  per project root, and coverage.py's defaults are used in its place.
 - A pair whose tool directives cannot move soundly is declined:
   - directives that differ between its sites (`directives_differ`): the
     helper has one line where the sites had several, so an ignore only one
