@@ -1037,7 +1037,10 @@ def _governed_thunks(helper: FunctionNode) -> Dict[str, Set[str]]:
 
     ``a() if p else b()``, ``if p: ... a() ... else: ... b()``, ``while p:
     a()`` and ``p and a()``: each call of a parameter inside a branch whose
-    condition reads parameter ``p`` is governed by ``p``. Own scope only.
+    condition is parameter ``p`` itself, perhaps negated or among the operands
+    of ``and``/``or``, is governed by ``p``: the test was passed in as ``p``. A
+    condition that merely reads a parameter, ``self.name == other.name``, is
+    the helper's own test and :mod:`narrowing` speaks for it. Own scope only.
     """
     parameters = {argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)}
     governed: Dict[str, Set[str]] = {}
@@ -1053,11 +1056,11 @@ def _governed_thunks(helper: FunctionNode) -> Dict[str, Set[str]]:
         }
 
     def tested(test: ast.expr) -> Set[str]:
-        return {
-            node.id
-            for node in ast.walk(test)
-            if isinstance(node, ast.Name) and node.id in parameters
-        }
+        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            return tested(test.operand)
+        if isinstance(test, ast.BoolOp):
+            return {name for value in test.values for name in tested(value)}
+        return {test.id} if isinstance(test, ast.Name) and test.id in parameters else set()
 
     for statement in helper.body:
         for node in walk_own_scope(statement):
