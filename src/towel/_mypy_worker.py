@@ -53,7 +53,13 @@ from mypy.errors import CompileError, Errors
 from mypy.find_sources import InvalidSourceList, create_source_list
 from mypy.fscache import FileSystemCache
 from mypy.main import process_options
-from mypy.modulefinder import matches_exclude
+from mypy.modulefinder import (
+    FindModuleCache,
+    ModuleNotFoundReason,
+    SearchPaths,
+    compute_search_paths,
+    matches_exclude,
+)
 from mypy.options import BuildType, Options
 from mypy.util import decode_python_encoding
 
@@ -559,6 +565,107 @@ def _build_sources(
     ]
 
 
+def _walked_like_mypy(entry: str, options: Options) -> bool:
+    """Whether mypy's walk of the root enters ``entry``, one of the root's own entries."""
+    name = os.path.basename(entry)
+    return not (
+        name in ("__pycache__", "site-packages", "node_modules")
+        or name.startswith(".")
+        or matches_exclude(entry, options.exclude, FileSystemCache(), False)
+    )
+
+
+def _sources_of_the_projects_run(options: Options, root: Path) -> list[BuildSource]:
+    """What the project's own mypy run is given: its ``files``, or else everything under ``root``.
+
+    It is read for which files that run checks, where ``files`` says
+    (:func:`_judged_by_the_project`), and for the directories its modules are
+    found from, which it searches for what they import
+    (:func:`_where_installed_code_hides_the_project`). A directory mypy will
+    not name (``docs/my-plugin/__init__.py``) stops mypy's walk of the whole
+    root, so the root's entries are then walked one by one, and only the one
+    holding it contributes nothing.
+    """
+    if options.files:
+        return create_source_list(list(options.files), options, allow_empty_dir=True)
+    try:
+        return create_source_list([str(root)], options, allow_empty_dir=True)
+    except InvalidSourceList:
+        pass
+    found: list[BuildSource] = []
+    for name in sorted(os.listdir(root)):
+        entry = str(root / name)
+        if (os.path.isdir(entry) or entry.endswith((".py", ".pyi"))) and _walked_like_mypy(
+            entry, options
+        ):
+            try:
+                found.extend(create_source_list([entry], options, allow_empty_dir=True))
+            except InvalidSourceList:
+                continue
+    return found
+
+
+def _within(path: str, directory: str) -> bool:
+    return Path(os.path.realpath(path)).is_relative_to(os.path.realpath(directory))
+
+
+def _where_installed_code_hides_the_project(
+    search: SearchPaths, run: Sequence[BuildSource], options: Options, root: Path
+) -> list[str]:
+    """The directories of the project's own packages that installed code answers for in a build.
+
+    ``search`` is where the build looks for modules, and ``run`` what the
+    project's own run is given (:func:`_sources_of_the_projects_run`).
+
+    The project's own run is given every file under its root, or its
+    ``files``, and mypy searches the directory each is found from (``src``
+    for ``src/shop/util.py``) before installed code. A build is given far
+    fewer: the files it changes with their packages and consumers, or one
+    probed module. A run over ``tests/`` alone therefore found ``shop`` where
+    the interpreter had it installed, a stale non-editable 1.0 whose
+    ``DEFAULT`` was ``object``, rather than in ``src/shop``, where it is
+    ``list[int]``. The helper written for ``object`` checked clean against
+    1.0, and the project's own ``mypy .`` rejected it.
+
+    Each directory returned holds a top-level package of the project's run
+    that this build would take from installed code, typed or not (an untyped
+    copy is an ``import-untyped`` error where the project's run finds its own
+    package); they are returned in the order that run searches them. Only
+    that is corrected. A package this build finds nowhere stays unfound, as it
+    was, and a lone module is left alone however it is named: searching every
+    directory the tree's modules are found from (187 of them in sphinx, one
+    per test root) would let a ``conf.py`` or an ``examples/requests.py``
+    answer for what they happen to share a name with.
+    """
+    searched = {os.path.realpath(path) for path in (*search.mypy_path, *search.python_path)}
+    finder = FindModuleCache(search, FileSystemCache(), options)
+    hidden: set[str] = set()
+    asked: set[Tuple[str, str]] = set()
+    for source in run:
+        if source.path is None or source.base_dir is None or not source.module:
+            continue
+        if "." not in source.module and Path(source.path).stem != "__init__":
+            continue  # a lone module, not a package
+        base = os.path.realpath(source.base_dir)
+        top = source.module.partition(".")[0]
+        if base in searched or (base, top) in asked:
+            continue
+        asked.add((base, top))
+        found = finder.find_module(top)
+        # Found without type hints is found in installed code: only there does
+        # mypy ask for a ``py.typed`` marker or stubs.
+        if found is ModuleNotFoundReason.FOUND_WITHOUT_TYPE_HINTS or (
+            isinstance(found, str)
+            and not _within(found, str(root))
+            and any(_within(found, installed) for installed in search.package_path)
+        ):
+            hidden.add(base)
+    if not hidden:
+        return []
+    order = compute_search_paths(list(run), options, build.default_data_dir()).python_path
+    return [path for path in order if os.path.realpath(path) in hidden]
+
+
 _FOUND_TWICE = re.compile(
     r"^(?P<path>.+?): error: Source file found twice under different module names:"
     r' "(?P<given>[^"]+)" and "(?P<imported>[^"]+)"'
@@ -655,20 +762,19 @@ def _build_as_the_project_reaches(
             current = as_imported
 
 
-def _judged_by_the_project(options: Options, root: Path) -> Callable[[str], bool]:
+def _judged_by_the_project(
+    options: Options, root: Path, run: Sequence[BuildSource]
+) -> Callable[[str], bool]:
     """Whether the project's own mypy run would take a file as one of its targets.
 
-    With ``files`` configured, the files those name, found as mypy finds them;
-    otherwise every file under ``root`` that no ``exclude`` pattern matches,
-    tested as mypy's own walk tests it, on the file and on each directory above
-    it. ``options.exclude`` must still be the project's, before Towel adds to it.
+    With ``files`` configured, the files of ``run``, what those name found as
+    mypy finds them (:func:`_sources_of_the_projects_run`); otherwise every
+    file under ``root`` that no ``exclude`` pattern matches, tested as mypy's
+    own walk tests it, on the file and on each directory above it.
+    ``options.exclude`` must still be the project's, before Towel adds to it.
     """
     if options.files:
-        targets = {
-            os.path.abspath(source.path)
-            for source in create_source_list(list(options.files), options, allow_empty_dir=True)
-            if source.path is not None
-        }
+        targets = {os.path.abspath(source.path) for source in run if source.path is not None}
         return lambda path: os.path.abspath(path) in targets
     excludes = list(options.exclude)
     cache = FileSystemCache()
@@ -804,8 +910,12 @@ def _request(request: object, cache: str) -> _Answered:
     complete = request.get("complete") is True
     configured = _options(root, config, cache, probe=not complete)
     options = configured.options
-    judged = _judged_by_the_project(options, root)
-    for excluded in _strings(request.get("excluded_paths")):
+    # The project's own run, read before Towel's exclusions, which name what
+    # Towel writes (a relocated output), never the project's own files.
+    run = _sources_of_the_projects_run(options, root)
+    judged = _judged_by_the_project(options, root, run)
+    excluded_paths = _strings(request.get("excluded_paths"))
+    for excluded in excluded_paths:
         path = Path(excluded)
         spellings = [str(path)]
         if path.is_relative_to(root):
@@ -823,6 +933,22 @@ def _request(request: object, cache: str) -> _Answered:
         _placeholders(request.get("modules")),
         _strings(request.get("consumers") or []),
     )
+    # Every source is named by now, and SourceFinder reads ``mypy_path`` as the
+    # explicit package bases; from here on it is only where modules are found.
+    options.mypy_path = [
+        *options.mypy_path,
+        *_where_installed_code_hides_the_project(
+            compute_search_paths(sources, options, build.default_data_dir()),
+            [
+                source
+                for source in run
+                if source.path is None
+                or not any(_within(source.path, path) for path in excluded_paths)
+            ],
+            options,
+            root,
+        ),
+    ]
     result, sources = _build_as_the_project_reaches(sources, options, judged, complete=complete)
     if not complete:
         return _Answered(list(result.errors), configured.said)

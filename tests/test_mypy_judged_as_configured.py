@@ -50,9 +50,9 @@ pytest.importorskip("mypy")
 
 from mypy.errors import CompileError  # noqa: E402
 from mypy.find_sources import create_source_list  # noqa: E402
-from mypy.modulefinder import BuildSource  # noqa: E402
+from mypy.modulefinder import BuildSource, SearchPaths, compute_search_paths  # noqa: E402
 from mypy import build as mypy_build  # noqa: E402
-from mypy.build import BuildResult  # noqa: E402
+from mypy.build import BuildResult, default_data_dir  # noqa: E402
 from mypy.options import Options  # noqa: E402
 
 from towel import _mypy_worker as worker  # noqa: E402
@@ -607,3 +607,115 @@ def test_a_refusal_no_rename_answers_is_raised_as_mypy_gave_it(
         worker._build_as_the_project_reaches(
             _named_sources(tmp_path), Options(), lambda _: False, complete=False
         )
+
+
+# --- D8: what a build over tests/ alone searches ------------------------------
+
+
+STALE_SHOP = {
+    "shop/__init__.py": "",
+    "shop/util.py": "DEFAULT: object = [1]\n",
+    "shop/py.typed": "",
+    "json5.py": "",
+}
+UNTYPED_SHOP = {"shop/__init__.py": "", "shop/util.py": "DEFAULT = [1]\n", "json5.py": ""}
+
+
+def _src_layout(root: Path) -> None:
+    _write(
+        root,
+        {
+            "src/shop/__init__.py": "",
+            "src/shop/util.py": "DEFAULT: list[int] = [1]\n",
+            "tests/test_shop.py": "from shop.util import DEFAULT\n",
+            # A lone module named like installed code is not the project's package.
+            "examples/json5.py": "",
+            # mypy's walk of the root cannot name this directory; the rest still counts.
+            "docs/my-plugin/__init__.py": "",
+        },
+    )
+
+
+def _search_with_installed(
+    sources: Sequence[BuildSource], options: Options, installed: Sequence[Path]
+) -> SearchPaths:
+    """Where mypy searches for ``sources``' imports, with ``installed`` as the interpreter's code."""
+    search = compute_search_paths(list(sources), options, default_data_dir())
+    return SearchPaths(
+        search.python_path,
+        search.mypy_path,
+        tuple(str(path) for path in installed),
+        search.typeshed_path,
+    )
+
+
+@pytest.mark.parametrize(
+    "installed, found",
+    [
+        # A stale non-editable copy would answer for ``shop``: the tree's ``src`` answers.
+        ("a stale copy", ["src"]),
+        # An untyped one would be an ``import-untyped`` error the project's run does not have.
+        ("an untyped copy", ["src"]),
+        # Nothing installed: nothing to correct, and nothing new is searched.
+        ("nothing", []),
+        # An editable install pointing into the tree already finds the tree's copy...
+        ("the tree, typed", []),
+        # ...unless it is untyped, which only installed code has to be.
+        ("the tree, untyped", ["src"]),
+    ],
+)
+def test_a_tests_only_target_finds_the_projects_package_in_the_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed: str, found: list[str]
+) -> None:
+    project, site = tmp_path / "project", tmp_path / "site"
+    _src_layout(project)
+    _write(site / "typed", STALE_SHOP)
+    _write(site / "untyped", UNTYPED_SHOP)
+    places = {
+        "a stale copy": [site / "typed"],
+        "an untyped copy": [site / "untyped"],
+        "nothing": [],
+        "the tree, typed": [project / "src"],
+        "the tree, untyped": [project / "src"],
+    }[installed]
+    if installed == "the tree, typed":
+        (project / "src" / "shop" / "py.typed").write_text("")
+    monkeypatch.chdir(project)
+    options = _options(project, "[tool.mypy]\n")
+    test = str(project / "tests" / "test_shop.py")
+    targets = worker._complete_targets({test: ""}, options, project, [])
+    assert targets == [test]  # the build walks the tests alone
+    search = _search_with_installed(create_source_list(targets, options), options, places)
+    run = worker._sources_of_the_projects_run(options, project)
+    assert worker._where_installed_code_hides_the_project(search, run, options, project) == [
+        str(project / name) for name in found
+    ]
+
+
+def test_a_build_that_already_searches_the_package_is_left_as_it_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, site = tmp_path / "project", tmp_path / "site"
+    _src_layout(project)
+    _write(site, STALE_SHOP)
+    monkeypatch.chdir(project)
+    options = _options(project, "[tool.mypy]\n")
+    sources = create_source_list([str(project / "src" / "shop" / "util.py")], options)
+    search = _search_with_installed(sources, options, [site])
+    run = worker._sources_of_the_projects_run(options, project)
+    assert worker._where_installed_code_hides_the_project(search, run, options, project) == []
+
+
+def test_a_configured_files_list_is_the_projects_run_so_its_stale_answer_stands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``files = ["tests"]`` the project's own mypy finds the installed copy too."""
+    project, site = tmp_path / "project", tmp_path / "site"
+    _src_layout(project)
+    _write(site, STALE_SHOP)
+    monkeypatch.chdir(project)
+    options = _options(project, '[tool.mypy]\nfiles = ["tests"]\n')
+    sources = create_source_list(["tests"], options)
+    search = _search_with_installed(sources, options, [site])
+    run = worker._sources_of_the_projects_run(options, project)
+    assert worker._where_installed_code_hides_the_project(search, run, options, project) == []
