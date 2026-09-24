@@ -858,7 +858,9 @@ The model answers three kinds of question:
 - **What an import executes** (`ImportModel.files_reached`, through
   `ProgramImports.reached`): the project files an import statement may run,
   package initializers on the way included and every candidate of an
-  ambiguous name. The cycle guard (`would_create_import_cycle`) walks these
+  ambiguous name. An import under a `TYPE_CHECKING` guard is no edge
+  (`TypeCheckingGuards`, the effects analysis's own test). The cycle guard
+  (`would_create_import_cycle`) walks these
   edges from the host and the initializers of its packages, reading each
   file where the run keeps it so that an import an earlier extraction added
   is an edge too; the import-time-effect, requirement, top-level-package and
