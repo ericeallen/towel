@@ -725,7 +725,7 @@ where the evidence comes from:
   assignments out of their `__init__`, which hides the attributes from the
   checker (13 errors for win32, one for darwin). Code the checker does not
   look at is no longer changed (below), which closes trio's case: in its
-  Python 3.11 environment the run names 142 such regions, declines the 5
+  Python 3.11 environment the run names 137 such regions, declines the 5
   proposals that touch them, and applies 17, and all three platforms of its
   CI's mypy pass. Checking as the project's CI does, flags included, is what
   would close idna's.
