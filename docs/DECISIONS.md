@@ -474,7 +474,8 @@ whether a callee is `typing.cast` or a project's own `cast`, and where an
 absolutely imported base class is defined. It never prints or refuses
 there, and it writes no import that runs.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch, as refined on 2026-09-24; not
+yet released.*
 
 ## 2026-09-22: Checked with the project's own checker, as configured
 
@@ -579,3 +580,53 @@ option. It runs a guarded block only after its module has imported, one
 statement at a time, and mocks whatever fails to import.
 
 *Status: being implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-24: How a typed run compares, as implemented
+
+Implementing the differential baseline refined the entry of 2026-09-23 in
+five ways. Four of them only ever reject more than its file-and-message rule
+would. The fifth applies that rule to the cold confirmation.
+
+- **Lines count wherever they cannot have moved.** In a file no change
+  touched, an error matches only one at the same line with the same
+  message. In a file a change touched, a line diff aligns the two texts. An
+  error on a line the change left alone must match the original's error on
+  that line. Only errors on lines the change wrote are compared by message,
+  against the original's errors on the lines it replaced. Under the rule as
+  first written, a change that removed one existing error and added a
+  different one with the same message, in the same file, passed.
+- **The reference follows the written changes.** A later change therefore
+  cannot spend an error that an earlier one removed.
+- **Every checker is asked.** With mypy and pyright both configured, the
+  combined check had stopped at the first checker that reported anything.
+  Against pre-existing mypy errors, pyright was never consulted.
+- **Code the checker cannot see into is not changed.** Where the original
+  check leaves a name typed as `Any`, a change to that file is checked
+  against `Any` and cannot fail. Such names come from an unresolved or
+  untyped import, a missing stub, an untyped decorator, or an `Any` base
+  class. The entry of 2026-09-23 reported such files. They are now left
+  alone, named up front, and their proposals counted as not verifiable. The
+  same is being applied to code the checker deems unreachable for the
+  platform or Python version it checks: on trio, win32-only modules were
+  "verified" by a check that looked at nothing.
+- **The cold confirmation excuses what the original also shows cold.** An
+  error that only the cold check reports is compared with a cold check of
+  the original. It refuses the run only if the original's check does not
+  account for it, because pyright's server and command line can disagree
+  about files no change touched.
+
+The fourth point declines where the earlier entry warned. A check against
+`Any` cannot fail, so it verifies nothing. It is recorded here pending the
+owner's confirmation; the alternative is to refactor such files with a
+warning.
+
+This still leaves Towel checking as the project configures its checker, not
+as its CI invokes it. On idna the CI adds `--strict`, and on trio it checks
+three platforms, and both then rejected output that Towel's check had
+accepted. Proposal (B) addresses that gap. The fallback to an unannotated
+helper, which is what failed idna's `--strict`, is being narrowed
+separately: it will not apply in a module whose functions are all
+annotated.
+
+*Status: implemented on the `audit-1772` branch, except the rule for
+unreachable code, which is being implemented. Not yet released.*
