@@ -64,7 +64,10 @@ formatted the way the project formats its own (`ruff format` when the project
 configures ruff, else Black, at the line length the project declares) and any
 imports Towel adds are sorted with ruff's import rules or isort when the
 project uses them, all when installed (`pip install "code-towel[format]"`);
-`--no-format` turns that off. In annotated code the helper also carries the parameter and return
+`--no-format` turns that off. Each tool leaves alone what the project's
+configuration of it excludes. Sorting moves only the imports Towel added:
+a file whose own imports the sorter would reorder is not sorted at all,
+since their order is the order their modules run in, and the run says so. In annotated code the helper also carries the parameter and return
 annotations its call sites declare, and, when the project's type checker is
 installed (mypy or pyright; `pip install "code-towel[types]"`), the types it
 infers for the rest, verified against the checker; `--no-types` turns that

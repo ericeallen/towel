@@ -148,7 +148,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
 | `type_oracle` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one nothing is inferred or verified (`--types/--no-types`). |
 | `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
-| `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports. |
+| `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports: called with the file's path and new text, while the file at that path still holds the text the change started from. |
 | `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). The rehearing that ends a run re-pairs everything regardless. |
 | `promote_equal_hof_literals` | `False` | Expose literal arguments of higher-order factory calls as helper parameters even when they are equal in every block. |
 | `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). When omitted, the engine reads the environment once at construction; the command line and the analysis session each read it once as well (see *Diagnostics and settings* in [ARCHITECTURE.md](ARCHITECTURE.md)). |
@@ -244,6 +244,22 @@ and only the probes that infer a helper's types also check the bodies of
 functions without annotations, where mypy otherwise reveals nothing but `Any`.
 Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
+
+Each tool keeps to the files its own configuration selects. The formatter
+leaves the inserted code as rendered where the project excludes the path it
+was chosen for from formatting (`ruff format`'s exclusions through
+`--force-exclude`; Black's `exclude`, `extend-exclude` and `force-exclude`).
+The import sorter leaves a file alone that ruff's `exclude`,
+`extend-exclude`, `lint.exclude` or `per-file-ignores`, or isort's `skip`,
+`extend_skip`, `skip_glob`, `extend_skip_glob` or `skip_gitignore`, leave
+out, judged for the project's own file even while a run works on a staged
+copy of it. It sorts only a file it already leaves as it is: every import
+runs its module where it stands, so a file's own imports keep their order,
+and only the ones Towel added may move. A file whose imports the sorter
+would change keeps Towel's imports where Towel placed them, and so does
+one where the sorter's result would move an import the file already had;
+the run logs each such file once. `sort_added_imports` makes that decision
+on texts, and `SortOutcome` names what came of it.
 
 The engine checks the original project before using its type oracle, and
 logs what that check reports (the `towel` logger, which the CLI prints on

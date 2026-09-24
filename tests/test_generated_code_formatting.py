@@ -201,7 +201,8 @@ def test_isort_sorts_the_inserted_import_when_configured(tmp_path: Path) -> None
     source = (
         "from typing import Any\nimport os\nimport sys\n\n\ndef f() -> Any:\n    return os, sys\n"
     )
-    module.write_text(source)
+    # The file as it stood before Towel added ``from typing import Any``.
+    module.write_text(source.replace("from typing import Any\n", ""))
     choice = import_sorter_for_project(module)
     finisher, note = choice.tool, choice.note
     assert finisher is not None and note == "isort"
@@ -217,7 +218,8 @@ def test_ruff_import_rules_sort_when_selected(tmp_path: Path) -> None:
     source = (
         "from typing import Any\nimport os\nimport sys\n\n\ndef f() -> Any:\n    return os, sys\n"
     )
-    module.write_text(source)
+    # The file as it stood before Towel added ``from typing import Any``.
+    module.write_text(source.replace("from typing import Any\n", ""))
     choice = import_sorter_for_project(module)
     finisher, note = choice.tool, choice.note
     assert finisher is not None and note == "ruff import sorting"

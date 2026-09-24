@@ -178,9 +178,23 @@ describe belong to that version.
   before and after formatting, and an import sorter's result is kept only
   when it only reorders or merges consecutive imports within one statement
   list while preserving each bound name's ordered providers. Wildcard imports,
-  future imports and non-import statements are barriers. Configured sorting
-  of independent imports can still change import-time side-effect order; static
-  binding checks do not establish that arbitrary module initializers commute.
+  future imports and non-import statements are barriers. An import runs its
+  module where it stands, so the order of a file's own imports is the order
+  of their import-time effects, and the sorter never changes it: it runs only
+  on a file its own configuration selects (ruff's `exclude`,
+  `extend-exclude`, `lint.exclude` and `per-file-ignores`; isort's `skip`,
+  `extend_skip`, `skip_glob`, `extend_skip_glob` and `skip_gitignore`,
+  judged for the project's file rather than the run's staged copy) and only
+  when it already leaves that file's text before the change as it is, so
+  that sorting can move only the imports Towel added; and its result is
+  used only when the file's own imports still bind their names in the order
+  they did. A file that fails either test keeps Towel's imports where it put
+  them, and the run says so once for the file. The formatters leave alone
+  the code Towel writes where their own configuration excludes the path
+  Towel was given: `ruff format` by `--force-exclude`, Black by `exclude`,
+  `extend-exclude` or `force-exclude`. That choice is made for the whole
+  run, since a snippet is formatted before the file it goes into is known;
+  it changes only layout.
 - **Annotations.** Every generated helper and its call sites are checked
   together in the prospective project, including unchanged consumers, and the
   check is compared with the project's own as it stood: an error the project
