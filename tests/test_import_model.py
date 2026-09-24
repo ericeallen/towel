@@ -728,8 +728,15 @@ def test_relative_imports_that_climb_out_or_name_nothing_are_problems(tmp_path):
     # A guarded import expects to fail, a stub proves a compiled module, and a
     # relative import in a bare directory can hold under a namespace-importing runner.
     assert len(model.problems) == 2
-    assert model.names["alpha"].flagged and model.names["utils"].flagged
-    assert _spelled(model, "tests/test_a.py", "alpha/c.py") is None
+    # Where the climb out of utils holds, v.py is part of a larger package,
+    # so utils may not be its name. A module that does not exist says
+    # nothing about where alpha is; only the file naming it is in doubt.
+    assert model.names["utils"].flagged and model.names["alpha"].trusted
+    assert _spelled(model, "tests/test_a.py", "alpha/c.py") == "alpha.c"
+    assert _spelled(model, "tests/test_a.py", "alpha/a.py") is None
+    assert _spelled(model, "tests/test_a.py", "utils/v.py") is None
+    assert escapes[0].name == "utils" and escapes[0].names_in_doubt == {"utils"}
+    assert missing[0].names_in_doubt == frozenset()
 
 
 def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
@@ -746,7 +753,81 @@ def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
     assert isinstance(problem, UnresolvedImport)
     assert (problem.missing, problem.site.line) == ("alpha.gone", 2)
     assert "tests/test_a.py:2" in problem.describe(model.root)
-    assert _spelled(model, "tests/test_a.py", "alpha/a.py") is None
+    # It names a module, not a place: alpha is where its other imports say.
+    assert model.names["alpha"].trusted
+    assert _spelled(model, "tests/test_a.py", "alpha/a.py") == "alpha.a"
+    assert problem.names_in_doubt == frozenset()
+
+
+def test_the_file_making_an_unresolved_import_is_never_a_provider(tmp_path):
+    project = _write(
+        tmp_path / "project",
+        {
+            "alpha/__init__.py": "",
+            "alpha/a.py": "",
+            "alpha/c.py": "from alpha.gone import thing\n",
+            "beta/__init__.py": "from beta._version import version\n",
+            "beta/b.py": "",
+            "tests/test_a.py": "import alpha.a\nimport beta.b\n",
+        },
+    )
+    model = _model(project)
+    assert all(isinstance(problem, UnresolvedImport) for problem in model.problems)
+    assert model.names["alpha"].trusted and model.names["beta"].trusted
+    assert _spelled(model, "tests/test_a.py", "alpha/c.py") is None
+    assert _spelled(model, "tests/test_a.py", "alpha/a.py") == "alpha.a"
+    # Every import of beta.b runs the initializer, whose import the tree lacks.
+    assert _spelled(model, "tests/test_a.py", "beta/b.py") is None
+    assert {path.name for problem in model.problems for path in problem.found_at} == {
+        "c.py",
+        "__init__.py",
+    }
+
+
+def _sphinx_shape(root: Path) -> Path:
+    """sphinx's shape: a package importing itself absolutely, and test data importing what it lacks."""
+    return _write(
+        root,
+        {
+            "pyproject.toml": _setuptools_project('[tool.setuptools]\npackages = ["sphx"]\n'),
+            "sphx/__init__.py": "",
+            "sphx/util.py": "VALUE = 1\n",
+            "sphx/a.py": "from sphx.util import VALUE\n",
+            "sphx/b.py": "from sphx.util import VALUE\n",
+            "tests/test_a.py": "import sphx.a\n",
+            "tests/roots/test-ext-autodoc/target/__init__.py": "",
+            "tests/roots/test-ext-autodoc/target/need_mocks.py": (
+                "import missing_module\n"
+                "import sphx.missing_module4\n"
+                "from sphx.missing_module4 import missing_name2\n"
+            ),
+        },
+    )
+
+
+def test_test_data_importing_what_its_package_lacks_leaves_the_package_trusted(tmp_path):
+    """sphinx's tests mock ``sphinx.missing_module4``; every other import still places ``sphinx``."""
+    project = _sphinx_shape(tmp_path / "project")
+    model = _model(project)
+    unresolved = [problem for problem in model.problems if isinstance(problem, UnresolvedImport)]
+    assert len(unresolved) == len(model.problems) == 2
+    assert {problem.missing for problem in unresolved} == {"sphx.missing_module4"}
+    assert model.names["sphx"].trusted
+    within = model.spelling(project / "sphx/b.py", project / "sphx/a.py")
+    assert within is not None and within.module == "sphx.a"
+    assert within.basis is SpellingBasis.OWN_PACKAGE
+    across = model.spelling(project / "tests/test_a.py", project / "sphx/b.py")
+    assert across is not None and across.module == "sphx.b"
+    # The test data is never a provider, and no file is the missing module.
+    data = "tests/roots/test-ext-autodoc/target"
+    assert _spelled(model, f"{data}/__init__.py", f"{data}/need_mocks.py") is None
+    named = {model.module_name(path) for path in project.rglob("*.py")} - {None}
+    assert named == {"sphx", "sphx.util", "sphx.a", "sphx.b"}
+    probes = [
+        _adopt(project, "sphx/b.py", "sphx/a.py", within, "sphx.b"),
+        _adopt(project, "tests/test_a.py", "sphx/b.py", across, "test_a"),
+    ]
+    _imports(sys.executable, [project / "tests", project], probes, tmp_path)
 
 
 def test_a_script_directory_borrows_only_what_its_scripts_import(tmp_path):

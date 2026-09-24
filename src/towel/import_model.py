@@ -35,8 +35,9 @@ The model is built once from a project's Python files:
 - The imports are checked, and each problem is a record, never an exception:
   every ambiguous name; an import of an attested name that its location does
   not hold; a location reachable under two names; a relative import that
-  climbs out of its package or names a missing module. A name a problem
-  involves is not trusted, and nothing is ever spelled into it.
+  climbs out of its package or names a missing module. A name whose location
+  a problem leaves in doubt is not trusted, and nothing is ever spelled into
+  it; a file holding a problem's import is never a provider.
 - Each module belongs to a *context*: its top-level package, or itself when it
   is in none. A context attests the trusted names its runtime imports use.
 
@@ -59,6 +60,11 @@ end, and are refined where they do; each refinement is argued where it is made:
   holds none of the modules its name's imports need is a namesake, not the
   name (:func:`_checked`), and a module that registers submodules at run time
   (``six.moves``) is not missing them (:meth:`_Listings.submodules`).
+- An import of a module a name's location lacks says nothing about where the
+  name lives. sphinx's test data imports ``sphinx.missing_module4``, which its
+  tests mock, and every other import of ``sphinx`` still places it; so only
+  the file making that import is in doubt, and no file is the missing module
+  for any import to name (:class:`UnresolvedImport`).
 - An import attests a name only when it runs, runs unguarded, and runs where
   ``sys.path`` is not being changed (:attr:`ImportSite.attests`).
 - A new import may enter a directory only where the importer's context or the
@@ -76,6 +82,10 @@ What the model assumes, and cannot check:
   interpreter can see makes the name ambiguous, but one only the project's own
   environment holds is invisible here, so the interpreter Towel runs in stands
   for the project's (as it already does for the type checker);
+- a location holding any module its name's imports need is that name: a
+  directory named like a library it only happens to share a module with
+  would be taken for the library, and the imports of it the directory does
+  not hold would put only their own files in doubt;
 - a module inside a regular package is imported through that package, never
   run by its path with its own directory on ``sys.path``;
 - ``sys.path`` is the same when a module is imported as when its functions
@@ -234,7 +244,7 @@ class TopLevelName:
     installed: Optional[str] = None
     """What this interpreter would import instead, when something outside the project provides it."""
     flagged: bool = False
-    """Whether a validation problem involves the name; a flagged name is never spelled into."""
+    """Whether a problem leaves the name's location in doubt; a flagged name is never spelled into."""
 
     @property
     def location(self) -> Optional[Path]:
@@ -264,6 +274,14 @@ class AmbiguousName:
     candidates: Tuple[Path, ...]
     installed: Optional[str]
 
+    @property
+    def names_in_doubt(self) -> FrozenSet[str]:
+        return frozenset({self.name})
+
+    @property
+    def found_at(self) -> Tuple[Path, ...]:
+        return self.candidates
+
     def describe(self, root: Path) -> str:
         places = [_shown(candidate, root) for candidate in self.candidates]
         if self.installed is not None:
@@ -275,14 +293,28 @@ class AmbiguousName:
 class UnresolvedImport:
     """An import of an attested name naming a module that the name's one location does not hold.
 
-    Either the import is broken, or the name the program imports is not the
-    location the tree suggests; both make that location's names unreliable.
+    The import is broken, or what it names exists only where it runs:
+    sphinx's test data imports ``sphinx.missing_module4``, which its tests
+    mock, and a generated ``_version.py`` is missing from a fresh clone.
+    Either way it says nothing about where the name lives, which the name's
+    imports that do resolve still attest; a name none of whose imports
+    resolve is a namesake, and external (:func:`_checked`). So it leaves no
+    name in doubt. The file making it is never a provider, and no file is
+    the missing module, so no import is ever spelled into it.
     """
 
     site: ImportSite
     name: str
     location: Path
     missing: str
+
+    @property
+    def names_in_doubt(self) -> FrozenSet[str]:
+        return frozenset()
+
+    @property
+    def found_at(self) -> Tuple[Path, ...]:
+        return (self.site.file,)
 
     def describe(self, root: Path) -> str:
         return (
@@ -302,6 +334,14 @@ class FileUnderTwoNames:
     location: Path
     names: Tuple[str, str]
 
+    @property
+    def names_in_doubt(self) -> FrozenSet[str]:
+        return frozenset(name.partition(".")[0] for name in self.names)
+
+    @property
+    def found_at(self) -> Tuple[Path, ...]:
+        return (self.location,)
+
     def describe(self, root: Path) -> str:
         first, second = self.names
         return f"{_shown(self.location, root)} is reachable both as {first} and as {second}"
@@ -320,6 +360,14 @@ class TopLevelInsidePackage:
     location: Path
     package: Path
 
+    @property
+    def names_in_doubt(self) -> FrozenSet[str]:
+        return frozenset({self.name})
+
+    @property
+    def found_at(self) -> Tuple[Path, ...]:
+        return (self.location,)
+
     def describe(self, root: Path) -> str:
         return (
             f"{self.name} is imported as a top-level name, and its only location"
@@ -333,10 +381,23 @@ class RelativeImportEscapes:
     """A relative import that climbs above the top-level package of its file.
 
     Python refuses it ("attempted relative import beyond top-level package")
-    whenever the statement runs.
+    whenever the statement runs. Where it runs and holds, the file is part of
+    a larger package than the tree shows, so the attested name whose location
+    holds the file, ``name``, may not be the name the program imports it by:
+    that name is in doubt.
     """
 
     site: ImportSite
+    name: Optional[str] = None
+    """The attested name whose location holds the file, when one does."""
+
+    @property
+    def names_in_doubt(self) -> FrozenSet[str]:
+        return frozenset() if self.name is None else frozenset({self.name})
+
+    @property
+    def found_at(self) -> Tuple[Path, ...]:
+        return (self.site.file,)
 
     def describe(self, root: Path) -> str:
         return (
@@ -346,10 +407,24 @@ class RelativeImportEscapes:
 
 @dataclass(frozen=True)
 class RelativeImportMissing:
-    """A relative import naming a module that does not exist where the climb ends."""
+    """A relative import naming a module that does not exist where the climb ends.
+
+    Like an :class:`UnresolvedImport`, it names a module and not a place: a
+    package's ``from ._version import __version__`` names a module its build
+    generates. It leaves no name in doubt, and the file making it is never a
+    provider.
+    """
 
     site: ImportSite
     missing: str
+
+    @property
+    def names_in_doubt(self) -> FrozenSet[str]:
+        return frozenset()
+
+    @property
+    def found_at(self) -> Tuple[Path, ...]:
+        return (self.site.file,)
 
     def describe(self, root: Path) -> str:
         return f"{self.site.where(root)}: {self.site.statement()} names {self.missing}, which does not exist"
@@ -363,7 +438,13 @@ ImportProblem = Union[
     RelativeImportEscapes,
     RelativeImportMissing,
 ]
-"""A reason the program's imports do not name its modules unambiguously."""
+"""A reason the program's imports do not name its modules unambiguously.
+
+Each kind says which top-level names it leaves in doubt (``names_in_doubt``),
+which are never spelled into, and where in the tree it lies (``found_at``):
+the locations it concerns, or the file holding its import, which is never a
+provider.
+"""
 
 
 # -- Spellings ----------------------------------------------------------------
@@ -1258,7 +1339,7 @@ def build_import_model(
     bounds = frozenset(location for locations in found.values() for location in locations)
     package_of = {path: _package_of(path, tree, used, bounds) for path in tree.modules}
     problems = _problems(tree, modules, names, unresolved, inside_used, listings)
-    flagged_names, flagged_files = _flags(problems, names, project)
+    flagged_names, flagged_files = _flags(problems)
     names = {name: replace(info, flagged=name in flagged_names) for name, info in names.items()}
     trusted = {info.candidates[0]: name for name, info in names.items() if info.trusted}
     blocked = frozenset(
@@ -1568,16 +1649,17 @@ def _relative_problems(
             continue
         chain = _chain(path.parent, tree.packages, tree.root)
         owner = _innermost_location(attested, path, tree.root)
+        name = None if owner is None else attested[owner]
         for site in module.sites:
             if not site.level or site.guarded:
                 continue
             base = _climb(path.parent, site.level - 1, tree.root)
             if base is None:
-                yield RelativeImportEscapes(site)
+                yield RelativeImportEscapes(site, name)
                 continue
             if owner is not None:
                 if not base.is_relative_to(owner):
-                    yield RelativeImportEscapes(site)
+                    yield RelativeImportEscapes(site, name)
                     continue
             elif base not in chain:
                 if base == tree.root:
@@ -1592,31 +1674,20 @@ def _relative_problems(
                 yield RelativeImportMissing(site, missing)
 
 
-def _flags(
-    problems: Sequence[ImportProblem], names: Mapping[str, TopLevelName], root: Path
-) -> Tuple[FrozenSet[str], FrozenSet[Path]]:
-    """The names and files the problems involve; nothing is spelled into either."""
-    attested = {
-        info.candidates[0]: name
-        for name, info in names.items()
-        if info.status is NameStatus.ATTESTED
-    }
-    flagged_names: Set[str] = set()
-    flagged_files: Set[Path] = set()
-    for problem in problems:
-        if isinstance(problem, (AmbiguousName, TopLevelInsidePackage)):
-            flagged_names.add(problem.name)
-        elif isinstance(problem, UnresolvedImport):
-            flagged_names.add(problem.name)
-            flagged_files.add(problem.site.file)
-        elif isinstance(problem, FileUnderTwoNames):
-            flagged_names.update(name.partition(".")[0] for name in problem.names)
-        else:
-            flagged_files.add(problem.site.file)
-            owner = _innermost_location(attested, problem.site.file, root)
-            if owner is not None:
-                flagged_names.add(attested[owner])
-    return frozenset(flagged_names), frozenset(flagged_files)
+def _flags(problems: Sequence[ImportProblem]) -> Tuple[FrozenSet[str], FrozenSet[Path]]:
+    """The names the problems leave in doubt, and the files holding their imports.
+
+    Nothing is spelled into a name in doubt, and a file holding a problem's
+    import is never a provider: importing it from somewhere new runs an
+    import the tree does not show to work.
+    """
+    flagged_names = frozenset(name for problem in problems for name in problem.names_in_doubt)
+    flagged_files = frozenset(
+        problem.site.file
+        for problem in problems
+        if isinstance(problem, (UnresolvedImport, RelativeImportEscapes, RelativeImportMissing))
+    )
+    return flagged_names, flagged_files
 
 
 def _attestations(
