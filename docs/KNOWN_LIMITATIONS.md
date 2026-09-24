@@ -711,8 +711,9 @@ where the evidence comes from:
   like any other, so a change is checked there too, against what that check
   already says. The difference cuts the other way as well: Towel's check can
   accept what the project's rejects. Refactored with types in their own
-  environments, 15 of those 17 projects still passed their own check, and two
-  did not. idna configures no mypy, so Towel checked it with mypy's defaults,
+  environments, 16 of those 17 projects still pass their own check; two did
+  not until code the checker does not look at was left alone, and one still
+  does not. idna configures no mypy, so Towel checked it with mypy's defaults,
   which accept an unannotated helper, and its CI runs `mypy --strict idna`,
   which rejects it (four errors); the same output comes from a project whose
   baseline was clean, as idna's is without its two fuzz tests. trio's CI runs
@@ -723,8 +724,11 @@ where the evidence comes from:
   trio's configuration forbids, and one that moved two classes' attribute
   assignments out of their `__init__`, which hides the attributes from the
   checker (13 errors for win32, one for darwin). Code the checker does not
-  look at is no longer changed (below), which closes trio's case; checking as
-  the project's CI does, flags included, is what would close idna's.
+  look at is no longer changed (below), which closes trio's case: in its
+  Python 3.11 environment the run names 142 such regions, declines the 5
+  proposals that touch them, and applies 17, and all three platforms of its
+  CI's mypy pass. Checking as the project's CI does, flags included, is what
+  would close idna's.
 - Code the checker does not look at is not changed. A checker takes code to
   be unreachable when the platform and Python version it checks for make a
   `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false, when an
