@@ -57,6 +57,13 @@ TRANSFORMED = {
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
     "xf29_type_checking_block_with_branches",
+    # The host's new binding for its annotations is private, so no module that
+    # star-imports it takes a typing name in place of its own Any or Callable:
+    # a sibling (xf30), the package's __init__ (xf31), a module outside the
+    # package the run was given (xf32).
+    "xf30_star_importer_takes_a_typing_name",
+    "xf31_package_init_star_imports_a_matcher_named_any",
+    "xf32_star_importer_outside_the_target",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.

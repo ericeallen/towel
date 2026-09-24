@@ -170,6 +170,13 @@ TRANSFORMED = {
     # the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
+    # The annotations' typing names are reached through a private alias of
+    # typing, so no name the module binds or exports changes: not its own Any
+    # (r160), not its public names under __all__ (r161), not the Callable a
+    # star import bound (r162).
+    "r160_host_binds_any_before_its_last_import",
+    "r161_module_with_all_gains_no_public_name",
+    "r162_host_star_imports_callable",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
