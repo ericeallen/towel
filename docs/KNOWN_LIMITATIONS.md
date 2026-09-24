@@ -877,7 +877,11 @@ the proposals it built and did not apply, by reason:
   would be silenced for every site or for none. `directive_on_argument`: a
   checker's ignore stands on a line where a block's own code, anything
   but a name or a literal, would become an argument of the call, which the
-  ignore, left in the helper, no longer covers. `directive_outlives_block`:
+  ignore, left in the helper, no longer covers. A linter's or coverage
+  directive on such a line is not declined for: it stays in the helper,
+  and the argument written at the call site goes without it, which can
+  cost a lint warning there (a long literal's `# noqa: E501`) but never a
+  type error. `directive_outlives_block`:
   a region directive on a line of its own (`fmt: off`/`on`, `isort:
   off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`) is not
   closed within the block, so its region reaches code that stays behind,

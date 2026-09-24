@@ -31,6 +31,7 @@ import pytest
 
 from towel.unification.block_comments import (
     CommentConflict,
+    CommentPlacementError,
     ConflictKind,
     HelperComments,
     Placement,
@@ -404,3 +405,29 @@ def test_a_formatter_that_splits_a_directive_from_its_code_is_detected() -> None
         "    )  # pyright: ignore\n    return total\n"
     )
     assert not woven.keeps_directives(split)
+
+
+def test_a_helper_after_its_type_declarations_is_found_and_woven() -> None:
+    text, block = _block("""
+        def f(items):
+            first = items[0]  # the head
+            return first
+        """)
+    helper = _helper(block)
+    module = ast.Module(body=[ast.parse("T = TypeVar('T')").body[0], helper], type_ignores=[])
+    woven = weave_comments(module, helper, _merged(helper, site_comments(text, block)))
+    assert woven.text.split("\n")[0] == "T = TypeVar('T')"
+    assert "    first = items[0]  # the head" in woven.text.split("\n")
+
+
+def test_a_helper_that_does_not_render_to_itself_is_refused() -> None:
+    text, block = _block("""
+        def f(items):
+            first = items[0]  # the head
+            return first
+        """)
+    helper = _helper(block)
+    merged = _merged(helper, site_comments(text, block))
+    other = _helper(block[1:])
+    with pytest.raises(CommentPlacementError):
+        weave_comments(other, helper, merged)

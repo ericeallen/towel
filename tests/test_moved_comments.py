@@ -715,3 +715,41 @@ def test_an_ignore_the_checker_needs_lets_the_helper_type_check(tmp_path: Path) 
         timeout=300,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_a_helper_inside_the_enclosing_function_carries_its_comments(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        """
+        def outer(values, scale):
+            def first():
+                total = 0
+                for value in values:
+                    # scaled on purpose
+                    total += value * scale  # type: ignore[operator]
+                return total
+
+            def second():
+                total = 0
+                for value in values:
+                    # scaled on purpose
+                    total += value * scale  # type: ignore[operator]
+                return total
+
+            return first() + second()
+        """,
+    )
+    engine = _engine()
+    proposals = engine.analyze_file(str(path))
+    assert proposals, engine.declined_pairs
+    result = engine.apply_refactoring(str(path), proposals[0])
+    compile(result, str(path), "exec")
+    helper = _helper_source(result)
+    lines = helper.split("\n")
+    comment = next(index for index, line in enumerate(lines) if "# scaled on purpose" in line)
+    assert lines[comment + 1].strip() == "total += value * scale  # type: ignore[operator]"
+    assert len(lines[comment]) - len(lines[comment].lstrip()) == len(lines[comment + 1]) - len(
+        lines[comment + 1].lstrip()
+    )
+    assert result.count("# scaled on purpose") == 1
+    _assert_same_refactoring_without_comments(path, result)
