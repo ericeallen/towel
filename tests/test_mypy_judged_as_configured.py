@@ -30,7 +30,8 @@ found five ways the mypy worker judged something differently from mypy:
   does not use, and mypy refused the build.
 
 These tests read mypy's own option and module resolution through its API and
-never build anything.
+never build anything; ``test_mypy_matches_its_own_run.py`` compares whole
+builds with mypy's own run.
 """
 
 from __future__ import annotations
