@@ -60,7 +60,6 @@ import builtins
 import copy
 import textwrap
 from dataclasses import dataclass
-import re
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, cast
 
 from .revealed_types import parse_revealed
@@ -1227,9 +1226,6 @@ def _return_probes(
     return probes
 
 
-_DOTTED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
-
-
 def class_object_revealed(expression: str, revealed: str) -> str:
     """``revealed``, spelled ``type[C]`` where it is the class ``expression`` names.
 
@@ -1244,23 +1240,72 @@ def class_object_revealed(expression: str, revealed: str) -> str:
     was probed does: a class is named by the class, so its last component is
     the constructed type's own name. A function whose name happens to match its
     return type's would be rewritten wrongly, and the project check that
-    follows rejects it, leaving the signature as it was.
+    follows rejects it, leaving the signature as it was. A thunk that returns
+    a class, ``lambda: ASTClass``, is shown as a thunk returning the
+    constructor, ``def () -> def (name: str) -> ASTClass``, and is spelled
+    ``def () -> type[ASTClass]`` the same way: rich's markdown elements pass
+    their child classes so, to ``isinstance``.
     """
-    if not revealed.startswith("def (") or not _DOTTED.match(expression):
+    try:
+        probed = ast.parse(expression, mode="eval").body
+    except SyntaxError:
         return revealed
-    signature = parse_revealed(revealed)
-    if not (
-        isinstance(signature, ast.Subscript)
-        and _dotted_name(signature.value) == "Callable"
-        and isinstance(signature.slice, ast.Tuple)
-        and len(signature.slice.elts) == 2
+    thunk = "def () -> "
+    if (
+        isinstance(probed, ast.Lambda)
+        and not probed.args.args
+        and not probed.args.posonlyargs
+        and not probed.args.kwonlyargs
+        and probed.args.vararg is None
+        and probed.args.kwarg is None
+        and revealed.startswith(thunk)
     ):
+        body = _dotted_name(probed.body)
+        constructed = _constructed_class(revealed[len(thunk) :])
+        if body is not None and constructed is not None and _names_class(body, constructed):
+            return f"{thunk}type[{constructed}]"
         return revealed
-    # A named tuple's constructor makes the class, however its fields read.
-    constructed = _dotted_name(signature.slice.elts[1])
-    if constructed is None or constructed.rsplit(".", 1)[-1] != expression.rsplit(".", 1)[-1]:
+    name = _dotted_name(probed)
+    constructed = _constructed_class(revealed)
+    if name is None or constructed is None or not _names_class(name, constructed):
         return revealed
     return f"type[{constructed}]"
+
+
+def _names_class(expression: str, constructed: str) -> bool:
+    """Whether a dotted ``expression`` names the class its constructor makes: the same last name."""
+    return constructed.rsplit(".", 1)[-1] == expression.rsplit(".", 1)[-1]
+
+
+def _constructed_class(revealed: str) -> Optional[str]:
+    """The class a constructor signature makes, when every signature of it makes one class.
+
+    ``def (...) -> C``, or mypy's ``Overload(def (...) -> C, ...)`` for a class
+    whose ``__init__`` is overloaded. A named tuple's constructor makes the
+    class, however mypy writes its fields.
+    """
+    text = revealed.strip()
+    if text.startswith("Overload(") and text.endswith(")"):
+        signatures = _split_top_level(text[len("Overload(") : -1])
+    else:
+        signatures = [text]
+    made: Set[str] = set()
+    for signature in signatures:
+        if not signature.startswith("def ("):
+            return None
+        parsed = parse_revealed(signature)
+        if not (
+            isinstance(parsed, ast.Subscript)
+            and _dotted_name(parsed.value) == "Callable"
+            and isinstance(parsed.slice, ast.Tuple)
+            and len(parsed.slice.elts) == 2
+        ):
+            return None
+        constructed = _dotted_name(parsed.slice.elts[1])
+        if constructed is None:
+            return None
+        made.add(constructed)
+    return made.pop() if len(made) == 1 else None
 
 
 def builtin_object_revealed(expression: str, revealed: str) -> str:

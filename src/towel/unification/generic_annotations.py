@@ -40,8 +40,15 @@ import re
 import textwrap
 import tokenize
 
-from .annotations import ApplySite, CallSite, _argument_annotation, _return_probes
+from .annotations import (
+    ApplySite,
+    CallSite,
+    _argument_annotation,
+    _return_probes,
+    class_object_revealed,
+)
 from .models import FunctionNode, MethodKind, span_contains
+from .statement_facts import bindings_of
 from .type_bindings import (
     ModuleNames,
     TypeKind,
@@ -132,6 +139,73 @@ class _SiteTypes:
     arguments: tuple[TypeTerm | _ProbeKey, ...]
     declared_result: TypeTerm | None
     result_probes: tuple[tuple[_ProbeKey, ...], ...]
+    argument_expressions: tuple[str, ...] = ()
+    """What each argument probe reveals, for reading a class the site passes as a class."""
+
+
+@dataclass(frozen=True)
+class _Alias:
+    """A returned variable bound once, to a parameter or to what calling that parameter returns."""
+
+    parameter: int
+    called: bool
+
+
+def _returned_aliases(
+    helper: ast.FunctionDef, return_variables: Sequence[str]
+) -> tuple[_Alias | None, ...]:
+    """For each returned variable, the parameter it is only ever bound from, if one.
+
+    Such a variable holds the argument, or the thunk argument's result, at
+    every site, so its type is taken from the argument's own. A reveal of the
+    site's variable would answer the same type in another spelling where it
+    matters most: mypy shows a class held in a variable as its constructor,
+    and the row would then relate nothing to the ``type[C]`` passed in.
+    """
+    parameters = [parameter.arg for parameter in helper.args.posonlyargs + helper.args.args]
+    bound = [bindings_of(statement, into_nested_scopes=False) for statement in helper.body]
+    declared = {
+        name
+        for node in ast.walk(helper)
+        if isinstance(node, (ast.Global, ast.Nonlocal))
+        for name in node.names
+    }
+    aliases: list[_Alias | None] = []
+    for variable in return_variables:
+        binders = [statement for statement, names in zip(helper.body, bound) if variable in names]
+        alias: _Alias | None = None
+        if len(binders) == 1 and variable not in declared:
+            statement = binders[0]
+            value = statement.value if isinstance(statement, ast.Assign) else None
+            if (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+            ):
+                called = isinstance(value, ast.Call) and not value.args and not value.keywords
+                source = value.func if isinstance(value, ast.Call) and called else value
+                if (
+                    isinstance(source, ast.Name)
+                    and source.id in parameters
+                    and source.id not in declared
+                    and not any(source.id in names for names in bound)
+                ):
+                    alias = _Alias(parameters.index(source.id), called)
+        aliases.append(alias)
+    return tuple(aliases)
+
+
+def _thunk_result(term: TypeTerm) -> TypeTerm | None:
+    """``R`` for ``Callable[[], R]``: what calling a thunk of that type returns."""
+    if (
+        term.kind is TypeKind.APPLY
+        and len(term.children) == 3
+        and term.children[0].name == "collections.abc.Callable"
+        and term.children[1].kind is TypeKind.LIST
+        and not term.children[1].children
+    ):
+        return term.children[2]
+    return None
 
 
 def _function_at(module: ast.Module, line: int) -> FunctionNode | None:
@@ -180,9 +254,11 @@ def _site_types(
     resolver = context.resolver(site.source, site.file_path, site.start_line)
     declared_site = CallSite(site.statement, site.call, function, module, site.file_path)
     arguments: list[TypeTerm | _ProbeKey] = []
+    expressions: list[str] = []
     for index, argument in enumerate(site.call.args):
         if index == receiver_index:
             continue
+        expressions.append(ast.unparse(argument))
         if index in unused:
             top = resolver.resolve_revealed("builtins.object")
             if top is None:
@@ -194,7 +270,7 @@ def _site_types(
         arguments.append(
             kind
             if kind is not None
-            else probes.add(site, site.start_line, site.indent, ast.unparse(argument))
+            else probes.add(site, site.start_line, site.indent, expressions[-1])
         )
     result: TypeTerm | None = None
     if isinstance(site.statement, ast.Return) and site.declared_return is not None:
@@ -209,7 +285,7 @@ def _site_types(
         if result is None
         else ()
     )
-    return _SiteTypes(resolver, tuple(arguments), result, result_probes)
+    return _SiteTypes(resolver, tuple(arguments), result, result_probes, tuple(expressions))
 
 
 def _tuple_type(elements: Sequence[TypeTerm], resolver: TypeResolver) -> TypeTerm | None:
@@ -230,6 +306,7 @@ def _signature_rows(
     receiver_index: int | None = None,
     module_names: ModuleNames | None = None,
     unused: frozenset[int] = frozenset(),
+    aliases: Sequence[_Alias | None] = (),
 ) -> tuple[tuple[TypeTerm, ...], ...]:
     context = _Context(host_file, host_source, host_class, module_names)
     probes = _Probes()
@@ -243,19 +320,38 @@ def _signature_rows(
     rows: list[tuple[TypeTerm, ...]] = []
     for site_types in contexts:
 
-        def resolved(key: _ProbeKey) -> TypeTerm | None:
+        def resolved(key: _ProbeKey, expression: str | None = None) -> TypeTerm | None:
             text = revealed.get(key)
+            if text is not None and expression is not None:
+                text = class_object_revealed(expression, text)
             return site_types.resolver.resolve_revealed(text) if text is not None else None
 
         arguments = [
-            argument if isinstance(argument, TypeTerm) else resolved(argument)
-            for argument in site_types.arguments
+            argument if isinstance(argument, TypeTerm) else resolved(argument, expression)
+            for argument, expression in zip(site_types.arguments, site_types.argument_expressions)
         ]
+
+        def aliased(position: int) -> TypeTerm | None:
+            """The argument a returned variable holds at this site, when it holds one."""
+            alias = aliases[position] if position < len(aliases) else None
+            if alias is None or alias.parameter == receiver_index:
+                return None
+            index = alias.parameter - (
+                1 if receiver_index is not None and alias.parameter > receiver_index else 0
+            )
+            term = arguments[index] if index < len(arguments) else None
+            if term is None or not alias.called:
+                return term
+            return _thunk_result(term)
+
         result = site_types.declared_result
         if result is None:
             alternatives: list[TypeTerm] = []
             for keys in site_types.result_probes:
-                elements = [resolved(key) for key in keys]
+                elements = [
+                    (aliased(position) if return_variables else None) or resolved(key)
+                    for position, key in enumerate(keys)
+                ]
                 if not elements or any(element is None for element in elements):
                     return ()
                 present = [element for element in elements if element is not None]
@@ -569,6 +665,7 @@ def generic_helpers(
         receiver_index=receiver_index,
         module_names=module_names,
         unused=_unused_parameters(helper) - {receiver_index},
+        aliases=_returned_aliases(helper, return_variables),
     )
     if not rows:
         return

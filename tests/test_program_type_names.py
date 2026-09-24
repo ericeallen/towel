@@ -573,3 +573,76 @@ def test_a_parameter_the_body_never_reads_is_object_end_to_end(tmp_path: Path) -
     assert "_towel_typevar('_TowelT0', 'int', 'str')" in changed, changed
     namespace: dict[str, object] = {}
     exec(compile(changed, str(path), "exec"), namespace)
+
+
+def _extract_first(path: Path) -> str:
+    """The first proposal applied under strict mypy, which must accept the result."""
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        )
+        proposals = engine.analyze_file(str(path))
+        assert proposals
+        changed = engine.apply_refactoring(str(path), proposals[0])
+        assert oracle.check(str(path), changed) == CheckSuccess(), changed
+    finally:
+        oracle.close()
+    return changed
+
+
+@requires_mypy
+def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """rich's markdown elements: ``lambda: Row`` feeds ``isinstance``; ``self.rows`` takes the child.
+
+    mypy reveals the thunk as returning the class's constructor. Read as that,
+    the ordinary signature fails ``isinstance`` and the two type variables of
+    the generic one are unrelated; read as ``type[Row]``, one variable relates
+    the class to the list it fills. Before, only ``Any`` got this through.
+    """
+    _project(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "elements.py": """\
+                class Element:
+                    pass
+
+
+                class Body(Element):
+                    def __init__(self) -> None:
+                        self.rows: list[Row] = []
+
+                    def on_child_close(self, child: Element) -> bool:
+                        assert isinstance(child, Row)
+                        self.rows.append(child)
+                        return False
+
+
+                class Line(Element):
+                    def __init__(self) -> None:
+                        self.cells: list[Cell] = []
+
+                    def on_child_close(self, child: Element) -> bool:
+                        assert isinstance(child, Cell)
+                        self.cells.append(child)
+                        return False
+
+
+                class Row(Element):
+                    pass
+
+
+                class Cell(Element):
+                    def __init__(self, justify: str) -> None:
+                        self.justify = justify
+                """,
+        },
+    )
+    changed = _extract_first(tmp_path / "elements.py")
+    helper = _helper(changed)
+    kinds = [_annotation(parameter.annotation) for parameter in helper.args.args]
+    assert kinds[:2] == ["Callable[[], type[_TowelT0]]", "Callable[[], list[_TowelT0]]"], changed
+    assert "Any" not in changed, changed
