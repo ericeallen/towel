@@ -73,7 +73,10 @@ def test_dotted_names_reduce_to_what_the_host_binds() -> None:
     assert box is not None and ast.unparse(box) == "Box"
     sequence = annotation_from_revealed("typing.Sequence[int]", host, True)
     assert sequence is not None and ast.unparse(sequence) == "typing.Sequence[int]"
-    assert annotation_from_revealed("pkg.elsewhere.Thing", host, True) is None
+    # A whole path the host does not bind stays whole, for the caller to import
+    # under TYPE_CHECKING or give up on.
+    kept = annotation_from_revealed("pkg.elsewhere.Thing", host, True)
+    assert isinstance(kept, ast.Constant) and kept.value == "pkg.elsewhere.Thing"
 
 
 @requires_mypy

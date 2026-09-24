@@ -70,6 +70,7 @@ from .annotations import (
     respell_bare,
     sites_use_annotations,
     typing_imports_needed,
+    unwritten_as_any,
     qualified_names_in_annotations,
     shorten_qualified_names,
     defers_annotations,
@@ -771,6 +772,11 @@ class HelperAnnotationWiring(EngineState):
             if selfless is not None:
                 proposal.extracted_function, proposal.helper_type_declarations = selfless
         proposal.type_checking_imports = self._shorten_unreachable_names(proposal, host)
+        proposal.required_imports = tuple(
+            dict.fromkeys(
+                proposal.required_imports + unwritten_as_any(proposal.extracted_function, host)
+            )
+        )
 
     def _annotation_sites(self, proposal: RefactoringProposal) -> List[ApplySite]:
         """Keep the current source and return context of each replacement together."""

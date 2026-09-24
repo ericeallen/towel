@@ -439,8 +439,9 @@ REVEALED = [
         None,
     ),
     ("abs", "def [_T] (typing.SupportsAbs[_T]) -> _T", None),
-    # A name that is no builtin is left as the checker put it.
-    ("measure", "def (typing.Sized) -> int", None),
+    # A name that is no builtin is left as the checker put it, a whole path
+    # kept for the caller to import or to write as Any.
+    ("measure", "def (typing.Sized) -> int", "'Callable[[typing.Sized], int]'"),
 ]
 
 

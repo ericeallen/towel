@@ -12,14 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a typed run does with the files it reads, with a checker whose answers are fixed.
+"""Two things a typed run does with the files it reads, with checkers whose answers are fixed.
 
 A file it cannot read is left out and left alone, as without types: one
-undecodable module of test data used to refuse the whole typed run (D7).
+undecodable module of test data used to refuse the whole typed run (D7). And a
+class the checker reveals by its whole path, which the helper's module does
+not import, is imported under ``TYPE_CHECKING`` and named directly, as the
+documentation says: it used to become ``Any`` unless the module bound the
+path's head (D13).
 """
 
 from __future__ import annotations
 
+import ast
 import textwrap
 from pathlib import Path
 from typing import Dict, List, Mapping, Sequence, Tuple
@@ -32,6 +37,7 @@ from towel.type_inference import (
     RevealRequest,
     Subtyping,
 )
+from towel.unification.annotations import annotation_from_revealed, unwritten_as_any
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes
 
@@ -115,3 +121,68 @@ def test_a_file_that_cannot_be_read_is_left_alone_and_the_typed_run_goes_on(
     assert all(
         not path.endswith("latin.py") for sources in oracle.checked for path in sources
     ), "the checker reads the file itself, as the project's own check would"
+
+
+ROW = textwrap.dedent("""\
+    from pkg.models import make_row
+
+
+    def first(k: int) -> int:
+        row = make_row(k)
+        print("first row", row.n)
+        total = row.n * 2
+        return total
+
+
+    def second(k: int) -> int:
+        row = make_row(k + 1)
+        print("second row", row.n)
+        total = row.n * 2
+        return total
+    """)
+
+MODELS = textwrap.dedent("""\
+    class Row:
+        def __init__(self, n: int) -> None:
+            self.n = n
+
+
+    def make_row(n: int) -> Row:
+        return Row(n)
+    """)
+
+
+def test_a_class_revealed_by_its_whole_path_is_imported_for_the_checker(tmp_path: Path) -> None:
+    """D13: ``pkg.models.Row``, which report.py does not import, is named ``"Row"``."""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "pkg"\nversion = "0"\n')
+    (package / "__init__.py").write_text("")
+    (package / "models.py").write_text(MODELS)
+    (package / "report.py").write_text(ROW)
+    oracle = _Fixed({"row": "pkg.models.Row", '"first row"': "builtins.str"})
+    engine = UnificationRefactorEngine(type_oracle=oracle)
+    engine.refactor_directory_to_fixed_point(str(package), str(package), progress="none")
+    written = (package / "report.py").read_text()
+    tree = ast.parse(written)
+    guard = next(node for node in tree.body if isinstance(node, ast.If))
+    assert ast.unparse(guard.body[0]) == "from pkg.models import Row", written
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+    )
+    assert "row: 'Row'" in ast.unparse(helper.args), written
+
+
+def test_a_whole_path_the_host_cannot_import_is_written_any() -> None:
+    """Where no module of the project owns the class, the annotation is Any, as before."""
+    host = ast.parse("import os\n")
+    kept = annotation_from_revealed("_io.TextIOWrapper", host, True)
+    assert isinstance(kept, ast.Constant) and kept.value == "_io.TextIOWrapper"
+    helper = ast.parse(
+        "def helper(stream: '_io.TextIOWrapper', path: 'os.PathLike[str]') -> None: ..."
+    ).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    assert unwritten_as_any(helper, host) == (("typing", "Any"),)
+    assert ast.unparse(helper.args) == "stream: Any, path: 'os.PathLike[str]'"

@@ -478,6 +478,11 @@ def _spelled_for_host(
             return expression
         return annotation if quoted else ast.Constant(value=ast.unparse(expression))
     if not same_module or host is None:
+        # A whole path means the same in every module, so it is not a site's
+        # binding carried into the host: it is written as a string for the
+        # caller to import under ``TYPE_CHECKING``, or give up.
+        if names - resolved <= _dotted_heads(expression):
+            return annotation if quoted else ast.Constant(value=ast.unparse(expression))
         return None
     if names - resolved <= _import_bound_names(host) and _evaluates_at_runtime(expression, host):
         return expression
@@ -580,6 +585,14 @@ def _evaluates_at_runtime(expression: ast.expr, host: Optional[ast.Module]) -> b
 
 def _referenced_names(expression: ast.expr) -> Set[str]:
     return {node.id for node in ast.walk(expression) if isinstance(node, ast.Name)}
+
+
+def _dotted_heads(expression: ast.expr) -> Set[str]:
+    """The names that only ever begin a dotted path in ``expression``: ``pkg`` of ``pkg.mod.Name``."""
+    bases = {id(node.value) for node in ast.walk(expression) if isinstance(node, ast.Attribute)}
+    names = [node for node in ast.walk(expression) if isinstance(node, ast.Name)]
+    heads = {name.id for name in names if id(name) in bases}
+    return heads - {name.id for name in names if id(name) not in bases}
 
 
 PythonVersion = Tuple[int, int]
@@ -782,9 +795,14 @@ def annotation_from_revealed(
     (``Literal['x']?``) is the builtin type its value belongs to, while a
     literal the program declared stays one; a named tuple or typed dict is
     its class. ``builtins.`` is dropped. ``Any`` as the whole type, ``Never``,
-    anything the reader cannot read, and an unresolvable name are declined; a
-    dotted name is kept only when its head is bound in the host, or reduced to
-    its last part when that is bound there.
+    anything the reader cannot read, and an unresolvable name are declined. A
+    dotted name is reduced to its last part when that is bound in the host,
+    under ``TYPE_CHECKING`` included, and is otherwise kept whole: the checker
+    names a class by its whole path, which means the same in every module, and
+    the caller imports it under ``TYPE_CHECKING`` where the host can import it,
+    or writes ``Any`` where it cannot (:func:`unwritten_as_any`). It used to be
+    declined unless its head was bound, and the type-only import that the
+    documentation promised was never written.
     """
     expression = parse_revealed(revealed)
     if expression is None:
@@ -798,8 +816,6 @@ def annotation_from_revealed(
     if not _is_type_expression(expression):
         return None
     reduced = _reduce_dotted_names(expression, host)
-    if reduced is None:
-        return None
     return _spelled_for_host(reduced, host, same_module, set(_TYPING_NAMES) | (bare_ok or set()))
 
 
@@ -850,22 +866,38 @@ def _is_type_expression(expression: ast.expr) -> bool:
     return True
 
 
-def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> Optional[ast.expr]:
-    """Rewrite ``pkg.mod.Name`` to what the host can spell, or None if it cannot."""
+def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> ast.expr:
+    """Rewrite ``pkg.mod.Name`` to the name the host binds for it; keep it whole otherwise."""
     bound = (
-        _import_bound_names(host) | _defined_names(host) if host is not None else set()
+        _import_bound_names(host) | _type_only_bound_names(host) | _defined_names(host)
+        if host is not None
+        else set()
     ) | _TYPING_NAMES
-    reducer = _DottedNameReducer(bound)
-    result = reducer.visit(copy.deepcopy(expression))
-    return None if reducer.failed else result
+    return cast(ast.expr, _DottedNameReducer(bound).visit(copy.deepcopy(expression)))
+
+
+def _type_only_bound_names(module: ast.Module) -> Set[str]:
+    """What the imports under the module's own ``if TYPE_CHECKING:`` bind, for the checker alone."""
+    bound: Set[str] = set()
+    for node in module.body:
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        guarded = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+            isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+        )
+        if guarded:
+            for statement in node.body:
+                if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                    bound.update(import_binding_names(statement))
+    return bound
 
 
 class _DottedNameReducer(ast.NodeTransformer):
-    """Rewrite each ``pkg.mod.Name`` to a name in ``bound``; ``failed`` when one cannot be."""
+    """Rewrite each ``pkg.mod.Name`` to a name in ``bound`` where one is; leave it whole otherwise."""
 
     def __init__(self, bound: Set[str]) -> None:
         self.bound = bound
-        self.failed = False
 
     def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
         head: ast.expr = node
@@ -875,8 +907,7 @@ class _DottedNameReducer(ast.NodeTransformer):
             return node  # ``typing.Sequence`` with ``import typing`` in the host
         if node.attr in self.bound:
             return ast.Name(id=node.attr, ctx=ast.Load())
-        self.failed = True
-        return node
+        return node  # a whole path, for the caller to import or give up
 
 
 def _defined_names(module: ast.Module) -> Set[str]:
@@ -962,6 +993,39 @@ def _written_annotations(helper: ast.FunctionDef) -> List[ast.expr]:
 def defers_annotations(module: Optional[ast.Module]) -> bool:
     """Whether the module's annotations are strings at run time rather than values."""
     return module is not None and _defers_annotations(module)
+
+
+def unwritten_as_any(
+    helper: ast.FunctionDef, host: Optional[ast.Module]
+) -> Tuple[Tuple[str, str], ...]:
+    """Write ``Any`` for each annotation that still names a whole path its host cannot reach.
+
+    Once the caller has imported what it can under ``TYPE_CHECKING``
+    (:func:`shorten_qualified_names`), a path whose head the host does not
+    bind is no name there at all, so the annotation holding it is ``Any``, as
+    it was before such paths were kept. A path whose head the host binds is
+    left for the project check to decide. Rewrites ``helper`` in place and
+    returns the ``typing`` imports that ``Any`` needs.
+    """
+    bound = (_import_bound_names(host) | _defined_names(host)) if host is not None else set()
+
+    def unwritable(annotation: Optional[ast.expr]) -> bool:
+        if annotation is None:
+            return False
+        return any(
+            dotted is not None and dotted.split(".", 1)[0] not in bound
+            for node in ast.walk(_unquoted(annotation))
+            if isinstance(node, ast.Attribute)
+            for dotted in [_dotted_name(node)]
+        )
+
+    replaced = False
+    for parameter in [*helper.args.posonlyargs, *helper.args.args, *helper.args.kwonlyargs]:
+        if unwritable(parameter.annotation):
+            parameter.annotation, replaced = ast.Name(id="Any", ctx=ast.Load()), True
+    if unwritable(helper.returns):
+        helper.returns, replaced = ast.Name(id="Any", ctx=ast.Load()), True
+    return typing_imports_needed(helper, host) if replaced else ()
 
 
 def shorten_qualified_names(
@@ -1512,8 +1576,11 @@ def _joined_revealed(
     extra = allowed if allowed is not None else set(_TYPING_NAMES)
     spare = list(fallbacks) + [None] * (len(present) - len(fallbacks))
     candidates = [
-        annotation_from_revealed(text, host, same_module, extra)
-        or (annotation_from_revealed(other, host, same_module, extra) if other else None)
+        _written_or_fallback(
+            annotation_from_revealed(text, host, same_module, extra),
+            annotation_from_revealed(other, host, same_module, extra) if other else None,
+            host,
+        )
         for text, other in zip(present, spare)
     ]
     if any(candidate is None for candidate in candidates):
@@ -1521,6 +1588,24 @@ def _joined_revealed(
     return _joined(
         [_unquoted(c) for c in candidates if c is not None], host, same_module, extra, subtypes
     )
+
+
+def _written_or_fallback(
+    written: Optional[ast.expr], fallback: Optional[ast.expr], host: Optional[ast.Module]
+) -> Optional[ast.expr]:
+    """The checker's spelling, unless it names a whole path the host does not bind and a fallback exists.
+
+    Such a path is imported for the checker where the host can import it, and
+    written ``Any`` where it cannot (:func:`unwritten_as_any`). A fallback is
+    only ever the loosened type of a builtin (``Callable[..., int]`` for
+    ``len``, whose own signature names ``typing.Sized``), which is written
+    as it is and says more than ``Any``.
+    """
+    if written is None or fallback is None:
+        return written or fallback
+    bound = (_import_bound_names(host) | _defined_names(host)) if host is not None else set()
+    heads = _dotted_heads(_unquoted(written))
+    return fallback if heads - bound else written
 
 
 def _joined_tuple(
