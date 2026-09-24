@@ -385,7 +385,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                         class_name=entry.class_name,
                         method_kind=None,
                         implicit_param=None,
-                        comments=site_comments(entry.source, cand_nodes, arguments),
+                        comments=site_comments(
+                            entry.source,
+                            cand_nodes,
+                            arguments,
+                            self._coverage_exclusion(entry.file_path).pattern,
+                        ),
                     ),
                     context,
                 )

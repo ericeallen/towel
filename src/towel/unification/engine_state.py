@@ -47,7 +47,9 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
-from ..diagnostics import Settings
+from ..coverage_config import CoverageExclusion, coverage_exclusion
+from ..diagnostics import LOG, Settings
+from ..project_layout import find_project_root
 from ..type_inference import CheckResult, TypeOracle
 from .block_signature import BlockSignature
 from .bounded_cache import BoundedCache
@@ -173,6 +175,8 @@ class EngineState:
     """The helper-shaped names each project root's sources already define, by root."""
     _namespace_writes: Dict[str, ProjectWrites]
     """The writes into module namespaces each project root's sources make, by root."""
+    _coverage_exclusions: Dict[str, CoverageExclusion]
+    """What each project root's coverage.py excludes lines by, read once per engine."""
     # Identities of the proposals this analysis has finished; a pair whose
     # proposal repeats one is declined before reuse, filtering and annotation.
     _seen_proposals: Set[Hashable]
@@ -316,6 +320,31 @@ class EngineState:
     def invalidate_paths(self, paths: List[str]) -> None:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
+
+    def _origin_of(self, path: str) -> str:
+        """Provided by HelperAnnotationWiring."""
+        raise NotImplementedError
+
+    def _coverage_exclusion(self, file_path: str) -> CoverageExclusion:
+        """What the coverage.py of the project around ``file_path`` excludes lines by.
+
+        Read from the project's own location, since an output directory is
+        only a copy of part of it, once per engine and root. A configuration
+        coverage.py could not read gives its defaults, and the run says so.
+        """
+        root = find_project_root(Path(self._origin_of(file_path)))
+        key = str(root)
+        found = self._coverage_exclusions.get(key)
+        if found is None:
+            found = self._coverage_exclusions[key] = coverage_exclusion(root)
+            if found.problem is not None:
+                LOG.warning(
+                    "warning: coverage.py could not read its configuration in %s (%s); moved"
+                    " code is judged against coverage.py's default exclusions",
+                    root,
+                    found.problem,
+                )
+        return found
 
     def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
         """Provided by UnificationRefactorEngine."""

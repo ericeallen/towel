@@ -754,7 +754,9 @@ header of a statement enclosing the block, or a `pylint: disable` earlier in
 an enclosing body, governs every site and would not reach the helper where
 placement writes it (`directive_around_block`, decided with the proposal);
 a block whose first statement coverage excludes would become a measured call
-(`excluded_block_start`); and a region directive (`fmt: off`, `isort:
+(`excluded_block_start`), where what coverage excludes is every line the
+project's own coverage.py configuration's regexes match, read as coverage.py
+reads it (`coverage_config.py`); and a region directive (`fmt: off`, `isort:
 off`, a `pylint: disable` on a line of its own) must close within the block,
 and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is
@@ -1324,6 +1326,7 @@ but the ideas and their names are from the literature.
 | Import-graph resolution and the cycle guard | `import_graph.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
 | The comments of moved blocks, and where they go in the helper | `block_comments.py` |
+| What the project's coverage.py excludes, from its configuration | `coverage_config.py` (at `src/towel/`) |
 | Helper annotations | `annotations.py` |
 | Type oracle (mypy, pyright) | `type_inference.py` (at `src/towel/`) |
 | Owned mypy worker, one forked build per request | `_mypy_worker.py` |

@@ -1354,6 +1354,7 @@ class PairEvaluation(
                 pair.source1 if block_idx == 0 else pair.source2,
                 nodes,
                 call_argument_lines(unified.substitution, block_idx),
+                self._coverage_exclusion(file_path).pattern,
             ),
         )
 

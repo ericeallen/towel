@@ -61,7 +61,11 @@ from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, U
 
 from .exceptions import RefactoringError
 from .substitution import Substitution
+from ..coverage_config import DEFAULT_EXCLUDE, CoverageExclusion
 from ..source_text import source_lines
+
+DEFAULT_EXCLUSION = CoverageExclusion().pattern
+"""coverage.py's own exclusion regexes, joined: for a block whose project sets none."""
 
 Position = Tuple[int, int]
 """A (line, column) place in a text; the line counts from 1 and the column in characters."""
@@ -135,10 +139,14 @@ class BlockComment:
     # with the anchor, the span of code the comment was written beside.
     line_start: Optional[NodePath] = None
     # The lines of the block whose code a tool directive governs: its own
-    # line, the statement or clause it excludes or disables, the region it
-    # opens, or the statement it precedes; none for a comment that tells no
-    # tool anything, or one that configures the whole file.
+    # line, the statement or clause it disables, the region it opens, or the
+    # statement it precedes; none for a comment that tells no tool anything,
+    # or one that configures the whole file. What coverage excludes is
+    # ``SiteComments.excluded``.
     reach: FrozenSet[int] = frozenset()
+    # Whether a tool reads the comment (``_counts_as_directive``): a pragma
+    # the project's coverage.py does not exclude by is a plain comment.
+    directive: bool = False
 
 
 @dataclass(frozen=True)
@@ -154,8 +162,12 @@ class SiteComments:
     # The directives outside the block that reach it (``_around``), which
     # a helper holding it may be out of reach of (``Surrounding``).
     around: Tuple["Surrounding", ...] = ()
-    # A coverage pragma excluding the block's first statement, which the call
-    # that replaces the block would not be (``_excluded_start``); or empty.
+    # The lines of the block coverage.py excludes, by a regex of the
+    # project's configuration or its defaults, with each whole statement and
+    # clause an excluded line opens (``_excluded``).
+    excluded: FrozenSet[int] = frozenset()
+    # Why the block's first statement is excluded from coverage, which the
+    # call that replaces the block would not be (``_excluded_start``); or empty.
     excluded_start: str = ""
 
 
@@ -247,12 +259,14 @@ _DIRECTIVE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-# A directive that coverage or pylint apply to the whole statement holding
-# its line, and to the whole block when that line opens one.
-_STATEMENT_WIDE = re.compile(r"\#\s*(?:pragma\b|pylint\s*:\s*disable\b)", re.IGNORECASE)
+# A directive that pylint applies to the whole statement holding its line,
+# and to the whole block when that line opens one, as coverage.py does with
+# an excluded line (``_excluded``).
+_STATEMENT_WIDE = re.compile(r"\#\s*pylint\s*:\s*disable\b", re.IGNORECASE)
 
-# Coverage's exclusion pragma.
-_COVERAGE_PRAGMA = re.compile(r"\#\s*pragma\b", re.IGNORECASE)
+# coverage.py's default exclusion pragma, which excludes nothing in a project
+# whose ``exclude_lines`` leaves it out.
+_DEFAULT_PRAGMA = re.compile(DEFAULT_EXCLUDE[0])
 
 # pylint's disable and enable, which on a line of their own govern the rest
 # of the block they stand in.
@@ -307,6 +321,46 @@ def is_directive(text: str) -> bool:
     hold it, as in ``# type: ignore  # noqa: E721``.
     """
     return _DIRECTIVE.search(text) is not None
+
+
+@functools.lru_cache(maxsize=16)
+def _exclusion_regex(pattern: str) -> Optional[re.Pattern[str]]:
+    return re.compile(pattern, re.MULTILINE) if pattern else None
+
+
+def _counts_as_directive(text: str, pattern: str) -> bool:
+    """Whether a tool reads the comment ``text`` in a project coverage.py excludes by ``pattern``.
+
+    A comment the project's own exclusion regexes match is coverage's, even
+    one no other tool reads (``# nocov``); coverage's default ``# pragma: no
+    cover`` in a project whose regexes leave it out tells no tool anything.
+    """
+    regex = _exclusion_regex(pattern)
+    if regex is not None and regex.search(text):
+        return True
+    return is_directive(_DEFAULT_PRAGMA.sub("", text))
+
+
+@functools.lru_cache(maxsize=16)
+def excluded_lines(source: str, pattern: str) -> FrozenSet[int]:
+    """The lines of ``source`` coverage.py's joined exclusion regexes ``pattern`` match.
+
+    Every line a match touches, a match spanning lines included, as
+    coverage.py's ``PythonParser.lines_matching`` counts them; none for an
+    empty ``pattern``, which excludes nothing.
+    """
+    regex = _exclusion_regex(pattern)
+    if regex is None:
+        return frozenset()
+    lines: set[int] = set()
+    last_start = last_start_line = 0
+    for match in regex.finditer(source):
+        start, end = match.span()
+        start_line = last_start_line + source.count("\n", last_start, start)
+        end_line = last_start_line + source.count("\n", last_start, end)
+        lines.update(range(start_line + 1, end_line + 2))
+        last_start, last_start_line = start, start_line
+    return frozenset(lines)
 
 
 def is_file_directive(text: str) -> bool:
@@ -642,33 +696,52 @@ def _own_line_anchor(
 
 
 def site_comments(
-    source: str, block: Sequence[ast.stmt], argument_lines: Iterable[int] = ()
+    source: str,
+    block: Sequence[ast.stmt],
+    argument_lines: Iterable[int] = (),
+    exclusion: str = DEFAULT_EXCLUSION,
 ) -> SiteComments:
     """The comments written between the first and last line of ``block``, anchored in it.
 
-    ``source`` is the module ``block`` was parsed from. Comments above the
-    block's first statement or below its last line belong to the call site
-    and stay there. A block whose tokens cannot be read is marked so, and
-    moves nowhere (``directive_conflict``).
+    ``source`` is the module ``block`` was parsed from, and ``exclusion`` the
+    joined regexes its project's coverage.py excludes lines by
+    (``coverage_config``). Comments above the block's first statement or
+    below its last line belong to the call site and stay there. A block
+    whose tokens cannot be read is marked so, and moves nowhere
+    (``directive_conflict``).
     """
     arguments = frozenset(argument_lines)
     if not block:
         return SiteComments(argument_lines=arguments)
     lines = _lines_of(source)
-    last_line = block[-1].end_lineno or block[-1].lineno
-    around = _around(source, block)
-    if not any("#" in line for line in lines[block[0].lineno - 1 : last_line]):
-        return SiteComments(argument_lines=arguments, around=around)
-    first = (block[0].lineno, _column(lines[block[0].lineno - 1], block[0].col_offset))
+    first_line, last_line = block[0].lineno, block[-1].end_lineno or block[-1].lineno
+    matched = excluded_lines(source, exclusion)
+    in_block = frozenset(line for line in matched if first_line <= line <= last_line)
+    around = _around(source, block, matched)
+    commented = any("#" in line for line in lines[first_line - 1 : last_line])
+    index = _BlockIndex(block, lines) if in_block or commented else None
+    excluded = _excluded(in_block, index)
+    start = _excluded_start(block, in_block)
+    bare = SiteComments(
+        argument_lines=arguments, around=around, excluded=excluded, excluded_start=start
+    )
+    if index is None or not commented:
+        return bare
+    first = (first_line, _column(lines[first_line - 1], block[0].col_offset))
     tokens = _block_tokens(lines, first, last_line)
     if tokens is None:
-        return SiteComments(argument_lines=arguments, unreadable=True, around=around)
+        return SiteComments(
+            argument_lines=arguments,
+            unreadable=True,
+            around=around,
+            excluded=excluded,
+            excluded_start=start,
+        )
     positions = [
         position for position, token in enumerate(tokens) if token.kind == tokenize.COMMENT
     ]
     if not positions:
-        return SiteComments(argument_lines=arguments, around=around)
-    index = _BlockIndex(block, lines)
+        return bare
     last = NodePath(len(block) - 1, type(block[-1]).__name__)
     first_on_line: Dict[int, _Token] = {}
     for token in tokens:
@@ -687,21 +760,44 @@ def site_comments(
             starter = index.first_starting_on(line, comment.start[1])
             line_start = starter.path if starter is not None else None
         group, exploded = _bracket_context(tokens, at, index)
+        directive = _counts_as_directive(comment.text, exclusion)
         comments.append(
             BlockComment(
                 comment.text.rstrip(),
                 Anchor(anchor.node, anchor.placement, anchor.punctuation, group, exploded),
                 line,
                 line_start,
-                _reach(comment, own_line, index),
+                _reach(comment, own_line, index) if directive else frozenset(),
+                directive,
             )
         )
-    read = _with_region_reach(comments)
-    return SiteComments(read, arguments, around=around, excluded_start=_excluded_start(block, read))
+    return SiteComments(
+        _with_region_reach(comments),
+        arguments,
+        around=around,
+        excluded=excluded,
+        excluded_start=start,
+    )
 
 
-def _excluded_start(block: Sequence[ast.stmt], comments: Sequence[BlockComment]) -> str:
-    """The pragma excluding the block's first statement from coverage, when that is a simple one.
+def _excluded(lines: FrozenSet[int], index: Optional[_BlockIndex]) -> FrozenSet[int]:
+    """The block's lines coverage.py excludes: each excluded line's statement, and the clause it opens.
+
+    coverage.py excludes a whole statement when any of its lines matches, and
+    the whole suite after the colon of a statement it excludes.
+    """
+    if index is None:
+        return frozenset()
+    found: set[int] = set(lines)
+    for line in lines:
+        holder = index.innermost_statement_on(line)
+        if holder is not None:
+            found.update(range(min(holder.start[0], line), max(holder.end[0], line) + 1))
+    return frozenset(found)
+
+
+def _excluded_start(block: Sequence[ast.stmt], excluded: FrozenSet[int]) -> str:
+    """Why coverage.py excludes the block's first statement, when that is a simple one.
 
     The call replacing the block runs exactly when its first statement did,
     and coverage measures it; a statement excluded because it never runs
@@ -712,10 +808,9 @@ def _excluded_start(block: Sequence[ast.stmt], comments: Sequence[BlockComment])
     first = block[0]
     if getattr(first, "body", None) is not None:
         return ""
-    for comment in comments:
-        if first.lineno in comment.reach and _COVERAGE_PRAGMA.search(comment.text):
-            return f"line {comment.line}: {comment.text}"
-    return ""
+    lines = range(first.lineno, (first.end_lineno or first.lineno) + 1)
+    hit = next((line for line in lines if line in excluded), None)
+    return "" if hit is None else f"line {hit} is excluded from coverage"
 
 
 @functools.lru_cache(maxsize=8)
@@ -757,18 +852,21 @@ def _scope_of(node: ast.stmt) -> Tuple[str, str]:
     return "", ""
 
 
-def _around(source: str, block: Sequence[ast.stmt]) -> Tuple[Surrounding, ...]:
+def _around(
+    source: str, block: Sequence[ast.stmt], excluded: FrozenSet[int]
+) -> Tuple[Surrounding, ...]:
     """Every directive outside ``block`` that reaches it, which a helper holding it may escape.
 
-    Coverage's pragma or pylint's ``disable`` at the end of the header of a
-    statement that encloses the block (its function's ``def`` line, a
-    class, an ``if``, ``for``, ``else:`` or ``except`` line and the like)
-    governs the whole of it, and a ``pylint: disable`` on a line of its own
-    earlier in a body that encloses the block governs the rest of that
-    body. Whether the helper stays within one depends on where it is
-    written (``Surrounding.governs``).
+    A line of the header of a statement that encloses the block (its
+    function's ``def`` line or decorators, a class, an ``if``, ``for``,
+    ``else:`` or ``except`` line and the like) that coverage.py excludes,
+    by a pragma or a configured regex (``excluded``), excludes the whole of
+    it; so does pylint's ``disable`` at the end of such a line; and a
+    ``pylint: disable`` on a line of its own earlier in a body that
+    encloses the block governs the rest of that body. Whether the helper
+    stays within one depends on where it is written (``Surrounding.governs``).
     """
-    if "pragma" not in source and "pylint" not in source:
+    if not excluded and "pylint" not in source:
         return ()
     read = _module_comments(source)
     if read is None:
@@ -835,11 +933,14 @@ def _around(source: str, block: Sequence[ast.stmt]) -> Tuple[Surrounding, ...]:
                     )
             previous_end = clause_end
         for line in sorted(header_lines):
+            if line in excluded:
+                found.append(
+                    Surrounding(f"line {line} is excluded from coverage", "coverage", scope, name)
+                )
             for token in comments.get(line, ()):
                 if not own_line(token) and _STATEMENT_WIDE.search(token.text):
-                    tool = "coverage" if _COVERAGE_PRAGMA.search(token.text) else "pylint"
                     found.append(
-                        Surrounding(f"line {line}: {token.text.rstrip()}", tool, scope, name)
+                        Surrounding(f"line {line}: {token.text.rstrip()}", "pylint", scope, name)
                     )
         node = holder
 
@@ -851,9 +952,9 @@ def _lines_between(first: int, last: int) -> FrozenSet[int]:
 def _reach(comment: _Token, own_line: bool, index: _BlockIndex) -> FrozenSet[int]:
     """The lines of the block whose code the directive ``comment`` governs (``BlockComment.reach``).
 
-    A directive at the end of a line governs that line; coverage's pragma
-    and pylint's ``disable`` govern the whole statement holding it, and the
-    whole block when the line opens one. Of those on a line of their own,
+    A directive at the end of a line governs that line; pylint's
+    ``disable`` governs the whole statement holding it, and the whole block
+    when the line opens one. Of those on a line of their own,
     PyCharm's ``noinspection`` governs the statement after it, and a region
     directive its region (``_with_region_reach``); the rest govern nothing.
     A directive for the whole file reaches its module wherever the code goes.
@@ -895,7 +996,12 @@ def _with_region_reach(comments: Sequence[BlockComment]) -> Tuple[BlockComment, 
     return tuple(
         (
             BlockComment(
-                comment.text, comment.anchor, comment.line, comment.line_start, reach[position]
+                comment.text,
+                comment.anchor,
+                comment.line,
+                comment.line_start,
+                reach[position],
+                comment.directive,
             )
             if position in reach
             else comment
@@ -1010,7 +1116,7 @@ def _directives(
     """The site's directives by where they land in the helper and how their tools read them."""
     found: Dict[Tuple[_Place, str], List[BlockComment]] = {}
     for comment in site.comments:
-        if is_directive(comment.text):
+        if comment.directive:
             anchor, _ = _projected(statements, comment.anchor)
             found.setdefault((_place(anchor), _normalized(comment.text)), []).append(comment)
     return found
@@ -1071,6 +1177,12 @@ def directive_conflict(
                     ConflictKind.DIRECTIVE_ON_ARGUMENT,
                     f"line {comment.line}: {comment.text}",
                 )
+        uncovered = site.excluded & site.argument_lines
+        if uncovered:
+            return CommentConflict(
+                ConflictKind.DIRECTIVE_ON_ARGUMENT,
+                f"line {min(uncovered)} is excluded from coverage",
+            )
         crossing = _region_imbalance(site)
         if crossing is not None:
             return CommentConflict(
@@ -1136,7 +1248,7 @@ def merge_comments(
             for place, comments in by_place.items()
         }
         for comment in site.comments:
-            directive = is_directive(comment.text)
+            directive = comment.directive
             if directive and position > 0:
                 continue  # the same as the first site's, which are carried
             anchor, _ = _projected(statements, comment.anchor)

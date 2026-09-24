@@ -328,7 +328,14 @@ that code is written at the call site where the directive does not reach.
 Nor may a coverage pragma or pylint `disable` around the blocks (on an
 enclosing `def`, `if`, loop or `else:` line) govern every site where the
 helper would be written outside it, nor may coverage exclude a block's
-first statement, since the call replacing the block would be measured. A pair
+first statement, since the call replacing the block would be measured.
+What coverage excludes is read from the project's own coverage.py
+configuration (`.coveragerc`, `.coveragerc.toml`, `setup.cfg` or `tox.ini`
+`[coverage:report]`, `pyproject.toml` `[tool.coverage.report]`, or the file
+`COVERAGE_RCFILE` names), so a line its `exclude_lines` or `exclude_also`
+matches counts as a `# pragma: no cover` line, and the pragma counts only
+where the configuration keeps it; a configuration coverage.py could not
+read is reported and replaced by its defaults. A pair
 that breaks any of these is declined, and `engine.declined_pairs` counts it
 under `directives_differ`, `directive_on_argument`,
 `directive_outlives_block`, `directive_around_block` or

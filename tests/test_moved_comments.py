@@ -29,6 +29,8 @@ from __future__ import annotations
 import ast
 import importlib.util
 import io
+import logging
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -38,6 +40,7 @@ from typing import Dict, Mapping, Sequence
 
 import pytest
 
+import towel
 from towel.diagnostics import Settings
 from towel.formatting import BlackSettings, SnippetFormatter, black_formatter, checked
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -1020,3 +1023,201 @@ def test_one_excluded_site_among_measured_ones_still_moves(tmp_path: Path) -> No
         """,
     )
     assert _refactor(path)
+
+
+_MAIN_BLOCK = """
+    if __name__ == "__main__":{pragma}
+        def first(values):
+            total = 0
+            for value in values:
+                total += value * 2
+            return total + 1
+
+        def second(values):
+            total = 0
+            for value in values:
+                total += value * 2
+            return total + 1
+    """
+
+_CONFIGURATIONS = {
+    ".coveragerc": ("[report]\nexclude_also =\n    if __name__ == .__main__.:\n"),
+    ".coveragerc.toml": "[report]\nexclude_also = ['if __name__ == .__main__.:']\n",
+    "setup.cfg": "[coverage:report]\nexclude_also =\n    if __name__ == .__main__.:\n",
+    "tox.ini": "[coverage:report]\nexclude_also =\n    if __name__ == .__main__.:\n",
+    "pyproject.toml": "[tool.coverage.report]\nexclude_also = ['if __name__ == .__main__.:']\n",
+    "custom.ini": "[report]\nexclude_also =\n    if __name__ == .__main__.:\n",
+}
+
+
+@pytest.mark.parametrize("source", list(_CONFIGURATIONS))
+def test_a_configured_exclusion_around_the_blocks_declines_the_pair(
+    tmp_path: Path, source: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pygments' builtins scripts, excluded by configuration rather than by a comment."""
+    monkeypatch.delenv("COVERAGE_RCFILE", raising=False)
+    if source == "custom.ini":
+        monkeypatch.setenv("COVERAGE_RCFILE", "custom.ini")
+    (tmp_path / source).write_text(_CONFIGURATIONS[source], encoding="utf-8")
+    assert "directive_around_block" in _declined(tmp_path / "m.py", _MAIN_BLOCK.format(pragma=""))
+
+
+def test_without_the_configuration_the_main_block_moves(tmp_path: Path) -> None:
+    assert _refactor(_write(tmp_path, _MAIN_BLOCK.format(pragma="")))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _MAIN_BLOCK.format(pragma="  # pragma: no cover"),
+        _INSIDE.format(
+            prelude="",
+            first_header_comment="",
+            second_header_comment="",
+            first_opener="for item in values:",
+            second_opener="while error:",
+            opener_comment="",
+            disable="pass  # pragma: no cover",
+            start_comment="  # pragma: no cover",
+        ),
+        _OVER_ARGUMENT.format(
+            first="record.alpha.items()",
+            second="record.beta.items()",
+            comment="  # pragma: no cover",
+        ),
+    ],
+    ids=["around", "block_start", "argument"],
+)
+def test_a_pragma_the_configuration_does_not_exclude_by_does_not_decline(
+    tmp_path: Path, source: str
+) -> None:
+    """``exclude_lines`` replaces coverage's default, so the pragma excludes nothing there."""
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.coverage.report]\nexclude_lines = ['raise NotImplementedError']\n"
+    )
+    result = _refactor(_write(tmp_path, source))
+    assert result.count("# pragma: no cover") >= 1
+
+
+def test_a_configured_exclusion_of_the_first_statement_declines_the_pair(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.coverage.report]\nexclude_also = ['log_debug[(]']\n"
+    )
+    path = _write(
+        tmp_path,
+        """
+        def first(values, error):
+            total = len(values) * 2
+            if error:
+                log_debug("bad: " + str(values))
+                values.clear()
+                raise ValueError(values)
+            return total + 1
+
+
+        def second(values, error):
+            total = sum(values) - 3
+            while error:
+                log_debug("bad: " + str(values))
+                values.clear()
+                raise ValueError(values)
+            return total * 5
+        """,
+    )
+    assert "excluded_block_start" in _declined(path)
+
+
+def test_a_configured_exclusion_over_an_argument_declines_the_pair(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.coverage.report]\nexclude_also = ['len[(]record']\n"
+    )
+    path = _write(
+        tmp_path,
+        _OVER_ARGUMENT.format(
+            first="record.alpha.items()", second="record.beta.items()", comment=""
+        ),
+    )
+    assert "directive_on_argument" in _declined(path)
+
+
+def test_an_excluded_decorator_of_the_enclosing_methods_declines_the_pair(
+    tmp_path: Path,
+) -> None:
+    """``@abstractmethod`` excludes each whole method; a method helper would not be."""
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.coverage.report]\nexclude_also = ['@abstractmethod']\n"
+    )
+    path = _write(
+        tmp_path,
+        """
+        from abc import ABC, abstractmethod
+
+
+        class Shape(ABC):
+            @abstractmethod
+            def area(self, values):
+                total = self.start
+                for value in values:
+                    total += value * 2
+                return total + 1
+
+            @abstractmethod
+            def perimeter(self, values):
+                total = self.start
+                for value in values:
+                    total += value * 2
+                return total + 1
+        """,
+    )
+    assert "directive_around_block" in _declined(path)
+
+
+def test_an_unreadable_configuration_falls_back_to_the_defaults_and_says_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / ".coveragerc").write_text("[report\nexclude_lines = x\n")
+    excluded = _write(tmp_path, _MAIN_BLOCK.format(pragma="  # pragma: no cover"), "a.py")
+    plain = _write(tmp_path, _LOOP.format(comment=""), "b.py")
+    engine = _engine()
+    with caplog.at_level(logging.WARNING, logger="towel"):
+        # coverage.py's default pragma still excludes; the rest still moves.
+        assert not engine.analyze_file(str(excluded))
+        assert "directive_around_block" in engine.declined_pairs
+        assert engine.analyze_file(str(plain))
+    warnings = [record.getMessage() for record in caplog.records if "coverage.py" in record.message]
+    assert len(warnings) == 1, warnings
+    assert "could not read its configuration" in warnings[0]
+    assert ".coveragerc" in warnings[0]
+
+
+def test_the_run_reports_an_unreadable_configuration(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "setup.py").write_text("")
+    (project / ".coveragerc").write_text("[report\nexclude_lines = x\n")
+    _write(project, _LOOP.format(comment=""))
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "towel.cli",
+            "dry",
+            str(project / "m.py"),
+            str(tmp_path / "out.py"),
+            "--no-interactive",
+            "--no-types",
+            "--no-format",
+            "--progress",
+            "none",
+        ],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, PYTHONPATH=str(Path(towel.__file__).resolve().parents[1])),
+        timeout=600,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    output = completed.stdout + completed.stderr
+    assert output.count("coverage.py could not read its configuration") == 1, output
+    assert "Applied 1 refactoring" in output, output
