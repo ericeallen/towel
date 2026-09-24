@@ -878,8 +878,14 @@ The model answers three kinds of question:
 
 The `dry` and `preview` commands, with `--cross-module`, read the model
 before the engine starts and report every problem with its remedy
-(`--exclude`); one that involves the package being refactored refuses the
-run before anything is written (`_judge_import_problems` in `cli.py`).
+(`--exclude`); one because of which the model declines something in the
+package being refactored refuses the run before anything is written
+(`_judge_import_problems` in `cli.py`). Each problem says which names it
+leaves in doubt and where it lies; one involves the package when a name
+of the package is in doubt, when it lies in the package, or when it lies
+in an initializer every import of the package runs. An import of a module
+the tree lacks leaves no name in doubt, so sphinx's test data importing
+`sphinx.missing_module4` is reported and a run on `sphinx` goes on.
 `rename-helpers` names each module by the model too (`renaming.py`), so a
 rename follows an import to the module the program means by it.
 
