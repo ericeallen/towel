@@ -742,10 +742,12 @@ carries it, the first site's first, since it documents code the helper now
 holds; another site's note where the first site's already ends the line goes
 on a line of its own before that code. A tool directive changes what a tool reports for its line, and the
 helper has one line where the sites had several, so the sites must carry
-the same directives at the same places (`directives_differ`); a checker's
-ignore must not stand on a line where some site's code, other than a name
-or a literal, becomes an argument, which the ignore would no longer cover
-(`directive_on_argument`); and a region directive (`fmt: off`, `isort:
+the same directives at the same places (`directives_differ`); no directive
+may reach code of some site's, other than a name or a literal, that becomes
+an argument and so is written at the call site, where the directive does
+not reach (`directive_on_argument`: its line, the statement or clause a
+coverage pragma or pylint `disable` covers, the statement after a
+`noinspection`, a region's span); and a region directive (`fmt: off`, `isort:
 off`, a `pylint: disable` on a line of its own) must close within the block,
 and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is

@@ -753,3 +753,79 @@ def test_a_helper_inside_the_enclosing_function_carries_its_comments(tmp_path: P
     )
     assert result.count("# scaled on purpose") == 1
     _assert_same_refactoring_without_comments(path, result)
+
+
+_OVER_ARGUMENT = """
+    def first(record, alpha):
+        total = 0
+        total += len({first}){comment}
+        total = total * 2
+        return total
+
+
+    def second(record, beta):
+        total = 0
+        total += len({second}){comment}
+        total = total * 2
+        return total
+    """
+
+_TOOL_DIRECTIVES = [
+    "# noqa: E501",
+    "# pragma: no cover",
+    "# nosec B101",
+    "# pylint: disable=no-member",
+    "# fmt: skip",
+]
+
+
+@pytest.mark.parametrize("directive", _TOOL_DIRECTIVES)
+def test_a_directive_over_code_that_becomes_an_argument_declines_the_pair(
+    tmp_path: Path, directive: str
+) -> None:
+    """The differing code would be written at the call site, where no tool sees the directive."""
+    path = _write(
+        tmp_path,
+        _OVER_ARGUMENT.format(
+            first="record.alpha.items()", second="record.beta.items()", comment="  " + directive
+        ),
+    )
+    assert "directive_on_argument" in _declined(path)
+
+
+@pytest.mark.parametrize("argument", ["name", "literal"])
+@pytest.mark.parametrize("directive", _TOOL_DIRECTIVES)
+def test_a_directive_over_a_name_or_literal_argument_moves(
+    tmp_path: Path, directive: str, argument: str
+) -> None:
+    """A name or a literal at the call site is nothing a tool reports on."""
+    first, second = ("alpha", "beta") if argument == "name" else ("'alpha'", "'beta'")
+    path = _write(
+        tmp_path, _OVER_ARGUMENT.format(first=first, second=second, comment="  " + directive)
+    )
+    result = _refactor(path)
+    assert _line_holding(_helper_source(result), "total += len(").endswith("  " + directive)
+    assert result.count(directive) == 1
+    _assert_same_refactoring_without_comments(path, result)
+
+
+def test_a_pragma_on_a_clause_reaches_the_arguments_inside_it(tmp_path: Path) -> None:
+    """Coverage excludes the whole clause a pragma's line opens, arguments included."""
+    path = _write(
+        tmp_path,
+        """
+        def first(record):
+            total = 0
+            if total == 0:  # pragma: no cover
+                total += len(record.alpha.items())
+            return total * 2
+
+
+        def second(record):
+            total = 0
+            if total == 0:  # pragma: no cover
+                total += len(record.beta.items())
+            return total * 2
+        """,
+    )
+    assert "directive_on_argument" in _declined(path)

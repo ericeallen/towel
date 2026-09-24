@@ -875,13 +875,18 @@ the proposals it built and did not apply, by reason:
   alike up to spacing, at the same places, as when only one copy of a line
   needed its `# type: ignore` (mashumaro's `type_name`): the helper's line
   would be silenced for every site or for none. `directive_on_argument`: a
-  checker's ignore stands on a line where a block's own code, anything
-  but a name or a literal, would become an argument of the call, which the
-  ignore, left in the helper, no longer covers. A linter's or coverage
-  directive on such a line is not declined for: it stays in the helper,
-  and the argument written at the call site goes without it, which can
-  cost a lint warning there (a long literal's `# noqa: E501`) but never a
-  type error. `directive_outlives_block`:
+  directive reaches code of a block's own, anything but a name or a
+  literal, that would become an argument of the call and so be written at
+  the call site, where the directive does not reach: a `# type: ignore` or
+  `# noqa` on its line, a `# nosec`, `# fmt: skip` or line-level
+  `# pylint: disable`, a `# pragma: no cover` on the statement or the
+  clause it excludes, the statement after a `# noinspection`, or a
+  `# fmt: off` region. The directive is not copied onto the call line
+  either, which would silence or exclude a line its tool never saw it on;
+  the cost of the rule is the refactorings it declines (the corpus figures
+  are in `CHANGELOG.md`). A directive for the whole file reaches its module
+  wherever the code is written and is not counted here.
+  `directive_outlives_block`:
   a region directive on a line of its own (`fmt: off`/`on`, `isort:
   off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`) is not
   closed within the block, so its region reaches code that stays behind,

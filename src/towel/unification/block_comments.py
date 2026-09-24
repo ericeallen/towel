@@ -39,9 +39,9 @@ carries it: it documents code the helper now holds, and one site's words
 are not lost for another's silence. A tool directive (``is_directive``)
 changes what a tool reports for its line, and the helper has one line where
 the sites had several, so the sites must agree: every site must carry the
-same directives at the same places (``DIRECTIVES_DIFFER`` otherwise), a
-checker's ignore must not stand on a line where a site's code becomes an
-argument of the call, which the ignore would no longer cover
+same directives at the same places (``DIRECTIVES_DIFFER`` otherwise), no
+directive may reach code of a site's that becomes an argument of the call,
+written at the call site where the directive does not reach
 (``DIRECTIVE_ON_ARGUMENT``), and a directive whose reach is a region or a
 file must not reach past the moved code (``DIRECTIVE_OUTLIVES_BLOCK``).
 """
@@ -134,6 +134,11 @@ class BlockComment:
     # For a comment at the end of a line, the first node that line started:
     # with the anchor, the span of code the comment was written beside.
     line_start: Optional[NodePath] = None
+    # The lines of the block whose code a tool directive governs: its own
+    # line, the statement or clause it excludes or disables, the region it
+    # opens, or the statement it precedes; none for a comment that tells no
+    # tool anything, or one that configures the whole file.
+    reach: FrozenSet[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -202,11 +207,12 @@ _DIRECTIVE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-_SILENCES_CHECKER = re.compile(
-    r"\#\s*(?:type\s*:\s*ignore\b|pyright\s*:\s*ignore\b|pyre-(?:ignore|fixme)\b"
-    r"|pytype\s*:\s*disable\b)",
-    re.IGNORECASE,
-)
+# A directive that coverage or pylint apply to the whole statement holding
+# its line, and to the whole block when that line opens one.
+_STATEMENT_WIDE = re.compile(r"\#\s*(?:pragma\b|pylint\s*:\s*disable\b)", re.IGNORECASE)
+
+# A directive on a line of its own that governs the statement after it.
+_NEXT_STATEMENT = re.compile(r"\#\s*noinspection\b", re.IGNORECASE)
 
 _FILE_DIRECTIVE = re.compile(
     r"\#\s*(?:flake8[:=\s]\s*noqa\b|ruff\s*:\s*noqa\b|mypy\s*:|pyright\s*:\s*(?!ignore\b)\w"
@@ -253,11 +259,6 @@ def is_directive(text: str) -> bool:
     hold it, as in ``# type: ignore  # noqa: E721``.
     """
     return _DIRECTIVE.search(text) is not None
-
-
-def silences_checker(text: str) -> bool:
-    """Whether the comment ``text`` silences a type checker for its line."""
-    return _SILENCES_CHECKER.search(text) is not None
 
 
 def is_file_directive(text: str) -> bool:
@@ -628,7 +629,8 @@ def site_comments(
     for at in positions:
         comment = tokens[at]
         line = comment.start[0]
-        if not lines[line - 1][: comment.start[1]].strip():
+        own_line = not lines[line - 1][: comment.start[1]].strip()
+        if own_line:
             anchor = _own_line_anchor(tokens, at, index, last)
             line_start = None
         else:
@@ -642,9 +644,70 @@ def site_comments(
                 Anchor(anchor.node, anchor.placement, anchor.punctuation, group, exploded),
                 line,
                 line_start,
+                _reach(comment, own_line, index),
             )
         )
-    return SiteComments(tuple(comments), arguments)
+    return SiteComments(_with_region_reach(comments), arguments)
+
+
+def _lines_between(first: int, last: int) -> FrozenSet[int]:
+    return frozenset(range(first, last + 1))
+
+
+def _reach(comment: _Token, own_line: bool, index: _BlockIndex) -> FrozenSet[int]:
+    """The lines of the block whose code the directive ``comment`` governs (``BlockComment.reach``).
+
+    A directive at the end of a line governs that line; coverage's pragma
+    and pylint's ``disable`` govern the whole statement holding it, and the
+    whole block when the line opens one. Of those on a line of their own,
+    PyCharm's ``noinspection`` governs the statement after it, and a region
+    directive its region (``_with_region_reach``); the rest govern nothing.
+    A directive for the whole file reaches its module wherever the code goes.
+    """
+    text, line = comment.text, comment.start[0]
+    if not is_directive(text) or is_file_directive(text):
+        return frozenset()
+    if own_line:
+        if _NEXT_STATEMENT.search(text):
+            following = index.statement_starting_after(comment.start)
+            if following is not None:
+                return _lines_between(following.start[0], following.end[0])
+        return frozenset()
+    if _STATEMENT_WIDE.search(text):
+        holder = index.innermost_statement_on(line)
+        if holder is not None:
+            return _lines_between(min(holder.start[0], line), max(holder.end[0], line))
+    return frozenset({line})
+
+
+def _with_region_reach(comments: Sequence[BlockComment]) -> Tuple[BlockComment, ...]:
+    """``comments`` with each region directive reaching from its opening to its closing line.
+
+    A region left open, or closed without being opened, reaches past the
+    block and declines it anyway (``_region_imbalance``).
+    """
+    reach: Dict[int, FrozenSet[int]] = {}
+    opened: Dict[str, int] = {}
+    for position, comment in enumerate(comments):
+        if not comment.anchor.own_line:
+            continue
+        for tool, opens, closes in _REGIONS:
+            if opens.search(comment.text):
+                opened.setdefault(tool, position)
+            elif closes.search(comment.text) and tool in opened:
+                start = opened.pop(tool)
+                region = _lines_between(comments[start].line, comment.line)
+                reach[start] = reach[position] = region
+    return tuple(
+        (
+            BlockComment(
+                comment.text, comment.anchor, comment.line, comment.line_start, reach[position]
+            )
+            if position in reach
+            else comment
+        )
+        for position, comment in enumerate(comments)
+    )
 
 
 def _moves_to_the_call(expression: ast.AST) -> bool:
@@ -781,8 +844,9 @@ def directive_conflict(
     """Why the sites' tool directives cannot move into the helper's ``statements``, if they cannot.
 
     Every site must carry the same directives, written alike up to spacing,
-    at the same places; a checker's ignore must not stand on a line where a
-    site's code becomes an argument; and a region a directive opens or
+    at the same places; no directive may reach code of a site's that
+    becomes an argument of its call, which is written at the call site,
+    where the directive does not reach; and a region a directive opens or
     closes must not reach past the block.
     """
     for site in sites:
@@ -806,11 +870,7 @@ def directive_conflict(
                     )
     for site in sites:
         for comment in site.comments:
-            if (
-                not comment.anchor.own_line
-                and silences_checker(comment.text)
-                and comment.line in site.argument_lines
-            ):
+            if comment.reach & site.argument_lines:
                 return CommentConflict(
                     ConflictKind.DIRECTIVE_ON_ARGUMENT,
                     f"line {comment.line}: {comment.text}",
