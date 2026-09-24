@@ -789,7 +789,22 @@ where the evidence comes from:
   placed is taken to be looked at nowhere. The body of a function without
   annotations, which mypy does not check unless configured to, counts as
   looked at, since mypy answers there (with `Any`): the project's own mypy
-  leaves it unchecked on every platform too.
+  leaves it unchecked on every platform too. A file a checker's configuration
+  has it report nothing on -- pyright's `exclude` and `ignore`, and what its
+  `include` leaves out, read from the configuration and its `extends` chain
+  before the run -- is outside that checker's check, not code it takes to be
+  unreachable: it is not probed with that checker, and the other checkers
+  settle it (param's pyright ignores `version.py`, which its mypy checks; all
+  four proposals there had been declined as unreachable). A language server
+  asked about such a file never answered, and the run waited a minute and
+  then gave the server up; the marker a settle waits for now goes where the
+  server reports. A file no configured checker reports on is changed as the
+  body of an unannotated function is, since the project's own check says
+  nothing there on any platform, and its helper takes only the annotations
+  its sites declare, completed with `Any`: nothing would check an inferred
+  one, and the most precise rung, tried first, was accepted unchecked. The
+  project check still judges what the change does to the files the checkers
+  report on.
 - Where the original check leaves a name it cannot type -- an import it cannot
   resolve or finds no types for (mypy's `import-not-found` and
   `import-untyped`, pyright's `reportMissingImports` and

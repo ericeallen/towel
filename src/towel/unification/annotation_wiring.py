@@ -122,6 +122,7 @@ from ..type_inference import (
     checker_module_name,
     checks_in_turn,
     holds_warm_state,
+    reports_by_each,
     reveal_by_each,
     start_cold,
 )
@@ -709,6 +710,31 @@ class HelperAnnotationWiring(EngineState):
         declared = self._declared_pythons[root] or OLDEST_PYTHON
         return max(declared, evaluated_syntax(host)) if host is not None else declared
 
+    def _judged_by_no_checker(self, proposal: RefactoringProposal) -> bool:
+        """Whether no configured checker reports on any file ``proposal`` changes.
+
+        Such files are outside what the project's check checks (pyright's
+        ``exclude`` or ``ignore``, with pyright the only checker), so they are
+        changed as the body of an unannotated function is: the project's own
+        check says nothing there on any platform. What a checker would infer
+        there, nothing would verify, so the helper takes the annotations its
+        sites declare and ``Any`` for the rest, as without types, and one
+        project check still judges what the change does to the files the
+        checkers do report on.
+        """
+        oracle = self._type_run_oracle
+        if oracle is None:
+            return False
+        touched = list(
+            dict.fromkeys(
+                [
+                    proposal.file_path,
+                    *(rep.file_path or proposal.file_path for rep in proposal.replacements),
+                ]
+            )
+        )
+        return not any(reported for reported in reports_by_each(oracle, touched))
+
     def _complete_helper_annotations(self, proposal: RefactoringProposal) -> None:
         """Copied annotations respelled, the rest inferred or completed with ``Any``."""
         module_level = proposal.insert_into_class is None and proposal.insert_into_function is None
@@ -717,7 +743,7 @@ class HelperAnnotationWiring(EngineState):
         host = self._parsed_host(proposal.file_path)
         receiver = self._receiver_name(proposal)
         oracle = self._active_type_oracle()
-        if oracle is None:
+        if oracle is None or self._judged_by_no_checker(proposal):
             respelled = respell_bare(proposal.extracted_function, host, bare_ok)
             completed = complete_with_any(respelled, host, receiver)
             proposal.extracted_function = completed.helper
@@ -906,7 +932,11 @@ class HelperAnnotationWiring(EngineState):
         finds no signature can answer ends the ladder at once. Each rung is
         named in a ``TYPES`` debug line before it is tried.
         """
-        if not check_types or proposal.reused_function is not None:
+        if (
+            not check_types
+            or proposal.reused_function is not None
+            or self._judged_by_no_checker(proposal)
+        ):
             yield proposal
             return
         known = self._untypeable_as_proposed(proposal)
@@ -1733,6 +1763,17 @@ class HelperAnnotationWiring(EngineState):
         name regions before a run. A module no probe can be placed in, or a
         checker that answers nothing a mapping can hold, is taken to look at
         none of it.
+
+        A file a checker's configuration has it report nothing on (pyright's
+        ``exclude`` or ``ignore``) is outside that checker's check, not code it
+        takes to be unreachable, and is not asked of it
+        (:func:`~towel.type_inference.reports_by_each`): the others settle it.
+        param's pyright ignores ``version.py``, which its mypy checks, and
+        every proposal there had been declined as unreachable. A file no
+        configured checker reports on is taken to be looked at, as the body
+        of an unannotated function is: the project's own check says nothing
+        there on any platform, so the verdict does not depend on where Towel
+        runs.
         """
         requests: List[RevealRequest] = []
         unseen: Dict[str, Set[Place]] = {}
@@ -1746,18 +1787,26 @@ class HelperAnnotationWiring(EngineState):
             for line, indent in sorted({plan.sites[p] for p in wanted[path] if p in plan.sites}):
                 requests.append(RevealRequest(path, plan.text, line, indent, (PROBE,)))
         answers: Tuple[Mapping[RevealKey, str], ...] = ()
+        reported = reports_by_each(oracle, list(probed))
+        if not every_checker:
+            reported = reported[:1]  # the one that infers comes first
         if requests:
             answers = (
                 reveal_by_each(oracle, requests) if every_checker else (oracle.reveal(requests),)
             )
         for path, plan in planned.items():
             unseen[path] = set()
+            asked = [
+                answer
+                for answer, covered in zip(answers, reported)
+                if len(answers) != len(reported) or path in covered
+            ]
             for place in wanted[path]:
                 site = plan.sites.get(place)
                 if site is None:
                     continue  # an ``elif``: its body answers for it
                 key = (path, site[0], 0)
-                if not all(isinstance(answer, Mapping) and key in answer for answer in answers):
+                if not all(isinstance(answer, Mapping) and key in answer for answer in asked):
                     unseen[path].add(place)
         return unseen
 
