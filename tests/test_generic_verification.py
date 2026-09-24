@@ -117,7 +117,9 @@ def test_checker_disagreement_cannot_accept_a_generic_candidate(tmp_path: Path) 
     oracle = CombinedOracle(primary, [dissenting])
     engine = _engine(oracle)
     proposal = engine.analyze_file(str(path))[0]
-    with pytest.raises(RefactoringError, match="Every helper annotation variant"):
+    # Every annotated variant is refused; the unannotated one is not tried in a
+    # module whose every function is annotated, and the decline says so.
+    with pytest.raises(RefactoringError, match="one unannotated function of its module"):
         engine.apply_refactoring(str(path), proposal)
     assert sum(bool(_declarations(sources[str(path)])) for sources in dissenting.checks) >= 2
     assert primary.checks == dissenting.checks
@@ -152,7 +154,9 @@ def test_generic_checker_timeout_aborts_without_trying_an_unchecked_fallback(
 def test_rejected_generic_declarations_do_not_leak_into_fallbacks(
     tmp_path: Path, fallback: str
 ) -> None:
-    path = _project(tmp_path, ADDITION)
+    # A module with an unannotated function already, where the unannotated
+    # helper is a rung at all.
+    path = _project(tmp_path, ADDITION + "\n    def legacy(value):\n        return value\n")
     original = path.read_text()
 
     def verdict(sources: Mapping[str, str]) -> CheckResult:
