@@ -587,6 +587,13 @@ where the evidence comes from:
   `Any` inside a composite (`list[Any]`) is written as the checker revealed
   it. A helper with any annotation has every parameter and its return
   annotated, so the checker's incomplete-definition rule is never tripped.
+  The checkers' own notation is read as the annotation it means, mypy's
+  before and after 2.0 and pyright's: a callable (`def (x: int)` returns
+  `None`), one returning another, a generic callable, a named tuple or typed
+  dict as its class, and a literal widened to its type only where mypy marks
+  it inferred (`Literal['a']?`). A callable no parameter list can state is
+  written `Callable[..., R]`. A class passed as a value, or returned by a
+  thunk the site passes (`lambda: Row`), is `type[Row]`, not its constructor.
 - A precise ordinary signature is preferred to a generic one. Towel tries the
   signature copied and inferred from the call sites first, and reaches for
   anti-unification only when that signature contains `Any` or when the whole
@@ -599,11 +606,21 @@ where the evidence comes from:
   obtained by anti-unifying complete argument/result rows, including nested constructors.
   Type-variable identity includes its original binding scope. Existing free
   variables are rebound with compatible bounds or constraints; dependent bounds,
-  conflicting free-variable domains, variadic type parameters, unresolved names,
-  and `Any`/`Unknown` decline generic inference. At most two generic contracts
+  conflicting free-variable domains, variadic type parameters, names that
+  resolve to nothing, and `Any`/`Unknown` as the whole type decline generic
+  inference; `Any` inside a type (`Mapping[str, Any]`) is the program's own.
+  A type the checker reveals is matched by the absolute name the program's
+  imports give its module, or, for a module none names, the name mypy is
+  given for it, so the checker's `pkg.version.Version` is the host's
+  `Version`, and a name imported only under `TYPE_CHECKING` counts. A type
+  only a call site can name may stand inside a type variable, but a signature
+  that would have to write it where the helper is defined is not offered, and
+  a variable is not constrained to it. A parameter the helper's body never
+  reads is `object`. At most two generic contracts
   are tried: unrestricted concrete disagreements, then constraints with two to
-  four concrete alternatives. Every fresh helper type parameter must occur in an
-  input. Instance and class helpers retain type parameters bound by their host
+  four concrete alternatives; sites in different modules that agree on every
+  type are offered their common signature instead. Every fresh helper type
+  parameter must occur in an input. Instance and class helpers retain type parameters bound by their host
   class, which can also appear only in the result. A module helper taken from
   static methods freshens source class parameters and must infer them from
   explicit arguments. Generic method
