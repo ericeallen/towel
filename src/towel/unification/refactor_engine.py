@@ -79,6 +79,7 @@ from .block_signature import (
     quick_filter,
     signature_bucket_key,
 )
+from ..coverage_config import CoverageExclusion
 from .models import (
     CodeBlockPair,
     FunctionArtifact,
@@ -517,6 +518,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # Writes into module namespaces anywhere in each project, scanned once
         # per engine: patches of a builtin that decline a cross-module pair.
         self._namespace_writes: Dict[str, ProjectWrites] = {}
+        # What each project's coverage.py excludes, read once per engine.
+        self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejections: Dict[str, int] = {}
@@ -855,6 +858,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         """
 
         self._record_function_paths(all_functions)
+        # Read each project's coverage configuration here, before evaluation
+        # forks, so a configuration that cannot be read is reported once.
+        for path in sorted({entry.file_path for entry in all_functions}):
+            self._coverage_exclusion(path)
         blocks = [self._signed_blocks(entry.node) for entry in all_functions]
         buckets = [_bucketed(function_blocks) for function_blocks in blocks]
         # Without cross-module helpers a function pairs only with the others

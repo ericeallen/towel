@@ -1045,6 +1045,40 @@ the proposals it built and did not apply, by reason:
   (`if error:  # pragma: no cover`) still moves: its header runs whenever
   it is reached, and so does the call. A further site whose directives
   differ from the pair's is left out of the cluster rather than declining it.
+  What coverage.py excludes is read from the project's own configuration,
+  as coverage.py reads it (`src/towel/coverage_config.py`, following
+  coverage.py 7.16.0): the first of `COVERAGE_RCFILE` or `.coveragerc`,
+  `.coveragerc.toml`, `setup.cfg`, `tox.ini` and `pyproject.toml` that it
+  would use, at the project's root, with its defaults (the `# pragma: no
+  cover` comment, a `...` stub line, `if TYPE_CHECKING:`) unless
+  `exclude_lines` replaces them and whatever `exclude_also` adds. A line
+  any of those regexes matches (`if __name__ == .__main__.:`, `raise
+  NotImplementedError`, `@overload`, `@abstractmethod`) counts exactly as a
+  line with the pragma does, for its statement and the clause or decorated
+  definition it opens; where `exclude_lines` leaves the pragma out, the
+  comment excludes nothing, and is carried as a plain comment. A relative
+  `COVERAGE_RCFILE` is taken from the project's root, where coverage.py is
+  taken to run, and the root is the nearest directory with a
+  `pyproject.toml`, `setup.cfg` or `setup.py`, so a `.coveragerc` elsewhere
+  is not seen. A configuration coverage.py could not read (it does not
+  parse, holds a regex that does not compile or a value of the wrong type,
+  or `COVERAGE_RCFILE` names no file) is reported once and replaced by the
+  defaults. Exclusions a coverage plugin makes are not seen. coverage.py
+  matches its regexes against the raw text, strings included, and so does
+  Towel: pytest excludes `assert False` and `@pytest.mark.xfail` lines, its
+  tests write such lines into the files they create with
+  `pytester.makepyfile("""...""")`, and coverage.py excludes each whole
+  statement that holds one; so a block starting with one is declined,
+  though that statement runs. Measured on September 24, 2026 on the
+  `--no-types` fixed points of pygments, markdown, coverage.py and its
+  tests, pytest and its tests, attrs, more-itertools, mashumaro,
+  python-statemachine, jinja2, sqlparse, werkzeug, packaging, h2, click and
+  rich, run in their own projects, reading the configuration cost 29 of
+  pytest's 697 test refactorings and 3 of coverage.py's 295, and changed
+  nothing else. In a first analysis of pytest's tests, 915 of the pairs it
+  declined were for such text in a fixture's string and 46 for a real
+  `@pytest.mark.xfail` decorator on the tests holding the blocks; all 37 in
+  coverage.py's tests were for text in strings.
 - Placement. `needs_class_body`: the blocks use zero-argument `super()` and
   the helper cannot be a method of the class holding both, reached through
   the same receiver (*Method insertion*); nothing else binds `super()` alike.

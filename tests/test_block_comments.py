@@ -143,10 +143,12 @@ def test_each_directive_reaches_the_code_its_tool_applies_it_to() -> None:
             flag = 2  # flake8: noqa
             return result
         """)
-    reach = {comment.text: comment.reach for comment in site_comments(source, block).comments}
+    site = site_comments(source, block)
+    reach = {comment.text: comment.reach for comment in site.comments}
     assert reach["# noqa: E741"] == {2}
     # Coverage excludes the loop the header opens, not only its line.
-    assert reach["# pragma: no cover"] == {3, 4}
+    assert reach["# pragma: no cover"] == {3}
+    assert site.excluded == {3, 4}
     assert reach["# noinspection PyUnresolvedReferences"] == {6, 7, 8, 9}
     # pylint's disable on a statement's line covers the whole statement.
     assert reach["# pylint: disable=no-member"] == {10, 11, 12}
