@@ -744,6 +744,7 @@ class HelperAnnotationWiring(EngineState):
             if proposal.insert_into_class is not None
             else None
         )
+        host = self._parsed_host(proposal.file_path)
         for candidate in generic_helpers(
             proposal.extracted_function,
             self._annotation_sites(proposal),
@@ -753,12 +754,17 @@ class HelperAnnotationWiring(EngineState):
             oracle,
             method=method,
         ):
-            yield dataclasses.replace(
+            variant = dataclasses.replace(
                 proposal,
                 extracted_function=candidate.helper,
                 required_imports=(),
+                type_checking_imports=(),
                 helper_type_declarations=candidate.declarations,
             )
+            # Its own spellings, not the ordinary signature's: a type the
+            # variant abstracts needs no import, and one it spells does.
+            variant.type_checking_imports = self._shorten_unreachable_names(variant, host)
+            yield variant
 
     def _self_as_type_variable(
         self, proposal: RefactoringProposal, host: ast.Module, sites: Sequence[ApplySite]

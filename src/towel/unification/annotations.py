@@ -939,11 +939,17 @@ def shorten_qualified_names(
             return ast.copy_location(ast.Name(id=shortened, ctx=ast.Load()), node)
 
     def rewritten(annotation: ast.expr) -> ast.expr:
-        shortened = cast(ast.expr, _Shorten().visit(annotation))
-        if not quote or shortened is annotation:
-            return shortened
-        if isinstance(shortened, ast.Constant) and isinstance(shortened.value, str):
-            return shortened
+        # A string annotation is shortened inside the string, and an annotation
+        # is known to be touched by what it spells, not by node identity: the
+        # transformer rewrites a nested name in place and hands back the same
+        # subscript, which left ``dict[Item, int]`` evaluated at definition.
+        expression = _unquoted(annotation)
+        was_string = expression is not annotation
+        shortened = cast(ast.expr, _Shorten().visit(copy.deepcopy(expression)))
+        if ast.dump(shortened) == ast.dump(expression):
+            return annotation
+        if not (quote or was_string):
+            return ast.copy_location(shortened, annotation)
         return ast.copy_location(ast.Constant(value=ast.unparse(shortened)), annotation)
 
     for parameter in helper.args.posonlyargs + helper.args.args:
