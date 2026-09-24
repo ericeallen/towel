@@ -20,7 +20,7 @@ from towel.type_inference import (
 )
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from towel.unification.type_bindings import TypeResolver, render_type
+from towel.unification.type_bindings import TypeResolver, render_type, required_imports
 
 
 @pytest.fixture(params=["mypy", "pyright"])
@@ -182,6 +182,12 @@ def test_real_inferred_literal_spelling_resolves_without_new_imports(
     tmp_path: Path,
     measured_oracle: tuple[TypeOracle, dict[RevealKey, str]],
 ) -> None:
+    """mypy marks the literal it inferred for a Final with ``?``; pyright marks none.
+
+    Only a marked literal is widened. Unmarked, it may be the program's own
+    declaration, which widening would change, so it stays exact and is
+    spelled with the import it needs.
+    """
     oracle, _ = measured_oracle
     path = project(
         tmp_path,
@@ -198,7 +204,14 @@ def test_real_inferred_literal_spelling_resolves_without_new_imports(
     text = revealed[(str(path), 5, 0)]
     assert text.startswith("Literal[3]"), text
     term = TypeResolver(source, str(path), 5, source, str(path)).resolve_revealed(text)
-    assert term is not None and ast.unparse(render_type(term)) == "int"
+    assert term is not None
+    if isinstance(oracle, MypyInferrer):
+        assert text == "Literal[3]?"
+        assert ast.unparse(render_type(term)) == "int" and not required_imports([term])
+    else:
+        assert text == "Literal[3]"
+        assert ast.unparse(render_type(term)) == "Literal[3]"
+        assert required_imports([term]) == (("typing", "Literal"),)
 
 
 @pytest.mark.parametrize(

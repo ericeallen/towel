@@ -24,7 +24,7 @@ valid for every allowed instantiation.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Sequence, Set
+from typing import Callable, Dict, List, Sequence, Set, Tuple
 
 from .type_bindings import (
     TypeKind,
@@ -98,6 +98,62 @@ def _replace_binders(term: TypeTerm, parameters: dict[str, NamedTypeParameter]) 
     )
 
 
+def _shape(term: TypeTerm) -> Tuple[object, ...]:
+    """What makes two members of a union counterparts: kind, constructor, and arity."""
+    constructor = term.children[0].name if term.kind is TypeKind.APPLY and term.children else ""
+    return term.kind, constructor, len(term.children)
+
+
+_COUNTERPARTS: Tuple[Callable[[TypeTerm, TypeTerm], bool], ...] = (
+    lambda member, other: member == other,
+    lambda member, other: _shape(member) == _shape(other),
+    lambda member, other: member.kind is other.kind,
+    lambda member, other: True,
+)
+"""The relations matched in turn: the same type, the same structure, the same kind, any."""
+
+
+def _counterparts(first: Sequence[TypeTerm], other: Sequence[TypeTerm]) -> List[TypeTerm]:
+    """For each member of ``first``, the member of ``other`` it corresponds to."""
+    chosen: Dict[int, int] = {}
+    for related in _COUNTERPARTS:
+        for index, member in enumerate(first):
+            if index in chosen:
+                continue
+            match = next(
+                (
+                    position
+                    for position, candidate in enumerate(other)
+                    if position not in chosen.values() and related(member, candidate)
+                ),
+                None,
+            )
+            if match is not None:
+                chosen[index] = match
+    return [other[chosen[index]] for index in range(len(first))]
+
+
+def aligned_children(terms: Sequence[TypeTerm]) -> Tuple[Tuple[TypeTerm, ...], ...] | None:
+    """The children of same-shaped terms, as columns; ``None`` when the shapes differ.
+
+    Positional structure lines up by position. A union's members have no
+    position: its canonical order sorts by identity, which pairs ``int |
+    pkg.Foo`` with ``pkg.Foo | zlib.Bar`` member by member into two
+    unrelated columns. Members line up by what they are instead -- the same
+    type, then the same structure (``list[str]`` with ``list[Version]``),
+    then the same kind -- in the first union's order.
+    """
+    first = terms[0]
+    if any(
+        term.kind is not first.kind or len(term.children) != len(first.children) for term in terms
+    ):
+        return None
+    if first.kind is not TypeKind.UNION:
+        return tuple(zip(*(term.children for term in terms)))
+    others = [_counterparts(first.children, term.children) for term in terms[1:]]
+    return tuple(zip(first.children, *others))
+
+
 def _can_merge_position(terms: tuple[TypeTerm, ...]) -> bool:
     """Keep literal metadata and callable argument-list syntax out of type holes."""
     first = terms[0]
@@ -159,7 +215,8 @@ class _Builder:
                 return self._hole(terms)
         elif not (same_shape and first.kind in (TypeKind.TUPLE, TypeKind.LIST, TypeKind.UNION)):
             return self._hole(terms)
-        columns = tuple(zip(*(term.children for term in terms)))
+        columns = aligned_children(terms)
+        assert columns is not None  # same_shape
         if not all(_can_merge_position(column) for column in columns):
             if first.kind in (TypeKind.LIST, TypeKind.TUPLE):
                 raise _UnsupportedGeneralization
@@ -172,17 +229,21 @@ def generalize_signatures(
     reserved_names: Set[str],
     *,
     retained_parameters: frozenset[str] = frozenset(),
+    constrainable: Callable[[TypeTerm], bool] = lambda term: True,
 ) -> tuple[GenericSignature, ...]:
     """Return at most two checkable candidates, without changing caller inputs.
 
     Fresh variables retain matching source bounds or constraints; incompatible
     source domains and dependent bounds are declined. Concrete differences are
     first unrestricted, then jointly constrained where there are two to four
-    closed alternatives. We do not enumerate an exponential mix of constraint
-    choices. Every generated binder must occur in an input, so a return-only
-    promise cannot be manufactured from unrelated call sites. Parameters already
-    bound by the helper's host class keep their identity and may occur only in
-    the result: the implicit receiver supplies that class instantiation.
+    closed alternatives that are all ``constrainable`` (a constraint is
+    written where the variable is declared, so each must be writable there;
+    a variable whose alternatives are not stays unrestricted). We do not
+    enumerate an exponential mix of constraint choices. Every generated binder
+    must occur in an input, so a return-only promise cannot be manufactured
+    from unrelated call sites. Parameters already bound by the helper's host
+    class keep their identity and may occur only in the result: the implicit
+    receiver supplies that class instantiation.
     """
     if not rows or not rows[0] or any(len(row) != len(rows[0]) for row in rows):
         return ()
@@ -204,6 +265,7 @@ def generalize_signatures(
         (
             replace(hole.parameter, constraints=hole.concrete_alternatives)
             if 2 <= len(hole.concrete_alternatives) <= 4
+            and all(constrainable(term) for term in hole.concrete_alternatives)
             else hole.parameter
         )
         for hole in builder.holes.values()

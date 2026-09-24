@@ -133,6 +133,10 @@ def test_a_call_site_error_under_every_any_ends_the_ladder(
             engine.apply_refactoring(str(path), proposal)
     finally:
         oracle.close()
-    signatures = _helper_signatures(oracle.checked)
+    # The generic rung is tried first, since the ordinary signature holds Any;
+    # the ladder that ends is the one after it.
+    signatures = [
+        signature for signature in _helper_signatures(oracle.checked) if "_TowelT" not in signature
+    ]
     assert len(signatures) == 2, signatures
     assert signatures[-1].count(": Any") == signatures[-1].count(",") + 1, signatures

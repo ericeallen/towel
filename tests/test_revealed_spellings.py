@@ -1,4 +1,4 @@
-"""A checker's spelling of a type is read as the annotation it means.
+"""A checker's spelling of a type is read as the annotation it means, in both rungs.
 
 The texts are what the checkers print, measured from mypy 2.3.1, mypy 1.14.1
 (which rich's lock file pins) and pyright: a callable returning ``None``
@@ -23,8 +23,26 @@ from towel.unification.annotations import (
     class_object_revealed,
     typing_imports_needed,
 )
+from towel.unification.type_bindings import TypeResolver, render_type
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
+
+CLASSES = """\
+from typing import NamedTuple
+
+
+class Style:
+    pass
+
+
+class Span(NamedTuple):
+    start: int
+    style: str | Style
+
+
+def site(span: Span) -> None:
+    pass
+"""
 
 
 def written(revealed: str, host: str = "") -> str | None:
@@ -38,6 +56,20 @@ def unquoted(annotation: ast.expr | None) -> str:
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
         return annotation.value
     return ast.unparse(annotation)
+
+
+def resolved(revealed: str, source: str = CLASSES) -> str | None:
+    """The generic rung's reading, in a module whose own classes are ``probe.*``."""
+    resolver = TypeResolver(
+        source,
+        "/project/probe.py",
+        len(source.splitlines()),
+        source,
+        "/project/probe.py",
+        module_names={"/project/probe.py": "probe"}.get,
+    )
+    term = resolver.resolve_revealed(revealed)
+    return None if term is None else ast.unparse(render_type(term))
 
 
 @pytest.mark.parametrize(
@@ -110,6 +142,36 @@ def test_union_optional_and_literal_are_imported_where_they_are_written() -> Non
         assert isinstance(helper, ast.FunctionDef)
         helper.args.args[0].annotation = annotation
         assert typing_imports_needed(helper, host) == (("typing", name),)
+
+
+@pytest.mark.parametrize(
+    "revealed, expected",
+    [
+        # mypy 2.3 and 1.14 spell the same named tuple constructor.
+        (
+            "def (start: int, style: str | probe.Style) -> tuple[int, str | probe.Style,"
+            " fallback=probe.Span]",
+            "Callable[[int, str | Style], Span]",
+        ),
+        (
+            "def (start: builtins.int, style: Union[builtins.str, probe.Style]) -> "
+            "tuple[builtins.int, Union[builtins.str, probe.Style], fallback=probe.Span]",
+            "Callable[[int, str | Style], Span]",
+        ),
+        ("def (tuple[int, str | probe.Style, fallback=probe.Span])", "Callable[[Span], None]"),
+        ("def (builtins.int)", "Callable[[int], None]"),
+        ("def () -> def (key: str) -> probe.Style", "Callable[[], Callable[[str], Style]]"),
+        ("Union[builtins.str, probe.Style, None]", "str | Style | None"),
+        ("Optional[probe.Style]", "Style | None"),
+        ("typing.Iterator[tuple[int, str, fallback=probe.Span]]", "Iterator[Span]"),
+        ("dict[str, Any] | None", "dict[str, Any] | None"),
+        ("Literal['<a href=\"']?", "str"),
+        ("Literal['r'] | Literal['w']", "Literal['r'] | Literal['w']"),
+        ("Any", None),
+    ],
+)
+def test_the_generic_rung_resolves_what_the_checker_spells(revealed: str, expected: str) -> None:
+    assert resolved(revealed) == expected
 
 
 def test_a_class_object_passed_as_an_argument_is_its_type_even_for_a_named_tuple() -> None:

@@ -73,6 +73,7 @@ from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
 from .generic_annotations import MethodContext, generic_helpers
+from .type_bindings import ModuleNames
 from .program_imports import ProgramImports
 
 UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
@@ -505,13 +506,26 @@ class HelperAnnotationWiring(EngineState):
             proposal.return_variables,
             oracle,
             method=method,
+            module_names=self._module_names_for(proposal),
         ):
             yield dataclasses.replace(
                 proposal,
                 extracted_function=candidate.helper,
-                required_imports=(),
+                required_imports=candidate.required_imports,
                 helper_type_declarations=candidate.declarations,
             )
+
+    def _module_names_for(self, proposal: RefactoringProposal) -> Optional[ModuleNames]:
+        """The absolute names the program's imports give its modules, as the checker writes them.
+
+        None when the program's imports cannot be read, which leaves the
+        generic rung naming modules by location, as it did before it had them.
+        """
+        try:
+            program = self.import_graph.program_for(Path(proposal.file_path))
+        except ProjectScanLimitError:
+            return None
+        return lambda path: program.module_name(Path(path))
 
     @staticmethod
     def _helper_uses_any(proposal: RefactoringProposal) -> bool:
