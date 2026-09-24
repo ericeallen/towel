@@ -30,6 +30,19 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- Comments inside a moved block were lost with it, because the helper was
+  rendered from its syntax tree. That included tool directives, such as
+  asyncstdlib's and mashumaro's `# type: ignore`, as well as
+  `# pyright: ignore`, `# noqa` and `# pragma: no cover`, and every
+  explanatory comment. A lost directive changes what a checker, linter or
+  coverage tool reports.
+
+  The helper now carries each comment beside the code it was written for,
+  in order. It also keeps the grouping parentheses and trailing commas that
+  held a list split across lines, so Black and ruff reproduce the source
+  layout. Where a formatter would move a directive off its code's line,
+  that helper is written unformatted. Comments above or below a moved block
+  stay with its call, and `preview` shows the helper's comments.
 - A typed run no longer refuses a project whose type check already reports
   errors. It reports them first, and rejects a change only for an error they
   do not account for:
@@ -495,6 +508,18 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   output is adopted into the place it was written for.
 
 ### Changed
+- A pair whose tool directives cannot move soundly is declined:
+  - directives that differ between its sites (`directives_differ`): the
+    helper has one line where the sites had several, so an ignore only one
+    site needed would either silence the other or be lost;
+  - a checker's ignore over code that becomes a call argument
+    (`directive_on_argument`), which would leave the argument outside the
+    ignore's reach. jinja2's `as_const` extraction had put two
+    `attr-defined` errors at its call sites this way;
+  - a region or file directive that would reach past the moved code
+    (`directive_outlives_block`).
+
+  Explanatory comments from every site are kept, the first site's first.
 - Helpers are shared across modules only with `--cross-module`
   (`cross_module_helpers=True` for library use), because a user
   deduplicating a package may not expect Towel to add imports between its
