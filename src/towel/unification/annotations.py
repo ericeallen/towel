@@ -60,9 +60,9 @@ import builtins
 import copy
 import textwrap
 from dataclasses import dataclass
-import re
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, cast
 
+from .revealed_types import parse_revealed
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, Subtyping, TypeOracle
 from .models import FunctionNode
@@ -490,7 +490,7 @@ def _evaluates_at_runtime(expression: ast.expr, host: Optional[ast.Module]) -> b
     """
     if not _is_inert(expression):
         return False
-    generic_names = set(_RUNTIME_GENERICS) | {"Any", "Callable"}
+    generic_names = set(_RUNTIME_GENERICS) | set(_TYPING_NAMES)
     typing_modules: Set[str] = set()
     if host is not None:
         for node in host.body:
@@ -681,10 +681,12 @@ def sites_use_annotations(sites: Sequence[CallSite]) -> bool:
     return any(_uses_annotations(site.function) for site in sites)
 
 
-_LITERAL = re.compile(r"Literal\[(?P<value>[^\]]*)\]\??")
-_CALLABLE = re.compile(r"^(?:def )?\((?P<params>.*)\) -> (?P<returns>.+)$")
-_TYPING_NAMES = frozenset({"Any", "Callable"})
-"""Names an inferred annotation may use that the host must import from ``typing``."""
+_TYPING_NAMES = frozenset({"Any", "Callable", "Literal", "Optional", "Union"})
+"""Names an inferred annotation may use that the host must import from ``typing``.
+
+A checker writes ``Union[A, B]`` and ``Optional[A]`` (mypy before 2.0), and a
+declared literal as ``Literal[...]``; each is imported where it is written.
+"""
 
 
 def _split_top_level(text: str) -> List[str]:
@@ -707,68 +709,33 @@ def _split_top_level(text: str) -> List[str]:
     return parts
 
 
-def _callable_spelling(text: str) -> Optional[str]:
-    """``Callable[...]`` for mypy's ``def (...) -> R`` spelling of a callable.
-
-    Plain positional parameters become ``Callable[[T1, T2], R]``; anything with
-    defaults, ``*args``, ``**kwargs`` or keyword-only parameters becomes
-    ``Callable[..., R]``.
-    """
-    match = _CALLABLE.match(text)
-    if match is None:
-        return None
-    params = _split_top_level(match.group("params"))
-    returns = match.group("returns").strip()
-    if not params:
-        return f"Callable[[], {returns}]"
-    types: List[str] = []
-    for param in params:
-        if param.startswith("*") or "=" in param:
-            return f"Callable[..., {returns}]"
-        name, colon, kind = param.partition(":")
-        types.append(kind.strip() if colon else name.strip())
-    return f"Callable[[{', '.join(types)}], {returns}]"
-
-
 def annotation_from_revealed(
     revealed: str,
     host: Optional[ast.Module],
     same_module: bool,
     bare_ok: Optional[Set[str]] = None,
 ) -> Optional[ast.expr]:
-    """An annotation from mypy's spelling of a type, or None when it cannot be written.
+    """An annotation from a checker's spelling of a type, or None when it cannot be written.
 
-    Inferred-literal markers (``Literal['x']?``) become the literal's builtin
-    type and ``builtins.``/``?``/``*`` markers are dropped. Anything containing
-    ``Any``, a callable, or an unresolvable name is declined; a dotted name is
-    kept only when its head is bound in the host, or reduced to its last part
-    when that is bound there.
+    The spelling is read as :func:`~towel.unification.revealed_types.parse_revealed`
+    reads it: a callable is ``Callable[[P], R]``, or ``Callable[..., R]``
+    where no parameter list can state it; an inferred literal
+    (``Literal['x']?``) is the builtin type its value belongs to, while a
+    literal the program declared stays one; a named tuple or typed dict is
+    its class. ``builtins.`` is dropped. ``Any`` as the whole type, ``Never``,
+    anything the reader cannot read, and an unresolvable name are declined; a
+    dotted name is kept only when its head is bound in the host, or reduced to
+    its last part when that is bound there.
     """
-    text = revealed.strip()
-    if not text or "<" in text or "Never" in text:
+    expression = parse_revealed(revealed)
+    if expression is None:
         return None
-    if text == "Any":
-        return None  # what an unannotated parameter already means
-    if text.startswith("def ") or text.startswith("("):
-        spelled = _callable_spelling(text)
-        if spelled is None:
-            return None
-        text = spelled
-
-    def literal_type(match: "re.Match[str]") -> str:
-        try:
-            value = ast.literal_eval(match.group("value"))
-        except (ValueError, SyntaxError):
-            return "Any"
-        kind = _literal_type(value)
-        return kind.id if isinstance(kind, ast.Name) else "Any"
-
-    text = _LITERAL.sub(literal_type, text)
-    text = text.replace("builtins.", "").replace("?", "").replace("*", "")
-    try:
-        expression = ast.parse(text, mode="eval").body
-    except SyntaxError:
-        return None
+    expression = _BuiltinsUnqualified().visit(expression)
+    if _dotted_name(expression) in ("Any", "typing.Any") or any(
+        isinstance(node, (ast.Name, ast.Attribute)) and _dotted_name(node) in _EMPTY_TYPES
+        for node in ast.walk(expression)
+    ):
+        return None  # Any is what an unannotated parameter already means
     if not _is_type_expression(expression):
         return None
     reduced = _reduce_dotted_names(expression, host)
@@ -777,15 +744,34 @@ def annotation_from_revealed(
     return _spelled_for_host(reduced, host, same_module, set(_TYPING_NAMES) | (bare_ok or set()))
 
 
+_EMPTY_TYPES = frozenset({"Never", "NoReturn", "typing.Never", "typing.NoReturn"})
+"""No value has them: a site that reveals one is unreachable, and says nothing about the rest."""
+
+
+class _BuiltinsUnqualified(ast.NodeTransformer):
+    """``builtins.int`` as ``int``, which is how an annotation writes it."""
+
+    def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+        if isinstance(node.value, ast.Name) and node.value.id == "builtins":
+            return ast.copy_location(ast.Name(id=node.attr, ctx=ast.Load()), node)
+        return cast(ast.expr, self.generic_visit(node))
+
+
 def _is_type_expression(expression: ast.expr) -> bool:
     """Whether the tree is made only of what a type annotation is made of.
 
-    Names, attributes, subscripts, tuples, constants, and ``|`` unions. A
-    module name that is not an identifier, for example, parses as arithmetic.
+    Names, attributes, subscripts, tuples, constants, ``|`` unions, and a
+    negated number in a literal. A module name that is not an identifier,
+    for example, parses as arithmetic.
     """
     for node in ast.walk(expression):
         if isinstance(node, ast.BinOp):
             if not isinstance(node.op, ast.BitOr):
+                return False
+        elif isinstance(node, ast.UnaryOp):
+            if not isinstance(node.op, ast.USub) or not (
+                isinstance(node.operand, ast.Constant) and type(node.operand.value) is int
+            ):
                 return False
         elif not isinstance(
             node,
@@ -798,6 +784,7 @@ def _is_type_expression(expression: ast.expr) -> bool:
                 ast.Constant,
                 ast.Load,
                 ast.BitOr,
+                ast.USub,
             ),
         ):
             return False
@@ -1239,9 +1226,6 @@ def _return_probes(
     return probes
 
 
-_DOTTED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
-
-
 def class_object_revealed(expression: str, revealed: str) -> str:
     """``revealed``, spelled ``type[C]`` where it is the class ``expression`` names.
 
@@ -1256,19 +1240,72 @@ def class_object_revealed(expression: str, revealed: str) -> str:
     was probed does: a class is named by the class, so its last component is
     the constructed type's own name. A function whose name happens to match its
     return type's would be rewritten wrongly, and the project check that
-    follows rejects it, leaving the signature as it was.
+    follows rejects it, leaving the signature as it was. A thunk that returns
+    a class, ``lambda: ASTClass``, is shown as a thunk returning the
+    constructor, ``def () -> def (name: str) -> ASTClass``, and is spelled
+    ``def () -> type[ASTClass]`` the same way: rich's markdown elements pass
+    their child classes so, to ``isinstance``.
     """
-    if not revealed.startswith("def (") or not _DOTTED.match(expression):
+    try:
+        probed = ast.parse(expression, mode="eval").body
+    except SyntaxError:
         return revealed
-    arrow = revealed.rfind(" -> ")
-    if arrow < 0:
+    thunk = "def () -> "
+    if (
+        isinstance(probed, ast.Lambda)
+        and not probed.args.args
+        and not probed.args.posonlyargs
+        and not probed.args.kwonlyargs
+        and probed.args.vararg is None
+        and probed.args.kwarg is None
+        and revealed.startswith(thunk)
+    ):
+        body = _dotted_name(probed.body)
+        constructed = _constructed_class(revealed[len(thunk) :])
+        if body is not None and constructed is not None and _names_class(body, constructed):
+            return f"{thunk}type[{constructed}]"
         return revealed
-    constructed = revealed[arrow + 4 :]
-    if not _DOTTED.match(constructed):
-        return revealed
-    if constructed.rsplit(".", 1)[-1] != expression.rsplit(".", 1)[-1]:
+    name = _dotted_name(probed)
+    constructed = _constructed_class(revealed)
+    if name is None or constructed is None or not _names_class(name, constructed):
         return revealed
     return f"type[{constructed}]"
+
+
+def _names_class(expression: str, constructed: str) -> bool:
+    """Whether a dotted ``expression`` names the class its constructor makes: the same last name."""
+    return constructed.rsplit(".", 1)[-1] == expression.rsplit(".", 1)[-1]
+
+
+def _constructed_class(revealed: str) -> Optional[str]:
+    """The class a constructor signature makes, when every signature of it makes one class.
+
+    ``def (...) -> C``, or mypy's ``Overload(def (...) -> C, ...)`` for a class
+    whose ``__init__`` is overloaded. A named tuple's constructor makes the
+    class, however mypy writes its fields.
+    """
+    text = revealed.strip()
+    if text.startswith("Overload(") and text.endswith(")"):
+        signatures = _split_top_level(text[len("Overload(") : -1])
+    else:
+        signatures = [text]
+    made: Set[str] = set()
+    for signature in signatures:
+        if not signature.startswith("def ("):
+            return None
+        parsed = parse_revealed(signature)
+        if not (
+            isinstance(parsed, ast.Subscript)
+            and _dotted_name(parsed.value) == "Callable"
+            and isinstance(parsed.slice, ast.Tuple)
+            and len(parsed.slice.elts) == 2
+        ):
+            return None
+        constructed = _dotted_name(parsed.slice.elts[1])
+        if constructed is None:
+            return None
+        made.add(constructed)
+    return made.pop() if len(made) == 1 else None
 
 
 def builtin_object_revealed(expression: str, revealed: str) -> str:

@@ -19,6 +19,14 @@ operates across those rows, sharing a fresh variable for repeated disagreement
 columns rather than independently joining every parameter. These are candidate
 contracts, not proofs: materialization checks the helper and all consumers in
 one prospective project before keeping any declaration.
+
+A row is the site's own types, resolved in the site's module by the names the
+program's imports give them (``module_names``), so a type only that module
+can name may still be generalized away into a variable; a signature that
+would have to write it where the helper is defined is not offered. A
+parameter the helper's body never reads is ``object``: every argument is one,
+and its type then need not be known at all. The ``typing`` names a signature
+writes that the host lacks are imported with it.
 """
 
 from __future__ import annotations
@@ -28,29 +36,41 @@ import copy
 from dataclasses import dataclass, replace
 from collections.abc import Iterator, Sequence
 import io
+import os
 import re
 import textwrap
 import tokenize
 
-from .annotations import ApplySite, CallSite, _argument_annotation, _return_probes
+from .annotations import (
+    ApplySite,
+    CallSite,
+    _argument_annotation,
+    _return_probes,
+    class_object_revealed,
+)
 from .models import FunctionNode, MethodKind, span_contains
+from .statement_facts import bindings_of
 from .type_bindings import (
+    ModuleNames,
     TypeKind,
     TypeResolver,
     TypeTerm,
     render_type,
+    required_imports,
+    spellable,
     type_parameter_identities,
 )
-from .type_generalization import GenericSignature, generalize_signatures
+from .type_generalization import GenericSignature, aligned_children, generalize_signatures
 from ..type_inference import RevealRequest, TypeOracle
 
 
 @dataclass(frozen=True)
 class GenericHelper:
-    """An independently owned helper and the declarations committed with it."""
+    """An independently owned helper, the declarations committed with it, and its imports."""
 
     helper: ast.FunctionDef
     declarations: tuple[ast.stmt, ...]
+    required_imports: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -120,6 +140,73 @@ class _SiteTypes:
     arguments: tuple[TypeTerm | _ProbeKey, ...]
     declared_result: TypeTerm | None
     result_probes: tuple[tuple[_ProbeKey, ...], ...]
+    argument_expressions: tuple[str, ...] = ()
+    """What each argument probe reveals, for reading a class the site passes as a class."""
+
+
+@dataclass(frozen=True)
+class _Alias:
+    """A returned variable bound once, to a parameter or to what calling that parameter returns."""
+
+    parameter: int
+    called: bool
+
+
+def _returned_aliases(
+    helper: ast.FunctionDef, return_variables: Sequence[str]
+) -> tuple[_Alias | None, ...]:
+    """For each returned variable, the parameter it is only ever bound from, if one.
+
+    Such a variable holds the argument, or the thunk argument's result, at
+    every site, so its type is taken from the argument's own. A reveal of the
+    site's variable would answer the same type in another spelling where it
+    matters most: mypy shows a class held in a variable as its constructor,
+    and the row would then relate nothing to the ``type[C]`` passed in.
+    """
+    parameters = [parameter.arg for parameter in helper.args.posonlyargs + helper.args.args]
+    bound = [bindings_of(statement, into_nested_scopes=False) for statement in helper.body]
+    declared = {
+        name
+        for node in ast.walk(helper)
+        if isinstance(node, (ast.Global, ast.Nonlocal))
+        for name in node.names
+    }
+    aliases: list[_Alias | None] = []
+    for variable in return_variables:
+        binders = [statement for statement, names in zip(helper.body, bound) if variable in names]
+        alias: _Alias | None = None
+        if len(binders) == 1 and variable not in declared:
+            statement = binders[0]
+            value = statement.value if isinstance(statement, ast.Assign) else None
+            if (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+            ):
+                called = isinstance(value, ast.Call) and not value.args and not value.keywords
+                source = value.func if isinstance(value, ast.Call) and called else value
+                if (
+                    isinstance(source, ast.Name)
+                    and source.id in parameters
+                    and source.id not in declared
+                    and not any(source.id in names for names in bound)
+                ):
+                    alias = _Alias(parameters.index(source.id), called)
+        aliases.append(alias)
+    return tuple(aliases)
+
+
+def _thunk_result(term: TypeTerm) -> TypeTerm | None:
+    """``R`` for ``Callable[[], R]``: what calling a thunk of that type returns."""
+    if (
+        term.kind is TypeKind.APPLY
+        and len(term.children) == 3
+        and term.children[0].name == "collections.abc.Callable"
+        and term.children[1].kind is TypeKind.LIST
+        and not term.children[1].children
+    ):
+        return term.children[2]
+    return None
 
 
 def _function_at(module: ast.Module, line: int) -> FunctionNode | None:
@@ -132,38 +219,59 @@ def _function_at(module: ast.Module, line: int) -> FunctionNode | None:
     return max(functions, key=lambda function: function.lineno) if functions else None
 
 
+@dataclass(frozen=True)
+class _Context:
+    """What every site's types are resolved against: the helper's host and the program's names."""
+
+    host_file: str
+    host_source: str
+    host_class: str | None = None
+    module_names: ModuleNames | None = None
+
+    def resolver(self, source: str, file_path: str, line: int) -> TypeResolver:
+        return TypeResolver(
+            source,
+            file_path,
+            line,
+            self.host_source,
+            self.host_file,
+            host_class=self.host_class,
+            module_names=self.module_names,
+        )
+
+
 def _site_types(
     site: ApplySite,
-    host_file: str,
-    host_source: str,
+    context: _Context,
     return_variables: Sequence[str],
     probes: _Probes,
-    host_class: str | None = None,
     receiver_index: int | None = None,
+    unused: frozenset[int] = frozenset(),
 ) -> _SiteTypes | None:
     module = ast.parse(site.source)
     function = _function_at(module, site.start_line)
     if function is None:
         return None
-    resolver = TypeResolver(
-        site.source,
-        site.file_path,
-        site.start_line,
-        host_source,
-        host_file,
-        host_class=host_class,
-    )
+    resolver = context.resolver(site.source, site.file_path, site.start_line)
     declared_site = CallSite(site.statement, site.call, function, module, site.file_path)
     arguments: list[TypeTerm | _ProbeKey] = []
+    expressions: list[str] = []
     for index, argument in enumerate(site.call.args):
         if index == receiver_index:
+            continue
+        expressions.append(ast.unparse(argument))
+        if index in unused:
+            top = resolver.resolve_revealed("builtins.object")
+            if top is None:
+                return None
+            arguments.append(top)
             continue
         annotation = _argument_annotation(declared_site, index)
         kind = resolver.resolve(annotation) if annotation is not None else None
         arguments.append(
             kind
             if kind is not None
-            else probes.add(site, site.start_line, site.indent, ast.unparse(argument))
+            else probes.add(site, site.start_line, site.indent, expressions[-1])
         )
     result: TypeTerm | None = None
     if isinstance(site.statement, ast.Return) and site.declared_return is not None:
@@ -178,7 +286,7 @@ def _site_types(
         if result is None
         else ()
     )
-    return _SiteTypes(resolver, tuple(arguments), result, result_probes)
+    return _SiteTypes(resolver, tuple(arguments), result, result_probes, tuple(expressions))
 
 
 def _tuple_type(elements: Sequence[TypeTerm], resolver: TypeResolver) -> TypeTerm | None:
@@ -197,37 +305,60 @@ def _signature_rows(
     *,
     host_class: str | None = None,
     receiver_index: int | None = None,
+    module_names: ModuleNames | None = None,
+    unused: frozenset[int] = frozenset(),
+    aliases: Sequence[_Alias | None] = (),
 ) -> tuple[tuple[TypeTerm, ...], ...]:
+    context = _Context(host_file, host_source, host_class, module_names)
     probes = _Probes()
     contexts: list[_SiteTypes] = []
     for site in sites:
-        context = _site_types(
-            site, host_file, host_source, return_variables, probes, host_class, receiver_index
-        )
-        if context is None:
+        site_types = _site_types(site, context, return_variables, probes, receiver_index, unused)
+        if site_types is None:
             return ()
-        contexts.append(context)
+        contexts.append(site_types)
     revealed = probes.reveal(oracle)
     rows: list[tuple[TypeTerm, ...]] = []
-    for context in contexts:
+    for site_types in contexts:
 
-        def resolved(key: _ProbeKey) -> TypeTerm | None:
+        def resolved(key: _ProbeKey, expression: str | None = None) -> TypeTerm | None:
             text = revealed.get(key)
-            return context.resolver.resolve_revealed(text) if text is not None else None
+            if text is not None and expression is not None:
+                text = class_object_revealed(expression, text)
+            return site_types.resolver.resolve_revealed(text) if text is not None else None
 
         arguments = [
-            argument if isinstance(argument, TypeTerm) else resolved(argument)
-            for argument in context.arguments
+            argument if isinstance(argument, TypeTerm) else resolved(argument, expression)
+            for argument, expression in zip(site_types.arguments, site_types.argument_expressions)
         ]
-        result = context.declared_result
+
+        def aliased(position: int) -> TypeTerm | None:
+            """The argument a returned variable holds at this site, when it holds one."""
+            alias = aliases[position] if position < len(aliases) else None
+            if alias is None or alias.parameter == receiver_index:
+                return None
+            index = alias.parameter - (
+                1 if receiver_index is not None and alias.parameter > receiver_index else 0
+            )
+            term = arguments[index] if index < len(arguments) else None
+            if term is None or not alias.called:
+                return term
+            return _thunk_result(term)
+
+        result = site_types.declared_result
         if result is None:
             alternatives: list[TypeTerm] = []
-            for keys in context.result_probes:
-                elements = [resolved(key) for key in keys]
+            for keys in site_types.result_probes:
+                elements = [
+                    (aliased(position) if return_variables else None) or resolved(key)
+                    for position, key in enumerate(keys)
+                ]
                 if not elements or any(element is None for element in elements):
                     return ()
                 present = [element for element in elements if element is not None]
-                value = _tuple_type(present, context.resolver) if len(present) > 1 else present[0]
+                value = (
+                    _tuple_type(present, site_types.resolver) if len(present) > 1 else present[0]
+                )
                 if value is None:
                     return ()
                 if value not in alternatives:
@@ -298,9 +429,9 @@ def _signature_substitutions(
             source.kind is target.kind and len(source.children) == len(target.children)
             for source in column
         ):
-            for children, child in zip(
-                zip(*(source.children for source in column)), target.children
-            ):
+            columns = aligned_children(column)
+            assert columns is not None
+            for children, child in zip(columns, target.children):
                 align(children, child)
 
     for column, target in zip(zip(*rows), generalized):
@@ -330,9 +461,10 @@ def _generalize_annotation(
         or not first.children
     ):
         return None
+    columns = aligned_children(column)
+    assert columns is not None  # same kind and arity, checked above
     children = tuple(
-        _generalize_annotation(values, substitutions, retained_parameters)
-        for values in zip(*(term.children for term in column))
+        _generalize_annotation(values, substitutions, retained_parameters) for values in columns
     )
     if any(child is None for child in children):
         return None
@@ -344,9 +476,7 @@ def _body_annotations(
     sites: Sequence[ApplySite],
     rows: Sequence[Sequence[TypeTerm]],
     signature: GenericSignature,
-    host_file: str,
-    host_source: str,
-    host_class: str | None = None,
+    context: _Context,
     retained_parameters: frozenset[str] = frozenset(),
 ) -> tuple[TypeTerm | None, ...] | None:
     """Prove a common rebinding for every original site's local annotation.
@@ -375,14 +505,7 @@ def _body_annotations(
         represented |= (
             tuple(_annotation_structure(node.annotation) for node in original) == structure
         )
-        resolver = TypeResolver(
-            site.source,
-            site.file_path,
-            site.start_line,
-            host_source,
-            host_file,
-            host_class=host_class,
-        )
+        resolver = context.resolver(site.source, site.file_path, site.start_line)
         terms: list[TypeTerm] = []
         for node in original:
             resolved = resolver.resolve(node.annotation)
@@ -400,6 +523,22 @@ def _body_annotations(
             return None
         rewritten.append(term if any(original != term for original in column) else None)
     return tuple(rewritten)
+
+
+def _written_terms(
+    signature: GenericSignature, body_annotations: Sequence[TypeTerm | None]
+) -> tuple[TypeTerm, ...]:
+    """Every term a rendered signature writes: its types, its binders' domains, local annotations."""
+    domains = tuple(
+        term
+        for binder in signature.parameters
+        for term in ((binder.bound,) if binder.bound is not None else ()) + binder.constraints
+    )
+    return (
+        signature.types
+        + domains
+        + tuple(annotation for annotation in body_annotations if annotation is not None)
+    )
 
 
 def _render_generic(
@@ -451,6 +590,21 @@ def _render_generic(
     return GenericHelper(
         ast.fix_missing_locations(annotated),
         tuple(ast.fix_missing_locations(declaration) for declaration in declarations),
+        required_imports(_written_terms(signature, body_annotations)),
+    )
+
+
+def _unused_parameters(helper: ast.FunctionDef) -> frozenset[int]:
+    """Positions of the parameters the helper's body never names."""
+    used = {
+        node.id
+        for statement in helper.body
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Name)
+    }
+    parameters = helper.args.posonlyargs + helper.args.args
+    return frozenset(
+        index for index, parameter in enumerate(parameters) if parameter.arg not in used
     )
 
 
@@ -463,8 +617,17 @@ def generic_helpers(
     oracle: TypeOracle,
     *,
     method: MethodContext | None = None,
+    module_names: ModuleNames | None = None,
 ) -> Iterator[GenericHelper]:
-    """Generic contracts preserving host binders, never unchecked fallbacks."""
+    """Generic contracts preserving host binders, never unchecked fallbacks.
+
+    ``module_names`` gives the absolute name the program's imports give the
+    module at a path, which is how the checker names the types it reveals.
+    Sites in different modules whose types all agree need no variable, and
+    their common signature is offered as it is: it names the types by what
+    they are, where the ordinary rung, spelling across modules, can write
+    only builtins. Within one module the ordinary rung writes the same types.
+    """
     parameters = helper.args.posonlyargs + helper.args.args
     width = len(parameters)
     if len(sites) < 2 or any(len(site.call.args) != width for site in sites):
@@ -494,10 +657,9 @@ def generic_helpers(
                 receiver = site.call.args[receiver_index]
                 if not isinstance(receiver, ast.Name) or receiver.id != positional[0].arg:
                     return
+    context = _Context(host_file, host_source, host_class, module_names)
     if method is not None and method.kind != "staticmethod":
-        retained = TypeResolver(
-            host_source, host_file, 1, host_source, host_file, host_class=host_class
-        ).host_class_parameter_identities
+        retained = context.resolver(host_source, host_file, 1).host_class_parameter_identities
     rows = _signature_rows(
         sites,
         host_file,
@@ -506,6 +668,9 @@ def generic_helpers(
         oracle,
         host_class=host_class,
         receiver_index=receiver_index,
+        module_names=module_names,
+        unused=_unused_parameters(helper) - {receiver_index},
+        aliases=_returned_aliases(helper, return_variables),
     )
     if not rows:
         return
@@ -514,14 +679,33 @@ def generic_helpers(
     while alias in reserved:
         alias += "_"
     reserved.add(alias)
-    signatures = (
-        generalize_signatures(rows, reserved, retained_parameters=retained)
-        if method is not None
-        else generalize_signatures(rows, reserved)
+    signatures = generalize_signatures(
+        rows,
+        reserved,
+        retained_parameters=retained if method is not None else frozenset(),
+        constrainable=spellable,
+    ) or (
+        _common_signature(rows, retained)
+        if any(os.path.abspath(site.file_path) != os.path.abspath(host_file) for site in sites)
+        else ()
     )
     for signature in signatures:
-        body_annotations = _body_annotations(
-            helper, sites, rows, signature, host_file, host_source, host_class, retained
-        )
-        if body_annotations is not None:
+        body_annotations = _body_annotations(helper, sites, rows, signature, context, retained)
+        if body_annotations is not None and all(
+            spellable(term) for term in _written_terms(signature, body_annotations)
+        ):
             yield _render_generic(helper, signature, alias, body_annotations, receiver_index)
+
+
+def _common_signature(
+    rows: Sequence[Sequence[TypeTerm]], retained: frozenset[str]
+) -> tuple[GenericSignature, ...]:
+    """The one signature every row states, when they all state the same one."""
+    first = tuple(rows[0]) if rows else ()
+    if (
+        not first
+        or any(tuple(row) != first for row in rows[1:])
+        or any(not type_parameter_identities(term) <= retained for term in first)
+    ):
+        return ()
+    return (GenericSignature(first, ()),)

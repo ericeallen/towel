@@ -259,6 +259,16 @@ def _module_name(path: Path) -> str:
     return _module_name_and_root(path)[0]
 
 
+def checker_module_name(path: Path) -> Optional[str]:
+    """The module name mypy is given for ``path`` when it is probed, or None for a placeholder.
+
+    It names a module by its ``__init__`` chain (:func:`_module_name_and_root`),
+    which is how mypy spells the module in every type it reveals.
+    """
+    name = _module_name(path)
+    return None if "_towel_package" in name.split(".") else name
+
+
 def _with_probes(request: RevealRequest) -> Tuple[str, List[int]]:
     """The module text with one ``reveal_type`` line per expression before ``line``.
 

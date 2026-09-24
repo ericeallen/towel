@@ -580,7 +580,11 @@ lattice ones:
 *Type anti-unification.* `generic_annotations.py` retains complete per-site
 argument/result rows. `type_bindings.py` resolves annotation constructors and
 source type parameters by their bindings, including legacy `TypeVar` declarations
-and PEP 695 scopes. `type_generalization.py` recursively keeps common type
+and PEP 695 scopes. A class or relatively imported name is identified by the
+absolute name the import model gives its module, which is the name a checker
+writes in what it reveals (`revealed_types.py` reads that notation), and is
+resolved in its site's module; its spelling in the helper's module, if it has
+one, is separate, and only a signature that writes it needs one. `type_generalization.py` recursively keeps common type
 constructors and shares a fresh parameter for each repeated disagreement vector.
 Thus `(list[int], int)` and `(list[str], str)` can become `(list[T], T)`.
 Different vectors remain independent, and a return-only variable is refused.

@@ -65,6 +65,7 @@ from ..type_inference import (
     TypeOracle,
     _configured_root,
     _mypy_config,
+    checker_module_name,
     holds_warm_state,
     start_cold,
 )
@@ -73,6 +74,7 @@ from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
 from .generic_annotations import MethodContext, generic_helpers
+from .type_bindings import ModuleNames
 from .program_imports import ProgramImports
 
 UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
@@ -505,13 +507,35 @@ class HelperAnnotationWiring(EngineState):
             proposal.return_variables,
             oracle,
             method=method,
+            module_names=self._module_names_for(proposal),
         ):
             yield dataclasses.replace(
                 proposal,
                 extracted_function=candidate.helper,
-                required_imports=(),
+                required_imports=candidate.required_imports,
                 helper_type_declarations=candidate.declarations,
             )
+
+    def _module_names_for(self, proposal: RefactoringProposal) -> ModuleNames:
+        """The absolute name of each module, as the checker writes it in the types it reveals.
+
+        The name the program's own imports give the module, and, for a module
+        no import names (a script, a package only ever imported relatively),
+        the one mypy was given for it: its ``__init__`` chain in the project
+        the checker reads (:func:`~towel.type_inference.checker_module_name`).
+        """
+        try:
+            program: Optional[ProgramImports] = self.import_graph.program_for(
+                Path(proposal.file_path)
+            )
+        except ProjectScanLimitError:
+            program = None
+
+        def module_name(path: str) -> Optional[str]:
+            named = program.module_name(Path(path)) if program is not None else None
+            return named or checker_module_name(Path(self._origin_of(path)))
+
+        return module_name
 
     @staticmethod
     def _helper_uses_any(proposal: RefactoringProposal) -> bool:

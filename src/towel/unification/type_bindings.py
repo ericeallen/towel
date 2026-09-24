@@ -14,10 +14,26 @@
 
 """Resolve annotation structure and lexical type-parameter identity without imports.
 
-Only the two supplied source strings are inspected. Ambiguous bindings and names
-the helper's module cannot spell are refused. Type-parameter atoms are the one
-exception: their declaration metadata permits the caller to introduce a fresh
-helper parameter rather than accidentally capturing the original binder.
+Only the two supplied source strings are inspected. A name is its binding: a
+class or an import is identified by the absolute name the program's own
+imports give it (``module_names``, the import model's answer), so the
+``Version`` a module imports relatively, the ``Version`` another defines, and
+the checker's ``packaging.version.Version`` are one type. Where the program
+names no module for a file, a relative import is identified by its location
+and a class by where it is defined. A name imported only for the checker,
+under ``if TYPE_CHECKING:``, is a binding like any other: every spelling this
+module produces is written into a quoted annotation, which only a checker
+reads. Ambiguous bindings are refused.
+
+Resolution and spelling are separate. A term is resolved in its site's own
+module, and carries the spelling the helper's module can write for it, or no
+spelling at all (:func:`spellable`): a type only the site can name may still
+be generalized away into a type variable, and a signature that would have to
+write it is declined by the caller. A ``typing`` name the helper's module does
+not bind is spelled bare, and the term records the import it needs
+(:func:`required_imports`). Type-parameter atoms carry their declaration
+metadata, which permits the caller to introduce a fresh helper parameter
+rather than accidentally capturing the original binder.
 """
 
 from __future__ import annotations
@@ -28,7 +44,10 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 import os
 import re
-from collections.abc import Callable
+import typing
+from collections.abc import Callable, Sequence
+
+from .revealed_types import OpaqueType, parse_revealed
 
 
 class TypeKind(Enum):
@@ -53,16 +72,22 @@ class TypeParameter:
 
 @dataclass(frozen=True)
 class TypeTerm:
-    """Canonical type structure; host spelling does not affect equality."""
+    """Canonical type structure; host spelling does not affect equality.
+
+    An atom with an empty ``spelling`` has none where the helper is defined.
+    ``imports`` are the ``(module, name)`` imports its spelling needs there.
+    """
 
     kind: TypeKind
     name: str = ""
     spelling: str = field(default="", compare=False)
     children: tuple[TypeTerm, ...] = ()
     parameter: TypeParameter | None = None
+    imports: tuple[tuple[str, str], ...] = field(default=(), compare=False)
 
 
 _BUILTINS = frozenset(name for name, value in vars(builtins).items() if isinstance(value, type))
+_BUILTIN_NAMES = frozenset(vars(builtins))
 _ALIASES = {
     "typing.List": "builtins.list",
     "typing.Dict": "builtins.dict",
@@ -97,8 +122,48 @@ _ALIASES = {
     "typing.AbstractSet": "collections.abc.Set",
 }
 _UNSAFE = frozenset(
-    f"typing.{name}" for name in ("Any", "Unknown", "ParamSpec", "TypeVarTuple", "Self")
+    f"typing.{name}"
+    for name in ("Unknown", "ParamSpec", "TypeVarTuple", "Self", "Never", "NoReturn")
 )
+_ANY = "typing.Any"
+"""Unsafe as a whole type, which says nothing; inside one (``dict[str, Any]``) it is the program's."""
+_REVEALED_FORMS = frozenset(
+    (
+        # mypy writes its special forms bare, ``Union`` and ``Optional`` before 2.0.
+        "Any",
+        "Union",
+        "Optional",
+        "Literal",
+        "LiteralString",
+        "Tuple",
+        "Type",
+        "TypeGuard",
+        "TypeIs",
+        # pyright writes every typing name bare, as the program spelled it.
+        "List",
+        "Dict",
+        "Set",
+        "FrozenSet",
+        "DefaultDict",
+        "OrderedDict",
+        "Counter",
+        "Deque",
+        "ChainMap",
+        *(alias.removeprefix("typing.") for alias in _ALIASES if alias.startswith("typing.")),
+        "IO",
+        "TextIO",
+        "BinaryIO",
+        "Pattern",
+        "Match",
+        "ContextManager",
+        "AsyncContextManager",
+        "ItemsView",
+        "KeysView",
+        "ValuesView",
+        "MappingView",
+    )
+)
+"""``typing`` names a checker writes bare when the site binds nothing by that name."""
 _QUOTED = re.compile(r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')""")
 
 
@@ -107,56 +172,6 @@ def _outside_strings(text: str, rewrite: Callable[[str], str]) -> str:
     return "".join(
         part if index % 2 else rewrite(part) for index, part in enumerate(_QUOTED.split(text))
     )
-
-
-def _split_top_level(text: str, separator: str = ",") -> tuple[str, ...] | None:
-    """Split checker signature fields, respecting nested types and literal text."""
-    quoted_spans = {
-        index for match in _QUOTED.finditer(text) for index in range(match.start(), match.end())
-    }
-    stack: list[str] = []
-    start = 0
-    parts: list[str] = []
-    for index, character in enumerate(text):
-        if index in quoted_spans:
-            continue
-        if character in "([{":
-            stack.append(character)
-        elif character in ")]}":
-            if not stack or stack.pop() != {")": "(", "]": "[", "}": "{"}[character]:
-                return None
-        elif character == separator and not stack:
-            parts.append(text[start:index].strip())
-            start = index + 1
-    if stack:
-        return None
-    if text[start:].strip():
-        parts.append(text[start:].strip())
-    return tuple(parts)
-
-
-def _strip_literal_markers(text: str) -> str:
-    """Remove mypy's inferred-literal suffix, only on complete Literal forms."""
-    quoted = {
-        index for match in _QUOTED.finditer(text) for index in range(match.start(), match.end())
-    }
-    removed: set[int] = set()
-    for match in re.finditer(r"\bLiteral\[", text):
-        if match.start() in quoted:
-            continue
-        depth = 1
-        for index in range(match.end(), len(text)):
-            if index in quoted:
-                continue
-            if text[index] == "[":
-                depth += 1
-            elif text[index] == "]":
-                depth -= 1
-                if depth == 0:
-                    if text[index + 1 : index + 2] == "?":
-                        removed.add(index + 1)
-                    break
-    return "".join(character for index, character in enumerate(text) if index not in removed)
 
 
 def _canonical(name: str) -> str:
@@ -172,6 +187,43 @@ def _dotted(node: ast.expr) -> str | None:
         head = _dotted(node.value)
         return f"{head}.{node.attr}" if head else None
     return None
+
+
+ModuleNames = Callable[[str], str | None]
+"""The absolute name the program's imports give the module at a path, when they give one."""
+
+
+def _package(file_path: str, module_name: str | None) -> str | None:
+    """The package a module's relative imports resolve in, its ``__package__``."""
+    if module_name is None:
+        return None
+    if os.path.basename(file_path) == "__init__.py":
+        return module_name
+    return module_name.rpartition(".")[0]
+
+
+def _relative_target(package: str | None, level: int, module: str | None) -> str | None:
+    """The absolute module ``from <level dots><module> import ...`` names, when known.
+
+    ``None`` for a module whose package is unknown, and for an import that
+    climbs out of its top-level package, which raises when it runs.
+    """
+    if not package:
+        return None
+    parts = package.split(".")
+    if level - 1 >= len(parts):
+        return None
+    return ".".join(parts[: len(parts) - (level - 1)] + ([module] if module else []))
+
+
+def _is_type_checking_guard(statement: ast.stmt) -> bool:
+    """``if TYPE_CHECKING:``, which checkers recognize by the name alone."""
+    if not isinstance(statement, ast.If):
+        return False
+    test = statement.test
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
 
 
 @dataclass(frozen=True)
@@ -195,11 +247,18 @@ class _ClassParameter:
 
 
 class _Collector(ast.NodeVisitor):
-    """Record every write in one scope; repeated or conditional writes are unsafe."""
+    """Record every write in one scope; repeated or conditional writes are unsafe.
 
-    def __init__(self, file_path: str, node: ast.AST) -> None:
+    ``module_name`` is the file's absolute module name, when the program gives
+    it one: a relative import and a module-level class are then identified by
+    the absolute names a checker writes, as every other import already is.
+    """
+
+    def __init__(self, file_path: str, node: ast.AST, module_name: str | None = None) -> None:
         self.file_path = file_path
         self.scope_node = node
+        self.module_name = module_name
+        self.package = _package(file_path, module_name)
         self.bindings: dict[str, _Binding] = {}
         self.wildcard = False
         self.direct = False
@@ -232,10 +291,11 @@ class _Collector(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = node.module or ""
         if node.level:
+            absolute = _relative_target(self.package, node.level, node.module)
             base = os.path.dirname(self.file_path)
             for _ in range(node.level - 1):
                 base = os.path.dirname(base)
-            module = f"relative:{base}/{module}"
+            module = absolute if absolute is not None else f"relative:{base}/{module}"
         for alias in node.names:
             if alias.name == "*":
                 self.wildcard = True
@@ -261,8 +321,13 @@ class _Collector(ast.NodeVisitor):
         self.bind(node.name, "unknown", "", node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        kind = "class" if isinstance(self.scope_node, ast.Module) else "unknown"
-        self.bind(node.name, kind, f"local:{self.file_path}:{node.lineno}:{node.name}", node)
+        module_level = isinstance(self.scope_node, ast.Module)
+        identity = (
+            f"{self.module_name}.{node.name}"
+            if module_level and self.module_name is not None
+            else f"local:{self.file_path}:{node.lineno}:{node.name}"
+        )
+        self.bind(node.name, "class" if module_level else "unknown", identity, node)
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         pass
@@ -307,11 +372,23 @@ class _Collector(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+_DIRECT = (
+    ast.Import,
+    ast.ImportFrom,
+    ast.Assign,
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+)
+"""Statements whose bindings are unconditional in the scope that runs them."""
+
+
 def _scope(
     node: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
     file_path: str,
+    module_name: str | None = None,
 ) -> _Scope:
-    collector = _Collector(file_path, node)
+    collector = _Collector(file_path, node, module_name)
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         for argument in (
             node.args.posonlyargs
@@ -322,17 +399,18 @@ def _scope(
         ):
             collector.bindings[argument.arg] = _Binding("unknown", "", argument)
     for statement in node.body:
-        collector.direct = isinstance(
-            statement,
-            (
-                ast.Import,
-                ast.ImportFrom,
-                ast.Assign,
-                ast.FunctionDef,
-                ast.AsyncFunctionDef,
-                ast.ClassDef,
-            ),
-        )
+        if _is_type_checking_guard(statement) and isinstance(statement, ast.If):
+            # Imported for the checker only: a binding for every annotation
+            # this module writes, all of which are quoted. What the other
+            # branch binds instead is a second, conditional binding.
+            for guarded in statement.body:
+                collector.direct = isinstance(guarded, (ast.Import, ast.ImportFrom))
+                collector.visit(guarded)
+            collector.direct = False
+            for alternative in statement.orelse:
+                collector.visit(alternative)
+            continue
+        collector.direct = isinstance(statement, _DIRECT)
         collector.visit(statement)
     # Writes made by nested functions can invalidate an otherwise stable import
     # or declaration. Ordinary nested locals do not affect this scope.
@@ -355,8 +433,10 @@ def _scope(
     return _Scope(node, collector.bindings, collector.wildcard)
 
 
-def _scopes(module: ast.Module, file_path: str, line: int) -> tuple[_Scope, ...]:
-    result = [_scope(module, file_path)]
+def _scopes(
+    module: ast.Module, file_path: str, line: int, module_name: str | None = None
+) -> tuple[_Scope, ...]:
+    result = [_scope(module, file_path, module_name)]
     current: ast.AST = module
     while True:
         candidates = [
@@ -383,7 +463,9 @@ class TypeResolver:
     Class parameters are exposed separately; the caller chooses whether their
     identities remain bound or are freshened for the helper's actual dispatch.
     Bounds and constraints always use module-visible spellings because fresh
-    TypeVar declarations are emitted outside the class.
+    TypeVar declarations are emitted outside the class. ``module_names`` gives
+    each file's absolute module name (see the module docstring); without it,
+    relative imports and module-level classes keep location identities.
     """
 
     def __init__(
@@ -395,6 +477,7 @@ class TypeResolver:
         host_file: str,
         *,
         host_class: str | None = None,
+        module_names: ModuleNames | None = None,
     ) -> None:
         self.file_path = os.path.abspath(file_path)
         self.host_file = os.path.abspath(host_file)
@@ -402,6 +485,7 @@ class TypeResolver:
         self.host_class_parameter_identities: frozenset[str] = frozenset()
         self._source_class_parameters: tuple[_ClassParameter, ...] = ()
         self._module_resolver: TypeResolver | None = None
+        self._module_names = module_names
         try:
             module = ast.parse(source)
             host = ast.parse(host_source)
@@ -409,10 +493,22 @@ class TypeResolver:
             self.scopes: tuple[_Scope, ...] = ()
             self.host: _Scope | None = None
         else:
-            self.scopes = _scopes(module, self.file_path, line)
-            self.host = _scope(host, self.host_file)
+            self.scopes = _scopes(module, self.file_path, line, self._module_name(self.file_path))
+            self.host = _scope(host, self.host_file, self._module_name(self.host_file))
             if host_class is not None:
                 self._configure_class_host(source, line, host_source, host, host_class)
+        self._class_identities = frozenset(
+            binding.identity
+            for scope in self.scopes
+            for binding in scope.bindings.values()
+            if binding.kind == "class"
+        )
+
+    def _module_name(self, path: str) -> str | None:
+        name = self._module_names(path) if self._module_names is not None else None
+        if name is None or not all(part.isidentifier() for part in name.split(".")):
+            return None
+        return name
 
     def _configure_class_host(
         self,
@@ -428,12 +524,22 @@ class TypeResolver:
         if len(classes) != 1 or self.host is None:
             self.host = None
             return
-        class_scope = _scope(classes[0], self.host_file)
+        class_scope = _scope(classes[0], self.host_file, self._module_name(self.host_file))
         self._module_resolver = TypeResolver(
-            source, self.file_path, line, host_source, self.host_file
+            source,
+            self.file_path,
+            line,
+            host_source,
+            self.host_file,
+            module_names=self._module_names,
         )
         host_resolver = TypeResolver(
-            host_source, self.host_file, classes[0].lineno, host_source, self.host_file
+            host_source,
+            self.host_file,
+            classes[0].lineno,
+            host_source,
+            self.host_file,
+            module_names=self._module_names,
         )
         host_parameters = host_resolver._declared_class_parameters(len(host_resolver.scopes) - 1)
         source_parameters: list[_ClassParameter] = []
@@ -485,7 +591,7 @@ class TypeResolver:
             ):
                 return None
             if term.kind is TypeKind.APPLY and not all(
-                _known_base_argument(argument) for argument in term.children[1:]
+                self._known_base_argument(argument) for argument in term.children[1:]
             ):
                 # An imported bare name might itself be an imported TypeVar.
                 # Without its declaration we cannot prove the class is closed.
@@ -513,12 +619,31 @@ class TypeResolver:
             )
         return tuple(result)
 
+    def _known_base_argument(self, term: TypeTerm) -> bool:
+        """Whether a generic base's argument is known not to be an imported type variable."""
+        if term.parameter is not None:
+            return True
+        if term.kind is TypeKind.ATOM:
+            return term.name in self._class_identities or term.name.startswith(
+                ("builtins.", "local:", "typing.", "collections.abc.")
+            )
+        children = term.children[1:] if term.kind is TypeKind.APPLY else term.children
+        return all(self._known_base_argument(child) for child in children)
+
     def resolve(self, annotation: ast.expr) -> TypeTerm | None:
         """Resolve a declared annotation, including a quoted forward annotation."""
-        return self._resolve(annotation, len(self.scopes), frozenset(), False)
+        return _informative(self._resolve(annotation, len(self.scopes), frozenset(), False))
 
     def resolve_revealed(self, text: str) -> TypeTerm | None:
-        """Resolve checker spelling, validating decorated type variables in scope."""
+        """Resolve checker spelling, validating decorated type variables in scope.
+
+        The spelling is read by :func:`~towel.unification.revealed_types.parse_revealed`.
+        Its dotted names are the checker's absolute names; a callable no
+        parameter list can state is an opaque atom, identified by its spelling
+        in this site's file, which only a type variable can stand for. A
+        generic callable is instantiated at the type variables of its own
+        binders' names in this scope, which any instantiation of it permits.
+        """
         failed = False
 
         def undecorate(match: re.Match[str]) -> str:
@@ -544,51 +669,10 @@ class TypeResolver:
         )
         if failed:
             return None
-        text = _strip_literal_markers(text)
-        if text.startswith(("def ", "(")):
-            return self._callable(text)
-        try:
-            node = ast.parse(text, mode="eval").body
-        except (SyntaxError, ValueError):
+        node = parse_revealed(text, callable_name="collections.abc.Callable", unwritable="opaque")
+        if node is None:
             return None
-        return self._resolve(node, len(self.scopes), frozenset(), True)
-
-    def _callable(self, text: str) -> TypeTerm | None:
-        """Preserve fixed positional callable structure without erasing domains."""
-        match = re.fullmatch(r"(?:def )?\((.*)\)\s*->\s*(.+)", text)
-        if match is None:
-            return None
-        fields = _split_top_level(match.group(1))
-        spelling = self._host_spelling("collections.abc.Callable")
-        if fields is None or spelling is None:
-            return None
-        arguments: list[TypeTerm] = []
-        for parameter_text in fields:
-            if parameter_text == "/":
-                continue
-            pieces = _split_top_level(parameter_text, ":")
-            if (
-                parameter_text.startswith("*")
-                or pieces is None
-                or len(pieces) not in (1, 2)
-                or (len(pieces) == 2 and not pieces[0].isidentifier())
-            ):
-                return None
-            kind = self.resolve_revealed(pieces[-1])
-            if kind is None:
-                return None
-            arguments.append(kind)
-        result = self.resolve_revealed(match.group(2))
-        if result is None:
-            return None
-        return TypeTerm(
-            TypeKind.APPLY,
-            children=(
-                TypeTerm(TypeKind.ATOM, "collections.abc.Callable", spelling),
-                TypeTerm(TypeKind.LIST, children=tuple(arguments)),
-                result,
-            ),
-        )
+        return _informative(self._resolve(node, len(self.scopes), frozenset(), True))
 
     def _lookup(self, name: str, limit: int) -> tuple[_Binding, int] | None:
         for index in range(limit - 1, -1, -1):
@@ -605,6 +689,12 @@ class TypeResolver:
         if found is None or found[0].kind != "import":
             return None
         return _canonical(found[0].identity + (separator + tail if separator else ""))
+
+    def _revealed_identity(self, text: str, limit: int) -> str:
+        """What a checker means by ``text``: an absolute name, or a bare typing form."""
+        if "." not in text and text in _REVEALED_FORMS and self._lookup(text, limit) is None:
+            return _canonical(f"typing.{text}")
+        return _canonical(text)
 
     def _host_spelling(self, identity: str) -> str | None:
         if self.host is None or self.host.wildcard:
@@ -629,37 +719,57 @@ class TypeResolver:
                     return name + alias[len(imported) :]
         return None
 
+    def _spelling(self, identity: str) -> tuple[str, tuple[tuple[str, str], ...]]:
+        """How the host writes ``identity``, and what it must import to; ``""`` when it cannot.
+
+        A ``typing`` name the host does not bind at all is written bare, with
+        its import from ``typing``: every alias of it names the same type.
+        """
+        spelled = self._host_spelling(identity)
+        if spelled is not None:
+            return spelled, ()
+        name = _typing_name(identity)
+        if (
+            name is None
+            or self.host is None
+            or self.host.wildcard
+            or name in self.host.bindings
+            or name in _BUILTIN_NAMES
+        ):
+            return "", ()
+        return name, (("typing", name),)
+
     def _name(
         self, text: str, limit: int, active: frozenset[str], revealed: bool
     ) -> TypeTerm | None:
-        head = text.split(".")[0]
-        found = self._lookup(head, limit)
-        if found is not None and "." not in text:
-            binding, index = found
-            if binding.kind in ("assignment", "parameter"):
-                return self._parameter(text, binding, index, active)
-            if binding.kind == "class":
-                identity = binding.identity
-            elif binding.kind == "import":
-                identity = _canonical(binding.identity)
-            else:
-                return None
-        elif found is not None:
-            identity = self._import_identity(text, limit) or ""
-        elif text in _BUILTINS:
-            identity = f"builtins.{text}"
-        elif revealed and text.startswith(
-            ("builtins.", "typing.", "typing_extensions.", "collections.abc.")
-        ):
-            identity = _canonical(text)
-        elif revealed and "." in text and self._host_spelling(_canonical(text)):
+        if revealed and "." in text:
+            # A checker writes absolute names, whatever the site's scope binds.
             identity = _canonical(text)
         else:
-            return None
+            head = text.split(".")[0]
+            found = self._lookup(head, limit)
+            if found is not None and "." not in text:
+                binding, index = found
+                if binding.kind in ("assignment", "parameter"):
+                    return self._parameter(text, binding, index, active)
+                if binding.kind == "class":
+                    identity = binding.identity
+                elif binding.kind == "import":
+                    identity = _canonical(binding.identity)
+                else:
+                    return None
+            elif found is not None:
+                identity = self._import_identity(text, limit) or ""
+            elif text in _BUILTINS:
+                identity = f"builtins.{text}"
+            elif revealed and text in _REVEALED_FORMS:
+                identity = _canonical(f"typing.{text}")
+            else:
+                return None
         if not identity or identity in _UNSAFE or identity == "typing.TypeVar":
             return None
-        spelling = self._host_spelling(identity)
-        return TypeTerm(TypeKind.ATOM, identity, spelling) if spelling else None
+        spelling, imports = self._spelling(identity)
+        return TypeTerm(TypeKind.ATOM, identity, spelling, imports=imports)
 
     def _parameter(
         self, name: str, binding: _Binding, index: int, active: frozenset[str]
@@ -707,10 +817,13 @@ class TypeResolver:
         seen = active | {identity}
         domain_resolver = self._module_resolver or self
         resolved_bound = (
-            domain_resolver._resolve(bound, index + 1, seen, False) if bound is not None else None
+            _informative(domain_resolver._resolve(bound, index + 1, seen, False))
+            if bound is not None
+            else None
         )
         resolved_constraints = tuple(
-            domain_resolver._resolve(item, index + 1, seen, False) for item in constraints
+            _informative(domain_resolver._resolve(item, index + 1, seen, False))
+            for item in constraints
         )
         if (bound is not None and resolved_bound is None) or any(
             item is None for item in resolved_constraints
@@ -739,6 +852,8 @@ class TypeResolver:
     ) -> TypeTerm | None:
         if not self.scopes or self.host is None:
             return None
+        if isinstance(node, OpaqueType):
+            return TypeTerm(TypeKind.ATOM, f"opaque:{self.file_path}:{node.spelling}")
         if isinstance(node, ast.Constant):
             if isinstance(node.value, str) and not literal:
                 try:
@@ -781,10 +896,10 @@ class TypeResolver:
             constructor = _dotted(node.value)
             canonical = self._import_identity(constructor, limit) if constructor else None
             if revealed and constructor and canonical is None:
-                canonical = _canonical(constructor)
-                if constructor == "Literal" and self._lookup("Literal", limit) is None:
-                    canonical = "typing.Literal"
+                canonical = self._revealed_identity(constructor, limit)
             args = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            if not args:
+                return None
             if canonical in ("typing.Optional", "typing.Union"):
                 if canonical == "typing.Optional" and len(args) != 1:
                     return None
@@ -793,25 +908,6 @@ class TypeResolver:
                     members += (TypeTerm(TypeKind.CONSTANT, "None"),)
                 return _union(members)
             head = self._resolve(node.value, limit, active, revealed)
-            if revealed and canonical == "typing.Literal" and head is None:
-                # A literal value always belongs to its concrete builtin type.
-                # Keep exact Literal structure when the host can spell it; do
-                # not invent a new typing import merely for inferred constants.
-                widened: list[TypeTerm | None] = []
-                for argument in args:
-                    try:
-                        value = ast.literal_eval(argument)
-                    except (ValueError, TypeError, SyntaxError):
-                        return None
-                    if value is None:
-                        widened.append(TypeTerm(TypeKind.CONSTANT, "None"))
-                    elif type(value) in (bool, int, str, bytes):
-                        widened.append(
-                            self._name(f"builtins.{type(value).__name__}", limit, active, True)
-                        )
-                    else:
-                        return None
-                return _union(tuple(widened))
             if head is None or head.parameter is not None or head.name == "typing.Annotated":
                 return None
             children = tuple(
@@ -827,6 +923,24 @@ class TypeResolver:
         return None
 
 
+def _typing_name(identity: str) -> str | None:
+    """The name ``typing`` exports for ``identity``, when it exports one."""
+    if identity.startswith("typing."):
+        name = identity.removeprefix("typing.")
+        return name if name.isidentifier() and hasattr(typing, name) else None
+    for alias, canonical in _ALIASES.items():
+        if canonical == identity:
+            return alias.removeprefix("typing.")
+    return None
+
+
+def _informative(term: TypeTerm | None) -> TypeTerm | None:
+    """``term``, unless it is ``Any`` as a whole, which states no relationship at all."""
+    if term is not None and term.kind is TypeKind.ATOM and term.name == _ANY:
+        return None
+    return term
+
+
 def contains_type_parameter(term: TypeTerm) -> bool:
     """Whether a type includes a source or freshly generated generic binder."""
     return bool(type_parameter_identities(term))
@@ -839,19 +953,31 @@ def _parameter_terms(term: TypeTerm) -> tuple[TypeTerm, ...]:
     )
 
 
-def _known_base_argument(term: TypeTerm) -> bool:
-    if term.parameter is not None:
-        return True
-    if term.kind is TypeKind.ATOM:
-        return term.name.startswith(("builtins.", "local:", "typing.", "collections.abc."))
-    children = term.children[1:] if term.kind is TypeKind.APPLY else term.children
-    return all(_known_base_argument(child) for child in children)
-
-
 def type_parameter_identities(term: TypeTerm) -> frozenset[str]:
     """Every scoped parameter identity mentioned by an immutable type term."""
     own = frozenset((term.parameter.identity,)) if term.parameter is not None else frozenset()
     return own.union(*(type_parameter_identities(child) for child in term.children))
+
+
+def spellable(term: TypeTerm) -> bool:
+    """Whether the helper's module can write ``term``: every name in it has a spelling there."""
+    if term.kind is TypeKind.ATOM:
+        return bool(term.spelling)
+    return all(spellable(child) for child in term.children)
+
+
+def required_imports(terms: Sequence[TypeTerm]) -> tuple[tuple[str, str], ...]:
+    """The ``(module, name)`` imports writing ``terms`` needs, each once, in order of use."""
+    found: dict[tuple[str, str], None] = {}
+
+    def collect(term: TypeTerm) -> None:
+        found.update(dict.fromkeys(term.imports))
+        for child in term.children:
+            collect(child)
+
+    for term in terms:
+        collect(term)
+    return tuple(found)
 
 
 def _union(members: tuple[TypeTerm | None, ...]) -> TypeTerm | None:
@@ -871,9 +997,15 @@ def _term_key(term: TypeTerm) -> str:
 
 
 def render_type(term: TypeTerm) -> ast.expr:
-    """Render a resolved term; callers replace source parameters before emission."""
+    """Render a resolved term; callers replace source parameters before emission.
+
+    Raises ``ValueError`` for a term that is not :func:`spellable`: a name the
+    helper's module cannot write is never replaced by one it would misread.
+    """
     if term.kind is TypeKind.ATOM:
-        return ast.parse(term.spelling or term.name, mode="eval").body
+        if not term.spelling:
+            raise ValueError(f"{term.name} has no spelling where the helper is defined")
+        return ast.parse(term.spelling, mode="eval").body
     if term.kind is TypeKind.CONSTANT:
         return ast.parse(term.name, mode="eval").body
     children = [render_type(child) for child in term.children]

@@ -41,6 +41,27 @@ requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, rea
         ("Klass", "def () -> builtins.list[m.Klass]", "def () -> builtins.list[m.Klass]"),
         # Not a plain dotted expression.
         ("kinds[0]", "def () -> m.Klass", "def () -> m.Klass"),
+        # A thunk returning the class is a thunk returning its type (rich's markdown).
+        ("lambda: Klass", "def () -> def (name: str) -> m.Klass", "def () -> type[m.Klass]"),
+        ("lambda: make_thing", "def () -> def () -> m.Thing", "def () -> def () -> m.Thing"),
+        ("lambda: Klass()", "def () -> m.Klass", "def () -> m.Klass"),
+        # A named tuple's constructor, as mypy 1.14 writes it, makes the class.
+        (
+            "Span",
+            "def (start: builtins.int) -> tuple[builtins.int, fallback=m.Span]",
+            "type[m.Span]",
+        ),
+        # A class whose __init__ is overloaded: every signature makes it.
+        (
+            "Box",
+            "Overload(def (x: builtins.int) -> m.Box, def (x: builtins.str) -> m.Box)",
+            "type[m.Box]",
+        ),
+        (
+            "Box",
+            "Overload(def (x: builtins.int) -> m.Box, def (x: builtins.str) -> m.Other)",
+            "Overload(def (x: builtins.int) -> m.Box, def (x: builtins.str) -> m.Other)",
+        ),
     ],
 )
 def test_only_a_reference_to_the_class_itself_is_respelled(
