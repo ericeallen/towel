@@ -30,6 +30,23 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- On Python 3.11 and 3.12, Towel compared the syntax trees it builds with
+  parsed ones by `ast.dump`. Before 3.13, `ast.dump` spells a field the
+  constructor was not given differently from one set empty. On 3.12 the
+  helper's `FunctionDef` has no `type_params`, so nearly every helper was
+  declined as "could not be rendered". Other comparisons could also miss:
+  - the subtype relation that needs no checker;
+  - union normalisation;
+  - the instantiation check;
+  - structural keys and proposal identities.
+
+  Each miss cost a refactoring or precision, never soundness. Every such
+  comparison now uses one spelling on every supported Python, the one
+  3.13's `ast.dump` writes. On 3.12 this recovers 5 typed refactorings in
+  the corpus: packaging 2, mistune 2 and nox 1.
+- The test suite passes on Python 3.11, 3.12 and 3.13. Fixtures in PEP 695
+  syntax, and tests of `typing.override`, are skipped where the running
+  Python lacks them.
 - The fallback annotations of a typed run are built from the checker's
   answer. Under strict mypy, the rung that made every annotation `Any` had
   verified 4 times in 46, and 32 of its refusals were "Returning Any". Now
@@ -234,10 +251,21 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   only builtins and fell back to `Any`, and mistune's block quote and spoiler
   helpers were declined.
 
-  With `--cross-module`, typed refactorings rise from 10 to 14 on packaging,
-  18 to 24 on rich and 15 to 19 on mistune; nox stays at 5. Every output
+  Together with the ladder and baseline changes above, typed refactorings
+  rise as follows, measured on Python 3.12.13 with `--cross-module` from
+  `eaa3882` to this release:
+
+  | Project | Typed refactorings | Project checks per run |
+  |---|---|---|
+  | packaging | 10 to 20 | 68 to 36 |
+  | rich | 18 to 22 | 45 to 30 |
+  | mistune | 15 to 19 | 31 to 19 |
+  | nox | 5 to 5 | 9 to 7 |
+  | idna | 3 to 1 | 5 to 5 |
+
+  idna's output now passes its CI's `mypy --strict idna`. Every output
   passes its project's own mypy and test suite exactly as the unchanged
-  project does.
+  project does, and every module imports as it did.
 - Pyright's language server checks a project as `pyright` itself does. Towel
   sent it a `python.analysis` section without `autoSearchPaths`, which the
   server then leaves off and the command line always sets, so a src
