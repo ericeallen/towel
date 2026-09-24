@@ -20,7 +20,7 @@ whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
 other (docs/DECISIONS.md, "Import names come from the program").
 
 A fixture that configures an import sorter is refactored with it, as the
-command line would: ``xf30_import_order_is_registration_order`` holds a
+command line would: ``xf7t_import_order_is_registration_order`` holds a
 module the sorter's configuration excludes and one whose imports are not in
 its order, and each import registers a plugin.
 """
@@ -63,7 +63,7 @@ TRANSFORMED = {
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
     "xf29_type_checking_block_with_branches",
-    "xf30_import_order_is_registration_order",
+    "xf7t_import_order_is_registration_order",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
