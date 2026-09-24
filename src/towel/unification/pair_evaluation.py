@@ -1221,9 +1221,6 @@ class PairEvaluation(
                     # Only the names the template block reads can matter to a
                     # candidate's eager-argument check; the rest would make
                     # the template's key differ per function position.
-                    # Only the names the template block reads can matter to a
-                    # candidate's eager-argument check; the rest would make
-                    # the template's key differ per function position.
                     available_names=free.available_names[0]
                     & set().union(*(loaded_names(node) for node in pair.block1_nodes)),
                     return_variables=tuple(unified.ordered_return_variables[0]),
