@@ -425,7 +425,11 @@ def _annotation(node: ast.expr | None) -> str:
 
 @requires_mypy
 def test_a_relatively_imported_class_gets_a_type_variable_end_to_end(tmp_path: Path) -> None:
-    """packaging D, in miniature: the rows form only when ``shapes.version.Version`` is ``Version``."""
+    """packaging D, in miniature: the rows form only when ``shapes.version.Version`` is ``Version``.
+
+    The arguments are locals, whose types only the checker knows, and it
+    names the one class ``shapes.version.Version``.
+    """
     _project(
         tmp_path,
         {
@@ -434,13 +438,17 @@ def test_a_relatively_imported_class_gets_a_type_variable_end_to_end(tmp_path: P
                 from .version import Version
 
 
-                def upper(upper_parts: list[str] | None, lower_parts: list[str]) -> list[str] | None:
+                def upper(text: str) -> list[str] | None:
+                    upper_parts = text.split(",") if text else None
+                    lower_parts = [text.lower()]
                     if upper_parts is None:
                         return None
                     return lower_parts + upper_parts
 
 
-                def tail(tail_parts: list[Version] | None, fragments: list[Version]) -> list[Version] | None:
+                def tail(texts: list[str]) -> list[Version] | None:
+                    tail_parts = [Version(text) for text in texts] if texts else None
+                    fragments = [Version("0")]
                     if tail_parts is None:
                         return None
                     return fragments + tail_parts
