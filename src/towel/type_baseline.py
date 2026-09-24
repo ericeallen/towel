@@ -34,8 +34,9 @@ and an error on a line the change left alone must match the reference's error
 on that same line, wherever it now stands; only the errors on lines the change
 wrote (the helper, the call sites, an import) are compared by message, as a
 multiset, with the reference's errors on the lines it replaced. Where either
-text is unknown, the whole file is compared by message. The message includes
-the checker's error code, so two errors differ when their codes do.
+text is unknown, the whole file is compared by message. A pyright message
+carries its rule, so two errors differ when their rules do; Towel's mypy worker
+hides error codes, so two mypy errors differ when their texts do.
 
 What this can mistake, and which way it errs:
 
@@ -102,6 +103,7 @@ __all__ = [
     "pre_existing_summary",
     "resolved_path",
     "unchanged_lines",
+    "unlooked_warning",
 ]
 
 
@@ -386,4 +388,22 @@ def names_any_warning(
             f"{'The rest lie' if declined else 'They lie'} in {len(elsewhere)} file(s) the run "
             f"does not change ({shown}{more}), where a use of such a name is checked against Any."
         )
+    return "\n".join(lines)
+
+
+def unlooked_warning(regions: Mapping[str, Sequence[Tuple[int, int]]], root: Path) -> str:
+    """The regions of the analyzed files the checker does not look at, and what the run does there."""
+    root = Path(resolved_path(str(root)))
+    listed = [(path, start, end) for path, spans in sorted(regions.items()) for start, end in spans]
+    lines = [
+        f"warning: the type checker does not look at {len(listed)} region(s) of the code this "
+        "run may change: it takes them to be unreachable on the platform and Python it checks "
+        "for (a sys.platform, sys.version_info or TYPE_CHECKING test it makes false, an assert "
+        "it knows fails), so it reports nothing there and a check says nothing about a change. "
+        "No change to them is attempted; the project's own check may look at them on another "
+        "platform or Python:"
+    ]
+    lines += [f"  {_shown(path, root)}:{start}-{end}" for path, start, end in listed[:_FILES_SHOWN]]
+    if len(listed) > _FILES_SHOWN:
+        lines.append(f"  ... and {len(listed) - _FILES_SHOWN} more")
     return "\n".join(lines)

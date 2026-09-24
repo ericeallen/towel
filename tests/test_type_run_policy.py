@@ -32,6 +32,7 @@ from towel.type_inference import (
 )
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.probe_answers import answer_probes, only_probes
 
 
 def _source(*, typed: bool = True) -> str:
@@ -66,8 +67,9 @@ class _Oracle:
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         assert self.checks, "Inference ran before the original project check"
-        self.inferences += 1
-        return {}
+        if not only_probes(requests):
+            self.inferences += 1
+        return answer_probes(requests)
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[tuple[str, str]]

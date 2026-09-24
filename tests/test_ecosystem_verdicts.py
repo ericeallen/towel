@@ -821,6 +821,9 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
             "PASS",
             typing_mode="no-types" if no_types else "default",
             pre_existing=None if no_types else PRE_EXISTING,
+            unchecked=(
+                None if no_types else ecosystem.UncheckedCode(regions=2, declined_proposals=1)
+            ),
         )
 
     def executor(max_workers: int, initializer: Callable[[], None]) -> ThreadPoolExecutor:
@@ -849,6 +852,7 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
     assert f"Typing mode requested: `{mode}`" in markdown
     if no_types or worker_fails:
         assert summary["pre_existing_errors"] == {} and "Typed against" not in markdown
+        assert summary["unchecked_code"] == {} and "does not look at" not in markdown
     else:
         assert summary["pre_existing_errors"] == {
             "fixture": {
@@ -864,6 +868,8 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
         assert (
             "Typed against pre-existing errors" in markdown and "fixture (12, 2, 1, 2)" in markdown
         )
+        assert summary["unchecked_code"] == {"fixture": {"regions": 2, "declined_proposals": 1}}
+        assert "does not look at (regions, proposals declined for it): fixture (2, 1)" in markdown
 
 
 PRE_EXISTING = ecosystem.PreExistingErrors(
@@ -898,10 +904,15 @@ PRE_EXISTING_REPORT = (
     '  package/blind.py:1: Cannot find implementation or library stub for module named "gone"\n'
     "The rest lie in 1 file(s) the run does not change (tests/conftest.py), where a use of such "
     "a name is checked against Any.\n"
+    "warning: the type checker does not look at 2 region(s) of the code this run may change: "
+    "it takes them to be unreachable on the platform and Python it checks for\n"
+    "  package/windows.py:9-40\n"
+    "  package/compat.py:3-5\n"
     "Applied 1 refactoring(s) across 1 file(s)\n"
     "Declined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):\n"
-    "  3 proposal(s) not applied: not verifiable: its file holds a name the type checker cannot "
-    "type 2, refused by the type checker 1\n"
+    "  4 proposal(s) not applied: not verifiable: its file holds a name the type checker cannot "
+    "type 2, not verifiable: the type checker does not look at the code it changes 1, refused "
+    "by the type checker 1\n"
 )
 """What Towel says, before it begins, of a project whose check already reports errors."""
 
@@ -962,13 +973,14 @@ def test_a_project_whose_check_has_errors_is_refactored_with_types_and_recorded(
     assert result.pre_existing == ecosystem.PreExistingErrors(
         errors=12, files=3, names_any=2, declined_files=1, declined_proposals=2
     )
+    assert result.unchecked == ecosystem.UncheckedCode(regions=2, declined_proposals=1)
 
 
 def test_a_clean_check_records_no_pre_existing_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result = _check(tmp_path, monkeypatch, (0, "3 passed in 0.01s\n"), (0, "3 passed in 0.01s\n"))
-    assert result.verdict == "PASS" and result.pre_existing is None
+    assert result.verdict == "PASS" and result.pre_existing is None and result.unchecked is None
 
 
 def test_an_older_towels_refusal_for_existing_errors_is_reported_and_not_retried(

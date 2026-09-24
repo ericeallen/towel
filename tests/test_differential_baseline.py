@@ -62,6 +62,7 @@ from towel.type_inference import (
 )
 from towel.unification.exceptions import RefactoringError, UnverifiableChangeError
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.probe_answers import answer_probes, only_probes
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
@@ -319,8 +320,9 @@ class _Oracle:
         return self.check_project({file_path: source})
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        self.inferences += 1
-        return {}
+        if not only_probes(requests):
+            self.inferences += 1
+        return answer_probes(requests)
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[tuple[str, str]]

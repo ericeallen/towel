@@ -52,7 +52,8 @@ project whose own check, as Towel runs it, already reports errors is refactored
 with types all the same: Towel compares each change's check with those errors
 and rejects the change only for one it adds. For each such project the report
 records how many errors there were, and how many files and proposals Towel
-declined because an error there leaves a name the checker cannot type. Only a
+declined because an error there leaves a name the checker cannot type, and the
+code the checker does not look at, which Towel does not change. Only a
 project whose checker cannot run at all is declined by Towel, and the answer it
 gives such a user is to rerun without types. The corpus does exactly that: it
 holds the refusal to its promised wording -- the reason and the way forward --
@@ -302,6 +303,20 @@ class PreExistingErrors:
     """Proposals declined for touching such a file, from the run's closing count."""
 
 
+@dataclasses.dataclass(frozen=True)
+class UncheckedCode:
+    """What a typed refactor said about code the type checker does not look at.
+
+    Code the checker takes to be unreachable where it runs (another platform,
+    another Python) is reported nowhere, so Towel changes none of it.
+    """
+
+    regions: int
+    """Regions of the refactored code the checker does not look at, named before the run."""
+    declined_proposals: int = 0
+    """Proposals declined because they would change such code, from the run's closing count."""
+
+
 @dataclasses.dataclass
 class Result:
     name: str
@@ -318,6 +333,8 @@ class Result:
     """Why the typed attempt was declined, when the verdict came from a retry without types."""
     pre_existing: Optional[PreExistingErrors] = None
     """The errors the project's check reported before the typed refactor, when it reported any."""
+    unchecked: Optional[UncheckedCode] = None
+    """Code the checker does not look at, when the typed refactor found any."""
     environment: Optional[Environment] = None
     """What Towel ran with; absent only when the environment could not be built."""
     cross_module: Optional[CrossModule] = None
@@ -2503,6 +2520,7 @@ def check_project(
         # types all the same, each change compared with those errors; what the
         # run said about them is kept whatever the attempt's outcome.
         result.pre_existing = _pre_existing_errors(logs / log_name)
+        result.unchecked = _unchecked_code(logs / log_name)
     if result.refactor.returncode != 0 and result.refactor.returncode != -9 and not no_types:
         # A project whose checker cannot run at all is one Towel declines to
         # verify, which is the documented behaviour and not a defect. The
@@ -2805,6 +2823,10 @@ NAMES_ANY_FILES = re.compile(r"^No change to these (\d+) file\(s\) is attempted"
 UNVERIFIABLE = re.compile(
     r"not verifiable: its file holds a name the type checker cannot type (\d+)"
 )
+UNLOOKED = re.compile(r"^warning: the type checker does not look at (\d+) region\(s\)", re.M)
+UNLOOKED_DECLINED = re.compile(
+    r"not verifiable: the type checker does not look at the code it changes (\d+)"
+)
 
 
 def _refusal(log_path: Path) -> str:
@@ -2848,6 +2870,22 @@ def _malformed_refusal(declined: BaselineRefusal, log_path: Path) -> Optional[st
     if REMEDY not in text:
         return f"refusal did not name the way forward ({REMEDY!r} absent)"
     return None
+
+
+def _unchecked_code(log_path: Path) -> Optional[UncheckedCode]:
+    """What a typed refactor reported about code the checker does not look at; ``None`` if none."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    regions = UNLOOKED.search(text)
+    declined = UNLOOKED_DECLINED.search(text)
+    if regions is None and declined is None:
+        return None
+    return UncheckedCode(
+        regions=int(regions.group(1)) if regions else 0,
+        declined_proposals=int(declined.group(1)) if declined else 0,
+    )
 
 
 def _pre_existing_errors(log_path: Path) -> Optional[PreExistingErrors]:
@@ -3208,6 +3246,9 @@ def main() -> int:
     pre_existing = {
         result.name: result.pre_existing for result in results if result.pre_existing is not None
     }
+    unchecked = {
+        result.name: result.unchecked for result in results if result.unchecked is not None
+    }
     cross_module_off = {
         result.name: result.cross_module.reason
         for result in results
@@ -3286,6 +3327,15 @@ def main() -> int:
                 for name, found in sorted(pre_existing.items())
             ),
         ]
+    if unchecked:
+        lines += [
+            "",
+            "Code the type checker does not look at (regions, proposals declined for it): "
+            + "; ".join(
+                f"{name} ({found.regions}, {found.declined_proposals})"
+                for name, found in sorted(unchecked.items())
+            ),
+        ]
     lines += [
         "",
         "Cross-module extraction off: "
@@ -3316,6 +3366,9 @@ def main() -> int:
                 "pre_existing_errors": {
                     name: dataclasses.asdict(found) for name, found in pre_existing.items()
                 },
+                "unchecked_code": {
+                    name: dataclasses.asdict(found) for name, found in unchecked.items()
+                },
                 "cross_module_off": cross_module_off,
                 "cross_module_opt_out_not_applied": opt_out_not_applied,
                 "results": [dataclasses.asdict(r) for r in results],
@@ -3329,7 +3382,13 @@ def main() -> int:
             line
             for line in lines
             if line.startswith(
-                ("Totals:", "Declined", "Typed against", "Cross-module extraction off")
+                (
+                    "Totals:",
+                    "Declined",
+                    "Typed against",
+                    "Code the type",
+                    "Cross-module extraction off",
+                )
             )
         ),
         flush=True,

@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import List, Mapping, Sequence
+
+import pytest
 
 from towel.type_inference import CheckResult, CheckSuccess, RevealRequest, TypeDiagnostic
 
+from tests.probe_answers import answer_probes, only_probes
 from tests.typed_fixtures import STRICT, CountingMypy, apply_one, requires_mypy
 
 
@@ -83,10 +86,14 @@ def test_the_unannotated_rung_is_still_tried_where_annotations_are_optional(
 
 
 class _RevealsNothing(CountingMypy):
-    """The project's mypy, which reveals no type: inference leaves the helper bare."""
+    """The project's mypy, which reveals no type: inference leaves the helper bare.
+
+    Its probes of where the checker looks are still answered, as mypy answers
+    them in checked code.
+    """
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[tuple[str, int, int], str]:
-        return {}
+        return answer_probes(requests) if only_probes(requests) else {}
 
 
 @requires_mypy
@@ -228,3 +235,62 @@ def test_the_type_the_block_saw_replaces_a_wider_declared_one(tmp_path: Path) ->
     assert outcome.error is None, outcome.error
     assert outcome.signature() in {"(self, text: 'Text') -> None", "(self, text: Text) -> None"}
     assert outcome.prospective_checks == 1, outcome.checked_helpers
+
+
+@requires_mypy
+def test_a_variant_accepted_after_a_replayed_refusal_is_still_probed_for_reachability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only refusals are replayed: a variant the checker accepts always has its lines probed.
+
+    The same variant is refused, heard again and refused by replay, and then,
+    once the module it imports is fixed, checked afresh and accepted, at which
+    point the check of code the checker does not look at runs for it.
+    """
+    from towel.unification.annotation_wiring import HelperAnnotationWiring
+    from towel.unification.exceptions import RefactoringError
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    probed: List[int] = []
+    original = HelperAnnotationWiring._refuse_what_the_checker_does_not_look_at
+
+    def probe(self: HelperAnnotationWiring, oracle: object, files: Mapping[str, str]) -> None:
+        probed.append(len(files))
+        original(self, oracle, files)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(HelperAnnotationWiring, "_refuse_what_the_checker_does_not_look_at", probe)
+    (tmp_path / "pyproject.toml").write_text(STRICT)
+    helpers = tmp_path / "helpers.py"
+    helpers.write_text("def key(a: int, b: int) -> tuple[int, int]:\n    return (a, b)\n")
+    path = tmp_path / "versions.py"
+    path.write_text(VERSIONS.lstrip())
+    oracle = CountingMypy()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        )
+        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        for _ in range(2):
+            with pytest.raises(RefactoringError):
+                engine.apply_refactoring(str(path), proposal)
+        assert probed == [], "a refused variant is not probed"
+        refused_checks = len(oracle.checked)
+        # ``key`` now returns a type ``<`` accepts on ``None`` too: the code after
+        # the call no longer relies on the block's narrowing.
+        helpers.write_text(
+            "from typing import Any\n\n\ndef key(a: int, b: int) -> Any:\n    return (a, b)\n"
+        )
+        (tmp_path / "versions.py").write_text(
+            VERSIONS.lstrip()
+            .replace("tuple[int, int] | None", "Any")
+            .replace("from helpers import key", "from typing import Any\n\nfrom helpers import key")
+        )
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        )
+        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        engine.apply_refactoring(str(path), proposal)
+        assert len(oracle.checked) > refused_checks
+        assert probed, "the accepted variant's lines were probed"
+    finally:
+        oracle.close()

@@ -23,11 +23,14 @@ from towel.type_inference import (
 from towel.unification.annotations import ApplySite
 from towel.unification.generic_annotations import generic_helpers
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.probe_answers import answer_probes, only_probes
 
 
 class _DeclaredTypesOnly(TypeOracle):
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        raise AssertionError("These complete source signatures need no speculative reveals")
+        if not only_probes(requests):
+            raise AssertionError("These complete source signatures need no speculative reveals")
+        return answer_probes(requests)
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[tuple[str, str]]

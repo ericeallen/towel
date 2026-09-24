@@ -60,6 +60,7 @@ from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import (
     CheckerUnavailableError,
     RefactoringError,
+    UncheckedCodeError,
     Untypeable,
     UntypeableExtraction,
     UnverifiableChangeError,
@@ -118,6 +119,7 @@ DeclineReason = Union[
         "refused by the type checker",
         "not judged: the type checker could not run",
         "not verifiable: its file holds a name the type checker cannot type",
+        "not verifiable: the type checker does not look at the code it changes",
         "not representable in its file's encoding",
         "could not be rendered",
         "changed nothing",
@@ -433,6 +435,11 @@ class FixedPointDrivers(Materialization):
             reason, said = (
                 "not judged: the type checker could not run",
                 "the type checker could not check",
+            )
+        elif isinstance(error, UncheckedCodeError):
+            reason, said = (
+                "not verifiable: the type checker does not look at the code it changes",
+                "the type checker could not verify",
             )
         elif isinstance(error, UnverifiableChangeError):
             reason, said = (
