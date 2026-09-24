@@ -902,10 +902,14 @@ the proposals it built and did not apply, by reason:
   `result` bound before it). `unbinds_external_name`: the block deletes,
   explicitly or through `except ... as`, a name bound before it or
   declared `global`/`nonlocal`.
-- Shape. `value_producing_mismatch`: one block returns a value and the
-  other does not. `incomplete_return_coverage_block1`/`_block2`: a
-  value-producing block does not leave by `return`, `raise`, `break` or
-  `continue` on every path. `not_structurally_similar`: the blocks'
+- Shape. `value_producing_mismatch`: one block produces a value (a
+  `return`, or variables its caller reads afterwards) and the other does
+  not. `return_versus_variables`: the first block's value is its `return`
+  and the second's the variables its caller reads after it, and one call
+  cannot be both `return helper()` and `x = helper()`.
+  `incomplete_return_coverage_block1`/`_block2`: a block that returns
+  does not leave by `return`, `raise`, `break` or `continue` on every path
+  (block enumeration already leaves such blocks out). `not_structurally_similar`: the blocks'
   per-statement node counts or type histograms differ by more than the
   similarity threshold.
 - Unification. `unification_failed`: the blocks do not anti-unify, which

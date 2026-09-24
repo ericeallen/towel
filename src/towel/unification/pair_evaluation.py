@@ -772,7 +772,10 @@ class PairEvaluation(
 
         Blocks with returned variables count as value-producing, since the
         helper will return them. A naturally value-producing block must
-        return on every path, so no partial control flow is extracted.
+        return on every path, so no partial control flow is extracted. When
+        the first block's value is its ``return`` and the second's the
+        variables its caller reads after it, one call cannot be both
+        ``return helper()`` and ``x = helper()``: ``return_versus_variables``.
         """
         debug_enabled = debugging(VALIDATION)
         value_prod1 = self._is_value_producing(pair.block1_nodes) or bool(
@@ -803,6 +806,14 @@ class PairEvaluation(
                 )
                 return None
             if not has_complete_return_coverage(pair.block2_nodes):
+                if analysis.return_variables2:
+                    self._reject(
+                        pair,
+                        RejectReason.RETURN_VERSUS_VARIABLES,
+                        detail=f"block2 binds {sorted(analysis.return_variables2)}",
+                        trace="  REJECTED: Block1 returns, block2 binds variables read after it",
+                    )
+                    return None
                 self._reject(
                     pair,
                     RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2,

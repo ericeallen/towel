@@ -7,12 +7,14 @@ would read it before it exists. Each test builds the smallest pair that
 reaches the guard and asserts the ``RejectReason`` on the ``towel.rejections``
 logger at DEBUG, which is what ``DEBUG_PROPOSAL_REJECTIONS`` turns on.
 
-The first block's coverage guard cannot fire: block enumeration already
-drops every value-producing block without complete return coverage (see
-``_extract_code_blocks``), and the guard tests the same predicate. A test
-pins that invariant so the shadowing stays visible. The second block's
-guard is still reachable, because a block that binds a variable read after
-it counts as value-producing without containing a return.
+Neither coverage guard fires for an enumerated block: enumeration already
+drops every block that returns on some path but not every one (see
+``_extract_code_blocks``), and the guards test the same predicate. A test
+pins that invariant so the shadowing stays visible. What does reach the
+second block's check is a block that binds a variable read after it, which
+counts as value-producing without containing a return, against a first
+block that returns: that is ``return_versus_variables``, not a block whose
+return coverage is incomplete, which is how it used to be counted.
 """
 
 from __future__ import annotations
@@ -82,13 +84,15 @@ def _reasons(messages: List[str]) -> List[str]:
     return [m[len("REJECT[") : m.index("]")] for m in messages if m.startswith("REJECT[")]
 
 
-def test_second_block_without_complete_return_coverage_is_rejected(
+def test_a_returning_block_against_one_that_binds_variables_is_named_for_that(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     messages = _rejections(tmp_path, RETURNING + BINDING, caplog)
-    hits = [m for m in messages if RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2 in m]
+    hits = [m for m in messages if f"REJECT[{RejectReason.RETURN_VERSUS_VARIABLES}]" in m]
     assert hits, messages
     assert all("returning@" in m and "binding@" in m for m in hits), hits
+    assert all(m.endswith(":: block2 binds ['label']") for m in hits), hits
+    assert RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2 not in _reasons(messages)
 
 
 def test_coverage_guards_are_skipped_when_the_first_block_returns_variables(
