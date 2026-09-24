@@ -359,7 +359,10 @@ import from each other (hostile fixture `xf23`); a directory of scripts that
 import nothing local gets no cross-file helpers; and a name the tree leaves
 ambiguous, such as a stale `build/lib/alpha` beside `src/alpha`, or a
 package this interpreter can import from elsewhere, gets none until the
-stray copy is excluded. Towel runs with the interpreter it was started with,
+stray copy is out of the way: excluded, when it is in the tree, and when it
+is installed elsewhere, by running Towel where the package is this tree (an
+editable install) or is not installed, since `--exclude` reaches only the
+tree. Towel runs with the interpreter it was started with,
 which stands for the project's: run it in the project's own environment.
 Before it writes anything, a `--cross-module` run of `dry` or `preview`
 names every such problem with that remedy, and refuses the run when one

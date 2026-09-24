@@ -1044,6 +1044,24 @@ IMPORT_PROBLEM_REMEDY = (
 )
 """What a user can do about an import problem that leaves a name in doubt."""
 
+INSTALLED_COPY_REMEDY = (
+    " --exclude reaches only the project's tree, so for a copy installed outside it run Towel"
+    " from an environment where the package is this tree (an editable install) or is not"
+    " installed."
+)
+"""What a user can do when the doubt comes from a copy the interpreter imports from elsewhere."""
+
+
+def _import_problem_remedy(problems: Sequence["ImportProblem"]) -> str:
+    """The remedy for ``problems``: exclusion, and, for an installed copy, another environment."""
+    from towel.import_model import AmbiguousName
+
+    installed = any(
+        isinstance(problem, AmbiguousName) and problem.installed is not None for problem in problems
+    )
+    return IMPORT_PROBLEM_REMEDY + (INSTALLED_COPY_REMEDY if installed else "")
+
+
 MISSING_MODULE_OUTSIDE_REMEDY = (
     "Fix the import, or leave its directory out with --exclude <directory name>."
 )
@@ -1095,7 +1113,7 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
             " do not name them unambiguously, so no import of one could be shown to work:\n"
             + "".join(f"  {problem.describe(model.root)}\n" for problem in involved)
             + (f"({others} other problem(s) alone would not stop the run.)\n" if others else "")
-            + IMPORT_PROBLEM_REMEDY
+            + _import_problem_remedy(involved)
         )
     missing = [
         problem
@@ -1108,7 +1126,7 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
             "The program's imports do not name every module unambiguously, so no helper is shared"
             " across the modules these involve:\n%s%s",
             "".join(f"  {problem.describe(model.root)}\n" for problem in in_doubt),
-            IMPORT_PROBLEM_REMEDY,
+            _import_problem_remedy(in_doubt),
         )
     if missing:
         LOG.warning("%s", _missing_module_report(model, missing, target))

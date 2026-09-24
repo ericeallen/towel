@@ -190,7 +190,10 @@ packages that never import each other share nothing; a directory of scripts
 that import nothing local gets no cross-file helpers; and a name the tree
 makes ambiguous (a stale `build/lib/alpha` beside `src/alpha`, or an
 installed copy of the package that the interpreter running Towel can see)
-gets none until the stray copy is left out with `--exclude`. On the command
+gets none until the stray copy is out of the way: left out with `--exclude`
+when it is in the tree, and, since `--exclude` reaches only the tree, by
+running Towel from an environment where the package is this tree (an
+editable install) or is not installed when it is installed elsewhere. On the command
 line, a `--cross-module` run names each such problem before it starts, and
 refuses when one leaves a name of the package it refactors in doubt: an
 ambiguous name, a file reachable under two names, a relative import that
