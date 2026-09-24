@@ -562,6 +562,29 @@ class UnificationRefactorEngine(ParallelEvaluation):
             msg += f" :: {detail}"
         REJECTIONS.debug(msg)
 
+    def _debug_decline_site(
+        self,
+        reason: RejectReason,
+        pair: "CodeBlockPair",
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        detail: object,
+    ) -> None:
+        """Trace a further occurrence that cannot join ``pair``'s helper, which the pair keeps.
+
+        Not the pair's reason, since the pair is not declined: its helper is
+        still proposed, for the sites that can share it.
+        """
+        if not debugging(REJECTIONS):
+            return
+        lines = (nodes[0].lineno, nodes[-1].end_lineno or nodes[-1].lineno) if nodes else None
+        site = _traced_block(pair.file_path, function.name, lines)
+        first = _traced_block(pair.file_path, pair.function1_name, pair.block1_range)
+        second = _traced_block(pair.file_path2, pair.function2_name, pair.block2_range)
+        REJECTIONS.debug(
+            f"DECLINE-SITE[{reason}]: {site} joins no helper of {first} <-> {second} :: {detail}"
+        )
+
     def analyze_file(self, file_path: str) -> List[RefactoringProposal]:
         """
         Analyze a Python file and find refactoring opportunities.

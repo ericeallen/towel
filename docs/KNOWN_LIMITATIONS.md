@@ -981,6 +981,12 @@ the proposals it built and did not apply, by reason:
   placeholder, a name bound only inside the block).
   `instantiation_mismatch`: the helper applied to the call's arguments does
   not reproduce the block up to renamed binders.
+  `unsupported_extraction`: the extractor cannot write the helper or one
+  of its calls (a generated parameter name the block already uses, an
+  annotated assignment whose target would become an argument, a parameter
+  with no argument at a site); the trace's detail says which. A further
+  occurrence that cannot join a pair's helper for this reason is traced as
+  `DECLINE-SITE[unsupported_extraction]`, and the pair keeps its helper.
 - Tool directives in the moved code. The comments of a block move into the
   helper with its code, and a directive (`# type: ignore`, `# pyright:
   ignore`, `# noqa`, `# pragma: no cover`, `# nosec`, `# pylint: ...`,

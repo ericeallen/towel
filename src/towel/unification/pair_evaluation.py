@@ -1120,7 +1120,8 @@ class PairEvaluation(
                 # Use hygienic double-underscore name; engine will prefix underscore for methods.
                 function_name="__extracted_func",
             )
-        except UnsupportedExtraction:
+        except UnsupportedExtraction as error:
+            self._debug_reject(RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=str(error))
             return None
         inline_leading_thunks(func_def, unified.substitution, param_order)
         if has_impure_eager_parameters(unified.substitution, free.available_names):
@@ -1272,7 +1273,10 @@ class PairEvaluation(
                 return_variables=list(unified.ordered_return_variables[block_idx]),
                 hygienic_renames=unified.hygienic_renames,
             )
-        except UnsupportedExtraction:
+        except UnsupportedExtraction as error:
+            self._debug_reject(
+                RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=f"block{block_idx+1}: {error}"
+            )
             return None
         if needs_class_body([call_node]):
             # The call would evaluate ``super()`` in a thunk, a lambda with no

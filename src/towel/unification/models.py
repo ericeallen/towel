@@ -331,6 +331,7 @@ class RejectReason(StrEnum):
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
     UNIFICATION_FAILED = "unification_failed"
     UNPROVEN_IMPORT = "unproven_import"
+    UNSUPPORTED_EXTRACTION = "unsupported_extraction"
     UNSAFE_REASSIGNMENT_BLOCK1 = "unsafe_reassignment_block1"
     UNSAFE_REASSIGNMENT_BLOCK2 = "unsafe_reassignment_block2"
     VALUE_PRODUCING_MISMATCH = "value_producing_mismatch"

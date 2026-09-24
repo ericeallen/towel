@@ -19,10 +19,12 @@ from typing import Callable, List, cast
 
 import pytest
 
+import towel.unification
 from towel.unification.models import CodeBlockPair, RejectReason
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-UNIFICATION = Path(__file__).resolve().parents[1] / "src" / "towel" / "unification"
+UNIFICATION = Path(towel.unification.__file__).resolve().parent
+"""The engine's modules, as imported: what the static checks below read."""
 
 PAIR = cast(
     CodeBlockPair,
@@ -103,3 +105,142 @@ def test_only_the_trace_sets_a_pairs_reason() -> None:
         ("refactor_engine.py", "_debug_reject"),
         ("refactor_engine.py", "_judge_pair"),
     ]
+
+
+# -- Declines by exception -----------------------------------------------------
+
+THREE_ALIKE = """
+def first(rows):
+    total = 0
+    for row in rows:
+        total += row * 2
+    total = total + 1
+    return total
+
+def second(rows):
+    total = 0
+    for row in rows:
+        total += row * 2
+    total = total + 2
+    return total
+
+def third(rows):
+    total = 0
+    for row in rows:
+        total += row * 2
+    total = total + 3
+    return total
+"""
+
+TRACERS = frozenset({"_debug_reject", "_reject", "_debug_decline_site"})
+"""The calls that trace a decline: of a pair, or of a further site a pair's helper cannot take."""
+
+ACCOUNTED = {
+    ("pair_evaluation.py", "_module_namespace_names", "SyntaxError"): (
+        "returns None, which _host_namespace_reads passes on and the pair declines as"
+        " bare_name_differs_by_module"
+    ),
+    ("pair_evaluation.py", "_builtin_evidence", "(OSError, UnicodeError, ValueError)"): (
+        "the unreadable file becomes the evidence that declines the pair as"
+        " builtin_may_differ_by_module"
+    ),
+}
+"""Handlers that trace nothing themselves, and the traced decline that accounts for each."""
+
+RAISING = frozenset({"extract_function", "generate_call"})
+"""The extractor's methods that raise ``UnsupportedExtraction``."""
+
+
+def _handlers(module: Path) -> List[tuple[str, ast.ExceptHandler]]:
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    return [
+        (function.name, handler)
+        for function in ast.walk(tree)
+        if isinstance(function, ast.FunctionDef)
+        for handler in ast.walk(function)
+        if isinstance(handler, ast.ExceptHandler)
+    ]
+
+
+@pytest.mark.parametrize("module", ["pair_evaluation.py", "clustering.py"])
+def test_every_exception_caught_while_judging_a_pair_is_traced(module: str) -> None:
+    """A new handler that declines without a trace fails here until it traces or is accounted for."""
+    silent = [
+        (module, function, ast.unparse(handler.type) if handler.type else "")
+        for function, handler in _handlers(UNIFICATION / module)
+        if not any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in TRACERS
+            for statement in handler.body
+            for node in ast.walk(statement)
+        )
+    ]
+    assert [key for key in silent if key not in ACCOUNTED] == []
+
+
+@pytest.mark.parametrize("module", ["pair_evaluation.py", "clustering.py"])
+def test_every_extraction_that_can_raise_is_caught(module: str) -> None:
+    """Uncaught, ``UnsupportedExtraction`` would end the whole analysis rather than decline."""
+    tree = ast.parse((UNIFICATION / module).read_text(encoding="utf-8"))
+    guarded = {
+        id(call)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and any(
+            handler.type is not None and "UnsupportedExtraction" in ast.unparse(handler.type)
+            for handler in node.handlers
+        )
+        for statement in node.body
+        for call in ast.walk(statement)
+    }
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in RAISING
+    ]
+    assert calls, "the extractor is called here"
+    assert [ast.unparse(call.func) for call in calls if id(call) not in guarded] == []
+
+
+@pytest.mark.parametrize(
+    "method, caller, prefix",
+    [
+        ("extract_function", "_render_helper", "REJECT"),
+        ("generate_call", "_call_for_block", "REJECT"),
+        ("extract_function", "_cluster_candidate_call", "DECLINE-SITE"),
+        ("generate_call", "_cluster_candidate_call", "DECLINE-SITE"),
+    ],
+)
+def test_an_extraction_the_extractor_cannot_render_is_traced_under_its_reason(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    caller: str,
+    prefix: str,
+) -> None:
+    import sys
+
+    from towel.unification.extractor import HygienicExtractor, UnsupportedExtraction
+
+    real = getattr(HygienicExtractor, method)
+
+    def raising(self: HygienicExtractor, *args: object, **kwargs: object) -> object:
+        if sys._getframe(1).f_code.co_name == caller:
+            raise UnsupportedExtraction("probe")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(HygienicExtractor, method, raising)
+    path = tmp_path / "m.py"
+    path.write_text(THREE_ALIKE)
+    engine = UnificationRefactorEngine(min_lines=3)
+    lines = _traced(caplog, lambda: engine.analyze_files([str(path)], progress="none"))
+    traced = [line for line in lines if line.startswith(f"{prefix}[unsupported_extraction]: ")]
+    assert traced and all(line.endswith("probe") for line in traced), lines
+    assert all(f"{path}::" in line for line in traced)
+    assert "other" not in engine.declined_pairs
+    if prefix == "REJECT":
+        assert engine.declined_pairs.get("unsupported_extraction", 0) == len(traced)

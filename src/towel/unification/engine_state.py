@@ -403,6 +403,17 @@ class EngineState:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 
+    def _debug_decline_site(
+        self,
+        reason: RejectReason,
+        pair: "CodeBlockPair",
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        detail: object,
+    ) -> None:
+        """Provided by UnificationRefactorEngine."""
+        raise NotImplementedError
+
     def _judge_pair(
         self,
         pair: "CodeBlockPair",
