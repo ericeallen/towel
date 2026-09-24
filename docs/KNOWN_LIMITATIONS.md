@@ -990,18 +990,60 @@ the proposals it built and did not apply, by reason:
   alike up to spacing, at the same places, as when only one copy of a line
   needed its `# type: ignore` (mashumaro's `type_name`): the helper's line
   would be silenced for every site or for none. `directive_on_argument`: a
-  checker's ignore stands on a line where a block's own code, anything
-  but a name or a literal, would become an argument of the call, which the
-  ignore, left in the helper, no longer covers. A linter's or coverage
-  directive on such a line is not declined for: it stays in the helper,
-  and the argument written at the call site goes without it, which can
-  cost a lint warning there (a long literal's `# noqa: E501`) but never a
-  type error. `directive_outlives_block`:
+  directive reaches code of a block's own, anything but a name or a
+  literal, that would become an argument of the call and so be written at
+  the call site, where the directive does not reach: a `# type: ignore` or
+  `# noqa` on its line, a `# nosec`, `# fmt: skip` or line-level
+  `# pylint: disable`, a `# pragma: no cover` on the statement or the
+  clause it excludes, the statement after a `# noinspection`, or a
+  `# fmt: off` region. The directive is not copied onto the call line
+  either, which would silence or exclude a line its tool never saw it on.
+  Measured on September 24, 2026, extending the rule from a checker's
+  ignore to every directive cost no refactoring: the `--no-types` fixed
+  points of click, rich, packaging, pygments, asyncstdlib, mashumaro,
+  python-statemachine, tinydb, fastjsonschema, pint, autopep8, docutils,
+  jinja2, markdown, pyparsing, sqlparse and tornado were byte-identical, and
+  a first analysis of those and of attrs, boltons, coverage.py and its
+  tests, more-itertools, pytest and its tests, requests, urllib3 and
+  werkzeug declined no pair for it that the checker's rule did not (one,
+  in jinja2). A directive for the whole file reaches its module wherever
+  the code is written and is not counted here. The two reasons below cost
+  five refactorings in those fixed points: four in pygments' builtins
+  scripts, whose `__main__` block no test runs (a module helper took
+  `_lua_builtins.py` from 100% to 40% line coverage), and one in
+  markdown's legacy inline patterns, both of whose sites are excluded. The
+  first analysis of the other nine declined two pairs for them: in
+  coverage.py's tests a block opening with its own `# pragma: nested`, and
+  in more-itertools two version-specific implementations each excluded on
+  its `def` line, where one of them runs on any given Python and the
+  helper might well have been covered; Towel cannot tell, and declines.
+  `directive_outlives_block`:
   a region directive on a line of its own (`fmt: off`/`on`, `isort:
   off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`) is not
   closed within the block, so its region reaches code that stays behind,
   or a file-wide directive (`flake8: noqa`, `ruff: noqa`, `mypy:`, `pyright:
-  strict`) would move into another module. A further site whose directives
+  strict`) would move into another module. `directive_around_block`:
+  every site's block is reached by a directive outside it that would not
+  reach the helper: `# pragma: no cover` or `# pylint: disable` at the end
+  of the header of a statement enclosing the block (its function's `def`
+  line, a class, an `if`, loop, `else:` or `except` line), or a `# pylint:
+  disable` on a line of its own earlier in a body enclosing it and not
+  enabled again before it. A helper written inside that class, as a method
+  at the class's end, or inside that function, from a directive on its
+  `def` line, is still reached; one on a line of its own at module level
+  reaches every helper of its module and is not counted. While one site is
+  measured or linted, the helper is that site's code and its tool reports
+  nothing new, so a single site outside is enough. pygments' builtins
+  scripts define functions under `if __name__ == '__main__':  # pragma: no
+  cover`; a module helper for two of them took `_lua_builtins.py` from 100%
+  to 40% line coverage, and a loop body excluded by its header's pragma
+  failed a `--fail-under=100` gate at 70%. `excluded_block_start`:
+  the block's first statement is a simple statement coverage excludes (the
+  `log(...)` before a `raise`, both marked `# pragma: no cover`); the call
+  that replaces the block runs exactly when that statement did, so it
+  would be measured and never run. A block opening with an excluded clause
+  (`if error:  # pragma: no cover`) still moves: its header runs whenever
+  it is reached, and so does the call. A further site whose directives
   differ from the pair's is left out of the cluster rather than declining it.
 - Placement. `needs_class_body`: the blocks use zero-argument `super()` and
   the helper cannot be a method of the class holding both, reached through

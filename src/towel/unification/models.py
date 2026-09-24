@@ -323,6 +323,8 @@ class RejectReason(StrEnum):
     DIRECTIVES_DIFFER = "directives_differ"
     DIRECTIVE_ON_ARGUMENT = "directive_on_argument"
     DIRECTIVE_OUTLIVES_BLOCK = "directive_outlives_block"
+    DIRECTIVE_AROUND_BLOCK = "directive_around_block"
+    EXCLUDED_BLOCK_START = "excluded_block_start"
     FORWARDED_CALLEE = "forwarded_callee"
     THUNK_OF_POSSIBLY_UNBOUND_LOCAL = "thunk_of_possibly_unbound_local"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"

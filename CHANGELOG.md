@@ -575,12 +575,20 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   - directives that differ between its sites (`directives_differ`): the
     helper has one line where the sites had several, so an ignore only one
     site needed would either silence the other or be lost;
-  - a checker's ignore over code that becomes a call argument
-    (`directive_on_argument`), which would leave the argument outside the
-    ignore's reach. jinja2's `as_const` extraction had put two
-    `attr-defined` errors at its call sites this way;
+  - any tool directive that reaches code, other than a name or a literal,
+    which would become a call argument (`directive_on_argument`). Checker,
+    linter, coverage, bandit and formatter directives all count. The
+    argument would sit outside the directive's reach. jinja2's `as_const`
+    extraction had put two `attr-defined` errors at its call sites this way.
+    No directive is copied onto a call;
   - a region or file directive that would reach past the moved code
-    (`directive_outlives_block`).
+    (`directive_outlives_block`);
+  - a coverage pragma or pylint `disable` around every site's block that
+    would not reach the helper (`directive_around_block`). A module helper
+    for pygments' `__main__`-only functions took `_lua_builtins.py` from
+    100% to 40% line coverage;
+  - a block whose first statement coverage excludes, since the call that
+    replaces it would be measured (`excluded_block_start`).
 
   Explanatory comments from every site are kept, the first site's first.
 - Helpers are shared across modules only with `--cross-module`
