@@ -334,7 +334,10 @@ class _BuildSource:
 
 @dataclass(frozen=True)
 class _BuildMessages:
+    """What a build reported, and what mypy said about the configuration while reading it."""
+
     messages: Tuple[str, ...]
+    warnings: Tuple[str, ...] = ()
 
 
 def _checker_root(path: Path) -> Path:
@@ -433,6 +436,8 @@ class MypyInferrer:
         self._import_scans: Dict[Path, ImportScan] = {}
         # Whether a build has answered since the cache and scans were empty.
         self.answered_from_warm_state = False
+        # What mypy has said about a configuration, each said once per oracle.
+        self._warned: set[str] = set()
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
@@ -556,7 +561,19 @@ class MypyInferrer:
             if isinstance(result, CheckFailure):
                 return _with_stderr(result, self._stderr_since(said_before))
             self.answered_from_warm_state = True
+            self._pass_on(result.warnings)
             return result
+
+    def _pass_on(self, warnings: Sequence[str]) -> None:
+        """Say, once each, what mypy said about the configuration and checked on regardless.
+
+        mypy's own run prints these and carries on, so a check does too; the
+        user still hears them, as they would from their own ``mypy``.
+        """
+        for warning in warnings:
+            if warning not in self._warned:
+                self._warned.add(warning)
+                LOG.warning("mypy, reading the project's configuration: %s", warning)
 
     def _running_worker(self) -> subprocess.Popen[bytes]:
         if self._process is not None:
@@ -640,13 +657,19 @@ class MypyInferrer:
         if not isinstance(payload, dict):
             return CheckFailure("mypy worker returned an invalid response")
         failure, messages = payload.get("failure"), payload.get("messages")
+        warnings = payload.get("warnings", [])
         if isinstance(failure, str):
             return CheckFailure(failure)
         if failure is not None:
             return CheckFailure("mypy worker returned an invalid failure status")
         if not isinstance(messages, list) or not all(isinstance(m, str) for m in messages):
             return CheckFailure("mypy worker returned invalid diagnostics")
-        return _BuildMessages(tuple(m for m in messages if isinstance(m, str)))
+        if not isinstance(warnings, list) or not all(isinstance(w, str) for w in warnings):
+            return CheckFailure("mypy worker returned invalid configuration warnings")
+        return _BuildMessages(
+            tuple(m for m in messages if isinstance(m, str)),
+            tuple(w for w in warnings if isinstance(w, str)),
+        )
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]

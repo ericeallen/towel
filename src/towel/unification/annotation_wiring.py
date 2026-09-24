@@ -518,11 +518,12 @@ class HelperAnnotationWiring(EngineState):
                     self._report_pre_existing(list(originals))
                     self._map_what_the_checker_does_not_look_at(originals)
         if isinstance(self._type_run_baseline, CheckFailure):
-            # A checker that cannot run at all -- a config naming a Python
-            # version it has dropped, a tree it cannot build -- leaves the same
-            # user in the same place as one reporting errors, and said nothing
-            # about how to get out of it. Voluptuous and Lark, whose configs
-            # ask mypy 1.19 for Python 3.9 and 3.8, are both this.
+            # A checker that cannot run at all -- a plugin it cannot load, a
+            # tree it cannot build -- leaves the same user in the same place as
+            # one reporting errors, and said nothing about how to get out of it.
+            # A configuration mypy only warns about is not this: one naming a
+            # Python version mypy has dropped (Voluptuous and Lark ask for 3.9
+            # and 3.8) is checked with mypy's oldest, as mypy checks it.
             raise RefactoringError(
                 f"Original project type check failed: {self._type_run_baseline.reason}\n"
                 f"{UNTYPED_REMEDY}"

@@ -44,7 +44,7 @@ import signal
 import sys
 import threading
 import time
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from mypy import build
 from mypy.build import BuildSource
@@ -68,9 +68,63 @@ configuration, took 12.9 s in one cache and 5.7 s in two.
 """
 
 
+class _Configured(NamedTuple):
+    """The project's options, and what mypy said while reading its configuration.
+
+    ``said`` is what mypy's own run prints and then goes on from: an option
+    this mypy does not know, a global option in a per-module section. mypy
+    exits 0 after saying it, so it is a warning, never a reason to refuse.
+
+    A ``NamedTuple``, not a dataclass: the tests load this file as a module
+    that is not in ``sys.modules``, where a dataclass cannot be made.
+    """
+
+    options: Options
+    said: Tuple[str, ...]
+
+
+def _read_configuration(config: str | None) -> _Configured:
+    """The project's options exactly as its own ``mypy`` reads them, and what mypy said doing so.
+
+    mypy writes every problem it finds in a configuration file and carries
+    on (``parse_config_file``: "Errors are written to stderr but are not
+    fatal"); only what stops its own run, which exits through ``SystemExit``,
+    stops this one. Any output used to be fatal here, so a key mypy 2
+    dropped (``force_uppercase_builtins``) or a ``python_version`` in an
+    override refused a typed run whose own ``mypy`` said so and checked
+    clean. What stops mypy is raised in mypy's words, not as an exit status.
+    """
+    said = io.StringIO()
+    # A synthetic module target suppresses target discovery while parsing the
+    # project's options. This API is present throughout mypy 1.x and 2.x. No
+    # plugin is loaded until ``_load_configured_plugins``, after the options
+    # that would execute or write something have been taken away. Some notices
+    # (``--strict-concatenate is deprecated``) are printed to standard output.
+    try:
+        with redirect_stdout(said):
+            _, options = process_options(
+                [
+                    "--config-file",
+                    config or "",
+                    "--python-executable",
+                    sys.executable,
+                    "--module",
+                    "__towel_config_probe__",
+                ],
+                stdout=said,
+                stderr=said,
+                require_targets=False,
+            )
+    except SystemExit as stopped:
+        raise ValueError(
+            said.getvalue().strip() or f"mypy stopped reading its configuration ({stopped.code})"
+        ) from None
+    return _Configured(options, tuple(line for line in said.getvalue().splitlines() if line))
+
+
 def _options(
     root: Path, config: str | None, cache: str, roots: Sequence[str], *, probe: bool
-) -> Options:
+) -> _Configured:
     """The options of one build: the project's own, but for what a probe needs beyond them.
 
     A check (a complete build: the baseline, a candidate, the cold
@@ -98,26 +152,8 @@ def _options(
     therefore checks them, in a cache of its own (see ``_PROBE_CACHE``). A
     configured project's probes run with its own options, as its checks do.
     """
-    errors = io.StringIO()
-    # A synthetic module target suppresses target discovery while parsing the
-    # project's options. This API is present throughout mypy 1.x and 2.x. No
-    # plugin is loaded until ``_load_configured_plugins``, after the options
-    # below that would execute or write something have been taken away.
-    _, options = process_options(
-        [
-            "--config-file",
-            config or "",
-            "--python-executable",
-            sys.executable,
-            "--module",
-            "__towel_config_probe__",
-        ],
-        stdout=io.StringIO(),
-        stderr=errors,
-        require_targets=False,
-    )
-    if errors.getvalue():
-        raise ValueError(errors.getvalue().strip())
+    configured = _read_configuration(config)
+    options = configured.options
     options.build_type = BuildType.STANDARD
     if probe and config is None:
         options.check_untyped_defs = True
@@ -157,7 +193,7 @@ def _options(
             ]
         )
     )
-    return options
+    return _Configured(options, configured.said)
 
 
 class _PluginUnavailable(Exception):
@@ -562,7 +598,14 @@ def _as_the_project_judges(
     return [message for message in messages if not about_unchecked(message)]
 
 
-def _request(request: object, cache: str) -> list[str]:
+class _Answered(NamedTuple):
+    """A build's diagnostics, and what mypy said about the configuration on the way."""
+
+    messages: List[str]
+    said: Tuple[str, ...]
+
+
+def _request(request: object, cache: str) -> _Answered:
     if not isinstance(request, dict):
         raise ValueError("Expected a request object")
     root_value = request.get("root")
@@ -572,7 +615,8 @@ def _request(request: object, cache: str) -> list[str]:
     root = Path(root_value)
     os.chdir(root)
     complete = request.get("complete") is True
-    options = _options(root, config, cache, _strings(request.get("roots")), probe=not complete)
+    configured = _options(root, config, cache, _strings(request.get("roots")), probe=not complete)
+    options = configured.options
     judged = _judged_by_the_project(options, root) if complete else None
     for excluded in _strings(request.get("excluded_paths")):
         path = Path(excluded)
@@ -594,22 +638,29 @@ def _request(request: object, cache: str) -> list[str]:
     )
     result = build.build(sources=sources, options=options)
     if judged is None:
-        return list(result.errors)
-    return _as_the_project_judges(result.errors, result, sources, judged, options)
+        return _Answered(list(result.errors), configured.said)
+    return _Answered(
+        _as_the_project_judges(result.errors, result, sources, judged, options), configured.said
+    )
 
 
 def _answer(line: str, cache: str) -> str:
-    messages: list[str] = []
+    answered = _Answered([], ())
     failure: str | None = None
     captured = io.StringIO()
     try:
         with redirect_stdout(captured), redirect_stderr(captured):
-            messages = _request(json.loads(line), cache)
+            answered = _request(json.loads(line), cache)
     except _PluginUnavailable as error:
         failure = str(error)
     except (Exception, SystemExit) as error:
         failure = f"{type(error).__name__}: {error}"
-    return json.dumps({"messages": messages, "failure": failure}) + "\n"
+    return (
+        json.dumps(
+            {"messages": answered.messages, "failure": failure, "warnings": list(answered.said)}
+        )
+        + "\n"
+    )
 
 
 def _exit_with_parent(owner: int) -> None:

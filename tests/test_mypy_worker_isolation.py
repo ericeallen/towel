@@ -45,7 +45,7 @@ spec.loader.exec_module(worker)
 def build(request, cache):
     if request == "die":
         os._exit(3)
-    return [str(os.getpid())]
+    return worker._Answered([str(os.getpid())], ())
 
 worker._request = build
 sys.stderr.write(str(os.getpid()))
