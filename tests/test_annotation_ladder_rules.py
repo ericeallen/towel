@@ -11,9 +11,14 @@ import ast
 import textwrap
 from pathlib import Path
 
+from towel.type_inference import TypeDiagnostic
 from towel.unification.annotation_ladder import (
+    Rejection,
     narrowing_needed_in_thunk,
     partial_type_passed,
+    self_as_type_variable,
+    targeted_any,
+    without_quoted_none,
 )
 from towel.unification.annotation_wiring import _variant_key, mypy_ladder_flags
 from towel.unification.exceptions import Untypeable
@@ -171,6 +176,102 @@ def test_attributes_pulling_both_ways_leave_the_helper_where_it_was() -> None:
                 self.__extracted_func_0(value)
                 self.twice = value
             """) is None
+
+
+# -- The targeted rung ---------------------------------------------------------------
+
+_MODULE = textwrap.dedent("""
+    from typing import Any, Callable
+
+
+    def __extracted_func_0(flag: bool, make: Callable[[], str | int], value: int | None) -> str:
+        if flag:
+            return make().upper()
+        return str(value + 1)
+
+
+    def caller(flag: bool) -> str:
+        return __extracted_func_0(flag, lambda: "a", None)
+    """).lstrip()
+_TARGETED = _function(_MODULE, 1)
+
+
+def _refusal(*errors: tuple[int, str]) -> Rejection:
+    return Rejection(
+        tuple(TypeDiagnostic("/p/m.py", message, line) for line, message in errors),
+        "/p/m.py",
+        "__extracted_func_0",
+        _MODULE,
+        {"/p/m.py": _MODULE},
+    )
+
+
+def test_a_thunk_whose_result_is_at_fault_keeps_its_shape() -> None:
+    loosened = targeted_any(
+        _TARGETED, _refusal((6, 'Item "int" of "str | int" has no attribute "upper"')), None
+    )
+    assert loosened is not None
+    assert ast.unparse(loosened.args) == ("flag: bool, make: Callable[[], Any], value: int | None")
+    assert loosened.returns is not None and ast.unparse(loosened.returns) == "str"
+
+
+def test_an_argument_error_at_the_call_names_its_parameter() -> None:
+    loosened = targeted_any(
+        _TARGETED,
+        _refusal(
+            (11, 'Argument 3 to "__extracted_func_0" has incompatible type "None"; expected "int"')
+        ),
+        None,
+    )
+    assert loosened is not None
+    assert ast.unparse(loosened.args) == "flag: bool, make: Callable[[], str | int], value: Any"
+
+
+def test_returning_any_inside_the_helper_keeps_the_declared_type_beside_any() -> None:
+    loosened = targeted_any(
+        _TARGETED, _refusal((6, 'Returning Any from function declared to return "str"')), None
+    )
+    assert loosened is not None and loosened.returns is not None
+    assert ast.unparse(loosened.returns) == "str | Any"
+
+
+def test_an_error_that_points_nowhere_makes_no_rung() -> None:
+    assert targeted_any(_TARGETED, _refusal((12, "Unrelated error elsewhere")), None) is None
+
+
+# -- None and Self -----------------------------------------------------------------
+
+
+def test_the_string_none_is_written_bare_everywhere_but_inside_another_string() -> None:
+    helper = ast.parse(textwrap.dedent("""
+        def f(a: 'None', b: "Literal['None']") -> '  None':
+            c: 'None' = None
+        """)).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    rewritten = without_quoted_none(helper)
+    assert ast.unparse(rewritten).splitlines() == [
+        "def f(a: None, b: \"Literal['None']\") -> None:",
+        "    c: None = None",
+    ]
+
+
+def test_self_in_a_module_helper_becomes_a_variable_bound_to_the_sites_classes() -> None:
+    helper = ast.parse("def f(cls: type[Self], d: int) -> Any: ...").body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    declared = [ast.Name(id="Self", ctx=ast.Load()), ast.Name(id="Self", ctx=ast.Load())]
+    spelled = self_as_type_variable(helper, ["A", "B", "A"], {"f"}, list(declared), True)
+    assert spelled is not None
+    rewritten, declarations = spelled
+    assert ast.unparse(rewritten) == "def f(cls: type[_TowelSelf], d: int) -> _TowelSelf:\n    ..."
+    assert ast.unparse(declarations[1]) == (
+        "_TowelSelf = _towel_typevar('_TowelSelf', bound='A | B')"
+    )
+
+
+def test_no_self_in_a_parameter_makes_no_variable() -> None:
+    helper = ast.parse("def f(d: int) -> Self: ...").body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    assert self_as_type_variable(helper, ["A"], set(), [None], False) is None
 
 
 # -- What the ladder knows before checking -------------------------------------------
