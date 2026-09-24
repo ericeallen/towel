@@ -281,8 +281,10 @@ types.
 
 Code the checker does not look at is not changed either. A checker takes
 code to be unreachable where the platform and Python version it checks for
-make a `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false, or
-after an `assert` it knows fails, and reports nothing there. The engine asks
+make a `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false,
+after an `assert` it knows fails, or where the declared types rule it out
+(a `return NotImplemented` after an `isinstance` test an annotated argument
+always passes, which no platform checks), and reports nothing there. The engine asks
 it where it looks (`towel.reachability`: a `reveal_type` placed before each
 statement is answered only there): before the run, the inferring checker, about
 the start of every block of the analyzed files, which it logs and does not

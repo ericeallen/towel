@@ -101,11 +101,14 @@ class UnverifiableChangeError(RefactoringError):
 class UncheckedCodeError(UnverifiableChangeError):
     """A candidate would change code the type checker does not look at.
 
-    The checker takes it to be unreachable on the platform and Python version
-    it checks for -- a module that asserts another platform, a branch under a
-    ``sys.platform`` or ``sys.version_info`` test it makes false -- and reports
-    nothing there, so its acceptance of the change said nothing. The
-    project's own check may look at it on another platform, and did at trio.
+    The checker takes it to be unreachable, and reports nothing there, so its
+    acceptance of the change said nothing. That may be for the platform and
+    Python version it checks for -- a module that asserts another platform, a
+    branch under a ``sys.platform`` or ``sys.version_info`` test it makes
+    false -- which the project's own check may look at on another platform,
+    and did at trio. Or the declared types may rule the code out on every
+    platform: packaging's ``return NotImplemented`` after an ``isinstance``
+    test that an argument's annotation always passes.
     """
 
 

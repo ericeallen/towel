@@ -397,11 +397,11 @@ def unlooked_warning(regions: Mapping[str, Sequence[Tuple[int, int]]], root: Pat
     listed = [(path, start, end) for path, spans in sorted(regions.items()) for start, end in spans]
     lines = [
         f"warning: the type checker does not look at {len(listed)} region(s) of the code this "
-        "run may change: it takes them to be unreachable on the platform and Python it checks "
+        "run may change: it takes them to be unreachable, for the platform and Python it checks "
         "for (a sys.platform, sys.version_info or TYPE_CHECKING test it makes false, an assert "
-        "it knows fails), so it reports nothing there and a check says nothing about a change. "
-        "No change to them is attempted; the project's own check may look at them on another "
-        "platform or Python:"
+        "it knows fails) or because the declared types rule them out (an isinstance test they "
+        "always pass), so it reports nothing there and a check says nothing about a change. "
+        "No change to them is attempted:"
     ]
     lines += [f"  {_shown(path, root)}:{start}-{end}" for path, start, end in listed[:_FILES_SHOWN]]
     if len(listed) > _FILES_SHOWN:

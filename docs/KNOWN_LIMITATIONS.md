@@ -762,9 +762,11 @@ where the evidence comes from:
 - Code the checker does not look at is not changed. A checker takes code to
   be unreachable when the platform and Python version it checks for make a
   `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false, when an
-  `assert` it knows fails precedes it, or when nothing can reach it (after a
-  `return` on every path), and reports nothing there, so its acceptance of a
-  change there says nothing. Which code that is, is each checker's own rule,
+  `assert` it knows fails precedes it, when nothing can reach it (after a
+  `return` on every path), or when the declared types rule it out on every
+  platform (packaging's `return NotImplemented` after an `isinstance` test
+  its argument's annotation always passes), and reports nothing there, so
+  its acceptance of a change there says nothing. Which code that is, is each checker's own rule,
   so Towel asks it: a `reveal_type((0))` placed before a statement is answered
   exactly where the checker looks. Before accepting a change, every
   configured checker is asked about each statement on the lines the change

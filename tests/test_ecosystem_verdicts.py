@@ -905,7 +905,7 @@ PRE_EXISTING_REPORT = (
     "The rest lie in 1 file(s) the run does not change (tests/conftest.py), where a use of such "
     "a name is checked against Any.\n"
     "warning: the type checker does not look at 2 region(s) of the code this run may change: "
-    "it takes them to be unreachable on the platform and Python it checks for\n"
+    "it takes them to be unreachable, for the platform and Python it checks for\n"
     "  package/windows.py:9-40\n"
     "  package/compat.py:3-5\n"
     "Applied 1 refactoring(s) across 1 file(s)\n"

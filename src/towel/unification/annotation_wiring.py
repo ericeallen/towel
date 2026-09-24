@@ -1750,8 +1750,8 @@ class HelperAnnotationWiring(EngineState):
                 if start <= last and first <= end:
                     raise UncheckedCodeError(
                         f"{path}:{start}-{end} is code the type checker does not look at "
-                        "(it takes it to be unreachable on the platform and Python it checks "
-                        "for), so a change there cannot be verified"
+                        "(it takes it to be unreachable, for the platform and Python it checks "
+                        "for or by the declared types), so a change there cannot be verified"
                     )
 
     def _refuse_what_the_checker_does_not_look_at(
@@ -1785,6 +1785,6 @@ class HelperAnnotationWiring(EngineState):
                 line = min(places)[0]
                 raise UncheckedCodeError(
                     f"{path}:{line}: the type checker does not look at the code this change "
-                    "writes there (it takes it to be unreachable on the platform and Python it "
-                    "checks for), so the change cannot be verified"
+                    "writes there (it takes it to be unreachable, for the platform and Python it "
+                    "checks for or by the declared types), so the change cannot be verified"
                 )
