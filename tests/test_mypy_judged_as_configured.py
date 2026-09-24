@@ -55,7 +55,22 @@ from mypy.build import BuildResult  # noqa: E402
 from mypy.options import Options  # noqa: E402
 
 from towel import _mypy_worker as worker  # noqa: E402
-from towel.type_inference import CheckFailure, MypyInferrer, _BuildMessages  # noqa: E402
+from towel.reachability import PROBE, probe_plan  # noqa: E402
+from towel.type_inference import (  # noqa: E402
+    CheckFailure,
+    CheckResult,
+    CheckSuccess,
+    MypyInferrer,
+    Revealed,
+    RevealKey,
+    RevealRequest,
+    Subtyping,
+    _BuildMessages,
+    unanswered_files,
+)
+from towel.unification.exceptions import CheckerUnavailableError, RefactoringError  # noqa: E402
+from towel.unification.refactor_engine import UnificationRefactorEngine  # noqa: E402
+from tests.probe_answers import answer_probes  # noqa: E402
 
 
 def _write(root: Path, files: Mapping[str, str]) -> None:
@@ -388,3 +403,111 @@ def test_a_complete_build_leaves_out_a_changed_file_the_project_does_not_follow(
             sources, options, lambda path: "app" in path, complete=complete
         )
     assert built == [["app.main"], ["app.main", "tools.gen.x"]]
+
+
+# --- D9: a probe build that failed is a checker failure --------------------------
+
+
+def _stub_builds(monkeypatch: pytest.MonkeyPatch, oracle: MypyInferrer, answer: object) -> None:
+    monkeypatch.setattr(oracle, "_build_errors", lambda *arguments, **keywords: answer)
+
+
+def test_a_failed_probe_build_answers_nothing_and_names_what_it_could_not_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "m.py"
+    request = RevealRequest(str(path), "x = 1\n", 1, "", (PROBE,))
+    oracle = MypyInferrer()
+    try:
+        _stub_builds(monkeypatch, oracle, CheckFailure("the probe build failed"))
+        failed = oracle.reveal([request])
+        _stub_builds(monkeypatch, oracle, _BuildMessages(()))
+        silent = oracle.reveal([request])
+    finally:
+        oracle.close()
+    assert dict(failed) == {} and unanswered_files(failed) == {str(path): "the probe build failed"}
+    assert dict(silent) == {} and unanswered_files(silent) == {}
+
+
+def test_the_reachability_rule_reads_silence_only_from_a_build_that_completed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = "def f() -> int:\n    return 1\n"
+    path = str(tmp_path / "m.py")
+    plan = probe_plan(text)
+    assert plan is not None
+    places = [place for place, _ in plan.spans]
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(min_lines=3, annotate_helpers=False, type_oracle=oracle)
+        _stub_builds(monkeypatch, oracle, _BuildMessages(()))
+        # A completed build that answers no probe: the checker looks at none of it.
+        assert engine._unlooked(oracle, {path: text}, {path: places}, every_checker=True) == {
+            path: set(places)
+        }
+        _stub_builds(monkeypatch, oracle, CheckFailure("the probe build failed"))
+        with pytest.raises(CheckerUnavailableError, match="(?s)could not build the probes.*failed"):
+            engine._unlooked(oracle, {path: text}, {path: places}, every_checker=True)
+    finally:
+        oracle.close()
+
+
+PAIR = "".join(
+    f"def {name}(value: int) -> int:\n    total = value + 1\n    doubled = total * 2\n"
+    f"    answer = doubled - {offset}\n    return answer\n\n\n"
+    for name, offset in (("first", 3), ("second", 4))
+)
+
+
+class _ProbesFail:
+    """A checker whose project checks pass and whose probe builds fail after the first ``kept``."""
+
+    def __init__(self, kept: int) -> None:
+        self.kept = kept
+
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        return CheckSuccess()
+
+    def check(self, file_path: str, source: str) -> CheckResult:
+        return self.check_project({file_path: source})
+
+    def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        if self.kept > 0:
+            self.kept -= 1
+            return answer_probes(requests)
+        return Revealed({}, {request.file_path: "the probe build failed" for request in requests})
+
+    def is_subtype(
+        self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
+    ) -> Sequence[Subtyping]:
+        return [Subtyping.UNKNOWN for _ in pairs]
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize(
+    "kept, refusal",
+    [
+        # The run-start map of what the checker looks at cannot be made: refused before anything.
+        (0, r"(?s)Original project type check failed.*could not build the probes"),
+        # Each change's own probes fail: every proposal is not judged, and the run says so.
+        (1, r"(?s)checker could not run for \d+ proposal.*could not build the probes"),
+    ],
+)
+def test_a_run_whose_probe_builds_fail_refuses_rather_than_call_everything_unreachable(
+    tmp_path: Path, kept: int, refusal: str
+) -> None:
+    """D9 ended ``No refactorings found! Termination: fixed_point``, exit status 0."""
+    (tmp_path / "m.py").write_text(PAIR)
+    engine = UnificationRefactorEngine(
+        min_lines=3,
+        reuse_existing_functions=False,
+        annotate_helpers=False,
+        type_oracle=_ProbesFail(kept),
+    )
+    with pytest.raises(RefactoringError, match=refusal):
+        engine.refactor_directory_to_fixed_point(str(tmp_path), str(tmp_path), progress="none")
+    assert (tmp_path / "m.py").read_text() == PAIR

@@ -100,6 +100,7 @@ __all__ = [
     "PyrightOracle",
     "RevealKey",
     "RevealRequest",
+    "Revealed",
     "Subtyping",
     "TypeDiagnostic",
     "TypeOracle",
@@ -108,6 +109,7 @@ __all__ = [
     "reveal_by_each",
     "type_oracle_for_project",
     "relocate_oracle",
+    "unanswered_files",
 ]
 
 RevealKey = Tuple[str, int, int]
@@ -177,6 +179,9 @@ class TypeOracle(Protocol):
         This flat protocol cannot correlate separate constrained-TypeVar
         instantiations. A checker reporting distinct types for the same probe
         does not establish any single one of those types for the expression.
+        A file whose probe build could not be completed is named in the
+        answer's :attr:`Revealed.unanswered`, so that its silence is never
+        taken for code the checker does not look at.
         """
         raise NotImplementedError
 
@@ -356,6 +361,36 @@ class _BuildMessages:
 
     messages: Tuple[str, ...]
     warnings: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, eq=False)
+class Revealed(Mapping[RevealKey, str]):
+    """The types a checker revealed, and the files whose probe build it could not complete.
+
+    It reads as the mapping of types, which is all inference asks. A probe in
+    a file listed in ``unanswered`` got no answer because the build failed,
+    not because the checker looked and saw nothing there; the reachability
+    rule reads silence as "the checker does not look at this code", so it
+    must never read these files' silence (see :func:`unanswered_files`).
+    """
+
+    types: Mapping[RevealKey, str]
+    unanswered: Mapping[str, str] = field(default_factory=dict)
+    """Each file whose probe build failed, and why."""
+
+    def __getitem__(self, key: RevealKey) -> str:
+        return self.types[key]
+
+    def __iter__(self) -> Iterator[RevealKey]:
+        return iter(self.types)
+
+    def __len__(self) -> int:
+        return len(self.types)
+
+
+def unanswered_files(answer: Mapping[RevealKey, str]) -> Mapping[str, str]:
+    """The files ``answer`` holds no verdict on because their probe build failed, and why."""
+    return answer.unanswered if isinstance(answer, Revealed) else {}
 
 
 def _checker_root(path: Path) -> Path:
@@ -776,11 +811,12 @@ class MypyInferrer:
                     )
             sources.append(_build_source(file_path, text))
         if not sources:
-            return {}
+            return Revealed({})
         result = self._build_errors(sources)
         if isinstance(result, CheckFailure):
+            # No probe was answered, and none was looked at and found silent.
             LOG.warning("mypy inference failed: %s", result.reason)
-            return {}
+            return Revealed({}, {file_path: result.reason for file_path in by_file})
         errors = result.messages
         revealed: Dict[RevealKey, str] = {}
         ambiguous: set[RevealKey] = set()
@@ -798,7 +834,7 @@ class MypyInferrer:
                     del revealed[key]
                 else:
                     revealed[key] = kind
-        return revealed
+        return Revealed(revealed)
 
 
 MYPY_TIMEOUT_SECONDS = 600.0
@@ -1137,6 +1173,7 @@ class PyrightOracle:
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         """Reveal each request by having pyright check a probed copy of its module."""
         revealed: Dict[RevealKey, str] = {}
+        unanswered: Dict[str, str] = {}
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
             by_file.setdefault(request.file_path, []).append(request)
@@ -1157,13 +1194,14 @@ class PyrightOracle:
                 shift += len(request.expressions)
             result = self._diagnostics(file_path, text)
             if isinstance(result, CheckFailure):
+                unanswered[file_path] = result.reason
                 continue
             for diagnostic in result.diagnostics:
                 match = _PYRIGHT_REVEALED.match(str(diagnostic.get("message", "")))
                 key = probe_lines.get(self._line(diagnostic))
                 if match is not None and key is not None:
                     revealed[key] = match.group("type")
-        return revealed
+        return Revealed(revealed, unanswered)
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
@@ -1606,11 +1644,15 @@ class _RelocatedOracle:
             for request in requests
         ]
 
-    def _outputs(self, revealed: Mapping[RevealKey, str]) -> Mapping[RevealKey, str]:
-        return {
-            (self._output(path), line, index): value
-            for (path, line, index), value in revealed.items()
-        }
+    def _outputs(self, revealed: Mapping[RevealKey, str]) -> Revealed:
+        """``revealed`` at the copy's paths, its unanswered files included."""
+        return Revealed(
+            {
+                (self._output(path), line, index): value
+                for (path, line, index), value in revealed.items()
+            },
+            {self._output(path): reason for path, reason in unanswered_files(revealed).items()},
+        )
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
