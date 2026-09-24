@@ -559,6 +559,57 @@ def _build_sources(
     ]
 
 
+_FOUND_TWICE = re.compile(
+    r"^(?P<path>.+?): error: Source file found twice under different module names:"
+    r' "(?P<given>[^"]+)" and "(?P<imported>[^"]+)"'
+)
+
+
+def _base_for(path: str, module: str) -> Optional[str]:
+    """The directory ``module`` is found from when it names the file at ``path``, if it can."""
+    file = Path(path)
+    spelled = list(file.parent.parts) + ([] if file.stem == "__init__" else [file.stem])
+    parts = module.split(".")
+    if len(spelled) <= len(parts) or spelled[-len(parts) :] != parts:
+        return None
+    return str(Path(*spelled[: -len(parts)]))
+
+
+def _named_by_its_importer(
+    messages: Sequence[str],
+    sources: Sequence[BuildSource],
+    judged: Callable[[str], bool],
+    renamed: set[str],
+) -> Optional[list[BuildSource]]:
+    """``sources`` with one file renamed as the import mypy reached it by names it, if that answers.
+
+    Only a file the project's own run is not given, which exists in that run
+    only as the module some import reaches, and only once: every other
+    "found twice" is the project's own, or no single rename resolves it.
+    """
+    for message in messages:
+        match = _FOUND_TWICE.match(message)
+        if match is None:
+            continue
+        path = os.path.abspath(match.group("path"))
+        for index, source in enumerate(sources):
+            if (
+                source.path is None
+                or os.path.abspath(source.path) != path
+                or source.module != match.group("given")
+                or path in renamed
+                or judged(source.path)
+            ):
+                continue
+            base = _base_for(path, match.group("imported"))
+            if base is None:
+                return None
+            renamed.add(path)
+            as_imported = BuildSource(source.path, match.group("imported"), source.text, base)
+            return [*sources[:index], as_imported, *sources[index + 1 :]]
+    return None
+
+
 def _build_as_the_project_reaches(
     sources: Sequence[BuildSource],
     options: Options,
@@ -575,16 +626,33 @@ def _build_as_the_project_reaches(
     (``skip``, ``error``): its importers then see what the project's run sees,
     ``Any`` or "Import of ... ignored", rather than the types a source would
     give them. A probe keeps it, since its question is the file's own types.
+
+    mypy names a source by its own walk, and such a file exists in the
+    project's run only as the module its importer names: ``tools/gen/x.py``,
+    outside ``files = ["app"]`` and with no ``__init__`` above it, is ``x`` to
+    mypy's walk and ``tools.gen.x`` to ``app/main.py``'s import. Given as
+    ``x``, the file was found twice and the build refused, while the project's
+    own ``mypy`` checked clean. mypy's own refusal names both names, and such a
+    file is given the importer's.
     """
-    current = [
-        source
-        for source in sources
-        if not complete
-        or source.path is None
-        or judged(source.path)
-        or _followed(options, source.module, source.path) is not _Followed.NOT_FOLLOWED
-    ]
-    return build.build(sources=current, options=options), current
+    current = list(sources)
+    renamed: set[str] = set()
+    while True:
+        if complete:
+            current = [
+                source
+                for source in current
+                if source.path is None
+                or judged(source.path)
+                or _followed(options, source.module, source.path) is not _Followed.NOT_FOLLOWED
+            ]
+        try:
+            return build.build(sources=current, options=options), current
+        except CompileError as error:
+            as_imported = _named_by_its_importer(error.messages, current, judged, renamed)
+            if as_imported is None:
+                raise
+            current = as_imported
 
 
 def _judged_by_the_project(options: Options, root: Path) -> Callable[[str], bool]:

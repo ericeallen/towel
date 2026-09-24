@@ -48,6 +48,7 @@ import pytest
 
 pytest.importorskip("mypy")
 
+from mypy.errors import CompileError  # noqa: E402
 from mypy.find_sources import create_source_list  # noqa: E402
 from mypy.modulefinder import BuildSource  # noqa: E402
 from mypy import build as mypy_build  # noqa: E402
@@ -511,3 +512,98 @@ def test_a_run_whose_probe_builds_fail_refuses_rather_than_call_everything_unrea
     with pytest.raises(RefactoringError, match=refusal):
         engine.refactor_directory_to_fixed_point(str(tmp_path), str(tmp_path), progress="none")
     assert (tmp_path / "m.py").read_text() == PAIR
+
+
+# --- D10: a changed file named as its importer names it ----------------------------
+
+
+@pytest.mark.parametrize(
+    "path, module, base",
+    [
+        ("/r/tools/gen/x.py", "tools.gen.x", "/r"),
+        ("/r/tools/gen/x.py", "gen.x", "/r/tools"),
+        ("/r/tools/gen/__init__.py", "tools.gen", "/r"),
+        ("/r/tools/gen/x.pyi", "tools.gen.x", "/r"),
+        ("/r/tools/gen/x.py", "other.x", None),
+        ("/r/x.py", "a.b.x", None),
+    ],
+)
+def test_the_directory_an_import_name_is_found_from(
+    path: str, module: str, base: Optional[str]
+) -> None:
+    assert worker._base_for(path, module) == base
+
+
+FOUND_TWICE = (
+    '{path}: error: Source file found twice under different module names: "x" and "tools.gen.x"'
+)
+
+
+def _named_sources(root: Path) -> list[BuildSource]:
+    return [
+        BuildSource(str(root / "app" / "main.py"), "app.main", None, str(root)),
+        BuildSource(str(root / "tools" / "gen" / "x.py"), "x", "text", str(root / "tools" / "gen")),
+    ]
+
+
+def test_a_file_the_project_reaches_only_by_import_takes_the_importers_name(tmp_path: Path) -> None:
+    sources = _named_sources(tmp_path)
+    message = FOUND_TWICE.format(path=tmp_path / "tools" / "gen" / "x.py")
+    renamed = worker._named_by_its_importer(
+        [message, "a note"], sources, lambda path: "app" in path, set()
+    )
+    assert renamed is not None
+    assert [(source.module, source.base_dir, source.text) for source in renamed] == [
+        ("app.main", str(tmp_path), None),
+        ("tools.gen.x", str(tmp_path), "text"),
+    ]
+
+
+@pytest.mark.parametrize("judged, renamed_before", [(True, False), (False, True)])
+def test_a_file_the_project_names_itself_or_one_already_renamed_keeps_the_refusal(
+    tmp_path: Path, judged: bool, renamed_before: bool
+) -> None:
+    path = tmp_path / "tools" / "gen" / "x.py"
+    renamed = {str(path)} if renamed_before else set()
+    assert (
+        worker._named_by_its_importer(
+            [FOUND_TWICE.format(path=path)], _named_sources(tmp_path), lambda _: judged, renamed
+        )
+        is None
+    )
+
+
+"""What a stubbed build answers with: nothing here reads a build's result."""
+
+
+def test_a_build_refused_for_a_file_found_twice_is_retried_under_the_importers_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: list[list[str]] = []
+
+    def build(sources: Sequence[BuildSource], options: Options) -> BuildResult:
+        built.append([source.module for source in sources])
+        if len(built) == 1:
+            raise CompileError([FOUND_TWICE.format(path=tmp_path / "tools" / "gen" / "x.py")])
+        return BUILT
+
+    monkeypatch.setattr(mypy_build, "build", build)
+    result, sources = worker._build_as_the_project_reaches(
+        _named_sources(tmp_path), Options(), lambda path: "app" in path, complete=False
+    )
+    assert result is BUILT
+    assert built == [["app.main", "x"], ["app.main", "tools.gen.x"]]
+    assert [source.module for source in sources] == ["app.main", "tools.gen.x"]
+
+
+def test_a_refusal_no_rename_answers_is_raised_as_mypy_gave_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def build(sources: Sequence[BuildSource], options: Options) -> BuildResult:
+        raise CompileError(["m.py:1: error: invalid syntax"])
+
+    monkeypatch.setattr(mypy_build, "build", build)
+    with pytest.raises(CompileError, match="invalid syntax"):
+        worker._build_as_the_project_reaches(
+            _named_sources(tmp_path), Options(), lambda _: False, complete=False
+        )
