@@ -772,4 +772,7 @@ is the approach the hosting rule already takes for metaclasses and
 `__init_subclass__`. The cost is measured before the list is settled, and
 the list grows only by verified entries.
 
+The owner has proposed a user-supplied list of trusted decorators, as an
+escape hatch for a later release: `docs/proposals/trusted-decorators.md`.
+
 *Status: being implemented on the `audit-1772` branch; not yet released.*
