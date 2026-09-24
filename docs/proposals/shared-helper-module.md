@@ -1,7 +1,8 @@
 # A shared helper module for duplicates across unrelated directories
 
-Status: proposal, 2026-09-24, from the owner. Measured, not scheduled; not
-part of 1.772.
+Status: proposal, 2026-09-24. The idea is the owner's, and the figures
+below measure it. Not scheduled; the recommendation is to build it after
+1.772.
 
 ## The idea
 
