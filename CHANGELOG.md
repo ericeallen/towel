@@ -253,7 +253,7 @@ that version; Towel's own checks run against a newer mypy and do not show it.
 
   Together with the ladder and baseline changes above, typed refactorings
   rise as follows, measured on Python 3.12.13 with `--cross-module` from
-  `eaa3882` to this release:
+  `eaa3882` to `336c890`:
 
   | Project | Typed refactorings | Project checks per run |
   |---|---|---|
