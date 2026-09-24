@@ -726,3 +726,72 @@ def test_a_module_no_import_names_is_named_as_mypy_names_it(tmp_path: Path) -> N
     assert checker_module_name(tmp_path / "script.py") == "script"
     _project(tmp_path, {"not-a-name/__init__.py": "", "not-a-name/mod.py": ""})
     assert checker_module_name(tmp_path / "not-a-name" / "mod.py") is None
+
+
+def _extract_across_modules(package: Path) -> dict[str, str]:
+    """The first proposal of a cross-module run, applied; strict mypy must accept the project."""
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
+            cross_module_helpers=True,
+        )
+        proposals = engine.analyze_directory(str(package), progress="none")
+        assert proposals
+        sources = engine.apply_refactoring_multi_file(proposals[0])
+        assert oracle.check_project(sources) == CheckSuccess(), sources
+    finally:
+        oracle.close()
+    return sources
+
+
+@requires_mypy
+def test_sites_that_agree_are_offered_their_common_signature_end_to_end(tmp_path: Path) -> None:
+    """mistune's block quote and spoiler: across modules the ordinary rung spells no ``BlockState``.
+
+    Both sites declare ``state: BlockState``, and the generic rung, which
+    resolves names by what they are, writes it where the ordinary one could
+    only write ``Any``, which the helper's ``return state.cursor`` then leaks.
+    """
+    parser = """\
+        from .core import BlockState
+
+
+        def {name}(state: BlockState, end_pos: int | None) -> int:
+            token = {{"type": "{kind}"}}
+            if end_pos:
+                state.prepend_token(token)
+                return end_pos
+            state.append_token(token)
+            return state.cursor
+        """
+    _project(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "tests/test_state.py": "from pkg.core import BlockState\n",
+            "pkg/__init__.py": "",
+            "pkg/core.py": """\
+                class BlockState:
+                    def __init__(self) -> None:
+                        self.cursor = 0
+                        self.tokens: list[dict[str, str]] = []
+
+                    def prepend_token(self, token: dict[str, str]) -> None:
+                        self.tokens.insert(0, token)
+
+                    def append_token(self, token: dict[str, str]) -> None:
+                        self.tokens.append(token)
+                """,
+            "pkg/block_parser.py": parser.format(name="parse_block_quote", kind="block_quote"),
+            "pkg/spoiler.py": parser.format(name="parse_block_spoiler", kind="block_spoiler"),
+        },
+    )
+    sources = _extract_across_modules(tmp_path / "pkg")
+    host = next(text for text in sources.values() if "def __extracted_func" in text)
+    helper = _helper(host)
+    kinds = {parameter.arg: _annotation(parameter.annotation) for parameter in helper.args.args}
+    assert kinds["state"] == "BlockState" and "Any" not in host, host
+    assert _annotation(helper.returns) == "int"

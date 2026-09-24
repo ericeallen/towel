@@ -36,6 +36,7 @@ import copy
 from dataclasses import dataclass, replace
 from collections.abc import Iterator, Sequence
 import io
+import os
 import re
 import textwrap
 import tokenize
@@ -622,6 +623,10 @@ def generic_helpers(
 
     ``module_names`` gives the absolute name the program's imports give the
     module at a path, which is how the checker names the types it reveals.
+    Sites in different modules whose types all agree need no variable, and
+    their common signature is offered as it is: it names the types by what
+    they are, where the ordinary rung, spelling across modules, can write
+    only builtins. Within one module the ordinary rung writes the same types.
     """
     parameters = helper.args.posonlyargs + helper.args.args
     width = len(parameters)
@@ -679,6 +684,10 @@ def generic_helpers(
         reserved,
         retained_parameters=retained if method is not None else frozenset(),
         constrainable=spellable,
+    ) or (
+        _common_signature(rows, retained)
+        if any(os.path.abspath(site.file_path) != os.path.abspath(host_file) for site in sites)
+        else ()
     )
     for signature in signatures:
         body_annotations = _body_annotations(helper, sites, rows, signature, context, retained)
@@ -686,3 +695,17 @@ def generic_helpers(
             spellable(term) for term in _written_terms(signature, body_annotations)
         ):
             yield _render_generic(helper, signature, alias, body_annotations, receiver_index)
+
+
+def _common_signature(
+    rows: Sequence[Sequence[TypeTerm]], retained: frozenset[str]
+) -> tuple[GenericSignature, ...]:
+    """The one signature every row states, when they all state the same one."""
+    first = tuple(rows[0]) if rows else ()
+    if (
+        not first
+        or any(tuple(row) != first for row in rows[1:])
+        or any(not type_parameter_identities(term) <= retained for term in first)
+    ):
+        return ()
+    return (GenericSignature(first, ()),)
