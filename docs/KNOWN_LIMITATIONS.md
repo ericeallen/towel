@@ -1254,11 +1254,14 @@ it tractable, all exact: they change no proposal.
   run and heard once more only at the rehearing that ends it. A bounded `--max-refactorings` run is the practical form there.
   Nothing about the result depends on any of this: the checkers are consulted
   identically.
-- What a checker still rejects is, on Sphinx, one thing and one family. The
-  thing is a helper lifted into a base class whose body reads a member only
-  its subclasses have, so the precise signature is refused and the helper
-  keeps `Any`; the family is a generic helper whose inferred type parameter
-  wants a bound. Neither loses the refactoring.
+- What a checker still rejected on Sphinx, when last measured (`2057bf6`,
+  September 21, 2026), was one thing and one family. The family is a
+  generic helper whose inferred type parameter wants a bound, which does
+  not lose the refactoring. The thing was a helper lifted into a base class
+  whose body read a member only its subclasses have; it no longer arises,
+  since from `da05485` a helper goes only into the class that holds both
+  duplicates, and a block that sibling classes share becomes a module
+  function whose receiver is annotated from its call sites.
 - Because the variants are generated lazily, a signature that verifies costs
   nothing further. A precise ordinary signature that passes means no generic
   candidate is ever built or checked, which is the cheapest order as well as
