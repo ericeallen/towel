@@ -702,10 +702,13 @@ def _child(node: ast.AST, field_name: str, index: int) -> Optional[ast.AST]:
 
 
 def _resolve(statements: Sequence[ast.AST], path: NodePath) -> Tuple[ast.AST, NodePath, bool]:
-    """The deepest node of ``statements`` along ``path``, its path, and whether it is the whole path.
+    """The node of ``statements`` at ``path``, its path there, and whether it stands where ``path`` does.
 
-    A path stops early where the helper holds a parameter instead of the
-    site's code, or where an annotation variant respelled a subtree.
+    Where the helper holds a parameter instead of the site's code, the path
+    ends at the parameter, which stands in that code's place: exactly where
+    the anchor was when it is the anchor that the parameter replaced, and
+    only near it when the anchor was inside the replaced code. A path also
+    ends early where an annotation variant respelled a subtree.
     """
     if path.statement >= len(statements):
         raise CommentPlacementError(
@@ -716,8 +719,11 @@ def _resolve(statements: Sequence[ast.AST], path: NodePath) -> Tuple[ast.AST, No
         return node, NodePath(path.statement, type(node).__name__), False
     for depth, (field_name, index, kind) in enumerate(path.steps):
         child = _child(node, field_name, index)
-        if child is None or type(child).__name__ != kind:
+        if child is None:
             return node, path.prefix(depth), False
+        if type(child).__name__ != kind:
+            replaced = path.prefix(depth).child(field_name, index, type(child).__name__)
+            return child, replaced, depth == len(path.steps) - 1
         node = child
     return node, path, True
 
@@ -829,7 +835,8 @@ def merge_comments(
     must agree (``directive_conflict``) and a file-wide one must stay in its
     module; the first site's are carried. Every other comment is carried
     from every site that has it: the first site's in its order, then each
-    other site's that the ones before did not already carry at that place.
+    other site's that the ones before did not already carry at that place,
+    on a line of its own before that code where one of theirs ends its line.
     """
     conflict = directive_conflict(statements, [site for site, _ in sites])
     if conflict is not None:
@@ -861,12 +868,24 @@ def merge_comments(
             line_start = None
             if directive and comment.line_start is not None:
                 line_start = _resolve(statements, comment.line_start)[1]
+            if position > 0 and not anchor.own_line and by_place.get(_place(anchor)):
+                # Another site's note already ends that line; this one goes
+                # on its own line before the same code rather than after it.
+                anchor = _above(anchor)
             by_place.setdefault(_place(anchor), []).append(
                 HelperComment(comment.text, anchor, directive, line_start)
             )
     return HelperComments(
         body_offset, tuple(comment for comments in by_place.values() for comment in comments)
     )
+
+
+def _above(anchor: Anchor) -> Anchor:
+    """``anchor`` moved from the end of its line to a line of its own before the same code."""
+    placement = (
+        Placement.ABOVE_HEADER if anchor.placement is Placement.HEADER else Placement.LEADING
+    )
+    return Anchor(anchor.node, placement, (), anchor.group, anchor.exploded)
 
 
 # -- Writing the comments into the rendered helper -----------------------------

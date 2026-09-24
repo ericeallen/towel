@@ -739,7 +739,8 @@ to the parameter that took a differing expression's place.
 Which comments the helper carries is decided from every site
 (`merge_comments`). An explanatory comment is kept wherever any site
 carries it, the first site's first, since it documents code the helper now
-holds. A tool directive changes what a tool reports for its line, and the
+holds; another site's note where the first site's already ends the line goes
+on a line of its own before that code. A tool directive changes what a tool reports for its line, and the
 helper has one line where the sites had several, so the sites must carry
 the same directives at the same places (`directives_differ`); a checker's
 ignore must not stand on a line where some site's code, other than a name

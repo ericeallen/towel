@@ -431,3 +431,55 @@ def test_a_helper_that_does_not_render_to_itself_is_refused() -> None:
     other = _helper(block[1:])
     with pytest.raises(CommentPlacementError):
         weave_comments(other, helper, merged)
+
+
+def test_another_sites_note_where_the_first_ends_its_line_goes_above() -> None:
+    """tornado's queues test: two different notes on one line read as one long comment."""
+    source_a, block_a = _block("""
+        def f(waiter):
+            done = waiter.done()
+            check(done)  # Final waiter is still active.
+            return done
+        """)
+    source_b, block_b = _block("""
+        def g(waiter):
+            done = waiter.done()
+            check(done)  # Final waiters still active.
+            return done
+        """)
+    helper = _helper(block_a)
+    merged = _merged(helper, site_comments(source_a, block_a), site_comments(source_b, block_b))
+    lines = weave_comments(helper, helper, merged).text.split("\n")
+    assert lines[2:4] == [
+        "    # Final waiters still active.",
+        "    check(done)  # Final waiter is still active.",
+    ]
+
+
+def test_a_note_on_an_argument_a_parameter_replaced_stays_beside_the_parameter() -> None:
+    """docutils' tex2mathml: the second site's notes on its own flags."""
+    source_a, block_a = _block("""
+        def f():
+            args = ['pandoc',
+                    '--mathml',
+                    '--from=latex',
+                    ]
+            return args
+        """)
+    source_b, block_b = _block("""
+        def g():
+            args = ['ttm',
+                    '-L',  # source is LaTeX snippet
+                    '-r']  # output MathML snippet
+            return args
+        """)
+    helper = _helper(block_a)
+    # The elements differ, so the helper holds a parameter in each's place.
+    assignment = helper.body[0]
+    assert isinstance(assignment, ast.Assign) and isinstance(assignment.value, ast.List)
+    assignment.value.elts = [ast.Name(id=f"__param_{index}", ctx=ast.Load()) for index in range(3)]
+    ast.fix_missing_locations(helper)
+    merged = _merged(helper, site_comments(source_a, block_a), site_comments(source_b, block_b))
+    text = weave_comments(helper, helper, merged).text
+    assert "__param_1,  # source is LaTeX snippet" in text, text
+    assert "]  # output MathML snippet" in text
