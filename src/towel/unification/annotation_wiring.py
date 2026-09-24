@@ -108,6 +108,7 @@ from ..type_baseline import (
 from ..reachability import PROBE, Place, probe_plan
 from ..type_inference import (
     CheckFailure,
+    CheckSuccess,
     CombinedOracle,
     MypyInferrer,
     RevealKey,
@@ -480,6 +481,7 @@ class HelperAnnotationWiring(EngineState):
         self._type_checked = None
         self._type_names_any = {}
         self._type_unlooked = {}
+        self._type_unreadable = frozenset()
         self._analysis_paths = tuple(file_paths)
         self._output_origin = None
         self.import_graph.begin_run()
@@ -497,17 +499,27 @@ class HelperAnnotationWiring(EngineState):
         the CI never checks. They are reported before anything else happens,
         with the files where they leave names the checker cannot type
         (``_report_pre_existing``).
+
+        A file of the run that cannot be read (undecodable test data, say) is
+        left out: the analysis skips it and says so, so nothing changes it,
+        and the checker reads it, or not, as the project's own check would.
+        It used to refuse the whole typed run, which ``--no-types`` completed.
         """
         if self._type_run_oracle is None:
             return
         if self._type_run_baseline is None and file_paths:
             originals: Dict[str, str] = {}
+            unreadable: Set[str] = set()
             for path in dict.fromkeys(file_paths):
                 source = self._read_source(path)
                 if source is None:
-                    self._type_run_baseline = CheckFailure(f"Cannot read original source: {path}")
-                    break
-                originals[path] = source
+                    TYPES.debug("left out of the original check, since it cannot be read: %s", path)
+                    unreadable.add(self._where_checked(path))
+                else:
+                    originals[path] = source
+            self._type_unreadable = frozenset(unreadable)
+            if not originals:
+                self._type_run_baseline = CheckSuccess(())
             else:
                 baseline = self._type_run_oracle.check_project(originals)
                 self._type_run_baseline = baseline
@@ -1276,9 +1288,14 @@ class HelperAnnotationWiring(EngineState):
         sources: Dict[str, str] = {}
         for path in dict.fromkeys(file_paths):
             source = self._read_source(path)
-            if source is None:
-                return  # A file that cannot be read is reported by the run itself.
-            sources[path] = source
+            if source is not None:
+                sources[path] = source
+            elif self._where_checked(path) not in self._type_unreadable:
+                # Readable when the run began, so the run may have written it.
+                raise RefactoringError(
+                    f"The finished project could not be confirmed: {path} cannot be read.\n"
+                    "Nothing was written."
+                )
         # The same oracle, so the run's own relocation and exclusions still
         # apply; only the warm state goes.
         start_cold(oracle)

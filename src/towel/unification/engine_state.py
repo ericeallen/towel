@@ -249,6 +249,8 @@ class EngineState:
     """The files the original check names what it cannot type in, which no change may touch."""
     _type_unlooked: Mapping[str, Tuple[str, Tuple[Tuple[int, int], ...]]]
     """Per file, the digest of its original text and the regions the checker did not look at."""
+    _type_unreadable: FrozenSet[str]
+    """The files of the run that could not be read when it began, as ``_where_checked`` names them."""
     _analysis_paths: Tuple[str, ...]
     """Paths from the latest analysis, used to seed a direct application's initial check."""
     _output_origin: Optional[Tuple[Path, Path]]

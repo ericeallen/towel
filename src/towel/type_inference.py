@@ -1614,7 +1614,12 @@ class _RelocatedOracle:
             )
 
     def _restated(self, sources: Mapping[str, str]) -> Dict[str, str] | CheckFailure:
-        """Every module of the copy, and ``sources`` over them, at the original's paths."""
+        """Every module of the copy, and ``sources`` over them, at the original's paths.
+
+        A module that does not decode is left out, and the checker reads the
+        original's, which is the same bytes: Towel changes no file it cannot
+        read. One such file (Latin-1 test data) had failed every check.
+        """
         try:
             current: Dict[str, str] = {}
             if self._directory:
@@ -1641,7 +1646,10 @@ class _RelocatedOracle:
                     for name in files:
                         path = directory / name
                         if path.suffix in {".py", ".pyi"} and not is_probe_file(path):
-                            current[self._original(str(path))] = read_source(path)
+                            try:
+                                current[self._original(str(path))] = read_source(path)
+                            except (ValueError, UnicodeError, SyntaxError):
+                                continue  # unchanged, and read at the original's path
             else:
                 current[str(self._source)] = read_source(self._destination)
             current.update({self._original(path): source for path, source in sources.items()})
