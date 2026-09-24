@@ -551,3 +551,31 @@ library cases. Building it now would reopen the audit rounds that 1.772 is
 closing.
 
 *Status: proposal; not scheduled.*
+
+## 2026-09-24: A type-only import is not an import edge
+
+The amendment that lets Towel write imports under `if TYPE_CHECKING:`
+rests on their never running. Towel's cycle guard nonetheless counted them
+as import edges, and so did its reckoning of what an import may load. A
+type-only import that Towel wrote to make an annotation precise then
+refused later extractions between the same two modules: on mistune, typed
+refactorings fell from 19 to 17. That contradicted the premise, and it
+traded away the precision the imports exist for. Towel's analysis of
+import-time effects already treated such a body as never running.
+
+The owner pointed out the contradiction, and the guard now follows the
+premise. A body guarded by `TYPE_CHECKING` is not an import edge anywhere:
+not for cycles, not for what an import may load, and not for what it
+requires. The guard is recognised by binding: `typing.TYPE_CHECKING` or
+`typing_extensions.TYPE_CHECKING`, however imported, or the module's own
+`TYPE_CHECKING = False`, bound once and never again. Its `else` branch still
+counts, and so does a guard Towel cannot resolve.
+
+A program that sets `typing.TYPE_CHECKING = True` before importing is
+outside the model. It breaks the idiom's own use for breaking cycles in
+every project that relies on it. The tool once cited for doing so,
+sphinx-autodoc-typehints, no longer does: version 3.13.7 has no such
+option. It runs a guarded block only after its module has imported, one
+statement at a time, and mocks whatever fails to import.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
