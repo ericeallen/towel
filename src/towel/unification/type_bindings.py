@@ -75,7 +75,8 @@ class TypeTerm:
     """Canonical type structure; host spelling does not affect equality.
 
     An atom with an empty ``spelling`` has none where the helper is defined.
-    ``imports`` are the ``(module, name)`` imports its spelling needs there.
+    ``imports`` are the ``(module, name)`` imports its spelling needs there,
+    and ``checking_imports`` the ones it needs only under ``TYPE_CHECKING``.
     """
 
     kind: TypeKind
@@ -84,6 +85,7 @@ class TypeTerm:
     children: tuple[TypeTerm, ...] = ()
     parameter: TypeParameter | None = None
     imports: tuple[tuple[str, str], ...] = field(default=(), compare=False)
+    checking_imports: tuple[tuple[str, str], ...] = field(default=(), compare=False)
 
 
 _BUILTINS = frozenset(name for name, value in vars(builtins).items() if isinstance(value, type))
@@ -191,6 +193,10 @@ def _dotted(node: ast.expr) -> str | None:
 
 ModuleNames = Callable[[str], str | None]
 """The absolute name the program's imports give the module at a path, when they give one."""
+
+CheckerImports = Callable[[str], tuple[str, str] | None]
+"""The ``from module import name`` by which the helper's module may name, for the checker
+only, the class with this absolute name; None where the program shows no import that works."""
 
 
 def _package(file_path: str, module_name: str | None) -> str | None:
@@ -478,6 +484,7 @@ class TypeResolver:
         *,
         host_class: str | None = None,
         module_names: ModuleNames | None = None,
+        checker_imports: CheckerImports | None = None,
     ) -> None:
         self.file_path = os.path.abspath(file_path)
         self.host_file = os.path.abspath(host_file)
@@ -486,6 +493,7 @@ class TypeResolver:
         self._source_class_parameters: tuple[_ClassParameter, ...] = ()
         self._module_resolver: TypeResolver | None = None
         self._module_names = module_names
+        self._checker_imports = checker_imports
         try:
             module = ast.parse(source)
             host = ast.parse(host_source)
@@ -532,6 +540,7 @@ class TypeResolver:
             host_source,
             self.host_file,
             module_names=self._module_names,
+            checker_imports=self._checker_imports,
         )
         host_resolver = TypeResolver(
             host_source,
@@ -540,6 +549,7 @@ class TypeResolver:
             host_source,
             self.host_file,
             module_names=self._module_names,
+            checker_imports=self._checker_imports,
         )
         host_parameters = host_resolver._declared_class_parameters(len(host_resolver.scopes) - 1)
         source_parameters: list[_ClassParameter] = []
@@ -719,25 +729,40 @@ class TypeResolver:
                     return name + alias[len(imported) :]
         return None
 
-    def _spelling(self, identity: str) -> tuple[str, tuple[tuple[str, str], ...]]:
-        """How the host writes ``identity``, and what it must import to; ``""`` when it cannot.
+    def _spelling(self, identity: str) -> TypeTerm:
+        """An atom for ``identity``, spelled as the host writes it; spelled ``""`` when it cannot.
 
         A ``typing`` name the host does not bind at all is written bare, with
-        its import from ``typing``: every alias of it names the same type.
+        its import from ``typing``: every alias of it names the same type. A
+        class of the program's that the host neither binds nor could otherwise
+        name is written bare too, imported under ``TYPE_CHECKING`` as the
+        program's own imports show the host can import its module
+        (``checker_imports``); an annotation that is a string, which is every
+        one this module spells, is all that reads it.
         """
         spelled = self._host_spelling(identity)
         if spelled is not None:
-            return spelled, ()
+            return TypeTerm(TypeKind.ATOM, identity, spelled)
+        if self.host is None or self.host.wildcard:
+            return TypeTerm(TypeKind.ATOM, identity)
         name = _typing_name(identity)
+        if name is not None:
+            if name in self.host.bindings or name in _BUILTIN_NAMES:
+                return TypeTerm(TypeKind.ATOM, identity)
+            return TypeTerm(TypeKind.ATOM, identity, name, imports=(("typing", name),))
+        imported = (
+            self._checker_imports(identity)
+            if self._checker_imports is not None and _is_absolute(identity)
+            else None
+        )
         if (
-            name is None
-            or self.host is None
-            or self.host.wildcard
-            or name in self.host.bindings
-            or name in _BUILTIN_NAMES
+            imported is None
+            or imported[1] in self.host.bindings
+            or imported[1] in _BUILTIN_NAMES
+            or identity.rpartition(".")[2] != imported[1]
         ):
-            return "", ()
-        return name, (("typing", name),)
+            return TypeTerm(TypeKind.ATOM, identity)
+        return TypeTerm(TypeKind.ATOM, identity, imported[1], checking_imports=(imported,))
 
     def _name(
         self, text: str, limit: int, active: frozenset[str], revealed: bool
@@ -768,8 +793,7 @@ class TypeResolver:
                 return None
         if not identity or identity in _UNSAFE or identity == "typing.TypeVar":
             return None
-        spelling, imports = self._spelling(identity)
-        return TypeTerm(TypeKind.ATOM, identity, spelling, imports=imports)
+        return self._spelling(identity)
 
     def _parameter(
         self, name: str, binding: _Binding, index: int, active: frozenset[str]
@@ -923,6 +947,15 @@ class TypeResolver:
         return None
 
 
+def _is_absolute(identity: str) -> bool:
+    """Whether ``identity`` is a module path and a name in it, not a location or a scope."""
+    return (
+        ":" not in identity
+        and "." in identity
+        and all(part.isidentifier() for part in identity.split("."))
+    )
+
+
 def _typing_name(identity: str) -> str | None:
     """The name ``typing`` exports for ``identity``, when it exports one."""
     if identity.startswith("typing."):
@@ -968,16 +1001,48 @@ def spellable(term: TypeTerm) -> bool:
 
 def required_imports(terms: Sequence[TypeTerm]) -> tuple[tuple[str, str], ...]:
     """The ``(module, name)`` imports writing ``terms`` needs, each once, in order of use."""
+    return _collected(terms, lambda term: term.imports)
+
+
+def checking_imports(terms: Sequence[TypeTerm]) -> tuple[tuple[str, str], ...]:
+    """The ``(module, name)`` imports writing ``terms`` needs under ``TYPE_CHECKING``."""
+    return _collected(terms, lambda term: term.checking_imports)
+
+
+def _collected(
+    terms: Sequence[TypeTerm], of: Callable[[TypeTerm], tuple[tuple[str, str], ...]]
+) -> tuple[tuple[str, str], ...]:
     found: dict[tuple[str, str], None] = {}
 
     def collect(term: TypeTerm) -> None:
-        found.update(dict.fromkeys(term.imports))
+        found.update(dict.fromkeys(of(term)))
+        if term.parameter is not None:
+            for domain in (term.parameter.bound, *term.parameter.constraints):
+                if domain is not None:
+                    collect(domain)
         for child in term.children:
             collect(child)
 
     for term in terms:
         collect(term)
     return tuple(found)
+
+
+def unambiguous_spellings(terms: Sequence[TypeTerm]) -> bool:
+    """Whether no one spelling in ``terms`` writes two different types.
+
+    Each site's types are spelled independently, and a bare name imported for
+    the checker is only free where it is not already another type's.
+    """
+    spelled: dict[str, str] = {}
+
+    def consistent(term: TypeTerm) -> bool:
+        if term.kind is TypeKind.ATOM and term.spelling and term.parameter is None:
+            if spelled.setdefault(term.spelling, term.name) != term.name:
+                return False
+        return all(consistent(child) for child in term.children)
+
+    return all(consistent(term) for term in terms)
 
 
 def _union(members: tuple[TypeTerm | None, ...]) -> TypeTerm | None:

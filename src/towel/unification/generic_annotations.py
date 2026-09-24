@@ -51,14 +51,17 @@ from .annotations import (
 from .models import FunctionNode, MethodKind, span_contains
 from .statement_facts import bindings_of
 from .type_bindings import (
+    CheckerImports,
     ModuleNames,
     TypeKind,
     TypeResolver,
     TypeTerm,
+    checking_imports,
     render_type,
     required_imports,
     spellable,
     type_parameter_identities,
+    unambiguous_spellings,
 )
 from .type_generalization import GenericSignature, aligned_children, generalize_signatures
 from ..type_inference import RevealRequest, TypeOracle
@@ -71,6 +74,7 @@ class GenericHelper:
     helper: ast.FunctionDef
     declarations: tuple[ast.stmt, ...]
     required_imports: tuple[tuple[str, str], ...] = ()
+    type_checking_imports: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -227,6 +231,7 @@ class _Context:
     host_source: str
     host_class: str | None = None
     module_names: ModuleNames | None = None
+    checker_imports: CheckerImports | None = None
 
     def resolver(self, source: str, file_path: str, line: int) -> TypeResolver:
         return TypeResolver(
@@ -237,6 +242,7 @@ class _Context:
             self.host_file,
             host_class=self.host_class,
             module_names=self.module_names,
+            checker_imports=self.checker_imports,
         )
 
 
@@ -306,10 +312,11 @@ def _signature_rows(
     host_class: str | None = None,
     receiver_index: int | None = None,
     module_names: ModuleNames | None = None,
+    checker_imports: CheckerImports | None = None,
     unused: frozenset[int] = frozenset(),
     aliases: Sequence[_Alias | None] = (),
 ) -> tuple[tuple[TypeTerm, ...], ...]:
-    context = _Context(host_file, host_source, host_class, module_names)
+    context = _Context(host_file, host_source, host_class, module_names, checker_imports)
     probes = _Probes()
     contexts: list[_SiteTypes] = []
     for site in sites:
@@ -587,10 +594,12 @@ def _render_generic(
                 ),
             )
         )
+    written = _written_terms(signature, body_annotations)
     return GenericHelper(
         ast.fix_missing_locations(annotated),
         tuple(ast.fix_missing_locations(declaration) for declaration in declarations),
-        required_imports(_written_terms(signature, body_annotations)),
+        required_imports(written),
+        checking_imports(written),
     )
 
 
@@ -618,11 +627,13 @@ def generic_helpers(
     *,
     method: MethodContext | None = None,
     module_names: ModuleNames | None = None,
+    checker_imports: CheckerImports | None = None,
 ) -> Iterator[GenericHelper]:
     """Generic contracts preserving host binders, never unchecked fallbacks.
 
     ``module_names`` gives the absolute name the program's imports give the
-    module at a path, which is how the checker names the types it reveals.
+    module at a path, which is how the checker names the types it reveals;
+    ``checker_imports`` how the host may import a class it cannot yet name.
     Sites in different modules whose types all agree need no variable, and
     their common signature is offered as it is: it names the types by what
     they are, where the ordinary rung, spelling across modules, can write
@@ -657,7 +668,7 @@ def generic_helpers(
                 receiver = site.call.args[receiver_index]
                 if not isinstance(receiver, ast.Name) or receiver.id != positional[0].arg:
                     return
-    context = _Context(host_file, host_source, host_class, module_names)
+    context = _Context(host_file, host_source, host_class, module_names, checker_imports)
     if method is not None and method.kind != "staticmethod":
         retained = context.resolver(host_source, host_file, 1).host_class_parameter_identities
     rows = _signature_rows(
@@ -669,6 +680,7 @@ def generic_helpers(
         host_class=host_class,
         receiver_index=receiver_index,
         module_names=module_names,
+        checker_imports=checker_imports,
         unused=_unused_parameters(helper) - {receiver_index},
         aliases=_returned_aliases(helper, return_variables),
     )
@@ -691,9 +703,10 @@ def generic_helpers(
     )
     for signature in signatures:
         body_annotations = _body_annotations(helper, sites, rows, signature, context, retained)
-        if body_annotations is not None and all(
-            spellable(term) for term in _written_terms(signature, body_annotations)
-        ):
+        if body_annotations is None:
+            continue
+        written = _written_terms(signature, body_annotations)
+        if all(spellable(term) for term in written) and unambiguous_spellings(written):
             yield _render_generic(helper, signature, alias, body_annotations, receiver_index)
 
 

@@ -74,7 +74,7 @@ from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
 from .generic_annotations import MethodContext, generic_helpers
-from .type_bindings import ModuleNames
+from .type_bindings import CheckerImports, ModuleNames
 from .program_imports import ProgramImports
 
 UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
@@ -508,11 +508,13 @@ class HelperAnnotationWiring(EngineState):
             oracle,
             method=method,
             module_names=self._module_names_for(proposal),
+            checker_imports=self._checker_imports_for(proposal),
         ):
             yield dataclasses.replace(
                 proposal,
                 extracted_function=candidate.helper,
                 required_imports=candidate.required_imports,
+                type_checking_imports=candidate.type_checking_imports,
                 helper_type_declarations=candidate.declarations,
             )
 
@@ -536,6 +538,28 @@ class HelperAnnotationWiring(EngineState):
             return named or checker_module_name(Path(self._origin_of(path)))
 
         return module_name
+
+    def _checker_imports_for(self, proposal: RefactoringProposal) -> Optional[CheckerImports]:
+        """How the helper's module may import a class for the checker, as the program shows.
+
+        The rule :meth:`_shorten_unreachable_names` follows for the ordinary
+        signature: a top-level class of a module of the project, imported the
+        way the program's own imports show the host can import that module.
+        """
+        importer = Path(proposal.file_path)
+        try:
+            program = self.import_graph.program_for(importer)
+        except ProjectScanLimitError:
+            return None
+
+        def checker_import(qualified: str) -> Optional[Tuple[str, str]]:
+            split = program.model.split_qualified(qualified)
+            if split is None or "." in split[2]:
+                return None  # No module of the project owns it, or it is nested.
+            spelling = program.spelling(importer, split[0])
+            return None if spelling is None else (spelling.module, split[2])
+
+        return checker_import
 
     @staticmethod
     def _helper_uses_any(proposal: RefactoringProposal) -> bool:

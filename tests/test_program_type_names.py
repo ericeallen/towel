@@ -21,11 +21,14 @@ import pytest
 from towel.type_inference import CheckSuccess, MypyInferrer, checker_module_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.type_bindings import (
+    TypeKind,
     TypeResolver,
     TypeTerm,
+    checking_imports,
     render_type,
     required_imports,
     spellable,
+    unambiguous_spellings,
 )
 from towel.unification.type_generalization import generalize_signatures
 
@@ -728,6 +731,38 @@ def test_a_module_no_import_names_is_named_as_mypy_names_it(tmp_path: Path) -> N
     assert checker_module_name(tmp_path / "not-a-name" / "mod.py") is None
 
 
+def test_a_class_the_host_cannot_name_is_imported_for_the_checker() -> None:
+    """packaging L: direct_url.py hosts the helper; ``PylockValidationError`` is pylock.py's."""
+    imports = {"packaging.pylock.PylockValidationError": (".pylock", "PylockValidationError")}
+    host = "class DirectUrlValidationError(Exception):\n    pass\n"
+
+    def resolved(host_source: str) -> TypeTerm | None:
+        return TypeResolver(
+            "class PylockValidationError(Exception):\n    pass\n",
+            "/project/src/packaging/pylock.py",
+            2,
+            host_source,
+            "/project/src/packaging/direct_url.py",
+            module_names=MODULES.get,
+            checker_imports=imports.get,
+        ).resolve_revealed("packaging.pylock.PylockValidationError")
+
+    term = resolved(host)
+    assert rendered(term) == "PylockValidationError"
+    assert term is not None and checking_imports([term]) == ((".pylock", "PylockValidationError"),)
+    assert not required_imports([term])
+    # A host that binds the name to something else cannot import the class under it.
+    taken = resolved(host + "PylockValidationError = DirectUrlValidationError\n")
+    assert taken is not None and not spellable(taken)
+
+
+def test_one_spelling_never_writes_two_types() -> None:
+    first = TypeTerm(TypeKind.ATOM, "a.Error", "Error")
+    second = TypeTerm(TypeKind.ATOM, "b.Error", "Error")
+    assert unambiguous_spellings([first, first])
+    assert not unambiguous_spellings([first, second])
+
+
 def _extract_across_modules(package: Path) -> dict[str, str]:
     """The first proposal of a cross-module run, applied; strict mypy must accept the project."""
     oracle = MypyInferrer()
@@ -745,6 +780,48 @@ def _extract_across_modules(package: Path) -> dict[str, str]:
     finally:
         oracle.close()
     return sources
+
+
+ERROR = """\
+class {name}(Exception):
+    def __init__(self, message: str, context: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.context = context
+
+    def __str__(self) -> str:
+        if self.context:
+            return f"{{self.message}} in {{self.context!r}}"
+        return self.message
+"""
+
+
+@requires_mypy
+def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """packaging L, in miniature: the variable ranges over the two modules' error classes.
+
+    The helper lives in direct.py, which does not import lock.py; the
+    constraint that names lock.py's class is imported under ``TYPE_CHECKING``,
+    as the program's imports show direct.py can, and so never runs.
+    """
+    _project(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "tests/test_errors.py": "from pkg.direct import DirectError\nfrom pkg.lock import LockError\n",
+            "pkg/__init__.py": "",
+            "pkg/direct.py": ERROR.format(name="DirectError"),
+            "pkg/lock.py": ERROR.format(name="LockError"),
+        },
+    )
+    sources = _extract_across_modules(tmp_path / "pkg")
+    direct = sources[str(tmp_path / "pkg" / "direct.py")]
+    assert "_towel_typevar('_TowelT0', 'DirectError', 'LockError')" in direct, direct
+    guarded = direct.split("if TYPE_CHECKING:", 1)[1].splitlines()[1]
+    assert guarded.strip() == "from .lock import LockError", direct
+    assert "Any" not in direct, direct
 
 
 @requires_mypy

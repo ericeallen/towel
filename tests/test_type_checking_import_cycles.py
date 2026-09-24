@@ -34,6 +34,8 @@ import sys
 import textwrap
 from typing import Mapping
 
+import importlib.util
+
 import pytest
 
 import towel
@@ -44,6 +46,8 @@ from towel.unification.import_graph import (
     _required_imports,
     would_create_import_cycle,
 )
+
+requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
 _BLOCK = """
 
@@ -192,7 +196,7 @@ def test_a_requirement_in_the_guards_else_is_required(tmp_path: Path) -> None:
     assert _required_imports(module, ImportGraphCache()) == frozenset({"typing", "tornado"})
 
 
-def _dry(root: Path) -> subprocess.CompletedProcess[str]:
+def _dry(root: Path, *, types: bool = False) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
@@ -202,7 +206,7 @@ def _dry(root: Path) -> subprocess.CompletedProcess[str]:
             ".",
             ".",
             "--no-interactive",
-            "--no-types",
+            *(() if types else ("--no-types",)),
             "--no-format",
             "--cross-module",
             "--progress",
@@ -249,4 +253,74 @@ def test_modules_that_name_each_other_for_the_checker_share_a_helper(tmp_path: P
         root,
         ["pkg.alpha", "pkg.beta"],
         "from pkg.alpha import fa\nfrom pkg.beta import fb\nprint(fa([0, 2, 3]), fb([1, 5]))\n",
+    )
+
+
+_ERROR = """\
+class {name}(Exception):
+    def __init__(self, message: str, context: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.context = context
+
+    def __str__(self) -> str:
+        if self.context:
+            return f"{{self.message}} in {{self.context!r}}"
+        return self.message
+"""
+
+_SUMMARY = """
+
+def summary_{name}(values: list[int]) -> int:
+    total = 0
+    for value in values:
+        if value > 1:
+            total += value * 2
+        else:
+            total -= value
+    return total + 1
+"""
+
+
+@requires_mypy
+def test_a_type_only_import_towel_wrote_refuses_no_later_pair(tmp_path: Path) -> None:
+    """mistune's renderers, in miniature: the second pair between two modules is still shared.
+
+    The first extraction hosts a generic helper in direct.py whose type
+    variable ranges over lock.py's class too, imported under ``TYPE_CHECKING``,
+    while lock.py imports the helper. A later duplicate between the same two
+    modules then had no host: in lock.py it closes a real cycle, and in
+    direct.py the guard followed the type-only import back to lock.py.
+    """
+    files: Mapping[str, str] = {
+        "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+        "tests/test_errors.py": "from pkg.direct import DirectError\nfrom pkg.lock import LockError\n",
+        "pkg/__init__.py": "",
+        "pkg/direct.py": _ERROR.format(name="DirectError"),
+        "pkg/lock.py": _ERROR.format(name="LockError"),
+    }
+    for name, content in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(content)
+    first = _dry(tmp_path, types=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+    direct = (tmp_path / "pkg" / "direct.py").read_text()
+    assert "if TYPE_CHECKING:\n    from .lock import LockError" in direct, direct
+    for module in ("direct", "lock"):
+        with (tmp_path / "pkg" / f"{module}.py").open("a") as handle:
+            handle.write(_SUMMARY.format(name=module))
+    second = _dry(tmp_path, types=True)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "Extract common code from summary_direct" in second.stdout, second.stdout
+    assert (
+        "def summary_lock(values: list[int]) -> int:\n    return "
+        in (tmp_path / "pkg" / "lock.py").read_text()
+    )
+    imports_in_every_order(
+        tmp_path,
+        ["pkg.direct", "pkg.lock"],
+        "from pkg.direct import DirectError, summary_direct\n"
+        "from pkg.lock import LockError, summary_lock\n"
+        "assert str(DirectError('m', 'c')) == \"m in 'c'\" and str(LockError('m')) == 'm'\n"
+        "assert summary_direct([0, 2, 3]) == summary_lock([0, 2, 3]) == 11\n",
     )
