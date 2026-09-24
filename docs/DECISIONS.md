@@ -606,9 +606,13 @@ would. The fifth applies that rule to the cold confirmation.
   untyped import, a missing stub, an untyped decorator, or an `Any` base
   class. The entry of 2026-09-23 reported such files. They are now left
   alone, named up front, and their proposals counted as not verifiable. The
-  same is being applied to code the checker deems unreachable for the
-  platform or Python version it checks: on trio, win32-only modules were
-  "verified" by a check that looked at nothing.
+  same applies to code the checker deems unreachable for the platform or
+  Python version it checks, where on trio win32-only modules had been
+  "verified" by a check that looked at nothing. Each checker is asked by a
+  `reveal_type` probe whether it looks at the lines a change writes. The
+  body of an unannotated function that mypy leaves unchecked counts as
+  looked at: the project's own mypy skips it on every platform, so the
+  verdict does not depend on where Towel runs.
 - **The cold confirmation excuses what the original also shows cold.** An
   error that only the cold check reports is compared with a cold check of
   the original. It refuses the run only if the original's check does not
@@ -628,8 +632,8 @@ helper, which is what failed idna's `--strict`, is being narrowed
 separately: it will not apply in a module whose functions are all
 annotated.
 
-*Status: implemented on the `audit-1772` branch, except the rule for
-unreachable code, which is being implemented. Not yet released.*
+*Status: implemented on the `audit-1772` branch, including the rule for
+unreachable code; not yet released.*
 
 ## 2026-09-24: An import problem refuses only when it leaves a name in doubt
 

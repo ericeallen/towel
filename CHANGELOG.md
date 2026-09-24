@@ -30,6 +30,17 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A typed run no longer changes code that the type checker does not look
+  at. That is code the checker takes to be unreachable on the platform and
+  Python version it checks for, and there it reports nothing. On darwin,
+  mypy skips a module guarded by `assert sys.platform == "win32"`, so
+  Towel's check of changes there was vacuous. trio's CI, which checks linux,
+  darwin and win32, found 14 errors in output Towel had accepted.
+
+  Every configured checker is now asked, by a `reveal_type` probe, whether
+  it looks at the lines a change writes. A change it does not look at is
+  declined as not verifiable. The regions are named before the run. trio's
+  CI now passes on all three platforms.
 - An import under `if TYPE_CHECKING:` never runs, and the cycle guard no
   longer follows it. Modules that name each other's classes only for the
   checker can now share a helper. A type-only import that Towel writes no
