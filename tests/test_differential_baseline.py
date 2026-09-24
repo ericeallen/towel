@@ -486,7 +486,13 @@ def test_an_error_only_its_message_matches_is_not_one_the_project_had(
         proposal.extracted_function
     ), "a helper for part of each body"
     if where_after == "swapped into the helper":
-        with pytest.raises(RefactoringError, match="introduces project type errors"):
+        # Every annotated variant is refused for the helper's new error; the
+        # unannotated one is not tried in a module whose every function is
+        # annotated, and the decline says so.
+        with pytest.raises(
+            RefactoringError,
+            match="introduces project type errors|one unannotated function of its module",
+        ):
             engine.apply_refactoring(str(path), proposal)
     else:
         assert "__extracted_func_0" in engine.apply_refactoring(str(path), proposal)

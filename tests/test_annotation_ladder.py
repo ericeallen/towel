@@ -17,7 +17,7 @@ import pytest
 
 from towel.type_inference import CheckResult, MypyInferrer, TypeDiagnostic
 from towel.unification.exceptions import RefactoringError
-from towel.unification.materialize import _Rejection
+from towel.unification.annotation_ladder import Rejection
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
@@ -33,8 +33,8 @@ MODULE = textwrap.dedent("""
     """).lstrip()
 
 
-def _rejection(*errors: TypeDiagnostic) -> _Rejection:
-    return _Rejection(errors, "/project/m.py", "helper", MODULE)
+def _rejection(*errors: TypeDiagnostic) -> Rejection:
+    return Rejection(errors, "/project/m.py", "helper", MODULE)
 
 
 def test_errors_on_the_helpers_own_lines_are_confined_to_it() -> None:
@@ -76,20 +76,27 @@ def _helper_signatures(sources: Sequence[str]) -> List[str]:
 
 
 @requires_mypy
+@pytest.mark.parametrize("strict", [True, False])
 def test_a_call_site_error_under_every_any_ends_the_ladder(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, strict: bool
 ) -> None:
     """Moving ``isinstance`` into the helper leaves ``other`` an ``object`` in the caller's thunk.
 
     Towel now declines this extraction where the proposal is built, so reaching
     the ladder at all means setting that refusal aside. The ladder rule is the
     second line and is worth keeping tested: an error no helper signature can
-    reach ends the ladder rather than costing two more project checks.
+    reach ends the ladder rather than costing two more project checks. The
+    second check is the rung that gives ``Any`` where the ordinary signature's
+    errors point; where mypy does not refuse a helper returning ``Any``
+    (``warn_return_any``, which ``strict`` sets) the rung that makes every
+    annotation ``Any`` is the second instead, the targeted one having nothing
+    the errors point at.
     """
     monkeypatch.setattr(
         "towel.unification.pair_evaluation.narrowing_lost_at_call_site", lambda *_: None
     )
-    (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
+    configuration = "strict = true" if strict else "check_untyped_defs = true"
+    (tmp_path / "pyproject.toml").write_text(f"[tool.mypy]\n{configuration}\n")
     path = tmp_path / "shapes.py"
     path.write_text(textwrap.dedent("""
             class Base:
@@ -139,4 +146,5 @@ def test_a_call_site_error_under_every_any_ends_the_ladder(
         signature for signature in _helper_signatures(oracle.checked) if "_TowelT" not in signature
     ]
     assert len(signatures) == 2, signatures
-    assert signatures[-1].count(": Any") == signatures[-1].count(",") + 1, signatures
+    every_any = signatures[-1].count(": Any") == signatures[-1].count(",") + 1
+    assert every_any is not strict, signatures

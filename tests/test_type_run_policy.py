@@ -187,7 +187,11 @@ def test_clean_unannotated_run_never_disables_for_prospective_errors(
     for _ in range(2):
         with pytest.raises(RefactoringError, match="[Tt]ype (errors|check failed)"):
             engine.apply_refactoring(str(path), proposal)
-    assert len(oracle.checks) == 3, "One baseline and both prospective changes must be checked"
+    # The second application renders the same variant against the same
+    # project, so a refusal is answered as the first check answered it; a
+    # checker that could not run answered nothing, and is asked again.
+    prospective = 2 if failure else 1
+    assert len(oracle.checks) == 1 + prospective, "The baseline and the prospective change"
     assert "disabling" not in caplog.text
     assert oracle.inferences == 0
     assert path.read_text() == original and engine.change_log == ()

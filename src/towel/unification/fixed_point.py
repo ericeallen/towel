@@ -54,12 +54,15 @@ from typing import (
     Set,
     Tuple,
     TypeVar,
+    Union,
 )
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import (
     CheckerUnavailableError,
     RefactoringError,
     UncheckedCodeError,
+    Untypeable,
+    UntypeableExtraction,
     UnverifiableChangeError,
 )
 from .models import RefactoringProposal, TerminationReason
@@ -111,16 +114,19 @@ def _is_checker_failure(error: BaseException) -> bool:
     return isinstance(error, CheckerUnavailableError)
 
 
-DeclineReason = Literal[
-    "refused by the type checker",
-    "not judged: the type checker could not run",
-    "not verifiable: its file holds a name the type checker cannot type",
-    "not verifiable: the type checker does not look at the code it changes",
-    "not representable in its file's encoding",
-    "could not be rendered",
-    "changed nothing",
+DeclineReason = Union[
+    Literal[
+        "refused by the type checker",
+        "not judged: the type checker could not run",
+        "not verifiable: its file holds a name the type checker cannot type",
+        "not verifiable: the type checker does not look at the code it changes",
+        "not representable in its file's encoding",
+        "could not be rendered",
+        "changed nothing",
+    ],
+    Untypeable,
 ]
-"""Why a proposal the analysis built was not applied."""
+"""Why a proposal the analysis built was not applied: an ``Untypeable`` names what no signature can type."""
 
 
 @dataclass(frozen=True)
@@ -415,10 +421,12 @@ class FixedPointDrivers(Materialization):
 
         Told apart by type, never by wording: a checker that could not run
         judged nothing; one that could run but cannot see what the proposal's
-        file imports was not asked; one that refused a rendered variant judged
-        the proposal (``_checker_refusals`` counts those since the driver
-        started it); text its file's encoding cannot hold is a limit of that
-        file; anything else is a rendering Towel could not produce.
+        file imports was not asked; a refusal no signature of the helper could
+        answer (``UntypeableExtraction``) says the extraction itself cannot be
+        typed; one that refused a rendered variant judged the proposal
+        (``_checker_refusals`` counts those since the driver started it); text
+        its file's encoding cannot hold is a limit of that file; anything else
+        is a rendering Towel could not produce.
         """
         reason: DeclineReason
         if _is_checker_failure(error):
@@ -437,6 +445,13 @@ class FixedPointDrivers(Materialization):
             reason, said = (
                 "not verifiable: its file holds a name the type checker cannot type",
                 "the type checker could not verify",
+            )
+        elif isinstance(error, UntypeableExtraction):
+            reason = error.reason
+            said = (
+                "no annotated helper signature types"
+                if reason is Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE
+                else "no helper signature can type"
             )
         elif isinstance(error, RefactoringError) and self._checker_refusals:
             reason, said = "refused by the type checker", "the type checker refused"

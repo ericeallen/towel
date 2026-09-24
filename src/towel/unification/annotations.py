@@ -926,11 +926,17 @@ def shorten_qualified_names(
             return ast.copy_location(ast.Name(id=shortened, ctx=ast.Load()), node)
 
     def rewritten(annotation: ast.expr) -> ast.expr:
-        shortened = cast(ast.expr, _Shorten().visit(annotation))
-        if not quote or shortened is annotation:
-            return shortened
-        if isinstance(shortened, ast.Constant) and isinstance(shortened.value, str):
-            return shortened
+        # A string annotation is shortened inside the string, and an annotation
+        # is known to be touched by what it spells, not by node identity: the
+        # transformer rewrites a nested name in place and hands back the same
+        # subscript, which left ``dict[Item, int]`` evaluated at definition.
+        expression = _unquoted(annotation)
+        was_string = expression is not annotation
+        shortened = cast(ast.expr, _Shorten().visit(copy.deepcopy(expression)))
+        if ast.dump(shortened) == ast.dump(expression):
+            return annotation
+        if not (quote or was_string):
+            return ast.copy_location(shortened, annotation)
         return ast.copy_location(ast.Constant(value=ast.unparse(shortened)), annotation)
 
     for parameter in helper.args.posonlyargs + helper.args.args:
@@ -1034,6 +1040,14 @@ def infer_missing_annotations(
     normalized by the checker's subtype relation, and unions the sites'
     declarations already supplied are normalized the same way.
 
+    A declaration copied from the sites is what each site's parameter was
+    declared as, which is not always what the block saw: ``other: _BaseVersion``
+    in a method whose block runs under ``isinstance(other, Version)``. So the
+    argument of a copied parameter is revealed too, and where the join of what
+    the blocks saw is a strict subtype of the copy, the helper takes that
+    instead; the call stands where the narrowing holds, so every site still
+    passes it. A copy that says the same in other words is kept as written.
+
     A method's receiver, named by ``receiver``, is not among them. Its type is
     fixed by the class the method is defined on, not by the callers that happen
     to exist: a helper on a base class is inherited by every subclass, so
@@ -1059,6 +1073,17 @@ def infer_missing_annotations(
         and parameter.arg != receiver
         and all(index < len(site.call.args) for site in sites)
     ]
+    copied = [
+        index
+        for index, parameter in enumerate(parameters)
+        if parameter.annotation is not None
+        and parameter.arg != receiver
+        and all(
+            index < len(site.call.args) and isinstance(site.call.args[index], ast.Name)
+            for site in sites
+        )
+    ]
+    probed = bare + copied
     allowed = set(_TYPING_NAMES) | (bare_ok or set())
     host_site = next((site for site in sites if site.file_path == host_file), None)
     subtypes: _Subtypes = (
@@ -1069,19 +1094,19 @@ def infer_missing_annotations(
     declared = [site.declared_return for site in sites]
     returns_call = bool(sites) and all(isinstance(site.statement, ast.Return) for site in sites)
     want_return = bool(sites) and (annotated.returns is None or returns_call)
-    if not bare and not want_return:
+    if not probed and not want_return:
         return _InferredHelper(annotated, ())
     requests: List[RevealRequest] = []
     return_probes: List[Tuple[str, int, int]] = []
     for site in sites:
-        if bare:
+        if probed:
             requests.append(
                 RevealRequest(
                     site.file_path,
                     site.source,
                     site.start_line,
                     site.indent,
-                    tuple(ast.unparse(site.call.args[index]) for index in bare),
+                    tuple(ast.unparse(site.call.args[index]) for index in probed),
                 )
             )
         if want_return:
@@ -1105,6 +1130,17 @@ def infer_missing_annotations(
         parameters[index].annotation = _joined_revealed(
             texts, host, same_module, subtypes, allowed, fallbacks=loosened
         )
+    for position, index in enumerate(copied, start=len(bare)):
+        seen = _joined_revealed(
+            [revealed.get((site.file_path, site.start_line, position)) for site in sites],
+            host,
+            same_module,
+            subtypes,
+            allowed,
+        )
+        current = parameters[index].annotation
+        if seen is not None and current is not None:
+            parameters[index].annotation = _narrower(current, seen, subtypes)
     for index, parameter in enumerate(parameters):
         if index not in bare and parameter.annotation is not None:
             parameter.annotation = _renormalized(
@@ -1130,6 +1166,17 @@ def infer_missing_annotations(
         elif revealed_return is not None or annotated.returns is None:
             annotated.returns = revealed_return
     return _InferredHelper(annotated, typing_imports_needed(annotated, host))
+
+
+def _narrower(declared: ast.expr, seen: ast.expr, subtypes: _Subtypes) -> ast.expr:
+    """``seen`` where the checker confirms it is a strict subtype of ``declared``; else ``declared``."""
+    if ast.dump(_unquoted(seen)) == ast.dump(_unquoted(declared)):
+        return declared
+    narrow, wide = _unquoted(seen), _unquoted(declared)
+    verdicts = list(subtypes([(narrow, wide), (wide, narrow)]))
+    if len(verdicts) == 2 and verdicts[0] is Subtyping.YES and verdicts[1] is not Subtyping.YES:
+        return seen
+    return declared
 
 
 def _return_under_declarations(
@@ -1385,10 +1432,24 @@ def _joined_revealed(
 
     A site's text that cannot be written is replaced by its entry in
     ``fallbacks``, when it has one (``builtin_object_revealed``).
+
+    A site where the value is ``Any`` constrains nothing and is left out of
+    the join, so long as another site says what the value is: ``Any`` is
+    assignable to every parameter type, so that site's call checks whatever
+    the others make the annotation, and the helper's body is checked against
+    the type the rest agree on instead of none. packaging's ``Tag`` is the
+    case: ``__init__`` passes ``interpreter: str`` and ``__setstate__`` the
+    ``Any`` it read from a pickled dict, and the helper they share took
+    ``Any`` for all three strings.
     """
     present = [text for text in texts if text is not None]
     if not present or len(present) != len(texts):
         return None
+    known = [index for index, text in enumerate(present) if text.strip() != "Any"]
+    if known and len(known) != len(present):
+        spare_by_index = list(fallbacks) + [None] * (len(present) - len(fallbacks))
+        present = [present[index] for index in known]
+        fallbacks = [spare_by_index[index] for index in known]
     extra = allowed if allowed is not None else set(_TYPING_NAMES)
     spare = list(fallbacks) + [None] * (len(present) - len(fallbacks))
     candidates = [

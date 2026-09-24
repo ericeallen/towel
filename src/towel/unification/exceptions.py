@@ -18,6 +18,8 @@ This module defines domain-specific exceptions that provide clearer error
 semantics than generic Python exceptions.
 """
 
+from enum import StrEnum
+
 
 class TowelError(Exception):
     """Base exception for all Towel-related errors."""
@@ -37,6 +39,52 @@ class CheckerUnavailableError(RefactoringError):
     Distinct from a candidate the checker refused, so a run whose every
     candidate went unjudged is reported as that rather than as a fixed point.
     """
+
+
+class Untypeable(StrEnum):
+    """What an extraction takes from its callers that no signature of the helper gives back.
+
+    Each is the reason a declined proposal is reported under, in the words the
+    run's summary uses.
+    """
+
+    NARROWING_READ_AFTER_CALL = "narrows what its caller reads after the call"
+    """The block tests a name or attribute that the code after it relies on (packaging's
+    ``if self._key_cache is None``); the narrowing ends with the helper."""
+    NARROWING_READ_IN_THUNK = "narrows what a call-site lambda reads"
+    """A test passed as an argument once governed an expression now passed as a lambda
+    (rich's ``task.total is not None`` and ``lambda: int(task.total)``)."""
+    ATTRIBUTE_DECLARATIONS = "declares its class's attributes"
+    """Assignments through a method's receiver were the class's attribute declarations
+    (nox's ``self.location_name = location``); a function outside the class declares none."""
+    PARTIAL_TYPE = "completes its caller's partial type"
+    """mypy learns an empty collection's element type from the next statement that fills
+    it (mistune's ``attrs = {}``); passed to a call first, it is an error at the assignment."""
+    UNANNOTATED_IN_ANNOTATED_MODULE = "would be the one unannotated function of its module"
+    """Every annotated signature was refused and only the unannotated helper is left, in a
+    module whose every function is annotated: a checker that skips unannotated bodies
+    accepts it, and the project's stricter CI does not (idna, whose CI runs
+    ``mypy --strict`` with no configuration Towel could read)."""
+
+
+class UntypeableExtraction(RefactoringError):
+    """A proposal no signature of its helper can type, and which of those reasons it is.
+
+    The ladder raises it instead of checking its remaining rungs, as soon as the
+    reason is known: from the proposal alone where that is enough, else from the
+    first refusal that shows it. The proposal is reported under the reason
+    rather than as an ordinary refusal.
+    """
+
+    def __init__(self, reason: Untypeable, detail: str) -> None:
+        lead = (
+            "No annotated helper signature types this extraction, and an unannotated helper"
+            if reason is Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE
+            else "No helper signature can type this extraction: it"
+        )
+        super().__init__(f"{lead} {reason}: {detail}")
+        self.reason = reason
+        self.detail = detail
 
 
 class UnverifiableChangeError(RefactoringError):
