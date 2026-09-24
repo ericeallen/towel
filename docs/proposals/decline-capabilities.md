@@ -62,3 +62,17 @@ venv's site-packages.
 |---|---|---|
 | `not_structurally_similar`, at a similarity threshold of 0.6 | It blocks pairs that pass every check. The recovered helpers read in rich bundle local aliases, which is low value. | default mode 93 → 104 refactorings over the four packages; with `--cross-module`, 119 → 142 |
 | `narrowing_lost_at_call_site` | Under `--no-types`, and in unannotated code, it changes no behaviour. | 2 / 27 pairs |
+
+## Found after the deferral
+
+These were found by the same round's real-code and semantic auditors, and
+deferred on the same grounds.
+
+| Decline | What is over-broad | Evidence |
+|---|---|---|
+| Blocks differing only in an operator | `n + 1` against `n - 1` is `unification_failed`, where any other differing subexpression is parameterised. The same holds for `+`/`*`, `<`/`>`, `not`/`-` and `and`/`or`. | semantic reproducer `p2_decline_differing_operator` |
+| `global` declared at one site only | `bound_after_block` ignores `global`, so the pair is `incomplete_lifetime_block2`. | `p2_decline_global_declared_in_one_site` |
+| A hole conflated with a binder | For `xs[v1 % 4]` against `xs[len(xs) % 4]`, every `v1` at site 2 is replaced. The instantiation check declines it safely, and only a smaller tail is extracted. | `p2_decline_hole_conflated_with_binder` |
+| `global` declared at both sites | A helper with its own `global` would be sound; it is declined as `module_data_lookup` and `moves_scope_declaration`. | semantic harness `misc_global_in_both` |
+| A per-module constant under `--cross-module` | A thunk would be sound. It is common: every module-level `logger`. | semantic harness `bind_x_global_both` |
+| A name used only in a local-variable annotation | Such an annotation never runs, but the name is treated as a run-time read. It declines the pair with a `TYPE_CHECKING` import, and otherwise makes the type a helper parameter. | real-code reproducer `p2_xmod_annotation_only_name` (uvicorn) |

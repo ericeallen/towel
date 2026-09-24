@@ -711,3 +711,33 @@ on new and riskier ground. They remain defects by the owner's standard, and
 are recorded as defects, not as limitations.
 
 *Status: decided. The deferred list is the next release's starting point.*
+
+## 2026-09-24: Every release is audited, and every finding becomes a test
+
+Every release gets a full from-scratch audit, run with the discipline of
+1.772's rounds:
+- independent auditors, each on its own dimension;
+- the shipped wheel run on 3.11, 3.12 and 3.13;
+- the owner's P1 and P2 standard;
+- another round after any round that finds a P1.
+
+The audit is not reserved for releases whose design changed.
+
+What an audit finds is not left for the next audit to find again. Every
+defect, and every class of defect it belongs to, becomes a cheap test in
+the default suite:
+- a fast unit test of the logic that failed;
+- the reproducer, added as a fixture to the hostile batteries, with their
+  before-and-after runtime oracle;
+- where the defect is one instance of a class, a property test that
+  checks the class. Examples: the cache off against the cache on; no new
+  public names in any battery fixture; Towel's name analysis against
+  `symtable`; Towel's reading of mypy's configuration against mypy's own.
+
+A performance regression is guarded by a count of calls, not by a
+timing. A seeded, bounded version of the semantic auditor's program
+generator runs in the suite, and a longer run (`just fuzz`) is a
+release-candidate step. The suite then catches the known classes on
+every commit, and each audit spends its time on new ground.
+
+*Status: adopted with 1.772. The round-3 fix branches add the tests.*
