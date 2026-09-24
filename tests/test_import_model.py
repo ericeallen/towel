@@ -784,6 +784,27 @@ def test_the_file_making_an_unresolved_import_is_never_a_provider(tmp_path):
     }
 
 
+def test_what_is_missing_below_a_module_file_is_the_module_under_it(tmp_path):
+    """``alpha/util.py`` holds no submodules: ``alpha.util.gone`` is missing, and ``alpha.util`` is not."""
+    project = _write(
+        tmp_path / "project",
+        {
+            "alpha/__init__.py": "",
+            "alpha/util.py": "",
+            "alpha/compat.py": "import sys\nsys.modules[__name__ + '.moves'] = sys\n",
+            "alpha/a.py": "from .util.gone import thing\n",
+            "tests/test_a.py": "import alpha.util\nimport alpha.util.gone\nimport alpha.compat.moves\n",
+        },
+    )
+    model = _model(project)
+    described = sorted(problem.describe(model.root) for problem in model.problems)
+    assert described == [
+        "alpha/a.py:1: from .util.gone import thing names .util.gone, which does not exist",
+        "tests/test_a.py:2: import alpha.util.gone needs alpha.util.gone, which alpha does not hold",
+    ]
+    assert _spelled(model, "tests/test_a.py", "alpha/util.py") == "alpha.util"
+
+
 def _sphinx_shape(root: Path) -> Path:
     """sphinx's shape: a package importing itself absolutely, and test data importing what it lacks."""
     return _write(

@@ -1026,13 +1026,18 @@ class _Listings:
         return any(file.startswith(prefix) and file.endswith(_EXTENSIONS) for file in files)
 
     def first_missing(self, directory: Path, parts: Sequence[str]) -> Optional[int]:
-        """The index of the first of ``parts`` that ``directory`` does not hold, or ``None``."""
+        """The index of the first of ``parts`` that ``directory`` does not hold, or ``None``.
+
+        A module that is not a package holds no submodules, so below one the
+        part after it is the one missing: with ``util.py`` present,
+        ``util.gone`` lacks ``gone``, not ``util``.
+        """
         cursor = directory
         for index, part in enumerate(parts):
             if index == len(parts) - 1:
                 return None if self.holds_module(cursor, part) else index
             if part not in self.entries(cursor)[0]:
-                return index
+                return index + 1 if self.holds_module(cursor, part) else index
             cursor = cursor / part
         return None
 
@@ -1056,9 +1061,19 @@ class _Listings:
         index = self.first_missing(location, inner)
         if index is None:
             return _Submodules(True)
-        if self._registers(location.joinpath(*inner[:index]) / "__init__.py"):
+        if self._registers(self._above(location, inner[:index])):
             return _Submodules(False)
         return _Submodules(False, ".".join(parts[: index + 2]))
+
+    def _above(self, location: Path, inner: Sequence[str]) -> Path:
+        """The module a missing submodule of ``inner`` would be registered by, below ``location``.
+
+        That is the package's initializer, or the module file itself when
+        ``inner`` names one, as ``six.py`` makes ``six.moves``.
+        """
+        parent = location.joinpath(*inner)
+        module = parent.with_name(f"{parent.name}.py")
+        return module if inner and module in self._modules else parent / "__init__.py"
 
     def _registers(self, path: Path) -> bool:
         module = self._modules.get(path)
