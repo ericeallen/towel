@@ -55,7 +55,11 @@ def quote_summary(quote):
 ```
 
 Towel proposes the shared block as a helper (emitted with a placeholder name you
-rename afterward) and rewrites both functions to call it. The inserted code is
+rename afterward) and rewrites both functions to call it. The comments of the
+moved code go into the helper beside the code they were written for, a
+`# type: ignore` or `# pragma: no cover` included; duplicates whose tool
+directives differ are left alone, since the helper would have one line where
+they had two. The inserted code is
 formatted the way the project formats its own (`ruff format` when the project
 configures ruff, else Black, at the line length the project declares) and any
 imports Towel adds are sorted with ruff's import rules or isort when the

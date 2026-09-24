@@ -117,7 +117,11 @@ flowchart TD
       same-file sites that can share the helper (`clustering.py`); a call
       that would pass a callee as `lambda *args, **kwargs: callee(*args,
       **kwargs)`, or that names something the site cannot resolve, declines
-      the pair (`forwarded_callee`, `undefined_names_in_call`);
+      the pair (`forwarded_callee`, `undefined_names_in_call`); so do tool
+      directives the two blocks do not carry alike (`directives_differ`,
+      `directive_on_argument`, `directive_outlives_block`; see *Comments of
+      moved code*), and a further site that differs from them in its
+      directives does not join;
    10. placement: function, class, or module, and a host module that closes
        no import cycle and whose import runs no module code the borrower's
        imports do not already run (a module-level helper may move to
@@ -772,6 +776,49 @@ otherwise the file stays as Towel assembled it. Independent imports can still
 have order-sensitive initialization, which this binding check cannot model. The tools are optional (`code-towel[format]`);
 without them code is inserted as rendered, and the CLI says so.
 
+## Comments of moved code
+
+A syntax tree holds no comments, so a helper rendered by `ast.unparse` lost
+every comment of the blocks it replaced: a `# type: ignore` a checker needed,
+a `# pragma: no cover`, a `# noqa`, and every word of explanation.
+[`block_comments.py`](../src/towel/unification/block_comments.py) carries
+them. When a site's call is generated, the comments between its block's
+first and last line are read from the module's tokens (`site_comments`),
+each anchored to the node it follows or precedes by a path of typed steps
+from the block's statements, with the punctuation between them, the
+grouping parentheses the comment stood in and the trailing comma that kept
+its brackets exploded; comments above or below the block belong to the call
+site and stay there. The helper's body is the first site's block with
+parameters substituted, so a path names the same code in the helper, down
+to the parameter that took a differing expression's place.
+
+Which comments the helper carries is decided from every site
+(`merge_comments`). An explanatory comment is kept wherever any site
+carries it, the first site's first, since it documents code the helper now
+holds; another site's note where the first site's already ends the line goes
+on a line of its own before that code. A tool directive changes what a tool reports for its line, and the
+helper has one line where the sites had several, so the sites must carry
+the same directives at the same places (`directives_differ`); a checker's
+ignore must not stand on a line where some site's code, other than a name
+or a literal, becomes an argument, which the ignore would no longer cover
+(`directive_on_argument`); and a region directive (`fmt: off`, `isort:
+off`, a `pylint: disable` on a line of its own) must close within the block,
+and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
+(`directive_outlives_block`). A clustered site whose directives differ is
+left out of the cluster.
+
+Materialization writes the comments into the unparsed helper before the
+formatter runs (`weave_comments`): at the end of the line holding their code,
+inside the brackets they stood in, or on lines of their own before or after
+their statements and clause headers, with the source's grouping parentheses
+and exploding trailing comma written back so Black and ruff lay the code
+out around them as the source did. The woven text must parse to the plain
+rendering's tree, and a comment that cannot stand where it was written goes
+to its statement's line. A formatting that moves a directive off the line
+of the code it covered, as ruff does with a comment after a split line's
+closing parenthesis, is not used for that helper (`keeps_directives`); it is
+inserted as rendered.
+
 ## Cross-file behavior
 
 Sharing a helper across modules is opt-in (`cross_module_helpers`,
@@ -1323,6 +1370,7 @@ but the ideas and their names are from the literature.
 | Safety guards and the pre-scan | `semantic_safety.py` |
 | Import-graph resolution and the cycle guard | `import_graph.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
+| The comments of moved blocks, and where they go in the helper | `block_comments.py` |
 | Helper annotations | `annotations.py` |
 | Type oracle (mypy, pyright) | `type_inference.py` (at `src/towel/`) |
 | Owned mypy worker, one forked build per request | `_mypy_worker.py` |

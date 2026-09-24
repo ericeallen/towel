@@ -40,6 +40,8 @@ import ast
 import hashlib
 import re
 
+from .block_comments import HelperComments, SiteComments
+
 MethodKind = Literal["instance", "classmethod", "staticmethod"]
 """How a helper placed in a class binds its receiver."""
 
@@ -142,6 +144,8 @@ class Replacement:
     class_name: Optional[str] = None
     method_kind: Optional[MethodKind] = None
     implicit_param: Optional[str] = None
+    # The comments of the block this call replaces, which move into the helper.
+    comments: SiteComments = SiteComments()
 
 
 GENERATED_HELPER_NAME = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
@@ -199,6 +203,8 @@ class RefactoringProposal:
     # variant. Rendered before a fresh module helper or the host of a method;
     # annotation fallbacks must drop this preamble along with its annotations.
     helper_type_declarations: Tuple[ast.stmt, ...] = ()
+    # The comments of the sites' blocks the helper carries (``block_comments``).
+    helper_comments: HelperComments = HelperComments()
 
 
 @dataclass
@@ -313,6 +319,10 @@ class RejectReason(StrEnum):
     TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"
     UNBINDS_EXTERNAL_NAME = "unbinds_external_name"
     DUPLICATE_PROPOSAL = "duplicate_proposal"
+    # The values of ``block_comments.ConflictKind``, which names them.
+    DIRECTIVES_DIFFER = "directives_differ"
+    DIRECTIVE_ON_ARGUMENT = "directive_on_argument"
+    DIRECTIVE_OUTLIVES_BLOCK = "directive_outlives_block"
     FORWARDED_CALLEE = "forwarded_callee"
     THUNK_OF_POSSIBLY_UNBOUND_LOCAL = "thunk_of_possibly_unbound_local"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
