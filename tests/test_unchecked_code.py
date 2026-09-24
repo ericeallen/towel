@@ -302,6 +302,36 @@ def test_the_statements_after_an_assert_are_a_block_of_their_own() -> None:
     assert ((3, 0), 3, 4) in plan.blocks and ((1, 0), 1, 4) in plan.blocks
 
 
+def test_a_class_body_is_answered_for_by_its_class() -> None:
+    """A probe is no statement a TypedDict body may hold, so the class answers for its body."""
+    from towel.reachability import probe_plan
+
+    source = (
+        "import typing\n\n\nclass Info(typing.TypedDict):\n    name: str\n\n\n"
+        "class More(Info):\n    size: int\n\n    def f(self) -> None:\n        pass\n"
+    )
+    plan = probe_plan(source)
+    assert plan is not None
+    assert plan.sites[(5, 4)] == plan.sites[(4, 0)] == (4, "")
+    assert plan.sites[(9, 4)] == plan.sites[(11, 4)] == plan.sites[(8, 0)]
+    assert plan.sites[(12, 8)] == (12, "        "), "a method's body is probed where it stands"
+
+
+@requires_mypy
+def test_a_typed_dict_is_no_region_the_checker_skips(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = "import typing\n\n\nclass Info(typing.TypedDict):\n    name: str\n\n\n" + _twins()
+    oracle = MypyInferrer()
+    caplog.set_level(logging.WARNING, logger="towel")
+    try:
+        written, applied, _ = _run(tmp_path, source, oracle)
+    finally:
+        oracle.close()
+    assert "does not look at" not in caplog.text
+    assert applied == 1, written
+
+
 def test_a_module_that_does_not_parse_is_one_nothing_is_known_about() -> None:
     from towel.reachability import probe_plan
 

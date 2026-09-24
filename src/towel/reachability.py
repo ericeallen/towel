@@ -30,7 +30,9 @@ unchecked) exactly where the checker looks.
 its own, so a statement that shares its line with a compound statement's
 header (``if x: return``) is first moved to a line of its own in the text the
 checker is given; a ``;`` sibling shares the probe of the statement it follows,
-and a decorated definition is probed before its first decorator. The plan also
+a decorated definition is probed before its first decorator, and a statement
+directly in a class body shares its class's probe, since a ``TypedDict`` body
+may hold nothing else. The plan also
 names the start of every block, and the statement after every ``assert``, for
 finding a module's unreachable regions before a run (:attr:`ProbePlan.blocks`).
 """
@@ -174,6 +176,18 @@ def probe_plan(source: str) -> Optional[ProbePlan]:
         elif not lines[line - 1][column:].startswith("elif"):
             # A ``;`` sibling shares the probe of the line's first statement.
             sites[(line, column)] = (position[line], _indent_of(lines[line - 1]))
+    # A statement directly in a class body runs whenever the class statement
+    # does, so the class's probe answers for it: a probe is no statement a
+    # TypedDict or NamedTuple body may hold, and there it would go unanswered
+    # whether or not the checker looks. An ``assert`` in the body could make
+    # what follows unreachable, so such a body is probed statement by statement.
+    for node in statements:  # outer classes first: ``ast.walk`` goes breadth first
+        if not isinstance(node, ast.ClassDef) or places[id(node)] not in sites:
+            continue
+        if any(isinstance(child, ast.Assert) for child in node.body):
+            continue
+        for child in node.body:
+            sites[places[id(child)]] = sites[places[id(node)]]
     text = "\n".join(moved)
     probed = text.split("\n")
     for at, indent in sorted(set(sites.values()), reverse=True):
