@@ -604,6 +604,8 @@ class _Module:
     changes_sys_path: bool
     registers_modules: bool = False
     """Whether it stores into ``sys.modules`` or adds a finder: its submodules need no files."""
+    binds: Optional[FrozenSet[str]] = None
+    """The names its module level binds, or ``None`` when it may bind names no statement shows."""
 
 
 @dataclass(frozen=True)
@@ -1214,10 +1216,11 @@ class _Listings:
     def submodules(self, location: Path, site: ImportSite) -> _Submodules:
         """What the absolute import ``site`` names below its top-level name's ``location``.
 
-        ``from Q.x import y`` needs only ``Q.x``, since ``y`` may be an
-        attribute; ``from Q import x`` needs nothing, but ties ``Q`` to the
-        location when ``x`` is a module there. A module is not missing from a
-        package whose initializer registers modules itself.
+        ``from Q.x import y`` needs ``Q.x``, and ``y`` too when ``Q.x`` is a
+        package whose initializer does not bind it (:meth:`unbound`);
+        ``from Q import x`` ties ``Q`` to the location when ``x`` is a module
+        there, and needs ``Q.x`` when nothing there binds ``x``. A module is
+        not missing from a package whose initializer registers modules itself.
         """
         parts = (site.module or "").split(".")
         inner = parts[1:]
@@ -1227,13 +1230,52 @@ class _Listings:
             return _Submodules(False, ".".join(parts[:2]))  # A module file has no submodules.
         if not inner:
             held = any(name != "*" and self.holds_module(location, name) for name in site.names)
-            return _Submodules(held)
+            unbound = self.unbound(location, site.names)
+            return _Submodules(held, None if unbound is None else f"{parts[0]}.{unbound}")
         index = self.first_missing(location, inner)
         if index is None:
-            return _Submodules(True)
+            unbound = self.unbound(location.joinpath(*inner), site.names)
+            return _Submodules(True, None if unbound is None else f"{site.module}.{unbound}")
         if self._registers(self._above(location, inner[:index])):
             return _Submodules(False)
         return _Submodules(False, ".".join(parts[: index + 2]))
+
+    def unbound(self, directory: Path, names: Sequence[str]) -> Optional[str]:
+        """The first of ``names`` a package ``directory`` neither holds as a module nor binds, if any.
+
+        ``from . import generated_at_build`` names a submodule or an attribute
+        of the package, and a package's attributes are what its initializer
+        binds: where it binds no such name and no such module exists, the
+        import fails as ``from .generated_at_build import VERSION`` does. A
+        namespace directory binds nothing but its modules. An initializer
+        that may bind names no statement shows (a star import, a module
+        ``__getattr__``, ``globals()``, a change to ``__path__`` or to
+        ``sys.modules``), or that is not Python source, leaves every name
+        possible. ``directory`` not being a directory leaves every name so too.
+        """
+        subdirectories, files = self.entries(directory)
+        if not subdirectories and not files:
+            return None
+        initializer = self._modules.get(directory / "__init__.py")
+        if initializer is None:
+            if any(file.startswith("__init__.") for file in files):
+                return None
+            binds: FrozenSet[str] = frozenset()
+        elif initializer.binds is None or initializer.registers_modules:
+            return None
+        else:
+            binds = initializer.binds
+        return next(
+            (
+                name
+                for name in names
+                if name != "*"
+                and name not in binds
+                and name not in _IMPLICIT_MODULE_NAMES
+                and not self.holds_module(directory, name)
+            ),
+            None,
+        )
 
     def _above(self, location: Path, inner: Sequence[str]) -> Path:
         """The module a missing submodule of ``inner`` would be registered by, below ``location``.
@@ -1251,6 +1293,22 @@ class _Listings:
 
 
 _EXTENSIONS = tuple(sorted(set(importlib.machinery.EXTENSION_SUFFIXES) | {".so", ".pyd"}))
+
+_IMPLICIT_MODULE_NAMES = frozenset(
+    {
+        "__name__",
+        "__file__",
+        "__path__",
+        "__doc__",
+        "__spec__",
+        "__loader__",
+        "__package__",
+        "__builtins__",
+        "__cached__",
+        "__dict__",
+    }
+)
+"""What every module or package has without binding it."""
 
 
 def _read_module(path: Path) -> _Module:
@@ -1309,7 +1367,73 @@ def _scan(tree: ast.Module, path: Path) -> _Module:
             registers_modules = registers_modules or _registers_modules(node)
             pending.extend(_children(node, when))
     ordered = sorted(sites, key=lambda site: (site.line, site.level, site.module or ""))
-    return _Module(tuple(ordered), changes_sys_path, registers_modules)
+    return _Module(tuple(ordered), changes_sys_path, registers_modules, _module_bindings(tree))
+
+
+_OPAQUE_NAMESPACE_CALLS = frozenset({"globals", "vars", "locals", "setattr", "exec", "eval"})
+"""Names through which a module can bind names no statement shows, from anywhere in it."""
+
+
+def _module_bindings(tree: ast.Module) -> Optional[FrozenSet[str]]:
+    """The names ``tree``'s module level binds, or ``None`` when it may bind names no statement shows.
+
+    Every statement that runs at module level is read, inside ``if``, ``try``,
+    loops and ``with`` too, but no function or class body. An over-count only
+    lets an import pass unreported, so every store counts, guarded or not. A
+    ``from . import x`` binds no attribute of its own: it names the
+    submodule, which either exists or fails to import; ``as y`` binds ``y``.
+    A module-level ``__getattr__``, a star import, a change to ``__path__``,
+    or any use anywhere in the file of ``globals``, ``vars``, ``locals``,
+    ``setattr``, ``exec`` or ``eval``, as bs4's ``register_treebuilders_from``
+    uses ``setattr`` on its own module, leaves every name possible.
+    """
+    if any(
+        (isinstance(node, ast.Name) and node.id in _OPAQUE_NAMESPACE_CALLS)
+        or (isinstance(node, ast.Attribute) and node.attr == "__dict__")
+        for node in ast.walk(tree)
+    ):
+        return None
+    bound: Set[str] = set()
+    pending: List[ast.AST] = list(tree.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == "__getattr__" and not isinstance(node, ast.ClassDef):
+                return None
+            bound.add(node.name)
+            pending.extend(node.decorator_list)
+            continue
+        if isinstance(
+            node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            continue
+        if isinstance(node, ast.ImportFrom):
+            if any(alias.name == "*" for alias in node.names):
+                return None
+            submodules = node.level and node.module is None
+            bound.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if not submodules or alias.asname not in (None, alias.name)
+            )
+            continue
+        if isinstance(node, ast.Import):
+            bound.update(alias.asname or alias.name.partition(".")[0] for alias in node.names)
+            continue
+        if isinstance(node, ast.Name):
+            if node.id == "__path__" and not isinstance(node.ctx, ast.Load):
+                return None
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                bound.add(node.id)
+            elif node.id == "__path__":
+                return None
+            continue
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name is not None:
+            bound.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            bound.add(node.rest)
+        pending.extend(ast.iter_child_nodes(node))
+    return frozenset(bound)
 
 
 def _children(node: ast.AST, when: _When) -> Iterator[Tuple[ast.AST, _When]]:
@@ -1957,11 +2081,20 @@ def _relative_problems(
                     yield RelativeImportEscapes(site)
                 continue  # A namespace directory no name places: not known to be wrong.
             if site.module is None:
-                continue  # ``from . import x`` may name an attribute of the package.
+                # ``from . import x`` names a submodule or an attribute the package binds.
+                unbound = listings.unbound(base, site.names)
+                if unbound is not None:
+                    yield RelativeImportMissing(site, "." * site.level + unbound, name)
+                continue
             parts = site.module.split(".")
             index = listings.first_missing(base, parts)
             if index is not None:
                 missing = "." * site.level + ".".join(parts[: index + 1])
+                yield RelativeImportMissing(site, missing, name)
+                continue
+            unbound = listings.unbound(base.joinpath(*parts), site.names)
+            if unbound is not None:
+                missing = "." * site.level + ".".join([*parts, unbound])
                 yield RelativeImportMissing(site, missing, name)
 
 
