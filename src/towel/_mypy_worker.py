@@ -35,6 +35,7 @@ this process's imports, which is all an incremental build reuses anyway.
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+import enum
 import io
 import json
 import os
@@ -44,7 +45,7 @@ import signal
 import sys
 import threading
 import time
-from typing import Callable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import Callable, List, Mapping, NamedTuple, Optional, Protocol, Sequence, Tuple
 
 from mypy import build
 from mypy.build import BuildSource
@@ -558,6 +559,34 @@ def _build_sources(
     ]
 
 
+def _build_as_the_project_reaches(
+    sources: Sequence[BuildSource],
+    options: Options,
+    judged: Callable[[str], bool],
+    *,
+    complete: bool,
+) -> Tuple[build.BuildResult, list[BuildSource]]:
+    """The build of ``sources``, each file the project reaches only by import taken as it would be.
+
+    Every file Towel changes is a source here, since only a source can be given
+    text, and mypy consults ``follow_imports`` only for a module it finds by
+    import, never for a source. So a complete build leaves out a file the
+    project's run is not given where the project's options do not follow it
+    (``skip``, ``error``): its importers then see what the project's run sees,
+    ``Any`` or "Import of ... ignored", rather than the types a source would
+    give them. A probe keeps it, since its question is the file's own types.
+    """
+    current = [
+        source
+        for source in sources
+        if not complete
+        or source.path is None
+        or judged(source.path)
+        or _followed(options, source.module, source.path) is not _Followed.NOT_FOLLOWED
+    ]
+    return build.build(sources=current, options=options), current
+
+
 def _judged_by_the_project(options: Options, root: Path) -> Callable[[str], bool]:
     """Whether the project's own mypy run would take a file as one of its targets.
 
@@ -589,12 +618,53 @@ def _judged_by_the_project(options: Options, root: Path) -> Callable[[str], bool
     return judged
 
 
+class _Followed(enum.Enum):
+    """How the project's own run takes a module that a module it checks imports."""
+
+    REPORTED = "followed, and its errors reported"
+    SILENCED = "followed, and its errors silenced"
+    NOT_FOLLOWED = "not followed"
+
+
+def _followed(options: Options, module: str, path: Optional[str]) -> _Followed:
+    """How the project's own run takes an import of ``module``, as that module's options say.
+
+    mypy decides it for each module it is asked to import
+    (``find_module_and_diagnose``) from the module's own options: the global
+    ``follow_imports`` as every section whose pattern names the module leaves
+    it (``Options.clone_for_module``), except that a stub is followed and
+    reported unless ``follow_imports_for_stubs`` says otherwise.
+    """
+    own = options.clone_for_module(module)
+    if path is not None and path.endswith(".pyi") and not own.follow_imports_for_stubs:
+        return _Followed.REPORTED
+    if own.follow_imports in {"skip", "error"}:
+        return _Followed.NOT_FOLLOWED
+    return _Followed.SILENCED if own.follow_imports == "silent" else _Followed.REPORTED
+
+
 _MESSAGE_PATH = re.compile(r"^(?P<path>.*?):(?:\d+:)?(?:\d+:)? (?:error|note|warning): ")
+
+
+class _Imports(Protocol):
+    """What a module of a finished build imports: all this judgement reads of mypy's ``State``."""
+
+    @property
+    def dependencies(self) -> Sequence[str]:
+        """The modules it imports that the build found."""
+
+    @property
+    def ancestors(self) -> Optional[Sequence[str]]:
+        """The packages above it, which mypy loads with it."""
+
+    @property
+    def path(self) -> Optional[str]:
+        """Its file."""
 
 
 def _as_the_project_judges(
     messages: Sequence[str],
-    result: build.BuildResult,
+    graph: Mapping[str, _Imports],
     sources: Sequence[BuildSource],
     judged: Callable[[str], bool],
     options: Options,
@@ -606,8 +676,11 @@ def _as_the_project_judges(
     naming ``files`` without it, then had its tests checked here and nowhere
     else, and a project whose mypy run is clean was refused. A file the project
     does not name is still checked when a file it does name imports it, since
-    mypy follows that import and reports what it finds -- unless the
-    configuration silences followed imports, when it reports nothing there.
+    mypy follows that import and reports what it finds -- unless that module's
+    own options silence it or do not follow it (:func:`_followed`). Reading
+    only the global ``follow_imports`` dropped every error in ``tools/`` under
+    a global ``silent`` whose ``tools.*`` section said ``normal``, and a helper
+    the project's own ``mypy`` rejected there was accepted.
     """
     unjudged = {
         source.module: os.path.abspath(source.path)
@@ -616,18 +689,26 @@ def _as_the_project_judges(
     }
     if not unjudged:
         return list(messages)
-    reached: set[str] = set()
-    if options.follow_imports not in {"silent", "skip"}:
-        pending = [source.module for source in sources if source.module not in unjudged]
-        while pending:
-            state = result.graph.get(pending.pop())
-            if state is None:
+    checked = [source.module for source in sources if source.module not in unjudged]
+    seen = set(checked)
+    reported: set[str] = set()
+    pending = list(checked)
+    while pending:
+        state = graph.get(pending.pop())
+        if state is None:
+            continue
+        for dependency in [*state.dependencies, *(state.ancestors or [])]:
+            if dependency in seen:
                 continue
-            for dependency in [*state.dependencies, *(state.ancestors or [])]:
-                if dependency not in reached:
-                    reached.add(dependency)
-                    pending.append(dependency)
-    unchecked = {path for module, path in unjudged.items() if module not in reached}
+            seen.add(dependency)
+            imported = graph.get(dependency)
+            how = _followed(options, dependency, imported.path if imported is not None else None)
+            if how is _Followed.NOT_FOLLOWED:
+                continue
+            if how is _Followed.REPORTED:
+                reported.add(dependency)
+            pending.append(dependency)
+    unchecked = {path for module, path in unjudged.items() if module not in reported}
 
     def about_unchecked(message: str) -> bool:
         match = _MESSAGE_PATH.match(message)
@@ -655,7 +736,7 @@ def _request(request: object, cache: str) -> _Answered:
     complete = request.get("complete") is True
     configured = _options(root, config, cache, probe=not complete)
     options = configured.options
-    judged = _judged_by_the_project(options, root) if complete else None
+    judged = _judged_by_the_project(options, root)
     for excluded in _strings(request.get("excluded_paths")):
         path = Path(excluded)
         spellings = [str(path)]
@@ -674,11 +755,12 @@ def _request(request: object, cache: str) -> _Answered:
         _placeholders(request.get("modules")),
         _strings(request.get("consumers") or []),
     )
-    result = build.build(sources=sources, options=options)
-    if judged is None:
+    result, sources = _build_as_the_project_reaches(sources, options, judged, complete=complete)
+    if not complete:
         return _Answered(list(result.errors), configured.said)
     return _Answered(
-        _as_the_project_judges(result.errors, result, sources, judged, options), configured.said
+        _as_the_project_judges(result.errors, result.graph, sources, judged, options),
+        configured.said,
     )
 
 

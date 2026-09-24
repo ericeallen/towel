@@ -35,19 +35,23 @@ never build anything.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import logging
 from pathlib import Path
 import subprocess
 import sys
 import textwrap
-from typing import Mapping
+from typing import Mapping, Optional, Sequence, Tuple, cast
 
 import pytest
 
 pytest.importorskip("mypy")
 
 from mypy.find_sources import create_source_list  # noqa: E402
+from mypy.modulefinder import BuildSource  # noqa: E402
+from mypy import build as mypy_build  # noqa: E402
+from mypy.build import BuildResult  # noqa: E402
 from mypy.options import Options  # noqa: E402
 
 from towel import _mypy_worker as worker  # noqa: E402
@@ -65,6 +69,10 @@ def _options(root: Path, config: str, *, probe: bool = False) -> Options:
     """The options the worker builds with for a project whose ``pyproject.toml`` holds ``config``."""
     (root / "pyproject.toml").write_text(config, encoding="utf-8")
     return worker._options(root, str(root / "pyproject.toml"), str(root / ".cache"), probe=probe)[0]
+
+
+def _override(module: str, follow: str) -> str:
+    return f'[[tool.mypy.overrides]]\nmodule = "{module}"\nfollow_imports = "{follow}"\n'
 
 
 # --- D2: what mypy says while reading a configuration ------------------------
@@ -234,3 +242,149 @@ def test_a_probed_module_is_named_as_mypy_names_its_file(
             each for each in create_source_list([str(tmp_path)], options) if each.path == path
         ]
         assert (walked.module, walked.base_dir) == (source.module, source.base_dir)
+
+
+# --- D4: which files' errors count, per module --------------------------------
+
+
+R, S, N = (worker._Followed.REPORTED, worker._Followed.SILENCED, worker._Followed.NOT_FOLLOWED)
+
+
+@pytest.mark.parametrize(
+    "config, module, suffix, expected",
+    [
+        ("", "tools.gen.x", ".py", R),
+        ('follow_imports = "silent"\n', "tools.gen.x", ".py", S),
+        ('follow_imports = "skip"\n', "tools.gen.x", ".py", N),
+        ('follow_imports = "error"\n', "tools.gen.x", ".py", N),
+        # D4: the module's own section decides, not the global setting.
+        ('follow_imports = "silent"\n' + _override("tools.*", "normal"), "tools.gen.x", ".py", R),
+        ('follow_imports = "silent"\n' + _override("tools.*", "normal"), "tools", ".py", R),
+        ('follow_imports = "silent"\n' + _override("tools.*", "normal"), "app.main", ".py", S),
+        (_override("tools.*", "skip"), "tools.gen.x", ".py", N),
+        (_override("tools.*", "error"), "tools.gen.x", ".py", N),
+        # A concrete section outranks a wildcard; an unstructured glob applies too.
+        (
+            _override("tools.*", "normal") + _override("tools.gen.x", "silent"),
+            "tools.gen.x",
+            ".py",
+            S,
+        ),
+        ('follow_imports = "silent"\n' + _override("tools.*.x", "normal"), "tools.gen.x", ".py", R),
+        ('follow_imports = "silent"\n' + _override("tools.*.x", "normal"), "tools.gen.y", ".py", S),
+        # A stub is always followed, unless ``follow_imports_for_stubs`` says otherwise.
+        (_override("tools.*", "skip"), "tools.gen.x", ".pyi", R),
+        (
+            "follow_imports_for_stubs = true\n" + _override("tools.*", "skip"),
+            "tools.gen.x",
+            ".pyi",
+            N,
+        ),
+    ],
+)
+def test_an_import_is_followed_as_the_imported_modules_own_options_say(
+    tmp_path: Path, config: str, module: str, suffix: str, expected: worker._Followed
+) -> None:
+    options = _options(tmp_path, "[tool.mypy]\n" + config)
+    path = str(tmp_path / (module.replace(".", "/") + suffix))
+    assert worker._followed(options, module, path) is expected
+
+
+@dataclass(frozen=True)
+class _Module:
+    """A module of a finished build, as the judgement reads it."""
+
+    dependencies: Tuple[str, ...] = ()
+    ancestors: Optional[Tuple[str, ...]] = None
+    path: Optional[str] = None
+
+
+def _judged_messages(
+    root: Path, config: str, graph: Mapping[str, _Module], unjudged: Sequence[str]
+) -> list[str]:
+    """What survives of one error per module when ``app.main`` alone is judged."""
+    options = _options(root, "[tool.mypy]\n" + config)
+    sources = [BuildSource(module.path, name) for name, module in graph.items() if module.path]
+    messages = [f"{module.path}:1: error: in {name}" for name, module in graph.items()]
+    kept = worker._as_the_project_judges(
+        messages,
+        graph,
+        [source for source in sources if source.module in ("app.main", *unjudged)],
+        lambda path: path.endswith("app/main.py"),
+        options,
+    )
+    return [message.rsplit(" ", 1)[1] for message in kept]
+
+
+def _graph(root: Path, **imports: Tuple[str, ...]) -> dict[str, _Module]:
+    return {
+        name: _Module(
+            dependencies,
+            tuple(".".join(name.split(".")[:end]) for end in range(1, name.count(".") + 1)),
+            str(root / (name.replace(".", "/") + ".py")),
+        )
+        for name, dependencies in imports.items()
+    }
+
+
+@pytest.mark.parametrize(
+    "config, kept",
+    [
+        ("", ["app.main", "tools.gen.x"]),
+        ('follow_imports = "silent"\n', ["app.main"]),
+        (
+            'follow_imports = "silent"\n' + _override("tools.*", "normal"),
+            ["app.main", "tools.gen.x"],
+        ),
+        (_override("tools.*", "skip"), ["app.main"]),
+        (_override("tools.gen.x", "error"), ["app.main"]),
+    ],
+)
+def test_a_changed_file_the_project_does_not_name_counts_where_its_import_is_followed(
+    tmp_path: Path, config: str, kept: list[str]
+) -> None:
+    """``tools/gen/x.py`` is changed, outside ``files``, and imported by ``app/main.py`` (D4)."""
+    graph = _graph(tmp_path, **{"app.main": ("tools.gen.x",), "tools.gen.x": ()})
+    assert _judged_messages(tmp_path, config, graph, ["tools.gen.x"]) == kept
+
+
+@pytest.mark.parametrize(
+    "config, kept",
+    [
+        # Reached through a module whose errors are silenced, and reported itself.
+        (_override("tools.a", "silent"), ["app.main", "tools.b"]),
+        # Reached only through a module that is not followed at all.
+        (_override("tools.a", "skip"), ["app.main"]),
+    ],
+)
+def test_a_module_is_reached_through_silenced_imports_but_not_through_skipped_ones(
+    tmp_path: Path, config: str, kept: list[str]
+) -> None:
+    graph = _graph(tmp_path, **{"app.main": ("tools.a",), "tools.a": ("tools.b",), "tools.b": ()})
+    assert _judged_messages(tmp_path, config, graph, ["tools.a", "tools.b"]) == kept
+
+
+BUILT = cast(BuildResult, object())
+
+
+def test_a_complete_build_leaves_out_a_changed_file_the_project_does_not_follow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its importers must see ``Any``, as in the project's run, not the file's own types."""
+    options = _options(tmp_path, "[tool.mypy]\n" + _override("tools.*", "skip"))
+    built: list[list[str]] = []
+
+    def build(sources: Sequence[BuildSource], options: Options) -> BuildResult:
+        built.append([source.module for source in sources])
+        return BUILT
+
+    monkeypatch.setattr(mypy_build, "build", build)
+    sources = [
+        BuildSource(str(tmp_path / "app" / "main.py"), "app.main", None, str(tmp_path)),
+        BuildSource(str(tmp_path / "tools" / "gen" / "x.py"), "tools.gen.x", "text", str(tmp_path)),
+    ]
+    for complete in (True, False):
+        worker._build_as_the_project_reaches(
+            sources, options, lambda path: "app" in path, complete=complete
+        )
+    assert built == [["app.main"], ["app.main", "tools.gen.x"]]
