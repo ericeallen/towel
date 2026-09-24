@@ -30,6 +30,15 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A type-only import now joins the module's existing `TYPE_CHECKING` guard,
+  recognised by binding as the import graph recognises it. Towel had found
+  the guard by its exact text, and indented the new import four spaces:
+  - packaging's `if TYPE_CHECKING:  # pragma: no cover` got a second guard;
+  - a guard body indented two spaces or with a tab raised `IndentationError`;
+  - in a module that rebinds `TYPE_CHECKING = True`, the import was joined
+    to a block that runs.
+
+  The import now takes the indentation of the guard's own body.
 - A `--cross-module` run refuses only for a problem that leaves a name of the
   code being refactored in doubt. Such problems are:
   - an ambiguous name, such as a stale `build/lib` copy of the package, which
