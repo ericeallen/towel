@@ -50,7 +50,6 @@ from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, Froz
 
 from ..canonical_ast import canonical_dump
 from ..diagnostics import VALIDATION, debugging
-from ..project_layout import find_project_root
 from ..source_text import read_source
 from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
@@ -564,7 +563,7 @@ class PairEvaluation(
         paths = {host} | {replacement.file_path or host for replacement in placement.replacements}
         sources = {pair.file_path: pair.source1, pair.file_path2: pair.source2}
         for path in sorted(paths):
-            origin = Path(self._origin_of(path)).resolve()
+            origin = self._origin_in_run(path)
             source = sources.get(path)
             if source is None:
                 try:
@@ -573,13 +572,13 @@ class PairEvaluation(
                     unreadable = f"{Path(path).name} cannot be read"
                     found.update({name: unreadable for name in names if name not in found})
                     continue
-            rebound = builtin_rebinding(origin, source, names, self._project_writes(origin))
+            rebound = builtin_rebinding(origin, source, names, self._project_writes(path))
             found.update({name: why for name, why in rebound.items() if name not in found})
         return found
 
-    def _project_writes(self, module: Path) -> ProjectWrites:
-        """The project's own writes into module namespaces, read once per engine and project."""
-        root = find_project_root(module)
+    def _project_writes(self, path: str) -> ProjectWrites:
+        """The own writes into module namespaces of the project holding ``path``, read once per engine."""
+        root = self._project_root_in_run(path)
         writes = self._namespace_writes.get(str(root))
         if writes is None:
             writes = self._namespace_writes[str(root)] = scan_project_writes(root)

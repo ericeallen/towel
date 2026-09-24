@@ -627,6 +627,7 @@ class FixedPointDrivers(Materialization):
         """
         inner_oracle = self._type_run_oracle
         root = find_project_root(origin)
+        self._forget_run_lookups()
         with staged_project(root, origin, output, limit=MAXIMUM_FILES) as stage:
             # Names are the program's, read from the project itself rather
             # than from its copy (``ProgramImports``). A run that may share a
@@ -666,6 +667,7 @@ class FixedPointDrivers(Materialization):
                 # The stage is about to go; nothing may keep checking against it.
                 self._type_run_oracle = inner_oracle
                 self._output_origin = None
+                self._forget_run_lookups()
                 self.import_graph.begin_run()
 
     def _apply_until_fixed_point(

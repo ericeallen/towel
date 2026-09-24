@@ -520,6 +520,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._namespace_writes: Dict[str, ProjectWrites] = {}
         # What each project's coverage.py excludes, read once per engine.
         self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
+        self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejections: Dict[str, int] = {}
@@ -637,6 +638,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.analysis_session.hold_at_least(
             len(file_paths), sum(_size_or_zero(path) for path in file_paths)
         )
+        if self._output_origin is None:
+            # Outside a fixed-point run the analysis is the run.
+            self._forget_run_lookups()
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)
