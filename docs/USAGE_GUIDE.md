@@ -246,7 +246,10 @@ change, the change's own check is the reference for the next, so an error one
 change removed cannot be spent by another; direct `apply_refactoring` calls,
 whose results the engine does not see written, keep comparing with the
 original's errors, counting in every file they changed. The final cold check
-compares the same way.
+compares the same way; an error only it reports is then looked for in a cold
+check of the original, since a checker started from nothing can disagree with a
+warm one about files no change touched, and only one the original lacks too
+refuses the run.
 
 A proposal that would change a file where the original check leaves a name the
 checker cannot type is declined with `UnverifiableChangeError` and counted as

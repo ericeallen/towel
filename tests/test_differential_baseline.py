@@ -596,7 +596,7 @@ def test_mypy_a_message_naming_a_line_the_change_leaves_in_place_is_the_same_err
 
 
 class _WithAnOldError(MypyInferrer):
-    """mypy, with one error the project has always had, wherever the check starts from."""
+    """mypy, with one error the project has always had, and one the change brings, seen cold."""
 
     def __init__(self, *, only_cold: str = "") -> None:
         super().__init__()
@@ -615,7 +615,8 @@ class _WithAnOldError(MypyInferrer):
             return real
         path = next(iter(sources))
         invented = [TypeDiagnostic(path, "invented: always there", 1)]
-        if self.forgotten and self.only_cold:
+        changed = any("_extracted_func" in text for text in sources.values())
+        if self.forgotten and self.only_cold and changed:
             invented.append(TypeDiagnostic(path, self.only_cold, 1))
         return CheckSuccess((*real.errors, *invented))
 
@@ -641,6 +642,63 @@ def test_the_cold_confirmation_compares_with_what_the_project_already_reports(
         else:
             _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
             assert applied == 1 and oracle.forgotten, "confirmed, from nothing"
+    finally:
+        oracle.close()
+
+
+class _ColdSeesMore(MypyInferrer):
+    """mypy, with an error only a checker started from nothing reports.
+
+    Everywhere, like pyright's command line on trio, which resolved modules
+    its language server did not; or only once the change is in.
+    """
+
+    def __init__(self, *, only_with_the_change: bool) -> None:
+        super().__init__()
+        self.forgotten = False
+        self.only_with_the_change = only_with_the_change
+        self.cold_checks = 0
+
+    def forget_warm_state(self) -> None:
+        super().forget_warm_state()
+        self.forgotten = True
+
+    def check_project(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> CheckResult:
+        real = super().check_project(sources, excluded_paths=excluded_paths)
+        if isinstance(real, CheckFailure) or not self.forgotten:
+            return real
+        self.cold_checks += 1
+        changed = any("_extracted_func" in text for text in sources.values())
+        if self.only_with_the_change and not changed:
+            return real
+        path = next(iter(sources))
+        return CheckSuccess((*real.errors, TypeDiagnostic(path, "cold only [misc]", 1)))
+
+
+@requires_mypy
+@pytest.mark.parametrize("only_with_the_change", [False, True])
+def test_an_error_only_a_cold_check_reports_is_loud_only_if_the_original_lacks_it(
+    tmp_path: Path, only_with_the_change: bool
+) -> None:
+    """A cold-only error the original has too is the checker's mode, not the run's doing."""
+    (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n", encoding="utf-8")
+    path = tmp_path / "m.py"
+    path.write_text(TWINS, encoding="utf-8")
+    oracle = _ColdSeesMore(only_with_the_change=only_with_the_change)
+    try:
+        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        if only_with_the_change:
+            with pytest.raises(
+                RefactoringError, match="did not report while the run was in progress"
+            ):
+                engine.refactor_to_fixed_point(str(path), progress="none")
+            assert path.read_text(encoding="utf-8") == TWINS, "nothing was written"
+        else:
+            _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+            assert applied == 1 and "__extracted_func_0" in path.read_text(encoding="utf-8")
+        assert oracle.cold_checks == 2, "the finished project, then the original, both cold"
     finally:
         oracle.close()
 

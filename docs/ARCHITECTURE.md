@@ -514,7 +514,12 @@ stops at the first that reports a new error: `CombinedOracle.check_project`
 itself returns every checker's errors, since stopping at the first checker
 that reported anything would, against pre-existing errors, leave the others
 unasked about every candidate. The cold confirmation compares the same way,
-with the reference the run's last written change left. Where the original
+with the reference the run's last written change left, and an error only it
+reports is then looked for in a cold check of the original: a checker started
+from nothing need not agree with a warm one even there (pyright's command line
+resolved trio's modules differently from its language server, and disagreed
+about files no change touched), so only an error neither accounts for is loud.
+Where the original
 check reports an error after which a name is `Any` to the checker
 (`makes_names_any`: an unresolved or untyped import, an untyped decorator, a
 base class of type `Any`), no change to that file is attempted

@@ -664,6 +664,14 @@ class HelperAnnotationWiring(EngineState):
         What it reports is compared as every candidate's check was
         (``towel.type_baseline``): with what the run's own checks said the
         project reports now, the errors the original had and kept included.
+        Those checks were warm, and a checker started from nothing need not
+        agree with them even about the original: pyright's command line and its
+        language server resolved trio's modules differently and disagreed about
+        errors in files no change touched. So an error only the cold check
+        reports is then looked for in a cold check of the original
+        (:meth:`_unseen_from_the_start`), and only one neither accounts for is
+        loud: that is exactly an error the run's changes brought and its warm
+        checks missed.
         """
         oracle = self._type_run_oracle
         if oracle is None or not holds_warm_state(oracle):
@@ -677,6 +685,22 @@ class HelperAnnotationWiring(EngineState):
         # The same oracle, so the run's own relocation and exclusions still
         # apply; only the warm state goes.
         start_cold(oracle)
+        reported = self._cold_errors(oracle, sources)
+        unseen = self._type_known.introduced(reported, where=self._where_checked)
+        if unseen:
+            unseen = self._unseen_from_the_start(reported, unseen, sources)
+        if unseen:
+            details = "\n".join(f"  {error.path}: {error.message}" for error in unseen[:3])
+            raise RefactoringError(
+                f"The finished project reports {len(unseen)} type error(s) that the "
+                f"checker did not report while the run was in progress:\n{details}\n"
+                "This is a defect in Towel's verification, not in the project; please "
+                "report it. Nothing was written."
+            )
+
+    @staticmethod
+    def _cold_errors(oracle: TypeOracle, sources: Mapping[str, str]) -> List[TypeDiagnostic]:
+        """Every configured checker's errors about ``sources``; a check that cannot run refuses."""
         reported: List[TypeDiagnostic] = []
         for result in checks_in_turn(oracle, sources):
             if isinstance(result, CheckFailure):
@@ -688,15 +712,46 @@ class HelperAnnotationWiring(EngineState):
                     f"nothing: {result.reason}\nNothing was written."
                 )
             reported.extend(result.errors)
-            unseen = self._type_known.introduced(reported, where=self._where_checked)
-            if unseen:
-                details = "\n".join(f"  {error.path}: {error.message}" for error in unseen[:3])
-                raise RefactoringError(
-                    f"The finished project reports {len(unseen)} type error(s) that the "
-                    f"checker did not report while the run was in progress:\n{details}\n"
-                    "This is a defect in Towel's verification, not in the project; please "
-                    "report it. Nothing was written."
-                )
+        return reported
+
+    def _unseen_from_the_start(
+        self,
+        reported: Sequence[TypeDiagnostic],
+        unseen: Tuple[TypeDiagnostic, ...],
+        finished: Mapping[str, str],
+    ) -> Tuple[TypeDiagnostic, ...]:
+        """Those of ``unseen`` that a cold check of the original does not account for either.
+
+        ``reported`` is the cold check of the ``finished`` project, and
+        ``unseen`` what of it the run's warm checks did not report. The
+        original is checked the way the finished project just was, from the
+        files the run started from, and compared as a change is: a file the
+        run left alone must hold the error at the same line, one it changed as
+        many times. What the original's cold check reports too was there before
+        the run and is not its doing. When the original cannot be read or
+        checked, nothing is excused.
+        """
+        oracle = self.type_oracle
+        if oracle is None:
+            return unseen
+        originals: Dict[str, str] = {}
+        changed: Set[str] = set()
+        for path, text in finished.items():
+            original = self._origin_of(path)
+            source = self._read_source(original)
+            if source is None:
+                return unseen
+            originals[original] = source
+            if source != text:
+                changed.add(resolved_path(original))
+        from_the_start: List[TypeDiagnostic] = []
+        for result in checks_in_turn(oracle, originals):
+            if isinstance(result, CheckFailure):
+                return unseen
+            from_the_start.extend(result.errors)
+        known = KnownErrors.of(from_the_start).moving(changed)
+        brought = {id(error) for error in known.introduced(reported, where=self._where_checked)}
+        return tuple(error for error in unseen if id(error) in brought)
 
     def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:
         """What the project, unchanged consumers included, would report with the change and not now.
