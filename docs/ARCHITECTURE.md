@@ -656,38 +656,72 @@ check every configured checker must accept, so the first to reject settles the
 candidate and the others are not asked.
 
 The signatures are tried in this order, and generation is lazy, so one that
-verifies costs nothing further:
+verifies costs nothing further. Each rung is built after the one before it
+was refused, from what the checker said (`unification/annotation_ladder.py`
+holds what each rung writes; `HelperAnnotationWiring._annotation_ladder`
+orders them):
 
 ```mermaid
 flowchart TD
+    known{"does the proposal alone show<br/>no signature can type it?"}
     q{"does the ordinary signature<br/>hold Any?"}
     g1["generic candidates"]
     plain1["the ordinary signature"]
     plain2["the ordinary signature"]
     g2["generic candidates"]
+    targeted["Any where the ordinary<br/>signature's errors point"]
+    warn{"does mypy refuse a helper<br/>returning Any?"}
     anyv["every annotation Any"]
-    conf{"do all of its errors lie<br/>inside the helper itself?"}
+    conf{"do all of the latest errors lie<br/>inside the helper itself?"}
+    typed{"does the project require annotations,<br/>or annotate every function of the module?"}
     bare["no annotations at all"]
     stop["declined"]
+    named["declined, under the reason<br/>no signature can answer"]
 
-    q -- "yes" --> g1 --> plain1 --> anyv
-    q -- "no" --> plain2 --> g2 --> anyv
-    anyv --> conf
+    known -- "yes: free" --> named
+    known -- "no" --> q
+    q -- "yes" --> g1 --> plain1 --> targeted
+    q -- "no" --> plain2 --> g2 --> targeted
+    targeted --> warn
+    warn -- "yes (warn_return_any)" --> conf
+    warn -- "no" --> anyv --> conf
     conf -- "no: nothing a signature can reach" --> stop
-    conf -- "yes" --> bare --> stop
+    conf -- "yes" --> typed
+    typed -- "requires them" --> stop
+    typed -- "annotates every one" --> named
+    typed -- "neither" --> bare --> stop
 ```
 
+The ordinary signature has lost information only where a parameter or the
+return is `Any` or bare; a method helper's receiver is bare on purpose and
+does not count. The targeted rung gives `Any` to exactly the positions the
+ordinary refusal's errors name -- the parameters read on a failing line of the
+helper, as `Callable[[...], Any]` for one only ever called there, and the one an
+"Argument N" names -- and loosens the return least of all: an error inside the
+helper about what it returns makes the return `<declared> | Any`, which mypy
+accepts at every caller and which is also how a helper returning
+`NotImplemented` is typed, since mypy accepts the constant only in a binary
+dunder it recognizes by name. Every rung is written with no annotation spelled
+as the string `"None"`, which mypy 2 refuses under `native_parser`; outside a
+class, a `Self` the sites revealed is a type variable bound to their classes.
 
+Every refusal is judged, and one that no signature of the helper can answer
+ends the ladder at once, under the reason that says why (`Untypeable`, each
+counted apart in the run's summary): the block narrowed what its caller reads
+after the call; a lambda at the call needed a test's narrowing; the block's
+assignments declared its class's attributes; the block completed its caller's
+partial type (mypy only); or only the unannotated helper is left in a module
+whose every function is annotated, which a stricter check than the
+configuration Towel reads would refuse. The lambda and partial-type cases are
+read off the proposal and cost no check; the others need the checker's verdict
+and cost the one refusal that shows them. A variant rendered again with
+nothing it could depend on changed -- its files but for the helper's generated
+name, the files its errors lie in, and everything those import -- has its
+refusal replayed rather than checked again.
 
-A proposal introducing
-an error tries the generic candidates where supported, then retries with every
-annotation `Any`, and then with none, that last only when every error of the
-all-`Any` refusal lies inside the helper's own definition, since an error
-anywhere else survives the change. Each
-variant must pass; checker failure or a remaining new error declines the
-proposal. `close()` releases checker resources, and the CLI calls it in a
-`finally` block. Without an
-oracle Towel copies and does not reason: unions are written unreduced and
+Checker failure, or a remaining new error, declines the proposal. `close()`
+releases checker resources, and the CLI calls it in a `finally` block. Without
+an oracle Towel copies and does not reason: unions are written unreduced and
 the meet requires identical declarations, because there is no second
 implementation of the subtype relation to fall back on.
 
