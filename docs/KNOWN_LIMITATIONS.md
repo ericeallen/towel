@@ -709,7 +709,21 @@ where the evidence comes from:
   their CI runs it, and Towel's check was clean for 6; none of the errors it
   reported was one the project's check reports. Those errors are compared with
   like any other, so a change is checked there too, against what that check
-  already says.
+  already says. The difference cuts the other way as well: Towel's check can
+  accept what the project's rejects. Refactored with types in their own
+  environments, 15 of those 17 projects still passed their own check, and two
+  did not. idna configures no mypy, so Towel checked it with mypy's defaults,
+  which accept an unannotated helper, and its CI runs `mypy --strict idna`,
+  which rejects it (four errors); the same output comes from a project whose
+  baseline was clean, as idna's is without its two fuzz tests. trio's CI runs
+  mypy for linux, darwin and win32, and Towel's check runs for the platform it
+  runs on: a module that begins `assert sys.platform == "win32" or not
+  TYPE_CHECKING` is unreachable to mypy anywhere else, so nothing in it is
+  checked, and there Towel accepted a helper annotated with `Any`, which
+  trio's configuration forbids, and one that moved two classes' attribute
+  assignments out of their `__init__`, which hides the attributes from the
+  checker (13 errors for win32, one for darwin). Checking as the project's CI
+  does, flags and platforms included, is what would close this.
 - Where the original check leaves a name it cannot type -- an import it cannot
   resolve or finds no types for (mypy's `import-not-found` and
   `import-untyped`, pyright's `reportMissingImports` and
