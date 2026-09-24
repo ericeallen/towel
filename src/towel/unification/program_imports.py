@@ -88,6 +88,17 @@ class ProgramImports:
         """The absolute name the program's imports give ``path``, when a trusted name reaches it."""
         return self.model.module_name(self.origin(path))
 
+    def leaves_unchanged(self, path: Path) -> bool:
+        """Whether a run must leave ``path`` as it is: it imports a module the tree lacks.
+
+        Such a file is broken, or runs only where something the tree does not
+        show supplies the module: a mock around sphinx's test data, or the
+        ``_version.py`` a build generates. Nothing shows a change to it keeps
+        it working, so it hosts no helper, borrows none, and gets no helper of
+        its own either.
+        """
+        return self.origin(path) in self.model.importers_of_missing_modules
+
     def is_local(self, name: str) -> bool:
         """Whether the top-level ``name`` may be one of the project's modules rather than an installed one."""
         info = self.model.names.get(name)

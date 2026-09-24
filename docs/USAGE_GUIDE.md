@@ -192,7 +192,20 @@ makes ambiguous (a stale `build/lib/alpha` beside `src/alpha`, or an
 installed copy of the package that the interpreter running Towel can see)
 gets none until the stray copy is left out with `--exclude`. On the command
 line, a `--cross-module` run names each such problem before it starts, and
-refuses when one concerns the package it refactors.
+refuses when one leaves a name of the package it refactors in doubt: an
+ambiguous name, a file reachable under two names, a relative import that
+climbs out of its package.
+
+An import of a module the tree lacks refuses nothing, wherever it lies. The
+run leaves the file making it exactly as it was, neither hosting nor
+borrowing a helper and getting none of its own, and says so, naming the
+file: test data such as sphinx's `need_mocks.py`, which imports a module its
+tests mock, or an example importing a module that no longer exists, can be
+left out with `--exclude`; a package's own import of the `_version.py` its
+build generates, missing from a fresh clone, is resolved by installing the
+project (`pip install -e .`). When that file is a package's `__init__.py`,
+which importing any module below it runs, those modules host a helper only
+for modules imported through the package, and the run says so in one line.
 
 Without `cross_module_helpers` no import between the project's modules that
 runs is ever written. A helper's annotation may still need a type from
@@ -616,6 +629,10 @@ adopted into its real location. If you still hit an import error:
 - Pass `--cross-module`: by default only duplicates within a module are paired.
 - If the run names import problems, leave out the directory holding the stray
   copy or the broken import with `--exclude`.
+- A file the run names as importing a module the tree lacks is left
+  unchanged. If it is a package's `__init__.py` importing a generated
+  `_version.py`, install the project (`pip install -e .`) so the module
+  exists, and its modules share helpers with the rest of the project again.
 
 ## Fast local testing
 
