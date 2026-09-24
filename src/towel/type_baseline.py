@@ -282,7 +282,7 @@ def names_any_warning(
         shown = ", ".join(_shown(path, root) for path in elsewhere[:_FILES_SHOWN])
         more = f" and {len(elsewhere) - _FILES_SHOWN} more" if len(elsewhere) > _FILES_SHOWN else ""
         lines.append(
-            f"The rest lie in {len(elsewhere)} file(s) the run does not change ({shown}{more}), "
-            "where a use of such a name is checked against Any."
+            f"{'The rest lie' if declined else 'They lie'} in {len(elsewhere)} file(s) the run "
+            f"does not change ({shown}{more}), where a use of such a name is checked against Any."
         )
     return "\n".join(lines)

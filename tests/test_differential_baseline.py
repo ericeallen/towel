@@ -230,6 +230,9 @@ def test_the_report_counts_by_file_and_names_what_it_will_not_change(tmp_path: P
     )
     assert "The rest lie in 1 file(s) the run does not change (tests/test_x.py)" in warning
     assert names_any_warning({}, root, set()) is None
+    untouched = names_any_warning(names_any, root, set())
+    assert untouched is not None and "No change to these" not in untouched
+    assert "They lie in 2 file(s) the run does not change (pkg/a.py, tests/test_x.py)" in untouched
 
 
 # --- The engine, with checkers whose verdicts are fixed ------------------------
