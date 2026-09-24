@@ -1175,7 +1175,7 @@ def _print_proposal(
     else:
         print("\n   Extracted function preview:")
         try:
-            lines = ast.unparse(prop.extracted_function).split("\n")
+            lines = _helper_preview(prop).split("\n")
             for line in lines[:8]:
                 print(f"      {line}")
             if len(lines) > 8:
@@ -1184,6 +1184,20 @@ def _print_proposal(
             print(f"      (Preview unavailable: {e})")
             print(f"      Function name: {prop.extracted_function.name}")
     _print_call_sites(prop, target, is_dir, source_cache)
+
+
+def _helper_preview(prop: "RefactoringProposal") -> str:
+    """The helper as it will be written, with the comments it carries, before formatting."""
+    from towel.unification.block_comments import CommentPlacementError, weave_comments
+
+    if not prop.helper_comments.comments:
+        return ast.unparse(prop.extracted_function)
+    try:
+        return weave_comments(
+            prop.extracted_function, prop.extracted_function, prop.helper_comments
+        ).text
+    except CommentPlacementError:
+        return ast.unparse(prop.extracted_function)
 
 
 def _print_call_sites(
