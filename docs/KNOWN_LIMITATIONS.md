@@ -363,8 +363,17 @@ stray copy is excluded. Towel runs with the interpreter it was started with,
 which stands for the project's: run it in the project's own environment.
 Before it writes anything, a `--cross-module` run of `dry` or `preview`
 names every such problem with that remedy, and refuses the run when one
-concerns the package being refactored: a file it names lies under the
-target, or it concerns a top-level name located at or around the target.
+leaves in doubt a top-level name located at or around the target, or lies
+under the target and leaves its own file's name in doubt. An import of a
+module the tree lacks leaves no name in doubt and refuses nothing, from the
+root, on a package or on a subpackage; the file making it is left exactly as
+it was, with no helper hosted, borrowed or extracted within it. The cost is
+that file's own duplicates, and, when it is a package's `__init__.py`, every
+helper a module outside that package would borrow from a module inside it:
+chardet's `detect` and `detect_all` share a block in its `__init__.py`,
+which a fresh clone lacking `_version.py` leaves as it is. Only a
+`--cross-module` run consults the model; a run without it refactors such a
+file as any other, and writes no import between modules that runs.
 
 The host is chosen so that no import cycle closes, preferring a module the
 borrowers already import; when none qualifies, one borrower gains a new

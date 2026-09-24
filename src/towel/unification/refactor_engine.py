@@ -644,7 +644,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         if self.cross_module_helpers and file_paths:
             # Read the program's imports before any pair is judged or a
             # worker forked, once for the project; a run's stage has them.
-            self.import_graph.program_for(Path(file_paths[0]))
+            program = self.import_graph.program_for(Path(file_paths[0]))
+            # A file importing a module the tree lacks takes part in no pair.
+            file_paths = [path for path in file_paths if not program.leaves_unchanged(Path(path))]
         return run_pipeline(
             file_paths,
             engine=self,

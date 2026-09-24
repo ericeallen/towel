@@ -736,7 +736,7 @@ def test_relative_imports_that_climb_out_or_name_nothing_are_problems(tmp_path):
     assert _spelled(model, "tests/test_a.py", "alpha/a.py") is None
     assert _spelled(model, "tests/test_a.py", "utils/v.py") is None
     assert escapes[0].name == "utils" and escapes[0].names_in_doubt == {"utils"}
-    assert missing[0].names_in_doubt == frozenset()
+    assert missing[0].names_in_doubt == frozenset() and missing[0].package == "alpha"
 
 
 def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
@@ -746,6 +746,7 @@ def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
             "alpha/__init__.py": "",
             "alpha/a.py": "",
             "tests/test_a.py": "import alpha.a\nfrom alpha.gone import thing\nfrom alpha import attribute\n",
+            "tests/test_b.py": "import alpha.a\n",
         },
     )
     model = _model(project)
@@ -755,11 +756,14 @@ def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
     assert "tests/test_a.py:2" in problem.describe(model.root)
     # It names a module, not a place: alpha is where its other imports say.
     assert model.names["alpha"].trusted
-    assert _spelled(model, "tests/test_a.py", "alpha/a.py") == "alpha.a"
-    assert problem.names_in_doubt == frozenset()
+    assert _spelled(model, "tests/test_b.py", "alpha/a.py") == "alpha.a"
+    # The file making it is given no new import: how it runs is what the tree does not show.
+    assert _spelled(model, "tests/test_a.py", "alpha/a.py") is None
+    assert problem.names_in_doubt == frozenset() and not problem.from_inside
+    assert model.importers_of_missing_modules == {model.root / "tests/test_a.py"}
 
 
-def test_the_file_making_an_unresolved_import_is_never_a_provider(tmp_path):
+def test_the_file_making_an_unresolved_import_is_neither_provider_nor_borrower(tmp_path):
     project = _write(
         tmp_path / "project",
         {
@@ -768,20 +772,31 @@ def test_the_file_making_an_unresolved_import_is_never_a_provider(tmp_path):
             "alpha/c.py": "from alpha.gone import thing\n",
             "beta/__init__.py": "from beta._version import version\n",
             "beta/b.py": "",
+            "beta/d.py": "",
+            "beta/sub/__init__.py": "",
+            "beta/sub/e.py": "from .. import b\n",
             "tests/test_a.py": "import alpha.a\nimport beta.b\n",
         },
     )
     model = _model(project)
-    assert all(isinstance(problem, UnresolvedImport) for problem in model.problems)
+    unresolved = [problem for problem in model.problems if isinstance(problem, UnresolvedImport)]
+    assert len(unresolved) == len(model.problems)
     assert model.names["alpha"].trusted and model.names["beta"].trusted
     assert _spelled(model, "tests/test_a.py", "alpha/c.py") is None
+    assert _spelled(model, "alpha/c.py", "alpha/a.py") is None
     assert _spelled(model, "tests/test_a.py", "alpha/a.py") == "alpha.a"
-    # Every import of beta.b runs the initializer, whose import the tree lacks.
+    # Importing beta.b from outside beta runs the initializer, whose import
+    # the tree lacks, where it did not run; a module imported through beta
+    # has run it already.
     assert _spelled(model, "tests/test_a.py", "beta/b.py") is None
-    assert {path.name for problem in model.problems for path in problem.found_at} == {
-        "c.py",
-        "__init__.py",
+    assert _spelled(model, "beta/d.py", "beta/b.py") == ".b"
+    assert _spelled(model, "beta/sub/e.py", "beta/d.py") == "..d"
+    assert _spelled(model, "beta/__init__.py", "beta/b.py") is None
+    assert model.importers_of_missing_modules == {
+        model.root / "alpha/c.py",
+        model.root / "beta/__init__.py",
     }
+    assert all(problem.from_inside for problem in unresolved)
 
 
 def test_what_is_missing_below_a_module_file_is_the_module_under_it(tmp_path):
@@ -794,6 +809,7 @@ def test_what_is_missing_below_a_module_file_is_the_module_under_it(tmp_path):
             "alpha/compat.py": "import sys\nsys.modules[__name__ + '.moves'] = sys\n",
             "alpha/a.py": "from .util.gone import thing\n",
             "tests/test_a.py": "import alpha.util\nimport alpha.util.gone\nimport alpha.compat.moves\n",
+            "tests/test_b.py": "import alpha.util\n",
         },
     )
     model = _model(project)
@@ -802,7 +818,7 @@ def test_what_is_missing_below_a_module_file_is_the_module_under_it(tmp_path):
         "alpha/a.py:1: from .util.gone import thing names .util.gone, which does not exist",
         "tests/test_a.py:2: import alpha.util.gone needs alpha.util.gone, which alpha does not hold",
     ]
-    assert _spelled(model, "tests/test_a.py", "alpha/util.py") == "alpha.util"
+    assert _spelled(model, "tests/test_b.py", "alpha/util.py") == "alpha.util"
 
 
 def _sphinx_shape(root: Path) -> Path:

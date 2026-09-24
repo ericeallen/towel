@@ -16,25 +16,29 @@
 
 A helper shared across modules is imported by the name the program's own
 imports give its host. Before anything is written, a ``--cross-module`` run
-names every problem those imports have, with the remedy. One because of
-which the model declines something in the package being refactored refuses
-the run: anyio's stale ``build/lib/anyio`` beside ``anyio`` makes every name
-of the package ambiguous. One that involves only other modules, a broken
-fixture in the test data, is reported and the run goes on; the model already
-declines what it involves. An import of a module the package lacks, as
-sphinx's test data and a stale prompt-toolkit example make, leaves no name in
-doubt, so it stops only a run that includes it. Without ``--cross-module`` no
-import that runs is written, so no problem can matter, and none is reported.
+names every problem those imports have, with the remedy. One that leaves a
+name of the package being refactored in doubt refuses the run: anyio's stale
+``build/lib/anyio`` beside ``anyio`` makes every name of the package
+ambiguous. One that involves only other modules is reported and the run goes
+on; the model already declines what it involves. An import of a module the
+tree lacks, as sphinx's test data, a stale prompt-toolkit example and a
+package's import of its generated ``_version.py`` make, leaves no name in
+doubt wherever it lies: the run goes on and leaves the file making it exactly
+as it was. Without ``--cross-module`` no import that runs is written, so no
+problem can matter, and none is reported.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import textwrap
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
+
+import pytest
 
 import towel
 from towel.cli import _problems_involving
@@ -118,7 +122,10 @@ def _sphinx_shaped(root: Path) -> Path:
                 "import missing_module\n"
                 "import zzsphx.missing_module4\n"
                 "from zzsphx.missing_module4 import missing_name2\n"
-            ),
+            )
+            + _BLOCK.format(name="fm", tag="m")
+            + _WITHIN.format(name="gm", tag="gm")
+            + _WITHIN.format(name="hm", tag="hm"),
         },
     )
 
@@ -157,6 +164,14 @@ _BROKEN_TEST_DATA = {
 }
 
 
+_INSIDE_REMEDY = (
+    "A module generated at build time, such as a _version.py, appears once the project is"
+    " installed (pip install -e .); fix any other."
+)
+_VERSION = {"src/zzalpha/_version.py": 'version = "1.0"\n'}
+_IMPORTS_VERSION = "from zzalpha._version import version\n"
+
+
 def _towel(
     root: Path, command: str, *flags: str, target: str = "src/zzalpha"
 ) -> subprocess.CompletedProcess[str]:
@@ -187,19 +202,49 @@ def _sources(root: Path) -> dict[str, str]:
     }
 
 
-def _behaviour(root: Path, sys_path: Sequence[str], code: str) -> str:
-    """What ``code`` prints with only ``sys_path`` under ``root`` added: the program as its users import it."""
+def _behaviour(
+    root: Path, sys_path: Sequence[str], code: str, generated: Mapping[str, str] = {}
+) -> str:
+    """What ``code`` prints with only ``sys_path`` under ``root`` added: the program as its users import it.
+
+    ``generated`` are the modules a build writes, which the tree lacks: the
+    program runs from a copy that holds them, as an installed project does.
+    """
+    if generated:
+        installed = root.parent / f"{root.name}-installed"
+        shutil.copytree(root, installed)
+        root = _write(installed, generated)
     prelude = f"import sys\nsys.path[:0] = {[str(root / entry) for entry in sys_path]!r}\n"
-    result = subprocess.run(
-        [sys.executable, "-I", "-B", "-c", prelude + code],
-        capture_output=True,
-        text=True,
-        cwd=root.parent,
-        env={"PATH": os.environ.get("PATH", "")},
-        timeout=120,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", prelude + code],
+            capture_output=True,
+            text=True,
+            cwd=root.parent,
+            env={"PATH": os.environ.get("PATH", "")},
+            timeout=120,
+        )
+    finally:
+        if generated:
+            shutil.rmtree(root)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
+
+
+def _refactored_alike(
+    root: Path,
+    sys_path: Sequence[str],
+    program: str,
+    refactor: Callable[[], subprocess.CompletedProcess[str]],
+    generated: Mapping[str, str] = {},
+) -> subprocess.CompletedProcess[str]:
+    """Run ``refactor`` on ``root``, and check ``program`` prints what it printed before."""
+    expected = _behaviour(root, sys_path, program, generated)
+    ran = refactor()
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "Refusing" not in ran.stderr, ran.stderr
+    assert _behaviour(root, sys_path, program, generated) == expected
+    return ran
 
 
 def test_a_problem_of_the_package_being_refactored_refuses_the_run(tmp_path: Path) -> None:
@@ -255,18 +300,27 @@ def test_test_data_importing_what_the_package_lacks_leaves_its_helpers_shared(
     assert "missing_module4" not in written
 
 
-def test_test_data_importing_what_the_package_lacks_refuses_a_run_that_includes_it(
+def test_a_run_from_the_root_leaves_test_data_importing_what_the_package_lacks_unchanged(
     tmp_path: Path,
 ) -> None:
-    """From the project root the test data is part of what is refactored, until it is set aside."""
+    """From the project root the test data is part of what is refactored, and is left as it was."""
     root = _sphinx_shaped(tmp_path / "project")
-    refused = _towel(root, "preview", "--cross-module", target=".")
-    assert refused.returncode == 1, refused.stdout + refused.stderr
-    assert "Refusing to share helpers across the modules of" in refused.stderr
-    assert "need_mocks.py:2: import zzsphx.missing_module4" in refused.stderr
-    ran = _towel(root, "preview", "--cross-module", "--exclude", "roots", target=".")
-    assert ran.returncode == 0, ran.stdout + ran.stderr
-    assert "missing_module4" not in ran.stderr
+    fixture = root / "tests/roots/test-ext-autodoc/target/need_mocks.py"
+    before = fixture.read_bytes()
+    program = (
+        "import zzsphx.a, zzsphx.b\nprint(zzsphx.a.fa([0, 1, 2, 3]), zzsphx.b.fb([3, -1, 5]))\n"
+    )
+    ran = _refactored_alike(
+        root, ["."], program, lambda: _towel(root, "dry", "--cross-module", target=".")
+    )
+    assert "need_mocks.py:2: import zzsphx.missing_module4" in ran.stderr
+    assert (
+        "Left unchanged: tests/roots/test-ext-autodoc/target/need_mocks.py. Fix the import, or"
+        " leave its directory out with --exclude <directory name>."
+    ) in ran.stderr
+    # Its block is duplicated in the package and within itself, and neither moved.
+    assert fixture.read_bytes() == before
+    assert "from zzsphx.a import __extracted_func" in (root / "zzsphx/b.py").read_text()
 
 
 def test_an_example_importing_what_the_package_lacks_leaves_its_helpers_shared(
@@ -295,14 +349,116 @@ def test_an_example_importing_what_the_package_lacks_leaves_its_helpers_shared(
     assert _behaviour(root, ["src"], program) == expected
 
 
-def test_an_unresolved_import_inside_the_package_refuses_the_run(tmp_path: Path) -> None:
-    root = _project(tmp_path / "project", {"src/zzalpha/c.py": "from zzalpha.gone import thing\n"})
+def test_an_unresolved_import_inside_the_package_leaves_its_file_unchanged(
+    tmp_path: Path,
+) -> None:
+    broken = "from zzalpha.gone import thing\n" + _WITHIN.format(name="gc", tag="gc")
+    root = _project(
+        tmp_path / "project",
+        {"src/zzalpha/c.py": broken + _WITHIN.format(name="hc", tag="hc")},
+    )
+    before = (root / "src/zzalpha/c.py").read_bytes()
+    program = (
+        "import zzalpha.a, zzalpha.b\nprint(zzalpha.a.fa([0, 1, 2, 3]), zzalpha.b.fb([3, -1, 5]))\n"
+    )
+    ran = _refactored_alike(root, ["src"], program, lambda: _towel(root, "dry", "--cross-module"))
+    assert "src/zzalpha/c.py:1: from zzalpha.gone import thing needs zzalpha.gone" in ran.stderr
+    assert f"Left unchanged: src/zzalpha/c.py. {_INSIDE_REMEDY}" in ran.stderr
+    assert (root / "src/zzalpha/c.py").read_bytes() == before
+    assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()
+
+
+def test_a_package_importing_its_generated_version_is_refactored_around_its_initializer(
+    tmp_path: Path,
+) -> None:
+    """A fresh clone lacks the ``_version.py`` its build writes; seven corpus packages import one."""
+    initializer = (
+        _IMPORTS_VERSION
+        + _BLOCK.format(name="fi", tag="i")
+        + _WITHIN.format(name="gi", tag="gi")
+        + _WITHIN.format(name="hi", tag="hi")
+    )
+    root = _project(tmp_path / "project", {"src/zzalpha/__init__.py": initializer})
+    before = (root / "src/zzalpha/__init__.py").read_bytes()
+    program = (
+        "import zzalpha, zzalpha.a, zzalpha.b\n"
+        "print(zzalpha.version, zzalpha.fi([2]), zzalpha.a.fa([0, 1, 2, 3]), zzalpha.b.fb([3, -1]))\n"
+    )
+    ran = _refactored_alike(
+        root, ["src"], program, lambda: _towel(root, "dry", "--cross-module"), _VERSION
+    )
+    assert "src/zzalpha/__init__.py:1: from zzalpha._version import version" in ran.stderr
+    assert f"Left unchanged: src/zzalpha/__init__.py. {_INSIDE_REMEDY}" in ran.stderr
+    assert "--exclude" not in ran.stderr
+    assert (root / "src/zzalpha/__init__.py").read_bytes() == before
+    # Every module of the package is imported through the initializer, so its
+    # import has already run wherever the helper is newly imported.
+    assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()
+
+
+def test_a_subpackage_below_an_initializer_importing_what_the_tree_lacks_is_refactored(
+    tmp_path: Path,
+) -> None:
+    """The initializer runs for every module of the subpackage; the run says what that costs."""
+    root = _project(
+        tmp_path / "project",
+        {
+            "src/zzalpha/__init__.py": _IMPORTS_VERSION,
+            "src/zzalpha/sub/__init__.py": "",
+            "src/zzalpha/sub/m.py": _BLOCK.format(name="fm", tag="m"),
+            "src/zzalpha/sub/n.py": _BLOCK.format(name="fn", tag="n"),
+        },
+    )
+    program = (
+        "import zzalpha.sub.m, zzalpha.sub.n\n"
+        "print(zzalpha.sub.m.fm([0, 1, 2, 3]), zzalpha.sub.n.fn([3, -1, 5]))\n"
+    )
+    ran = _refactored_alike(
+        root,
+        ["src"],
+        program,
+        lambda: _towel(root, "dry", "--cross-module", target="src/zzalpha/sub"),
+        _VERSION,
+    )
+    assert f"Left unchanged: src/zzalpha/__init__.py. {_INSIDE_REMEDY}" in ran.stderr
+    assert (
+        "Modules in src/zzalpha host a helper only for modules imported through it: importing"
+        " one from anywhere else would run src/zzalpha/__init__.py, whose import the tree"
+        " lacks, where it has not run."
+    ) in ran.stderr
+    assert "from .m import __extracted_func" in (root / "src/zzalpha/sub/n.py").read_text()
+
+
+@pytest.mark.parametrize(
+    "extra, named",
+    [
+        (_STALE_COPY, "zzalpha could be any of: build/lib/zzalpha; src/zzalpha"),
+        (
+            {"tests/fixtures/copy/zzalpha/__init__.py": ""},
+            "zzalpha could be any of: src/zzalpha; tests/fixtures/copy/zzalpha",
+        ),
+        (
+            {"tools/report.py": "import src.zzalpha.a\n"},
+            "src/zzalpha is reachable both as src.zzalpha and as zzalpha",
+        ),
+        (
+            {"src/zzalpha/c.py": "from ... import elsewhere\n"},
+            "src/zzalpha/c.py:1: from ... import elsewhere climbs out of its top-level package",
+        ),
+    ],
+    ids=["stale-build-copy", "ambiguous-name", "file-under-two-names", "escaping-relative-import"],
+)
+def test_a_problem_leaving_a_name_of_the_target_in_doubt_still_refuses(
+    tmp_path: Path, extra: Mapping[str, str], named: str
+) -> None:
+    root = _project(tmp_path / "project", extra)
     before = _sources(root)
-    refused = _towel(root, "dry", "--cross-module")
-    assert refused.returncode == 1, refused.stdout + refused.stderr
-    assert "Refusing to share helpers across the modules of" in refused.stderr
-    assert "src/zzalpha/c.py:1: from zzalpha.gone import thing needs zzalpha.gone" in refused.stderr
-    assert _sources(root) == before
+    for target in ("src/zzalpha", "."):
+        refused = _towel(root, "dry", "--cross-module", target=target)
+        assert refused.returncode == 1, refused.stdout + refused.stderr
+        assert "Refusing to share helpers across the modules of" in refused.stderr
+        assert named in refused.stderr, refused.stderr
+        assert _sources(root) == before
 
 
 def test_without_cross_module_no_problem_is_reported_or_refuses(tmp_path: Path) -> None:
@@ -334,19 +490,19 @@ def test_which_problems_involve_the_target(tmp_path: Path) -> None:
     assert any("could be any of" in text for text in involved)
     assert not any("tests/data/broken" in text for text in involved)
     assert any("tests/data/broken" in text for text in described - involved)
-    # From the project root every file lies under the target.
-    assert {
-        problem.describe(model.root) for problem in _problems_involving(model, root)
-    } == described
+    # From the project root every name is the target's, and every missing module lies in it.
+    assert {problem.describe(model.root) for problem in _problems_involving(model, root)} == {
+        text for text in described if "tests/data/broken" not in text
+    }
     # An import of a module zzalpha lacks puts no name in doubt, only the test making it.
     gone = _project(tmp_path / "gone", {"tests/test_gone.py": "from zzalpha.gone import thing\n"})
     model = build_import_model(gone)
     assert len(model.problems) == 1
     assert _problems_involving(model, gone / "src" / "zzalpha") == []
-    assert _problems_involving(model, gone) == list(model.problems)
+    assert _problems_involving(model, gone) == []
 
 
-def test_a_problem_elsewhere_in_the_package_involves_a_subpackage_it_declines(
+def test_a_problem_elsewhere_in_the_package_involves_a_subpackage_when_it_leaves_a_name_in_doubt(
     tmp_path: Path,
 ) -> None:
     """Refusing only for problems inside the target let a run go on with every helper declined."""
@@ -366,16 +522,13 @@ def test_a_problem_elsewhere_in_the_package_involves_a_subpackage_it_declines(
     assert len(model.problems) == 1
     assert _problems_involving(model, target) == list(model.problems)
     assert [problem.names_in_doubt for problem in model.problems] == [{"zzalpha"}]
-    # The package's initializer runs for every module of the subpackage.
+    # An initializer importing what the tree lacks runs for every module of
+    # the subpackage, but leaves no name in doubt.
     _write(
         root,
         {"src/zzalpha/tools/x.py": "", "src/zzalpha/__init__.py": "from zzalpha._v import v\n"},
     )
     model = build_import_model(root)
     assert len(model.problems) == 1
-    assert _problems_involving(model, target) == list(model.problems)
+    assert _problems_involving(model, target) == []
     assert [problem.names_in_doubt for problem in model.problems] == [frozenset()]
-    # A directory without an initializer is not imported through the package.
-    loose = root / "src" / "zzalpha" / "loose"
-    _write(root, {"src/zzalpha/loose/n.py": ""})
-    assert _problems_involving(build_import_model(root), loose) == []
