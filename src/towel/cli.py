@@ -1038,12 +1038,13 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
 
     A helper shared across modules is imported by the name the program's own
     imports give its host (docs/DECISIONS.md, "Import names come from the
-    program"), and the model those imports make already declines every name a
-    problem involves. So every problem is named before anything is written.
-    One that involves the package being refactored (:func:`_problems_involving`)
-    refuses the run, since the helpers shared across its modules are what
-    ``--cross-module`` asks for and none could be named soundly; any other is
-    reported, and the run goes on. Only a run with ``--cross-module`` asks:
+    program"), and the model those imports make already declines every name
+    whose location a problem leaves in doubt, and every file holding a
+    problem's import. So every problem is named before anything is written.
+    One because of which something in the package being refactored is
+    declined (:func:`_problems_involving`) refuses the run, since the helpers
+    shared across its modules are what ``--cross-module`` asks for; any other
+    is reported, and the run goes on. Only a run with ``--cross-module`` asks:
     without it no import that runs is written, so nothing depends on them.
     """
     from towel.consumers import ScanLimitExceeded
@@ -1081,47 +1082,45 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
 
 
 def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProblem"]:
-    """The problems that involve the package being refactored.
+    """The problems because of which the model declines something in the package being refactored.
 
-    One does when a file it names lies under ``target``, or when it concerns a
-    top-level name one of whose locations lies under ``target`` or holds it:
-    anyio's stale ``build/lib/anyio`` beside ``anyio`` is a problem of
-    ``anyio``, wherever the stray copy sits.
+    One does when it lies under ``target``, when it leaves in doubt a
+    top-level name one of whose locations lies under ``target`` or holds it,
+    or when it lies in the initializer of a package ``target`` is imported
+    as part of, which every import of its modules runs. anyio's stale
+    ``build/lib/anyio`` beside ``anyio`` is a problem of ``anyio``, wherever
+    the stray copy sits. An import of a module the tree lacks leaves no name
+    in doubt (:class:`~towel.import_model.UnresolvedImport`), so it is one
+    only from inside: sphinx's test data importing ``sphinx.missing_module4``
+    stops no run on ``sphinx``.
     """
-    from towel.import_model import (
-        AmbiguousName,
-        FileUnderTwoNames,
-        TopLevelInsidePackage,
-        UnresolvedImport,
-    )
-
     resolved = target.resolve()
 
     def under(path: Path) -> bool:
         return path == resolved or path.is_relative_to(resolved)
+
+    def initializes(path: Path) -> bool:
+        if path.name != "__init__.py" or not resolved.is_relative_to(path.parent):
+            return False
+        # The initializer runs for the target's modules only when every
+        # directory between them is a package they are imported through.
+        return all(
+            (directory / "__init__.py").is_file()
+            for directory in (resolved, *resolved.parents)
+            if directory.is_relative_to(path.parent)
+        )
 
     own = {
         name
         for name, info in model.names.items()
         if any(under(location) or resolved.is_relative_to(location) for location in info.candidates)
     }
-    involved: List["ImportProblem"] = []
-    for problem in model.problems:
-        files: Sequence[Path]
-        names: Set[str]
-        if isinstance(problem, AmbiguousName):
-            files, names = problem.candidates, {problem.name}
-        elif isinstance(problem, UnresolvedImport):
-            files, names = (problem.site.file,), {problem.name}
-        elif isinstance(problem, FileUnderTwoNames):
-            files, names = (problem.location,), {name.partition(".")[0] for name in problem.names}
-        elif isinstance(problem, TopLevelInsidePackage):
-            files, names = (problem.location,), {problem.name}
-        else:
-            files, names = (problem.site.file,), set()
-        if any(under(path) for path in files) or names & own:
-            involved.append(problem)
-    return involved
+    return [
+        problem
+        for problem in model.problems
+        if problem.names_in_doubt & own
+        or any(under(path) or initializes(path) for path in problem.found_at)
+    ]
 
 
 def _print_declined(report: "RunReport", applied: int) -> None:
@@ -1175,7 +1174,7 @@ def _print_proposal(
     else:
         print("\n   Extracted function preview:")
         try:
-            lines = ast.unparse(prop.extracted_function).split("\n")
+            lines = _helper_preview(prop).split("\n")
             for line in lines[:8]:
                 print(f"      {line}")
             if len(lines) > 8:
@@ -1184,6 +1183,20 @@ def _print_proposal(
             print(f"      (Preview unavailable: {e})")
             print(f"      Function name: {prop.extracted_function.name}")
     _print_call_sites(prop, target, is_dir, source_cache)
+
+
+def _helper_preview(prop: "RefactoringProposal") -> str:
+    """The helper as it will be written, with the comments it carries, before formatting."""
+    from towel.unification.block_comments import CommentPlacementError, weave_comments
+
+    if not prop.helper_comments.comments:
+        return ast.unparse(prop.extracted_function)
+    try:
+        return weave_comments(
+            prop.extracted_function, prop.extracted_function, prop.helper_comments
+        ).text
+    except CommentPlacementError:
+        return ast.unparse(prop.extracted_function)
 
 
 def _print_call_sites(

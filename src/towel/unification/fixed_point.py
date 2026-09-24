@@ -62,6 +62,7 @@ from .exceptions import (
     RefactoringError,
     Untypeable,
     UntypeableExtraction,
+    UnverifiableChangeError,
 )
 from .models import RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
@@ -116,6 +117,7 @@ DeclineReason = Union[
     Literal[
         "refused by the type checker",
         "not judged: the type checker could not run",
+        "not verifiable: its file holds a name the type checker cannot type",
         "not representable in its file's encoding",
         "could not be rendered",
         "changed nothing",
@@ -353,6 +355,7 @@ class FixedPointDrivers(Materialization):
                     self._forget_records_since(recorded)
                     raise
                 self._applied(proposal)
+                self._follow_the_written_change()
                 applied_one = True
                 break
             if not applied_one:
@@ -415,12 +418,13 @@ class FixedPointDrivers(Materialization):
         """Say why ``proposal`` was not applied, and count it under that reason.
 
         Told apart by type, never by wording: a checker that could not run
-        judged nothing; a refusal no signature of the helper could answer
-        (``UntypeableExtraction``) says the extraction itself cannot be typed;
-        one that refused a rendered variant judged the proposal
-        (``_checker_refusals`` counts those since the driver started it);
-        text its file's encoding cannot hold is a limit of that file; anything
-        else is a rendering Towel could not produce.
+        judged nothing; one that could run but cannot see what the proposal's
+        file imports was not asked; a refusal no signature of the helper could
+        answer (``UntypeableExtraction``) says the extraction itself cannot be
+        typed; one that refused a rendered variant judged the proposal
+        (``_checker_refusals`` counts those since the driver started it); text
+        its file's encoding cannot hold is a limit of that file; anything else
+        is a rendering Towel could not produce.
         """
         reason: DeclineReason
         if _is_checker_failure(error):
@@ -429,6 +433,11 @@ class FixedPointDrivers(Materialization):
             reason, said = (
                 "not judged: the type checker could not run",
                 "the type checker could not check",
+            )
+        elif isinstance(error, UnverifiableChangeError):
+            reason, said = (
+                "not verifiable: its file holds a name the type checker cannot type",
+                "the type checker could not verify",
             )
         elif isinstance(error, UntypeableExtraction):
             reason = error.reason
@@ -842,6 +851,7 @@ class FixedPointDrivers(Materialization):
             self._forget_records_since(recorded)
             raise
         self._applied(proposal)
+        self._follow_the_written_change()
         # Every file the proposal rendered is re-analysed and recorded, not
         # only those whose bytes moved: a file rendered identically is still
         # one the proposal reached, and the localized pass that follows must

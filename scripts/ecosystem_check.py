@@ -19,7 +19,8 @@ Towel runs the way a user runs it: inside the project's own environment, after
 project's test dependencies, the project itself installed editable from the
 tree under test, the tools of Towel's two extras (mypy and pyright; Black, isort
 and ruff), each left as the project's own requirements installed it or installed
-at the version the project's lock file pins, unless that version fails the
+at the version the project pins -- in its lock file, else as the revision of its
+pre-commit hook, else in a requirements file -- unless that version fails the
 extra's requirement, and the candidate: one wheel, built from ``--towel-src`` or
 named by ``--towel-wheel``, verified to be that source, and verified again in
 every environment it is installed into. Towel still picks the formatter from
@@ -47,13 +48,17 @@ modules by default. A manifest entry may turn it off only by giving its reason,
 and the report names each project that ran without it.
 
 Types stay enabled unless the caller explicitly requests ``--no-types``. A
-project whose own sources do not type-check is declined by Towel rather than
-refactored unverified, which is its documented behaviour and the answer it
+project whose own check, as Towel runs it, already reports errors is refactored
+with types all the same: Towel compares each change's check with those errors
+and rejects the change only for one it adds. For each such project the report
+records how many errors there were, and how many files and proposals Towel
+declined because an error there leaves a name the checker cannot type. Only a
+project whose checker cannot run at all is declined by Towel, and the answer it
 gives such a user is to rerun without types. The corpus does exactly that: it
-holds the refusal to its promised wording -- the count, a diagnostic naming its
-file, and the way forward -- and then reruns that project with ``--no-types``
-so its behaviour is still covered. The report says which projects that was, and
-their verdicts are evidence about the untyped path only.
+holds the refusal to its promised wording -- the reason and the way forward --
+and then reruns that project with ``--no-types`` so its behaviour is still
+covered. The report says which projects that was, and their verdicts are
+evidence about the untyped path only.
 
 Trust boundary: this script executes code it does not review. It clones
 public repositories, runs each manifest entry's ``prepare`` command, installs
@@ -98,7 +103,7 @@ import tomllib
 import traceback
 import urllib.parse
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import (
     Callable,
     ContextManager,
@@ -108,6 +113,7 @@ from typing import (
     List,
     Literal,
     Mapping,
+    NewType,
     Optional,
     Sequence,
     Set,
@@ -125,12 +131,18 @@ SUMMARY_PATTERNS = (
 )
 TypingMode = Literal["default", "no-types"]
 LockFile = Literal["uv.lock", "poetry.lock", "pdm.lock"]
-ToolSource = Union[Literal["project", "towel[types]", "towel[format]"], LockFile]
+PreCommitConfig = Literal[".pre-commit-config.yaml"]
+RequirementsFile = NewType("RequirementsFile", str)
+"""A requirements file of the project's, by its path in the tree: ``requirements/lint.txt``."""
+PinSource = Union[LockFile, PreCommitConfig, RequirementsFile]
+"""A file of the project's that pins the version of one of Towel's tools."""
+ToolSource = Union[Literal["project", "towel[types]", "towel[format]"], PinSource]
 LOCK_FILES: Tuple[LockFile, ...] = ("uv.lock", "poetry.lock", "pdm.lock")
 """The lock files whose pins describe a project's own environment, in the order they are read."""
+PRE_COMMIT_CONFIG: PreCommitConfig = ".pre-commit-config.yaml"
 TOWEL_PACKAGE = "towel"
 """The import package the candidate wheel provides."""
-ENVIRONMENT_LAYOUT = 5
+ENVIRONMENT_LAYOUT = 6
 """What a project environment holds; raised when that changes, so an older one is rebuilt."""
 CROSS_MODULE_FLAG = "--cross-module"
 """The option that turns on extraction across modules, where the Towel under test has it."""
@@ -211,9 +223,10 @@ class Tool:
     name: str
     version: str
     source: ToolSource
-    """``project`` when the project's own requirements installed it, the lock file whose pin
-    it was installed at, or the candidate's extra that named it (``towel[types]`` for mypy
-    and pyright, ``towel[format]`` for Black, isort and ruff)."""
+    """``project`` when the project's own requirements installed it; the file whose pin it
+    was installed at (a lock file, ``.pre-commit-config.yaml``, or a requirements file by its
+    path, as ``tool_pins`` chooses); or the candidate's extra that named it (``towel[types]``
+    for mypy and pyright, ``towel[format]`` for Black, isort and ruff)."""
     overridden: str = ""
     """A version the project had chosen that fails its extra's requirement, as
     ``poetry.lock 22.12.0``; the extra's own was installed instead, as installing it does."""
@@ -271,6 +284,24 @@ class CrossModule:
     """The option passed, the default of a Towel without it, or the manifest's reason for off."""
 
 
+@dataclasses.dataclass(frozen=True)
+class PreExistingErrors:
+    """What a typed refactor said, before it began, about the errors the project's check reports.
+
+    Towel leaves them as they are and rejects a change only for an error they
+    do not account for; the counts come from its report on standard error.
+    """
+
+    errors: int
+    files: int
+    names_any: int = 0
+    """How many of them leave a name the checker cannot type (an unresolved import and the like)."""
+    declined_files: int = 0
+    """Files of the refactored code holding one, which Towel declined to change."""
+    declined_proposals: int = 0
+    """Proposals declined for touching such a file, from the run's closing count."""
+
+
 @dataclasses.dataclass
 class Result:
     name: str
@@ -285,6 +316,8 @@ class Result:
     typing_mode: TypingMode = "default"
     fallback: str = ""
     """Why the typed attempt was declined, when the verdict came from a retry without types."""
+    pre_existing: Optional[PreExistingErrors] = None
+    """The errors the project's check reported before the typed refactor, when it reported any."""
     environment: Optional[Environment] = None
     """What Towel ran with; absent only when the environment could not be built."""
     cross_module: Optional[CrossModule] = None
@@ -958,6 +991,158 @@ def applicable_version(
     return matches[0] if matches else None
 
 
+PRE_COMMIT_TOOL_REPOSITORIES: Mapping[str, str] = {
+    "pre-commit/mirrors-mypy": "mypy",
+    "robertcraigie/pyright-python": "pyright",
+    "psf/black": "black",
+    "psf/black-pre-commit-mirror": "black",
+    "pycqa/isort": "isort",
+    "astral-sh/ruff-pre-commit": "ruff",
+    "charliermarsh/ruff-pre-commit": "ruff",
+}
+"""The hook repositories that run one of Towel's tools at the version their revision names,
+by the ``owner/name`` their URL ends with, compared without case."""
+
+_VERSION_TAG = re.compile(r"v?(\d+(?:\.\d+)+(?:(?:a|b|rc)\d+)?(?:\.post\d+)?)")
+"""A tag that is a version, ``v1.17.1`` or ``23.11.0``, and the version it names."""
+
+
+def _repository_key(url: str) -> str:
+    """The ``owner/name`` a repository URL ends with, in lower case."""
+    parts = re.split(r"[/:]", url.strip().lower().removesuffix("/").removesuffix(".git"))
+    return "/".join(parts[-2:])
+
+
+def pre_commit_versions(text: str) -> List[Tuple[str, str]]:
+    """Each repository of a pre-commit configuration pinned at a version, and that version.
+
+    A revision is a tag (``rev: v1.17.1``) or a commit, which ``pre-commit autoupdate
+    --freeze`` writes with the tag it stands for in a comment,
+    ``rev: 7ff8d35...  # frozen: v1.17.1``, read as that tag. A revision that is
+    neither -- a bare commit, a branch -- pins no version, and its repository is left
+    out. The configuration is read in the part of YAML ``pre_commit_dependencies``
+    reads: a repository is an item of a block sequence whose ``repo`` and ``rev`` keys
+    stand in one column, in either order, and whatever is indented further belongs to
+    its hooks.
+    """
+    found: List[Tuple[str, str]] = []
+    column = -1
+    item: Dict[str, str] = {}
+
+    def finish() -> None:
+        if item.get("repo") and item.get("rev"):
+            found.append((item["repo"], item["rev"]))
+        item.clear()
+
+    for raw in text.splitlines():
+        line = _without_comment(raw)
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        dashed = re.match(r"^(-\s+)([\w-]+):\s*(.*)$", stripped)
+        if dashed is not None and dashed[2] in ("repo", "rev"):
+            finish()
+            column = indent + len(dashed[1])
+            key, value = dashed[2], dashed[3]
+        elif indent == column and not stripped.startswith("-"):
+            key, _, value = (part.strip() for part in stripped.partition(":"))
+        else:
+            if indent < column:
+                finish()
+                column = -1
+            continue
+        value = _yaml_scalar(value)
+        if key == "rev":
+            tag = _VERSION_TAG.fullmatch(value)
+            frozen = re.fullmatch(r"#\s*frozen:\s*(\S+)", raw[len(line) :].strip())
+            if tag is None and frozen is not None:
+                tag = _VERSION_TAG.fullmatch(frozen[1])
+            value = tag[1] if tag is not None else ""
+        item[key] = value
+    finish()
+    return found
+
+
+def pre_commit_pins(tree: Path, names: Sequence[str]) -> Dict[str, str]:
+    """The version ``.pre-commit-config.yaml`` runs each of ``names`` at, where it runs one.
+
+    A repository of ``PRE_COMMIT_TOOL_REPOSITORIES`` runs its tool at the version
+    its revision names; the first such repository of a tool decides.
+    """
+    try:
+        text = (tree / PRE_COMMIT_CONFIG).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {}
+    wanted = {_canonical(name) for name in names}
+    pins: Dict[str, str] = {}
+    for repository, version in pre_commit_versions(text):
+        tool = PRE_COMMIT_TOOL_REPOSITORIES.get(_repository_key(repository))
+        if tool is not None and tool in wanted:
+            pins.setdefault(tool, version)
+    return pins
+
+
+def requirement_pins(
+    python: Path, tree: Path, names: Sequence[str]
+) -> Dict[str, Tuple[RequirementsFile, str]]:
+    """The version a requirements file pins each of ``names`` at for ``python``, and the file.
+
+    Only an exact pin (``mypy==1.17.1``) chooses a version, and only where its marker
+    holds for the interpreter. Files named for typing are read first and then the
+    project's others (see ``_requirements_files``), each group in path order, and a
+    tool's first pin decides. A file is read with every ``-r`` it includes, so a pin
+    that only an included file holds is recorded under the file that includes it.
+    """
+    wanted = {_canonical(name) for name in names}
+    files = sorted(
+        _requirements_files(tree),
+        key=lambda path: not _named_for_typing(path.relative_to(tree).with_suffix("").as_posix()),
+    )
+    lines = [
+        (path, requirement)
+        for path in files
+        for requirement in _requirements_file(path, tree, frozenset())
+        if (named := _REQUIREMENT_NAME.match(requirement)) is not None
+        and _canonical(named[1]) in wanted
+    ]
+    if not lines:
+        return {}
+    parsed = _ask_packaging(python, parse=[requirement for _, requirement in lines]).parsed
+    pins: Dict[str, Tuple[RequirementsFile, str]] = {}
+    for (path, _), requirement in zip(lines, parsed):
+        if requirement is None or not requirement.applies or requirement.url:
+            continue
+        exact = re.fullmatch(r"===?([^\s,*]+)", requirement.specifier)
+        if exact is not None and requirement.name in wanted:
+            source = RequirementsFile(path.relative_to(tree).as_posix())
+            pins.setdefault(requirement.name, (source, exact[1]))
+    return pins
+
+
+def tool_pins(python: Path, tree: Path, names: Sequence[str]) -> Dict[str, Tuple[PinSource, str]]:
+    """The version the project pins each of ``names`` at for ``python``, and the file that does.
+
+    The first of these to pin a tool decides: the lock file (see ``lock_pins``), which
+    is the project's environment written down; then the revision of the tool's
+    pre-commit hook (see ``pre_commit_pins``), the version the project's own checks
+    run it at; then an exact pin in a requirements file (see ``requirement_pins``).
+    A tool none of them pins is left out, for the candidate's extra to supply.
+    """
+    pins: Dict[str, Tuple[PinSource, str]] = {}
+    lock, locked = lock_pins(tree, names)
+    for name in names:
+        if lock is not None and name in locked:
+            version = applicable_version(python, lock, name, locked[name])
+            if version is not None:
+                pins[name] = (lock, version)
+    for name, version in pre_commit_pins(tree, [n for n in names if n not in pins]).items():
+        pins[name] = (PRE_COMMIT_CONFIG, version)
+    for name, pin in requirement_pins(python, tree, [n for n in names if n not in pins]).items():
+        pins[name] = pin
+    return pins
+
+
 @dataclasses.dataclass(frozen=True)
 class Choice:
     """Who chose one tool's version, and a choice of the project's that was overruled."""
@@ -969,12 +1154,13 @@ class Choice:
 def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) -> Dict[str, Choice]:
     """Install the checkers and formatters of Towel's extras as installing them would.
 
-    A tool the project's own requirements installed stays, and one its lock file pins
-    is installed at that version, so the project is checked and formatted by the tools
-    its own checks use. One the project leaves to Towel comes from the candidate's
-    extra at the version that resolves today, and so does one whose chosen version
-    fails the extra's requirement: ``pip install "code-towel[format,types]"`` would
-    replace that version too, and the record says which it replaced.
+    A tool the project's own requirements installed stays, and one the project pins
+    (see ``tool_pins``) is installed at that version, so the project is checked and
+    formatted by the tools its own checks use. One the project leaves to Towel comes
+    from the candidate's extra at the version that resolves today, and so does one
+    whose chosen version fails the extra's requirement: ``pip install
+    "code-towel[format,types]"`` would replace that version too, and the record says
+    which it replaced.
     """
     requested: List[Tuple[str, str, ToolSource]] = []
     for requirement in candidate.types_requirements:
@@ -983,16 +1169,14 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
         requested.append((requirement_name(requirement), requirement, "towel[format]"))
     names = [name for name, _, _ in requested]
     present = probe_environment(python, names).versions
-    lock, pins = lock_pins(tree, [name for name in names if present.get(name) is None])
+    pinned = tool_pins(python, tree, [name for name in names if present.get(name) is None])
     offered: Dict[str, Tuple[ToolSource, str]] = {}
     for name in names:
         installed = present.get(name)
         if installed is not None:
             offered[name] = ("project", installed)
-        elif lock is not None and name in pins:
-            pinned = applicable_version(python, lock, name, pins[name])
-            if pinned is not None:
-                offered[name] = (lock, pinned)
+        elif name in pinned:
+            offered[name] = pinned[name]
     judged = [(name, requirement) for name, requirement, _ in requested if name in offered]
     satisfied = (
         _ask_packaging(
@@ -1024,9 +1208,20 @@ _TOOL_SOURCES: Mapping[str, ToolSource] = {
     "uv.lock": "uv.lock",
     "poetry.lock": "poetry.lock",
     "pdm.lock": "pdm.lock",
+    PRE_COMMIT_CONFIG: PRE_COMMIT_CONFIG,
     "towel[types]": "towel[types]",
     "towel[format]": "towel[format]",
 }
+
+
+def _recorded_source(recorded: str) -> Optional[ToolSource]:
+    """The source a provenance record names: one of ``_TOOL_SOURCES``, or a requirements file."""
+    if recorded in _TOOL_SOURCES:
+        return _TOOL_SOURCES[recorded]
+    path = PurePosixPath(recorded)
+    if path.is_absolute() or ".." in path.parts or path.suffix not in (".txt", ".in"):
+        return None
+    return RequirementsFile(recorded)
 
 
 def _read_provenance(path: Path) -> Optional[Dict[str, Choice]]:
@@ -1041,7 +1236,7 @@ def _read_provenance(path: Path) -> Optional[Dict[str, Choice]]:
     for name, entry in data.items():
         if not isinstance(entry, dict):
             return None
-        source = _TOOL_SOURCES.get(str(entry.get("source")))
+        source = _recorded_source(str(entry.get("source")))
         overridden = entry.get("overridden", "")
         if source is None or not isinstance(overridden, str):
             return None
@@ -1703,9 +1898,12 @@ def _pre_commit_declarations(declarer: _Declarer) -> List[Declaration]:
 _REQUIREMENT_DIRECTORIES = ("requirements", "requirements.d", "reqs")
 
 
-def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
-    """Requirements files named for typing, at the root or in a requirements directory."""
-    root = declarer.tree
+def _requirements_files(root: Path) -> List[Path]:
+    """The project's requirements files, at the root or in a requirements directory, in order.
+
+    A ``.in`` beside the ``.txt`` compiled from it is left out: the ``.txt`` pins what the
+    ``.in`` names.
+    """
     candidates = [
         path
         for path in (root.iterdir() if root.is_dir() else [])
@@ -1718,16 +1916,20 @@ def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
                 for path in (root / directory).rglob("*")
                 if path.is_file() and path.suffix in (".txt", ".in")
             ]
-    named = sorted(
+    return sorted(
         path
         for path in candidates
-        if _named_for_typing(path.relative_to(root).with_suffix("").as_posix())
-        # A compiled requirements.txt beside its .in pins what the .in names.
-        and not (path.suffix == ".in" and path.with_suffix(".txt").is_file())
+        if not (path.suffix == ".in" and path.with_suffix(".txt").is_file())
     )
+
+
+def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
+    """Requirements files named for typing, at the root or in a requirements directory."""
+    root = declarer.tree
     return [
         declaration
-        for path in named
+        for path in _requirements_files(root)
+        if _named_for_typing(path.relative_to(root).with_suffix("").as_posix())
         for declaration in declarer.declared(
             path.relative_to(root).as_posix(), _requirements_file(path, root, frozenset())
         )
@@ -2296,8 +2498,13 @@ def check_project(
 
     log_name = f"{project.name}-refactor.log"
     result.refactor = refactor(no_types, log_name)
+    if not no_types:
+        # A project whose check already reports errors is refactored with
+        # types all the same, each change compared with those errors; what the
+        # run said about them is kept whatever the attempt's outcome.
+        result.pre_existing = _pre_existing_errors(logs / log_name)
     if result.refactor.returncode != 0 and result.refactor.returncode != -9 and not no_types:
-        # A project whose own sources do not check is one Towel declines to
+        # A project whose checker cannot run at all is one Towel declines to
         # verify, which is the documented behaviour and not a defect. The
         # answer it gives its user is to rerun without types, so that is what
         # the corpus does: the refusal is held to its promised wording, and the
@@ -2577,16 +2784,27 @@ def _retest_agrees(
 
 
 REFUSAL = re.compile(
+    # The first is a Towel from before its baseline became differential, which
+    # refused a project whose check reported errors; it is reported as such,
+    # not retried, since no Towel under test refuses for that any more.
     r"^Error: (Original project check reported [1-9]\d* type error\(s\):|"
     r"Original project type check failed: .*|"
     r"Unsupported build backend .*|.*cannot infer safe imports.*)$",
     re.M,
 )
 
-PRE_EXISTING_ERRORS = re.compile(r"^Original project check reported ([1-9]\d*) type error\(s\):$")
 CHECKER_FAILED = re.compile(r"^Original project type check failed: (.+)$")
-DIAGNOSTIC_LINE = re.compile(r"^  (?P<path>[^:]+.*?): (?P<message>.+)$", re.M)
 REMEDY = "rerun with --no-types"
+PRE_EXISTING = re.compile(
+    r"^The original project's type check reports (\d+) error\(s\) in (\d+) file\(s\)\.", re.M
+)
+NAMES_ANY = re.compile(
+    r"^warning: (\d+) of these error\(s\) leave a name the checker cannot type", re.M
+)
+NAMES_ANY_FILES = re.compile(r"^No change to these (\d+) file\(s\) is attempted", re.M)
+UNVERIFIABLE = re.compile(
+    r"not verifiable: its file holds a name the type checker cannot type (\d+)"
+)
 
 
 def _refusal(log_path: Path) -> str:
@@ -2608,10 +2826,11 @@ class BaselineRefusal:
 
 
 def _baseline_refusal(refused: str) -> Optional[BaselineRefusal]:
-    """Whether this refusal is about the project's own type baseline, and which kind."""
-    errors = PRE_EXISTING_ERRORS.match(refused)
-    if errors is not None:
-        return BaselineRefusal("pre-existing-errors", f"{errors.group(1)} pre-existing type errors")
+    """Whether this refusal is because the project's checker could not run, and why.
+
+    It is the only refusal about the type baseline there is: a project whose
+    check reports errors is refactored against them (``_pre_existing_errors``).
+    """
     failed = CHECKER_FAILED.match(refused)
     if failed is not None:
         return BaselineRefusal("checker-failed", failed.group(1)[:200])
@@ -2622,19 +2841,38 @@ def _malformed_refusal(declined: BaselineRefusal, log_path: Path) -> Optional[st
     """What the refusal failed to tell its reader, or ``None`` when it told them everything.
 
     A refusal is the only thing a user of an unchecked project ever sees, so the
-    corpus holds it to its promise: say how many errors there are, show some of
-    them with the file they are in, and name the way forward. Asserting it here
+    corpus holds it to its promise: name the way forward. Asserting it here
     means every project in the corpus that trips it is a test of the wording.
     """
     text = log_path.read_text(encoding="utf-8", errors="replace")
     if REMEDY not in text:
         return f"refusal did not name the way forward ({REMEDY!r} absent)"
-    if declined.kind != "pre-existing-errors":
-        return None
-    shown = DIAGNOSTIC_LINE.findall(text)
-    if not shown:
-        return "refusal reported a count but showed no diagnostic with its file"
     return None
+
+
+def _pre_existing_errors(log_path: Path) -> Optional[PreExistingErrors]:
+    """What a typed refactor reported about the errors the project's check already has.
+
+    ``None`` when it reported none: a clean check, or a run that never got as
+    far as checking.
+    """
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    reported = PRE_EXISTING.search(text)
+    if reported is None:
+        return None
+    names_any = NAMES_ANY.search(text)
+    declined_files = NAMES_ANY_FILES.search(text)
+    declined_proposals = UNVERIFIABLE.search(text)
+    return PreExistingErrors(
+        errors=int(reported.group(1)),
+        files=int(reported.group(2)),
+        names_any=int(names_any.group(1)) if names_any else 0,
+        declined_files=int(declined_files.group(1)) if declined_files else 0,
+        declined_proposals=int(declined_proposals.group(1)) if declined_proposals else 0,
+    )
 
 
 FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) ([^(].*)$")
@@ -2947,6 +3185,8 @@ def main() -> int:
             seconds = result.refactor.seconds if result.refactor else 0.0
             detail_line = result.detail.splitlines()[0] if result.detail else ""
             mode = f"[{result.typing_mode}]" if result.fallback else ""
+            if result.pre_existing is not None:
+                mode += f"[{result.pre_existing.errors} pre-existing]"
             if result.cross_module is not None and not result.cross_module.enabled:
                 mode += "[no cross-module]"
             print(
@@ -2965,6 +3205,9 @@ def main() -> int:
     for result in results:
         if result.fallback:
             fallbacks[result.fallback] = fallbacks.get(result.fallback, 0) + 1
+    pre_existing = {
+        result.name: result.pre_existing for result in results if result.pre_existing is not None
+    }
     cross_module_off = {
         result.name: result.cross_module.reason
         for result in results
@@ -2985,18 +3228,22 @@ def main() -> int:
         "with the project installed editable from the tree under test. The Checkers "
         "and Formatters columns name the mypy and pyright, and the Black, isort and "
         "ruff, there: `(project)` marks one the project's own requirements installed, "
-        "`(uv.lock)` and the like one installed at the version the project's lock file "
-        "pins, `(over ...)` one whose chosen version failed the extra's requirement and "
+        "`(uv.lock)`, `(.pre-commit-config.yaml)`, `(requirements.txt)` and the like one "
+        "installed at the version that file of the project's pins (a lock file first, "
+        "then a pre-commit hook's revision, then a requirements file), "
+        "`(over ...)` one whose chosen version failed the extra's requirement and "
         "was replaced as installing the extra replaces it, and the rest came from the "
         "candidate's `types` and `format` extras. Which formatter a project gets is its "
         "configuration's choice, as it is for any user. Typing deps counts the "
         "requirements the project declares for its own type check that were installed, "
         "of those it declares, and where it declares them; each result lists them all.",
         "",
-        f"Typing mode requested: `{typing_mode}`. A project whose own sources do not "
-        "check is declined by Towel and rerun here without types; its row says so, and "
-        "its verdict is evidence about the untyped path only. Runtime test outcomes do "
-        "not establish type-checking coverage either way.",
+        f"Typing mode requested: `{typing_mode}`. A project whose own check already "
+        "reports errors is refactored with types, each change rejected only for an error "
+        "it adds, and its row gives the count. One whose checker cannot run at all is "
+        "declined by Towel and rerun here without types; its row says so, and its verdict "
+        "is evidence about the untyped path only. Runtime test outcomes do not establish "
+        "type-checking coverage either way.",
         "",
         f"Every refactor extracts across modules ({CROSS_MODULE_FLAG}, or the default of a "
         "Towel without that option) unless its manifest entry turns that off with a "
@@ -3008,6 +3255,8 @@ def main() -> int:
     ]
     for result in results:
         typing = result.typing_mode + (f" (declined: {result.fallback})" if result.fallback else "")
+        if result.pre_existing is not None:
+            typing += f" ({result.pre_existing.errors} pre-existing)"
         environment = result.environment
         lines.append(
             f"| {result.name} | `{result.commit[:10]}` | {result.verdict} | {typing} | "
@@ -3025,6 +3274,17 @@ def main() -> int:
             "",
             "Declined the typed path and rerun without types: "
             + ", ".join(f"{key} {value}" for key, value in sorted(fallbacks.items())),
+        ]
+    if pre_existing:
+        lines += [
+            "",
+            "Typed against pre-existing errors (errors, of them leaving a name the checker "
+            "cannot type, files and proposals declined for it): "
+            + "; ".join(
+                f"{name} ({found.errors}, {found.names_any}, {found.declined_files}, "
+                f"{found.declined_proposals})"
+                for name, found in sorted(pre_existing.items())
+            ),
         ]
     lines += [
         "",
@@ -3053,6 +3313,9 @@ def main() -> int:
                 "typing_mode": typing_mode,
                 "counts": counts,
                 "declined_typed_path": fallbacks,
+                "pre_existing_errors": {
+                    name: dataclasses.asdict(found) for name, found in pre_existing.items()
+                },
                 "cross_module_off": cross_module_off,
                 "cross_module_opt_out_not_applied": opt_out_not_applied,
                 "results": [dataclasses.asdict(r) for r in results],
@@ -3065,7 +3328,9 @@ def main() -> int:
         "\n".join(
             line
             for line in lines
-            if line.startswith(("Totals:", "Declined", "Cross-module extraction off"))
+            if line.startswith(
+                ("Totals:", "Declined", "Typed against", "Cross-module extraction off")
+            )
         ),
         flush=True,
     )

@@ -19,9 +19,10 @@ infer the rest through the project's type checker, decides whether the
 generated code is to be type-checked, orders the signatures a typed proposal
 is tried with (:meth:`HelperAnnotationWiring._annotation_ladder`; what each
 rung writes is in annotation_ladder.py), and compares messages before and
-after a change. Oracle inference and verification run only when the complete
-original project is clean; existing errors and checker infrastructure failures
-refuse application with distinct diagnostics.
+after a change. Oracle inference and verification start from a check of the
+complete original project: the errors it reports are left as they are, and a
+change is rejected only for an error they do not account for
+(``towel.type_baseline``). A checker that cannot run at all refuses the run.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from .annotation_ladder import (
     self_as_type_variable,
     targeted_any,
     unannotated_function,
+    used_imports,
     without_quoted_none,
 )
 from .annotations import (
@@ -80,11 +82,20 @@ from .exceptions import (
     ProjectScanLimitError,
     RefactoringError,
     Untypeable,
+    UnverifiableChangeError,
 )
 from .models import FunctionNode, RefactoringProposal, span_contains
-from ..diagnostics import TYPES
+from ..diagnostics import LOG, TYPES
 from ..checker_project import _read_json_config
 from ..project_layout import find_project_root, load_pyproject, package_chain
+from ..type_baseline import (
+    CheckedChange,
+    KnownErrors,
+    files_where_names_are_any,
+    names_any_warning,
+    pre_existing_summary,
+    resolved_path,
+)
 from ..type_inference import (
     CheckFailure,
     CombinedOracle,
@@ -95,6 +106,8 @@ from ..type_inference import (
     _module_name_and_root,
     _mypy_config,
     _RelocatedOracle,
+    checker_module_name,
+    checks_in_turn,
     holds_warm_state,
     start_cold,
 )
@@ -103,10 +116,11 @@ from .engine_state import EngineState
 from ..source_text import read_source, source_lines, try_read_source
 from .function_index import FunctionIndex
 from .generic_annotations import MethodContext, generic_helpers
+from .type_bindings import CheckerImports, ModuleNames
 from .program_imports import ProgramImports
 
 UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
-"""The way out of every refusal to verify: the one thing such a user can act on."""
+"""The way out when the checker cannot run at all: the one thing such a user can act on."""
 
 
 def python_lower_bound(specifier: str) -> Optional[PythonVersion]:
@@ -341,7 +355,9 @@ class _RefusedCheck:
     errors: Tuple[TypeDiagnostic, ...]
     helper_name: str
     depends_on: Tuple[Tuple[str, str], ...]
-    """(path, digest) of every file outside the variant that the refusal could depend on."""
+    """(path, digest) of every file the refusal could depend on, the variant's own as they stand."""
+    known: str
+    """What the run already counted as the project's own errors in those files (``type_baseline``)."""
 
 
 _REFUSED_CHECKS_KEPT = 512
@@ -447,13 +463,27 @@ class HelperAnnotationWiring(EngineState):
         self._type_run_baseline = None
         self._ladder_policies = {}
         self._refused_checks = {}
+        self._type_known = KnownErrors()
+        self._type_checked = None
+        self._type_names_any = {}
         self._analysis_paths = tuple(file_paths)
         self._output_origin = None
         self.import_graph.begin_run()
         self._ensure_type_checking(file_paths)
 
     def _ensure_type_checking(self, file_paths: Sequence[str]) -> None:
-        """Check once; neither existing errors nor checker failure permit application."""
+        """Check the original project once; only a checker that cannot run refuses the run.
+
+        The errors that check reports are what every later check is compared
+        with (``towel.type_baseline``): the run leaves them as they are, and
+        rejects a change only for an error they do not account for. It used to
+        refuse any project that reported one: of 20 corpus projects, all 17
+        that type-check pass their own check as their CI runs it, and Towel's
+        check was clean for 6, its errors lying in tests, benchmarks and docs
+        the CI never checks. They are reported before anything else happens,
+        with the files where they leave names the checker cannot type
+        (``_report_pre_existing``).
+        """
         if self._type_run_oracle is None:
             return
         if self._type_run_baseline is None and file_paths:
@@ -465,10 +495,18 @@ class HelperAnnotationWiring(EngineState):
                     break
                 originals[path] = source
             else:
-                self._type_run_baseline = self._type_run_oracle.check_project(originals)
-                if not isinstance(self._type_run_baseline, CheckFailure):
-                    for diagnostic in self._type_run_baseline.errors:
+                baseline = self._type_run_oracle.check_project(originals)
+                self._type_run_baseline = baseline
+                if not isinstance(baseline, CheckFailure):
+                    for diagnostic in baseline.errors:
                         TYPES.debug("original error in %s: %s", diagnostic.path, diagnostic.message)
+                    self._type_known = KnownErrors.of(
+                        baseline.errors,
+                        self._where_checked,
+                        texts={self._where_checked(path): text for path, text in originals.items()},
+                    )
+                    self._type_names_any = files_where_names_are_any(self._type_known.errors)
+                    self._report_pre_existing(list(originals))
         if isinstance(self._type_run_baseline, CheckFailure):
             # A checker that cannot run at all -- a config naming a Python
             # version it has dropped, a tree it cannot build -- leaves the same
@@ -479,21 +517,9 @@ class HelperAnnotationWiring(EngineState):
                 f"Original project type check failed: {self._type_run_baseline.reason}\n"
                 f"{UNTYPED_REMEDY}"
             )
-        if self._type_run_baseline is not None and self._type_run_baseline.errors:
-            errors = self._type_run_baseline.errors
-            details = "\n".join(f"  {error.path}: {error.message}" for error in errors[:3])
-            if len(errors) > 3:
-                details += (
-                    f"\n  ... and {len(errors) - 3} more "
-                    "(TOWEL_DEBUG_TYPES=1 shows all diagnostics)."
-                )
-            raise RefactoringError(
-                f"Original project check reported {len(errors)} type error(s):\n{details}\n"
-                f"Fix the existing errors or {UNTYPED_REMEDY}"
-            )
 
     def _active_type_oracle(self) -> Optional[TypeOracle]:
-        """The caller's oracle only when this run's original check completed cleanly."""
+        """The caller's oracle once this run's original check has completed, errors or not."""
         if self._type_run_oracle is None:
             return None
         self._ensure_type_checking(())
@@ -759,17 +785,24 @@ class HelperAnnotationWiring(EngineState):
             proposal.return_variables,
             oracle,
             method=method,
+            module_names=self._module_names_for(proposal),
+            checker_imports=self._checker_imports_for(proposal),
         ):
             variant = dataclasses.replace(
                 proposal,
                 extracted_function=candidate.helper,
-                required_imports=(),
-                type_checking_imports=(),
+                required_imports=candidate.required_imports,
+                type_checking_imports=candidate.type_checking_imports,
                 helper_type_declarations=candidate.declarations,
             )
-            # Its own spellings, not the ordinary signature's: a type the
-            # variant abstracts needs no import, and one it spells does.
-            variant.type_checking_imports = self._shorten_unreachable_names(variant, host)
+            # Its own imports, never the ordinary signature's: those the
+            # generic rung wrote for the classes it names, and any a name it
+            # left qualified needs once shortened. A type the variant
+            # abstracts needs none.
+            shortened = self._shorten_unreachable_names(variant, host)
+            variant.type_checking_imports = tuple(
+                dict.fromkeys(candidate.type_checking_imports + shortened)
+            )
             yield variant
 
     def _self_as_type_variable(
@@ -891,7 +924,7 @@ class HelperAnnotationWiring(EngineState):
                 targeted.extracted_function
             ):
                 TYPES.debug("ladder rung every-Any for %s", proposal.description)
-                yield every_any
+                yield self._finished(every_any)
                 if hearing.settled_by() is not None:
                     return
         last = hearing.last
@@ -914,15 +947,76 @@ class HelperAnnotationWiring(EngineState):
                 )
                 return
             TYPES.debug("ladder rung unannotated for %s", proposal.description)
-            yield self._without_annotations(proposal)
+            yield self._finished(self._without_annotations(proposal))
+
+    def _module_names_for(self, proposal: RefactoringProposal) -> ModuleNames:
+        """The absolute name of each module, as the checker writes it in the types it reveals.
+
+        The name the program's own imports give the module, and, for a module
+        no import names (a script, a package only ever imported relatively),
+        the one mypy was given for it: its ``__init__`` chain in the project
+        the checker reads (:func:`~towel.type_inference.checker_module_name`).
+        """
+        try:
+            program: Optional[ProgramImports] = self.import_graph.program_for(
+                Path(proposal.file_path)
+            )
+        except ProjectScanLimitError:
+            program = None
+
+        def module_name(path: str) -> Optional[str]:
+            named = program.module_name(Path(path)) if program is not None else None
+            return named or checker_module_name(Path(self._origin_of(path)))
+
+        return module_name
+
+    def _checker_imports_for(self, proposal: RefactoringProposal) -> Optional[CheckerImports]:
+        """How the helper's module may import a class for the checker, as the program shows.
+
+        The rule :meth:`_shorten_unreachable_names` follows for the ordinary
+        signature: a top-level class of a module of the project, imported the
+        way the program's own imports show the host can import that module.
+        """
+        importer = Path(proposal.file_path)
+        try:
+            program = self.import_graph.program_for(importer)
+        except ProjectScanLimitError:
+            return None
+
+        def checker_import(qualified: str) -> Optional[Tuple[str, str]]:
+            split = program.model.split_qualified(qualified)
+            if split is None or "." in split[2]:
+                return None  # No module of the project owns it, or it is nested.
+            spelling = program.spelling(importer, split[0])
+            return None if spelling is None else (spelling.module, split[2])
+
+        return checker_import
 
     @staticmethod
     def _finished(variant: RefactoringProposal) -> RefactoringProposal:
-        """``variant`` as it is written: never ``None`` as the string ``"None"`` (``without_quoted_none``)."""
+        """``variant`` as it is written.
+
+        Never ``None`` as the string ``"None"`` (``without_quoted_none``), and
+        no import its annotations no longer name (``used_imports``): every rung
+        but the first writes ``Any`` somewhere the ordinary signature named a
+        class, and the class's import stays behind with no use.
+        """
         helper = without_quoted_none(variant.extracted_function)
-        if ast.dump(helper) == ast.dump(variant.extracted_function):
+        declarations = variant.helper_type_declarations
+        required = used_imports(variant.required_imports, helper, declarations)
+        checking = used_imports(variant.type_checking_imports, helper, declarations)
+        if (
+            ast.dump(helper) == ast.dump(variant.extracted_function)
+            and required == variant.required_imports
+            and checking == variant.type_checking_imports
+        ):
             return variant
-        return dataclasses.replace(variant, extracted_function=helper)
+        return dataclasses.replace(
+            variant,
+            extracted_function=helper,
+            required_imports=required,
+            type_checking_imports=checking,
+        )
 
     def _targeted_variant(
         self, ordinary: RefactoringProposal, refusal: Rejection
@@ -939,7 +1033,9 @@ class HelperAnnotationWiring(EngineState):
                 ordinary,
                 extracted_function=helper,
                 helper_type_declarations=declarations,
-                required_imports=typing_imports_needed(helper, host),
+                required_imports=tuple(
+                    dict.fromkeys(ordinary.required_imports + typing_imports_needed(helper, host))
+                ),
             )
         )
 
@@ -1146,6 +1242,18 @@ class HelperAnnotationWiring(EngineState):
         being kept is that the project still checks. The drivers ask this of
         the private stage the run refactored, before anything is published, so
         a refusal here leaves the project and the output as they were.
+
+        What it reports is compared as every candidate's check was
+        (``towel.type_baseline``): with what the run's own checks said the
+        project reports now, the errors the original had and kept included.
+        Those checks were warm, and a checker started from nothing need not
+        agree with them even about the original: pyright's command line and its
+        language server resolved trio's modules differently and disagreed about
+        errors in files no change touched. So an error only the cold check
+        reports is then looked for in a cold check of the original
+        (:meth:`_unseen_from_the_start`), and only one neither accounts for is
+        loud: that is exactly an error the run's changes brought and its warm
+        checks missed.
         """
         oracle = self._type_run_oracle
         if oracle is None or not holds_warm_state(oracle):
@@ -1159,23 +1267,84 @@ class HelperAnnotationWiring(EngineState):
         # The same oracle, so the run's own relocation and exclusions still
         # apply; only the warm state goes.
         start_cold(oracle)
-        result = oracle.check_project(sources)
-        if isinstance(result, CheckFailure):
-            # This check exists to make a wrong answer loud; a check that could
-            # not run has not confirmed anything, and saying so quietly would
-            # be the same silence it was built to remove.
+        reported = self._cold_errors(oracle, sources)
+        finished = {self._where_checked(path): text for path, text in sources.items()}
+        unseen = self._type_known.introduced(
+            reported, where=self._where_checked, texts_after=finished.get
+        )
+        if unseen:
+            unseen = self._unseen_from_the_start(reported, unseen, sources)
+        if unseen:
+            details = "\n".join(f"  {error.path}: {error.message}" for error in unseen[:3])
             raise RefactoringError(
-                "The finished project could not be confirmed by a checker started from "
-                f"nothing: {result.reason}\nNothing was written."
-            )
-        if result.errors:
-            details = "\n".join(f"  {error.path}: {error.message}" for error in result.errors[:3])
-            raise RefactoringError(
-                f"The finished project reports {len(result.errors)} type error(s) that the "
+                f"The finished project reports {len(unseen)} type error(s) that the "
                 f"checker did not report while the run was in progress:\n{details}\n"
-                "This is a defect in Towel's verification, not in the project; please report "
-                "it. Nothing was written."
+                "This is a defect in Towel's verification, not in the project; please "
+                "report it. Nothing was written."
             )
+
+    @staticmethod
+    def _cold_errors(oracle: TypeOracle, sources: Mapping[str, str]) -> List[TypeDiagnostic]:
+        """Every configured checker's errors about ``sources``; a check that cannot run refuses."""
+        reported: List[TypeDiagnostic] = []
+        for result in checks_in_turn(oracle, sources):
+            if isinstance(result, CheckFailure):
+                # This check exists to make a wrong answer loud; a check that
+                # could not run has not confirmed anything, and saying so
+                # quietly would be the same silence it was built to remove.
+                raise RefactoringError(
+                    "The finished project could not be confirmed by a checker started from "
+                    f"nothing: {result.reason}\nNothing was written."
+                )
+            reported.extend(result.errors)
+        return reported
+
+    def _unseen_from_the_start(
+        self,
+        reported: Sequence[TypeDiagnostic],
+        unseen: Tuple[TypeDiagnostic, ...],
+        finished: Mapping[str, str],
+    ) -> Tuple[TypeDiagnostic, ...]:
+        """Those of ``unseen`` that a cold check of the original does not account for either.
+
+        ``reported`` is the cold check of the ``finished`` project, and
+        ``unseen`` what of it the run's warm checks did not report. The
+        original is checked the way the finished project just was, from the
+        files the run started from, and compared as a change is: a file the
+        run left alone must hold the error at the same line, one it changed as
+        many times. What the original's cold check reports too was there before
+        the run and is not its doing. When the original cannot be read or
+        checked, nothing is excused.
+        """
+        oracle = self.type_oracle
+        if oracle is None:
+            return unseen
+        originals: Dict[str, str] = {}
+        changed: Set[str] = set()
+        for path, text in finished.items():
+            original = self._origin_of(path)
+            source = self._read_source(original)
+            if source is None:
+                return unseen
+            originals[original] = source
+            if source != text:
+                changed.add(resolved_path(original))
+        from_the_start: List[TypeDiagnostic] = []
+        for result in checks_in_turn(oracle, originals):
+            if isinstance(result, CheckFailure):
+                return unseen
+            from_the_start.extend(result.errors)
+        known = KnownErrors.of(
+            from_the_start, texts={resolved_path(path): text for path, text in originals.items()}
+        ).moving(changed)
+        texts = {self._where_checked(path): text for path, text in finished.items()}
+        brought = {
+            id(error)
+            for error in known.introduced(
+                reported, where=self._where_checked, texts_after=texts.get
+            )
+        }
+        return tuple(error for error in unseen if id(error) in brought)
 
     def _project_errors(
         self, modified_files: Dict[str, str], helper_name: str
@@ -1200,7 +1369,11 @@ class HelperAnnotationWiring(EngineState):
         """
         key = _variant_key(modified_files, helper_name)
         known = self._refused_checks.get(key)
-        if known is not None and self._dependencies_unchanged(known):
+        if (
+            known is not None
+            and self._dependencies_unchanged(known)
+            and self._known_errors_in(known.depends_on) == known.known
+        ):
             self._checker_refusals += 1
             renamed = re.compile(rf"(?<!\w){re.escape(known.helper_name)}(?!\w)")
             TYPES.debug(
@@ -1215,7 +1388,9 @@ class HelperAnnotationWiring(EngineState):
             depends_on = self._refusal_dependencies(modified_files, errors)
             if depends_on is not None:
                 kept = dict(self._refused_checks)
-                kept[key] = _RefusedCheck(errors, helper_name, depends_on)
+                kept[key] = _RefusedCheck(
+                    errors, helper_name, depends_on, self._known_errors_in(depends_on)
+                )
                 while len(kept) > _REFUSED_CHECKS_KEPT:
                     kept.pop(next(iter(kept)))
                 self._refused_checks = kept
@@ -1263,15 +1438,34 @@ class HelperAnnotationWiring(EngineState):
             except SyntaxError:
                 return None
             pending.extend(_imported_files(path, tree, roots) - seen)
+        # The variant's own files count as they stand before the change: the
+        # key holds what the change makes of them, and what the run counts as
+        # their existing errors is read against this text.
+        seen |= {Path(path) for path in variant}
         depends_on: List[Tuple[str, str]] = []
         for path in sorted(seen):
-            if str(path) in variant:
-                continue
             text = try_read_source(str(path))
             if text is None:
                 return None
             depends_on.append((str(path), _digest(text)))
         return tuple(depends_on)
+
+    def _known_errors_in(self, depends_on: Sequence[Tuple[str, str]]) -> str:
+        """A digest of the errors the run counts as the project's own in these files, and which moved.
+
+        A change is refused only for an error the project did not already
+        report (``towel.type_baseline``), and what it already reports is
+        brought up to date after every applied change. A refusal replayed must
+        have been judged against the same account of these files.
+        """
+        places = {self._where_checked(path) for path, _ in depends_on}
+        known = self._type_known
+        errors = sorted(
+            (error.path, error.line or 0, error.message)
+            for error in known.errors
+            if error.path in places
+        )
+        return _digest(repr((errors, sorted(known.moved & places))))
 
     @staticmethod
     def _dependencies_unchanged(known: _RefusedCheck) -> bool:
@@ -1282,17 +1476,147 @@ class HelperAnnotationWiring(EngineState):
         return True
 
     def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:
-        """What the run's clean project, unchanged consumers included, would now report."""
+        """What the project, unchanged consumers included, would report with the change and not now.
+
+        The project as it stands is checked with ``modified_files`` over it,
+        and what that check reports is compared with what the project reports
+        already (``towel.type_baseline``): an error the original project had,
+        and still has, is not the change's. Every configured checker must
+        accept, so the first to report a new error settles it and the rest are
+        not asked (:func:`~towel.type_inference.checks_in_turn`). An accepted
+        change's check is kept: once the driver has written it, it is what the
+        project reports, and the next change is compared with it
+        (:meth:`_follow_the_written_change`).
+        """
         oracle = self._active_type_oracle()
         if oracle is None:
             raise RefactoringError("Type checking was requested without a type oracle")
-        after = oracle.check_project(modified_files)
-        if isinstance(after, CheckFailure):
-            raise CheckerUnavailableError(f"Prospective project type check failed: {after.reason}")
-        for diagnostic, count in Counter(after.errors).items():
+        checked = {self._where_checked(path): text for path, text in modified_files.items()}
+        changing = frozenset(checked)
+
+        def seen(path: str) -> Optional[str]:
+            """The text of ``path`` (resolved, the original's) that this check sees."""
+            text = checked.get(path)
+            return text if text is not None else self._read_source(self._as_checked(path))
+
+        reported: List[TypeDiagnostic] = []
+        introduced: Tuple[TypeDiagnostic, ...] = ()
+        for result in checks_in_turn(oracle, modified_files):
+            if isinstance(result, CheckFailure):
+                raise CheckerUnavailableError(
+                    f"Prospective project type check failed: {result.reason}"
+                )
+            reported.extend(result.errors)
+            introduced = self._type_known.introduced(
+                reported, changing, where=self._where_checked, texts_after=seen
+            )
+            if introduced:
+                break
+        for diagnostic, count in Counter(introduced).items():
             TYPES.debug("new error x%d in %s: %s", count, diagnostic.path, diagnostic.message)
-        if after.errors:
+        if introduced:
             # Counted so a proposal no variant of which survives is reported as
             # the checker's refusal, not as something that could not be rendered.
             self._checker_refusals += 1
-        return after.errors
+            return introduced
+        # What this check saw of each file: the change's texts, and those of
+        # files an earlier change may have altered as they now stand; the rest
+        # have kept the text the reference records.
+        texts = {**self._type_known.texts, **checked}
+        for path in self._type_known.moved - changing:
+            text = seen(path)
+            if text is None:
+                texts.pop(path, None)
+            else:
+                texts[path] = text
+        self._type_known = self._type_known.moving(changing)
+        self._type_checked = CheckedChange(
+            tuple(modified_files.items()),
+            KnownErrors.of(reported, self._where_checked, texts=texts),
+        )
+        return ()
+
+    def _follow_the_written_change(self) -> None:
+        """The driver wrote the change the checker last accepted; compare the next with its check.
+
+        That check was made of the project as it stood with the change over
+        it, which is the project as it now stands, so what it reported is what
+        the project reports: every line in it is where it is now. Comparing the
+        next change with the original's errors instead would let one change
+        spend what another removed: an error a first change made disappear, and
+        a second brought back with the same message in the same file, would
+        count against the original's and pass. When what was checked is not
+        what the files hold, nothing is assumed, and the files it named stay
+        among those whose lines may have moved.
+        """
+        checked, self._type_checked = self._type_checked, None
+        if checked is None:
+            return
+        if all(self._read_source(path) == text for path, text in checked.files):
+            self._type_known = checked.reported
+
+    def _where_checked(self, path: str) -> str:
+        """``path`` in the project whose check the run compares with: the original, resolved."""
+        return resolved_path(self._origin_of(path))
+
+    def _as_checked(self, original: str) -> str:
+        """``original`` (resolved) where the run checks it: in its private copy, when it has one.
+
+        The inverse of :meth:`_where_checked`, for reading what a check saw of
+        a file the change did not supply.
+        """
+        origin = self._output_origin
+        if origin is None:
+            return original
+        source, destination = (root.resolve() for root in origin)
+        absolute = Path(original)
+        if absolute == source:
+            return str(destination)
+        if absolute.is_relative_to(source):
+            return str(destination / absolute.relative_to(source))
+        return original
+
+    def _decline_what_the_checker_cannot_see(self, paths: Sequence[str]) -> None:
+        """Refuse a change to a file where the original check names what it cannot type.
+
+        An import the checker cannot resolve or finds no types for, or a
+        decorator without types, leaves a name that is ``Any`` wherever it
+        goes. ``Any`` accepts every use, so no check can reject a change that
+        misuses what such a name carries, and the subtype questions that
+        normalize a helper's annotations answer yes about it whatever the
+        project's own check, which may see its real type, would say. All 17
+        corpus projects that type-check pass their own check as their CI runs
+        it, so each such error Towel's check reports in one of them is one
+        their check does not: there Towel's is either blind where theirs is
+        not, or looking at a file theirs leaves alone, and neither verdict is
+        worth accepting a change for. A file that only imports from such a
+        module is not declined; see docs/KNOWN_LIMITATIONS.md.
+        """
+        if self._type_run_oracle is None or not self._type_names_any:
+            return
+        for path in dict.fromkeys(paths):
+            errors = self._type_names_any.get(self._where_checked(path))
+            if errors:
+                raise UnverifiableChangeError(
+                    f"{path} holds {len(errors)} name(s) the type checker cannot type, "
+                    f"so a change there cannot be verified: {errors[0].message}"
+                )
+
+    def _report_pre_existing(self, analyzed: Sequence[str]) -> None:
+        """Say, before anything else, what the original check reports and what it cannot see.
+
+        The errors are left as they are, so a user learns what verification
+        will compare with. Those that leave a name the checker cannot type are
+        named with their files, since no change to those files is attempted:
+        installing what they import, with its stubs, where Towel runs is what
+        has them verified.
+        """
+        errors = self._type_known.errors
+        if not errors:
+            return
+        root = find_project_root(Path(analyzed[0])) if analyzed else Path.cwd()
+        LOG.warning(pre_existing_summary(errors, root))
+        changed = frozenset(self._where_checked(path) for path in analyzed)
+        warning = names_any_warning(self._type_names_any, root, changed)
+        if warning:
+            LOG.warning(warning)

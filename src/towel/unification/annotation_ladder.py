@@ -225,6 +225,52 @@ def method_at(source: str, line: int) -> Optional[SiteMethod]:
     return None
 
 
+# -- Imports -------------------------------------------------------------------
+
+
+def _spelled_names(node: ast.AST) -> Set[str]:
+    """Every name ``node`` spells, reading a string constant as the expression it quotes."""
+    names: Set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Name):
+            names.add(sub.id)
+        elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            try:
+                quoted = ast.parse(sub.value.strip(), mode="eval").body
+            except SyntaxError:
+                continue
+            names |= _spelled_names(quoted)
+    return names
+
+
+def annotation_names(helper: ast.FunctionDef, declarations: Sequence[ast.stmt] = ()) -> Set[str]:
+    """Every name the helper's annotations, anywhere in it, and its type declarations spell."""
+    names: Set[str] = set()
+    for node in ast.walk(helper):
+        if isinstance(node, ast.arg) and node.annotation is not None:
+            names |= _spelled_names(node.annotation)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.returns:
+            names |= _spelled_names(node.returns)
+        elif isinstance(node, ast.AnnAssign):
+            names |= _spelled_names(node.annotation)
+    for declaration in declarations:
+        names |= _spelled_names(declaration)
+    return names
+
+
+def used_imports(
+    imports: Sequence[Tuple[str, str]], helper: ast.FunctionDef, declarations: Sequence[ast.stmt]
+) -> Tuple[Tuple[str, str], ...]:
+    """Those of ``imports`` (``(module, name)``) whose name the helper's annotations still spell.
+
+    A rung that writes ``Any`` in place of an annotation leaves the import that
+    annotation needed without a use; written anyway, it is an unused import a
+    project's linter reports, and one under ``TYPE_CHECKING`` is dead code.
+    """
+    spelled = annotation_names(helper, declarations)
+    return tuple(entry for entry in imports if entry[1] in spelled)
+
+
 # -- Self ---------------------------------------------------------------------
 
 

@@ -14,6 +14,7 @@ import ast
 import json
 import logging
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -81,6 +82,8 @@ def _oracle_without_pyright() -> type_inference.PyrightOracle:
     oracle._server = None
     oracle._warmed = {}
     oracle._probe_copies = {}
+    oracle._interpreter = sys.executable
+    oracle._search_path = ()
     return oracle
 
 

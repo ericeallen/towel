@@ -40,6 +40,7 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set
+from .block_comments import weave_comments
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
 from .engine_state import HelperNameClaims
 from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
@@ -118,18 +119,19 @@ class Materialization(
 
         The first application establishes the run's complete original type
         baseline before inference or materialization. Later applications keep
-        that policy until ``begin_refactoring_run`` starts another run.
+        that policy until ``begin_refactoring_run`` starts another run. A
+        proposal that would change a file where that baseline names what the
+        checker cannot type is declined before anything is inferred there.
         """
         for path, digest in proposal.source_digests:
             if hashlib.sha256(read_source(path).encode("utf-8")).hexdigest() != digest:
                 raise StaleSource(f"Stale proposal; analyze again: {path}")
-        self._ensure_type_checking(
-            [
-                *self._analysis_paths,
-                proposal.file_path,
-                *(rep.file_path or proposal.file_path for rep in proposal.replacements),
-            ]
-        )
+        touched = [
+            proposal.file_path,
+            *(rep.file_path or proposal.file_path for rep in proposal.replacements),
+        ]
+        self._ensure_type_checking([*self._analysis_paths, *touched])
+        self._decline_what_the_checker_cannot_see(touched)
         counters = self._helper_name_counters.copy()
         try:
             return self._materialize_refactoring(proposal)
@@ -142,6 +144,23 @@ class Materialization(
         if self.snippet_formatter is None:
             return source
         return self.snippet_formatter(source)
+
+    def _helper_text(self, proposal: RefactoringProposal, node: ast.AST) -> str:
+        """The helper's text: ``node`` rendered with the comments its sites' blocks carried.
+
+        ``node`` is the helper, or a module ending with it. The comments are
+        written in before the formatter runs (``block_comments``), and a
+        formatting that moves a tool directive off the line of its code is
+        not used: the helper is then inserted as rendered, where each
+        directive stands beside the code it was written for.
+        """
+        if not proposal.helper_comments.comments:
+            return self._render(node)
+        woven = weave_comments(node, proposal.extracted_function, proposal.helper_comments)
+        if self.snippet_formatter is None:
+            return woven.text
+        formatted = self.snippet_formatter(woven.text)
+        return formatted if woven.keeps_directives(formatted) else woven.text
 
     def _materialize_refactoring(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """
@@ -493,7 +512,10 @@ class Materialization(
         fn_insert_info = self._find_function_insert_position_before_body_statements(
             "".join(lines), proposal.insert_into_function
         )
-        fn_lines = [line + "\n" for line in self._render(proposal.extracted_function).split("\n")]
+        fn_lines = [
+            line + "\n"
+            for line in self._helper_text(proposal, proposal.extracted_function).split("\n")
+        ]
         if fn_insert_info is None:
             insert_line = self._find_insert_position(lines)
             lines[insert_line:insert_line] = fn_lines + ["\n", "\n"]
@@ -514,7 +536,8 @@ class Materialization(
             proposal.method_param_name,
         )
         method_lines = [
-            line + "\n" for line in self._render(proposal.extracted_function).split("\n")
+            line + "\n"
+            for line in self._helper_text(proposal, proposal.extracted_function).split("\n")
         ]
         insert_info = self._find_class_insert_position("".join(lines), proposal.insert_into_class)
         if insert_info is None:
@@ -553,7 +576,7 @@ class Materialization(
                 type_ignores=[],
             )
             dependencies |= self._type_declaration_dependencies(proposal)
-        func_lines = [line + "\n" for line in self._render(node).split("\n")]
+        func_lines = [line + "\n" for line in self._helper_text(proposal, node).split("\n")]
         insert_line = self._find_insert_position(lines, dependencies)
         if proposal.helper_type_declarations:
             insert_line = self._type_declaration_position(lines, dependencies, insert_line)

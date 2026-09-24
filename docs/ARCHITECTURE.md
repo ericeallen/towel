@@ -117,7 +117,11 @@ flowchart TD
       same-file sites that can share the helper (`clustering.py`); a call
       that would pass a callee as `lambda *args, **kwargs: callee(*args,
       **kwargs)`, or that names something the site cannot resolve, declines
-      the pair (`forwarded_callee`, `undefined_names_in_call`);
+      the pair (`forwarded_callee`, `undefined_names_in_call`); so do tool
+      directives the two blocks do not carry alike (`directives_differ`,
+      `directive_on_argument`, `directive_outlives_block`; see *Comments of
+      moved code*), and a further site that differs from them in its
+      directives does not join;
    10. placement: function, class, or module, and a host module that closes
        no import cycle and whose import runs no module code the borrower's
        imports do not already run (a module-level helper may move to
@@ -451,13 +455,26 @@ decides this), since a plugin changes what an expression's type is; one that
 cannot be loaded fails the check, so the baseline refuses the run. `PyrightOracle`
 does the same through one long-lived `pyright-langserver` per project,
 watching a private copy that follows the project; the pyright command line is
-the fallback when no server can be started.
+the fallback when no server can be started. The two must reach one verdict,
+and share an analyzer but not its defaults, so the server is configured
+setting by setting as the command line configures itself (`server_settings`
+in `pyright_session.py` lists each setting and why it is sent or left unset):
+above all `autoSearchPaths`, without which a `src` layout's consumers resolved
+the package to the environment's installed copy, the user's own tree, and a
+candidate that broke them read as clean. Both paths resolve imports through
+the same interpreter, and the command line is told the project's root rather
+than left to find it from a working directory. Where that interpreter's
+search path reaches into the project, as an editable install's does, both are
+given the copy's counterpart ahead of it, so a consumer that imports its
+package through the install is judged against the candidate wherever the
+package lives.
 `type_oracle_for_project` picks the checker the project configures: mypy
 for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
 `pyrightconfig.json`, and for a project configuring both, mypy infers
 and both verify, so the project's own check stays green. Every configured
-checker must accept, so the first to reject settles the candidate and the
-others are not asked; only an accepted candidate is seen by all of them. When
+checker must accept, so the first to report an error the project did not
+already have settles the candidate and the others are not asked; only an
+accepted candidate is seen by all of them. When
 a run that was checked through a language server has applied something -- ever,
 not only if one is still warm -- the finished project is confirmed once more by
 a pyright started from nothing. A confirmation that cannot itself run has
@@ -489,15 +506,53 @@ flowchart LR
     towel -. "closing the oracle ends<br/>the processes and removes both" .-> disk
 ```
 
-Before using the oracle, the engine checks the complete original project.
-If that completed check reports type errors, it aborts with an instruction to
-fix the errors or explicitly rerun with `--no-types`. That option disables
-helper annotation generation, inference and verification while preserving
-existing source annotations. A checker crash, timeout or incomplete result is
-a distinct `CheckFailure` and does not permit unchecked application, and says
-the same thing about how to proceed. A clean baseline keeps verification
-enabled, so errors introduced by a transformation cannot subsequently be
-treated as pre-existing errors that disable checking.
+Before using the oracle, the engine checks the complete original project,
+and the errors that check reports are the reference every later check is
+compared with ([`type_baseline.py`](../src/towel/type_baseline.py)): a change
+is rejected only for an error the reference does not account for. It used to
+refuse any project whose check reported one, and in a study of 20 corpus
+projects that check was clean for 6, while all 17 that type-check pass their
+own check as their CI runs it; the errors lay in tests, benchmarks and docs
+the CI never checks, in checkers no CI step runs, or came from checking
+without the CI's flags. `KnownErrors.introduced` compares a file that no
+change has touched by file, line and message, since its lines cannot have
+moved. A file a change has touched is aligned with the text the reference was
+checked against (`unchanged_lines`, a line diff, so it holds whatever wrote the
+lines, formatter and import sorter included): an error on a line the change
+left alone must match the reference's on that line, wherever it now stands,
+and the errors on the lines the change wrote are compared by message, as a
+multiset, with the reference's on the lines it replaced, which is where a
+duplicated block's error moves into the helper from. However the diff pairs
+the lines, an error is new whenever its message appears more often than before
+in its file, so the alignment rejects more than a comparison by message would,
+never less. A message that embeds a line reappears as new when its line moves,
+so it fails closed. The reference follows the project. When a driver
+writes a change, `_follow_the_written_change` makes that change's own check
+the reference, once the files hold what was checked, so an error one change
+removed cannot be spent by the next; against the original's errors it could
+be. The checks come one checker at a time (`checks_in_turn`), and the caller
+stops at the first that reports a new error: `CombinedOracle.check_project`
+itself returns every checker's errors, since stopping at the first checker
+that reported anything would, against pre-existing errors, leave the others
+unasked about every candidate. The cold confirmation compares the same way,
+with the reference the run's last written change left, and an error only it
+reports is then looked for in a cold check of the original: a checker started
+from nothing need not agree with a warm one even there (pyright's command line
+resolved trio's modules differently from its language server, and disagreed
+about files no change touched), so only an error neither accounts for is loud.
+Where the original
+check reports an error after which a name is `Any` to the checker
+(`makes_names_any`: an unresolved or untyped import, an untyped decorator, a
+base class of type `Any`), no change to that file is attempted
+(`UnverifiableChangeError`), because `Any` accepts every use and the subtype
+questions that normalize a helper's annotations answer yes about it; the
+report before the run names those files. A checker crash, timeout or
+incomplete result is a distinct `CheckFailure`, does not permit unchecked
+application, and refuses the run with an instruction to fix what stops the
+checker or explicitly rerun with `--no-types`. That option disables helper
+annotation generation, inference and verification while preserving existing
+source annotations. Errors a transformation introduces never enter the
+reference, since a change that introduces one is never written.
 
 *What "complete" covers.* A checker config that names its own `files` settles
 it: the project has said what it checks. mypy takes its targets on the command
@@ -568,7 +623,11 @@ lattice ones:
 *Type anti-unification.* `generic_annotations.py` retains complete per-site
 argument/result rows. `type_bindings.py` resolves annotation constructors and
 source type parameters by their bindings, including legacy `TypeVar` declarations
-and PEP 695 scopes. `type_generalization.py` recursively keeps common type
+and PEP 695 scopes. A class or relatively imported name is identified by the
+absolute name the import model gives its module, which is the name a checker
+writes in what it reveals (`revealed_types.py` reads that notation), and is
+resolved in its site's module; its spelling in the helper's module, if it has
+one, is separate, and only a signature that writes it needs one. `type_generalization.py` recursively keeps common type
 constructors and shares a fresh parameter for each repeated disagreement vector.
 Thus `(list[int], int)` and `(list[str], str)` can become `(list[T], T)`.
 Different vectors remain independent, and a return-only variable is refused.
@@ -652,8 +711,9 @@ flowchart TD
 The first tier is the structural refusals of the `RejectReason` vocabulary
 together with an extraction that would separate a narrowing test from an
 expression it leaves at the call site (`unification/narrowing.py`). Within one
-check every configured checker must accept, so the first to reject settles the
-candidate and the others are not asked.
+check every configured checker must accept, so the first to report an error
+the project did not already have settles the candidate and the others are not
+asked.
 
 The signatures are tried in this order, and generation is lazy, so one that
 verifies costs nothing further. Each rung is built after the one before it
@@ -714,10 +774,13 @@ partial type (mypy only); or only the unannotated helper is left in a module
 whose every function is annotated, which a stricter check than the
 configuration Towel reads would refuse. The lambda and partial-type cases are
 read off the proposal and cost no check; the others need the checker's verdict
-and cost the one refusal that shows them. A variant rendered again with
-nothing it could depend on changed -- its files but for the helper's generated
-name, the files its errors lie in, and everything those import -- has its
-refusal replayed rather than checked again.
+and cost the one refusal that shows them. Each rung is rendered with the
+comments of the moved code woven in, and with only the imports its own
+annotations name. A variant rendered again with nothing it could depend on
+changed -- its files as rendered, comments and imports included, but for the
+helper's generated name; those files as they stood, the files its errors lie
+in, and everything those import; and the errors the run already counts as the
+project's own there -- has its refusal replayed rather than checked again.
 
 Checker failure, or a remaining new error, declines the proposal. `close()`
 releases checker resources, and the CLI calls it in a `finally` block. Without
@@ -749,6 +812,49 @@ providers. Wildcard imports, future imports and other statements are barriers;
 otherwise the file stays as Towel assembled it. Independent imports can still
 have order-sensitive initialization, which this binding check cannot model. The tools are optional (`code-towel[format]`);
 without them code is inserted as rendered, and the CLI says so.
+
+## Comments of moved code
+
+A syntax tree holds no comments, so a helper rendered by `ast.unparse` lost
+every comment of the blocks it replaced: a `# type: ignore` a checker needed,
+a `# pragma: no cover`, a `# noqa`, and every word of explanation.
+[`block_comments.py`](../src/towel/unification/block_comments.py) carries
+them. When a site's call is generated, the comments between its block's
+first and last line are read from the module's tokens (`site_comments`),
+each anchored to the node it follows or precedes by a path of typed steps
+from the block's statements, with the punctuation between them, the
+grouping parentheses the comment stood in and the trailing comma that kept
+its brackets exploded; comments above or below the block belong to the call
+site and stay there. The helper's body is the first site's block with
+parameters substituted, so a path names the same code in the helper, down
+to the parameter that took a differing expression's place.
+
+Which comments the helper carries is decided from every site
+(`merge_comments`). An explanatory comment is kept wherever any site
+carries it, the first site's first, since it documents code the helper now
+holds; another site's note where the first site's already ends the line goes
+on a line of its own before that code. A tool directive changes what a tool reports for its line, and the
+helper has one line where the sites had several, so the sites must carry
+the same directives at the same places (`directives_differ`); a checker's
+ignore must not stand on a line where some site's code, other than a name
+or a literal, becomes an argument, which the ignore would no longer cover
+(`directive_on_argument`); and a region directive (`fmt: off`, `isort:
+off`, a `pylint: disable` on a line of its own) must close within the block,
+and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
+(`directive_outlives_block`). A clustered site whose directives differ is
+left out of the cluster.
+
+Materialization writes the comments into the unparsed helper before the
+formatter runs (`weave_comments`): at the end of the line holding their code,
+inside the brackets they stood in, or on lines of their own before or after
+their statements and clause headers, with the source's grouping parentheses
+and exploding trailing comma written back so Black and ruff lay the code
+out around them as the source did. The woven text must parse to the plain
+rendering's tree, and a comment that cannot stand where it was written goes
+to its statement's line. A formatting that moves a directive off the line
+of the code it covered, as ruff does with a comment after a split line's
+closing parenthesis, is not used for that helper (`keeps_directives`); it is
+inserted as rendered.
 
 ## Cross-file behavior
 
@@ -789,7 +895,9 @@ The model answers three kinds of question:
 - **What an import executes** (`ImportModel.files_reached`, through
   `ProgramImports.reached`): the project files an import statement may run,
   package initializers on the way included and every candidate of an
-  ambiguous name. The cycle guard (`would_create_import_cycle`) walks these
+  ambiguous name. An import under a `TYPE_CHECKING` guard is no edge
+  (`TypeCheckingGuards`, the effects analysis's own test). The cycle guard
+  (`would_create_import_cycle`) walks these
   edges from the host and the initializers of its packages, reading each
   file where the run keeps it so that an import an earlier extraction added
   is an edge too; the import-time-effect, requirement, top-level-package and
@@ -807,8 +915,14 @@ The model answers three kinds of question:
 
 The `dry` and `preview` commands, with `--cross-module`, read the model
 before the engine starts and report every problem with its remedy
-(`--exclude`); one that involves the package being refactored refuses the
-run before anything is written (`_judge_import_problems` in `cli.py`).
+(`--exclude`); one because of which the model declines something in the
+package being refactored refuses the run before anything is written
+(`_judge_import_problems` in `cli.py`). Each problem says which names it
+leaves in doubt and where it lies; one involves the package when a name
+of the package is in doubt, when it lies in the package, or when it lies
+in an initializer every import of the package runs. An import of a module
+the tree lacks leaves no name in doubt, so sphinx's test data importing
+`sphinx.missing_module4` is reported and a run on `sphinx` goes on.
 `rename-helpers` names each module by the model too (`renaming.py`), so a
 rename follows an import to the module the program means by it.
 
@@ -972,9 +1086,9 @@ a check costs a re-check of the changed modules and their import cycle rather
 than of the project; text identical to what a file already holds is withheld
 from mypy so its incremental cache applies; each mypy build runs in a forked
 child that exits when it has answered, so the thousandth request costs what the
-first did; the first checker to reject settles a candidate; and a declined
-proposal is remembered for the whole run rather than retried at every analysis.
-The measures below concern analysis.
+first did; the first checker to report a new error settles a candidate; and a
+declined proposal is remembered for the whole run rather than retried at every
+analysis. The measures below concern analysis.
 
 Pairing is quadratic in candidate blocks per file, and with N near-identical
 blocks in one file every pair proposes the same N-site extraction, so
@@ -1301,6 +1415,7 @@ but the ideas and their names are from the literature.
 | Safety guards and the pre-scan | `semantic_safety.py` |
 | Import-graph resolution and the cycle guard | `import_graph.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
+| The comments of moved blocks, and where they go in the helper | `block_comments.py` |
 | Helper annotations | `annotations.py` |
 | Type oracle (mypy, pyright) | `type_inference.py` (at `src/towel/`) |
 | Owned mypy worker, one forked build per request | `_mypy_worker.py` |

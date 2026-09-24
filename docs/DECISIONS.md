@@ -434,6 +434,49 @@ it so that a user who wants those extractions can have them explicitly.
 
 *Status: being implemented on the `audit-1772` branch; not yet released.*
 
+## 2026-09-23: A typed run compares against its baseline
+
+This supersedes the clean-baseline requirement of "Well-formed input".
+Typed mode had refused a project unless Towel's baseline check of it was
+clean. A study of 20 corpus projects in their own environments found all 17
+that type-check passing their own check as their CI runs it, while Towel's
+baseline was clean for 6. None of the errors Towel's baseline reported was
+also reported by the project's own check. Towel checked something different:
+
+- tests, benchmarks and docs outside the CI's targets;
+- a configured pyright that no CI step runs;
+- without the CI's flags or its typing dependencies.
+
+The owner chose a **differential baseline**:
+
+- Typed mode proceeds on a project whose baseline has errors, and rejects a
+  candidate only if the check reports an error the baseline did not have.
+- Errors are compared by file and message, ignoring line numbers. A message
+  that embeds a line number reappears as new after a line shift, so it
+  rejects rather than masks.
+- The final cold confirmation compares the same way.
+- A checker that cannot run at all still refuses the run.
+- The run reports the pre-existing errors, and where they may hide new ones:
+  an unresolved import or a missing stub turns types into `Any` downstream.
+
+This checks strictly more than `--no-types`, the advice it replaces.
+
+Making Towel's check agree with the project's own is recorded as a
+proposal, not adopted: `docs/proposals/project-own-check.md`. It would
+discover the check from tox, pre-commit, nox, Makefiles and workflows, and
+use its targets, flags and checkers, always including the package being
+refactored. On the same 20 projects it would agree exactly with the CI for
+13, and the differential baseline would cover the rest.
+
+The same day the owner confirmed that the default mode may consult the
+import model for read-only questions about the program's own imports:
+whether a callee is `typing.cast` or a project's own `cast`, and where an
+absolutely imported base class is defined. It never prints or refuses
+there, and it writes no import that runs.
+
+*Status: implemented on the `audit-1772` branch, as refined on 2026-09-24; not
+yet released.*
+
 ## 2026-09-22: Checked with the project's own checker, as configured
 
 A candidate is verified by the checker the project configures, exactly as the
@@ -481,3 +524,109 @@ off by default behind a flag, and cross-module soundness becomes the next
 release's work. The 141-project corpus then runs against the final commit.
 Its recorded phases total about two hours, roughly half an hour to an hour of
 wall time at four workers.
+
+## 2026-09-24: A helper module shared by unrelated directories is a proposal
+
+The owner suggested a way to recover cross-module duplicates that the
+directory rule and the cycle and import-change checks decline. Behind a flag
+of its own, the helper would go in a new module at the most specific regular
+package that holds every borrower. A study of 12 corpus projects found 19,914
+such duplicates recoverable, 3,831 of them between library modules. They
+include the largest cross-module duplicates in sphinx's C and C++ domains
+and in networkx's graph classes.
+
+It is recorded as a proposal, `docs/proposals/shared-helper-module.md`, and
+is not part of 1.772. A new host alone does not make it sound. Four more
+things are needed:
+
+- every directory from the common package down to each borrower must be a
+  regular package;
+- the new module must be shown to ship;
+- test helpers must not become a shipped library module, which 949 of the
+  recoverable duplicates would do;
+- the new module needs its own cycle and import-change argument.
+
+That last point matters because Towel's current checks see false cycles
+through the common package's `__init__.py`, and accept only 684 of the 3,831
+library cases. Building it now would reopen the audit rounds that 1.772 is
+closing.
+
+*Status: proposal; not scheduled.*
+
+## 2026-09-24: A type-only import is not an import edge
+
+The amendment that lets Towel write imports under `if TYPE_CHECKING:`
+rests on their never running. Towel's cycle guard nonetheless counted them
+as import edges, and so did its reckoning of what an import may load. A
+type-only import that Towel wrote to make an annotation precise then
+refused later extractions between the same two modules: on mistune, typed
+refactorings fell from 19 to 17. That contradicted the premise, and it
+traded away the precision the imports exist for. Towel's analysis of
+import-time effects already treated such a body as never running.
+
+The owner pointed out the contradiction, and the guard now follows the
+premise. A body guarded by `TYPE_CHECKING` is not an import edge anywhere:
+not for cycles, not for what an import may load, and not for what it
+requires. The guard is recognised by binding: `typing.TYPE_CHECKING` or
+`typing_extensions.TYPE_CHECKING`, however imported, or the module's own
+`TYPE_CHECKING = False`, bound once and never again. Its `else` branch still
+counts, and so does a guard Towel cannot resolve.
+
+A program that sets `typing.TYPE_CHECKING = True` before importing is
+outside the model. It breaks the idiom's own use for breaking cycles in
+every project that relies on it. The tool once cited for doing so,
+sphinx-autodoc-typehints, no longer does: version 3.13.7 has no such
+option. It runs a guarded block only after its module has imported, one
+statement at a time, and mocks whatever fails to import.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-24: How a typed run compares, as implemented
+
+Implementing the differential baseline refined the entry of 2026-09-23 in
+five ways. Four of them only ever reject more than its file-and-message rule
+would. The fifth applies that rule to the cold confirmation.
+
+- **Lines count wherever they cannot have moved.** In a file no change
+  touched, an error matches only one at the same line with the same
+  message. In a file a change touched, a line diff aligns the two texts. An
+  error on a line the change left alone must match the original's error on
+  that line. Only errors on lines the change wrote are compared by message,
+  against the original's errors on the lines it replaced. Under the rule as
+  first written, a change that removed one existing error and added a
+  different one with the same message, in the same file, passed.
+- **The reference follows the written changes.** A later change therefore
+  cannot spend an error that an earlier one removed.
+- **Every checker is asked.** With mypy and pyright both configured, the
+  combined check had stopped at the first checker that reported anything.
+  Against pre-existing mypy errors, pyright was never consulted.
+- **Code the checker cannot see into is not changed.** Where the original
+  check leaves a name typed as `Any`, a change to that file is checked
+  against `Any` and cannot fail. Such names come from an unresolved or
+  untyped import, a missing stub, an untyped decorator, or an `Any` base
+  class. The entry of 2026-09-23 reported such files. They are now left
+  alone, named up front, and their proposals counted as not verifiable. The
+  same is being applied to code the checker deems unreachable for the
+  platform or Python version it checks: on trio, win32-only modules were
+  "verified" by a check that looked at nothing.
+- **The cold confirmation excuses what the original also shows cold.** An
+  error that only the cold check reports is compared with a cold check of
+  the original. It refuses the run only if the original's check does not
+  account for it, because pyright's server and command line can disagree
+  about files no change touched.
+
+The fourth point declines where the earlier entry warned. A check against
+`Any` cannot fail, so it verifies nothing. It is recorded here pending the
+owner's confirmation; the alternative is to refactor such files with a
+warning.
+
+This still leaves Towel checking as the project configures its checker, not
+as its CI invokes it. On idna the CI adds `--strict`, and on trio it checks
+three platforms, and both then rejected output that Towel's check had
+accepted. Proposal (B) addresses that gap. The fallback to an unannotated
+helper, which is what failed idna's `--strict`, is being narrowed
+separately: it will not apply in a module whose functions are all
+annotated.
+
+*Status: implemented on the `audit-1772` branch, except the rule for
+unreachable code, which is being implemented. Not yet released.*

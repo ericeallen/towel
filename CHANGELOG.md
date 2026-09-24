@@ -30,6 +30,104 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- Comments inside a moved block were lost with it, because the helper was
+  rendered from its syntax tree. That included tool directives, such as
+  asyncstdlib's and mashumaro's `# type: ignore`, as well as
+  `# pyright: ignore`, `# noqa` and `# pragma: no cover`, and every
+  explanatory comment. A lost directive changes what a checker, linter or
+  coverage tool reports.
+
+  The helper now carries each comment beside the code it was written for,
+  in order. It also keeps the grouping parentheses and trailing commas that
+  held a list split across lines, so Black and ruff reproduce the source
+  layout. Where a formatter would move a directive off its code's line,
+  that helper is written unformatted. Comments above or below a moved block
+  stay with its call, and `preview` shows the helper's comments.
+- A typed run no longer refuses a project whose type check already reports
+  errors. It reports them first, and rejects a change only for an error they
+  do not account for:
+  - In a file no change touched, an error must match one at the same line.
+  - In a file a change touched, the two texts are aligned by a line diff. An
+    error on a line the change left alone must match the original's error
+    on that line, and only errors on lines the change wrote are compared by
+    message.
+  - A message that names a line fails closed.
+  - Each written change's check becomes the reference for the next.
+  - The cold confirmation compares the same way.
+
+  In a study of 20 corpus projects in their own environments, the old rule
+  let 5 through. 19 are now refactored with types, for 125 refactorings, 77
+  of them in the 14 newly admitted projects.
+- With mypy and pyright both configured, the combined check stopped at the
+  first checker that reported anything. Against pre-existing mypy errors,
+  pyright was then never asked about any candidate. Every checker is now
+  asked until one reports a new error.
+- A file where the original check leaves a name the checker cannot type is
+  not changed. Such names come from an unresolved or untyped import, a
+  missing stub, an untyped decorator or an `Any` base class. A change there
+  would be checked against `Any`, and could not fail. The run names these
+  files up front and counts their proposals as not verifiable.
+- The cold confirmation checks the original cold before it treats as new an
+  error that only it reports. On trio, pyright's language server and command
+  line disagreed about files no change touched, so every typed run failed at
+  the end.
+- Only a checker that cannot run still refuses a typed run. The corpus
+  harness reruns a project without types only in that case, and records
+  every other project's pre-existing errors.
+- Typed runs read every type spelling that mypy 1.x, mypy 2.x and pyright
+  print. A regular expression took the last `) -> ` as the end of a
+  parameter list, so `lambda: parse_extras` in packaging's `_parser` was
+  annotated as the function the lambda returns. Now read correctly:
+  - a function returning `None` (`def (builtins.int)`), a function
+    returning a function, and a generic function;
+  - a named tuple or typed dict, and its constructor;
+  - `Union` and `Optional` beside `|`, and a literal whose text holds `<`.
+
+  Only a literal type the checker inferred is widened, and a declared one is
+  kept. `Union`, `Optional` and `Literal` are imported where they are
+  written.
+- The type-variable rung recognises the program's own classes. It had
+  identified a class by where its import points or where it is defined,
+  which never matches the checker's `packaging.version.Version`. So the
+  row, and every type variable in it, was lost: rows formed in 13 of 81
+  attempts across packaging, rich, mistune and nox.
+
+  A class is now named by the absolute name the import model gives its
+  module. Where the program's imports name no module, the rung uses mypy's
+  `__init__` chain instead. Rows now form in 58 of 66 attempts. Along with
+  that:
+  - a type only a call site can name may stand inside a type variable;
+  - `Any` nested in a type is kept;
+  - the signature brings its typing imports;
+  - a parameter the body never reads is `object`;
+  - union members line up by structure;
+  - a class passed directly or through a thunk (`lambda: Row`) is
+    `type[Row]`, and a returned variable bound to a parameter takes that
+    argument's type.
+- Sites in different modules that agree on every type get their common
+  signature, naming the host's classes. Before, the ordinary signature wrote
+  only builtins and fell back to `Any`, and mistune's block quote and spoiler
+  helpers were declined.
+
+  With `--cross-module`, typed refactorings rise from 10 to 14 on packaging,
+  18 to 24 on rich and 15 to 19 on mistune; nox stays at 5. Every output
+  passes its project's own mypy and test suite exactly as the unchanged
+  project does.
+- Pyright's language server checks a project as `pyright` itself does. Towel
+  sent it a `python.analysis` section without `autoSearchPaths`, which the
+  server then leaves off and the command line always sets, so a src
+  layout's package was analysed as `src.<pkg>` and consumers outside `src`
+  imported the installed copy, which for an editable install is the user's
+  own tree. A candidate that removed `edit` from click's exports broke six
+  lines of its typing tests and was reported clean, and trio reported 1989
+  errors where its own pyright reports 1870. The server's settings are now
+  stated in full and match the command line's in every configuration
+  tested; on click, trio, jinja2, markupsafe, attrs and structlog the two
+  report identical errors. A consumer that imports its package through an
+  editable install is judged against the candidate wherever the package
+  lives (`python/`, `lib/`, `packages/<name>/src`, or configured
+  `extraPaths`), and pyright's command line is told the project it checks,
+  so its answers no longer depend on where the temporary directory lives.
 - `s = super; s()` shared by sibling classes was moved into a module
   function, where it raised `RuntimeError: super(): __class__ cell not
   found`; `super()` reached through another name now stays where it is.
@@ -410,6 +508,18 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   output is adopted into the place it was written for.
 
 ### Changed
+- A pair whose tool directives cannot move soundly is declined:
+  - directives that differ between its sites (`directives_differ`): the
+    helper has one line where the sites had several, so an ignore only one
+    site needed would either silence the other or be lost;
+  - a checker's ignore over code that becomes a call argument
+    (`directive_on_argument`), which would leave the argument outside the
+    ignore's reach. jinja2's `as_const` extraction had put two
+    `attr-defined` errors at its call sites this way;
+  - a region or file directive that would reach past the moved code
+    (`directive_outlives_block`).
+
+  Explanatory comments from every site are kept, the first site's first.
 - Helpers are shared across modules only with `--cross-module`
   (`cross_module_helpers=True` for library use), because a user
   deduplicating a package may not expect Towel to add imports between its
@@ -510,8 +620,9 @@ the correlation the call sites had.
   editable from the tree under test, Towel's `format` and `types` extras,
   and one candidate wheel, checked against `--towel-src` in every
   environment. mypy, pyright, Black, ruff and isort are taken at the
-  versions the project's `uv.lock`, `poetry.lock` or `pdm.lock` pins, where
-  it pins them. The environment also holds whatever the project declares its
+  versions the project pins: its lock file first, then the `rev` of the
+  tool's `.pre-commit-config.yaml` hook, then an exact pin in a requirements
+  file (httpx's `requirements.txt` has `mypy==1.17.1`). The environment also holds whatever the project declares its
   own type check needs: typing-named dependency groups and extras, the
   dependencies of tox environments and nox sessions that run a checker, its
   pre-commit mypy and pyright hooks' `additional_dependencies`, and

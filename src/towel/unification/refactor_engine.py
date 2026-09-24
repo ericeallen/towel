@@ -88,6 +88,7 @@ from .models import (
     AppliedChange,
     FunctionNode,
 )
+from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
 from ..source_files import python_sources
 from ..source_text import read_source
@@ -378,11 +379,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 (default: True). Nothing is inferred unless ``type_oracle``
                 is given.
             type_oracle: Checks the complete original project before the run's
-                first application. Existing type errors and checker failures
-                refuse application with distinct diagnostics. A clean baseline
-                enables inference where sites declare types and verification of
-                every prospective change.
-                Direct applications share an implicit run until
+                first application, then infers where sites declare types and
+                verifies every prospective change. Errors the original check
+                reports are left as they are, and a change is rejected only for
+                an error they do not account for (``towel.type_baseline``); a
+                checker that cannot run refuses application with a distinct
+                diagnostic. Direct applications share an implicit run until
                 ``begin_refactoring_run(paths)`` starts another; each fixed-point
                 call starts its own run. None (default) infers and checks nothing.
                 The caller retains ownership of the oracle and must close it.
@@ -423,6 +425,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.type_oracle = type_oracle
         self._type_run_oracle = type_oracle
         self._type_run_baseline = None
+        self._type_known = KnownErrors()
+        self._type_checked = None
+        self._type_names_any = {}
         self.snippet_formatter = snippet_formatter
         self.file_finisher = file_finisher
         self.incremental_global_passes = incremental_global_passes

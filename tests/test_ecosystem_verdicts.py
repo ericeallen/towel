@@ -817,7 +817,10 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
         if worker_fails:
             raise RuntimeError("fixture worker failed")
         return ecosystem.Result(
-            "fixture", "PASS", typing_mode="no-types" if no_types else "default"
+            "fixture",
+            "PASS",
+            typing_mode="no-types" if no_types else "default",
+            pre_existing=None if no_types else PRE_EXISTING,
         )
 
     def executor(max_workers: int, initializer: Callable[[], None]) -> ThreadPoolExecutor:
@@ -842,19 +845,65 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
     summary = json.loads((tmp_path / "report/summary.json").read_text())
     assert result["typing_mode"] == summary["typing_mode"] == mode
     assert summary["results"][0]["typing_mode"] == mode
-    assert f"Typing mode requested: `{mode}`" in (tmp_path / "report/summary.md").read_text()
+    markdown = (tmp_path / "report/summary.md").read_text()
+    assert f"Typing mode requested: `{mode}`" in markdown
+    if no_types or worker_fails:
+        assert summary["pre_existing_errors"] == {} and "Typed against" not in markdown
+    else:
+        assert summary["pre_existing_errors"] == {
+            "fixture": {
+                "errors": 12,
+                "files": 3,
+                "names_any": 2,
+                "declined_files": 1,
+                "declined_proposals": 2,
+            }
+        }
+        assert result["pre_existing"]["errors"] == 12
+        assert "| default (12 pre-existing) |" in markdown
+        assert (
+            "Typed against pre-existing errors" in markdown and "fixture (12, 2, 1, 2)" in markdown
+        )
 
 
-PRE_EXISTING_ERRORS = (
+PRE_EXISTING = ecosystem.PreExistingErrors(
+    errors=12, files=3, names_any=2, declined_files=1, declined_proposals=2
+)
+
+
+OLD_PRE_EXISTING_REFUSAL = (
     "Error: Original project check reported 2 type error(s):\n"
     "  module.py: incompatible type\n"
     "Fix the existing errors or rerun with --no-types "
     "(library: type_oracle=None, annotate_helpers=False).\n"
 )
+"""What a Towel from before the differential baseline said of a project whose check had errors."""
 CHECKER_FAILED = (
     "Error: Original project type check failed: timed out\n"
     "rerun with --no-types (library: type_oracle=None, annotate_helpers=False).\n"
 )
+PRE_EXISTING_REPORT = (
+    "The original project's type check reports 12 error(s) in 3 file(s). The run leaves them "
+    "as they are and rejects a change only for an error they do not account for "
+    "(TOWEL_DEBUG_TYPES=1 lists them):\n"
+    "  tests/test_module.py: 10\n"
+    "  package/blind.py: 1\n"
+    "  tests/conftest.py: 1\n"
+    "warning: 2 of these error(s) leave a name the checker cannot type (an import it cannot "
+    "resolve or finds no types for, or a decorator without types), and whatever such a name "
+    "reaches is Any to the checker, which accepts any use of it, so a new error there would go "
+    "unseen.\n"
+    "No change to these 1 file(s) is attempted; install what they import, and its stubs, where "
+    "Towel runs to have them refactored with types:\n"
+    '  package/blind.py:1: Cannot find implementation or library stub for module named "gone"\n'
+    "The rest lie in 1 file(s) the run does not change (tests/conftest.py), where a use of such "
+    "a name is checked against Any.\n"
+    "Applied 1 refactoring(s) across 1 file(s)\n"
+    "Declined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):\n"
+    "  3 proposal(s) not applied: not verifiable: its file holds a name the type checker cannot "
+    "type 2, refused by the type checker 1\n"
+)
+"""What Towel says, before it begins, of a project whose check already reports errors."""
 
 
 @pytest.mark.parametrize(
@@ -880,12 +929,8 @@ def test_a_failed_transformation_is_never_retried_without_types(
     assert result.refactor is not None and result.refactor.returncode == 1
 
 
-@pytest.mark.parametrize(
-    "diagnostic,kind",
-    [(PRE_EXISTING_ERRORS, "pre-existing-errors"), (CHECKER_FAILED, "checker-failed")],
-)
-def test_a_project_towel_declines_to_verify_is_rerun_without_types(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diagnostic: str, kind: str
+def test_a_project_whose_checker_cannot_run_is_rerun_without_types(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The verdict then comes from the untyped path, and the row says so."""
     result = _check(
@@ -893,12 +938,53 @@ def test_a_project_towel_declines_to_verify_is_rerun_without_types(
         monkeypatch,
         (0, "3 passed in 0.01s\n"),
         (0, "3 passed in 0.01s\n"),
-        refactor=(1, diagnostic),
+        refactor=(1, CHECKER_FAILED),
         refactor_retry=(0, "Applied 1 refactoring\n"),
     )
     assert result.verdict == "PASS"
-    assert result.fallback == kind and result.typing_mode == "no-types"
-    assert result.after is not None
+    assert result.fallback == "checker-failed" and result.typing_mode == "no-types"
+    assert result.after is not None and result.pre_existing is None
+
+
+def test_a_project_whose_check_has_errors_is_refactored_with_types_and_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No retry: Towel refactors it typed, against its errors, and the row gives the count."""
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(0, PRE_EXISTING_REPORT),
+    )
+    assert result.verdict == "PASS" and result.typing_mode == "default"
+    assert result.fallback == ""
+    assert result.pre_existing == ecosystem.PreExistingErrors(
+        errors=12, files=3, names_any=2, declined_files=1, declined_proposals=2
+    )
+
+
+def test_a_clean_check_records_no_pre_existing_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check(tmp_path, monkeypatch, (0, "3 passed in 0.01s\n"), (0, "3 passed in 0.01s\n"))
+    assert result.verdict == "PASS" and result.pre_existing is None
+
+
+def test_an_older_towels_refusal_for_existing_errors_is_reported_and_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Towel under test that still refuses such a project is unsupported there, not rerun."""
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(1, OLD_PRE_EXISTING_REFUSAL),
+    )
+    assert result.verdict == "UNSUPPORTED" and result.fallback == ""
+    assert result.detail == "Original project check reported 2 type error(s):"
+    assert result.typing_mode == "default"
 
 
 def test_a_rerun_without_types_that_still_fails_keeps_its_own_verdict(
@@ -909,26 +995,15 @@ def test_a_rerun_without_types_that_still_fails_keeps_its_own_verdict(
         monkeypatch,
         (0, "3 passed in 0.01s\n"),
         (0, "3 passed in 0.01s\n"),
-        refactor=(1, PRE_EXISTING_ERRORS),
+        refactor=(1, CHECKER_FAILED),
         refactor_retry=(1, "Traceback (most recent call last):\nRuntimeError: fixture\n"),
     )
-    assert result.verdict == "CRASH" and result.fallback == "pre-existing-errors"
+    assert result.verdict == "CRASH" and result.fallback == "checker-failed"
 
 
 @pytest.mark.parametrize(
     "diagnostic,missing",
-    [
-        (
-            "Error: Original project check reported 2 type error(s):\n"
-            "  module.py: incompatible type\n",
-            "way forward",
-        ),
-        (
-            "Error: Original project check reported 2 type error(s):\n" "rerun with --no-types\n",
-            "showed no diagnostic",
-        ),
-        ("Error: Original project type check failed: timed out\n", "way forward"),
-    ],
+    [("Error: Original project type check failed: timed out\n", "way forward")],
 )
 def test_a_refusal_that_does_not_say_what_to_do_fails_the_corpus(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diagnostic: str, missing: str

@@ -287,11 +287,13 @@ conditions for retaining narrowing in closures; extraction must preserve them.
 
 ## Verification and fallback
 
-The implementation retains the 1.732 release policy:
-check the initial complete project before using checker-driven inference or
-verification or writing refactored output. If that baseline contains type
-errors, abort with a clear instruction to fix them or explicitly rerun with
-`--no-types`. Do not silently disable checking. Existing source and callee
+The implementation checks the initial complete project before using
+checker-driven inference or verification or writing refactored output. Since
+the differential baseline (docs/DECISIONS.md, 2026-09-23), the errors that
+check reports are compared with rather than refused: a candidate, generic or
+not, is rejected only for an error they do not account for. A checker that
+cannot run aborts with a clear instruction to fix what stops it or explicitly
+rerun with `--no-types`. Do not silently disable checking. Existing source and callee
 annotations remain unchanged. A checker execution failure is a distinct outcome
 and must never certify a proposal as type-correct. An installation without an
 available optional checker retains its existing explicit availability notice.
@@ -364,9 +366,10 @@ The acceptance suite exercises the following obligations:
   unless a future, separately verified transformation preserves the narrowing.
   Adding a `TypeVar` alone must not make the test pass by suppressing errors.
 - A new error in an unchanged consumer, disagreement between checkers, a checker
-  timeout, and an initially failing project exercise the whole-project policy.
-  An initially failing project aborts before creating copied output or modifying
-  existing files; rerunning the same command with `--no-types` is possible.
+  timeout, and a project whose checker cannot run exercise the whole-project
+  policy. Such a project aborts before creating copied output or modifying
+  existing files; rerunning the same command with `--no-types` is possible. One
+  whose check already reports errors is refactored against them.
   No annotation or import is left behind by a failed variant.
 - Generated legacy syntax parses and runs on Python 3.11 and passes the tested
   checker floor. New syntax is never emitted for an unsupported project or

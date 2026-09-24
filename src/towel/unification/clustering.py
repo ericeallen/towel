@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
+from .block_comments import call_argument_lines, directive_conflict, site_comments
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
@@ -113,12 +114,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
 
     def _cluster_candidate_call(
         self, template: "HelperTemplate", candidate: "_ClusterCandidate"
-    ) -> Optional[ast.stmt]:
-        """The call replacing a clustered occurrence, or None when it cannot share the helper.
+    ) -> Optional[Tuple[ast.stmt, FrozenSet[int]]]:
+        """The call replacing a clustered occurrence, and the lines where its code becomes an argument.
 
-        Everything here is a function of the template and candidate blocks'
-        structure, the candidate's function and module, and the pair's helper,
-        so the caller memoizes it on exactly those.
+        None when the occurrence cannot share the helper. Everything here is a
+        function of the template and candidate blocks' structure, the
+        candidate's function and module, and the pair's helper, so the caller
+        memoizes it on exactly those.
         """
         pair = template.pair
         cluster_renames: List[Dict[str, str]] = [{}, {}]
@@ -250,7 +252,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for name in used2
         ):
             return None
-        return call_node2
+        return call_node2, call_argument_lines(subst2, 1)
 
     def _add_clustered_replacements(
         self,
@@ -264,17 +266,26 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
 
         Takes the file's admissible sites for the template (scanned once per
         template, see ``_clustered_sites``) and appends, in scan order, each
-        that overlaps neither the pair's own blocks nor a site already taken,
-        recording the method context needed to decide, later, whether that
-        call can dispatch through a receiver. Mutates ``replacements`` and
-        ``cluster_contexts`` in place.
+        that overlaps neither the pair's own blocks nor a site already taken
+        and carries the tool directives the pair's blocks do
+        (``directive_conflict``), recording the method context needed to
+        decide, later, whether that call can dispatch through a receiver.
+        Mutates ``replacements`` and ``cluster_contexts`` in place.
         """
         pair = template.pair
         covered: Set[int] = set(_lines_of(pair.block1_range))
         covered.update(_lines_of(pair.block2_range))
+        statements = template.func_def.body[template.preamble_length :]
         for site in self._clustered_sites(template, dce_node, functions):
             lines = _lines_of(site.replacement.line_range)
             if not covered.isdisjoint(lines):
+                continue
+            if (
+                directive_conflict(
+                    statements, [replacements[0].comments, site.replacement.comments]
+                )
+                is not None
+            ):
                 continue
             cluster_contexts[len(replacements)] = site.context
             replacements.append(site.replacement)
@@ -362,9 +373,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 # whole, so a per-candidate table was never read (no hit on
                 # h2, Towel's source, or a file of near-identical functions)
                 # while holding a call node per candidate.
-                call_node = self._cluster_candidate_call(template, candidate)
-                if call_node is None:
+                found = self._cluster_candidate_call(template, candidate)
+                if found is None:
                     continue
+                call_node, arguments = found
                 yield ClusteredSite(
                     Replacement(
                         line_range=cand_range,
@@ -373,6 +385,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                         class_name=entry.class_name,
                         method_kind=None,
                         implicit_param=None,
+                        comments=site_comments(entry.source, cand_nodes, arguments),
                     ),
                     context,
                 )

@@ -12,6 +12,8 @@ from towel.unification.type_bindings import (
     TypeResolver,
     TypeTerm,
     render_type,
+    required_imports,
+    spellable,
     type_parameter_identities,
 )
 
@@ -66,24 +68,43 @@ def test_legacy_collection_aliases_normalize_to_builtins():
     assert rendered(resolve(source, "D[str, L[S[int]]]", "")) == "dict[str, list[set[int]]]"
 
 
-def test_required_typing_import_is_not_invented():
-    assert resolve("from typing import Sequence", "Sequence[int]", "") is None
+def test_a_typing_name_the_host_lacks_is_spelled_with_its_import():
+    term = resolve("from typing import Sequence", "Sequence[int]", "")
+    assert rendered(term) == "Sequence[int]"
+    assert term is not None and required_imports([term]) == (("typing", "Sequence"),)
+    # A host binding the name to something else cannot write the type at all.
+    taken = resolve("from typing import Sequence", "Sequence[int]", "Sequence = list")
+    assert taken is not None and not spellable(taken)
 
 
 @pytest.mark.parametrize(
-    "source,host",
+    "source",
     [
-        ("list = object()", ""),
-        ("", "list = object()"),
-        ("from other import list", ""),
-        ("from other import *", ""),
-        ("", "from other import *"),
-        ("if condition:\n    list = object()", ""),
-        ("def f(list):\n    pass", ""),
+        "list = object()",
+        "from other import *",
+        "if condition:\n    list = object()",
+        "def f(list):\n    pass",
     ],
 )
-def test_builtin_shadowing_declines(source, host):
-    assert resolve(source, "list[int]", host) is None
+def test_builtin_shadowing_at_the_site_declines(source):
+    assert resolve(source, "list[int]", "") is None
+
+
+def test_a_site_import_shadowing_a_builtin_names_the_import():
+    term = resolve("from other import list", "list[int]", "")
+    assert term is not None and term.children[0].name == "other.list" and not spellable(term)
+
+
+@pytest.mark.parametrize("host", ["list = object()", "from other import list"])
+def test_builtin_shadowed_in_the_host_is_spelled_by_its_typing_alias(host):
+    term = resolve("", "list[int]", host)
+    assert rendered(term) == "List[int]"
+    assert term is not None and required_imports([term]) == (("typing", "List"),)
+
+
+def test_a_host_star_import_leaves_even_builtins_unspellable():
+    term = resolve("", "list[int]", "from other import *")
+    assert term is not None and not spellable(term)
 
 
 def test_shadowed_builtin_can_use_existing_host_builtin_alias():
@@ -158,16 +179,21 @@ def test_attribute_and_nested_global_writes_invalidate_binding_proofs():
     source = "import typing as t\nt.Sequence = custom"
     assert resolve(source, "t.Sequence[int]") is None
     host = "def rebind():\n    global int\n    int = str"
-    assert resolve("", "int", host) is None
+    rebound = resolve("", "int", host)
+    assert rebound is not None and not spellable(rebound)
     source = "from typing import TypeVar\ndef f():\n    T = TypeVar('T')\n    def rebind():\n        nonlocal T\n        T = int\n    pass"
     assert resolve(source, "T") is None
 
 
-@pytest.mark.parametrize(
-    "annotation", ["Any", "list[Any]", "Unknown", "Self", "ParamSpec", "TypeVarTuple"]
-)
+@pytest.mark.parametrize("annotation", ["Any", "Unknown", "Self", "ParamSpec", "TypeVarTuple"])
 def test_dynamic_and_contextual_types_decline(annotation):
     assert resolve("from typing import Any, Self, ParamSpec, TypeVarTuple", annotation) is None
+
+
+@pytest.mark.parametrize("annotation", ["list[Any]", "dict[str, Any]", "Callable[[Any], int]"])
+def test_any_inside_a_type_is_the_programs_own(annotation):
+    source = "from typing import Any, Callable"
+    assert rendered(resolve(source, annotation)) == annotation
 
 
 def test_nominal_imports_preserve_qualified_identity_across_aliases():
@@ -176,7 +202,9 @@ def test_nominal_imports_preserve_qualified_identity_across_aliases():
     term = resolve(source, "list[V]", host)
     assert rendered(term) == "list[model.Value]"
     assert resolver(source, host).resolve_revealed("list[domain.model.Value]") == term
-    assert resolve(source, "V", "from other.model import Value as V") is None
+    elsewhere = resolve(source, "V", "from other.model import Value as V")
+    assert elsewhere is not None and elsewhere.name == "domain.model.Value"
+    assert not spellable(elsewhere)
 
 
 def test_relative_imports_include_the_package_location():
@@ -184,14 +212,16 @@ def test_relative_imports_include_the_package_location():
     same = TypeResolver(source, "/project/site.py", 1, source, "/project/host.py")
     foreign = TypeResolver(source, "/project/site.py", 1, source, "/other/host.py")
     assert rendered(same.resolve(ast.Name(id="Value"))) == "Value"
-    assert foreign.resolve(ast.Name(id="Value")) is None
+    unreachable = foreign.resolve(ast.Name(id="Value"))
+    assert unreachable is not None and not spellable(unreachable)
 
 
 def test_same_module_class_can_be_forward_spelled_but_local_class_cannot():
     source = "def f(x: 'Value'):\n    pass\nclass Value:\n    pass"
     term = resolver(source, line=2).resolve(ast.Constant(value="Value"))
     assert rendered(term) == "Value"
-    assert resolve(source, "Value", "class Value:\n    pass") is None
+    namesake = resolve(source, "Value", "class Value:\n    pass")
+    assert namesake is not None and not spellable(namesake)
     local = "def f():\n    class Value:\n        pass\n    pass"
     assert resolve(local, "Value") is None
 
@@ -240,28 +270,47 @@ def test_revealed_fixed_callable_preserves_free_parameters(text):
         "def (*args: int) -> int",
         "def (*, value: int) -> int",
         "def (value: int = ...) -> int",
-        "def (Any) -> int",
-        "def (int) -> Unknown",
-        "def [T] (T) -> T",
-        "def (value: int, [str) -> int",
+        "def (value: int =) -> int",
+        "def [T <: int] (T) -> T",
+        "Overload(def (x: int) -> int, def (x: str) -> str)",
     ],
 )
 def test_revealed_unsupported_callable_never_becomes_unrestricted_ellipsis(text):
+    """What no parameter list states is only a spelling, for a type variable to stand for."""
+    term = resolver("from typing import Callable").resolve_revealed(text)
+    assert term is not None and term.kind is TypeKind.ATOM and not spellable(term)
+    assert term == resolver("from typing import Callable").resolve_revealed(text)
+    elsewhere = TypeResolver("", "/project/other.py", 1, "", "/project/other.py")
+    assert elsewhere.resolve_revealed(text) != term  # Only the same file's spelling is the same.
+
+
+@pytest.mark.parametrize(
+    "text", ["def (int) -> Unknown", "def [T] (T) -> T", "def (value: int, [str) -> int"]
+)
+def test_revealed_callable_that_names_nothing_known_declines(text):
     assert resolver("from typing import Callable").resolve_revealed(text) is None
 
 
-def test_revealed_callable_requires_existing_host_binding():
-    assert resolver("").resolve_revealed("def (int) -> int") is None
+def test_revealed_callable_is_spelled_by_the_host_or_with_the_import_it_needs():
+    fresh = resolver("").resolve_revealed("def (int) -> int")
+    assert rendered(fresh) == "Callable[[int], int]"
+    assert fresh is not None and required_imports([fresh]) == (("typing", "Callable"),)
     instance = resolver("", "from collections.abc import Callable as C")
-    assert rendered(instance.resolve_revealed("() -> int")) == "C[[], int]"
+    bound = instance.resolve_revealed("() -> int")
+    assert rendered(bound) == "C[[], int]" and bound is not None and not required_imports([bound])
 
 
 def test_revealed_literal_markers_preserve_strings_and_do_not_rewrite_unknown_markers():
     instance = resolver("from typing import Literal")
-    assert rendered(instance.resolve_revealed("Literal['T@foreign']?")) == "Literal['T@foreign']"
-    assert rendered(instance.resolve_revealed("Literal['a,b:c]']?")) == "Literal['a,b:c]']"
+    # A declared literal is kept exactly, its text untouched by decoration stripping.
+    assert rendered(instance.resolve_revealed("Literal['T@foreign']")) == "Literal['T@foreign']"
+    assert rendered(instance.resolve_revealed("Literal['a,b:c]']")) == "Literal['a,b:c]']"
+    declared = resolver("").resolve_revealed("Literal['word']")
+    assert rendered(declared) == "Literal['word']"
+    assert declared is not None and required_imports([declared]) == (("typing", "Literal"),)
+    # One the checker inferred, marked ``?``, is the type its value belongs to.
+    assert rendered(instance.resolve_revealed("Literal['T@foreign']?")) == "str"
     assert rendered(resolver("").resolve_revealed("Literal[3]?")) == "int"
-    assert rendered(resolver("").resolve_revealed("Literal['word']")) == "str"
     assert resolver("").resolve_revealed("Literal[Unknown]") is None
     assert resolver("").resolve_revealed("list[int]?") is None
     assert resolver("").resolve_revealed("str*") is None
@@ -394,7 +443,8 @@ def test_class_local_import_shadows_module_import_without_changing_identity():
     local = resolver(host, host_class="Host").resolve(ast.Name(id="Value"))
     assert local is not None and local.name == "inner.Value" and rendered(local) == "Value"
     foreign = resolver("from outer import Value", host=host, host_class="Host")
-    assert foreign.resolve(ast.Name(id="Value")) is None
+    shadowed = foreign.resolve(ast.Name(id="Value"))
+    assert shadowed is not None and shadowed.name == "outer.Value" and not spellable(shadowed)
     alias_host = "import outer as outside\n" + host
     alias = resolver("from outer import Value", host=alias_host, host_class="Host")
     assert rendered(alias.resolve(ast.Name(id="Value"))) == "outside.Value"
@@ -402,7 +452,8 @@ def test_class_local_import_shadows_module_import_without_changing_identity():
 
 def test_class_shadowed_builtin_uses_only_an_existing_unshadowed_module_alias():
     host = "class Host:\n    int = str\n"
-    assert resolver("", host=host, host_class="Host").resolve(ast.Name(id="int")) is None
+    shadowed = resolver("", host=host, host_class="Host").resolve(ast.Name(id="int"))
+    assert shadowed is not None and not spellable(shadowed)
     alias = resolver("", host="import builtins as b\n" + host, host_class="Host")
     assert rendered(alias.resolve(ast.Name(id="int"))) == "b.int"
     # Supplying no class leaves the module helper's existing behavior intact.
@@ -428,18 +479,27 @@ class Host:
 
 
 def test_class_only_bound_and_type_alias_decline_instead_of_escaping_to_module():
+    """A fresh binder is declared at module scope, where a class-only name is not."""
     source = """\
 from typing import TypeVar
 class Host:
-    from collections.abc import Sized as LocalBound
+    from shapes import Sized as LocalBound
     U = TypeVar("U", bound=LocalBound)
     Alias = list[int]
     def method(self):
         pass
 """
     instance = resolver(source, host_class="Host")
-    assert instance.resolve(ast.Name(id="U")) is None
+    term = instance.resolve(ast.Name(id="U"))
+    assert term is not None and term.parameter is not None and term.parameter.bound is not None
+    assert term.parameter.bound.name == "shapes.Sized" and not spellable(term.parameter.bound)
     assert instance.resolve(ast.Name(id="Alias")) is None
+    # A typing name is no escape: the module imports it afresh under its own name.
+    typing_bound = resolver(source.replace("shapes", "collections.abc"), host_class="Host")
+    typed = typing_bound.resolve(ast.Name(id="U"))
+    assert typed is not None and typed.parameter is not None and typed.parameter.bound is not None
+    assert rendered(typed.parameter.bound) == "Sized"
+    assert required_imports([typed.parameter.bound]) == (("typing", "Sized"),)
 
 
 @pytest.mark.parametrize(
@@ -481,5 +541,7 @@ def test_pep695_host_binder_is_retained_while_method_binder_remains_independent(
 def test_pep695_dependent_class_bound_or_class_local_method_bound_is_not_exported():
     dependent = "class Host[T, U: T]:\n    def method(self):\n        pass"
     assert resolver(dependent, host_class="Host").resolve(ast.Name(id="T")) is None
-    local = "class Host:\n    from collections.abc import Sized as Local\n    def method[T: Local](self):\n        pass"
-    assert resolver(local, host_class="Host").resolve(ast.Name(id="T")) is None
+    local = "class Host:\n    from shapes import Sized as Local\n    def method[T: Local](self):\n        pass"
+    term = resolver(local, host_class="Host").resolve(ast.Name(id="T"))
+    assert term is not None and term.parameter is not None and term.parameter.bound is not None
+    assert not spellable(term.parameter.bound)

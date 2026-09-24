@@ -54,9 +54,16 @@ from .bounded_cache import BoundedCache
 from .exceptions import ProjectScanLimitError
 from ..import_model import NameStatus
 from ..project_layout import find_project_root, load_pyproject
-from .module_bindings import NAMESPACE_PRESERVING_DECORATORS, dotted_name, global_bindings
+from .module_bindings import (
+    NAMESPACE_PRESERVING_DECORATORS,
+    ModuleBindings,
+    dotted_name,
+    global_bindings,
+    import_origin,
+)
 from .program_imports import ProgramImports, program_imports
 from .statement_facts import (
+    bindings_of,
     imported_binding_name,
 )
 from ..source_text import read_source
@@ -206,32 +213,255 @@ def relative_imports_resolve_alike(files: Iterable[str], levels: Iterable[int]) 
 ImportExtent = Literal["everywhere", "at_import", "unconditionally"]
 
 
+_TYPE_CHECKING = frozenset({"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"})
+
+
+class TypeCheckingGuards:
+    """Which ``if`` tests of one module are ``TYPE_CHECKING``, false wherever the module runs.
+
+    A body under ``if TYPE_CHECKING:`` is for a checker, which reads it, and
+    never runs: Towel writes imports there on exactly that premise, and every
+    question about what a module runs, imports or requires answers it the same
+    way, through this one test. A test is such a guard when its name, resolved
+    by the module's own bindings, is ``typing.TYPE_CHECKING`` or
+    ``typing_extensions.TYPE_CHECKING`` however it is imported or aliased, or
+    the module's own ``TYPE_CHECKING = False``. It is resolved where the
+    statement holding the test runs when that is known, and otherwise only
+    when every binding the module ever gives the name is one of those, which
+    also covers ``try: from typing import TYPE_CHECKING`` with an ``except``
+    that binds ``False``. Anything else runs: a name a function or class scope
+    binds for itself (a local ``TYPE_CHECKING = True``), a name a function
+    declares ``global``, a module with a star import, an expression other
+    than the name (``not TYPE_CHECKING``), and an unresolvable one. Only the
+    guarded body is skipped; its ``else`` runs.
+    """
+
+    def __init__(self, tree: ast.Module, bindings: Optional[ModuleBindings]) -> None:
+        self._tree = tree
+        self._bindings = bindings
+
+    @classmethod
+    def of(cls, source: str, tree: ast.Module) -> "TypeCheckingGuards":
+        """The guards of the module ``tree`` parsed from ``source``."""
+        return cls(tree, global_bindings(source))
+
+    def never_true(
+        self, test: ast.expr, shadowed: FrozenSet[str] = frozenset(), order: Optional[int] = None
+    ) -> bool:
+        """Whether ``test`` is a guard, where the names ``shadowed`` are the enclosing scopes' own.
+
+        ``order`` is the index of the top-level statement the test runs in,
+        when it runs as the module is imported; None for a test in a
+        function body, which runs when the module's bindings are all made.
+        """
+        dotted = dotted_name(test)
+        if dotted is None or self._bindings is None or dotted.split(".")[0] in shadowed:
+            return False
+        if order is not None and self._in_effect(dotted, order):
+            return True
+        return self._always_guard(dotted, 0)
+
+    def _in_effect(self, dotted: str, order: int) -> bool:
+        """Whether ``dotted`` is a guard by the binding certainly in effect at ``order``."""
+        assert self._bindings is not None
+        if self._bindings.resolve(dotted, order) in _TYPE_CHECKING:
+            return True
+        if "." in dotted:
+            return False
+        binding = self._bindings.in_effect(dotted, order)
+        if binding is None or len(self._bindings.bindings.get(dotted, ())) != 1:
+            return False
+        return _binds_false(self._tree.body[binding.order], dotted)
+
+    def _always_guard(self, dotted: str, depth: int) -> bool:
+        """Whether every binding the module's own scope ever gives ``dotted``'s head makes it one."""
+        assert self._bindings is not None
+        head, _, rest = dotted.partition(".")
+        bindings = self._bindings
+        if (
+            depth > 8
+            or bindings.star_imports
+            or head in bindings.rebound_by_global
+            or not bindings.bindings.get(head)
+        ):
+            return False
+        sources = list(_module_scope_bindings(self._tree, head))
+        if not sources:
+            return False
+        for statement, alias in sources:
+            if alias is not None and isinstance(statement, (ast.Import, ast.ImportFrom)):
+                origin = import_origin(statement, alias)
+                if origin is None or (f"{origin}.{rest}" if rest else origin) not in _TYPE_CHECKING:
+                    return False
+            elif not rest and _binds_false(statement, head):
+                continue
+            elif (
+                isinstance(statement, ast.Assign)
+                and all(isinstance(target, ast.Name) for target in statement.targets)
+                and (aliased := dotted_name(statement.value)) is not None
+            ):
+                if not self._always_guard(f"{aliased}.{rest}" if rest else aliased, depth + 1):
+                    return False
+            else:
+                return False
+        return True
+
+
+def _binds_false(statement: ast.AST, name: str) -> bool:
+    """``name = False`` or ``name: bool = False``, and nothing else."""
+    if isinstance(statement, ast.Assign):
+        targets, value = statement.targets, statement.value
+    elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+        targets, value = [statement.target], statement.value
+    else:
+        return False
+    return (
+        len(targets) == 1
+        and isinstance(targets[0], ast.Name)
+        and targets[0].id == name
+        and isinstance(value, ast.Constant)
+        and value.value is False
+    )
+
+
+def _module_scope_bindings(
+    tree: ast.Module, name: str
+) -> Iterator[Tuple[ast.AST, Optional[ast.alias]]]:
+    """Each construct of the module's own scope that binds ``name``: the statement, and the alias.
+
+    An import yields its alias; anything else binding the name yields the
+    statement holding it (an assignment) or the binding node itself (a loop
+    target, a definition), which callers treat as unknown.
+    """
+    pending: List[Tuple[ast.AST, Optional[ast.stmt]]] = [(node, None) for node in tree.body]
+    while pending:
+        node, statement = pending.pop()
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if imported_binding_name(alias) == name:
+                    yield node, alias
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                yield node, None
+            # Decorators, defaults and bases run in this scope; the body does not.
+            pending.extend((child, None) for child in _header_nodes(node))
+            continue
+        if isinstance(node, ast.Lambda):
+            pending.extend((default, statement) for default in node.args.defaults)
+            continue
+        if isinstance(node, ast.Name):
+            if node.id == name and isinstance(node.ctx, (ast.Store, ast.Del)):
+                yield (statement if statement is not None else node), None
+            continue
+        if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name == name:
+            yield node, None
+        if isinstance(node, ast.MatchMapping) and node.rest == name:
+            yield node, None
+        if isinstance(node, ast.comprehension):
+            pending.extend((child, statement) for child in (node.iter, *node.ifs))
+            continue
+        owner = node if isinstance(node, (ast.Assign, ast.AnnAssign)) else statement
+        pending.extend((child, owner) for child in ast.iter_child_nodes(node))
+
+
+def _header_nodes(
+    node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef],
+) -> List[ast.AST]:
+    """What a definition evaluates in the scope that runs it."""
+    if isinstance(node, ast.ClassDef):
+        return [*node.decorator_list, *node.bases, *(keyword.value for keyword in node.keywords)]
+    arguments = node.args
+    return [
+        *node.decorator_list,
+        *arguments.defaults,
+        *(default for default in arguments.kw_defaults if default is not None),
+    ]
+
+
+def _function_scope_names(function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> FrozenSet[str]:
+    """The names a function's body resolves in its own scope, not the module's."""
+    arguments = function.args
+    names = {
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *((arguments.vararg,) if arguments.vararg else ()),
+            *((arguments.kwarg,) if arguments.kwarg else ()),
+        )
+    }
+    for statement in function.body:
+        names |= bindings_of(statement, into_nested_scopes=False)
+        # A declaration hands the name to another scope, which this cannot resolve.
+        names |= {
+            name
+            for node in ast.walk(statement)
+            if isinstance(node, (ast.Global, ast.Nonlocal))
+            for name in node.names
+        }
+    return frozenset(names)
+
+
+def _class_scope_names(klass: ast.ClassDef) -> FrozenSet[str]:
+    """The names a class body binds, which its own statements resolve before the module's."""
+    return frozenset(
+        name
+        for statement in klass.body
+        for name in bindings_of(statement, into_nested_scopes=False)
+    )
+
+
 def _import_statements(
-    tree: ast.Module, extent: ImportExtent
+    tree: ast.Module, extent: ImportExtent, guards: TypeCheckingGuards
 ) -> List[Union[ast.Import, ast.ImportFrom]]:
-    """The import statements of ``tree`` that ``extent`` counts."""
-    if extent == "everywhere":
-        return [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    """The import statements of ``tree`` that ``extent`` counts.
+
+    None under a ``TYPE_CHECKING`` guard (``TypeCheckingGuards``) counts:
+    such an import never runs, in any body.
+    """
     if extent == "unconditionally":
         return [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
     found: List[Union[ast.Import, ast.ImportFrom]] = []
 
-    def visit(statements: Sequence[ast.stmt]) -> None:
-        # A class body and every branch of a compound statement run, or may
-        # run, as the module is imported; a function body does not.
-        for statement in statements:
+    def visit(
+        statements: Sequence[ast.stmt],
+        outer: FrozenSet[str],
+        own: FrozenSet[str],
+        order: Optional[int],
+    ) -> None:
+        """``outer`` names the enclosing functions bind, ``own`` those of a class body here.
+
+        ``order`` is the top-level statement these run in as the module is
+        imported, or None inside a function body.
+        """
+        for position, statement in enumerate(statements):
+            where = position if statements is tree.body else order
             if isinstance(statement, (ast.Import, ast.ImportFrom)):
                 found.append(statement)
-            elif not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # A function body runs only when it is called.
+                if extent == "everywhere":
+                    visit(
+                        statement.body, outer | _function_scope_names(statement), frozenset(), None
+                    )
+            elif isinstance(statement, ast.ClassDef):
+                visit(statement.body, outer, _class_scope_names(statement), where)
+            elif isinstance(statement, ast.If) and guards.never_true(
+                statement.test, outer | own, where
+            ):
+                visit(statement.orelse, outer, own, where)
+            else:
                 for field in ("body", "orelse", "finalbody"):
-                    visit(getattr(statement, field, []))
+                    visit(getattr(statement, field, []), outer, own, where)
                 for clause in (
                     *getattr(statement, "handlers", []),
                     *getattr(statement, "cases", []),
                 ):
-                    visit(clause.body)
+                    visit(clause.body, outer, own, where)
 
-    visit(tree.body)
+    visit(tree.body, frozenset(), frozenset(), None)
     return found
 
 
@@ -259,12 +489,13 @@ def _import_edges(
     if key in cache.edges:
         return cache.edges.get(key)
     try:
-        tree = ast.parse(read_source(path))
+        source = read_source(path)
+        tree = ast.parse(source)
     except (OSError, UnicodeError, SyntaxError):
         return cache.edges.put(key, None)
     files: Set[Path] = set()
     unseen = False
-    for node in _import_statements(tree, extent):
+    for node in _import_statements(tree, extent, TypeCheckingGuards.of(source, tree)):
         for level, module, names in _import_requests(node):
             reached = program.reached(current, level, module, names)
             if reached is None:
@@ -602,7 +833,6 @@ _BUILTIN_GENERICS = frozenset({"dict", "frozenset", "list", "set", "tuple", "typ
 
 # Facts of the running interpreter a module may branch on at import.
 _PLATFORM_FACTS = frozenset({"os.name", "sys.byteorder", "sys.platform", "sys.version_info"})
-_TYPE_CHECKING = frozenset({"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"})
 
 
 @dataclass(frozen=True)
@@ -657,6 +887,7 @@ class ImportTimeCode:
     ) -> None:
         self._tree = ast.parse(source)
         self._bindings = global_bindings(source)
+        self._guards = TypeCheckingGuards(self._tree, self._bindings)
         self._path = path
         self._cache = cache
         self._depth = depth
@@ -874,20 +1105,7 @@ class ImportTimeCode:
         return self._origin(node, order, body) in _PLATFORM_FACTS
 
     def _is_type_checking(self, test: ast.expr, order: int, body: Optional[_ClassBody]) -> bool:
-        if self._origin(test, order, body) in _TYPE_CHECKING:
-            return True
-        # The module's own ``TYPE_CHECKING = False``, bound once and never again.
-        if not isinstance(test, ast.Name) or body is not None or self._bindings is None:
-            return False
-        binding = self._bindings.in_effect(test.id, order)
-        if binding is None or len(self._bindings.bindings.get(test.id, ())) != 1:
-            return False
-        statement = self._tree.body[binding.order]
-        return (
-            isinstance(statement, ast.Assign)
-            and isinstance(statement.value, ast.Constant)
-            and statement.value.value is False
-        )
+        return self._guards.never_true(test, body.names if body is not None else frozenset(), order)
 
     # -- callables ------------------------------------------------------------
 
@@ -1634,22 +1852,28 @@ def _required_imports(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
     if known is not None:
         return known
     try:
-        tree = ast.parse(read_source(module))
+        source = read_source(module)
+        tree = ast.parse(source)
     except (OSError, UnicodeError, SyntaxError):
         return cache.required_imports.put(key, frozenset())
+    guards = TypeCheckingGuards.of(source, tree)
     names: Set[str] = set()
-    pending: List[ast.stmt] = list(tree.body)
+    pending: List[Tuple[ast.stmt, int]] = [(node, order) for order, node in enumerate(tree.body)]
     while pending:
-        statement = pending.pop()
+        statement, order = pending.pop()
         if isinstance(statement, ast.Import):
             names.update(alias.name.split(".")[0] for alias in statement.names)
         elif isinstance(statement, ast.ImportFrom) and statement.level == 0 and statement.module:
             names.add(statement.module.split(".")[0])
-        elif isinstance(statement, ast.If) and not (
-            isinstance(statement.test, ast.Name) and statement.test.id == "TYPE_CHECKING"
-        ):
-            # Either branch may be the one that runs; an import there is required there.
-            pending.extend(statement.body + statement.orelse)
+        elif isinstance(statement, ast.If):
+            # Either branch may be the one that runs; an import there is required
+            # there. Under ``TYPE_CHECKING`` only the ``else`` ever runs.
+            branches = (
+                statement.orelse
+                if guards.never_true(statement.test, order=order)
+                else statement.body + statement.orelse
+            )
+            pending.extend((branch, order) for branch in branches)
     names.discard("__future__")
     return cache.required_imports.put(key, frozenset(names))
 

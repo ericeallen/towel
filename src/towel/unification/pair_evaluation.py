@@ -55,6 +55,13 @@ from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
+from .block_comments import (
+    CommentConflict,
+    call_argument_lines,
+    directive_conflict,
+    merge_comments,
+    site_comments,
+)
 from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
     available_argument_names,
@@ -377,6 +384,10 @@ class PairEvaluation(
     Clustering, HelperPlacement, BlockAnalysis, ExistingFunctionReuse, HelperAnnotationWiring
 ):
     """From a candidate pair to a verified proposal; see the module docstring."""
+
+    def _reject_comments(self, pair: CodeBlockPair, conflict: CommentConflict) -> None:
+        """Decline ``pair`` because its sites' comments cannot all move into one helper."""
+        self._debug_reject(RejectReason(conflict.kind.value), pair, detail=conflict.detail)
 
     def _reject(
         self,
@@ -1182,6 +1193,15 @@ class PairEvaluation(
             if replacement is None:
                 return None
             replacements.append(replacement)
+        # A tool directive moves into the helper only where both blocks carry
+        # it alike: the helper has one line where they had two.
+        conflict = directive_conflict(
+            rendered.func_def.body[rendered.preamble_length :],
+            [replacement.comments for replacement in replacements],
+        )
+        if conflict is not None:
+            self._reject_comments(pair, conflict)
+            return None
         # Same-file clustering: further identical blocks join this proposal.
         cluster_contexts: Dict[int, ClusterContext] = {}
         if not pair.is_cross_file:
@@ -1330,6 +1350,11 @@ class PairEvaluation(
             class_name=class_name,
             method_kind=method_info.kind,
             implicit_param=method_info.implicit_param,
+            comments=site_comments(
+                pair.source1 if block_idx == 0 else pair.source2,
+                nodes,
+                call_argument_lines(unified.substitution, block_idx),
+            ),
         )
 
     # -- 10 --------------------------------------------------------------------
@@ -1542,6 +1567,21 @@ class PairEvaluation(
         participating_paths = {home.file_path} | {
             replacement.file_path or home.file_path for replacement in placement.replacements
         }
+        comments = merge_comments(
+            rendered.func_def.body[rendered.preamble_length :],
+            [
+                (
+                    replacement.comments,
+                    os.path.abspath(replacement.file_path or home.file_path)
+                    == os.path.abspath(home.file_path),
+                )
+                for replacement in placement.replacements
+            ],
+            rendered.preamble_length,
+        )
+        if isinstance(comments, CommentConflict):
+            self._reject_comments(pair, comments)
+            return None
         proposal = RefactoringProposal(
             file_path=home.file_path,
             extracted_function=rendered.func_def,
@@ -1560,6 +1600,7 @@ class PairEvaluation(
                     if (digest := functions.source_digest(path)) is not None
                 )
             ),
+            helper_comments=comments,
         )
         separated = narrowing_lost_at_call_site(rendered.func_def, placement.replacements)
         if separated is not None:

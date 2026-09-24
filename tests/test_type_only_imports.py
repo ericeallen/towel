@@ -152,3 +152,56 @@ def test_a_shortened_name_inside_an_annotation_is_never_evaluated(tmp_path: Path
         text=True,
     )
     assert ran.returncode == 0, ran.stderr
+
+
+@requires_mypy
+def test_a_fallback_rung_keeps_no_import_its_any_replaced(tmp_path: Path) -> None:
+    """The ordinary signature names ``Version``; the rung that verifies gives that parameter ``Any``."""
+    (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "models.py").write_text(textwrap.dedent("""
+        class Version:
+            def __init__(self, major: int) -> None:
+                self.major = major
+
+
+        def coerce(text: str) -> Version | None:
+            return Version(int(text)) if text.isdigit() else None
+
+
+        def within(bounds: tuple[int, int], version: Version) -> bool:
+            return bounds[0] <= version.major < bounds[1]
+        """).lstrip())
+    path = package / "ranges.py"
+    path.write_text(textwrap.dedent("""
+        import pkg.models
+
+
+        class Range:
+            def __init__(self, bounds: tuple[int, int]) -> None:
+                self._bounds = bounds
+
+            def _arbitrary(self) -> bool:
+                return self._bounds[0] == 0
+
+            def matches_literal(self, text: str) -> bool:
+                parsed = pkg.models.coerce(text)
+                if parsed is None:
+                    return self._arbitrary()
+                return pkg.models.within(self._bounds, parsed)
+
+            def contains(self, item: pkg.models.Version, pre: bool) -> bool:
+                if pre and item.major == 0:
+                    return False
+                return pkg.models.within(self._bounds, item)
+        """).lstrip())
+    module = ast.parse(_apply(path))
+    helper = next(
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+    )
+    imported = _type_only_imports(module)
+    assert imported <= _annotation_names(helper), f"imported and never named: {imported}"

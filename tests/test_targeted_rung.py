@@ -13,7 +13,22 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests.typed_fixtures import apply_one, requires_mypy
+from tests.typed_fixtures import TypedOutcome, apply_one, requires_mypy
+
+
+def _targeted_after_the_precise_rungs(outcome: TypedOutcome) -> None:
+    """The ordinary signature was refused first, then any generic candidate, and no every-Any rung ran.
+
+    The targeted rung follows the rungs that lose no information; the generic
+    candidates the sites offer are tried before it and may cost a check each.
+    """
+    checked = outcome.checked_helpers
+    assert len(checked) >= 2, checked
+    assert "Any" not in checked[0], checked
+    assert all("_TowelT" in signature for signature in checked[1:-1]), checked
+    assert not any(
+        signature.count(": Any") == signature.count(": ") for signature in checked
+    ), checked
 
 
 @requires_mypy
@@ -62,7 +77,7 @@ def test_the_parameter_whose_narrowing_the_call_dropped_alone_becomes_any(
     assert outcome.signature() == (
         "(self, __param_0: bool, __param_1: Callable[[], bool], __param_2: Any) -> bool"
     )
-    assert outcome.prospective_checks == 2, outcome.checked_helpers
+    _targeted_after_the_precise_rungs(outcome)
 
 
 @requires_mypy
@@ -105,4 +120,57 @@ def test_a_helper_returning_notimplemented_returns_its_type_or_any(tmp_path: Pat
     assert returns is not None
     spelled = returns.value if isinstance(returns, ast.Constant) else ast.unparse(returns)
     assert spelled == "bool | Any", outcome.signature()
-    assert outcome.prospective_checks == 2, outcome.checked_helpers
+    _targeted_after_the_precise_rungs(outcome)
+
+
+@requires_mypy
+def test_a_later_rung_carries_the_comments_of_the_moved_code(tmp_path: Path) -> None:
+    """The targeted rung, rendered after the ordinary one was refused, keeps the block's comments."""
+    outcome = apply_one(
+        tmp_path,
+        """
+        class Version:
+            def __init__(self, parts: tuple[int, ...], pre: bool = False) -> None:
+                self.parts = parts
+                self.is_prerelease = pre
+
+
+        def matches_bounds_only(bounds: tuple[int, int], version: Version) -> bool:
+            return bounds[0] <= version.parts[0] < bounds[1]
+
+
+        def _coerce(text: str) -> Version | None:
+            return Version((int(text),)) if text.isdigit() else None
+
+
+        class VersionRange:
+            def __init__(self, bounds: tuple[int, int]) -> None:
+                self._bounds = bounds
+
+            def _arbitrary_active(self) -> bool:
+                return self._bounds[0] == 0
+
+            def _matches_literal(self, text: str) -> bool:
+                parsed = _coerce(text)
+                if parsed is None:
+                    # Nothing parsed: the arbitrary-equality flag decides.
+                    return self._arbitrary_active()
+                return matches_bounds_only(self._bounds, parsed)  # the parsed bounds
+
+            def contains(self, item: Version, effective_pre: bool | None) -> bool:
+                if effective_pre is False and item.is_prerelease:
+                    # Nothing parsed: the arbitrary-equality flag decides.
+                    return False
+                return matches_bounds_only(self._bounds, item)  # the parsed bounds
+        """,
+        pick="_matches_literal and contains",
+    )
+    assert outcome.error is None, outcome.error
+    _targeted_after_the_precise_rungs(outcome)
+    assert outcome.module is not None
+    helper = outcome.helper()
+    written = outcome.module.splitlines()[helper.lineno - 1 : helper.end_lineno]
+    text = "\n".join(written)
+    assert "__param_2: Any" in text, text
+    assert "# Nothing parsed: the arbitrary-equality flag decides." in text, text
+    assert "# the parsed bounds" in text, text

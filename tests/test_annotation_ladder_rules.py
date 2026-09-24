@@ -20,6 +20,7 @@ from towel.unification.annotation_ladder import (
     self_as_type_variable,
     targeted_any,
     unannotated_function,
+    used_imports,
     without_quoted_none,
 )
 from towel.unification.annotation_wiring import _variant_key, mypy_ladder_flags
@@ -383,3 +384,40 @@ def test_a_module_is_fully_annotated_as_mypy_strict_counts_it() -> None:
         ("def f() -> None:\n    def g(y):\n        pass\n", "g"),
     ]:
         assert unannotated_function(ast.parse(source)) == name, source
+
+
+# -- Imports and keys after a rung rewrites the signature ----------------------------
+
+
+def test_an_import_a_rung_no_longer_spells_is_dropped() -> None:
+    helper = _function("""
+        def f(item: 'Item', count: Any) -> 'dict[Item, _TowelT0]':
+            local: 'Box' = make()
+        """)
+    declarations = tuple(
+        ast.parse("_TowelT0 = _towel_typevar('_TowelT0', bound='Tag | None')").body
+    )
+    imports = [
+        ("pkg.models", "Item"),
+        ("pkg.models", "Box"),
+        ("pkg.tags", "Tag"),
+        ("pkg.models", "Gone"),
+        ("typing", "Any"),
+    ]
+    assert used_imports(imports, helper, declarations) == (
+        ("pkg.models", "Item"),
+        ("pkg.models", "Box"),
+        ("pkg.tags", "Tag"),
+        ("typing", "Any"),
+    )
+
+
+def test_a_variants_key_holds_its_comments_and_imports() -> None:
+    plain = {"/p/m.py": "def __extracted_func_1(a: int) -> int:\n    return a\n"}
+    commented = {"/p/m.py": "def __extracted_func_1(a: int) -> int:\n    return a  # why\n"}
+    imported = {
+        "/p/m.py": "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n"
+        "    from pkg import A\n\ndef __extracted_func_1(a: int) -> int:\n    return a\n"
+    }
+    keys = {_variant_key(files, "__extracted_func_1") for files in (plain, commented, imported)}
+    assert len(keys) == 3

@@ -6,6 +6,7 @@ import ast
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -204,7 +205,7 @@ def test_real_checkers_validate_even_an_unused_constraint_body(
     )
 
     def extra_constraint(
-        rows: Sequence[Sequence[TypeTerm]], reserved: set[str]
+        rows: Sequence[Sequence[TypeTerm]], reserved: set[str], **options: Any
     ) -> tuple[GenericSignature, ...]:
         # Fault-inject an unsupported alternative that no original caller uses.
         return tuple(
@@ -219,7 +220,7 @@ def test_real_checkers_validate_even_an_unused_constraint_body(
                     for parameter in candidate.parameters
                 ),
             )
-            for candidate in generalize_signatures(rows, reserved)
+            for candidate in generalize_signatures(rows, reserved, **options)
         )
 
     with patch(

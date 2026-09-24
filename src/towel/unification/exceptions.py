@@ -87,6 +87,17 @@ class UntypeableExtraction(RefactoringError):
         self.detail = detail
 
 
+class UnverifiableChangeError(RefactoringError):
+    """A candidate would change a file where the type checker cannot see what it moves.
+
+    The original check leaves a name there that it cannot type -- an import it
+    cannot resolve or finds no types for, a decorator without types -- and
+    everything that name reaches is ``Any``, which accepts every use. No check
+    could reject a change that misuses it, so the candidate is declined, not
+    refused on its merits.
+    """
+
+
 class UnsupportedLayoutError(TowelError, ValueError):
     """The project's packaging layout is one Towel does not model.
 
