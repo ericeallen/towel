@@ -30,6 +30,21 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- Pyright's language server checks a project as `pyright` itself does. Towel
+  sent it a `python.analysis` section without `autoSearchPaths`, which the
+  server then leaves off and the command line always sets, so a src
+  layout's package was analysed as `src.<pkg>` and consumers outside `src`
+  imported the installed copy, which for an editable install is the user's
+  own tree. A candidate that removed `edit` from click's exports broke six
+  lines of its typing tests and was reported clean, and trio reported 1989
+  errors where its own pyright reports 1870. The server's settings are now
+  stated in full and match the command line's in every configuration
+  tested; on click, trio, jinja2, markupsafe, attrs and structlog the two
+  report identical errors. A consumer that imports its package through an
+  editable install is judged against the candidate wherever the package
+  lives (`python/`, `lib/`, `packages/<name>/src`, or configured
+  `extraPaths`), and pyright's command line is told the project it checks,
+  so its answers no longer depend on where the temporary directory lives.
 - `s = super; s()` shared by sibling classes was moved into a module
   function, where it raised `RuntimeError: super(): __class__ cell not
   found`; `super()` reached through another name now stays where it is.
@@ -510,8 +525,9 @@ the correlation the call sites had.
   editable from the tree under test, Towel's `format` and `types` extras,
   and one candidate wheel, checked against `--towel-src` in every
   environment. mypy, pyright, Black, ruff and isort are taken at the
-  versions the project's `uv.lock`, `poetry.lock` or `pdm.lock` pins, where
-  it pins them. The environment also holds whatever the project declares its
+  versions the project pins: its lock file first, then the `rev` of the
+  tool's `.pre-commit-config.yaml` hook, then an exact pin in a requirements
+  file (httpx's `requirements.txt` has `mypy==1.17.1`). The environment also holds whatever the project declares its
   own type check needs: typing-named dependency groups and extras, the
   dependencies of tox environments and nox sessions that run a checker, its
   pre-commit mypy and pyright hooks' `additional_dependencies`, and
