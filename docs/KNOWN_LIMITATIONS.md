@@ -866,6 +866,24 @@ the proposals it built and did not apply, by reason:
   placeholder, a name bound only inside the block).
   `instantiation_mismatch`: the helper applied to the call's arguments does
   not reproduce the block up to renamed binders.
+- Tool directives in the moved code. The comments of a block move into the
+  helper with its code, and a directive (`# type: ignore`, `# pyright:
+  ignore`, `# noqa`, `# pragma: no cover`, `# nosec`, `# pylint: ...`,
+  `# fmt: ...`, `# isort: ...`, a type comment) changes what a tool reports
+  for its line, of which the helper has one where the sites had several.
+  `directives_differ`: the blocks do not carry the same directives, written
+  alike up to spacing, at the same places, as when only one copy of a line
+  needed its `# type: ignore` (mashumaro's `type_name`): the helper's line
+  would be silenced for every site or for none. `directive_on_argument`: a
+  checker's ignore stands on a line where a block's own code, anything
+  but a name or a literal, would become an argument of the call, which the
+  ignore, left in the helper, no longer covers. `directive_outlives_block`:
+  a region directive on a line of its own (`fmt: off`/`on`, `isort:
+  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`) is not
+  closed within the block, so its region reaches code that stays behind,
+  or a file-wide directive (`flake8: noqa`, `ruff: noqa`, `mypy:`, `pyright:
+  strict`) would move into another module. A further site whose directives
+  differ from the pair's is left out of the cluster rather than declining it.
 - Placement. `needs_class_body`: the blocks use zero-argument `super()` and
   the helper cannot be a method of the class holding both, reached through
   the same receiver (*Method insertion*); nothing else binds `super()` alike.
