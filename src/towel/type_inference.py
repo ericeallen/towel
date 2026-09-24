@@ -262,11 +262,20 @@ def _module_name(path: Path) -> str:
     return _module_name_and_root(path)[0]
 
 
-def checker_module_name(path: Path) -> Optional[str]:
-    """The module name mypy is given for ``path`` when it is probed, or None for a placeholder.
+def _build_source(path: str, text: str) -> _BuildSource:
+    """``text`` for the module at ``path``, with the name Towel gives it where mypy gives none."""
+    module, root = _module_name_and_root(Path(path))
+    return _BuildSource(path, module, str(root), text)
 
-    It names a module by its ``__init__`` chain (:func:`_module_name_and_root`),
-    which is how mypy spells the module in every type it reveals.
+
+def checker_module_name(path: Path) -> Optional[str]:
+    """The module's name by its ``__init__`` chain, or None for a placeholder.
+
+    It is the name mypy gives a probed module wherever the configuration does
+    not decide otherwise (:func:`_module_name_and_root`), and so how mypy
+    spells the module in the types it reveals. Under ``explicit_package_bases``
+    mypy names a module from its package base (``tests.test_m``, not
+    ``test_m``), and a type from a module no import names is then not matched.
     """
     name = _module_name(path)
     return None if "_towel_package" in name.split(".") else name
@@ -327,8 +336,17 @@ def _verdicts_from_error_lines(
 
 @dataclass(frozen=True)
 class _BuildSource:
+    """A module given to the worker as text.
+
+    ``module`` and ``root`` are Towel's ``__init__``-chain name for it and the
+    directory that name is found from; the worker names a probed module as
+    mypy names its file, and takes these only where mypy names none
+    (``_probed_as_the_project_names`` in ``_mypy_worker.py``).
+    """
+
     path: str
     module: str
+    root: str
     text: str
 
 
@@ -525,7 +543,6 @@ class MypyInferrer:
     def _build_errors(
         self,
         sources: Sequence[_BuildSource],
-        roots: Sequence[str],
         *,
         complete: bool = False,
         excluded_paths: Sequence[str] = (),
@@ -544,13 +561,15 @@ class MypyInferrer:
             request = {
                 "root": str(root),
                 "config": _mypy_config(root),
-                "roots": list(roots),
                 "sources": {str(Path(source.path).resolve()): source.text for source in sources},
                 # A complete build is a check of the project, any other a probe.
                 "complete": complete,
                 "excluded_paths": list(excluded_paths),
                 "consumers": list(consumers),
-                "modules": {str(Path(source.path).resolve()): source.module for source in sources},
+                "modules": {
+                    str(Path(source.path).resolve()): [source.module, source.root]
+                    for source in sources
+                },
             }
             try:
                 process = self._running_worker()
@@ -682,8 +701,7 @@ class MypyInferrer:
         if not pairs:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
-        module, root = _module_name_and_root(Path(file_path))
-        result = self._build_errors([_BuildSource(file_path, module, text)], [str(root)])
+        result = self._build_errors([_build_source(file_path, text)])
         if isinstance(result, CheckFailure):
             LOG.warning("mypy subtype check failed: %s", result.reason)
             return [Subtyping.UNKNOWN] * len(pairs)
@@ -703,17 +721,13 @@ class MypyInferrer:
     ) -> CheckResult:
         errors: List[TypeDiagnostic] = []
         for root, replacements in _source_groups(sources, "mypy").items():
-            builds = [
-                _BuildSource(path, _module_name_and_root(Path(path))[0], source)
-                for path, source in replacements.items()
-            ]
+            builds = [_build_source(path, source) for path, source in replacements.items()]
             try:
                 consumers = self._consumers(root, replacements)
             except ScanLimitExceeded as error:
                 return CheckFailure(str(error))
             result = self._build_errors(
                 builds,
-                [str(root)],
                 complete=True,
                 excluded_paths=excluded_paths,
                 consumers=consumers,
@@ -733,7 +747,6 @@ class MypyInferrer:
         for request in requests:
             by_file.setdefault(request.file_path, []).append(request)
         sources: List[_BuildSource] = []
-        roots: List[str] = []
         probe_lines: Dict[Tuple[str, int], RevealKey] = {}
         for file_path, file_requests in by_file.items():
             text = file_requests[0].source
@@ -761,13 +774,10 @@ class MypyInferrer:
                         request.line,
                         index,
                     )
-            module, root = _module_name_and_root(Path(file_path))
-            sources.append(_BuildSource(file_path, module, text))
-            if str(root) not in roots:
-                roots.append(str(root))
+            sources.append(_build_source(file_path, text))
         if not sources:
             return {}
-        result = self._build_errors(sources, roots)
+        result = self._build_errors(sources)
         if isinstance(result, CheckFailure):
             LOG.warning("mypy inference failed: %s", result.reason)
             return {}

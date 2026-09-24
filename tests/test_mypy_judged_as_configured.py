@@ -40,14 +40,32 @@ import logging
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
 from typing import Mapping
 
 import pytest
 
 pytest.importorskip("mypy")
 
+from mypy.find_sources import create_source_list  # noqa: E402
+from mypy.options import Options  # noqa: E402
+
 from towel import _mypy_worker as worker  # noqa: E402
 from towel.type_inference import CheckFailure, MypyInferrer, _BuildMessages  # noqa: E402
+
+
+def _write(root: Path, files: Mapping[str, str]) -> None:
+    for name, text in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
+
+
+def _options(root: Path, config: str, *, probe: bool = False) -> Options:
+    """The options the worker builds with for a project whose ``pyproject.toml`` holds ``config``."""
+    (root / "pyproject.toml").write_text(config, encoding="utf-8")
+    return worker._options(root, str(root / "pyproject.toml"), str(root / ".cache"), probe=probe)[0]
+
 
 # --- D2: what mypy says while reading a configuration ------------------------
 
@@ -147,3 +165,72 @@ def test_the_worker_answer_carries_what_mypy_said_and_never_a_failure_for_it(
         "failure": None,
         "warnings": ["warned"],
     }
+
+
+# --- D9: how a probed module is named ------------------------------------------
+
+
+NAMING = [
+    # (files, [tool.mypy] body, probed file, module, directory it is found from)
+    (["pkg/__init__.py", "pkg/m.py"], "", "pkg/m.py", "pkg.m", "."),
+    (["src/pkg/__init__.py", "src/pkg/m.py"], "", "src/pkg/m.py", "pkg.m", "src"),
+    (["src/pkg/__init__.py"], "", "src/pkg/__init__.py", "pkg", "src"),
+    (["tests/test_m.py"], "", "tests/test_m.py", "test_m", "tests"),
+    # A PEP 420 directory above a package: named from the package, or from the base.
+    (
+        ["src/acme/shop/__init__.py", "src/acme/shop/models.py"],
+        "",
+        "src/acme/shop/models.py",
+        "shop.models",
+        "src/acme",
+    ),
+    (
+        ["src/acme/shop/__init__.py", "src/acme/shop/models.py"],
+        'mypy_path = "src"\nexplicit_package_bases = true\n',
+        "src/acme/shop/models.py",
+        "acme.shop.models",
+        "src",
+    ),
+    (
+        ["tests/test_m.py"],
+        "explicit_package_bases = true\n",
+        "tests/test_m.py",
+        "tests.test_m",
+        ".",
+    ),
+    # A directory without ``__init__`` inside a package is a namespace package, unless turned off.
+    (["pkg/__init__.py", "pkg/sub/m.py"], "", "pkg/sub/m.py", "pkg.sub.m", "."),
+    (
+        ["pkg/__init__.py", "pkg/sub/m.py"],
+        "namespace_packages = false\n",
+        "pkg/sub/m.py",
+        "m",
+        "pkg/sub",
+    ),
+    # A package directory whose name is no identifier: mypy names nothing there.
+    (["cleaned-out/__init__.py", "cleaned-out/m.py"], "", "cleaned-out/m.py", "placeholder", "."),
+]
+
+
+@pytest.mark.parametrize("files, config, probed, module, directory", NAMING)
+def test_a_probed_module_is_named_as_mypy_names_its_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    files: list[str],
+    config: str,
+    probed: str,
+    module: str,
+    directory: str,
+) -> None:
+    _write(tmp_path, {name: "" for name in files})
+    monkeypatch.chdir(tmp_path)
+    options = _options(tmp_path, "[tool.mypy]\n" + config, probe=True)
+    path = str(tmp_path / probed)
+    source = worker._probed_as_the_project_names(path, "", ("placeholder", str(tmp_path)), options)
+    assert (source.module, Path(source.base_dir or "")) == (module, (tmp_path / directory))
+    if module != "placeholder":
+        # Exactly as mypy's own walk names the file for the project's run.
+        [walked] = [
+            each for each in create_source_list([str(tmp_path)], options) if each.path == path
+        ]
+        assert (walked.module, walked.base_dir) == (source.module, source.base_dir)

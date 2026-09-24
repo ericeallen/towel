@@ -49,7 +49,7 @@ from typing import Callable, List, Mapping, NamedTuple, Optional, Sequence, Tupl
 from mypy import build
 from mypy.build import BuildSource
 from mypy.errors import CompileError, Errors
-from mypy.find_sources import create_source_list
+from mypy.find_sources import InvalidSourceList, create_source_list
 from mypy.fscache import FileSystemCache
 from mypy.main import process_options
 from mypy.modulefinder import matches_exclude
@@ -122,9 +122,7 @@ def _read_configuration(config: str | None) -> _Configured:
     return _Configured(options, tuple(line for line in said.getvalue().splitlines() if line))
 
 
-def _options(
-    root: Path, config: str | None, cache: str, roots: Sequence[str], *, probe: bool
-) -> _Configured:
+def _options(root: Path, config: str | None, cache: str, *, probe: bool) -> _Configured:
     """The options of one build: the project's own, but for what a probe needs beyond them.
 
     A check (a complete build: the baseline, a candidate, the cold
@@ -179,19 +177,13 @@ def _options(
     # Pretty diagnostics read snippets from disk, but prospective sources and
     # probes exist only in memory and can extend beyond the physical file.
     options.pretty = False
-    # A check's sources come with the directories mypy searches for what they
-    # import, and the root is the working directory, searched after them, as
-    # in the project's own run. Searched first, the root answered a test's
-    # ``import helpers`` with a ``helpers.py`` of its own instead of the one
-    # beside the test. A probed module is given as text alone, so a probe is
-    # also given the root its module imports from.
+    # Every source, a probed module included, comes with the directory mypy
+    # searches for what it imports (its ``base_dir``), and the root is the
+    # working directory, searched after them, as in the project's own run.
+    # Searched first, the root answered a test's ``import helpers`` with a
+    # ``helpers.py`` of its own instead of the one beside the test.
     options.mypy_path = list(
-        dict.fromkeys(
-            [
-                *(str((root / path).resolve()) for path in options.mypy_path),
-                *(roots if probe else ()),
-            ]
-        )
+        dict.fromkeys(str((root / path).resolve()) for path in options.mypy_path)
     )
     return _Configured(options, configured.said)
 
@@ -254,6 +246,24 @@ def _sources(value: object) -> dict[str, str]:
         if not isinstance(path, str) or not isinstance(text, str) or not Path(path).is_absolute():
             raise ValueError("Expected source text and absolute paths")
         result[path] = text
+    return result
+
+
+def _placeholders(value: object) -> dict[str, Tuple[str, str]]:
+    """Per probed path, the module name and import directory Towel supplies for when mypy has none."""
+    if not isinstance(value, dict):
+        raise ValueError("Expected probed module names keyed by absolute path")
+    result: dict[str, Tuple[str, str]] = {}
+    for path, named in value.items():
+        if (
+            not isinstance(path, str)
+            or not Path(path).is_absolute()
+            or not isinstance(named, list)
+            or len(named) != 2
+            or not all(isinstance(part, str) for part in named)
+        ):
+            raise ValueError("Expected a module name and its directory for each probed path")
+        result[path] = (str(named[0]), str(named[1]))
     return result
 
 
@@ -471,13 +481,38 @@ def _one_source_per_module(selected: Sequence[BuildSource]) -> list[BuildSource]
     return list(by_path.values())
 
 
+def _probed_as_the_project_names(
+    path: str, text: Optional[str], placeholder: Tuple[str, str], options: Options
+) -> BuildSource:
+    """A probed module, named as mypy names its file under the project's configuration.
+
+    Its module name and the directory it imports from are what mypy's own
+    walk gives the file (``crawl_up``), so a probe names a module exactly as
+    the project's run and a complete check do. Towel's own ``__init__``-chain
+    name differed wherever the configuration decides: with
+    ``explicit_package_bases`` and ``mypy_path = "src"``, mypy names
+    ``src/acme/shop/models.py`` ``acme.shop.models``, a probe named it
+    ``shop.models``, and every probe build of such a project failed with
+    "Source file found twice". Only a file mypy will not name at all, below a
+    package directory whose name is no identifier, takes ``placeholder``.
+    """
+    try:
+        named = create_source_list([path], options)
+    except InvalidSourceList:
+        named = []
+    if len(named) != 1 or not named[0].module:
+        module, directory = placeholder
+        return BuildSource(path, module, text, directory)
+    return BuildSource(path, named[0].module, text, named[0].base_dir)
+
+
 def _build_sources(
     replacements: Mapping[str, str],
     given: Mapping[str, str],
     options: Options,
     root: Path,
     complete: bool,
-    modules: Mapping[str, str],
+    placeholders: Mapping[str, Tuple[str, str]],
     consumers: Sequence[str],
 ) -> list[BuildSource]:
     # Text is given for the replacements and for every path an earlier request
@@ -492,7 +527,10 @@ def _build_sources(
     if not complete:
         # The probed modules are the question and are built from their own
         # text; every other module is read as the project's mypy would read it.
-        probed = [BuildSource(path, modules[path], given.get(path)) for path in replacements]
+        probed = [
+            _probed_as_the_project_names(path, given.get(path), placeholders[path], options)
+            for path in replacements
+        ]
         return probed + [
             BuildSource(
                 resolved.path, resolved.module, given.get(resolved.path or ""), resolved.base_dir
@@ -615,7 +653,7 @@ def _request(request: object, cache: str) -> _Answered:
     root = Path(root_value)
     os.chdir(root)
     complete = request.get("complete") is True
-    configured = _options(root, config, cache, _strings(request.get("roots")), probe=not complete)
+    configured = _options(root, config, cache, probe=not complete)
     options = configured.options
     judged = _judged_by_the_project(options, root) if complete else None
     for excluded in _strings(request.get("excluded_paths")):
@@ -633,7 +671,7 @@ def _request(request: object, cache: str) -> _Answered:
         options,
         root,
         complete,
-        _sources(request.get("modules")),
+        _placeholders(request.get("modules")),
         _strings(request.get("consumers") or []),
     )
     result = build.build(sources=sources, options=options)
