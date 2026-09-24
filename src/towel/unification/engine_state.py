@@ -243,6 +243,8 @@ class EngineState:
     """The change the checker last accepted, until the driver writes it or checks another."""
     _type_names_any: Mapping[str, Tuple[TypeDiagnostic, ...]]
     """The files the original check names what it cannot type in, which no change may touch."""
+    _type_unlooked: Mapping[str, Tuple[str, Tuple[Tuple[int, int], ...]]]
+    """Per file, the digest of its original text and the regions the checker did not look at."""
     _analysis_paths: Tuple[str, ...]
     """Paths from the latest analysis, used to seed a direct application's initial check."""
     _output_origin: Optional[Tuple[Path, Path]]

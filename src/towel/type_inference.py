@@ -105,6 +105,7 @@ __all__ = [
     "TypeOracle",
     "checks_in_turn",
     "is_probe_file",
+    "reveal_by_each",
     "type_oracle_for_project",
     "relocate_oracle",
 ]
@@ -1450,6 +1451,23 @@ def checks_in_turn(
         yield oracle.check_project(sources, excluded_paths=excluded_paths)
 
 
+def reveal_by_each(
+    oracle: TypeOracle, requests: Sequence[RevealRequest]
+) -> Tuple[Mapping[RevealKey, str], ...]:
+    """What each checker behind ``oracle`` reveals for ``requests``, one answer per checker.
+
+    A combined oracle infers with its primary checker alone, and that is all
+    ``reveal`` asks. Whether a checker looks at a line at all is a question for
+    every checker that verifies: mypy and pyright each take their own platform
+    and Python version, and code one of them skips it verifies nothing about.
+    """
+    if isinstance(oracle, CombinedOracle):
+        return tuple(answer for one in oracle.checkers for answer in reveal_by_each(one, requests))
+    if isinstance(oracle, _RelocatedOracle):
+        return oracle.reveal_by_each(requests)
+    return (oracle.reveal(requests),)
+
+
 def _every_check(results: Iterable[CheckResult]) -> CheckResult:
     """All the errors of ``results``, or the first that could not be completed."""
     errors: List[TypeDiagnostic] = []
@@ -1534,7 +1552,17 @@ class _RelocatedOracle:
         return path
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        originals = [
+        return self._outputs(self._oracle.reveal(self._originals(requests)))
+
+    def reveal_by_each(
+        self, requests: Sequence[RevealRequest]
+    ) -> Tuple[Mapping[RevealKey, str], ...]:
+        """Each checker's revelations, at the copy's paths; see :func:`reveal_by_each`."""
+        answers = reveal_by_each(self._oracle, self._originals(requests))
+        return tuple(self._outputs(answer) for answer in answers)
+
+    def _originals(self, requests: Sequence[RevealRequest]) -> List[RevealRequest]:
+        return [
             RevealRequest(
                 self._original(request.file_path),
                 request.source,
@@ -1544,9 +1572,11 @@ class _RelocatedOracle:
             )
             for request in requests
         ]
+
+    def _outputs(self, revealed: Mapping[RevealKey, str]) -> Mapping[RevealKey, str]:
         return {
             (self._output(path), line, index): value
-            for (path, line, index), value in self._oracle.reveal(originals).items()
+            for (path, line, index), value in revealed.items()
         }
 
     def is_subtype(

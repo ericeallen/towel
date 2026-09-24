@@ -50,6 +50,17 @@ class UnverifiableChangeError(RefactoringError):
     """
 
 
+class UncheckedCodeError(UnverifiableChangeError):
+    """A candidate would change code the type checker does not look at.
+
+    The checker takes it to be unreachable on the platform and Python version
+    it checks for -- a module that asserts another platform, a branch under a
+    ``sys.platform`` or ``sys.version_info`` test it makes false -- and reports
+    nothing there, so its acceptance of the change said nothing. The
+    project's own check may look at it on another platform, and did at trio.
+    """
+
+
 class UnsupportedLayoutError(TowelError, ValueError):
     """The project's packaging layout is one Towel does not model.
 
