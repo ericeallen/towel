@@ -15,6 +15,7 @@ from towel.type_inference import TypeDiagnostic
 from towel.unification.annotation_ladder import (
     Rejection,
     narrowing_needed_in_thunk,
+    narrowing_refused_in_thunk,
     partial_type_passed,
     self_as_type_variable,
     targeted_any,
@@ -58,6 +59,46 @@ def test_a_flag_or_a_lambda_reading_something_else_is_left_to_the_checker() -> N
     flag = _call("helper(finished, lambda: int(task.total), lambda: done)")
     other = _call("helper(task.total is not None, lambda: int(task.done), lambda: done)")
     assert narrowing_needed_in_thunk(_HELPER, [flag, other]) is None
+
+
+def test_a_test_that_narrows_only_some_types_is_left_to_the_checker() -> None:
+    """mistune's ``strip_end``: ``newline >= 0`` leaves ``newline`` an ``int``."""
+    ordering = _call("helper(newline >= 0, lambda: src[:newline] + '\\n', lambda: src)")
+    membership = _call("helper(key in cache, lambda: cache[key], lambda: None)")
+    truth = _call("helper(self.total, lambda: self.total / 2, lambda: 0)")
+    assert narrowing_needed_in_thunk(_HELPER, [ordering, membership, truth]) is None
+
+
+_THUNK_MODULE = textwrap.dedent("""
+    def __extracted_func_0(__param_0, __param_1, __param_2):
+        value = __param_1() if __param_0 else __param_2()
+        return value
+
+
+    def caller(self) -> float:
+        return __extracted_func_0(self.total, lambda: self.total / 2, lambda: 0)
+    """).lstrip()
+
+
+def _thunk_refusal(message: str) -> Rejection:
+    return Rejection(
+        (TypeDiagnostic("/p/m.py", message, 7),),
+        "/p/m.py",
+        "__extracted_func_0",
+        _THUNK_MODULE,
+        {"/p/m.py": _THUNK_MODULE},
+    )
+
+
+def test_the_checker_says_when_a_truth_test_narrowed_what_a_lambda_reads() -> None:
+    helper = _function(_THUNK_MODULE)
+    refused = _thunk_refusal('Unsupported operand types for / ("None" and "int")')
+    verdict = narrowing_refused_in_thunk(helper, refused)
+    assert verdict is not None and verdict.reason is Untypeable.NARROWING_READ_IN_THUNK
+    argument = _thunk_refusal(
+        'Argument 1 to "__extracted_func_0" has incompatible type "int | None"; expected "int"'
+    )
+    assert narrowing_refused_in_thunk(helper, argument) is None
 
 
 def _partial(source: str, *, checked_untyped: bool = False) -> object:

@@ -820,33 +820,58 @@ class Unanswerable:
 _NARROWING_CALLS = frozenset({"isinstance", "issubclass", "callable", "hasattr"})
 
 
-def _tested(test: ast.expr) -> Set[str]:
-    """The names and attribute chains a test narrows for the code it governs."""
+def _narrows(comparison: ast.Compare) -> bool:
+    """Whether a comparison narrows its left operand: identity, or equality with ``None``.
+
+    ``newline >= 0`` leaves ``newline`` an ``int`` and ``key in mapping`` leaves
+    ``key`` what it was; neither is a test a guarded expression can rely on.
+    """
+    for operator, right in zip(comparison.ops, comparison.comparators):
+        if isinstance(operator, (ast.Is, ast.IsNot)):
+            continue
+        if (
+            isinstance(operator, (ast.Eq, ast.NotEq))
+            and isinstance(right, ast.Constant)
+            and right.value is None
+        ):
+            continue
+        return False
+    return True
+
+
+def _tested(test: ast.expr, *, truthiness: bool = True) -> Set[str]:
+    """The names and attribute chains a test narrows for the code it governs.
+
+    A narrowing call's first argument (``isinstance`` and its kind), the left
+    of an identity comparison or of ``== None`` (``type(x) is C`` narrows
+    ``x``), through ``not`` and ``and``/``or``; and, with ``truthiness``, a
+    name or chain tested for truth, which narrows an optional value but
+    leaves an ``int`` or a ``str`` as it was.
+    """
     found: Set[str] = set()
-    for node in ast.walk(test):
-        subject: Optional[ast.expr] = None
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in _NARROWING_CALLS and node.args:
-                subject = node.args[0]
-        elif isinstance(node, ast.Compare):
-            subject = node.left
-            if (
-                isinstance(subject, ast.Call)
-                and isinstance(subject.func, ast.Name)
-                and subject.func.id == "type"
-                and len(subject.args) == 1
-            ):
-                subject = subject.args[0]
-        if subject is not None and (spelled := _dotted(subject)) is not None:
-            found.add(spelled)
-    if (spelled := _dotted(test)) is not None:
-        found.add(spelled)  # truthiness
-    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-        if (spelled := _dotted(test.operand)) is not None:
-            found.add(spelled)
     if isinstance(test, ast.BoolOp):
         for value in test.values:
-            found |= _tested(value)
+            found |= _tested(value, truthiness=truthiness)
+        return found
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return _tested(test.operand, truthiness=truthiness)
+    subject: Optional[ast.expr] = None
+    if isinstance(test, ast.Call) and isinstance(test.func, ast.Name):
+        if test.func.id in _NARROWING_CALLS and test.args:
+            subject = test.args[0]
+    elif isinstance(test, ast.Compare) and _narrows(test):
+        subject = test.left
+        if (
+            isinstance(subject, ast.Call)
+            and isinstance(subject.func, ast.Name)
+            and subject.func.id == "type"
+            and len(subject.args) == 1
+        ):
+            subject = subject.args[0]
+    elif truthiness:
+        subject = test
+    if subject is not None and (spelled := _dotted(subject)) is not None:
+        found.add(spelled)
     return found
 
 
@@ -1052,17 +1077,15 @@ def _governed_thunks(helper: FunctionNode) -> Dict[str, Set[str]]:
 
 
 def _narrowing_test(argument: ast.expr) -> Set[str]:
-    """What an argument narrows where the helper tests it: nothing unless it is a test.
+    """What an argument narrows wherever it is tested, whatever the declared types.
 
-    A comparison, a narrowing call such as ``isinstance``, their negation or
-    conjunction, or an attribute chain tested for truth. A bare name is most
-    often a flag, and a flag narrows nothing a lambda would read.
+    Only a narrowing call or an identity test: those change a type whenever
+    they change anything, since ``x is not None`` is written only where ``x``
+    may be ``None``. A value tested for truth narrows an optional one but not
+    an ``int`` or a ``str``, which only the checker can tell apart
+    (``narrowing_refused_in_thunk``).
     """
-    if isinstance(argument, ast.Name):
-        return set()
-    if isinstance(argument, (ast.Compare, ast.Call, ast.BoolOp, ast.UnaryOp, ast.Attribute)):
-        return _tested(argument)
-    return set()
+    return _tested(argument, truthiness=False)
 
 
 def _read_in_lambda(thunk: ast.Lambda) -> Set[str]:
@@ -1125,6 +1148,54 @@ def narrowing_needed_in_thunk(
                             f"{ast.unparse(thunk)} reads {reference}, which"
                             f" {ast.unparse(test)} narrowed where the block evaluated it",
                         )
+    return None
+
+
+def narrowing_refused_in_thunk(
+    helper: FunctionNode, rejection: Rejection
+) -> Optional[Unanswerable]:
+    """Why no signature can answer ``rejection``: a lambda at a call lost a narrowing a truth test gave it.
+
+    The same case as :func:`narrowing_needed_in_thunk` for a test that only
+    narrows some types: ``self.total / 2 if self.total else 0`` narrows an
+    optional ``total`` and leaves an ``int`` one alone, so only the checker can
+    say the lambda needed it. It says so with an error on the lambda's own
+    lines, other than one about the call's arguments or its value, which a
+    signature could still correct.
+    """
+    governed = _governed_thunks(helper)
+    if not governed:
+        return None
+    project = _RenderedProject(rejection)
+    for call in project.calls():
+        for test_parameter, thunk_parameters in governed.items():
+            test = call.arguments.get(test_parameter)
+            if test is None:
+                continue
+            narrowed = _tested(test)
+            for thunk_parameter in sorted(thunk_parameters):
+                thunk = call.arguments.get(thunk_parameter)
+                if not isinstance(thunk, ast.Lambda):
+                    continue
+                read = {r for r in narrowed if _reads(_read_in_lambda(thunk), r)}
+                if not read:
+                    continue
+                first, last = thunk.lineno, thunk.end_lineno or thunk.lineno
+                for error in rejection.errors:
+                    if (
+                        error.line is None
+                        or not _same_file(error.path, call.path)
+                        or not first <= error.line <= last
+                        or _ARGUMENT.match(error.message)
+                        or error.message.startswith((_RETURNING_ANY, *_VALUE_REFUSED))
+                    ):
+                        continue
+                    return Unanswerable(
+                        Untypeable.NARROWING_READ_IN_THUNK,
+                        f"{ast.unparse(thunk)} reads {sorted(read)[0]}, which"
+                        f" {ast.unparse(test)} narrowed where the block evaluated it"
+                        f" ({os.path.basename(error.path)}:{error.line}: {error.message})",
+                    )
     return None
 
 

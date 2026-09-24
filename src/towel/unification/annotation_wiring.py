@@ -47,6 +47,7 @@ from .annotation_ladder import (
     drop_unbound_variables,
     method_at,
     narrowing_needed_in_thunk,
+    narrowing_refused_in_thunk,
     narrowing_the_call_cannot_carry,
     partial_type_passed,
     self_as_type_variable,
@@ -944,13 +945,16 @@ class HelperAnnotationWiring(EngineState):
         """What decides that a refusal of ``proposal``'s helper is one no signature can answer.
 
         A narrowing the call cannot carry back to its caller
-        (``narrowing_the_call_cannot_carry``), or attribute declarations that
-        left their class with the block (``declarations_leave_their_class``).
+        (``narrowing_the_call_cannot_carry``), one a lambda at the call lost
+        (``narrowing_refused_in_thunk``), or attribute declarations that left
+        their class with the block (``declarations_leave_their_class``).
         """
         receivers = self._site_receivers(proposal)
 
         def judge(helper: ast.FunctionDef, rejection: Rejection) -> Optional[Unanswerable]:
             reason = narrowing_the_call_cannot_carry(helper, rejection)
+            if reason is None:
+                reason = narrowing_refused_in_thunk(helper, rejection)
             if reason is None and receivers:
                 reason = declarations_leave_their_class(helper, rejection, receivers)
             return reason
