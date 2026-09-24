@@ -30,7 +30,7 @@ import tempfile
 
 import pytest
 
-from tests.hostile_execution import observe
+from tests.hostile_execution import module_faces, observe
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_crossfile"
@@ -78,6 +78,17 @@ def _run(root: Path) -> tuple[int, str, list[str]]:
     return observe("run.py", root)
 
 
+def _modules(root: Path) -> list[str]:
+    """Every module of the fixture but its script, ``run.py``, by the name it is imported under."""
+    names = []
+    for path in sorted(root.rglob("*.py")):
+        parts = path.relative_to(root).with_suffix("").parts
+        if parts == ("run",):
+            continue
+        names.append(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+    return names
+
+
 @pytest.mark.parametrize("case", sorted(path.name for path in CASES.iterdir() if path.is_dir()))
 def test_directory_refactoring_preserves_program_output(case: str) -> None:
     with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-") as directory:
@@ -96,6 +107,10 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
         transformed = _python_files(after) != _python_files(before)
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
         assert _run(after) == _run(before)
+        if transformed:
+            # No module's public names appear, disappear, or change meaning.
+            modules = _modules(before)
+            assert module_faces(after, modules) == module_faces(before, modules)
         assert transformed == (case in TRANSFORMED), (
             "rejected" if not transformed else "transformed"
         )

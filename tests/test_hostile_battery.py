@@ -4,8 +4,10 @@ Each fixture in ``tests/hostile_cases`` is a script whose ``__main__`` block
 prints every observation that an extraction could disturb: evaluation order,
 evaluation count, conditional evaluation, closure cells, deletion, and
 pattern bindings. The battery asserts that the program's output is identical
-after refactoring, and records per fixture whether the current engine
-transforms it or rejects it, so a change in either direction is visible.
+after refactoring, and that the module shows its importers the same public
+names bound to the same things (``module_faces``), and records per fixture
+whether the current engine transforms it or rejects it, so a change in either
+direction is visible.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import tempfile
 
 import pytest
 
-from tests.hostile_execution import observe, parsed_or_skipped
+from tests.hostile_execution import module_faces, observe, parsed_or_skipped
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -202,6 +204,9 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         transformed = before.read_bytes() != after.read_bytes()
         assert transformed == (applied > 0)
         assert _run(after) == _run(before)
+        if transformed:
+            # No public name of the module appears, disappears, or changes meaning.
+            assert module_faces(after.parent, ["m"]) == module_faces(before.parent, ["m"])
         assert transformed == (case in TRANSFORMED), (
             "rejected" if not transformed else "transformed"
         )
