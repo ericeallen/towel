@@ -1378,6 +1378,8 @@ class PairEvaluation(
                 a.class_name for a in functions.named(canonical_file, home.insert_into_function)
             }
             destination_class = next(iter(destinations)) if len(destinations) == 1 else None
+        # A site's block lies somewhere in its function's body, and moves out
+        # of its class; the function's own name and signature stay behind.
         for replacement in replacements:
             if replacement.class_name and replacement.class_name != destination_class:
                 source_path = replacement.file_path or canonical_file
@@ -1385,7 +1387,7 @@ class PairEvaluation(
                     if (
                         a.class_name == replacement.class_name
                         and span_contains(a.node, replacement.line_range)
-                        and uses_class_private_names([a.node])
+                        and uses_class_private_names(a.node.body)
                     ):
                         self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)
                         return None

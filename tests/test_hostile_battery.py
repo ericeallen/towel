@@ -174,6 +174,9 @@ TRANSFORMED = {
     # keep their code.
     "r160_rebinding_enclosing_function_beside_a_benign_twin",
     "r162_top_level_copy_beside_a_loop_copy",
+    # The control for the mangled parameters of r163 and r164, and the names
+    # of r165, which a class body rewrites and a helper elsewhere would not.
+    "r166_unmangled_parameter_passed_by_keyword",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
