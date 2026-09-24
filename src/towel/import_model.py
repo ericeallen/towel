@@ -105,7 +105,8 @@ What the model assumes, and cannot check:
   file, a setup.py); the imports of it the directory does not hold then put
   only their own files in doubt;
 - a module inside a regular package is imported through that package, never
-  run by its path with its own directory on ``sys.path``;
+  run by its path with its own directory on ``sys.path``, unless it imports
+  by a top-level name a module that only its package holds;
 - ``sys.path`` is the same when a module is imported as when its functions
   run, except in files that change it, whose imports attest nothing;
 - dynamic imports (``importlib.import_module``, ``__import__``) name nothing,
@@ -419,7 +420,11 @@ class TopLevelInsidePackage:
 
     ``import alpha.a`` from the tests finds ``src/alpha`` only with ``src`` on
     ``sys.path``, while another import uses ``src`` itself as a package, so the
-    same files are ``alpha.a`` to one and ``src.alpha.a`` to the other.
+    same files are ``alpha.a`` to one and ``src.alpha.a`` to the other. A module
+    file is the same: ``pkg/c.py`` importing ``helpers_top``, which only
+    ``pkg/helpers_top.py`` provides, runs with ``pkg`` itself on ``sys.path``,
+    as the top-level module ``c``, and a relative import written into it fails
+    there (:func:`_modules_beside_their_importers`).
     """
 
     name: str
@@ -1458,15 +1463,18 @@ def build_import_model(
     listings = _Listings(modules)
     entries = _top_level_entries(tree)
     strict = {name: entries.get(name, ()) for name in absolute}
-    relaxed, inside_used = _relaxed_candidates(
-        tree, _used_packages(tree, sites, strict), absolute, strict, listings
-    )
+    used_strictly = _used_packages(tree, sites, strict)
+    relaxed, inside_used = _relaxed_candidates(tree, used_strictly, absolute, strict, listings)
     found = {name: strict[name] or relaxed.get(name, ()) for name in absolute}
     classified = {
         name: _classify(name, found[name], absolute[name], tree, listings, probe, project)
         for name in absolute
     }
     requirements = tuple(declared_requirements(project) if required is None else required)
+    classified, modules_inside, scripts = _modules_beside_their_importers(
+        classified, absolute, tree, used_strictly, requirements, lambda name: probe(name, project)
+    )
+    inside_used = {**inside_used, **modules_inside}
     names, unresolved = _checked(dict(sorted(classified.items())), absolute, listings)
     names, unresolved = _required_elsewhere(names, unresolved, requirements)
     located = {
@@ -1481,6 +1489,7 @@ def build_import_model(
     package_of = {path: _package_of(path, tree, used, bounds) for path in tree.modules}
     problems = _problems(tree, modules, names, unresolved, inside_used, listings)
     flagged_names, flagged_files = _flags(problems)
+    flagged_files |= scripts
     names = {name: replace(info, flagged=name in flagged_names) for name, info in names.items()}
     trusted = {info.candidates[0]: name for name, info in names.items() if info.trusted}
     blocked = frozenset(
@@ -1609,6 +1618,64 @@ def _relaxed_candidates(
                 if top in used:
                     inside_used.setdefault(name, (child, top))
     return {name: tuple(paths) for name, paths in found.items()}, inside_used
+
+
+def _modules_beside_their_importers(
+    names: Mapping[str, TopLevelName],
+    absolute: Mapping[str, Sequence[ImportSite]],
+    tree: _Tree,
+    used: Set[Path],
+    required: Sequence[Requirement],
+    outside: Callable[[str], Optional[OutsideProvider]],
+) -> Tuple[Dict[str, TopLevelName], Dict[str, Tuple[Path, Path]], FrozenSet[Path]]:
+    """Names nothing else provides that a file in a package imports from a module beside it.
+
+    ``pkg/c.py`` imports ``helpers_top``, and only ``pkg/helpers_top.py`` is
+    named so: the import holds only where ``c.py`` runs as a script, with
+    ``pkg`` itself on ``sys.path``, so that module is the name's location.
+    Where the program also uses the package as one, the second mapping
+    records the conflict. Either way the files making such an import, and
+    the module they import, the third result, run as top-level modules,
+    where a relative import fails: they are never a provider and are given
+    no new import. Only an import that
+    attests (:attr:`ImportSite.attests`), from another file of the module's
+    own directory, is such evidence. A module importing its own name
+    (``tqdm/keras.py``'s ``import keras``), or a script elsewhere importing a
+    library named like a package's module (mistune's benchmark importing
+    ``markdown``), names the library; and so does any import of a name
+    something else provides: an installed copy, the standard library, or a
+    distribution the project requires.
+    """
+    requiring = frozenset(requirement.name for requirement in required)
+    placed: Dict[str, TopLevelName] = {}
+    inside: Dict[str, Tuple[Path, Path]] = {}
+    scripts: Set[Path] = set()
+    modules = frozenset(tree.modules)
+    for name, info in names.items():
+        if (
+            info.status is not NameStatus.EXTERNAL
+            or info.installed is not None
+            or normalized_name(name) in requiring
+            or not _is_identifier(name)
+        ):
+            continue
+        importers: Dict[Path, Set[Path]] = {}
+        for site in absolute[name]:
+            sibling = site.file.parent / f"{name}.py"
+            if site.attests and sibling in modules and sibling != site.file:
+                importers.setdefault(sibling, set()).add(site.file)
+        if not importers or outside(name) is not None:
+            continue
+        locations = tuple(sorted(importers))
+        status = NameStatus.ATTESTED if len(locations) == 1 else NameStatus.AMBIGUOUS
+        placed[name] = TopLevelName(name, status, locations)
+        for location in locations:
+            scripts.update({location, *importers[location]})
+            chain = _chain(location.parent, tree.packages, tree.root)
+            package = next((directory for directory in reversed(chain) if directory in used), None)
+            if package is not None:
+                inside.setdefault(name, (location, package))
+    return {**names, **placed}, inside, frozenset(scripts)
 
 
 def _names_a_module_of(sites: Sequence[ImportSite], directory: Path, listings: _Listings) -> bool:
