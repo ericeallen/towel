@@ -501,11 +501,12 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   taking the receiver.
 - A helper goes into a class only when every duplicate it replaces is a
   method of that class; blocks shared by different classes become
-  module-level functions taking the receiver. Towel had hoisted 14 of 45
-  method helpers over click, rich, packaging and pygments into ancestors
-  that held none of the code, among them click's `UsageError`, rich's
-  `JupyterMixin` and pygments' `Formatter` and `Lexer`: public bases that
-  other code subclasses, where any subclass could take the helper's place.
+  module-level functions taking the receiver. Towel had hoisted method
+  helpers into ancestors that held none of the code, among them click's
+  `UsageError`, rich's `JupyterMixin`, packaging's `BaseSpecifier` and
+  pygments' `Formatter` and `Lexer`. These are public bases that other code
+  subclasses, where any subclass could take the helper's place
+  (`docs/DECISIONS.md` gives the count measured when the rule was chosen).
   Whether such a function belongs in a class is left to whoever reviews the
   output (see `docs/DECISIONS.md`). pygments makes 71 refactorings instead
   of 77 and rich 30 instead of 33; click and packaging are unchanged, and
@@ -562,14 +563,13 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   rather than wrapped again. With the escape guard switched off, sqlglot's
   DuckDB generator went from no fixed point in 900 s to one in 18 s.
 - A base-class name is resolved as the binding in effect where the class
-  statement runs, not by finding a class of that qualname anywhere in the file.
-  Python binds globals as a module executes, so `Base = object` written between
-  two subclasses gives them different bases, and the helper hoisted into the
-  class the first one sees is not a method of the second: the program Towel
-  wrote raised `AttributeError` where the program it was given returned an
-  answer. A binding that cannot be established there yields no ancestor and a
-  module-level helper. Over 21 packages the proposals are unchanged; of 4,706
-  same-module resolutions 148 are declined, 96 for a qualname never unique.
+  statement runs, not by finding a class of that qualname anywhere in the
+  file. Python binds globals as a module executes, so `Base = object`
+  written between two subclasses gives them different bases. The checks on
+  a host class's bases (its metaclass, `__init_subclass__` and
+  `__getattribute__`) therefore read the base the class really has. A
+  binding that cannot be established there counts as unknown, and the
+  helper is a module-level function.
 - A copied annotation is no longer evaluated a second time. An annotation is an
   expression, and the copy runs at the helper's own `def`:
   `Annotated[int, mark('a')]` called `mark` again at import, and an annotation
@@ -644,9 +644,6 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   inherited by every subclass. One such annotation was enough to send a whole
   helper down to the all-`Any` rung, so signatures that had lost every type
   recover them.
-- The shared ancestor a helper is lifted into is the one both classes agree
-  on. It was the nearest from whichever class the pair presented first, so
-  declaration order decided the home.
 - A class passed to a helper is typed `type[C]`. A checker shows a reference
   to a class as its constructor's signature, which reads as something merely
   callable and is rejected where a type is wanted, by `isinstance` among
