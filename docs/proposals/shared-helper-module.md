@@ -1,8 +1,8 @@
 # A shared helper module for duplicates across unrelated directories
 
-Status: proposal, 2026-09-24. The idea is the owner's, and the figures
-below measure it. Not scheduled; the recommendation is to build it after
-1.772.
+Status: proposal, recorded at the owner's direction on 2026-09-24 (see
+`docs/DECISIONS.md`). The idea is the owner's, and the figures below
+measure it. It is not part of 1.772 and is not scheduled.
 
 ## The idea
 

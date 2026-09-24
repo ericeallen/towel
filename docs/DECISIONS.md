@@ -523,3 +523,31 @@ off by default behind a flag, and cross-module soundness becomes the next
 release's work. The 141-project corpus then runs against the final commit.
 Its recorded phases total about two hours, roughly half an hour to an hour of
 wall time at four workers.
+
+## 2026-09-24: A helper module shared by unrelated directories is a proposal
+
+The owner suggested a way to recover cross-module duplicates that the
+directory rule and the cycle and import-change checks decline. Behind a flag
+of its own, the helper would go in a new module at the most specific regular
+package that holds every borrower. A study of 12 corpus projects found 19,914
+such duplicates recoverable, 3,831 of them between library modules. They
+include the largest cross-module duplicates in sphinx's C and C++ domains
+and in networkx's graph classes.
+
+It is recorded as a proposal, `docs/proposals/shared-helper-module.md`, and
+is not part of 1.772. A new host alone does not make it sound. Four more
+things are needed:
+
+- every directory from the common package down to each borrower must be a
+  regular package;
+- the new module must be shown to ship;
+- test helpers must not become a shipped library module, which 949 of the
+  recoverable duplicates would do;
+- the new module needs its own cycle and import-change argument.
+
+That last point matters because Towel's current checks see false cycles
+through the common package's `__init__.py`, and accept only 684 of the 3,831
+library cases. Building it now would reopen the audit rounds that 1.772 is
+closing.
+
+*Status: proposal; not scheduled.*
