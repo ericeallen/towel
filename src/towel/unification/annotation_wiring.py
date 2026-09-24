@@ -91,8 +91,11 @@ from ..diagnostics import LOG, TYPES
 from ..checker_project import _read_json_config
 from ..project_layout import find_project_root, load_pyproject, package_chain
 from ..type_baseline import (
+    NO_SHAPE,
+    ChangeShape,
     CheckedChange,
     KnownErrors,
+    ReplacedCopy,
     files_where_names_are_any,
     names_any_warning,
     pre_existing_summary,
@@ -1357,7 +1360,7 @@ class HelperAnnotationWiring(EngineState):
         return tuple(error for error in unseen if id(error) in brought)
 
     def _project_errors(
-        self, modified_files: Dict[str, str], helper_name: str
+        self, modified_files: Dict[str, str], helper_name: str, shape: ChangeShape = NO_SHAPE
     ) -> Tuple[TypeDiagnostic, ...]:
         """What the project check says of a variant, without asking again when nothing it read changed.
 
@@ -1375,7 +1378,9 @@ class HelperAnnotationWiring(EngineState):
         Only refusals are kept; an accepted variant is applied and changes the
         project. The run forgets them all when it begins, and a refusal whose
         dependencies cannot be followed (an error in no file, too many files)
-        is not kept at all.
+        is not kept at all. ``shape`` says where the variant wrote what
+        (:meth:`_change_shape`); what the variant renders to settles it, so
+        the key needs nothing more.
         """
         key = _variant_key(modified_files, helper_name)
         known = self._refused_checks.get(key)
@@ -1393,7 +1398,7 @@ class HelperAnnotationWiring(EngineState):
                 dataclasses.replace(error, message=renamed.sub(helper_name, error.message))
                 for error in known.errors
             )
-        errors = self._new_type_errors(modified_files)
+        errors = self._new_type_errors(modified_files, shape)
         if errors:
             depends_on = self._refusal_dependencies(modified_files, errors)
             if depends_on is not None:
@@ -1485,13 +1490,16 @@ class HelperAnnotationWiring(EngineState):
                 return False
         return True
 
-    def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:
+    def _new_type_errors(
+        self, modified_files: Dict[str, str], shape: ChangeShape = NO_SHAPE
+    ) -> Tuple[TypeDiagnostic, ...]:
         """What the project, unchanged consumers included, would report with the change and not now.
 
         The project as it stands is checked with ``modified_files`` over it,
         and what that check reports is compared with what the project reports
         already (``towel.type_baseline``): an error the original project had,
-        and still has, is not the change's. Every configured checker must
+        and still has, where the change's ``shape`` puts it, is not the
+        change's. Every configured checker must
         accept, so the first to report a new error settles it and the rest are
         not asked (:func:`~towel.type_inference.checks_in_turn`). An accepted
         change's check is kept: once the driver has written it, it is what the
@@ -1518,7 +1526,7 @@ class HelperAnnotationWiring(EngineState):
                 )
             reported.extend(result.errors)
             introduced = self._type_known.introduced(
-                reported, changing, where=self._where_checked, texts_after=seen
+                reported, changing, where=self._where_checked, texts_after=seen, shape=shape
             )
             if introduced:
                 break
@@ -1546,6 +1554,29 @@ class HelperAnnotationWiring(EngineState):
             KnownErrors.of(reported, self._where_checked, texts=texts),
         )
         return ()
+
+    def _change_shape(self, proposal: RefactoringProposal) -> ChangeShape:
+        """Where ``proposal``, as rendered, replaced its copies and wrote its helper.
+
+        Each copy is given with the text its lines number, as the file stands
+        now: the comparison uses a copy only where that is the text the
+        reference was checked against. A proposal that calls a function
+        already there writes no helper.
+        """
+        copies: List[ReplacedCopy] = []
+        for replacement in proposal.replacements:
+            path = replacement.file_path or proposal.file_path
+            text = self._read_source(path)
+            if text is not None:
+                first, last = replacement.line_range
+                copies.append(ReplacedCopy(self._where_checked(path), first, last, text))
+        if proposal.reused_function is not None:
+            return ChangeShape(tuple(copies))
+        return ChangeShape(
+            tuple(copies),
+            self._where_checked(proposal.file_path),
+            proposal.extracted_function.name,
+        )
 
     def _follow_the_written_change(self) -> None:
         """The driver wrote the change the checker last accepted; compare the next with its check.

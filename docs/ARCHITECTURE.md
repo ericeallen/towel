@@ -519,16 +519,19 @@ the CI never checks, in checkers no CI step runs, or came from checking
 without the CI's flags. `KnownErrors.introduced` compares a file that no
 change has touched by file, line and message, since its lines cannot have
 moved. A file a change has touched is aligned with the text the reference was
-checked against (`unchanged_lines`, a line diff, so it holds whatever wrote the
-lines, formatter and import sorter included): an error on a line the change
-left alone must match the reference's on that line, wherever it now stands,
-and the errors on the lines the change wrote are compared by message, as a
-multiset, with the reference's on the lines it replaced, which is where a
-duplicated block's error moves into the helper from. However the diff pairs
-the lines, an error is new whenever its message appears more often than before
-in its file, so the alignment rejects more than a comparison by message would,
-never less. A message that embeds a line reappears as new when its line moves,
-so it fails closed. The reference follows the project. When a driver
+checked against by a line diff, so it holds whatever wrote the lines,
+formatter and import sorter included, in which the copies the change replaced
+and the helper it wrote pair with nothing: the change's `ChangeShape`, which
+materialization passes along, says where they are. An error on a line the
+change left alone must match the reference's on that line, wherever it now
+stands. An error in the helper must match, by message, the reference's error
+at the same statement of one copy of the block, statements counted in order
+through the copy and the helper's body; one copy's errors account for the
+helper's, each once, so merging two copies frees the other's errors to
+account for nothing. Any other error on a line the change wrote, a call site
+among them, must match one on the lines the same stretch of the diff replaced.
+Where either text is unknown, every error of the file is new. A message that
+embeds a line reappears as new when its line moves, so it fails closed. The reference follows the project. When a driver
 writes a change, `_follow_the_written_change` makes that change's own check
 the reference, once the files hold what was checked, so an error one change
 removed cannot be spent by the next; against the original's errors it could

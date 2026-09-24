@@ -716,14 +716,23 @@ where the evidence comes from:
   is rejected for an error its check reports that the project's check did not:
   in a file no change has touched, the same message at the same line; in one a
   change has touched, the same message on the same line wherever the change
-  moved it, found by a line diff of the two texts, and on the lines the change
-  wrote, no more often than on the lines it replaced. So an error that
-  disappears from a replaced line where another with the very same message
-  appears in the helper or at a call site is taken to have moved, as a
-  duplicated block's error does when the block moves into the helper, and is
-  not new; one that disappears from a line the change left alone accounts for
-  nothing. Where the diff pairs a helper with one copy of its block, an error
-  that came from the other copy is new, which costs a change. A message
+  moved it, found by a line diff of the two texts in which the copies the
+  change replaced and the helper it wrote pair with nothing. An error in the
+  helper must be the same message at the same statement of one copy of the
+  block the helper was made from, statements counted in order through the
+  copy and through the helper's body, and each of that copy's errors accounts
+  for one; an error at a call site must be the same message on the lines that
+  call replaced; any other error on a line the change wrote must be the same
+  message on the lines the same stretch of the diff replaced. Everything else
+  is new. Merging two copies into one helper frees the other copy's errors,
+  and they account for nothing: before this, with both copies holding `n + s`
+  and `s + n`, a helper typed `int | str` whose `p + p` raised the same two
+  messages on a line both copies had clean was accepted. One that disappears
+  from a line the change left alone accounts for nothing either. A helper
+  whose statements do not follow its block's (one Towel added before them)
+  is accounted for by no copy, an error on an import the sorter moved into
+  another stretch of the file is new, and where either text of a changed file
+  is unknown every error in it is new; each costs a change. A message
   that names a line (mypy's `Name "x" already defined on line 12`) reappears
   as new when that line moves, which declines the change rather than hide an
   error: a module with such an error below the place a helper would go keeps

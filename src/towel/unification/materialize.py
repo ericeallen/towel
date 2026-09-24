@@ -206,7 +206,11 @@ class Materialization(
         try:
             files = self._materialize_once(rendered)
             errors = (
-                self._project_errors(files, rendered.extracted_function.name) if check_types else ()
+                self._project_errors(
+                    files, rendered.extracted_function.name, self._change_shape(rendered)
+                )
+                if check_types
+                else ()
             )
         except Exception:
             del self._change_log[mark:]
