@@ -312,7 +312,9 @@ def test_the_report_counts_by_file_and_names_what_it_will_not_change(tmp_path: P
     names_any = files_where_names_are_any(errors)
     warning = names_any_warning(names_any, root, {str(root / "pkg/a.py")})
     assert warning is not None
-    assert warning.startswith("warning: 2 of these error(s) leave a name the checker cannot type")
+    assert warning.startswith(
+        "warning: 2 import(s) or error(s) leave a name the checker cannot type"
+    )
     assert "No change to these 1 file(s) is attempted" in warning
     assert (
         '  pkg/a.py:3: Cannot find implementation or library stub for module named "gone"'

@@ -895,7 +895,7 @@ PRE_EXISTING_REPORT = (
     "  tests/test_module.py: 10\n"
     "  package/blind.py: 1\n"
     "  tests/conftest.py: 1\n"
-    "warning: 2 of these error(s) leave a name the checker cannot type (an import it cannot "
+    "warning: 2 import(s) or error(s) leave a name the checker cannot type (an import it cannot "
     "resolve or finds no types for, or a decorator without types), and whatever such a name "
     "reaches is Any to the checker, which accepts any use of it, so a new error there would go "
     "unseen.\n"

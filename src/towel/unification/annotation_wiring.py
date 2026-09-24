@@ -97,6 +97,8 @@ from ..type_baseline import (
     KnownErrors,
     ReplacedCopy,
     files_where_names_are_any,
+    import_probes,
+    imports_typed_as_any,
     names_any_warning,
     pre_existing_summary,
     resolved_path,
@@ -517,7 +519,7 @@ class HelperAnnotationWiring(EngineState):
                         self._where_checked,
                         texts={self._where_checked(path): text for path, text in originals.items()},
                     )
-                    self._type_names_any = files_where_names_are_any(self._type_known.errors)
+                    self._type_names_any = self._names_the_checker_cannot_type(originals)
                     self._report_pre_existing(list(originals))
                     self._map_what_the_checker_does_not_look_at(originals)
         if isinstance(self._type_run_baseline, CheckFailure):
@@ -1644,6 +1646,39 @@ class HelperAnnotationWiring(EngineState):
                     f"so a change there cannot be verified: {errors[0].message}"
                 )
 
+    def _names_the_checker_cannot_type(
+        self, originals: Mapping[str, str]
+    ) -> Mapping[str, Tuple[TypeDiagnostic, ...]]:
+        """The files (resolved) where the original check leaves a name typed as ``Any``, and why.
+
+        The original's errors name some (:func:`files_where_names_are_any`),
+        but a configuration can silence exactly those errors: with
+        ``ignore_missing_imports``, or pyright's ``reportMissingImports`` off,
+        an import of a module missing where Towel runs reports nothing, and
+        its names are ``Any`` all the same, so a change was checked against
+        ``Any`` and accepted where the project's own check, which sees the
+        module, rejects it (uvicorn, with ``warn_unused_ignores``). So every
+        checker is also asked what each import of the analyzed files binds
+        (:func:`~towel.type_baseline.import_probes`), in one probe build.
+        """
+        found: Dict[str, List[TypeDiagnostic]] = {
+            path: list(errors)
+            for path, errors in files_where_names_are_any(self._type_known.errors).items()
+        }
+        oracle = self._type_run_oracle
+        probes = {path: import_probes(path, text) for path, text in originals.items()}
+        requests = [request for probe in probes.values() if probe for request in probe.requests]
+        if oracle is None or not requests:
+            return {path: tuple(errors) for path, errors in found.items()}
+        answers = reveal_by_each(oracle, requests)
+        for path, probe in probes.items():
+            if probe is None:
+                continue
+            for finding in imports_typed_as_any(probe, answers, self._where_checked(path)):
+                TYPES.debug("%s:%s: %s", path, finding.line, finding.message)
+                found.setdefault(finding.path, []).append(finding)
+        return {path: tuple(errors) for path, errors in found.items()}
+
     def _report_pre_existing(self, analyzed: Sequence[str]) -> None:
         """Say, before anything else, what the original check reports and what it cannot see.
 
@@ -1654,10 +1689,11 @@ class HelperAnnotationWiring(EngineState):
         has them verified.
         """
         errors = self._type_known.errors
-        if not errors:
+        if not errors and not self._type_names_any:
             return
         root = find_project_root(Path(analyzed[0])) if analyzed else Path.cwd()
-        LOG.warning(pre_existing_summary(errors, root))
+        if errors:
+            LOG.warning(pre_existing_summary(errors, root))
         changed = frozenset(self._where_checked(path) for path in analyzed)
         warning = names_any_warning(self._type_names_any, root, changed)
         if warning:

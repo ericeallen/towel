@@ -80,7 +80,9 @@ types for, a decorator without types -- is ``Any`` to it wherever it goes, and
 ``Any`` accepts everything, so a change that misuses what that name carries is
 invisible to the check. Such errors are named by :func:`makes_names_any`, and
 the files they lie in by :func:`files_where_names_are_any`, for the run to
-decline changing them.
+decline changing them. Since a configuration can hide those errors
+(``ignore_missing_imports``), the checker is also asked directly what each
+import binds (:func:`import_probes`, :func:`imports_typed_as_any`).
 """
 
 from __future__ import annotations
@@ -109,16 +111,22 @@ from typing import (
     Tuple,
 )
 
-from .type_inference import TypeDiagnostic
+from .reachability import probe_plan
+from .type_inference import RevealRequest, TypeDiagnostic
 
 __all__ = [
+    "IMPORT_PROBE_PREFIX",
     "NO_SHAPE",
     "ChangeShape",
     "CheckedChange",
     "KnownErrors",
     "LineMap",
     "ReplacedCopy",
+    "ImportProbes",
+    "ImportQuestion",
     "files_where_names_are_any",
+    "import_probes",
+    "imports_typed_as_any",
     "makes_names_any",
     "names_any_warning",
     "pre_existing_summary",
@@ -675,6 +683,197 @@ def files_where_names_are_any(
     return {path: tuple(listed) for path, listed in found.items()}
 
 
+IMPORT_PROBE_PREFIX = "_towel_imported_"
+"""How the names a probe binds what an import binds to begin, in the probed text only."""
+
+_IMPORTED = IMPORT_PROBE_PREFIX + "{}"
+
+_ATTRIBUTES_PROBED = 3
+"""How many of the attributes a module is read for are asked about, per import."""
+
+
+@dataclass(frozen=True)
+class ImportQuestion:
+    """One question about what an import binds, and what its answer means.
+
+    ``key`` is where its answer comes back (``towel.type_inference.RevealKey``)
+    and ``line`` the import's own line. mypy answers a ``module`` question
+    ``Any`` for a module it cannot resolve or finds no types for; pyright
+    answers a ``name`` or ``attribute`` question ``Unknown`` for what an
+    import it cannot resolve binds. Neither answers that way for a module it
+    sees, and a checker that does not look at the import answers nothing.
+    """
+
+    key: Tuple[str, int, int]
+    line: int
+    kind: str
+    subject: str
+
+
+@dataclass(frozen=True)
+class ImportProbes:
+    """The reveal requests that ask a checker about every import of one file, and what each asks."""
+
+    requests: Tuple[RevealRequest, ...]
+    questions: Tuple[ImportQuestion, ...]
+
+
+@dataclass(frozen=True)
+class _Probe:
+    """An import the probed text adds, the import it stands for, and what it asks."""
+
+    statement: str
+    line: int
+    asked: Tuple[Tuple[str, str, str], ...]
+    """(expression revealed, kind of question, what it is about)"""
+
+
+def _module_attributes(tree: ast.Module, bound: str, within: Sequence[str]) -> List[str]:
+    """The attributes read from a module bound to ``bound``, past ``within``: a few, in order."""
+    found: Dict[str, None] = {}
+    for node in ast.walk(tree):
+        chain: List[str] = []
+        inner: ast.expr = node if isinstance(node, ast.Attribute) else ast.Constant(None)
+        while isinstance(inner, ast.Attribute):
+            chain.append(inner.attr)
+            inner = inner.value
+        path = chain[::-1]
+        if isinstance(inner, ast.Name) and inner.id == bound and len(path) > len(within):
+            if path[: len(within)] == list(within):
+                found.setdefault(path[len(within)], None)
+                if len(found) == _ATTRIBUTES_PROBED:
+                    break
+    return list(found)
+
+
+def _probes_of(node: ast.stmt, tree: ast.Module, first: int) -> List[_Probe]:
+    """What the probed text adds for the import statement ``node``, its aliases numbered from ``first``."""
+    probes: List[_Probe] = []
+    number = first
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            name = _IMPORTED.format(number)
+            number += 1
+            dotted = alias.name.split(".")
+            bound, within = (alias.asname, []) if alias.asname else (dotted[0], dotted[1:])
+            asked = [(name, "module", f'module "{alias.name}"')]
+            asked += [
+                (f"{name}.{attribute}", "attribute", f'"{attribute}" of module "{alias.name}"')
+                for attribute in _module_attributes(tree, bound, within)
+            ]
+            probes.append(_Probe(f"import {alias.name} as {name}", node.lineno, tuple(asked)))
+        return probes
+    if not isinstance(node, ast.ImportFrom):
+        return probes
+    dots = "." * node.level
+    spelled = f"{dots}{node.module or ''}"
+    if node.module is not None:
+        name = _IMPORTED.format(number)
+        number += 1
+        head, _, last = node.module.rpartition(".")
+        statement = (
+            f"from {dots}{head} import {last} as {name}"
+            if node.level
+            else f"import {node.module} as {name}"
+        )
+        probes.append(_Probe(statement, node.lineno, ((name, "module", f'module "{spelled}"'),)))
+    for alias in node.names:
+        if alias.name == "*":
+            continue
+        name = _IMPORTED.format(number)
+        number += 1
+        subject = f'"{alias.name}" imported from "{spelled}"'
+        statement = f"from {spelled} import {alias.name} as {name}"
+        probes.append(_Probe(statement, node.lineno, ((name, "name", subject),)))
+    return probes
+
+
+def import_probes(path: str, text: str) -> Optional[ImportProbes]:
+    """Requests that reveal, for each import in ``text``, what it binds, where the import stands.
+
+    Before each import statement the probed text imports the same module, and
+    each name the statement imports, under names of its own, and reveals them:
+    ``import m as _towel_imported_0`` then ``reveal_type(_towel_imported_0)``.
+    So a module the checker cannot resolve, or finds no types for, is found
+    whether or not the configuration has it report that
+    (``ignore_missing_imports``, pyright's ``reportMissingImports``) and
+    whether or not the import carries ``# type: ignore``, and only where the
+    checker looks at the import: one the platform or Python of the check never
+    reaches is asked about in the same place, and answered nothing. A module
+    imported whole is also asked about the attributes the file reads from it,
+    since pyright gives a module it cannot resolve a module's type. ``None``
+    when ``text`` has no import to ask about or no probe can be placed in it.
+    """
+    plan = probe_plan(text)
+    tree = _parsed(text)
+    if plan is None or tree is None:
+        return None
+    lines = text.split("\n")
+    added: Dict[Tuple[int, str], List[_Probe]] = {}
+    count = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            continue
+        encoded = lines[node.lineno - 1].encode("utf-8")
+        place = (node.lineno, len(encoded[: node.col_offset].decode("utf-8", "replace")))
+        site = plan.sites.get(place)
+        if site is None:
+            continue
+        probes = _probes_of(node, tree, count)
+        count += len(probes)
+        added.setdefault(site, []).extend(probes)
+    if not added:
+        return None
+    probed = plan.text.split("\n")
+    landed: Dict[Tuple[int, str], int] = {}
+    shift = 0
+    for site, probes in sorted(added.items()):
+        at = site[0] - 1 + shift
+        probed[at:at] = [f"{site[1]}{probe.statement}" for probe in probes]
+        shift += len(probes)
+        landed[site] = site[0] + shift
+    source = "\n".join(probed)
+    requests: List[RevealRequest] = []
+    questions: List[ImportQuestion] = []
+    for site, probes in sorted(added.items()):
+        asked = [(probe.line, question) for probe in probes for question in probe.asked]
+        expressions = tuple(expression for _, (expression, _, _) in asked)
+        requests.append(RevealRequest(path, source, landed[site], site[1], expressions))
+        questions += [
+            ImportQuestion((path, landed[site], index), line, kind, subject)
+            for index, (line, (_, kind, subject)) in enumerate(asked)
+        ]
+    return ImportProbes(tuple(requests), tuple(questions))
+
+
+def imports_typed_as_any(
+    probes: ImportProbes, answers: Sequence[Mapping[Tuple[str, int, int], str]], where: str
+) -> Tuple[TypeDiagnostic, ...]:
+    """What the ``answers`` (one mapping per checker) say the checker cannot see, at ``where``.
+
+    Each finding is stated as an error of the file it lies in (``where``,
+    resolved), at the import's line, so that it is reported and declined with
+    the errors of :func:`makes_names_any`.
+    """
+    found: Dict[Tuple[int, str], TypeDiagnostic] = {}
+    for question in probes.questions:
+        for answer in answers:
+            revealed = answer.get(question.key)
+            blind = (question.kind == "module" and revealed == "Any") or (
+                question.kind != "module" and revealed == "Unknown"
+            )
+            if blind and (question.line, question.subject) not in found:
+                found[(question.line, question.subject)] = TypeDiagnostic(
+                    where,
+                    f"the type checker types {question.subject} as {revealed}: it cannot "
+                    "resolve the import, or finds no types for it",
+                    question.line,
+                )
+    return tuple(found.values())
+
+
 _FILES_SHOWN = 5
 """How many files, or errors, a report lists before it counts the rest."""
 
@@ -703,12 +902,15 @@ def pre_existing_summary(errors: Sequence[TypeDiagnostic], root: Path) -> str:
 
 
 def names_any_warning(
-    names_any: Mapping[str, Tuple[TypeDiagnostic, ...]], root: Path, changed: Collection[str]
+    names_any: Mapping[str, Tuple[TypeDiagnostic, ...]],
+    root: Path,
+    changed: Collection[str],
 ) -> Optional[str]:
     """Where the original check leaves names it cannot type, and what the run does there.
 
     ``names_any`` is :func:`files_where_names_are_any` of the original's
-    errors, and ``changed`` the files (resolved) the run may change: no change
+    errors, with what :func:`imports_typed_as_any` found, and ``changed`` the
+    files (resolved) the run may change: no change
     to one of those that holds such a name is attempted. The rest are named
     too, since where they use such a name, a change is checked against
     ``Any``, which accepts it. ``None`` when there is nothing to say.
@@ -720,7 +922,7 @@ def names_any_warning(
     elsewhere = [path for path in names_any if path not in changed]
     count = sum(len(errors) for errors in names_any.values())
     lines = [
-        f"warning: {count} of these error(s) leave a name the checker cannot type (an "
+        f"warning: {count} import(s) or error(s) leave a name the checker cannot type (an "
         "import it cannot resolve or finds no types for, or a decorator without types), "
         "and whatever such a name reaches is Any to the checker, which accepts any use "
         "of it, so a new error there would go unseen."

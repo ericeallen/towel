@@ -2817,7 +2817,10 @@ PRE_EXISTING = re.compile(
     r"^The original project's type check reports (\d+) error\(s\) in (\d+) file\(s\)\.", re.M
 )
 NAMES_ANY = re.compile(
-    r"^warning: (\d+) of these error\(s\) leave a name the checker cannot type", re.M
+    # The wording before and after imports were also asked about directly.
+    r"^warning: (\d+) (?:of these error\(s\)|import\(s\) or error\(s\)) leave a name the "
+    r"checker cannot type",
+    re.M,
 )
 NAMES_ANY_FILES = re.compile(r"^No change to these (\d+) file\(s\) is attempted", re.M)
 UNVERIFIABLE = re.compile(

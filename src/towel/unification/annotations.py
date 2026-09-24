@@ -252,21 +252,79 @@ def _unknown_subtypes(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Su
     ]
 
 
-def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> _Subtypes:
-    """The relation as the type checker judges it in ``file_path``.
+_UNRELATED = "_TowelUnrelatedType"
+"""A class of the probe's own, which no type the program can name is a subtype of."""
 
-    A pair the checker cannot judge stays None, which every caller treats as
-    "not known to be a subtype".
+_WITH_UNRELATED = f"\n\nclass {_UNRELATED}:\n    pass\n"
+
+_UNTYPED_NAMES = frozenset({"Any", "Unknown"})
+"""How mypy and pyright spell a type they know nothing about, as a whole or within one."""
+
+
+def _mentions_any(annotation: ast.expr) -> bool:
+    """Whether ``annotation`` spells ``Any`` (or pyright's ``Unknown``) anywhere in it."""
+    for node in ast.walk(_unquoted(annotation)):
+        if isinstance(node, ast.Name) and node.id in _UNTYPED_NAMES:
+            return True
+        if isinstance(node, ast.Attribute) and node.attr in _UNTYPED_NAMES:
+            return True
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            try:
+                quoted = ast.parse(node.value, mode="eval").body
+            except SyntaxError:
+                continue
+            if _mentions_any(quoted):
+                return True
+    return False
+
+
+def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> _Subtypes:
+    """The relation as the type checker judges it in ``file_path``, where it can judge it.
+
+    A checker asked whether ``narrow`` is assignable to ``wide`` says yes
+    whenever either is ``Any``, in whole or in part, or is a class with an
+    ``Any`` base, and ``Any`` is what it makes of a name it cannot resolve or
+    finds no types for. That yes is no subtype relation: the project's own
+    check may see the real type and reject what the normalized union writes.
+    So a pair that spells ``Any`` or ``Unknown`` is not asked about, and each
+    type is also asked whether it is assignable to a class the probe defines
+    for the purpose, which only such a type is; a pair with one of those is
+    UNKNOWN. So is every pair of a question the checker answered nothing
+    about, as it does where it does not look: ``int`` assignable to that class
+    must come back no. A pair spelled the same on both sides is the same type
+    and asked as before. Every caller treats UNKNOWN as "not known to be a
+    subtype".
     """
 
     def relation(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Subtyping]:
         if not pairs:
             return []
-        return list(
-            oracle.is_subtype(
-                file_path, source, [(ast.unparse(n), ast.unparse(w)) for n, w in pairs]
-            )
-        )
+        verdicts: List[Optional[Subtyping]] = [None] * len(pairs)
+        asked: List[int] = []
+        for index, (narrow, wide) in enumerate(pairs):
+            same = canonical_dump(_unquoted(narrow)) == canonical_dump(_unquoted(wide))
+            if not same and (_mentions_any(narrow) or _mentions_any(wide)):
+                verdicts[index] = Subtyping.UNKNOWN
+            else:
+                asked.append(index)
+        if asked:
+            spelled = [(ast.unparse(pairs[i][0]), ast.unparse(pairs[i][1])) for i in asked]
+            types = list(dict.fromkeys(text for pair in spelled for text in pair))
+            questions = [*spelled, *((text, _UNRELATED) for text in types), ("int", _UNRELATED)]
+            answers = list(oracle.is_subtype(file_path, source + _WITH_UNRELATED, questions))
+            if len(answers) != len(questions) or answers[-1] is not Subtyping.NO:
+                answers = [Subtyping.UNKNOWN] * len(questions)  # it did not look
+            untyped = {
+                text
+                for text, answer in zip(types, answers[len(spelled) : -1])
+                if answer is not Subtyping.NO
+            }
+            for index, (narrow_text, wide_text), answer in zip(asked, spelled, answers):
+                unrelated = narrow_text in untyped or wide_text in untyped
+                verdicts[index] = (
+                    Subtyping.UNKNOWN if narrow_text != wide_text and unrelated else answer
+                )
+        return [verdict or Subtyping.UNKNOWN for verdict in verdicts]
 
     return relation
 

@@ -794,7 +794,25 @@ where the evidence comes from:
   resolve or finds no types for (mypy's `import-not-found` and
   `import-untyped`, pyright's `reportMissingImports` and
   `reportMissingTypeStubs`), a decorator without types, a base class of type
-  `Any` -- no change to that file is attempted. Whatever such a name reaches is
+  `Any` -- no change to that file is attempted. A configuration can silence
+  the errors that say so (`ignore_missing_imports`, pyright's
+  `reportMissingImports = "none"`), so every checker is also asked, before the
+  run, what each import of the analyzed files binds: a probe imports the same
+  module and names under names of its own, where the import stands, and
+  reveals them. mypy answers `Any` for a module it cannot resolve or finds no
+  types for, and pyright `Unknown` for a name or attribute such an import
+  binds (pyright gives the module itself a module's type). With the report
+  silenced, uvicorn's `websockets` module missing where Towel ran, a change
+  had left a `type: ignore` unused in the project's own check. A name a typed
+  module declares as `Any` is the same wherever the check runs, and is not
+  named. pyright with `typeCheckingMode = "off"` answers `Any` rather than
+  `Unknown`, and reports missing imports as warnings, which the comparison
+  does not count, so a file importing a module missing where Towel runs is
+  not named there; that mode checks almost nothing. A subtype question about
+  a type that spells `Any`, or that the checker finds assignable to a class
+  of the probe's own (a class with an `Any` base), or one the checker gave no
+  answer about at all, answers unknown, so it never folds one member of a
+  union into another. Whatever such a name reaches is
   `Any`, which accepts every use, and the subtype questions that normalize a
   helper's annotations answer yes about it, so a misuse would pass Towel's
   check while the project's own, which may see the real type, rejects it. The
