@@ -232,13 +232,39 @@ functions without annotations, where mypy otherwise reveals nothing but `Any`.
 Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
 
-The engine checks the original project before using its type oracle. If that
-check completes with type errors, it aborts: fix the errors or explicitly
-rerun the CLI with `--no-types`. This option preserves existing source
-annotations but generates unannotated helpers; library callers obtain the
-same behavior with `type_oracle=None` and `annotate_helpers=False`. A checker
-crash or timeout remains a distinct verification failure. A clean baseline
-keeps prospective-project verification enabled throughout the run.
+The engine checks the original project before using its type oracle, and
+logs what that check reports (the `towel` logger, which the CLI prints on
+stderr): how many errors, in which files, and which files leave a name the
+checker cannot type. The errors are left as they are. Every later check is
+compared with them, and a change is rejected only for an error they do not
+account for. In a file no change has touched an error must match one at the
+same line; in a file a change has touched, lines move, so the errors of each
+message are counted instead. A message that names a line (mypy's `Name "x"
+already defined on line 12`) therefore reappears as new when its line moves,
+and rejects the change rather than hide an error. Once a driver writes a
+change, the change's own check is the reference for the next, so an error one
+change removed cannot be spent by another; direct `apply_refactoring` calls,
+whose results the engine does not see written, keep comparing with the
+original's errors, counting in every file they changed. The final cold check
+compares the same way.
+
+A proposal that would change a file where the original check leaves a name the
+checker cannot type is declined with `UnverifiableChangeError` and counted as
+`not verifiable: its file holds a name the type checker cannot type` in
+`engine.run_report`. Such a name comes from an import the checker cannot
+resolve or finds no types for (mypy's `import-not-found` and `import-untyped`,
+pyright's `reportMissingImports` and `reportMissingTypeStubs`), an untyped
+decorator, or a base class of type `Any`; whatever it reaches is `Any`, which
+accepts every use, so no check could see a misuse. Installing the missing
+module or its stubs where Towel runs is what has such a file refactored with
+types.
+
+Only a checker that cannot run at all refuses the run: a crash, a timeout, a
+plugin or configuration it cannot load. Fix what stops it, or rerun the CLI
+with `--no-types`, which preserves existing source annotations but generates
+unannotated helpers; library callers obtain the same behavior with
+`type_oracle=None` and `annotate_helpers=False`. Prospective-project
+verification stays enabled throughout every other run.
 
 mypy runs with the project's configured plugins, loaded exactly as the
 project's own mypy loads them: a plugin module from the environment Towel runs

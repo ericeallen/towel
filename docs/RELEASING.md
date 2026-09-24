@@ -112,17 +112,22 @@ result says so. A manifest entry may turn cross-module extraction off only with
 a `cross_module_reason`, and the summary lists every project that ran without
 it, with its reason.
 
-A project whose own sources do not type-check under the checker it configures
-is declined rather than refactored unverified, which is the documented
-behaviour and not a harness failure. The answer Towel gives such a user is to
-rerun without types, so that is what the corpus does, and it holds the refusal
-to its promise first: the count, a diagnostic naming its file, and the way
-forward. A refusal missing any of those is the verdict `REFUSAL_MALFORMED` and
-fails the gate — the refusal is the only thing that user ever sees, and the
-corpus is the only place its wording meets a real project. The report names
-every project that took the untyped path and why, and those verdicts are
-evidence about the untyped path only. Read the counts with that split in view:
-a corpus where most projects were declined has said little about the typed one.
+A project whose own check, as Towel runs it, already reports errors is
+refactored with types all the same: each change is compared with those errors
+and rejected only for an error it adds. The report records, for each such
+project, how many errors there were, how many leave a name the checker cannot
+type, and the files and proposals Towel declined because of them (the Typing
+column and the `Typed against pre-existing errors` line). Only a project whose
+checker cannot run at all is declined rather than refactored unverified, which
+is the documented behaviour and not a harness failure. The answer Towel gives
+such a user is to rerun without types, so that is what the corpus does, and it
+holds the refusal to its promise first: the reason, and the way forward. A
+refusal without the way forward is the verdict `REFUSAL_MALFORMED` and fails
+the gate — the refusal is the only thing that user ever sees, and the corpus is
+the only place its wording meets a real project. The report names every
+project that took the untyped path and why, and those verdicts are evidence
+about the untyped path only. Read the counts with that split in view: a corpus
+where most projects were declined has said little about the typed one.
 
 `REFUSAL_MALFORMED` found two projects on its first run, Lark and Voluptuous,
 whose mypy configs name a Python version mypy 1.19 has dropped. The checker
@@ -184,10 +189,12 @@ docker run -d --name towel-eco -e TOWEL_WORKERS=1 \
         --towel-src /snapshot/src --towel-wheel /opt/towel --work /work --workers 4
 ```
 
-Verify the default policy separately: dirty original projects abort before
-copying, checker failure is distinct, explicit `--no-types` preserves existing
-source annotations, and clean originals retain prospective project checks,
-including unchanged consumers, copied outputs, and existing-function reuse.
+Verify the default policy separately: an original whose check reports errors
+is refactored against them, a change that adds one is rejected and one that
+adds none accepted, a file whose imports the checker cannot type is left alone,
+a checker that cannot run refuses before copying, explicit `--no-types`
+preserves existing source annotations, and prospective project checks cover
+unchanged consumers, copied outputs, and existing-function reuse.
 
 Only completed, nonempty test runs qualify for an accepted corpus verdict.
 Preserve baseline failures and failing-test identities; investigate setup,
