@@ -29,9 +29,10 @@ The model is built once from a project's Python files:
 - Every absolute import contributes its top-level name. A name's *candidates*
   are the directories (regular or namespace) holding Python files, and the
   ``.py`` files, of that name that are not inside a regular package. The name
-  is *attested* at its location when it has exactly one candidate and no module
-  outside the project provides it to this interpreter, *ambiguous* when either
-  fails, and *external* when it has no candidate at all.
+  is *attested* at its location when it has exactly one candidate, no module
+  outside the project provides it to this interpreter, and no distribution the
+  project requires is named like it; *ambiguous* when any of these fails; and
+  *external* when it has no candidate at all.
 - The imports are checked, and each problem is a record, never an exception:
   every ambiguous name; an import of an attested name that its location does
   not hold; a location reachable under two names; a relative import that
@@ -61,6 +62,10 @@ end, and are refined where they do; each refinement is argued where it is made:
   holds none of the modules its name's imports need is a namesake, not the
   name (:func:`_checked`), and a module that registers submodules at run time
   (``six.moves``) is not missing them (:meth:`_Listings.submodules`).
+- A candidate that does hold one may still be a namesake. A project requiring
+  ``click`` imports that distribution under the name wherever it is installed,
+  so a directory ``click/`` sharing one module with the library is in doubt
+  even where this interpreter lacks the library (:func:`_required_elsewhere`).
 - An import of a module a name's location lacks says nothing about where the
   name lives. sphinx's test data imports ``sphinx.missing_module4``, which its
   tests mock, and every other import of ``sphinx`` still places it; so only
@@ -81,14 +86,20 @@ end, and are refined where they do; each refinement is argued where it is made:
 What the model assumes, and cannot check:
 
 - the program's existing imports work in every environment it is used in, and
-  its packages are imported from this tree: an installed copy this
-  interpreter can see makes the name ambiguous, but one only the project's own
-  environment holds is invisible here, so the interpreter Towel runs in stands
-  for the project's (as it already does for the type checker);
-- a location holding any module its name's imports need is that name: a
-  directory named like a library it only happens to share a module with
-  would be taken for the library, and the imports of it the directory does
-  not hold would put only their own files in doubt;
+  its packages are imported from this tree. An installed copy this
+  interpreter can see makes the name ambiguous, and so does a distribution the
+  project declares it requires. One that only the project's own environment holds,
+  and that no declaration names by its import name, is invisible here, so the
+  interpreter Towel runs in stands for the project's (as it already does for
+  the type checker);
+- a location holding any module its name's imports need is that name, unless
+  one of those says otherwise. So where this interpreter lacks the library, a
+  directory named like it is taken for it when the project requires it under
+  a different distribution name (``PyYAML`` provides ``yaml``), reaches it
+  only as a dependency's dependency with no lockfile recording it, or
+  installs it from a recipe not read (``tox.ini``, a ``Pipfile``, a CI
+  file, a setup.py); the imports of it the directory does not hold then put
+  only their own files in doubt;
 - a module inside a regular package is imported through that package, never
   run by its path with its own directory on ``sys.path``;
 - ``sys.path`` is the same when a module is imported as when its functions
@@ -125,9 +136,11 @@ from typing import (
 )
 
 from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES, ScanLimitExceeded
+from .declared_requirements import Requirement, declared_requirements, normalized_name
 
 __all__ = [
     "AmbiguousName",
+    "Doubt",
     "FileUnderTwoNames",
     "ImportModel",
     "ImportProblem",
@@ -232,7 +245,7 @@ class NameStatus(enum.Enum):
     ATTESTED = "attested"
     """Exactly one location in the project, and no provider outside it."""
     AMBIGUOUS = "ambiguous"
-    """Several locations in the project, or one and a provider outside it."""
+    """Several locations in the project, or one and a provider outside it or a distribution it requires."""
     EXTERNAL = "external"
     """No location in the project: the standard library or an installed distribution."""
 
@@ -247,6 +260,8 @@ class TopLevelName:
     """Every location in the project that could be this name, sorted."""
     installed: Optional[str] = None
     """What this interpreter would import instead, when something outside the project provides it."""
+    required: Optional[str] = None
+    """A requirement the project declares on a distribution of this name, which installed provides it."""
     flagged: bool = False
     """Whether a problem leaves the name's location in doubt; a flagged name is never spelled into."""
 
@@ -264,6 +279,17 @@ class TopLevelName:
 # -- Problems -----------------------------------------------------------------
 
 
+class Doubt(enum.Enum):
+    """Where a problem's doubt about a name comes from, which decides what can resolve it."""
+
+    TREE = "the project's tree"
+    """A second copy of the name, or an import that names a module two ways or climbs out of it."""
+    INSTALLED = "a copy installed outside the project"
+    """A provider the interpreter can import, which no ``--exclude`` reaches."""
+    REQUIRED = "a distribution the project requires"
+    """A distribution of the name, which is what the installed project imports by it."""
+
+
 @dataclass(frozen=True)
 class AmbiguousName:
     """A name the program imports that could be more than one module.
@@ -277,6 +303,8 @@ class AmbiguousName:
     name: str
     candidates: Tuple[Path, ...]
     installed: Optional[str]
+    required: Optional[str] = None
+    """A requirement the project declares on a distribution of the name, as written and where."""
 
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
@@ -286,10 +314,24 @@ class AmbiguousName:
     def found_at(self) -> Tuple[Path, ...]:
         return self.candidates
 
+    @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset(
+            doubt
+            for doubt, present in (
+                (Doubt.TREE, len(self.candidates) > 1),
+                (Doubt.INSTALLED, self.installed is not None),
+                (Doubt.REQUIRED, self.required is not None),
+            )
+            if present
+        )
+
     def describe(self, root: Path) -> str:
         places = [_shown(candidate, root) for candidate in self.candidates]
         if self.installed is not None:
             places.append(f"outside the project ({self.installed})")
+        if self.required is not None:
+            places.append(f"the distribution the project requires ({self.required})")
         return f"{self.name} could be any of: {'; '.join(places)}"
 
 
@@ -315,6 +357,10 @@ class UnresolvedImport:
 
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
+        return frozenset()
+
+    @property
+    def doubts(self) -> FrozenSet[Doubt]:
         return frozenset()
 
     @property
@@ -349,6 +395,10 @@ class FileUnderTwoNames:
         return frozenset(name.partition(".")[0] for name in self.names)
 
     @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset({Doubt.TREE})
+
+    @property
     def found_at(self) -> Tuple[Path, ...]:
         return (self.location,)
 
@@ -373,6 +423,10 @@ class TopLevelInsidePackage:
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
         return frozenset({self.name})
+
+    @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset({Doubt.TREE})
 
     @property
     def found_at(self) -> Tuple[Path, ...]:
@@ -406,6 +460,10 @@ class RelativeImportEscapes:
         return frozenset() if self.name is None else frozenset({self.name})
 
     @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset({Doubt.TREE})
+
+    @property
     def found_at(self) -> Tuple[Path, ...]:
         return (self.site.file,)
 
@@ -435,6 +493,10 @@ class RelativeImportMissing:
         return frozenset()
 
     @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset()
+
+    @property
     def found_at(self) -> Tuple[Path, ...]:
         return (self.site.file,)
 
@@ -458,7 +520,8 @@ ImportProblem = Union[
 """A reason the program's imports do not name its modules unambiguously.
 
 Each kind says which top-level names it leaves in doubt (``names_in_doubt``),
-which are never spelled into, and where in the tree it lies (``found_at``):
+which are never spelled into, what that doubt comes from (``doubts``), and
+where in the tree it lies (``found_at``):
 the locations it concerns, or the file holding its import, which is never a
 provider and never given a new import.
 """
@@ -1359,6 +1422,7 @@ def build_import_model(
     excluded: Iterable[Path] = (),
     excluded_names: Iterable[str] = (),
     installed: Optional[InstalledProbe] = None,
+    required: Optional[Iterable[Requirement]] = None,
 ) -> ImportModel:
     """The import model of every Python file under ``root``, outside ``excluded``.
 
@@ -1366,6 +1430,9 @@ def build_import_model(
     CLI's ``--exclude`` does, which is how a stray copy is set aside.
     ``installed`` says what outside the project provides a top-level name;
     it defaults to :func:`installed_outside`, this interpreter's own answer.
+    ``required`` are the distributions the project declares it requires; they
+    default to what ``root``'s metadata, lockfiles and requirements files
+    declare (:func:`~towel.declared_requirements.declared_requirements`).
     Raises :class:`~towel.consumers.ScanLimitExceeded` for a tree too large
     to read, since a partial model could miss the copy that makes a name
     ambiguous.
@@ -1393,7 +1460,9 @@ def build_import_model(
         name: _classify(name, found[name], absolute[name], tree, listings, probe, project)
         for name in absolute
     }
+    requirements = tuple(declared_requirements(project) if required is None else required)
     names, unresolved = _checked(dict(sorted(classified.items())), absolute, listings)
+    names, unresolved = _required_elsewhere(names, unresolved, requirements)
     located = {
         name: info.candidates
         for name, info in names.items()
@@ -1623,6 +1692,38 @@ def _checked(
     return checked, unresolved
 
 
+def _required_elsewhere(
+    names: Mapping[str, TopLevelName],
+    unresolved: Sequence[UnresolvedImport],
+    required: Iterable[Requirement],
+) -> Tuple[Dict[str, TopLevelName], List[UnresolvedImport]]:
+    """Each name the tree places that a distribution the project requires also provides, in doubt.
+
+    A project that requires ``click`` imports that distribution under the name
+    wherever it is installed, whatever the tree holds: a directory ``click/``
+    sharing one module with the library would otherwise be taken for it
+    wherever the interpreter running Towel lacks the library, as ``uvx``
+    does, and a helper hosted there is imported from a module the library
+    lacks. A distribution is matched by its normalized name, so one whose
+    import name differs (``PyYAML`` provides ``yaml``) goes unnoticed unless
+    this interpreter can import it. An import of such a name that the tree's
+    location lacks is then the library's, and no problem of its own.
+    """
+    first: Dict[str, Requirement] = {}
+    for requirement in required:
+        first.setdefault(requirement.name, requirement)
+    doubted = {
+        name: replace(info, status=NameStatus.AMBIGUOUS, required=declared.describe())
+        for name, info in names.items()
+        if info.status is not NameStatus.EXTERNAL
+        and (declared := first.get(normalized_name(name))) is not None
+    }
+    return (
+        {**names, **doubted},
+        [problem for problem in unresolved if problem.name not in doubted],
+    )
+
+
 def _package_of(
     module: Path, tree: _Tree, used: Set[Path], bounds: FrozenSet[Path]
 ) -> Optional[Path]:
@@ -1652,7 +1753,7 @@ def _problems(
     listings: _Listings,
 ) -> List[ImportProblem]:
     problems: List[ImportProblem] = [
-        AmbiguousName(name, info.candidates, info.installed)
+        AmbiguousName(name, info.candidates, info.installed, info.required)
         for name, info in names.items()
         if info.status is NameStatus.AMBIGUOUS
     ]
