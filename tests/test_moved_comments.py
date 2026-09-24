@@ -406,7 +406,9 @@ def test_comments_that_differ_between_sites_are_all_kept_in_site_order(tmp_path:
     _assert_same_refactoring_without_comments(path, result)
 
 
-def _declined(path: Path, **options: object) -> Mapping[str, int]:
+def _declined(path: Path, source: str = "", **options: object) -> Mapping[str, int]:
+    if source:
+        path = _write(path.parent, source, path.name)
     engine = _engine(**options)
     proposals = engine.analyze_file(str(path))
     assert not proposals, [ast.unparse(proposal.extracted_function) for proposal in proposals]
@@ -753,3 +755,268 @@ def test_a_helper_inside_the_enclosing_function_carries_its_comments(tmp_path: P
     )
     assert result.count("# scaled on purpose") == 1
     _assert_same_refactoring_without_comments(path, result)
+
+
+_OVER_ARGUMENT = """
+    def first(record, alpha):
+        total = 0
+        total += len({first}){comment}
+        total = total * 2
+        return total
+
+
+    def second(record, beta):
+        total = 0
+        total += len({second}){comment}
+        total = total * 2
+        return total
+    """
+
+_TOOL_DIRECTIVES = [
+    "# noqa: E501",
+    "# pragma: no cover",
+    "# nosec B101",
+    "# pylint: disable=no-member",
+    "# fmt: skip",
+]
+
+
+@pytest.mark.parametrize("directive", _TOOL_DIRECTIVES)
+def test_a_directive_over_code_that_becomes_an_argument_declines_the_pair(
+    tmp_path: Path, directive: str
+) -> None:
+    """The differing code would be written at the call site, where no tool sees the directive."""
+    path = _write(
+        tmp_path,
+        _OVER_ARGUMENT.format(
+            first="record.alpha.items()", second="record.beta.items()", comment="  " + directive
+        ),
+    )
+    assert "directive_on_argument" in _declined(path)
+
+
+@pytest.mark.parametrize("argument", ["name", "literal"])
+@pytest.mark.parametrize("directive", _TOOL_DIRECTIVES)
+def test_a_directive_over_a_name_or_literal_argument_moves(
+    tmp_path: Path, directive: str, argument: str
+) -> None:
+    """A name or a literal at the call site is nothing a tool reports on."""
+    first, second = ("alpha", "beta") if argument == "name" else ("'alpha'", "'beta'")
+    path = _write(
+        tmp_path, _OVER_ARGUMENT.format(first=first, second=second, comment="  " + directive)
+    )
+    result = _refactor(path)
+    assert _line_holding(_helper_source(result), "total += len(").endswith("  " + directive)
+    assert result.count(directive) == 1
+    _assert_same_refactoring_without_comments(path, result)
+
+
+def test_a_pragma_on_a_clause_reaches_the_arguments_inside_it(tmp_path: Path) -> None:
+    """Coverage excludes the whole clause a pragma's line opens, arguments included."""
+    path = _write(
+        tmp_path,
+        """
+        def first(record):
+            total = 0
+            if total == 0:  # pragma: no cover
+                total += len(record.alpha.items())
+            return total * 2
+
+
+        def second(record):
+            total = 0
+            if total == 0:  # pragma: no cover
+                total += len(record.beta.items())
+            return total * 2
+        """,
+    )
+    assert "directive_on_argument" in _declined(path)
+
+
+_INSIDE = """
+    {prelude}
+    def first(values, error):{first_header_comment}
+        total = len(values) * 2
+        {first_opener}{opener_comment}
+            {disable}
+            message = "bad: " + str(values){start_comment}
+            values.clear(){start_comment}
+            raise ValueError(message){start_comment}
+        return total + 1
+
+
+    def second(values, error):{second_header_comment}
+        total = sum(values) - 3
+        {second_opener}{opener_comment}
+            {disable}
+            message = "bad: " + str(values){start_comment}
+            values.clear(){start_comment}
+            raise ValueError(message){start_comment}
+        return total * 5
+    """
+
+
+def _inside(**parts: str) -> str:
+    defaults = {
+        "prelude": "",
+        "first_header_comment": "",
+        "second_header_comment": "",
+        "first_opener": "for item in values:",
+        "second_opener": "while error:",
+        "opener_comment": "",
+        "disable": "pass",
+        "start_comment": "",
+    }
+    defaults.update(parts)
+    return _INSIDE.format(**defaults)
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [
+        # coverage excludes the loop; the helper holding its body would not be
+        {"opener_comment": "  # pragma: no cover"},
+        # pylint's disable on a def line covers the function's body
+        {
+            "first_header_comment": "  # pylint: disable=protected-access",
+            "second_header_comment": "  # pylint: disable=protected-access",
+        },
+        # an else clause excluded from coverage
+        {
+            "first_opener": "if values:\n            pass\n        else:",
+            "second_opener": "if error:\n            pass\n        else:",
+            "opener_comment": "  # pragma: no cover",
+        },
+    ],
+)
+def test_a_directive_around_the_block_declines_the_pair(
+    tmp_path: Path, parts: Dict[str, str]
+) -> None:
+    """The helper would be written outside the clause or function the directive governs."""
+    assert "directive_around_block" in _declined(tmp_path / "m.py", _inside(**parts))
+
+
+def test_a_pylint_disable_earlier_in_the_body_declines_until_it_is_enabled(
+    tmp_path: Path,
+) -> None:
+    disabled = _inside(disable="# pylint: disable=broad-exception-raised")
+    assert "directive_around_block" in _declined(tmp_path / "m.py", disabled)
+    enabled = _inside(
+        disable=(
+            "# pylint: disable=broad-exception-raised\n"
+            "            # pylint: enable=broad-exception-raised"
+        )
+    )
+    path = _write(tmp_path, enabled, "enabled.py")
+    assert _refactor(path)
+
+
+def test_a_module_wide_disable_reaches_the_helper_too(tmp_path: Path) -> None:
+    path = _write(tmp_path, _inside(prelude="# pylint: disable=broad-exception-raised"))
+    result = _refactor(path)
+    assert result.startswith("# pylint: disable=broad-exception-raised")
+
+
+def test_a_block_starting_with_an_excluded_statement_declines_the_pair(tmp_path: Path) -> None:
+    """The call replacing the block would run and be measured exactly where it did not."""
+    source = _inside(disable="pass  # pragma: no cover", start_comment="  # pragma: no cover")
+    assert "excluded_block_start" in _declined(tmp_path / "m.py", source)
+
+
+def test_a_block_opening_with_an_excluded_clause_still_moves(tmp_path: Path) -> None:
+    """A header runs whenever it is reached, and so would the call that replaces it."""
+    path = _write(
+        tmp_path,
+        """
+        def first(values, error):
+            total = len(values) * 2
+            if error:  # pragma: no cover
+                message = "bad: " + str(values)
+                values.clear()
+                raise ValueError(message)
+            return total + 1
+
+
+        def second(values, error):
+            total = sum(values) - 3
+            if error:  # pragma: no cover
+                message = "bad: " + str(values)
+                values.clear()
+                raise ValueError(message)
+            return total * 5
+        """,
+    )
+    result = _refactor(path)
+    assert _line_holding(_helper_source(result), "if error:").endswith("  # pragma: no cover")
+
+
+def test_a_class_wide_disable_still_reaches_a_method_helper(tmp_path: Path) -> None:
+    """fastjsonschema's generators: the helper is written at the end of the disabled class."""
+    path = _write(
+        tmp_path,
+        """
+        class Generator:
+            # pylint: disable=line-too-long
+            def first(self, value):
+                count = self.count + 1
+                self.count = count
+                self.emit("first", value, count)
+                return count
+
+            def second(self, value):
+                count = self.count + 1
+                self.count = count
+                self.emit("second", value, count)
+                return count
+        """,
+    )
+    result = _refactor(path)
+    tree = ast.parse(result)
+    (cls,) = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+    assert any("extracted_func" in getattr(node, "name", "") for node in cls.body), result
+
+
+def test_functions_under_an_excluded_main_block_keep_their_code(tmp_path: Path) -> None:
+    """pygments' builtins scripts: a module helper would be measured though the block is not."""
+    path = _write(
+        tmp_path,
+        """
+        if __name__ == "__main__":  # pragma: no cover
+            def first(values):
+                total = 0
+                for value in values:
+                    total += value * 2
+                return total + 1
+
+            def second(values):
+                total = 0
+                for value in values:
+                    total += value * 2
+                return total + 1
+        """,
+    )
+    assert "directive_around_block" in _declined(path)
+
+
+def test_one_excluded_site_among_measured_ones_still_moves(tmp_path: Path) -> None:
+    """markdown's inline patterns: the helper runs from the measured site as that code did."""
+    path = _write(
+        tmp_path,
+        """
+        class Old:  # pragma: no cover
+            def render(self, value):
+                count = self.count + 1
+                self.count = count
+                self.emit("old", value, count)
+                return count
+
+
+        class New:
+            def render(self, value):
+                count = self.count + 1
+                self.count = count
+                self.emit("new", value, count)
+                return count
+        """,
+    )
+    assert _refactor(path)

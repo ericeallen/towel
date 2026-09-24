@@ -40,7 +40,6 @@ from towel.unification.block_comments import (
     is_directive,
     is_file_directive,
     merge_comments,
-    silences_checker,
     site_comments,
     weave_comments,
 )
@@ -114,16 +113,47 @@ def test_prose_is_not_a_directive(text: str) -> None:
     assert not is_directive(text)
 
 
-def test_checker_and_file_directives_are_told_apart() -> None:
-    assert silences_checker("# type: ignore[attr-defined]")
-    assert silences_checker("# noqa: E721  # pyright: ignore")
-    assert not silences_checker("# type: int")
-    assert not silences_checker("# noqa")
+def test_file_directives_are_told_apart() -> None:
     assert is_file_directive("# flake8: noqa")
     assert is_file_directive("# ruff: noqa: E501")
     assert is_file_directive("# pyright: strict")
     assert not is_file_directive("# pyright: ignore")
     assert not is_file_directive("# noqa: E501")
+
+
+def test_each_directive_reaches_the_code_its_tool_applies_it_to() -> None:
+    source, block = _block("""
+        def f(values, other):
+            total = 0  # noqa: E741
+            for value in values:  # pragma: no cover
+                total += value
+            # noinspection PyUnresolvedReferences
+            result = compute(
+                total,
+                other,
+            )
+            check(  # pylint: disable=no-member
+                result,
+            )
+            # fmt: off
+            table = [1,2,
+                     3,4]
+            # fmt: on
+            note = 1  # a plain comment
+            flag = 2  # flake8: noqa
+            return result
+        """)
+    reach = {comment.text: comment.reach for comment in site_comments(source, block).comments}
+    assert reach["# noqa: E741"] == {2}
+    # Coverage excludes the loop the header opens, not only its line.
+    assert reach["# pragma: no cover"] == {3, 4}
+    assert reach["# noinspection PyUnresolvedReferences"] == {6, 7, 8, 9}
+    # pylint's disable on a statement's line covers the whole statement.
+    assert reach["# pylint: disable=no-member"] == {10, 11, 12}
+    assert reach["# fmt: off"] == reach["# fmt: on"] == {13, 14, 15, 16}
+    assert reach["# a plain comment"] == frozenset()
+    # A directive for the whole file reaches its module wherever code goes.
+    assert reach["# flake8: noqa"] == frozenset()
 
 
 def test_comments_outside_the_block_belong_to_the_call_site() -> None:

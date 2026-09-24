@@ -362,6 +362,7 @@ proposal.reused_function      # ReusedFunction(name, file_path, line_range) on a
                               # always None from the engine, which extracts a helper
 proposal.required_imports     # Imports the host needs for the helper's annotations
 proposal.helper_type_declarations  # Fresh generic declarations, materialized with the helper
+proposal.helper_comments      # The sites' comments the helper carries (see Comments below)
 proposal.return_variables     # Names the helper returns, in the call's unpacking order
 proposal.insert_into_class    # The class the helper becomes a class-private method of,
                               # if any: only ever the class holding every site;
@@ -370,6 +371,27 @@ proposal.method_kind          # instance, class, or static, with insert_into_fun
 proposal.source_digests       # The file digests the proposal was computed from; applying
                               # a stale proposal raises ChangeConflict("Stale proposal")
 ```
+
+### Comments
+
+The helper carries the comments of the blocks it replaces, beside the code
+they were written for; `proposal.helper_comments` holds them, and each
+`replacement.comments` holds its own block's. Comments above or below a
+block stay at its call. An explanatory comment is kept from every site that
+has one. A tool directive (`# type: ignore`, `# noqa`, `# pragma: no
+cover`, `# nosec`, `# pylint: ...`, `# fmt: ...`, `# isort: ...`, a type
+comment) must be carried alike by every site, and must not reach code that
+becomes an argument of the call, anything but a name or a literal, since
+that code is written at the call site where the directive does not reach.
+Nor may a coverage pragma or pylint `disable` around the blocks (on an
+enclosing `def`, `if`, loop or `else:` line) govern every site where the
+helper would be written outside it, nor may coverage exclude a block's
+first statement, since the call replacing the block would be measured. A pair
+that breaks any of these is declined, and `engine.declined_pairs` counts it
+under `directives_differ`, `directive_on_argument`,
+`directive_outlives_block`, `directive_around_block` or
+`excluded_block_start`; a directive is never copied onto a call or a
+helper's `def` line.
 
 ### Cross-File vs Same-File
 
