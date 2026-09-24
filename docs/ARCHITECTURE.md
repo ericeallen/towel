@@ -118,8 +118,10 @@ flowchart TD
       that would pass a callee as `lambda *args, **kwargs: callee(*args,
       **kwargs)`, or that names something the site cannot resolve, declines
       the pair (`forwarded_callee`, `undefined_names_in_call`); so do tool
-      directives the two blocks do not carry alike (`directives_differ`,
-      `directive_on_argument`, `directive_outlives_block`; see *Comments of
+      directives the two blocks do not carry alike, or whose reach the
+      moved code or its call would leave (`directives_differ`,
+      `directive_on_argument`, `directive_outlives_block`,
+      `directive_around_block`, `excluded_block_start`; see *Comments of
       moved code*), and a further site that differs from them in its
       directives does not join;
    10. placement: function, class, or module, and a host module that closes
@@ -747,7 +749,12 @@ may reach code of some site's, other than a name or a literal, that becomes
 an argument and so is written at the call site, where the directive does
 not reach (`directive_on_argument`: its line, the statement or clause a
 coverage pragma or pylint `disable` covers, the statement after a
-`noinspection`, a region's span); and a region directive (`fmt: off`, `isort:
+`noinspection`, a region's span); a coverage pragma or pylint `disable` on the
+header of a statement enclosing the block, or a `pylint: disable` earlier in
+an enclosing body, governs every site and would not reach the helper where
+placement writes it (`directive_around_block`, decided with the proposal);
+a block whose first statement coverage excludes would become a measured call
+(`excluded_block_start`); and a region directive (`fmt: off`, `isort:
 off`, a `pylint: disable` on a line of its own) must close within the block,
 and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is

@@ -151,6 +151,44 @@ class SiteComments:
     argument_lines: FrozenSet[int] = frozenset()
     # The block's tokens could not be read, so neither could its comments.
     unreadable: bool = False
+    # The directives outside the block that reach it (``_around``), which
+    # a helper holding it may be out of reach of (``Surrounding``).
+    around: Tuple["Surrounding", ...] = ()
+    # A coverage pragma excluding the block's first statement, which the call
+    # that replaces the block would not be (``_excluded_start``); or empty.
+    excluded_start: str = ""
+
+
+@dataclass(frozen=True)
+class Surrounding:
+    """A directive outside a block that reaches it, and the statement whose reach it shares.
+
+    ``scope`` is ``"class"`` or ``"function"`` when that statement is one,
+    named ``name``, else empty: a helper is only ever written inside a class
+    or a function. ``header`` says the directive ends the statement's
+    header, so it governs all of it; otherwise it is a ``pylint: disable``
+    on a line of its own in the statement's body, and ``to_end`` says no
+    ``enable`` follows it there, so it still governs the body's end, where
+    a method helper is written.
+    """
+
+    detail: str
+    # "coverage" for a pragma, "pylint" for a disable.
+    tool: str = "coverage"
+    scope: str = ""
+    name: str = ""
+    header: bool = True
+    to_end: bool = False
+
+    def governs(self, home_class: Optional[str], home_function: Optional[str]) -> bool:
+        """Whether the directive still reaches a helper placed in ``home_class`` or ``home_function``."""
+        if self.scope == "class" and self.name == home_class:
+            return self.header or self.to_end
+        if self.scope == "function" and self.name == home_function:
+            # A nested helper goes before the function's statements, so
+            # only a directive on the ``def`` line reaches it.
+            return self.header
+        return False
 
 
 @dataclass(frozen=True)
@@ -177,6 +215,8 @@ class ConflictKind(Enum):
     DIRECTIVES_DIFFER = "directives_differ"
     DIRECTIVE_ON_ARGUMENT = "directive_on_argument"
     DIRECTIVE_OUTLIVES_BLOCK = "directive_outlives_block"
+    DIRECTIVE_AROUND_BLOCK = "directive_around_block"
+    EXCLUDED_BLOCK_START = "excluded_block_start"
 
 
 @dataclass(frozen=True)
@@ -210,6 +250,14 @@ _DIRECTIVE = re.compile(
 # A directive that coverage or pylint apply to the whole statement holding
 # its line, and to the whole block when that line opens one.
 _STATEMENT_WIDE = re.compile(r"\#\s*(?:pragma\b|pylint\s*:\s*disable\b)", re.IGNORECASE)
+
+# Coverage's exclusion pragma.
+_COVERAGE_PRAGMA = re.compile(r"\#\s*pragma\b", re.IGNORECASE)
+
+# pylint's disable and enable, which on a line of their own govern the rest
+# of the block they stand in.
+_PYLINT_DISABLE = re.compile(r"\#\s*pylint\s*:\s*disable\b", re.IGNORECASE)
+_PYLINT_ENABLE = re.compile(r"\#\s*pylint\s*:\s*enable\b", re.IGNORECASE)
 
 # A directive on a line of its own that governs the statement after it.
 _NEXT_STATEMENT = re.compile(r"\#\s*noinspection\b", re.IGNORECASE)
@@ -608,17 +656,18 @@ def site_comments(
         return SiteComments(argument_lines=arguments)
     lines = _lines_of(source)
     last_line = block[-1].end_lineno or block[-1].lineno
+    around = _around(source, block)
     if not any("#" in line for line in lines[block[0].lineno - 1 : last_line]):
-        return SiteComments(argument_lines=arguments)
+        return SiteComments(argument_lines=arguments, around=around)
     first = (block[0].lineno, _column(lines[block[0].lineno - 1], block[0].col_offset))
     tokens = _block_tokens(lines, first, last_line)
     if tokens is None:
-        return SiteComments(argument_lines=arguments, unreadable=True)
+        return SiteComments(argument_lines=arguments, unreadable=True, around=around)
     positions = [
         position for position, token in enumerate(tokens) if token.kind == tokenize.COMMENT
     ]
     if not positions:
-        return SiteComments(argument_lines=arguments)
+        return SiteComments(argument_lines=arguments, around=around)
     index = _BlockIndex(block, lines)
     last = NodePath(len(block) - 1, type(block[-1]).__name__)
     first_on_line: Dict[int, _Token] = {}
@@ -647,7 +696,152 @@ def site_comments(
                 _reach(comment, own_line, index),
             )
         )
-    return SiteComments(_with_region_reach(comments), arguments)
+    read = _with_region_reach(comments)
+    return SiteComments(read, arguments, around=around, excluded_start=_excluded_start(block, read))
+
+
+def _excluded_start(block: Sequence[ast.stmt], comments: Sequence[BlockComment]) -> str:
+    """The pragma excluding the block's first statement from coverage, when that is a simple one.
+
+    The call replacing the block runs exactly when its first statement did,
+    and coverage measures it; a statement excluded because it never runs
+    in the tests (the ``log(...)`` before a ``raise``) would leave that
+    call unrun and measured. The header of a compound statement is left
+    out: it runs whenever it is reached, and so does the call.
+    """
+    first = block[0]
+    if getattr(first, "body", None) is not None:
+        return ""
+    for comment in comments:
+        if first.lineno in comment.reach and _COVERAGE_PRAGMA.search(comment.text):
+            return f"line {comment.line}: {comment.text}"
+    return ""
+
+
+@functools.lru_cache(maxsize=8)
+def _module_comments(source: str) -> Optional[Tuple[ast.Module, Dict[int, Tuple[_Token, ...]]]]:
+    """The module's tree and its comments by line; None when it does not parse or tokenize."""
+    try:
+        tree = ast.parse(source)
+        tokens = _tokens(source)
+    except (SyntaxError, ValueError, tokenize.TokenError):
+        return None
+    by_line: Dict[int, List[_Token]] = {}
+    for token in tokens:
+        if token.kind == tokenize.COMMENT:
+            by_line.setdefault(token.start[0], []).append(token)
+    return tree, {line: tuple(found) for line, found in by_line.items()}
+
+
+def _clauses(node: ast.AST) -> List[List[ast.stmt]]:
+    """The statement lists of a compound statement, in order: its body, branches and handlers."""
+    found: List[List[ast.stmt]] = []
+    for name in ("body", "orelse", "finalbody"):
+        value = getattr(node, name, None)
+        if isinstance(value, list) and value and all(isinstance(item, ast.stmt) for item in value):
+            found.append(list(value))
+    for handler in getattr(node, "handlers", ()) or ():
+        if isinstance(handler, ast.ExceptHandler) and handler.body:
+            found.append(list(handler.body))
+    for case in getattr(node, "cases", ()) or ():
+        if isinstance(case, ast.match_case) and case.body:
+            found.append(list(case.body))
+    return found
+
+
+def _scope_of(node: ast.stmt) -> Tuple[str, str]:
+    if isinstance(node, ast.ClassDef):
+        return "class", node.name
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return "function", node.name
+    return "", ""
+
+
+def _around(source: str, block: Sequence[ast.stmt]) -> Tuple[Surrounding, ...]:
+    """Every directive outside ``block`` that reaches it, which a helper holding it may escape.
+
+    Coverage's pragma or pylint's ``disable`` at the end of the header of a
+    statement that encloses the block (its function's ``def`` line, a
+    class, an ``if``, ``for``, ``else:`` or ``except`` line and the like)
+    governs the whole of it, and a ``pylint: disable`` on a line of its own
+    earlier in a body that encloses the block governs the rest of that
+    body. Whether the helper stays within one depends on where it is
+    written (``Surrounding.governs``).
+    """
+    if "pragma" not in source and "pylint" not in source:
+        return ()
+    read = _module_comments(source)
+    if read is None:
+        return ()
+    tree, comments = read
+    lines = _lines_of(source)
+    first, last = block[0].lineno, block[-1].end_lineno or block[-1].lineno
+    starts = {(statement.lineno, statement.col_offset) for statement in block}
+    found: List[Surrounding] = []
+
+    def own_line(token: _Token) -> bool:
+        return not lines[token.start[0] - 1][: token.start[1]].strip()
+
+    node: ast.AST = tree
+    while True:
+        holder: Optional[ast.stmt] = None
+        for clause in _clauses(node):
+            for statement in clause:
+                start, end = statement.lineno, statement.end_lineno or statement.lineno
+                if (start, statement.col_offset) in starts:
+                    continue
+                if start <= first and last <= end:
+                    holder = statement
+        if holder is None:
+            return tuple(found)
+        scope, name = _scope_of(holder)
+        holder_clauses = _clauses(holder)
+        decorators = getattr(holder, "decorator_list", []) or []
+        header_start = min([holder.lineno] + [decorator.lineno for decorator in decorators])
+        header_lines = (
+            set(range(header_start, holder_clauses[0][0].lineno)) if holder_clauses else set()
+        )
+        previous_end = header_start
+        for clause in holder_clauses:
+            clause_start, clause_end = clause[0].lineno, clause[-1].end_lineno or clause[0].lineno
+            if clause_start <= first <= clause_end:
+                header_lines.update(range(previous_end + 1, clause_start))
+                # A ``pylint: disable`` on a line of its own earlier in the
+                # clause governs the rest of it, the block included.
+                column = clause[0].col_offset
+                disabled: Optional[_Token] = None
+                enabled_after = False
+                for line in range(max(previous_end, header_start) + 1, clause_end + 1):
+                    for token in comments.get(line, ()):
+                        if not own_line(token) or token.start[1] != column:
+                            continue
+                        if line < first and _PYLINT_DISABLE.search(token.text):
+                            disabled, enabled_after = token, False
+                        elif _PYLINT_ENABLE.search(token.text):
+                            if line < first:
+                                disabled = None
+                            else:
+                                enabled_after = True
+                if disabled is not None:
+                    found.append(
+                        Surrounding(
+                            f"line {disabled.start[0]}: {disabled.text.rstrip()}",
+                            "pylint",
+                            scope,
+                            name,
+                            header=False,
+                            to_end=not enabled_after,
+                        )
+                    )
+            previous_end = clause_end
+        for line in sorted(header_lines):
+            for token in comments.get(line, ()):
+                if not own_line(token) and _STATEMENT_WIDE.search(token.text):
+                    tool = "coverage" if _COVERAGE_PRAGMA.search(token.text) else "pylint"
+                    found.append(
+                        Surrounding(f"line {line}: {token.text.rstrip()}", tool, scope, name)
+                    )
+        node = holder
 
 
 def _lines_between(first: int, last: int) -> FrozenSet[int]:
@@ -869,6 +1063,8 @@ def directive_conflict(
                         f"{example.text} (line {example.line}) is not at every site",
                     )
     for site in sites:
+        if site.excluded_start:
+            return CommentConflict(ConflictKind.EXCLUDED_BLOCK_START, site.excluded_start)
         for comment in site.comments:
             if comment.reach & site.argument_lines:
                 return CommentConflict(
@@ -887,13 +1083,20 @@ def merge_comments(
     statements: Sequence[ast.AST],
     sites: Sequence[Tuple[SiteComments, bool]],
     body_offset: int,
+    home_class: Optional[str] = None,
+    home_function: Optional[str] = None,
 ) -> Union[HelperComments, CommentConflict]:
     """The comments the helper carries from every site, or why the sites decline it.
 
     ``statements`` is the helper's body from ``body_offset`` on, and each
     site comes with whether it is in the helper's module. The directives
-    must agree (``directive_conflict``) and a file-wide one must stay in its
-    module; the first site's are carried. Every other comment is carried
+    must agree (``directive_conflict``), and a file-wide one must stay in its
+    module. A coverage pragma or pylint ``disable`` around a site's block
+    that would not reach the helper where it is written, in ``home_class``
+    or ``home_function`` or at module level (``Surrounding.governs``),
+    declines it when every site has one for that tool: the helper is the
+    code of a site its tool already measured or linted, so only then would
+    it report anything new. The first site's directives are carried. Every other comment is carried
     from every site that has it: the first site's in its order, then each
     other site's that the ones before did not already carry at that place,
     on a line of its own before that code where one of theirs ends its line.
@@ -901,6 +1104,22 @@ def merge_comments(
     conflict = directive_conflict(statements, [site for site, _ in sites])
     if conflict is not None:
         return conflict
+    for tool in ("coverage", "pylint"):
+        escaped = [
+            next(
+                (
+                    surrounding
+                    for surrounding in site.around
+                    if surrounding.tool == tool
+                    and not (same_module and surrounding.governs(home_class, home_function))
+                ),
+                None,
+            )
+            for site, same_module in sites
+        ]
+        if sites and all(surrounding is not None for surrounding in escaped):
+            detail = escaped[0].detail if escaped[0] is not None else ""
+            return CommentConflict(ConflictKind.DIRECTIVE_AROUND_BLOCK, detail)
     for site, same_module in sites:
         if same_module:
             continue

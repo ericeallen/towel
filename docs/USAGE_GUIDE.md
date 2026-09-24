@@ -325,9 +325,15 @@ cover`, `# nosec`, `# pylint: ...`, `# fmt: ...`, `# isort: ...`, a type
 comment) must be carried alike by every site, and must not reach code that
 becomes an argument of the call, anything but a name or a literal, since
 that code is written at the call site where the directive does not reach.
-A pair that breaks either is declined, and `engine.declined_pairs` counts
-it under `directives_differ`, `directive_on_argument` or
-`directive_outlives_block`; the directive is never copied onto a call.
+Nor may a coverage pragma or pylint `disable` around the blocks (on an
+enclosing `def`, `if`, loop or `else:` line) govern every site where the
+helper would be written outside it, nor may coverage exclude a block's
+first statement, since the call replacing the block would be measured. A pair
+that breaks any of these is declined, and `engine.declined_pairs` counts it
+under `directives_differ`, `directive_on_argument`,
+`directive_outlives_block`, `directive_around_block` or
+`excluded_block_start`; a directive is never copied onto a call or a
+helper's `def` line.
 
 ### Cross-File vs Same-File
 

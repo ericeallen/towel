@@ -1578,6 +1578,8 @@ class PairEvaluation(
                 for replacement in placement.replacements
             ],
             rendered.preamble_length,
+            home_class=home.insert_into_class,
+            home_function=home.insert_into_function,
         )
         if isinstance(comments, CommentConflict):
             self._reject_comments(pair, comments)
