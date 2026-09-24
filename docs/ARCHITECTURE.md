@@ -530,7 +530,18 @@ check reports an error after which a name is `Any` to the checker
 base class of type `Any`), no change to that file is attempted
 (`UnverifiableChangeError`), because `Any` accepts every use and the subtype
 questions that normalize a helper's annotations answer yes about it; the
-report before the run names those files. A checker crash, timeout or
+report before the run names those files. Nor is code the checker does not
+look at: a checker reports nothing in code it takes to be unreachable on the
+platform and Python it checks for, so its acceptance there says nothing.
+[`reachability.py`](../src/towel/reachability.py) places a `reveal_type((0))`
+probe before any statement, a one-line body first moved to a line of its
+own, and a statement a checker does not answer at is one it skips. Before the
+run the inferring checker is asked about the start of every block, and the
+regions it skips are named and left alone
+(`_decline_what_the_checker_does_not_look_at`); before any change is
+accepted, every checker is asked about each statement on the lines it writes
+(`_refuse_what_the_checker_does_not_look_at`, through `reveal_by_each`),
+since mypy and pyright each take their own platform and version. A checker crash, timeout or
 incomplete result is a distinct `CheckFailure`, does not permit unchecked
 application, and refuses the run with an instruction to fix what stops the
 checker or explicitly rerun with `--no-types`. That option disables helper

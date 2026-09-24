@@ -31,6 +31,7 @@ from collections import Counter
 import configparser
 import copy
 import dataclasses
+import hashlib
 from pathlib import Path
 import re
 
@@ -59,6 +60,7 @@ from .exceptions import (
     CheckerUnavailableError,
     ProjectScanLimitError,
     RefactoringError,
+    UncheckedCodeError,
     UnverifiableChangeError,
 )
 from .models import FunctionNode, RefactoringProposal, span_contains
@@ -72,15 +74,21 @@ from ..type_baseline import (
     names_any_warning,
     pre_existing_summary,
     resolved_path,
+    unchanged_lines,
+    unlooked_warning,
 )
+from ..reachability import PROBE, Place, probe_plan
 from ..type_inference import (
     CheckFailure,
+    RevealKey,
+    RevealRequest,
     TypeDiagnostic,
     TypeOracle,
     _configured_root,
     _mypy_config,
     checks_in_turn,
     holds_warm_state,
+    reveal_by_each,
     start_cold,
 )
 
@@ -216,6 +224,7 @@ class HelperAnnotationWiring(EngineState):
         self._type_known = KnownErrors()
         self._type_checked = None
         self._type_names_any = {}
+        self._type_unlooked = {}
         self._analysis_paths = tuple(file_paths)
         self._output_origin = None
         self.import_graph.begin_run()
@@ -257,6 +266,7 @@ class HelperAnnotationWiring(EngineState):
                     )
                     self._type_names_any = files_where_names_are_any(self._type_known.errors)
                     self._report_pre_existing(list(originals))
+                    self._map_what_the_checker_does_not_look_at(originals)
         if isinstance(self._type_run_baseline, CheckFailure):
             # A checker that cannot run at all -- a config naming a Python
             # version it has dropped, a tree it cannot build -- leaves the same
@@ -812,6 +822,7 @@ class HelperAnnotationWiring(EngineState):
             # the checker's refusal, not as something that could not be rendered.
             self._checker_refusals += 1
             return introduced
+        self._refuse_what_the_checker_does_not_look_at(oracle, modified_files)
         # What this check saw of each file: the change's texts, and those of
         # files an earlier change may have altered as they now stand; the rest
         # have kept the text the reference records.
@@ -913,3 +924,164 @@ class HelperAnnotationWiring(EngineState):
         warning = names_any_warning(self._type_names_any, root, changed)
         if warning:
             LOG.warning(warning)
+
+    def _unlooked(
+        self,
+        oracle: TypeOracle,
+        probed: Mapping[str, str],
+        wanted: Mapping[str, Sequence[Place]],
+        *,
+        every_checker: bool,
+    ) -> Dict[str, Set[Place]]:
+        """For each file of ``probed``, the ``wanted`` statements a checker does not look at.
+
+        A probe goes before each statement (``towel.reachability``), and a
+        statement the checker gives no answer for is one it takes to be
+        unreachable. ``every_checker`` asks each checker behind ``oracle``, as
+        verification must; otherwise the one that infers, which is enough to
+        name regions before a run. A module no probe can be placed in, or a
+        checker that answers nothing a mapping can hold, is taken to look at
+        none of it.
+        """
+        requests: List[RevealRequest] = []
+        unseen: Dict[str, Set[Place]] = {}
+        planned = {}
+        for path, text in probed.items():
+            plan = probe_plan(text)
+            if plan is None:
+                unseen[path] = set(wanted[path])
+                continue
+            planned[path] = plan
+            for line, indent in sorted({plan.sites[p] for p in wanted[path] if p in plan.sites}):
+                requests.append(RevealRequest(path, plan.text, line, indent, (PROBE,)))
+        answers: Tuple[Mapping[RevealKey, str], ...] = ()
+        if requests:
+            answers = (
+                reveal_by_each(oracle, requests) if every_checker else (oracle.reveal(requests),)
+            )
+        for path, plan in planned.items():
+            unseen[path] = set()
+            for place in wanted[path]:
+                site = plan.sites.get(place)
+                if site is None:
+                    continue  # an ``elif``: its body answers for it
+                key = (path, site[0], 0)
+                if not all(isinstance(answer, Mapping) and key in answer for answer in answers):
+                    unseen[path].add(place)
+        return unseen
+
+    def _map_what_the_checker_does_not_look_at(self, originals: Mapping[str, str]) -> None:
+        """Find, before a run, the regions of the analyzed files the checker does not look at.
+
+        A block (a body, an ``else``, a handler, the statements after an
+        ``assert``) whose first statement the checker does not answer a probe
+        at is one it takes to be unreachable, and so are the blocks inside it.
+        They are named now, since no change to them will be attempted
+        (:meth:`_decline_what_the_checker_does_not_look_at`), and kept with the
+        text they were found in, for as long as a file still holds it. The
+        checker that infers is asked, in one probe build; every change is still
+        asked of every checker before it is accepted
+        (:meth:`_refuse_what_the_checker_does_not_look_at`).
+        """
+        oracle = self._type_run_oracle
+        if oracle is None or not originals:
+            return
+        wanted: Dict[str, List[Place]] = {}
+        blocks: Dict[str, Dict[Place, Tuple[int, int]]] = {}
+        whole: Dict[str, Tuple[int, int]] = {}
+        for path, text in originals.items():
+            plan = probe_plan(text)
+            if plan is None:
+                whole[path] = (1, max(1, len(text.split("\n"))))
+                continue
+            blocks[path] = {place: (start, end) for place, start, end in plan.blocks}
+            wanted[path] = list(blocks[path])
+        unseen = self._unlooked(
+            oracle, {path: originals[path] for path in wanted}, wanted, every_checker=False
+        )
+        regions: Dict[str, Tuple[Tuple[int, int], ...]] = {}
+        for path, places in unseen.items():
+            spans = sorted(blocks[path][place] for place in places)
+            outermost: List[Tuple[int, int]] = []
+            for start, end in spans:
+                if outermost and start <= outermost[-1][1]:
+                    continue  # inside the region before it
+                outermost.append((start, end))
+            if outermost:
+                regions[path] = tuple(outermost)
+        for path, span in whole.items():
+            regions[path] = (span,)
+        self._type_unlooked = {
+            self._where_checked(path): (_digest(originals[path]), spans)
+            for path, spans in regions.items()
+        }
+        if regions:
+            root = find_project_root(Path(next(iter(originals))))
+            LOG.warning(
+                unlooked_warning(
+                    {self._where_checked(path): spans for path, spans in regions.items()}, root
+                )
+            )
+
+    def _decline_what_the_checker_does_not_look_at(self, proposal: RefactoringProposal) -> None:
+        """Refuse, before anything is inferred, a proposal that replaces code the checker skips.
+
+        Only while the file still holds the text the regions were found in;
+        once a change has moved its lines, every change is still asked of the
+        checker itself before it is accepted.
+        """
+        if not self._type_unlooked:
+            return
+        for replacement in proposal.replacements:
+            path = replacement.file_path or proposal.file_path
+            found = self._type_unlooked.get(self._where_checked(path))
+            text = self._read_source(path) if found is not None else None
+            if found is None or text is None or _digest(text) != found[0]:
+                continue
+            first, last = replacement.line_range
+            for start, end in found[1]:
+                if start <= last and first <= end:
+                    raise UncheckedCodeError(
+                        f"{path}:{start}-{end} is code the type checker does not look at "
+                        "(it takes it to be unreachable on the platform and Python it checks "
+                        "for), so a change there cannot be verified"
+                    )
+
+    def _refuse_what_the_checker_does_not_look_at(
+        self, oracle: TypeOracle, modified_files: Mapping[str, str]
+    ) -> None:
+        """Refuse a change that writes a line some checker does not look at.
+
+        Asked of a change every checker has accepted, before it counts as
+        verified: the lines it wrote -- the call sites, the helper, its
+        imports -- found by aligning each file with what it held
+        (``towel.type_baseline.unchanged_lines``), and each statement that
+        begins on one is probed, by every checker. A checker reports nothing
+        in code it takes to be unreachable, so its acceptance there said
+        nothing: trio's CI checks linux, darwin and win32, and a helper
+        accepted where a module asserts another platform failed there.
+        """
+        wanted: Dict[str, List[Place]] = {}
+        for path, text in modified_files.items():
+            plan = probe_plan(text)
+            if plan is None:
+                raise UncheckedCodeError(
+                    f"{path}: no probe can be placed in the changed module, so what the type "
+                    "checker looks at in it is not known and the change cannot be verified"
+                )
+            before = self._read_source(path)
+            kept = unchanged_lines(before, text).unchanged_after if before is not None else set()
+            wanted[path] = [place for place, _ in plan.spans if place[0] not in kept]
+        unseen = self._unlooked(oracle, modified_files, wanted, every_checker=True)
+        for path, places in unseen.items():
+            if places:
+                line = min(places)[0]
+                raise UncheckedCodeError(
+                    f"{path}:{line}: the type checker does not look at the code this change "
+                    "writes there (it takes it to be unreachable on the platform and Python it "
+                    "checks for), so the change cannot be verified"
+                )
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()

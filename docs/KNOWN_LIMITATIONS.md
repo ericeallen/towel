@@ -716,14 +716,37 @@ where the evidence comes from:
   which accept an unannotated helper, and its CI runs `mypy --strict idna`,
   which rejects it (four errors); the same output comes from a project whose
   baseline was clean, as idna's is without its two fuzz tests. trio's CI runs
-  mypy for linux, darwin and win32, and Towel's check runs for the platform it
+  mypy for linux, darwin and win32, and Towel's check ran for the platform it
   runs on: a module that begins `assert sys.platform == "win32" or not
-  TYPE_CHECKING` is unreachable to mypy anywhere else, so nothing in it is
+  TYPE_CHECKING` is unreachable to mypy anywhere else, so nothing in it was
   checked, and there Towel accepted a helper annotated with `Any`, which
   trio's configuration forbids, and one that moved two classes' attribute
   assignments out of their `__init__`, which hides the attributes from the
-  checker (13 errors for win32, one for darwin). Checking as the project's CI
-  does, flags and platforms included, is what would close this.
+  checker (13 errors for win32, one for darwin). Code the checker does not
+  look at is no longer changed (below), which closes trio's case; checking as
+  the project's CI does, flags included, is what would close idna's.
+- Code the checker does not look at is not changed. A checker takes code to
+  be unreachable when the platform and Python version it checks for make a
+  `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false, when an
+  `assert` it knows fails precedes it, or when nothing can reach it (after a
+  `return` on every path), and reports nothing there, so its acceptance of a
+  change there says nothing. Which code that is, is each checker's own rule,
+  so Towel asks it: a `reveal_type((0))` placed before a statement is answered
+  exactly where the checker looks. Before accepting a change, every
+  configured checker is asked about each statement on the lines the change
+  writes (the call sites, the helper, its imports), and one it does not answer
+  at declines the change as `not verifiable: the type checker does not look at
+  the code it changes`. Before the run, the checker that infers is asked about
+  the start of every block of the analyzed files, and the blocks it does not
+  look at are named and not changed at all; mypy and pyright each take their
+  own platform and version, so pyright set to check for Windows can skip what
+  mypy looks at, and only the question put to every checker settles a change.
+  A body that shares its header's line (`if x: return`) is probed on a line of
+  its own in the text the checker is given; a module in which no probe can be
+  placed is taken to be looked at nowhere. The body of a function without
+  annotations, which mypy does not check unless configured to, counts as
+  looked at, since mypy answers there (with `Any`): the project's own mypy
+  leaves it unchecked on every platform too.
 - Where the original check leaves a name it cannot type -- an import it cannot
   resolve or finds no types for (mypy's `import-not-found` and
   `import-untyped`, pyright's `reportMissingImports` and

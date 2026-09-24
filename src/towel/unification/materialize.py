@@ -176,6 +176,7 @@ class Materialization(
         ]
         self._ensure_type_checking([*self._analysis_paths, *touched])
         self._decline_what_the_checker_cannot_see(touched)
+        self._decline_what_the_checker_does_not_look_at(proposal)
         counters = self._helper_name_counters.copy()
         try:
             return self._materialize_refactoring(proposal)

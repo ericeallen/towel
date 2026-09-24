@@ -266,6 +266,18 @@ accepts every use, so no check could see a misuse. Installing the missing
 module or its stubs where Towel runs is what has such a file refactored with
 types.
 
+Code the checker does not look at is not changed either. A checker takes
+code to be unreachable where the platform and Python version it checks for
+make a `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false, or
+after an `assert` it knows fails, and reports nothing there. The engine asks
+it where it looks (`towel.reachability`: a `reveal_type` placed before each
+statement is answered only there): before the run, the inferring checker, about
+the start of every block of the analyzed files, which it logs and does not
+change; and before it accepts any change, every configured checker, about each
+statement on the lines the change writes. A proposal refused this way raises
+`UncheckedCodeError` and is counted as `not verifiable: the type checker does
+not look at the code it changes`.
+
 Only a checker that cannot run at all refuses the run: a crash, a timeout, a
 plugin or configuration it cannot load. Fix what stops it, or rerun the CLI
 with `--no-types`, which preserves existing source annotations but generates

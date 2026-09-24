@@ -28,6 +28,7 @@ from towel.type_inference import (
 )
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.probe_answers import answer_probes
 
 PAIR = "".join(
     f"def {name}(value):\n    total = value + 1\n    doubled = total * 2\n"
@@ -53,7 +54,7 @@ class _Oracle:
         return self.check_project({file_path: source})
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        return {}
+        return answer_probes(requests)
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[tuple[str, str]]
