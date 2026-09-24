@@ -42,10 +42,13 @@ from .annotation_ladder import (
     Hearing,
     Judge,
     Rejection,
+    Unanswerable,
     declarations_leave_their_class,
     drop_unbound_variables,
     method_at,
+    narrowing_needed_in_thunk,
     narrowing_the_call_cannot_carry,
+    partial_type_passed,
     self_as_type_variable,
     targeted_any,
     without_quoted_none,
@@ -201,8 +204,8 @@ def declared_oldest_python(path: Path) -> Optional[PythonVersion]:
     return min(targets) if targets else None
 
 
-_LADDER_FLAGS = ("disallow_untyped_defs", "warn_return_any")
-"""The mypy options that decide which fallback rungs can succeed; ``strict`` sets both."""
+_LADDER_FLAGS = ("disallow_untyped_defs", "warn_return_any", "check_untyped_defs")
+"""The mypy options that decide what the ladder can learn before checking; ``strict`` sets all three."""
 
 
 def _boolean(value: object) -> Optional[bool]:
@@ -269,7 +272,7 @@ def _names_module(pattern: str, module: str) -> bool:
 
 
 def mypy_ladder_flags(path: Path) -> Dict[str, bool]:
-    """``disallow_untyped_defs`` and ``warn_return_any`` as the project's mypy applies them to ``path``.
+    """Each of ``_LADDER_FLAGS`` as the project's mypy applies it to ``path``.
 
     What the global section says, ``strict`` setting both where a flag is not
     given, then every per-module section whose pattern names the module, in
@@ -318,6 +321,10 @@ class _LadderPolicy:
     """mypy's ``disallow_untyped_defs``: an unannotated helper is refused on its own definition."""
     returning_any_refused: bool = False
     """mypy's ``warn_return_any``: a helper returning ``Any`` is refused wherever its value is returned."""
+    untyped_bodies_checked: bool = False
+    """mypy's ``check_untyped_defs``: the body of an unannotated function is checked too."""
+    mypy: bool = False
+    """Whether mypy verifies at all; every other field is False when it does not."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -796,6 +803,8 @@ class HelperAnnotationWiring(EngineState):
             known = _LadderPolicy(
                 annotations_required=flags["disallow_untyped_defs"],
                 returning_any_refused=flags["warn_return_any"],
+                untyped_bodies_checked=flags["check_untyped_defs"],
+                mypy=True,
             )
             self._ladder_policies = {**self._ladder_policies, origin: known}
         return known
@@ -826,6 +835,10 @@ class HelperAnnotationWiring(EngineState):
         """
         if not check_types or proposal.reused_function is not None:
             yield proposal
+            return
+        known = self._untypeable_as_proposed(proposal)
+        if known is not None:
+            hearing.settle(known)
             return
         policy = self._ladder_policy(proposal.file_path)
         lossy = self._helper_uses_any(proposal)
@@ -906,6 +919,27 @@ class HelperAnnotationWiring(EngineState):
             )
         )
 
+    def _untypeable_as_proposed(self, proposal: RefactoringProposal) -> Optional[Unanswerable]:
+        """Why no signature can type ``proposal``, when the proposal alone shows it; else None.
+
+        A lambda at a call that needs a test's narrowing
+        (``narrowing_needed_in_thunk``), and, where mypy verifies, a
+        collection whose partial type the block would have completed
+        (``partial_type_passed``). Both are the proposal's own construction,
+        so no check is spent learning them; the other two reasons need the
+        checker's verdict (``_judge_for``).
+        """
+        sites = self._annotation_sites(proposal)
+        verdict = narrowing_needed_in_thunk(
+            proposal.extracted_function, [site.call for site in sites]
+        )
+        if verdict is None and self._ladder_policy(proposal.file_path).mypy:
+            verdict = partial_type_passed(
+                [(site.file_path, site.source, site.start_line, site.call) for site in sites],
+                lambda path: self._ladder_policy(path).untyped_bodies_checked,
+            )
+        return verdict
+
     def _judge_for(self, proposal: RefactoringProposal) -> Judge:
         """What decides that a refusal of ``proposal``'s helper is one no signature can answer.
 
@@ -915,7 +949,7 @@ class HelperAnnotationWiring(EngineState):
         """
         receivers = self._site_receivers(proposal)
 
-        def judge(helper: ast.FunctionDef, rejection: Rejection) -> Optional[str]:
+        def judge(helper: ast.FunctionDef, rejection: Rejection) -> Optional[Unanswerable]:
             reason = narrowing_the_call_cannot_carry(helper, rejection)
             if reason is None and receivers:
                 reason = declarations_leave_their_class(helper, rejection, receivers)

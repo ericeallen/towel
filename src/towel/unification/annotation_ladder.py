@@ -58,6 +58,7 @@ from typing import (
     cast,
 )
 
+from .exceptions import Untypeable
 from .models import FunctionNode, RefactoringProposal
 from .semantic_safety import walk_own_scope
 from ..type_inference import TypeDiagnostic
@@ -807,6 +808,15 @@ def drop_unbound_variables(
 
 # -- Refusals no signature can answer -------------------------------------------
 
+
+@dataclass(frozen=True)
+class Unanswerable:
+    """Why no signature of the helper can type the extraction: which reason, and the evidence."""
+
+    reason: Untypeable
+    detail: str
+
+
 _NARROWING_CALLS = frozenset({"isinstance", "issubclass", "callable", "hasattr"})
 
 
@@ -879,7 +889,9 @@ def _spelled_at(reference: str, arguments: Mapping[str, ast.expr]) -> Optional[s
     return f"{spelled}.{rest}" if rest else spelled
 
 
-def narrowing_the_call_cannot_carry(helper: FunctionNode, rejection: Rejection) -> Optional[str]:
+def narrowing_the_call_cannot_carry(
+    helper: FunctionNode, rejection: Rejection
+) -> Optional[Unanswerable]:
     """Why no signature can answer ``rejection``: code after a call relied on the block's narrowing.
 
     After ``if self._key_cache is None: self._key_cache = _cmpkey(...)`` the
@@ -922,10 +934,11 @@ def narrowing_the_call_cannot_carry(helper: FunctionNode, rejection: Rejection) 
             for reference in sorted(narrowed):
                 spelled = _spelled_at(reference, call.arguments)
                 if spelled is not None and _reads(read, spelled):
-                    return (
-                        f"the block narrows {spelled} for the code after it, and a call cannot"
-                        f" carry a narrowing back to its caller"
-                        f" ({os.path.basename(error.path)}:{error.line}: {error.message})"
+                    return Unanswerable(
+                        Untypeable.NARROWING_READ_AFTER_CALL,
+                        f"the block narrows {spelled}, and a call cannot carry a narrowing back"
+                        f" to its caller ({os.path.basename(error.path)}:{error.line}:"
+                        f" {error.message})",
                     )
     return None
 
@@ -954,7 +967,7 @@ def assigned_attributes(helper: FunctionNode, parameter: str) -> Set[str]:
 
 def declarations_leave_their_class(
     helper: FunctionNode, rejection: Rejection, receivers: Mapping[str, FrozenSet[str]]
-) -> Optional[str]:
+) -> Optional[Unanswerable]:
     """Why no signature can answer ``rejection``: the block declared its class's attributes.
 
     A checker learns an instance attribute from the class's body and from the
@@ -984,19 +997,269 @@ def declarations_leave_their_class(
             attribute = match.group("attr")
             for parameter, classes in receivers.items():
                 if owner in classes and attribute in assigned[parameter]:
-                    return (
+                    return Unanswerable(
+                        Untypeable.ATTRIBUTE_DECLARATIONS,
                         f"the block's assignment {parameter}.{attribute} declared"
                         f" {owner}.{attribute}, and a helper outside {owner} cannot declare its"
                         f" attributes ({os.path.basename(error.path)}:{error.line}:"
-                        f" {error.message})"
+                        f" {error.message})",
                     )
+    return None
+
+
+def _governed_thunks(helper: FunctionNode) -> Dict[str, Set[str]]:
+    """For each parameter the helper tests, the parameters it calls only where that test governs.
+
+    ``a() if p else b()``, ``if p: ... a() ... else: ... b()``, ``while p:
+    a()`` and ``p and a()``: each call of a parameter inside a branch whose
+    condition reads parameter ``p`` is governed by ``p``. Own scope only.
+    """
+    parameters = {argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)}
+    governed: Dict[str, Set[str]] = {}
+
+    def called_in(nodes: Sequence[ast.AST]) -> Set[str]:
+        return {
+            node.func.id
+            for root in nodes
+            for node in walk_own_scope(root)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in parameters
+        }
+
+    def tested(test: ast.expr) -> Set[str]:
+        return {
+            node.id
+            for node in ast.walk(test)
+            if isinstance(node, ast.Name) and node.id in parameters
+        }
+
+    for statement in helper.body:
+        for node in walk_own_scope(statement):
+            branches: Sequence[ast.AST] = ()
+            condition: Optional[ast.expr] = None
+            if isinstance(node, ast.IfExp):
+                condition, branches = node.test, (node.body, node.orelse)
+            elif isinstance(node, (ast.If, ast.While)):
+                condition, branches = node.test, (*node.body, *node.orelse)
+            elif isinstance(node, ast.BoolOp):
+                condition, branches = node.values[0], tuple(node.values[1:])
+            if condition is None:
+                continue
+            for test in tested(condition):
+                governed.setdefault(test, set()).update(called_in(branches) - {test})
+    return {test: thunks for test, thunks in governed.items() if thunks}
+
+
+def _narrowing_test(argument: ast.expr) -> Set[str]:
+    """What an argument narrows where the helper tests it: nothing unless it is a test.
+
+    A comparison, a narrowing call such as ``isinstance``, their negation or
+    conjunction, or an attribute chain tested for truth. A bare name is most
+    often a flag, and a flag narrows nothing a lambda would read.
+    """
+    if isinstance(argument, ast.Name):
+        return set()
+    if isinstance(argument, (ast.Compare, ast.Call, ast.BoolOp, ast.UnaryOp, ast.Attribute)):
+        return _tested(argument)
+    return set()
+
+
+def _read_in_lambda(thunk: ast.Lambda) -> Set[str]:
+    """Names and attribute chains a lambda's body reads from the scope around it."""
+    own = {
+        argument.arg
+        for argument in (*thunk.args.posonlyargs, *thunk.args.args, *thunk.args.kwonlyargs)
+    }
+    found: Set[str] = set()
+    for node in ast.walk(thunk.body):
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(
+            getattr(node, "ctx", None), ast.Load
+        ):
+            spelled = _dotted(node)
+            if spelled is not None and spelled.split(".", 1)[0] not in own:
+                found.add(spelled)
+    return found
+
+
+def narrowing_needed_in_thunk(
+    helper: FunctionNode, calls: Sequence[ast.Call]
+) -> Optional[Unanswerable]:
+    """Why no signature can type the extraction: a lambda at a call needs the narrowing a test gave it.
+
+    Where two blocks differ in a test and in what it guards, both become
+    arguments: ``task.total is not None`` and ``lambda: int(task.total)``
+    (rich's progress columns). In the block the test narrowed ``task.total``
+    for the expression it guarded; at the call the test is only a ``bool``,
+    evaluated beforehand, and the lambda is checked where it is written, in
+    the caller, where ``task.total`` is ``float | None`` again. No signature
+    of the helper reaches the lambda's body.
+
+    Decided from the proposal alone, as :mod:`narrowing` decides its sibling
+    case, because both halves are Towel's own construction: the helper calls
+    the thunk only where it tests the test's parameter
+    (:func:`_governed_thunks`), and the lambda reads what the test narrows.
+    """
+    governed = _governed_thunks(helper)
+    if not governed:
+        return None
+    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
+    for call in calls:
+        arguments = dict(zip(parameters, call.args))
+        for test_parameter, thunk_parameters in governed.items():
+            test = arguments.get(test_parameter)
+            if test is None:
+                continue
+            narrowed = _narrowing_test(test)
+            if not narrowed:
+                continue
+            for thunk_parameter in sorted(thunk_parameters):
+                thunk = arguments.get(thunk_parameter)
+                if not isinstance(thunk, ast.Lambda):
+                    continue
+                read = _read_in_lambda(thunk)
+                for reference in sorted(narrowed):
+                    if _reads(read, reference):
+                        return Unanswerable(
+                            Untypeable.NARROWING_READ_IN_THUNK,
+                            f"{ast.unparse(thunk)} reads {reference}, which"
+                            f" {ast.unparse(test)} narrowed where the block evaluated it",
+                        )
+    return None
+
+
+_EMPTY_COLLECTIONS = frozenset({"list", "dict", "set"})
+"""Calls that make an empty collection mypy gives a partial type, as ``[]`` and ``{}`` are."""
+
+
+def _is_empty_collection(value: ast.expr) -> bool:
+    if isinstance(value, ast.List) and not value.elts:
+        return True
+    if isinstance(value, ast.Dict) and not value.keys:
+        return True
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in _EMPTY_COLLECTIONS
+        and not value.args
+        and not value.keywords
+    )
+
+
+def _innermost_function(tree: ast.Module, line: int) -> Optional[FunctionNode]:
+    found: Optional[FunctionNode] = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+            node.lineno <= line <= (node.end_lineno or node.lineno)
+        ):
+            if found is None or node.lineno > found.lineno:
+                found = node
+    return found
+
+
+def _declares_types(function: FunctionNode) -> bool:
+    arguments = function.args
+    every = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+    every += [extra for extra in (arguments.vararg, arguments.kwarg) if extra is not None]
+    return function.returns is not None or any(a.annotation is not None for a in every)
+
+
+def partial_type_passed(
+    sites: Sequence[Tuple[str, str, int, ast.Call]], checks_untyped_bodies: Callable[[str], bool]
+) -> Optional[Unanswerable]:
+    """Why mypy refuses every signature: a call passes a collection whose element type is still open.
+
+    ``attrs = {}`` gives ``attrs`` a partial type, which mypy completes from the
+    next statement of the same scope that fills it, ``attrs[key] = value``. In
+    the block that statement came next; after the extraction the next thing
+    is the call, and a partial type passed to a call is an error at the
+    assignment, whatever the parameter is declared as (mistune's
+    ``_parse_attrs``: "Need type annotation for attrs"). Pyright has no partial
+    types, so this is mypy's alone, and only in a body mypy checks: an
+    annotated function, or any where ``check_untyped_defs`` holds.
+
+    ``sites`` are each call's file path, its source, the first line of its
+    block, and the call. The collection must be bound once before the block,
+    without an annotation, and not read in between.
+    """
+    for path, source, start_line, call in sites:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        function = _innermost_function(tree, start_line)
+        if function is None:
+            continue
+        if not _declares_types(function) and not checks_untyped_bodies(path):
+            continue
+        parameters = {
+            argument.arg
+            for argument in (
+                *function.args.posonlyargs,
+                *function.args.args,
+                *function.args.kwonlyargs,
+                *[a for a in (function.args.vararg, function.args.kwarg) if a is not None],
+            )
+        }
+        own = [node for statement in function.body for node in walk_own_scope(statement)]
+        for argument in call.args:
+            if not isinstance(argument, ast.Name) or argument.id in parameters:
+                continue
+            name = argument.id
+            bindings = [
+                node
+                for node in own
+                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+                and node.lineno < start_line
+                and any(
+                    isinstance(target, ast.Name) and target.id == name
+                    for statement_target in (
+                        node.targets if isinstance(node, ast.Assign) else [node.target]
+                    )
+                    for target in ast.walk(statement_target)
+                )
+            ]
+            other_bindings = [
+                node
+                for node in own
+                if isinstance(node, ast.Name)
+                and node.id == name
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+                and node.lineno < start_line
+            ]
+            if len(bindings) != 1 or len(other_bindings) != 1:
+                continue
+            binding = bindings[0]
+            if not (
+                isinstance(binding, ast.Assign)
+                and len(binding.targets) == 1
+                and isinstance(binding.targets[0], ast.Name)
+                and _is_empty_collection(binding.value)
+            ):
+                continue
+            last = binding.end_lineno or binding.lineno
+            read_between = any(
+                isinstance(node, ast.Name)
+                and node.id == name
+                and isinstance(node.ctx, ast.Load)
+                and last < node.lineno < start_line
+                for node in own
+            )
+            if read_between:
+                continue
+            return Unanswerable(
+                Untypeable.PARTIAL_TYPE,
+                f"{ast.unparse(binding)} ({os.path.basename(path)}:{binding.lineno}) takes its"
+                f" element type from the block's first write to {name}, and passed to the"
+                " helper first it has none",
+            )
     return None
 
 
 # -- A hearing -----------------------------------------------------------------
 
 
-Judge = Callable[[ast.FunctionDef, Rejection], Optional[str]]
+Judge = Callable[[ast.FunctionDef, Rejection], Optional[Unanswerable]]
 """Why no signature can answer a refusal of the helper, or None when some signature might."""
 
 
@@ -1014,7 +1277,7 @@ class Hearing:
     def __init__(self, judge: Judge) -> None:
         self._judge = judge
         self._refusals: List[Tuple[RefactoringProposal, Rejection]] = []
-        self._settled_by: Optional[str] = None
+        self._settled_by: Optional[Unanswerable] = None
 
     def refused(self, variant: RefactoringProposal, rejection: Rejection) -> None:
         """Record that the checker refused ``variant``, and whether that settles the proposal."""
@@ -1022,8 +1285,13 @@ class Hearing:
         if self._settled_by is None:
             self._settled_by = self._judge(variant.extracted_function, rejection)
 
-    def settled_by(self) -> Optional[str]:
-        """Why no signature can answer this proposal's refusals, once a refusal has shown it."""
+    def settle(self, verdict: Unanswerable) -> None:
+        """Record that the proposal alone shows no signature can type it; nothing need be checked."""
+        if self._settled_by is None:
+            self._settled_by = verdict
+
+    def settled_by(self) -> Optional[Unanswerable]:
+        """Why no signature can type this proposal, once the proposal or a refusal has shown it."""
         return self._settled_by
 
     def of(self, variant: RefactoringProposal) -> Optional[Rejection]:

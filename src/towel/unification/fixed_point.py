@@ -54,9 +54,15 @@ from typing import (
     Set,
     Tuple,
     TypeVar,
+    Union,
 )
 from .defaults import DEFAULT_MAX_ITERATIONS
-from .exceptions import CheckerUnavailableError, RefactoringError, UntypeableExtraction
+from .exceptions import (
+    CheckerUnavailableError,
+    RefactoringError,
+    Untypeable,
+    UntypeableExtraction,
+)
 from .models import RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
@@ -106,15 +112,17 @@ def _is_checker_failure(error: BaseException) -> bool:
     return isinstance(error, CheckerUnavailableError)
 
 
-DeclineReason = Literal[
-    "refused by the type checker",
-    "no helper signature can type it",
-    "not judged: the type checker could not run",
-    "not representable in its file's encoding",
-    "could not be rendered",
-    "changed nothing",
+DeclineReason = Union[
+    Literal[
+        "refused by the type checker",
+        "not judged: the type checker could not run",
+        "not representable in its file's encoding",
+        "could not be rendered",
+        "changed nothing",
+    ],
+    Untypeable,
 ]
-"""Why a proposal the analysis built was not applied."""
+"""Why a proposal the analysis built was not applied: an ``Untypeable`` names what no signature can type."""
 
 
 @dataclass(frozen=True)
@@ -423,10 +431,7 @@ class FixedPointDrivers(Materialization):
                 "the type checker could not check",
             )
         elif isinstance(error, UntypeableExtraction):
-            reason, said = (
-                "no helper signature can type it",
-                "no helper signature can type",
-            )
+            reason, said = error.reason, "no helper signature can type"
         elif isinstance(error, RefactoringError) and self._checker_refusals:
             reason, said = "refused by the type checker", "the type checker refused"
         elif isinstance(error, UnencodableText):

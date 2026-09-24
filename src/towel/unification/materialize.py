@@ -166,7 +166,7 @@ class Materialization(
             hearing.refused(variant, outcome)
         settled = hearing.settled_by()
         if settled is not None:
-            raise UntypeableExtraction(f"No helper signature can type this extraction: {settled}")
+            raise UntypeableExtraction(settled.reason, settled.detail)
         if proposal.reused_function is not None:
             raise RefactoringError("Reusing the existing function introduces project type errors")
         raise RefactoringError("Every helper annotation variant introduces project type errors")
