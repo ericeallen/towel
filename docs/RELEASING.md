@@ -61,9 +61,17 @@ test dependencies; the project itself, installed editable from the tree under
 test; the tools of Towel's two extras, mypy and pyright from `types` and Black,
 isort and ruff from `format`; and the candidate, installed with `--no-deps` and
 then compared file by file with the wheel. A tool the project's own
-requirements installed is left as it is, and one the project's `uv.lock`,
-`poetry.lock` or `pdm.lock` pins is installed at that version; only the rest
-come from the wheel's extras, at the versions that resolve that day. A version
+requirements installed is left as it is, and one the project pins is installed
+at that version. The first of three places to pin a tool decides: its
+`uv.lock`, `poetry.lock` or `pdm.lock`, which is the project's environment
+written down; then the `rev` of the tool's hook in `.pre-commit-config.yaml`
+(`pre-commit/mirrors-mypy`, `RobertCraigie/pyright-python`,
+`psf/black-pre-commit-mirror`, `PyCQA/isort`, `astral-sh/ruff-pre-commit`),
+which is the version the project's own checks run, with a commit read as the
+tag its `# frozen:` comment names; then an exact pin, for this interpreter, in a
+requirements file, those named for typing read first (httpx's
+`requirements.txt` has `mypy==1.17.1`). Only the rest come from the wheel's
+extras, at the versions that resolve that day. A version
 the project chose that fails the extra's requirement is replaced by the extra's,
 as installing the extra replaces it, and the result names the pin it overrode:
 rich's `poetry.lock` pins Black 22.12.0, below `black>=26.3.1`. Which formatter
@@ -100,8 +108,9 @@ html5lib, whose `setup.py` cannot be built in isolation.
 
 Run the corpus with the default type policy, which is what a user gets. Each
 result records the interpreter, the candidate's version, each checker's and
-formatter's version and who chose it (`project`, the lock file, or the extra,
-`towel[types]` or `towel[format]`, with any pin it overrode), every typing
+formatter's version and who chose it (`project`; the file whose pin it is, a
+lock file, `.pre-commit-config.yaml` or a requirements file by its path; or the
+extra, `towel[types]` or `towel[format]`, with any pin it overrode), every typing
 requirement the project declares with where it declares it and what became of
 it (installed as, pinned by, or why not), the distributions the installer
 added for them, the tree the project was installed from, and whether its

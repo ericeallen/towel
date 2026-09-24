@@ -799,6 +799,14 @@ class PyrightOracle:
     wrote into the input it promised only to read, and a kill between writing
     and removing it left it there. Raises ``ImportError`` at construction when
     pyright is not installed; it is part of the ``types`` extra.
+
+    The server and the command line are configured alike (see
+    ``towel.pyright_session.server_settings``) and resolve imports through one
+    interpreter, this one's, whose environment holds the project's
+    dependencies and, installed editable, the project itself. Either path
+    therefore reaches the verdict the other would. Where that environment
+    reaches into the project, both reach the copy instead (see
+    ``_environment``).
     """
 
     def __init__(self, *, language_server: bool = True) -> None:
@@ -806,6 +814,8 @@ class PyrightOracle:
         if command is None:
             raise ImportError("pyright is not installed")
         self._command: List[str] = command
+        self._interpreter = sys.executable
+        self._search_path: Optional[Tuple[str, ...]] = None
         # The command line is the fallback and reaches the same verdicts, so it
         # stays available: a caller that must not keep a checker process alive,
         # and the tests covering that path, ask for it here.
@@ -826,6 +836,61 @@ class PyrightOracle:
         for copy in self._probe_copies.values():
             copy.close()
         self._probe_copies.clear()
+
+    def _interpreter_search_path(self) -> Tuple[str, ...]:
+        """The interpreter's ``sys.path``, where pyright looks for installed code; asked once.
+
+        Asked as pyright asks it, in the same environment. An interpreter that
+        cannot answer leaves nothing to move, and pyright, asking it the same,
+        finds nothing installed either.
+        """
+        if self._search_path is None:
+            listed: object = []
+            try:
+                completed = subprocess.run(
+                    [self._interpreter, "-c", "import json, sys; json.dump(sys.path, sys.stdout)"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=INTERPRETER_TIMEOUT_SECONDS,
+                    env=python_tool_environment(),
+                    cwd=str(Path(self._interpreter).parent),
+                )
+                if completed.returncode == 0:
+                    listed = json.loads(completed.stdout)
+                else:
+                    LOG.warning(
+                        "%s exited %d when asked for its search path",
+                        self._interpreter,
+                        completed.returncode,
+                    )
+            except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+                LOG.warning("could not ask %s for its search path: %s", self._interpreter, error)
+            entries = listed if isinstance(listed, list) else []
+            self._search_path = tuple(entry for entry in entries if isinstance(entry, str))
+        return self._search_path
+
+    def _environment(self, root: Path, copy: Path) -> Dict[str, str]:
+        """What pyright runs with over ``copy``, the private copy of ``root``.
+
+        An editable install puts the directory its package lives in on the
+        interpreter's search path, and pyright resolves a consumer's import of
+        that package there: in the user's tree, not the copy under check. The
+        copy's own search roots win only where they reach the package -- its
+        root, ``src`` (``autoSearchPaths``), the configuration's ``extraPaths``
+        -- so a package under ``python/`` or ``lib/``, or a ``src`` that the
+        configuration's ``extraPaths`` replace, was found only in the user's
+        tree, and a candidate that broke such a consumer read as clean on both
+        paths while the project's own check, run after it was applied, failed.
+        Each such directory's counterpart in the copy therefore goes on
+        ``PYTHONPATH``, ahead of the interpreter's own site directories, for
+        the interpreter pyright asks where installed code is.
+        """
+        environment = python_tool_environment()
+        moved = _copied_search_paths(self._interpreter_search_path(), root, copy)
+        if moved:
+            environment["PYTHONPATH"] = os.pathsep.join(moved)
+        return environment
 
     def _probe_copy(self, root: Path) -> CheckerSnapshot | CheckFailure:
         """The private copy of ``root`` the command line probes modules in, made on first use."""
@@ -867,8 +932,8 @@ class PyrightOracle:
             session = PyrightSession(
                 self._server,
                 snapshot.tree,
-                sys.executable,
-                environment=python_tool_environment(),
+                self._interpreter,
+                environment=self._environment(root, snapshot.tree),
             )
         except SessionFailure as error:
             snapshot.close()
@@ -918,29 +983,43 @@ class PyrightOracle:
             copy.apply({str(original): text})
         except (OSError, ValueError, UnicodeError) as error:
             return CheckFailure(f"Could not write a pyright probe into Towel's copy: {error}")
-        probe = copy.path_of(str(original))
-        return self._run_diagnostics([str(probe)], probe.parent)
+        return self._run_diagnostics(root, copy.tree, [str(copy.path_of(str(original)))])
 
     def _run_diagnostics(
-        self, paths: Sequence[str], directory: Path, *, project: bool = False
+        self, root: Path, project: Path, paths: Sequence[str] = ()
     ) -> _PyrightDiagnostics | CheckFailure:
-        project_arguments = ["--project", str(directory)] if project else []
+        """``pyright`` over ``project``, the copy of ``root``, or over just ``paths`` in it.
+
+        The project is named, never left for pyright to find: the language
+        server is given its root, and the command line must stand in the same
+        place. pyright looks for a configuration from its working directory,
+        which it sees with symbolic links resolved, while the paths it is given
+        keep theirs; where the temporary directory is such a link, as on macOS,
+        a probe was then outside the project found for it, and was analyzed as
+        a module of its own directory, whose relative imports named a second
+        copy of its package: ``"_core.Task" is not assignable to
+        "pkg._core.Task"``. A project with no configuration at its root was
+        rooted at the probe's directory besides, where ``src`` is not found.
+        Named files replace the configured include list but not its exclusions;
+        without them the configuration's own scope is checked.
+        """
         try:
             completed = subprocess.run(
                 [
                     *self._command,
                     "--outputjson",
                     "--pythonpath",
-                    sys.executable,
-                    *project_arguments,
+                    self._interpreter,
+                    "--project",
+                    str(project),
                     *paths,
                 ],
                 capture_output=True,
                 text=True,
-                cwd=str(directory),
+                cwd=str(project),
                 check=False,
                 timeout=PYRIGHT_TIMEOUT_SECONDS,
-                env=python_tool_environment(),
+                env=self._environment(root, project),
             )
         except (subprocess.TimeoutExpired, OSError) as error:
             reason = (
@@ -1086,9 +1165,9 @@ class PyrightOracle:
                 with checker_snapshot(
                     root, replacements, excluded_paths=excluded_paths
                 ) as snapshot:
-                    # A positional directory overrides both configured include
-                    # and exclude lists. Project mode preserves their scope.
-                    result = self._run_diagnostics([], snapshot, project=True)
+                    # A positional directory would override both configured
+                    # include and exclude lists; naming none keeps their scope.
+                    result = self._run_diagnostics(root, snapshot)
                     if isinstance(result, CheckFailure):
                         return result
                     for diagnostic in result.diagnostics:
@@ -1137,6 +1216,30 @@ class PyrightOracle:
 
 PYRIGHT_TIMEOUT_SECONDS = 600.0
 """How long one pyright run may take before Towel proceeds without its answer."""
+
+INTERPRETER_TIMEOUT_SECONDS = 60.0
+"""How long the interpreter may take to say where its installed code is."""
+
+
+def _copied_search_paths(search_path: Sequence[str], root: Path, copy: Path) -> List[str]:
+    """The directories of ``search_path`` inside ``root`` but not ``root`` itself, in ``copy``.
+
+    Only those the copy holds: an environment kept inside the project is not
+    copied, and pyright goes on finding it where it is. The root is the copy's
+    own root already, where pyright looks first.
+    """
+    resolved = root.resolve()
+    moved: Dict[str, None] = {}
+    for entry in search_path:
+        if not entry or not os.path.isabs(entry):
+            continue
+        path = Path(entry).resolve()
+        if path == resolved or not path.is_relative_to(resolved):
+            continue
+        counterpart = copy / path.relative_to(resolved)
+        if counterpart.is_dir():
+            moved[str(counterpart)] = None
+    return list(moved)
 
 
 def _what_pyright_said(stderr: str) -> str:

@@ -451,7 +451,19 @@ decides this), since a plugin changes what an expression's type is; one that
 cannot be loaded fails the check, so the baseline refuses the run. `PyrightOracle`
 does the same through one long-lived `pyright-langserver` per project,
 watching a private copy that follows the project; the pyright command line is
-the fallback when no server can be started.
+the fallback when no server can be started. The two must reach one verdict,
+and share an analyzer but not its defaults, so the server is configured
+setting by setting as the command line configures itself (`server_settings`
+in `pyright_session.py` lists each setting and why it is sent or left unset):
+above all `autoSearchPaths`, without which a `src` layout's consumers resolved
+the package to the environment's installed copy, the user's own tree, and a
+candidate that broke them read as clean. Both paths resolve imports through
+the same interpreter, and the command line is told the project's root rather
+than left to find it from a working directory. Where that interpreter's
+search path reaches into the project, as an editable install's does, both are
+given the copy's counterpart ahead of it, so a consumer that imports its
+package through the install is judged against the candidate wherever the
+package lives.
 `type_oracle_for_project` picks the checker the project configures: mypy
 for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
 `pyrightconfig.json`, and for a project configuring both, mypy infers
