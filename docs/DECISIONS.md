@@ -689,3 +689,25 @@ The third audit tests this case. If it fails, the fix is to put that name
 in doubt, not to return to refusing whole runs.
 
 *Status: implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-24: 1.772 fixes defects, and defers widening what Towel accepts
+
+The third audit round classified and priced every place Towel declines. Some
+declines exist only because an analysis is coarser than it could be. A
+nested block's variables are returned without liveness. A `getattr` marks a
+whole module reflective. A block ending in `raise` is never considered.
+
+The owner decided what goes into 1.772, and what waits:
+
+- **In 1.772:** every P1; the cheap P2s (refusals, recovery, remedy text, a
+  slowdown, observability, tests); and every documentation correction.
+- **Deferred to the next release:** declines that would be recovered only
+  by making the safety analysis accept code it now refuses. They are listed,
+  with their measured cost, in `docs/proposals/decline-capabilities.md`.
+
+Each deferred item widens what Towel accepts, and needs its own soundness
+argument and an audit of its own. Adding them now would open another round
+on new and riskier ground. They remain defects by the owner's standard, and
+are recorded as defects, not as limitations.
+
+*Status: decided. The deferred list is the next release's starting point.*
