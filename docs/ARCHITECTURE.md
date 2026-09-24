@@ -818,12 +818,24 @@ and the rewritten call statements are formatted, never the surrounding
 file, and every formatter is wrapped by `checked`, which compares each
 snippet's syntax tree before and after and raises if formatting changed
 it. A `FileFinisher` sorts the imports of each modified file the way the
-project does, with ruff's `I` rules when selected or isort when configured;
-`imports_permuted_only` accepts only reordering or merging within consecutive
-import runs in the same statement list, preserving each bound name's ordered
-providers. Wildcard imports, future imports and other statements are barriers;
-otherwise the file stays as Towel assembled it. Independent imports can still
-have order-sensitive initialization, which this binding check cannot model. The tools are optional (`code-towel[format]`);
+project does, with ruff's `I` rules when selected or isort when configured.
+An import runs its module where it stands, so the order of a file's own
+imports is the order of their import-time effects, which no binding check
+can show to commute; the finisher therefore moves only the imports Towel
+added. It runs the tool only on a file the tool's own configuration selects
+(`--force-exclude` for ruff; isort's skip settings, directories included),
+judged for the project's file rather than the run's staged copy
+(`_counterpart`), and only on a file whose text before the change the tool
+already leaves unchanged, where the file's own imports are in the tool's
+order (`sort_added_imports`). The result must permute or merge only
+consecutive imports within one statement list, preserving each bound name's
+ordered providers, with wildcard imports, future imports and other
+statements as barriers, and must bind the file's own imports in their
+original order; otherwise the file stays as Towel assembled it, and a file
+left unsorted is logged once. The formatters leave the code they are given
+unformatted where their configuration excludes the path the run was given
+(`--force-exclude` for `ruff format`; Black's `exclude`, `extend-exclude`,
+`force-exclude`). The tools are optional (`code-towel[format]`);
 without them code is inserted as rendered, and the CLI says so.
 
 ## Comments of moved code
