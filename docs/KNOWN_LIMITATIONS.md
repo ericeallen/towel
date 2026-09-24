@@ -882,10 +882,17 @@ the proposals it built and did not apply, by reason:
   `# pylint: disable`, a `# pragma: no cover` on the statement or the
   clause it excludes, the statement after a `# noinspection`, or a
   `# fmt: off` region. The directive is not copied onto the call line
-  either, which would silence or exclude a line its tool never saw it on;
-  the cost of the rule is the refactorings it declines (the corpus figures
-  are in `CHANGELOG.md`). A directive for the whole file reaches its module
-  wherever the code is written and is not counted here.
+  either, which would silence or exclude a line its tool never saw it on.
+  Measured on September 24, 2026, extending the rule from a checker's
+  ignore to every directive cost no refactoring: the `--no-types` fixed
+  points of click, rich, packaging, pygments, asyncstdlib, mashumaro,
+  python-statemachine, tinydb, fastjsonschema, pint, autopep8, docutils,
+  jinja2, markdown, pyparsing, sqlparse and tornado were byte-identical, and
+  a first analysis of those and of attrs, boltons, coverage.py and its
+  tests, more-itertools, pytest and its tests, requests, urllib3 and
+  werkzeug declined no pair for it that the checker's rule did not (one,
+  in jinja2). A directive for the whole file reaches its module wherever
+  the code is written and is not counted here.
   `directive_outlives_block`:
   a region directive on a line of its own (`fmt: off`/`on`, `isort:
   off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`) is not
