@@ -630,3 +630,52 @@ annotated.
 
 *Status: implemented on the `audit-1772` branch, except the rule for
 unreachable code, which is being implemented. Not yet released.*
+
+## 2026-09-24: An import problem refuses only when it leaves a name in doubt
+
+This refines "How the import model decides, and when a problem refuses".
+That entry refused a run for a problem that involves the code being
+refactored, and its first implementation read "involves" too broadly.
+Sphinx's test data imports a mocked `sphinx.missing_module4`. That import
+flagged the name `sphinx`, so every `--cross-module` run on sphinx refused.
+With the refusal set aside, all but 2 of its 3,860 cross-module pairs were
+declined.
+
+An import of a module the tree lacks says nothing about where any other
+module lives. `from sphinx.missing_module4 import X` cannot make
+`sphinx.util` mean something else. So the names of every other file are as
+trustworthy with that import present as without it.
+
+The owner chose one rule for root, package and sub-package runs:
+
+- **A problem that leaves a name in doubt refuses the run.** Towel then
+  cannot tell which reading of the program is real, and so cannot transform
+  any of it safely. Such problems are:
+  - an ambiguous name;
+  - a file reachable under two names, such as a stale `build/lib` copy of
+    the package;
+  - a relative import that climbs out of its package;
+  - a top-level module inside a package.
+- **An import of a module the tree lacks refuses nothing, wherever it
+  lies.** The file making it is left entirely unchanged, reported, and never
+  used as a host or a borrower. The run proceeds. This covers:
+  - test fixtures inside a root run;
+  - a package whose `__init__.py` imports a `_version.py` generated at build
+    time, which a fresh clone lacks;
+  - an initializer that a sub-package is imported through.
+
+The refusal it replaces also happened to steer users away from refactoring
+test fixtures (`--exclude tests/roots`). That was a coincidence: a root run
+over fixtures that import cleanly refactors them anyway, and choosing the
+target is the user's call.
+
+One assumption now carries more weight, and the model's docstring states
+it: a location that holds any module its name's imports need is taken to be
+that name. So a project directory named like a library, and sharing just one
+of its modules, would be taken for the library. The imports it cannot
+satisfy would then put only their own files in doubt. The model does check
+installed libraries, but only those the interpreter Towel runs in can see.
+The third audit tests this case. If it fails, the fix is to put that name
+in doubt, not to return to refusing whole runs.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
