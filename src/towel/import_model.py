@@ -82,8 +82,13 @@ end, and are refined where they do; each refinement is argued where it is made:
   provider's own package already imports from it, the owner's rule for
   top-level packages applied at every level, because part of a package may
   not ship: ``bs4/tests`` is left out of beautifulsoup4's wheel
-  (:meth:`ImportModel._only_entered_directories`). A package's ``__main__``
-  is never a provider, and neither is a module below a directory without
+  (:meth:`ImportModel._only_entered_directories`). Only an import that runs
+  whenever its file is imported counts, never one inside a function
+  (:attr:`ImportSite.loads`). A build can also leave out one module of a
+  directory it ships, and a module the project's build configuration
+  declares left out of what ships is never a provider to one it keeps
+  (:meth:`ImportModel._ships_wherever`). A package's ``__main__`` is never a
+  provider, and neither is a module below a directory without
   ``__init__.py`` inside a regular package (:func:`_absolute_module`).
 
 What the model assumes, and cannot check:
@@ -104,6 +109,10 @@ What the model assumes, and cannot check:
   installs it from a recipe not read (``tox.ini``, a ``Pipfile``, a CI
   file, a setup.py); the imports of it the directory does not hold then put
   only their own files in doubt;
+- what a build leaves out is what its configuration declares, as read by
+  :mod:`towel.shipped_files`, and what no import from outside a directory
+  shows ships: a module a setup.py or a build hook leaves out of a directory
+  the program imports from would pass for shipped;
 - a module inside a regular package is imported through that package, never
   run by its path with its own directory on ``sys.path``, unless it imports
   by a top-level name a module that only its package holds;
@@ -144,6 +153,7 @@ from typing import (
 
 from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES, ScanLimitExceeded
 from .declared_requirements import Requirement, declared_requirements, normalized_name
+from .shipped_files import Artifact, left_out
 
 __all__ = [
     "AmbiguousName",
@@ -234,6 +244,16 @@ class ImportSite:
     def attests(self) -> bool:
         """Whether this import shows its top-level name is importable wherever the file runs."""
         return self.level == 0 and self.runtime and not self.guarded
+
+    @property
+    def loads(self) -> bool:
+        """Whether it runs whenever its file is imported: at import time, unguarded, not in a function.
+
+        Only such an import shows that what it names is present wherever the
+        file is; one inside a function may run only on a path, a developer's
+        command say, that the installed program never takes.
+        """
+        return self.runtime and not self.guarded and not self.deferred
 
     def statement(self) -> str:
         """The import as source, for messages."""
@@ -617,7 +637,9 @@ class ImportModel:
     _blocked: FrozenSet[Path]
     _flagged_files: FrozenSet[Path]
     _entered: Mapping[Path, FrozenSet[Path]]
-    """For each directory, the contexts with a module outside it that imports from it."""
+    """For each directory, the contexts with a module outside it that loads a module in it."""
+    _left_out: Mapping[Path, FrozenSet[Artifact]]
+    """For each module a declared build exclusion covers, what it is left out of."""
 
     def spelling(self, importer: Path, provider: Path) -> Optional[ImportSpelling]:
         """The module ``importer`` can name ``provider`` by, or ``None`` when none is known to work.
@@ -640,6 +662,8 @@ class ImportModel:
         if self._blocked_provider(providing, importing):
             return None
         if not self._only_entered_directories(importing, providing):
+            return None
+        if not self._ships_wherever(importing, providing):
             return None
         package = self._package_of[importing]
         if package is not None and package == self._package_of[providing]:
@@ -761,11 +785,15 @@ class ImportModel:
         relative import of it from ``bs4/formatter.py`` resolves in the source
         tree and breaks every installation. So each directory the new import
         enters, from the provider's own up to the first that holds the
-        importer, must already be imported from, at run time and unguarded, by
-        a module outside it in the importer's context or in the provider's
-        own package: the owner's rule for top-level packages, at every level.
-        An import from anywhere else, a documentation script say, shows only
-        that the directory exists where that script runs.
+        importer, must already be imported from by a module outside it in the
+        importer's context or in the provider's own package, with an import
+        that runs whenever that module is imported (:attr:`ImportSite.loads`):
+        the owner's rule for top-level packages, at every level. An import
+        from anywhere else, a documentation script say, shows only that the
+        directory exists where that script runs, and one inside a function
+        only that it exists where that function is called: shop's
+        ``cli.main`` imports ``shop.devtools`` only for a developer's command,
+        and the wheel leaves ``shop/devtools`` out.
         """
         sides = {self._contexts[importer], self._contexts[provider]}
         directory = provider.parent
@@ -776,6 +804,19 @@ class ImportModel:
                 break
             directory = directory.parent
         return True
+
+    def _ships_wherever(self, importer: Path, provider: Path) -> bool:
+        """Whether the provider ships in every artifact of the project that ships the importer.
+
+        A directory that ships can still leave one of its files behind: hatch's
+        ``exclude = ["src/shop/_devtools.py"]`` keeps ``_devtools.py`` out of the
+        wheel beside a ``shop/stats.py`` that does ship, and a helper hosted in
+        it made the installed ``shop.stats`` raise ``ModuleNotFoundError``. What
+        the build configuration declares left out is read for that alone
+        (:mod:`towel.shipped_files`); it names nothing.
+        """
+        missing = self._left_out.get(provider, frozenset())
+        return not missing or missing <= self._left_out.get(importer, frozenset())
 
     def _blocked_provider(self, provider: Path, importer: Optional[Path] = None) -> bool:
         """Whether importing ``provider`` could load the wrong file, or a file that cannot load.
@@ -884,11 +925,15 @@ def _entered_from_outside(
     contexts: Mapping[Path, Path],
     root: Path,
 ) -> Dict[Path, FrozenSet[Path]]:
-    """For each directory, the contexts that import from it at run time, unguarded, from outside it."""
+    """For each directory, the contexts that load a module in it from outside it.
+
+    Only an import that runs whenever its module is imported counts
+    (:attr:`ImportSite.loads`).
+    """
     entered: Dict[Path, Set[Path]] = {}
     for path, module in modules.items():
         for site in module.sites or ():
-            if not site.runtime or site.guarded:
+            if not site.loads:
                 continue
             reached = _reached(
                 modules, directories, names, root, path, site.level, site.module, site.names
@@ -1434,6 +1479,7 @@ def build_import_model(
     excluded_names: Iterable[str] = (),
     installed: Optional[InstalledProbe] = None,
     required: Optional[Iterable[Requirement]] = None,
+    left_out_of: Optional[Mapping[Path, FrozenSet[Artifact]]] = None,
 ) -> ImportModel:
     """The import model of every Python file under ``root``, outside ``excluded``.
 
@@ -1444,6 +1490,9 @@ def build_import_model(
     ``required`` are the distributions the project declares it requires; they
     default to what ``root``'s metadata, lockfiles and requirements files
     declare (:func:`~towel.declared_requirements.declared_requirements`).
+    ``left_out_of`` says which modules the build configuration leaves out of
+    what ships; it defaults to what ``root``'s configuration declares
+    (:func:`~towel.shipped_files.left_out`).
     Raises :class:`~towel.consumers.ScanLimitExceeded` for a tree too large
     to read, since a partial model could miss the copy that makes a name
     ambiguous.
@@ -1500,6 +1549,7 @@ def build_import_model(
     )
     contexts = {path: package_of[path] or path for path in tree.modules}
     entered = _entered_from_outside(modules, tree.holding_modules, names, contexts, project)
+    left = left_out(project, tree.modules) if left_out_of is None else left_out_of
     return ImportModel(
         root=project,
         names=names,
@@ -1514,6 +1564,7 @@ def build_import_model(
         _blocked=blocked,
         _flagged_files=flagged_files,
         _entered=entered,
+        _left_out=left,
     )
 
 
