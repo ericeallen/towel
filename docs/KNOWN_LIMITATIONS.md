@@ -313,7 +313,11 @@ addresses:
   when there are none), so a script that runs a statement before its
   imports keeps it first. Static local import cycles are rejected
   (including cycles through a package's `__init__`, which `from . import
-  name` runs), dynamic ones are not detected.
+  name` runs), dynamic ones are not detected. An import under a
+  `TYPE_CHECKING` guard, resolved as above, never runs and closes no cycle;
+  one in the guard's `else`, under `if not TYPE_CHECKING:`, or under a name
+  a scope binds for itself does. A program that sets `typing.TYPE_CHECKING`
+  true before importing is outside this model.
 - **Concurrency of application.** A run refactors a private copy of the
   project and writes back only when it has succeeded, as one batch; a file
   edited during the run refuses the batch, nothing written. Files are replaced
