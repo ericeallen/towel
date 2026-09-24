@@ -39,12 +39,12 @@ import textwrap
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from .block_comments import weave_comments
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
 from .engine_state import HelperNameClaims
 from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
-from .import_graph import ImportTimeCode, fails_run_by_path, runs_as_script
+from .import_graph import ImportTimeCode, TypeCheckingGuards, fails_run_by_path, runs_as_script
 from .insertion import reindent
 from .models import (
     AppliedChange,
@@ -752,19 +752,21 @@ class Materialization(
         it under ``TYPE_CHECKING`` keeps the module's runtime imports as they
         were and cannot close an import cycle -- which matters here, because
         the extraction has often just made that module import this one. An
-        existing guard is extended rather than a second one written.
+        existing module-level guard is extended rather than a second one
+        written. It is recognised as every other question about what a module
+        runs recognises one, by binding (``TypeCheckingGuards``), whatever
+        follows its colon, and the import takes the indentation of the
+        guard's own body.
         """
         wanted = f"from {module_name} import {name}"
         if any(wanted == line.strip() for line in lines):
             return
+        existing = _guard_body_start(lines)
+        if existing is not None:
+            index, indent = existing
+            lines.insert(index, f"{indent}{wanted}\n")
+            return
         self._ensure_import(lines, "typing", "TYPE_CHECKING")
-        for index, line in enumerate(lines):
-            # Only a guard at module level: one indented inside a function or
-            # class would take the import out of the scope the annotation
-            # reads it in.
-            if line.rstrip("\n") in {"if TYPE_CHECKING:", "if typing.TYPE_CHECKING:"}:
-                lines.insert(index + 1, f"    {wanted}\n")
-                return
         at = self._find_import_position(lines)
         lines[at:at] = ["\n", "if TYPE_CHECKING:\n", f"    {wanted}\n"]
 
@@ -937,3 +939,36 @@ def _string_constants(nodes: List[ast.expr]) -> Set[str]:
         for node in nodes
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
+
+
+def _guard_body_start(lines: List[str]) -> Optional[Tuple[int, str]]:
+    """Where a line joins the body of the module's first ``TYPE_CHECKING`` guard, and its indent.
+
+    Only a guard at module level: one inside a function or class would take
+    the import out of the scope the annotation reads it in. A guard is one
+    ``TypeCheckingGuards`` resolves as never true where it runs, so a name the
+    module rebinds is not one, and an import joined to it would run. A guard
+    whose body shares its header's line has no line to join, nor has a module
+    that does not parse or whose lines do not match its statements; each of
+    those gets a guard of its own.
+    """
+    source = "".join(lines)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    guards = TypeCheckingGuards.of(source, tree)
+    for order, statement in enumerate(tree.body):
+        if not isinstance(statement, ast.If) or not guards.never_true(statement.test, order=order):
+            continue
+        first = statement.body[0]
+        index = first.lineno - 1
+        if first.lineno == statement.lineno or index >= len(lines):
+            continue
+        line = lines[index]
+        indent = line[: len(line) - len(line.lstrip(" \t"))]
+        # The indent is ASCII, so its length is also the byte offset the
+        # parser reports; a mismatch means these lines are not the parser's.
+        if indent and len(indent) == first.col_offset:
+            return index, indent
+    return None
