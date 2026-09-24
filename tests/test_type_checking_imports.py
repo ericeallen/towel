@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from typing import List
 
 import pytest
 
@@ -328,3 +329,69 @@ def test_the_import_joins_a_guard_at_module_level_and_not_one_inside_a_function(
     joined = "".join(at_top)
     assert joined.count("if TYPE_CHECKING:") == 1, joined
     assert "    from pkg.other import Thing\n" in joined
+
+
+def _joined_and_run(lines: List[str]) -> str:
+    """Add the type-only import to ``lines``, then prove the module parses and never runs it."""
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    UnificationRefactorEngine()._ensure_type_checking_import(lines, "pkg.other", "Thing")
+    written = "".join(lines)
+    # pkg.other does not exist: the module raises if the import ever runs.
+    exec(compile(written, "<module>", "exec"), {"__name__": "module_under_test"})
+    return written
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["if TYPE_CHECKING:  # pragma: no cover\n", "if TYPE_CHECKING:  # noqa: SIM102\n"],
+)
+def test_a_guard_whose_line_carries_a_comment_is_joined_not_repeated(header: str) -> None:
+    """packaging's guard reads ``if TYPE_CHECKING:  # pragma: no cover``; a second guard was written."""
+    written = _joined_and_run(
+        ["from typing import TYPE_CHECKING\n", "\n", header, "    import collections\n"]
+    )
+    assert written.count("if TYPE_CHECKING") == 1, written
+    assert header + "    from pkg.other import Thing\n    import collections\n" in written, written
+
+
+@pytest.mark.parametrize("indent", ["  ", "\t", "        "])
+def test_the_import_takes_the_indentation_of_the_guards_body(indent: str) -> None:
+    """A four-space line before a two-space body is an IndentationError."""
+    written = _joined_and_run(
+        [
+            "from typing import TYPE_CHECKING\n",
+            "if TYPE_CHECKING:\n",
+            f"{indent}import collections\n",
+            f"{indent}import os\n",
+        ]
+    )
+    assert f"if TYPE_CHECKING:\n{indent}from pkg.other import Thing\n" in written, written
+    assert written.count("if TYPE_CHECKING") == 1, written
+
+
+def test_a_guard_through_the_typing_module_needs_no_import_of_the_name() -> None:
+    written = _joined_and_run(["import typing\n", "if typing.TYPE_CHECKING:\n", "    import os\n"])
+    assert "if typing.TYPE_CHECKING:\n    from pkg.other import Thing\n" in written, written
+    assert "from typing import TYPE_CHECKING" not in written, written
+
+
+def test_a_rebound_name_is_not_a_guard_to_join() -> None:
+    """``TYPE_CHECKING = True`` makes the block run, so an import joined to it would too."""
+    written = _joined_and_run(
+        [
+            "from typing import TYPE_CHECKING\n",
+            "TYPE_CHECKING = True\n",
+            "if TYPE_CHECKING:\n",
+            "    import os\n",
+        ]
+    )
+    assert "if TYPE_CHECKING:\n    import os\n" in written, written
+
+
+def test_a_guard_whose_body_shares_its_line_gets_a_guard_beside_it() -> None:
+    written = _joined_and_run(
+        ["from typing import TYPE_CHECKING\n", "if TYPE_CHECKING: import os\n", "x = 1\n"]
+    )
+    assert "if TYPE_CHECKING:\n    from pkg.other import Thing\n" in written, written
+    assert "if TYPE_CHECKING: import os\n" in written, written
