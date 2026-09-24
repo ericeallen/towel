@@ -10,13 +10,13 @@ the frozen dataclass are the surrounding code the helpers must still fit.
 
 from dataclasses import dataclass
 from typing import Final
-from typing import Any
+import typing as _typing
 
 SCALE: Final[float] = 100.0
 EMPTY_LABEL: Final[str] = "empty"
 
 
-def __extracted_func_2(counts: Any, key: Any, order: Any) -> None:
+def __extracted_func_2(counts: _typing.Any, key: _typing.Any, order: _typing.Any) -> None:
     if key not in counts:
         counts[key] = 0
         order.append(key)

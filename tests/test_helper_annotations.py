@@ -129,7 +129,7 @@ def test_declared_return_types_need_a_checker_to_meet(tmp_path: Path) -> None:
             return len(text.strip())
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(value: int) -> Any:"
+    assert _signature(result) == "def __extracted_func_0(value: int) -> _typing.Any:"
 
 
 def test_unrelated_declared_return_types_leave_the_return_to_any(tmp_path: Path) -> None:
@@ -147,8 +147,9 @@ def test_unrelated_declared_return_types_leave_the_return_to_any(tmp_path: Path)
             return len(text.strip())
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(value: int) -> Any:"
-    assert "from typing import Any" in result
+    assert _signature(result) == "def __extracted_func_0(value: int) -> _typing.Any:"
+    # ``Any`` is reached through a private alias: the module gains no public name.
+    assert "import typing as _typing\n" in result and "from typing import Any" not in result
 
 
 def test_rebound_parameter_is_not_trusted(tmp_path: Path) -> None:
@@ -162,7 +163,7 @@ def test_rebound_parameter_is_not_trusted(tmp_path: Path) -> None:
     )
     # A rebound parameter is not trusted; once the helper is annotated at
     # all, the bare parameter becomes ``Any`` so the signature is complete.
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: Any) -> None:"
+    assert _signature(result) == "def __extracted_func_0(prefix: str, value: _typing.Any) -> None:"
 
 
 def test_literals_take_their_builtin_type_and_bool_is_not_int(tmp_path: Path) -> None:

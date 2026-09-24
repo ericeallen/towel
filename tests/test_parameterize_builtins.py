@@ -554,4 +554,4 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(tmp_path: Path
         for argument in helper.args.args
         if argument.annotation is not None
     }
-    assert annotations["len"] == "Callable[..., int]"
+    assert annotations["len"] == "_typing.Callable[..., int]"

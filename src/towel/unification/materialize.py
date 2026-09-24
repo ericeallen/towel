@@ -40,7 +40,16 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
-from .block_comments import weave_comments
+from .annotation_imports import (
+    AnnotationImports,
+    annotation_imports,
+    bound_by,
+    refuse_public_or_taken,
+    respelled_declarations,
+    respelled_helper,
+    words_of,
+)
+from .block_comments import excluded_lines, weave_comments
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
 from .engine_state import HelperNameClaims
 from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
@@ -54,6 +63,7 @@ from .models import (
     is_generated_helper_name,
 )
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
+from ..coverage_config import CoverageExclusion
 from ..project_layout import find_project_root
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
@@ -493,11 +503,7 @@ class Materialization(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]
     ) -> None:
         """Insert the helper into the canonical file's ``lines`` where the proposal places it."""
-        # Names an inferred annotation needs that the module does not bind.
-        for module_name, name in proposal.required_imports:
-            self._ensure_import(lines, module_name, name)
-        for module_name, name in proposal.type_checking_imports:
-            self._ensure_type_checking_import(lines, module_name, name)
+        self._bind_annotation_names(proposal, file_path, lines)
         if proposal.insert_into_function:
             self._insert_helper_into_function(proposal, lines)
         elif proposal.insert_into_class:
@@ -740,35 +746,149 @@ class Materialization(
         self._ensure_import(lines, spelling.module, proposal.extracted_function.name)
 
     def _ensure_import(self, lines: List[str], module_name: str, name: str) -> None:
-        """Add ``from module_name import name`` at the import position unless a line already says so."""
+        """Add ``from module_name import name`` at the import position unless a line already says so.
+
+        Only for a helper's own import into a module that calls it: the name is
+        private and allocated past every helper-shaped word of the files the
+        proposal touches, so it binds nothing the module had. What annotations
+        need is bound by :meth:`_bind_annotation_names`.
+        """
         import_line = f"from {module_name} import {name}\n"
         if not any(import_line.strip() == ln.strip() for ln in lines):
             lines.insert(self._find_import_position(lines), import_line)
 
-    def _ensure_type_checking_import(self, lines: List[str], module_name: str, name: str) -> None:
-        """State ``from module_name import name`` where only a checker will read it.
+    def _bind_annotation_names(
+        self, proposal: RefactoringProposal, file_path: str, lines: List[str]
+    ) -> None:
+        """Bind what the helper's annotations name and the module does not, and spell them so.
 
-        The name is wanted by an annotation and never at run time, so importing
-        it under ``TYPE_CHECKING`` keeps the module's runtime imports as they
-        were and cannot close an import cycle -- which matters here, because
-        the extraction has often just made that module import this one. An
-        existing module-level guard is extended rather than a second one
-        written. It is recognised as every other question about what a module
-        runs recognises one, by binding (``TypeCheckingGuards``), whatever
-        follows its colon, and the import takes the indentation of the
-        guard's own body.
+        The ``typing`` names the annotations use, and the classes they need a
+        checker to import, are bound under private names no text of the module
+        spells, or through a binding the module already has that certainly
+        means the same (``annotation_imports``), and the helper's annotations
+        and type declarations are rewritten to read them there. A public name
+        written into the module would reach every module that star-imports
+        it, and a taken one would rebind what the module's own code reads.
+        The type declarations' own bindings are held to the same rule.
         """
-        wanted = f"from {module_name} import {name}"
-        if any(wanted == line.strip() for line in lines):
+        typing_names: List[str] = []
+        for module_name, name in proposal.required_imports:
+            if module_name != "typing":
+                raise RefactoringError(
+                    f"The helper's annotations need {module_name}.{name}, for which no private"
+                    " spelling is known"
+                )
+            typing_names.append(name)
+        declarations = proposal.helper_type_declarations
+        if not typing_names and not proposal.type_checking_imports and not declarations:
+            return
+        host_words = words_of("".join(self._source_lines(file_path)), "".join(lines))
+        refuse_public_or_taken(bound_by(declarations), host_words)
+        taken = host_words | words_of(
+            ast.unparse(proposal.extracted_function),
+            *(ast.unparse(declaration) for declaration in declarations),
+        )
+        plan = annotation_imports(
+            "".join(lines),
+            taken,
+            typing_names,
+            proposal.type_checking_imports,
+            self._find_import_position(lines),
+            joins_guard=_guard_body_start(lines) is not None,
+        )
+        proposal.extracted_function = respelled_helper(
+            proposal.extracted_function, plan.respellings
+        )
+        proposal.helper_type_declarations = respelled_declarations(declarations, plan.respellings)
+        self._write_annotation_imports(file_path, lines, plan)
+
+    def _ensure_type_checking_import(
+        self, lines: List[str], module_name: str, name: str, file_path: Optional[str] = None
+    ) -> str:
+        """State ``from module_name import name`` where only a checker reads it; the name bound.
+
+        The one import :meth:`_bind_annotation_names` would write for an
+        annotation that needs ``name``, with nothing else wanted: under a
+        private alias, or the name an existing guard already binds it to.
+        """
+        plan = annotation_imports(
+            "".join(lines),
+            words_of("".join(lines)),
+            (),
+            ((module_name, name),),
+            self._find_import_position(lines),
+            joins_guard=_guard_body_start(lines) is not None,
+        )
+        self._write_annotation_imports(file_path, lines, plan)
+        return plan.respellings.get(name, name)
+
+    def _write_annotation_imports(
+        self, file_path: Optional[str], lines: List[str], plan: AnnotationImports
+    ) -> None:
+        """Write ``plan``'s imports into ``lines``: ``typing``'s alias, then the type-only imports.
+
+        The type-only imports are wanted by annotations and never at run time,
+        so importing them under ``TYPE_CHECKING`` keeps the module's runtime
+        imports as they were and cannot close an import cycle -- which matters
+        here, because the extraction has often just made that module import
+        this one. An existing module-level guard is extended rather than a
+        second one written. It is recognised as every other question about
+        what a module runs recognises one, by binding (``TypeCheckingGuards``),
+        whatever follows its colon, and the import takes the indentation of
+        the guard's own body. A new guard is confirmed to be one by the same
+        test before it is kept (:meth:`_guard_header` spells it).
+        """
+        if plan.typing_import is not None:
+            lines.insert(self._find_import_position(lines), plan.typing_import + "\n")
+        if not plan.guarded:
             return
         existing = _guard_body_start(lines)
         if existing is not None:
             index, indent = existing
-            lines.insert(index, f"{indent}{wanted}\n")
+            lines[index:index] = [f"{indent}{guarded.statement}\n" for guarded in plan.guarded]
             return
-        self._ensure_import(lines, "typing", "TYPE_CHECKING")
+        if plan.guard_test is None:
+            raise RefactoringError("Type-only imports need a guard, and none was planned")
         at = self._find_import_position(lines)
-        lines[at:at] = ["\n", "if TYPE_CHECKING:\n", f"    {wanted}\n"]
+        lines[at:at] = [
+            "\n",
+            self._guard_header(file_path, plan.guard_test),
+            *(f"    {guarded.statement}\n" for guarded in plan.guarded),
+        ]
+        source = "".join(lines)
+        tree = self._parse_source(source)
+        guards = TypeCheckingGuards.of(source, tree)
+        if not any(
+            isinstance(statement, ast.If)
+            and statement.lineno == at + 2
+            and guards.never_true(statement.test, order=order)
+            for order, statement in enumerate(tree.body)
+        ):
+            raise RefactoringError(
+                f"The guard written for type-only imports, if {plan.guard_test}, is not one"
+                " the module resolves as never true"
+            )
+
+    def _guard_header(self, file_path: Optional[str], test: str) -> str:
+        """``if <test>:``, marked for coverage.py when only the mark excludes it.
+
+        The guarded body never runs, so the project's coverage counts it as
+        missed unless it is excluded. coverage.py's own defaults exclude ``if
+        TYPE_CHECKING:`` and ``if typing.TYPE_CHECKING:``, not a guard through
+        a private alias of ``typing``, which the defaults' ``# pragma: no
+        cover`` excludes instead; a project whose exclusions already match
+        the guard gets no mark.
+        """
+        header = f"if {test}:"
+        marked = f"{header}  # pragma: no cover"
+        pattern = (
+            self._coverage_exclusion(file_path).pattern
+            if file_path is not None
+            else CoverageExclusion().pattern
+        )
+        if not excluded_lines(header, pattern) and excluded_lines(marked, pattern):
+            return marked + "\n"
+        return header + "\n"
 
     def _verify_helper_call_arity(
         self,

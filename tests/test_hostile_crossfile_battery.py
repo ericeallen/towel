@@ -30,7 +30,7 @@ import tempfile
 
 import pytest
 
-from tests.hostile_execution import observe
+from tests.hostile_execution import module_faces, observe
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_crossfile"
@@ -57,6 +57,13 @@ TRANSFORMED = {
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
     "xf29_type_checking_block_with_branches",
+    # The host's new binding for its annotations is private, so no module that
+    # star-imports it takes a typing name in place of its own Any or Callable:
+    # a sibling (xf30), the package's __init__ (xf31), a module outside the
+    # package the run was given (xf32).
+    "xf30_star_importer_takes_a_typing_name",
+    "xf31_package_init_star_imports_a_matcher_named_any",
+    "xf32_star_importer_outside_the_target",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -78,6 +85,17 @@ def _run(root: Path) -> tuple[int, str, list[str]]:
     return observe("run.py", root)
 
 
+def _modules(root: Path) -> list[str]:
+    """Every module of the fixture but its script, ``run.py``, by the name it is imported under."""
+    names = []
+    for path in sorted(root.rglob("*.py")):
+        parts = path.relative_to(root).with_suffix("").parts
+        if parts == ("run",):
+            continue
+        names.append(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+    return names
+
+
 @pytest.mark.parametrize("case", sorted(path.name for path in CASES.iterdir() if path.is_dir()))
 def test_directory_refactoring_preserves_program_output(case: str) -> None:
     with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-") as directory:
@@ -96,6 +114,10 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
         transformed = _python_files(after) != _python_files(before)
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
         assert _run(after) == _run(before)
+        if transformed:
+            # No module's public names appear, disappear, or change meaning.
+            modules = _modules(before)
+            assert module_faces(after, modules) == module_faces(before, modules)
         assert transformed == (case in TRANSFORMED), (
             "rejected" if not transformed else "transformed"
         )

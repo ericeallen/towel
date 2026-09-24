@@ -170,8 +170,12 @@ def test_rejected_generic_declarations_do_not_leak_into_fallbacks(
         annotations = [argument.annotation for argument in helper.args.args] + [helper.returns]
         expected = all(annotation is None for annotation in annotations)
         if fallback == "any":
+            # ``Any`` as the module reaches it: through the private alias of typing.
             expected = all(
-                isinstance(annotation, ast.Name) and annotation.id == "Any"
+                isinstance(annotation, ast.Attribute)
+                and annotation.attr == "Any"
+                and isinstance(annotation.value, ast.Name)
+                and annotation.value.id == "_typing"
                 for annotation in annotations
             )
         return CheckSuccess() if expected else _error(path)
