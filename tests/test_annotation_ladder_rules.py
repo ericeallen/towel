@@ -15,6 +15,7 @@ from towel.unification.annotation_ladder import (
     partial_type_passed,
 )
 from towel.unification.exceptions import Untypeable
+from towel.unification.placement import method_helper_position
 
 
 def _function(source: str, index: int = 0) -> ast.FunctionDef:
@@ -102,3 +103,69 @@ def test_a_body_mypy_does_not_check_is_left_alone() -> None:
     assert (
         getattr(_partial(source, checked_untyped=True), "reason", None) is Untypeable.PARTIAL_TYPE
     )
+
+
+# -- Where the helper goes ---------------------------------------------------------
+
+_METHOD_HELPER = _function("""
+    def __extracted_func_0(self, value: int) -> None:
+        self.value = value
+        self.twice = value * 2
+    """)
+
+
+def _position(body: str) -> object:
+    source = "class Box:\n" + textwrap.indent(textwrap.dedent(body).lstrip(), "    ")
+    return method_helper_position(source, "Box", _METHOD_HELPER, "self")
+
+
+def test_no_later_assignment_leaves_the_helper_at_the_end_of_the_class() -> None:
+    assert _position("""
+            def __init__(self, value: int) -> None:
+                self.__extracted_func_0(value)
+
+            def reset(self) -> None:
+                self.__extracted_func_0(0)
+            """) is None
+
+
+def test_an_assignment_before_the_first_call_keeps_the_declaration_where_it_was() -> None:
+    assert _position("""
+            def __init__(self) -> None:
+                self.value = 0
+                self.twice = 0
+
+            def set(self, value: int) -> None:
+                self.__extracted_func_0(value)
+
+            def clear(self) -> None:
+                self.value = -1
+            """) is None
+
+
+def test_a_later_assignment_puts_the_helper_right_after_the_first_caller() -> None:
+    # __init__ ends on line 3 of the module ("class Box:" is line 1).
+    assert _position("""
+            def __init__(self, value: int) -> None:
+                self.__extracted_func_0(value)
+
+            def restore(self, state: object) -> None:
+                self.value, self.twice = state  # type: ignore[misc]
+            """) == 3
+
+
+def test_the_first_callers_own_later_assignment_puts_the_helper_before_it() -> None:
+    assert _position("""
+            def __init__(self, value: int) -> None:
+                self.__extracted_func_0(value)
+                self.twice = value
+            """) == 1
+
+
+def test_attributes_pulling_both_ways_leave_the_helper_where_it_was() -> None:
+    assert _position("""
+            def __init__(self, value: int) -> None:
+                self.value = value
+                self.__extracted_func_0(value)
+                self.twice = value
+            """) is None

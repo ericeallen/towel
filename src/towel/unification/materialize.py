@@ -61,7 +61,7 @@ from .reuse import ExistingFunctionReuse
 from .annotation_ladder import Hearing, Rejection, Verified
 from .annotation_wiring import HelperAnnotationWiring
 from .insertion import InsertionPoints
-from .placement import HelperPlacement
+from .placement import HelperPlacement, method_helper_position
 from .statement_facts import bindings_of, loaded_names
 
 
@@ -527,6 +527,15 @@ class Materialization(
             reindent(line, method_indent) if line.strip() else line for line in method_lines
         ]
         insert_at = insert_line_zero_based + 1
+        if (proposal.method_kind or "instance") == "instance":
+            # Where the class's attributes keep the declarations they had.
+            ordered = method_helper_position(
+                "".join(lines),
+                proposal.insert_into_class,
+                proposal.extracted_function,
+                proposal.method_param_name or "self",
+            )
+            insert_at = insert_at if ordered is None else ordered
         lines[insert_at:insert_at] = _padded(lines, insert_at, indented)
 
     def _insert_helper_at_module_level(

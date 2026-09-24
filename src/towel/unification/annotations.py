@@ -1348,10 +1348,24 @@ def _joined_revealed(
 
     A site's text that cannot be written is replaced by its entry in
     ``fallbacks``, when it has one (``builtin_object_revealed``).
+
+    A site where the value is ``Any`` constrains nothing and is left out of
+    the join, so long as another site says what the value is: ``Any`` is
+    assignable to every parameter type, so that site's call checks whatever
+    the others make the annotation, and the helper's body is checked against
+    the type the rest agree on instead of none. packaging's ``Tag`` is the
+    case: ``__init__`` passes ``interpreter: str`` and ``__setstate__`` the
+    ``Any`` it read from a pickled dict, and the helper they share took
+    ``Any`` for all three strings.
     """
     present = [text for text in texts if text is not None]
     if not present or len(present) != len(texts):
         return None
+    known = [index for index, text in enumerate(present) if text.strip() != "Any"]
+    if known and len(known) != len(present):
+        spare_by_index = list(fallbacks) + [None] * (len(present) - len(fallbacks))
+        present = [present[index] for index in known]
+        fallbacks = [spare_by_index[index] for index in known]
     extra = allowed if allowed is not None else set(_TYPING_NAMES)
     spare = list(fallbacks) + [None] * (len(present) - len(fallbacks))
     candidates = [

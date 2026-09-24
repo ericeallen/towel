@@ -33,11 +33,13 @@ import ast
 
 from pathlib import Path
 from typing import (
+    Dict,
     FrozenSet,
     List,
     Mapping,
     Optional,
     Sequence,
+    Set,
     cast,
 )
 from .models import (
@@ -292,6 +294,148 @@ def _module_level_class(
     """
     matches = [info for info in class_infos if info.file_path == file_path and info.name == name]
     return matches[0] if len(matches) == 1 and matches[0].qualname == name else None
+
+
+def _assigned_through(function: FunctionNode, receiver: str) -> Dict[str, List[int]]:
+    """The lines on which ``function``'s own scope assigns each attribute of ``receiver``."""
+    lines: Dict[str, List[int]] = {}
+    pending: List[ast.AST] = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == receiver
+        ):
+            lines.setdefault(node.attr, []).append(node.lineno)
+        pending.extend(ast.iter_child_nodes(node))
+    return lines
+
+
+def _class_body_names(owner: ast.ClassDef) -> Set[str]:
+    """Names the class body itself binds or annotates: declarations no method can displace."""
+    names: Set[str] = set()
+    for statement in owner.body:
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            names.add(statement.target.id)
+        elif isinstance(statement, ast.Assign):
+            names.update(t.id for t in statement.targets if isinstance(t, ast.Name))
+    return names
+
+
+def _instance_receiver(function: FunctionNode) -> Optional[str]:
+    """The receiver an instance method assigns attributes through, or None for any other function."""
+    if any(
+        isinstance(decorator, ast.Name) and decorator.id in {"staticmethod", "classmethod"}
+        for decorator in function.decorator_list
+    ):
+        return None
+    positional = [*function.args.posonlyargs, *function.args.args]
+    return positional[0].arg if positional else None
+
+
+def _calls_helper(function: FunctionNode, helper_name: str) -> List[int]:
+    """The lines of ``function`` that call ``helper_name`` as a method."""
+    return sorted(
+        node.lineno
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == helper_name
+    )
+
+
+def method_helper_position(
+    source: str, class_name: str, helper: ast.FunctionDef, receiver: str
+) -> Optional[int]:
+    """Where a method helper goes so its class's attributes keep the declarations they had.
+
+    mypy takes an attribute's type from the first assignment to it in the
+    class, in the order the methods are written. A block that held that first
+    assignment hands it to the helper, and the helper placed at the end of the
+    class, as method helpers are, comes after every assignment the other
+    methods still make: the first of those becomes the declaration.
+    packaging's ``Tag`` is the case. ``__init__`` assigned ``_interpreter``
+    from a ``str``; ``__setstate__`` still assigns it by unpacking a tuple of
+    ``Any``; with the helper last, ``_interpreter`` was ``Any`` and every
+    property returning it was refused under ``warn_return_any``.
+
+    So when some attribute the helper assigns through its receiver had its
+    first assignment in the block (no method before the first call assigns
+    it) and another method after that call still assigns it, the helper goes
+    right after the method holding the first call, where the block's
+    assignment stood relative to the rest; or right before that method, when
+    it is that method's own later assignment that must follow. An attribute
+    the class body declares is fixed wherever the helper goes. None -- the end
+    of the class -- when nothing needs the helper earlier, or when two
+    attributes pull it both ways. ``source`` is the module with the calls
+    already in place, ``receiver`` the helper's own receiver.
+
+    The line returned is a 0-based index into the module's lines, before which
+    the helper's lines are inserted.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    owners = [
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name
+    ]
+    if len(owners) != 1:
+        return None
+    owner = owners[0]
+    wanted = set(_assigned_through(helper, receiver)) - _class_body_names(owner)
+    if not wanted:
+        return None
+    members = [
+        member
+        for member in owner.body
+        if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    first = next(
+        (
+            (index, lines[0])
+            for index, member in enumerate(members)
+            if (lines := _calls_helper(member, helper.name))
+        ),
+        None,
+    )
+    if first is None:
+        return None
+    first_index, first_call = first
+    earlier: Set[str] = set()  # assigned by a method before the holder
+    holder_before: Set[str] = set()  # assigned by the holder before its first call
+    holder_after: Set[str] = set()  # assigned by the holder after that call
+    later: Set[str] = set()  # assigned by a method after the holder
+    for index, member in enumerate(members):
+        own_receiver = _instance_receiver(member)
+        if own_receiver is None:
+            continue
+        for attribute, lines in _assigned_through(member, own_receiver).items():
+            if attribute not in wanted:
+                continue
+            if index < first_index:
+                earlier.add(attribute)
+            elif index > first_index:
+                later.add(attribute)
+            else:
+                holder_before.update(attribute for line in lines if line < first_call)
+                holder_after.update(attribute for line in lines if line > first_call)
+    declared_first = wanted - earlier - holder_before  # the block held the first assignment
+    if not declared_first & (holder_after | later):
+        return None
+    holder = members[first_index]
+    if declared_first & holder_after:
+        # The holder's own later assignment must follow the helper, so the
+        # helper goes before the holder -- unless the holder assigns another
+        # attribute first, whose declaration that would take away.
+        if holder_before - earlier:
+            return None
+        return min([holder.lineno, *(d.lineno for d in holder.decorator_list)]) - 1
+    return holder.end_lineno or holder.lineno
 
 
 class _CallRenamer(ast.NodeTransformer):
