@@ -65,6 +65,7 @@ from ..type_inference import (
     TypeOracle,
     _configured_root,
     _mypy_config,
+    checker_module_name,
     holds_warm_state,
     start_cold,
 )
@@ -515,17 +516,26 @@ class HelperAnnotationWiring(EngineState):
                 helper_type_declarations=candidate.declarations,
             )
 
-    def _module_names_for(self, proposal: RefactoringProposal) -> Optional[ModuleNames]:
-        """The absolute names the program's imports give its modules, as the checker writes them.
+    def _module_names_for(self, proposal: RefactoringProposal) -> ModuleNames:
+        """The absolute name of each module, as the checker writes it in the types it reveals.
 
-        None when the program's imports cannot be read, which leaves the
-        generic rung naming modules by location, as it did before it had them.
+        The name the program's own imports give the module, and, for a module
+        no import names (a script, a package only ever imported relatively),
+        the one mypy was given for it: its ``__init__`` chain in the project
+        the checker reads (:func:`~towel.type_inference.checker_module_name`).
         """
         try:
-            program = self.import_graph.program_for(Path(proposal.file_path))
+            program: Optional[ProgramImports] = self.import_graph.program_for(
+                Path(proposal.file_path)
+            )
         except ProjectScanLimitError:
-            return None
-        return lambda path: program.module_name(Path(path))
+            program = None
+
+        def module_name(path: str) -> Optional[str]:
+            named = program.module_name(Path(path)) if program is not None else None
+            return named or checker_module_name(Path(self._origin_of(path)))
+
+        return module_name
 
     @staticmethod
     def _helper_uses_any(proposal: RefactoringProposal) -> bool:

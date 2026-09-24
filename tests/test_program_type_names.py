@@ -18,7 +18,7 @@ import textwrap
 
 import pytest
 
-from towel.type_inference import CheckSuccess, MypyInferrer
+from towel.type_inference import CheckSuccess, MypyInferrer, checker_module_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.type_bindings import (
     TypeResolver,
@@ -646,3 +646,75 @@ def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
     kinds = [_annotation(parameter.annotation) for parameter in helper.args.args]
     assert kinds[:2] == ["Callable[[], type[_TowelT0]]", "Callable[[], list[_TowelT0]]"], changed
     assert "Any" not in changed, changed
+
+
+@requires_mypy
+def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path) -> None:
+    """rich R3, in miniature: the helper returns what it was passed, crossed between the sites.
+
+    ``_Span`` is ``Span`` at one site and ``0`` at the other, and ``plain``
+    is what the thunk returns, ``self.plain`` or ``Span``. The result's types
+    are the arguments' own, so two type variables carry them through. The
+    module is one no import names, so its classes are named as mypy names it.
+    """
+    _project(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.mypy]\nstrict = true\n",
+            "text.py": """\
+                from typing import NamedTuple
+
+
+                class Span(NamedTuple):
+                    start: int
+                    end: int
+
+
+                class Text:
+                    def __init__(self, plain: str) -> None:
+                        self.plain = plain
+                        self._spans: list[Span] = []
+
+                    def highlight_regex(self, pattern: str) -> int:
+                        append_span = self._spans.append
+                        _Span = Span
+                        plain = self.plain
+                        for index, character in enumerate(plain):
+                            if character == pattern:
+                                append_span(_Span(index, index + 1))
+                        return len(self._spans)
+
+                    def highlight_words(self, word: str) -> int:
+                        add_span = self._spans.append
+                        count = 0
+                        _Span = Span
+                        for index in range(len(self.plain)):
+                            if self.plain.startswith(word, index):
+                                add_span(_Span(index, index + len(word)))
+                                count += 1
+                        return count
+                """,
+        },
+    )
+    changed = _extract_first(tmp_path / "text.py")
+    helper = _helper(changed)
+    kinds = {
+        parameter.arg: _annotation(parameter.annotation)
+        for parameter in helper.args.args
+        if parameter.arg != "self"
+    }
+    assert kinds == {"__param_0": "_TowelT0", "__param_1": "Callable[[], _TowelT1]"}, changed
+    assert _annotation(helper.returns) == "tuple[_TowelT0, Callable[[Span], None], _TowelT1]"
+
+
+def test_a_module_no_import_names_is_named_as_mypy_names_it(tmp_path: Path) -> None:
+    """The ``__init__`` chain mypy is given, and nothing for a directory no name can spell."""
+    _project(
+        tmp_path,
+        {"pkg/__init__.py": "", "pkg/sub/__init__.py": "", "pkg/sub/mod.py": "", "script.py": ""},
+    )
+    assert checker_module_name(tmp_path / "pkg" / "sub" / "mod.py") == "pkg.sub.mod"
+    assert checker_module_name(tmp_path / "pkg" / "sub" / "__init__.py") == "pkg.sub"
+    assert checker_module_name(tmp_path / "script.py") == "script"
+    _project(tmp_path, {"not-a-name/__init__.py": "", "not-a-name/mod.py": ""})
+    assert checker_module_name(tmp_path / "not-a-name" / "mod.py") is None
