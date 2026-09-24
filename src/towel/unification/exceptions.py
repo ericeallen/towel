@@ -60,6 +60,11 @@ class Untypeable(StrEnum):
     PARTIAL_TYPE = "completes its caller's partial type"
     """mypy learns an empty collection's element type from the next statement that fills
     it (mistune's ``attrs = {}``); passed to a call first, it is an error at the assignment."""
+    UNANNOTATED_IN_ANNOTATED_MODULE = "would be the one unannotated function of its module"
+    """Every annotated signature was refused and only the unannotated helper is left, in a
+    module whose every function is annotated: a checker that skips unannotated bodies
+    accepts it, and the project's stricter CI does not (idna, whose CI runs
+    ``mypy --strict`` with no configuration Towel could read)."""
 
 
 class UntypeableExtraction(RefactoringError):
@@ -72,7 +77,12 @@ class UntypeableExtraction(RefactoringError):
     """
 
     def __init__(self, reason: Untypeable, detail: str) -> None:
-        super().__init__(f"No helper signature can type this extraction: it {reason}: {detail}")
+        lead = (
+            "No annotated helper signature types this extraction, and an unannotated helper"
+            if reason is Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE
+            else "No helper signature can type this extraction: it"
+        )
+        super().__init__(f"{lead} {reason}: {detail}")
         self.reason = reason
         self.detail = detail
 

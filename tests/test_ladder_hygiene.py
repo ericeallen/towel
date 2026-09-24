@@ -70,9 +70,10 @@ def test_the_unannotated_rung_is_not_tried_where_annotations_are_required(
 def test_the_unannotated_rung_is_still_tried_where_annotations_are_optional(
     tmp_path: Path,
 ) -> None:
+    """Optional in the configuration, and already absent from one of the module's functions."""
     outcome = apply_one(
         tmp_path,
-        SUMS,
+        SUMS + "\n\ndef legacy(value):\n    return value\n",
         pick="first and second",
         config="[tool.mypy]\ncheck_untyped_defs = true\n",
         oracle=_RefusedInsideTheHelper(),

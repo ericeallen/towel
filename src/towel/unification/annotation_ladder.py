@@ -1330,6 +1330,48 @@ def partial_type_passed(
     return None
 
 
+_IMPLIED_NONE = frozenset({"__init__", "__init_subclass__"})
+"""Methods mypy gives ``-> None`` when any of their parameters is annotated."""
+
+
+def unannotated_function(module: ast.Module) -> Optional[str]:
+    """The first function of ``module`` that is not fully annotated, or None when every one is.
+
+    Fully annotated is what ``mypy --strict`` asks: every parameter annotated
+    but a method's own receiver, and a return annotated but where mypy implies
+    ``None`` (an ``__init__`` or ``__init_subclass__`` with an annotated
+    parameter). Nested functions count; a lambda cannot be annotated and does
+    not.
+    """
+    methods: Set[int] = set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.ClassDef):
+            methods.update(
+                id(member)
+                for member in node.body
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+    for node in ast.walk(module):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        arguments = node.args
+        positional = [*arguments.posonlyargs, *arguments.args]
+        static = any(
+            isinstance(decorator, ast.Name) and decorator.id == "staticmethod"
+            for decorator in node.decorator_list
+        )
+        if id(node) in methods and not static and positional:
+            positional = positional[1:]
+        every = [*positional, *arguments.kwonlyargs]
+        every += [extra for extra in (arguments.vararg, arguments.kwarg) if extra is not None]
+        if any(argument.annotation is None for argument in every):
+            return node.name
+        implied = id(node) in methods and node.name in _IMPLIED_NONE and bool(every)
+        if node.returns is None and not implied:
+            return node.name
+    return None
+
+
 # -- A hearing -----------------------------------------------------------------
 
 

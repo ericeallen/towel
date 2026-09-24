@@ -52,6 +52,7 @@ from .annotation_ladder import (
     partial_type_passed,
     self_as_type_variable,
     targeted_any,
+    unannotated_function,
     without_quoted_none,
 )
 from .annotations import (
@@ -74,7 +75,12 @@ from .annotations import (
     _import_bound_names,
     _defined_names,
 )
-from .exceptions import CheckerUnavailableError, ProjectScanLimitError, RefactoringError
+from .exceptions import (
+    CheckerUnavailableError,
+    ProjectScanLimitError,
+    RefactoringError,
+    Untypeable,
+)
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import TYPES
 from ..checker_project import _read_json_config
@@ -896,6 +902,17 @@ class HelperAnnotationWiring(EngineState):
             and self._helper_has_annotations(proposal)
         ):
             # The unannotated helper follows only when it could help; see ``Rejection``.
+            host = self._parsed_host(proposal.file_path)
+            if host is not None and unannotated_function(host) is None:
+                hearing.settle(
+                    Unanswerable(
+                        Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE,
+                        f"every function of {Path(proposal.file_path).name} is annotated,"
+                        " and a check stricter than the configuration Towel reads, such as"
+                        " mypy --strict, refuses the first that is not",
+                    )
+                )
+                return
             TYPES.debug("ladder rung unannotated for %s", proposal.description)
             yield self._without_annotations(proposal)
 

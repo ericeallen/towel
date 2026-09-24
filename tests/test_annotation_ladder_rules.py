@@ -19,6 +19,7 @@ from towel.unification.annotation_ladder import (
     partial_type_passed,
     self_as_type_variable,
     targeted_any,
+    unannotated_function,
     without_quoted_none,
 )
 from towel.unification.annotation_wiring import _variant_key, mypy_ladder_flags
@@ -348,3 +349,37 @@ def test_the_ladder_reads_strict_and_the_flags_it_sets_per_module(tmp_path: Path
         "warn_return_any": False,
         "check_untyped_defs": True,
     }
+
+
+# -- A fully annotated module --------------------------------------------------------
+
+
+def test_a_module_is_fully_annotated_as_mypy_strict_counts_it() -> None:
+    annotated = ast.parse(textwrap.dedent("""
+        class Box:
+            def __init__(self, value: int):
+                self.value = value
+
+            @staticmethod
+            def make(value: int) -> "Box":
+                return Box(value)
+
+            @classmethod
+            def empty(cls) -> "Box":
+                def zero() -> int:
+                    return 0
+                return cls(zero())
+
+
+        def double(values: list[int], *rest: int, **named: int) -> int:
+            return sum(map(lambda v: v * 2, values))
+        """))
+    assert unannotated_function(annotated) is None
+    for source, name in [
+        ("def f(x: int):\n    return x\n", "f"),
+        ("class A:\n    def m(self, x):\n        return x\n", "m"),
+        ("class A:\n    @staticmethod\n    def s(x) -> int:\n        return 1\n", "s"),
+        ("class A:\n    def __init__(self):\n        pass\n", "__init__"),
+        ("def f() -> None:\n    def g(y):\n        pass\n", "g"),
+    ]:
+        assert unannotated_function(ast.parse(source)) == name, source

@@ -431,7 +431,12 @@ class FixedPointDrivers(Materialization):
                 "the type checker could not check",
             )
         elif isinstance(error, UntypeableExtraction):
-            reason, said = error.reason, "no helper signature can type"
+            reason = error.reason
+            said = (
+                "no annotated helper signature types"
+                if reason is Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE
+                else "no helper signature can type"
+            )
         elif isinstance(error, RefactoringError) and self._checker_refusals:
             reason, said = "refused by the type checker", "the type checker refused"
         elif isinstance(error, UnencodableText):
