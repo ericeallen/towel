@@ -741,3 +741,35 @@ release-candidate step. The suite then catches the known classes on
 every commit, and each audit spends its time on new ground.
 
 *Status: adopted with 1.772. The round-3 fix branches add the tests.*
+
+## 2026-09-24: Code under a decorator moves only if the decorator leaves bodies alone
+
+Round 3 found Towel moving code out of functions whose decorator rewrites
+the body. typeguard's `@typechecked` recompiles a function from its source
+with checks added, so the moved code lost its checks, and a call that had
+raised `TypeCheckError` returned normally. numba's `@njit` compiles the
+body, so the function stopped compiling once it called a plain Python
+helper. It happened in the default mode, and typeguard's own tests caught
+it.
+
+The owner chose an allowlist over a denylist of known offenders, which is
+unsound for any decorator not yet known, and over inspecting each
+decorator's implementation, which is heuristic. Code may move out of a
+function, or a helper be placed in it, only when every decorator that can
+reach that code is known to leave the body alone. That means decorators on
+the function itself, on every enclosing function and on every enclosing
+class. Decorators are resolved by binding.
+
+A decorator is known to leave the body alone in two cases:
+- it is on a curated list, where each entry records the library source it
+  was verified against;
+- it is a project decorator that Towel can show is a plain wrapper, which
+  returns the function or calls it with its own arguments and never reads
+  its code or source.
+
+Anything else declines the pair, under a reason naming the decorator. This
+is the approach the hosting rule already takes for metaclasses and
+`__init_subclass__`. The cost is measured before the list is settled, and
+the list grows only by verified entries.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
