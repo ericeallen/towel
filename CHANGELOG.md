@@ -30,6 +30,22 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- An import under `if TYPE_CHECKING:` never runs, and the cycle guard no
+  longer follows it. Modules that name each other's classes only for the
+  checker can now share a helper. A type-only import that Towel writes no
+  longer refuses later pairs between the same two modules; on mistune it
+  had cost two typed refactorings.
+
+  The guard is recognised by resolving the name: typing's or
+  typing_extensions' `TYPE_CHECKING`, however imported or aliased, or the
+  module's own `TYPE_CHECKING = False`. Its `else` branch still counts as
+  an import that runs, as do `if not TYPE_CHECKING:` and a shadowed or
+  unresolvable name. A module's requirements now include the imports in the
+  guard's `else`, which had been dropped.
+- A type variable over classes from two modules now imports the one its host
+  lacks, under `TYPE_CHECKING`, spelled as the program's own imports spell
+  it. packaging's validation and required-key errors, and mistune's
+  renderer `__call__`, are now typed without `Any`.
 - Comments inside a moved block were lost with it, because the helper was
   rendered from its syntax tree. That included tool directives, such as
   asyncstdlib's and mashumaro's `# type: ignore`, as well as
