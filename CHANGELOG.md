@@ -30,6 +30,42 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A `--cross-module` run refuses only for a problem that leaves a name of the
+  code being refactored in doubt. Such problems are:
+  - an ambiguous name, such as a stale `build/lib` copy of the package, which
+    `--exclude build` still clears;
+  - a file reachable under two names;
+  - a top-level name found inside a package;
+  - a relative import that climbs out of its package.
+
+  An import of a module the tree lacks refuses nothing, whether the run is
+  from the root, on a package or on a sub-package. Such imports had stopped
+  every run on sphinx, astroid and prompt-toolkit, and on seven packages
+  whose modules import the `_version.py` their build generates, which a
+  fresh clone lacks. With the refusal set aside, the package's name was
+  flagged, so every helper its modules could share was declined: 3,858 of
+  the 3,860 cross-module pairs on sphinx.
+
+  Over 140 corpus projects, runs on the package refused 14 before and 4
+  after. Runs from the root, measured only after the first of these changes,
+  refused 24 and now refuse 18. Every remaining refusal is for a name in
+  doubt, such as the four module names sphinx's `tests/roots` each defines
+  more than once.
+- In a `--cross-module` run, a file making such an import is left exactly as
+  it was. It hosts no helper, borrows none, and none of its own duplicates
+  are extracted. The run names each such file, with a remedy that fits:
+  test data or an example can be left out with `--exclude`, and a package's
+  generated module appears once the project is installed. When the file is
+  a package's `__init__.py`, that package's modules still share helpers
+  among themselves, and the run says in one line that they host none for
+  modules outside the package.
+- A run on a sub-package now refuses, instead of going on with every helper
+  declined, when a relative import elsewhere in the package climbs out of
+  it.
+- An import below a module file names the module it lacks: `util.gone`, not
+  `util`, when `util.py` exists. A module file that registers submodules at
+  run time, as `six.py` registers `six.moves`, is not reported as missing
+  them, wherever it sits.
 - A typed run no longer changes code that the type checker does not look
   at. That is code the checker takes to be unreachable on the platform and
   Python version it checks for, and there it reports nothing. On darwin,

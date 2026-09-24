@@ -661,12 +661,18 @@ The owner chose one rule for root, package and sub-package runs:
   - a relative import that climbs out of its package;
   - a top-level module inside a package.
 - **An import of a module the tree lacks refuses nothing, wherever it
-  lies.** The file making it is left entirely unchanged, reported, and never
-  used as a host or a borrower. The run proceeds. This covers:
+  lies.** In a `--cross-module` run, the file making it is left entirely
+  unchanged, reported, and never used as a host or a borrower. The run
+  proceeds. A default run neither reads the import model nor refuses over
+  imports, and it refactors that file within itself as before. The rule
+  covers:
   - test fixtures inside a root run;
   - a package whose `__init__.py` imports a `_version.py` generated at build
     time, which a fresh clone lacks;
-  - an initializer that a sub-package is imported through.
+  - an initializer that a sub-package is imported through. Its package's
+    modules still share helpers among themselves, since importing any of
+    them has already run that initializer. Only importers outside the
+    package lose them.
 
 The refusal it replaces also happened to steer users away from refactoring
 test fixtures (`--exclude tests/roots`). That was a coincidence: a root run
