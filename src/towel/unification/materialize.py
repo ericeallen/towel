@@ -163,18 +163,19 @@ class Materialization(
 
         The first application establishes the run's complete original type
         baseline before inference or materialization. Later applications keep
-        that policy until ``begin_refactoring_run`` starts another run.
+        that policy until ``begin_refactoring_run`` starts another run. A
+        proposal that would change a file where that baseline names what the
+        checker cannot type is declined before anything is inferred there.
         """
         for path, digest in proposal.source_digests:
             if hashlib.sha256(read_source(path).encode("utf-8")).hexdigest() != digest:
                 raise StaleSource(f"Stale proposal; analyze again: {path}")
-        self._ensure_type_checking(
-            [
-                *self._analysis_paths,
-                proposal.file_path,
-                *(rep.file_path or proposal.file_path for rep in proposal.replacements),
-            ]
-        )
+        touched = [
+            proposal.file_path,
+            *(rep.file_path or proposal.file_path for rep in proposal.replacements),
+        ]
+        self._ensure_type_checking([*self._analysis_paths, *touched])
+        self._decline_what_the_checker_cannot_see(touched)
         counters = self._helper_name_counters.copy()
         try:
             return self._materialize_refactoring(proposal)

@@ -51,28 +51,43 @@ def test_oracle_closes_after_success_or_output_failure(
     assert (source / "main.py").read_text() == "value = 3\n"
 
 
-@pytest.mark.parametrize("failed_checker", [False, True])
-def test_cli_closes_checker_when_original_baseline_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_checker: bool
+def test_cli_closes_checker_when_the_original_cannot_be_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source, output = tmp_path / "input.py", tmp_path / "output.py"
     source.write_text("value = 3\n")
     oracle = Mock(spec=TypeOracle)
-    oracle.check_project.return_value = (
-        CheckFailure("checker timed out")
-        if failed_checker
-        else CheckSuccess((TypeDiagnostic(str(source), "Existing type error"),))
-    )
+    oracle.check_project.return_value = CheckFailure("checker timed out")
     monkeypatch.setattr(cli, "_type_oracle", lambda path: oracle)
     result = invoke(
         ["dry", str(source), str(output), "--no-interactive", "--no-format", "--progress", "none"]
     )
     assert result.status == 1
-    assert (
-        "Original project type check failed" if failed_checker else "--no-types"
-    ) in result.stderr
+    assert "Original project type check failed" in result.stderr
+    assert "--no-types" in result.stderr
     oracle.close.assert_called_once_with()
     assert source.read_text() == "value = 3\n" and not output.exists()
+
+
+def test_cli_reports_the_originals_errors_and_goes_on_to_close_the_checker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Errors the original check reports are compared with, not refused."""
+    source, output = tmp_path / "input.py", tmp_path / "output.py"
+    source.write_text("value = 3\n")
+    oracle = Mock(spec=TypeOracle)
+    oracle.check_project.return_value = CheckSuccess(
+        (TypeDiagnostic(str(source), "Existing type error"),)
+    )
+    monkeypatch.setattr(cli, "_type_oracle", lambda path: oracle)
+    result = invoke(
+        ["dry", str(source), str(output), "--no-interactive", "--no-format", "--progress", "none"]
+    )
+    assert result.status == 0, result.stderr
+    assert "The original project's type check reports 1 error(s) in 1 file(s)." in result.stderr
+    assert "--no-types" not in result.stderr
+    oracle.close.assert_called_once_with()
+    assert source.read_text() == "value = 3\n" == output.read_text()
 
 
 def test_cancelled_run_never_constructs_checker(

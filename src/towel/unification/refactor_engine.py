@@ -88,6 +88,7 @@ from .models import (
     AppliedChange,
     FunctionNode,
 )
+from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
 from ..source_files import python_sources
 from ..source_text import read_source
@@ -423,6 +424,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.type_oracle = type_oracle
         self._type_run_oracle = type_oracle
         self._type_run_baseline = None
+        self._type_known = KnownErrors()
+        self._type_checked = None
+        self._type_names_any = {}
         self.snippet_formatter = snippet_formatter
         self.file_finisher = file_finisher
         self.incremental_global_passes = incremental_global_passes
