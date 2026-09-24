@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.hostile_execution import parsed_or_skipped
 from towel.unification import definite_assignment as da
 from towel.unification.definite_assignment import (
     definitely_bound_after,
@@ -49,7 +50,7 @@ def _statements_in_own_lists(function: ast.AST):
 
 @pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
 def test_cached_definite_before_matches_the_path_walk(path: Path) -> None:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parsed_or_skipped(path)
     checked = 0
     for function in _functions(tree):
         for statement in _statements_in_own_lists(function):
@@ -64,7 +65,7 @@ def test_cached_definite_before_matches_the_path_walk(path: Path) -> None:
 
 @pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
 def test_before_each_matches_after_each_prefix(path: Path) -> None:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parsed_or_skipped(path)
     for function in _functions(tree):
         body = function.body
         expected = [definitely_bound_after(body[:index]) for index in range(len(body))]
@@ -73,6 +74,6 @@ def test_before_each_matches_after_each_prefix(path: Path) -> None:
 
 @pytest.mark.parametrize("path", EXAMPLES[:20], ids=lambda p: p.name)
 def test_locally_bound_names_match_the_reference(path: Path) -> None:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parsed_or_skipped(path)
     for function in _functions(tree):
         assert da.locally_bound_names(function) == da._locally_bound_names(function)

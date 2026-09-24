@@ -41,6 +41,7 @@ import re
 import textwrap
 import tokenize
 
+from ..canonical_ast import canonical_dump
 from .annotations import (
     ApplySite,
     CallSite,
@@ -421,7 +422,7 @@ def _annotation_structure(annotation: ast.expr) -> str:
             annotation = ast.parse(annotation.value, mode="eval").body
         except SyntaxError:
             break
-    return ast.dump(annotation)
+    return canonical_dump(annotation)
 
 
 def _signature_substitutions(

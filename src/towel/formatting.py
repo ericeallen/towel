@@ -40,6 +40,7 @@ import shutil
 import subprocess
 from typing import Callable, List, Mapping, Optional
 
+from .canonical_ast import canonical_dump
 from .project_layout import find_project_root, load_pyproject
 from .project_tools import ToolChoice, python_tool_environment
 from .diagnostics import LOG
@@ -138,7 +139,7 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
             formatted_tree = ast.parse(formatted)
         except SyntaxError as error:
             raise FormattingChangedCode(f"formatting produced unparsable code: {error}") from error
-        if ast.dump(formatted_tree) != ast.dump(ast.parse(source)):
+        if canonical_dump(formatted_tree) != canonical_dump(ast.parse(source)):
             raise FormattingChangedCode(
                 "formatting changed the generated code's meaning:\n" + formatted
             )
@@ -397,7 +398,7 @@ def _normalized_imports(module: ast.Module) -> str:
         for field, value in ast.iter_fields(node):
             if isinstance(value, list) and value and isinstance(value[0], ast.stmt):
                 setattr(node, field, _normalize_import_groups(value))
-    return ast.dump(normalized)
+    return canonical_dump(normalized)
 
 
 def _normalize_import_groups(statements: list[ast.stmt]) -> list[ast.stmt]:

@@ -40,6 +40,7 @@ import ast
 import hashlib
 import re
 
+from ..canonical_ast import canonical_dump
 from .block_comments import HelperComments, SiteComments
 
 MethodKind = Literal["instance", "classmethod", "staticmethod"]
@@ -414,7 +415,7 @@ def proposal_identity(proposal: RefactoringProposal) -> Hashable:
         proposal.insert_into_function,
         proposal.method_kind,
         proposal.method_param_name,
-        GENERATED_HELPER_NAME.sub("", ast.dump(proposal.extracted_function)),
+        GENERATED_HELPER_NAME.sub("", canonical_dump(proposal.extracted_function)),
         tuple(
             sorted(
                 (replacement.file_path or proposal.file_path, replacement.line_range)

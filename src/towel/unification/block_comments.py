@@ -59,6 +59,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
 
+from ..canonical_ast import canonical_dump
 from .exceptions import RefactoringError
 from .substitution import Substitution
 from ..coverage_config import DEFAULT_EXCLUDE, CoverageExclusion
@@ -1776,18 +1777,18 @@ def weave_comments(node: ast.AST, helper: ast.AST, comments: HelperComments) -> 
     tree = ast.parse(text)
     position = len(tree.body) - 1 if isinstance(node, ast.Module) else 0
     rendered = _helper_in(tree, position)
-    if rendered is None or ast.dump(rendered) != ast.dump(helper):
+    if rendered is None or canonical_dump(rendered) != canonical_dump(helper):
         raise CommentPlacementError("The helper does not render to itself")
     statements = getattr(rendered, "body")[comments.body_offset :]
     layout = _Layout(text)
-    expected = ast.dump(tree)
+    expected = canonical_dump(tree)
     for safe in (False, True):
         insertions = _joined(_Weaver(layout, statements, comments.comments).weave(safe))
         woven = _applied(text, insertions)
         written = [insertion for insertion in insertions if insertion.comments]
         lines = _comment_lines(woven)
         try:
-            same = ast.dump(ast.parse(woven)) == expected
+            same = canonical_dump(ast.parse(woven)) == expected
         except SyntaxError:
             same = False
         if same and lines is not None and len(lines) == len(written):

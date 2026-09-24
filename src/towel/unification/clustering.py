@@ -38,6 +38,7 @@ import ast
 
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
+from ..canonical_ast import canonical_dump
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import align_return_variables
 from .block_comments import call_argument_lines, directive_conflict, site_comments
@@ -169,7 +170,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         inline_leading_thunks(candidate_helper, subst2, candidate_order)
         if (
             candidate_order != template.param_order
-            or ast.dump(candidate_helper) != template.func_def_dump
+            or canonical_dump(candidate_helper) != template.func_def_dump
         ):
             return None
         if has_impure_eager_parameters(subst2, available):

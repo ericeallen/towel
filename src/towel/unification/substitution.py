@@ -17,63 +17,30 @@
 from __future__ import annotations
 
 import ast
-import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from weakref import WeakKeyDictionary
 
-
-class _HexInt(int):
-    """An int constant as a structural key spells it: in hexadecimal.
-
-    ``ast.dump`` writes a constant with ``repr``, and CPython refuses to
-    write an int in decimal once it has more digits than
-    ``sys.get_int_max_str_digits()`` allows (4,300 unless configured), so a
-    key for a node holding a wider literal raised ``ValueError`` and ended
-    the run. Only decimal conversion is limited; hexadecimal is linear in
-    the value's size and has no limit. ``repr`` never yields this spelling
-    for a real constant, so such a key cannot equal an ordinary dump.
-    """
-
-    def __repr__(self) -> str:
-        return f"int({self:#x})"
-
-
-def dump_without_positions(node: ast.AST) -> str:
-    """``ast.dump`` of ``node`` without positions, whatever ints it holds.
-
-    A node whose ints all fit the decimal limit dumps exactly as ``ast.dump``
-    does. One holding a wider int is dumped from a copy with every int
-    spelled in hexadecimal; whether the plain dump fails depends only on the
-    structure, so equal structures always take the same spelling.
-    """
-    try:
-        return ast.dump(node, include_attributes=False)
-    except ValueError:
-        pass
-    spelled = copy.deepcopy(node)
-    for child in ast.walk(spelled):
-        if isinstance(child, ast.Constant) and type(child.value) is int:
-            child.value = _HexInt(child.value)
-    return ast.dump(spelled, include_attributes=False)
-
+from ..canonical_ast import canonical_dump
 
 _STRUCTURAL_TEXT: "WeakKeyDictionary[ast.AST, str]" = WeakKeyDictionary()
 
 
 def structural_text(node: ast.AST) -> str:
-    """``ast.dump`` of ``node`` without positions, once per node.
+    """``canonical_dump(node)``, once per node.
 
     Rendered Python is not an AST identity: on Python 3.9 a bare
     FormattedValue and its enclosing JoinedStr unparse identically, so the
-    dump is the key that preserves node kinds and structure. The memo is
-    weak and assumes a node's structure is fixed once it has been keyed: the
-    blocks being unified are read-only, and the extractor queries each of
-    its copied template nodes once, before substituting its children.
+    dump is the key that preserves node kinds and structure. It spells an
+    int too wide for decimal in hexadecimal, so no literal ends the run.
+    The memo is weak and assumes a node's structure is fixed once it has
+    been keyed: the blocks being unified are read-only, and the extractor
+    queries each of its copied template nodes once, before substituting its
+    children.
     """
     cached = _STRUCTURAL_TEXT.get(node)
     if cached is None:
-        cached = dump_without_positions(node)
+        cached = canonical_dump(node)
         try:
             _STRUCTURAL_TEXT[node] = cached
         except TypeError:  # a node type that cannot be weakly referenced

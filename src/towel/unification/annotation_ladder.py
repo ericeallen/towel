@@ -58,6 +58,7 @@ from typing import (
     cast,
 )
 
+from ..canonical_ast import canonical_dump
 from .exceptions import Untypeable
 from .models import FunctionNode, RefactoringProposal
 from .semantic_safety import walk_own_scope
@@ -386,7 +387,9 @@ def self_as_type_variable(
     if rewritten.returns is not None and _mentions_self(rewritten.returns):
         rewritten.returns = _self_replaced(rewritten.returns, variable)
     elif returns_call and _is_any(rewritten.returns):
-        spellings = {ast.dump(_unquoted(declared)[0]) for declared in declared_returns if declared}
+        spellings = {
+            canonical_dump(_unquoted(declared)[0]) for declared in declared_returns if declared
+        }
         first = declared_returns[0] if declared_returns else None
         if (
             first is not None
@@ -784,7 +787,7 @@ def targeted_any(
         expression, quoted = _unquoted(targeted.returns)
         union = ast.BinOp(left=expression, op=ast.BitOr(), right=ast.Name(id="Any", ctx=ast.Load()))
         targeted.returns = _requoted(union, quoted, targeted.returns)
-    if ast.dump(targeted) == ast.dump(helper):
+    if canonical_dump(targeted) == canonical_dump(helper):
         return None
     return ast.fix_missing_locations(targeted)
 

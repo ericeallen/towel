@@ -1146,9 +1146,15 @@ measure is exact and changes no proposal.
   site and the reuse redirect make, `FunctionIndex.innermost_at`, is
   memoized per file and span.
 - **Structural identity.** `_sid` is the SHA-256 over each statement's
-  digest of `ast.dump(statement)` without positions; the per-statement
-  digests are memoized per node. All the engine's id-keyed caches — guard
-  verdicts, unification results, the clustering pipeline, per-block
+  digest of `canonical_dump(statement)`; the per-statement digests are
+  memoized per node. `canonical_dump` (`canonical_ast.py`) is what 3.13's
+  `ast.dump` writes, without positions, on every supported Python: before
+  3.13 a node Towel built lacks the fields its constructor was not given,
+  where the parser sets them empty, and `ast.dump` spells the two
+  differently. Every comparison, hash and key built from a tree's structure
+  goes through it, so a helper, an annotation or a reduced body Towel built
+  compares as the tree the parser would build. All the engine's id-keyed
+  caches — guard verdicts, unification results, the clustering pipeline, per-block
   analyses — are keyed by structural id, so a fixed-point iteration that
   re-parses a file still reuses results for the blocks it did not change.
   Those id-keyed caches are `BoundedCache` instances (`bounded_cache.py`,

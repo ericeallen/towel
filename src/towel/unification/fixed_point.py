@@ -56,6 +56,7 @@ from typing import (
     TypeVar,
     Union,
 )
+from ..canonical_ast import canonical_dump
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import (
     CheckerUnavailableError,
@@ -939,9 +940,15 @@ class _RejectedProposals:
                 proposal.insert_into_class,
                 proposal.insert_into_function,
                 None if proposal.reused_function is None else proposal.reused_function.name,
-                ast.dump(proposal.extracted_function),
+                canonical_dump(proposal.extracted_function),
                 sorted(
-                    repr((rep.file_path or proposal.file_path, rep.class_name, ast.dump(rep.node)))
+                    repr(
+                        (
+                            rep.file_path or proposal.file_path,
+                            rep.class_name,
+                            canonical_dump(rep.node),
+                        )
+                    )
                     for rep in proposal.replacements
                 ),
             )

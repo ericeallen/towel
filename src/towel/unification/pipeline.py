@@ -48,6 +48,7 @@ import hashlib
 from dataclasses import dataclass
 import os
 
+from ..canonical_ast import canonical_dump
 from .models import (
     RawModule,
     ParsedModule,
@@ -325,7 +326,7 @@ class AnalysisSession:
 
     @staticmethod
     def _digest(analysis: ModuleAnalysis) -> str:
-        return hashlib.sha256(ast.dump(analysis.module.tree).encode("utf-8")).hexdigest()
+        return hashlib.sha256(canonical_dump(analysis.module.tree).encode("utf-8")).hexdigest()
 
     def invalidate(self, paths: Sequence[str]) -> None:
         """Discard every spelling of the selected absolute paths in this session."""

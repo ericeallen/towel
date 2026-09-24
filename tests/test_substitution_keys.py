@@ -8,12 +8,13 @@ import sys
 
 import pytest
 
+from towel.canonical_ast import canonical_dump
 from towel.unification.substitution import Substitution, structural_text
 
 
-def test_structural_text_is_the_dump_without_positions() -> None:
+def test_structural_text_is_the_canonical_dump() -> None:
     node = ast.parse("f(x, y=1)", mode="eval").body
-    assert structural_text(node) == ast.dump(node, include_attributes=False)
+    assert structural_text(node) == canonical_dump(node)
     assert structural_text(node) is structural_text(node)
 
 

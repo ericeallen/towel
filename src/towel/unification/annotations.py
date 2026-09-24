@@ -62,6 +62,7 @@ import textwrap
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, cast
 
+from ..canonical_ast import canonical_dump
 from .revealed_types import parse_revealed
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, Subtyping, TypeOracle
@@ -246,7 +247,7 @@ def _unknown_subtypes(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Su
     second, weaker implementation of subtyping here.
     """
     return [
-        Subtyping.YES if ast.dump(narrow) == ast.dump(wide) else Subtyping.UNKNOWN
+        Subtyping.YES if canonical_dump(narrow) == canonical_dump(wide) else Subtyping.UNKNOWN
         for narrow, wide in pairs
     ]
 
@@ -325,7 +326,7 @@ def _joined(
     if not present or len(present) != len(candidates):
         return None
     first = present[0]
-    if all(ast.dump(candidate) == ast.dump(first) for candidate in present[1:]):
+    if all(canonical_dump(candidate) == canonical_dump(first) for candidate in present[1:]):
         # One spelling everywhere: keep it as written (``Optional[int]`` stays)
         # when the host can write it; otherwise its members may still be
         # writable (``str | None`` needs no import where ``Optional`` does).
@@ -356,7 +357,7 @@ def normalize_union(members: Sequence[ast.expr], subtypes: _Subtypes) -> List[as
     distinct: List[ast.expr] = []
     seen: Set[str] = set()
     for member in members:
-        key = ast.dump(member)
+        key = canonical_dump(member)
         if key not in seen:
             seen.add(key)
             distinct.append(copy.deepcopy(member))
@@ -933,7 +934,7 @@ def shorten_qualified_names(
         expression = _unquoted(annotation)
         was_string = expression is not annotation
         shortened = cast(ast.expr, _Shorten().visit(copy.deepcopy(expression)))
-        if ast.dump(shortened) == ast.dump(expression):
+        if canonical_dump(shortened) == canonical_dump(expression):
             return annotation
         if not (quote or was_string):
             return ast.copy_location(shortened, annotation)
@@ -1170,7 +1171,7 @@ def infer_missing_annotations(
 
 def _narrower(declared: ast.expr, seen: ast.expr, subtypes: _Subtypes) -> ast.expr:
     """``seen`` where the checker confirms it is a strict subtype of ``declared``; else ``declared``."""
-    if ast.dump(_unquoted(seen)) == ast.dump(_unquoted(declared)):
+    if canonical_dump(_unquoted(seen)) == canonical_dump(_unquoted(declared)):
         return declared
     narrow, wide = _unquoted(seen), _unquoted(declared)
     verdicts = list(subtypes([(narrow, wide), (wide, narrow)]))
