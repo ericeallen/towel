@@ -13,6 +13,7 @@ runtime, and each deliberately left out is shown doing what left it out.
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 import sys
 import textwrap
@@ -277,11 +278,19 @@ def _spelled(dotted: str) -> Tuple[str, str]:
     return ("", name) if module == "builtins" else (f"import {module}\n", dotted)
 
 
+def _skip_unless_this_python_has(dotted: str) -> None:
+    """Skip where the standard library is too old for ``dotted``: ``typing.override`` is 3.12's."""
+    module, _, name = dotted.rpartition(".")
+    if not hasattr(importlib.import_module(module), name):
+        pytest.skip(f"{dotted} is newer than Python {sys.version_info[0]}.{sys.version_info[1]}")
+
+
 @pytest.mark.parametrize(
     "dotted",
     sorted(name for name in _QUIET_FUNCTION_DECORATORS if not name.startswith("typing_extensions")),
 )
 def test_each_quiet_function_decorator_registers_nothing(dotted: str) -> None:
+    _skip_unless_this_python_has(dotted)
     setup, spelled = _spelled(dotted)
     snippet = f"class Box:\n    @{spelled}\n    def f(self):\n        return 1\n"
     if "contextmanager" in dotted:
@@ -294,6 +303,7 @@ def test_each_quiet_function_decorator_registers_nothing(dotted: str) -> None:
     sorted(name for name in _QUIET_CLASS_DECORATORS if not name.startswith("typing_extensions")),
 )
 def test_each_quiet_class_decorator_registers_nothing(dotted: str) -> None:
+    _skip_unless_this_python_has(dotted)
     setup, spelled = _spelled(dotted)
     # Each decorator is applied to a class it accepts.
     bases = {"typing.runtime_checkable": "(typing.Protocol)", "enum.unique": "(enum.Enum)"}

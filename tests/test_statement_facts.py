@@ -8,6 +8,7 @@ from typing import Iterator, List, Sequence
 
 import pytest
 
+from tests.hostile_execution import parsed_or_skipped
 from towel.unification.block_signature import BlockSignature, extract_block_signature
 from towel.unification.extractor import contains_return
 from towel.unification.visitors import OwnScopeVisitor
@@ -240,7 +241,7 @@ def test_memoized_guards_match_the_whole_block_walk(path: Path) -> None:
         requires_original_frame,
     )
 
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = parsed_or_skipped(path)
     for statements in _statement_lists(tree):
         for block in _contiguous_blocks(statements, longest=4):
             assert requires_original_frame(block) == _reference_requires_original_frame(block)

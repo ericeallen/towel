@@ -10,9 +10,12 @@ or in their shell variables can reach it.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import subprocess
 import sys
+
+import pytest
 
 ISOLATED_ENV = {"PYTHONDONTWRITEBYTECODE": "1", "PATH": ""}
 
@@ -29,3 +32,16 @@ def observe(script: str, cwd: Path) -> tuple[int, str, list[str]]:
         env=ISOLATED_ENV,
     )
     return completed.returncode, completed.stdout, completed.stderr.strip().splitlines()[-1:]
+
+
+def parsed_or_skipped(path: Path) -> ast.Module:
+    """``path`` parsed, or the calling test skipped where this Python lacks the fixture's syntax.
+
+    A fixture may be written in syntax newer than the oldest supported Python:
+    ``type Alias = ...`` and ``class Box[T]:`` need 3.12. Every test that reads
+    the fixtures skips such a one there, alike.
+    """
+    try:
+        return ast.parse(path.read_bytes(), filename=str(path))
+    except SyntaxError:
+        pytest.skip("the fixture is written in syntax this Python does not have")

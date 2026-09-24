@@ -10,7 +10,6 @@ transforms it or rejects it, so a change in either direction is visible.
 
 from __future__ import annotations
 
-import ast
 import contextlib
 import io
 from pathlib import Path
@@ -19,7 +18,7 @@ import tempfile
 
 import pytest
 
-from tests.hostile_execution import observe
+from tests.hostile_execution import observe, parsed_or_skipped
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -188,10 +187,7 @@ def _run(script: Path) -> tuple[int, str, list[str]]:
 
 @pytest.mark.parametrize("case", sorted(path.stem for path in CASES.glob("*.py")))
 def test_refactoring_preserves_program_output(case: str) -> None:
-    try:
-        ast.parse((CASES / f"{case}.py").read_bytes())
-    except SyntaxError:
-        pytest.skip("the fixture is written in syntax this Python does not have")
+    parsed_or_skipped(CASES / f"{case}.py")
     with tempfile.TemporaryDirectory(prefix="towel-hostile-") as directory:
         root = Path(directory)
         before = root / "before" / "m.py"
