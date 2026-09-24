@@ -77,6 +77,7 @@ from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring
 from .placement import HelperPlacement
 from .block_analysis import BlockAnalysis
+from .engine_state import BlockSite
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
@@ -276,19 +277,17 @@ def _analyzed_module(analyzer: Optional[ScopeAnalyzer]) -> Optional[ast.Module]:
 
 @dataclass(frozen=True)
 class _PairContext:
-    """Each block's function, scope analyzer and root scope, and the pair's structural ids."""
+    """Each block's function, scope analyzer and root scope, and where each block stands."""
 
     func1: FunctionNode
     func2: FunctionNode
     scope_analyzer: ScopeAnalyzer
     scope_analyzer2: ScopeAnalyzer
     root_scope: Scope
-    # Structural ids of the functions and blocks, computed once: every guard
-    # and per-block analysis of the pair is memoized under them.
-    function1_id: str
-    function2_id: str
-    block1_id: str
-    block2_id: str
+    # Each block's site, computed once: every guard and per-block analysis of
+    # the pair is memoized under it. None when the function was not recorded.
+    site1: Optional[BlockSite]
+    site2: Optional[BlockSite]
 
 
 def _is_forwarding_lambda(node: ast.AST) -> bool:
@@ -591,17 +590,16 @@ class PairEvaluation(
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
         ctx = self._resolve_pair_context(pair, functions)
         blocks = (
-            (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, ctx.function1_id, ctx.block1_id),
-            (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.function2_id, ctx.block2_id),
+            (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, ctx.site1),
+            (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2),
         )
-        for nodes, function, analyzer, function_id, block_id in blocks:
+        for nodes, function, analyzer, site in blocks:
             if self._block_rejected(
                 block_requires_original_frame,
                 nodes,
                 function,
                 analyzer,
-                function_id=function_id,
-                block_id=block_id,
+                site=site,
             ):
                 self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
                 return None
@@ -610,8 +608,7 @@ class PairEvaluation(
                 nodes,
                 function,
                 analyzer,
-                function_id=function_id,
-                block_id=block_id,
+                site=site,
             ):
                 self._debug_reject(RejectReason.FRAME_READ_IN_FUNCTION, pair)
                 return None
@@ -620,8 +617,7 @@ class PairEvaluation(
                 nodes,
                 function,
                 analyzer,
-                function_id=function_id,
-                block_id=block_id,
+                site=site,
             ):
                 self._debug_reject(RejectReason.CREATED_OBJECT_ESCAPES, pair)
                 return None
@@ -654,22 +650,8 @@ class PairEvaluation(
             (nested_scopes_cross_block_boundary, RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY),
             (moves_scope_declaration, RejectReason.MOVES_SCOPE_DECLARATION),
         ):
-            if (
-                self._block_rejected(
-                    guard,
-                    pair.block1_nodes,
-                    func1,
-                    function_id=ctx.function1_id,
-                    block_id=ctx.block1_id,
-                )
-            ) or (
-                self._block_rejected(
-                    guard,
-                    pair.block2_nodes,
-                    func2,
-                    function_id=ctx.function2_id,
-                    block_id=ctx.block2_id,
-                )
+            if (self._block_rejected(guard, pair.block1_nodes, func1, site=ctx.site1)) or (
+                self._block_rejected(guard, pair.block2_nodes, func2, site=ctx.site2)
             ):
                 self._debug_reject(reason, pair)
                 return None
@@ -700,22 +682,16 @@ class PairEvaluation(
             return None
         if self._per_block(
             "unbinds",
-            ctx.func1,
-            pair.block1_nodes,
             lambda: unbinds_external_name(
                 ctx.func1, pair.block1_nodes, first[0].bound_before_block
             ),
-            function_id=ctx.function1_id,
-            block_id=ctx.block1_id,
+            site=ctx.site1,
         ) or self._per_block(
             "unbinds",
-            ctx.func2,
-            pair.block2_nodes,
             lambda: unbinds_external_name(
                 ctx.func2, pair.block2_nodes, second[0].bound_before_block
             ),
-            function_id=ctx.function2_id,
-            block_id=ctx.block2_id,
+            site=ctx.site2,
         ):
             self._debug_reject(RejectReason.UNBINDS_EXTERNAL_NAME, pair)
             return None
@@ -727,26 +703,23 @@ class PairEvaluation(
         """Block ``block_idx``'s binding snapshot and the variables it must return; None if it reassigns unsafely."""
         if block_idx == 0:
             func, nodes, block_range = ctx.func1, pair.block1_nodes, pair.block1_range
-            ids = (ctx.function1_id, ctx.block1_id)
+            site = ctx.site1
             name, reason = pair.function1_name, RejectReason.UNSAFE_REASSIGNMENT_BLOCK1
         else:
             func, nodes, block_range = ctx.func2, pair.block2_nodes, pair.block2_range
-            ids = (ctx.function2_id, ctx.block2_id)
+            site = ctx.site2
             name, reason = pair.function2_name, RejectReason.UNSAFE_REASSIGNMENT_BLOCK2
         reassignments = self._get_assignment_reuse(func)
         has_unsafe, problematic_vars = self._per_block(
             "reassignments",
-            func,
-            nodes,
             lambda: has_reassignments_without_bindings(func, nodes, reassignments),
-            function_id=ids[0],
-            block_id=ids[1],
+            site=site,
         )
         if has_unsafe:
             self._debug_reject(reason, pair, str(problematic_vars))
             return None
         snapshot = self._build_block_binding_snapshot(
-            func, nodes, block_range, reassignments, function_id=ids[0], block_id=ids[1]
+            func, nodes, block_range, reassignments, site=site
         )
         debug_label = f"Block{block_idx + 1} Validation Debug"
         debug_enabled = debugging(VALIDATION)
@@ -997,11 +970,10 @@ class PairEvaluation(
         # An external name another function may rebind is snapshotted by the
         # call unless the helper reads it bare.
         if any(
-            self._rebound_external_names(func, nodes, analyzer, function_id, block_id)
-            - module_names
-            for func, nodes, analyzer, function_id, block_id in (
-                (ctx.func1, pair.block1_nodes, scope_analyzer, ctx.function1_id, ctx.block1_id),
-                (ctx.func2, pair.block2_nodes, scope_analyzer2, ctx.function2_id, ctx.block2_id),
+            self._rebound_external_names(func, nodes, analyzer, site) - module_names
+            for func, nodes, analyzer, site in (
+                (ctx.func1, pair.block1_nodes, scope_analyzer, ctx.site1),
+                (ctx.func2, pair.block2_nodes, scope_analyzer2, ctx.site2),
             )
         ):
             self._debug_reject(RejectReason.REBOUND_EXTERNAL_BINDING, pair)
@@ -1633,15 +1605,13 @@ class PairEvaluation(
         pair: CodeBlockPair,
         functions: FunctionIndex,
     ) -> "_PairContext":
-        """The pair's functions, analyzers and root scope, with their structural ids."""
+        """The pair's functions, analyzers and root scope, with where each block stands."""
         return _PairContext(
             func1=pair.function1_node,
             func2=pair.function2_node,
             scope_analyzer=pair.scope_analyzer1,
             scope_analyzer2=pair.scope_analyzer2,
             root_scope=pair.root_scope1,
-            function1_id=self._sid([pair.function1_node]),
-            function2_id=self._sid([pair.function2_node]),
-            block1_id=self._sid(pair.block1_nodes),
-            block2_id=self._sid(pair.block2_nodes),
+            site1=self._block_site(pair.function1_node, pair.block1_nodes),
+            site2=self._block_site(pair.function2_node, pair.block2_nodes),
         )

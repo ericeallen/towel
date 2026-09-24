@@ -72,7 +72,7 @@ from .typing_forms import ModuleText
 from .visitors import body_without_docstring
 
 from .builtins import CALL_ARGUMENT_BUILTINS
-from .engine_state import ClusteredSite, ClusterScanKey, TemplateKey
+from .engine_state import BlockSite, ClusteredSite, ClusterScanKey, TemplateKey
 from .insertion import InsertionPoints
 from .placement import HelperPlacement
 from .block_analysis import BlockAnalysis
@@ -88,6 +88,8 @@ class _ClusterCandidate:
     function: FunctionNode
     analyzer: ScopeAnalyzer
     nodes: List[ast.stmt]
+    # Where the block stands, which its per-block analyses are memoized under.
+    site: Optional[BlockSite]
     snapshot: BlockBindingSnapshot
     # Names the block binds for the first time that are read after it.
     return_variables: FrozenSet[str]
@@ -142,7 +144,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             if resolved != template.module_names:
                 return None
         if (
-            self._rebound_external_names(candidate.function, candidate.nodes, candidate.analyzer)
+            self._rebound_external_names(
+                candidate.function, candidate.nodes, candidate.analyzer, candidate.site
+            )
             - template.module_names
         ):
             return None
@@ -355,7 +359,6 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 fn, candidate_class, analyzed if isinstance(analyzed, ast.Module) else None
             )
             context = ClusterContext(candidate_class, candidate_info)
-            fn_id = self._sid([fn])
             for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
                 # The size gate and signature filter are constant-time and
                 # reject most blocks; the semantic guards each walk the
@@ -365,8 +368,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                     continue
                 if not quick_filter(template_signature, cand_sig):
                     continue
-                cand_id = self._sid(cand_nodes)
-                candidate = self._admissible_candidate(entry, fn_id, cand_nodes, cand_id)
+                candidate = self._admissible_candidate(
+                    entry, cand_nodes, self._block_site(fn, cand_nodes)
+                )
                 if candidate is None:
                     continue
                 # Not memoized per candidate: a candidate's call is computed
@@ -399,9 +403,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
     def _admissible_candidate(
         self,
         entry: FunctionArtifact,
-        fn_id: str,
         cand_nodes: List[ast.stmt],
-        cand_id: str,
+        site: Optional[BlockSite],
     ) -> Optional["_ClusterCandidate"]:
         """The candidate block as a cluster candidate, or None when a semantic guard declines it.
 
@@ -416,40 +419,32 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             frame_read_outside_block,
             created_object_escapes,
         ):
-            if self._block_rejected(
-                frame_guard, cand_nodes, fn, analyzer, function_id=fn_id, block_id=cand_id
-            ):
+            if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
         for guard in (
             nested_bindings_escape,
             nested_scopes_cross_block_boundary,
             moves_scope_declaration,
         ):
-            if self._block_rejected(guard, cand_nodes, fn, function_id=fn_id, block_id=cand_id):
+            if self._block_rejected(guard, cand_nodes, fn, site=site):
                 return None
         reassignments = self._get_assignment_reuse(fn)
         if self._per_block(
             "reassignments",
-            fn,
-            cand_nodes,
             lambda: has_reassignments_without_bindings(fn, cand_nodes, reassignments),
-            function_id=fn_id,
-            block_id=cand_id,
+            site=site,
         )[0]:
             return None
         cand_range = self._block_line_span(cand_nodes)
         if cand_range is None:
             return None
         snapshot = self._build_block_binding_snapshot(
-            fn, cand_nodes, cand_range, reassignments, function_id=fn_id, block_id=cand_id
+            fn, cand_nodes, cand_range, reassignments, site=site
         )
         if self._per_block(
             "unbinds",
-            fn,
-            cand_nodes,
             lambda: unbinds_external_name(fn, cand_nodes, snapshot.bound_before_block),
-            function_id=fn_id,
-            block_id=cand_id,
+            site=site,
         ):
             return None
         return _ClusterCandidate(
@@ -457,6 +452,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             function=fn,
             analyzer=analyzer,
             nodes=cand_nodes,
+            site=site,
             snapshot=snapshot,
             return_variables=frozenset(
                 self._find_return_variables(fn, cand_range, snapshot.initially_bound, cand_nodes)

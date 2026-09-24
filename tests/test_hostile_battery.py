@@ -168,6 +168,12 @@ TRANSFORMED = {
     # the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
+    # Round-3 audit: a memoized verdict answers only for its block's site. The
+    # benign twins of a rebinding hazard, and the top-level twin of a copy in
+    # a loop, still share helpers; the hazard (r160) and the loop copy (r161)
+    # keep their code.
+    "r160_rebinding_enclosing_function_beside_a_benign_twin",
+    "r162_top_level_copy_beside_a_loop_copy",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in

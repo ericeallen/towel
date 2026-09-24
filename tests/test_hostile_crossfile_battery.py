@@ -57,6 +57,9 @@ TRANSFORMED = {
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
     "xf29_type_checking_block_with_branches",
+    # Only the benign module's twins; the rebinding hazard in the other keeps
+    # its code (round-3 audit, P1-1).
+    "xf30_rebinding_enclosing_function_beside_a_twin_in_another_module",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
