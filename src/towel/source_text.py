@@ -29,6 +29,8 @@ from pathlib import Path
 import tokenize
 from typing import List, Optional, Tuple, Union
 
+from .canonical_ast import canonical_dump
+
 
 def source_encoding(data: bytes) -> str:
     """The encoding Python would decode ``data`` with; ``utf-8-sig`` when it carries a BOM.
@@ -153,7 +155,7 @@ def _escaped_for(text: str, encoding: str) -> Optional[str]:
         rewritten = rewritten[:start] + spelled + rewritten[end:]
     try:
         rewritten.encode(encoding)
-        if ast.dump(ast.parse(rewritten)) != ast.dump(ast.parse(text)):
+        if canonical_dump(ast.parse(rewritten)) != canonical_dump(ast.parse(text)):
             return None
     except (UnicodeEncodeError, SyntaxError, ValueError):
         return None

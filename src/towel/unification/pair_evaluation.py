@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
 
+from ..canonical_ast import canonical_dump
 from ..diagnostics import VALIDATION, debugging
 from ..project_layout import find_project_root
 from ..source_text import read_source
@@ -1209,7 +1210,7 @@ class PairEvaluation(
                 HelperTemplate(
                     pair=pair,
                     func_def=rendered.func_def,
-                    func_def_dump=ast.dump(rendered.func_def),
+                    func_def_dump=canonical_dump(rendered.func_def),
                     param_order=rendered.param_order,
                     preamble_length=rendered.preamble_length,
                     free_vars=free.free_vars,

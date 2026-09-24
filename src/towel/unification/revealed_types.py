@@ -52,6 +52,8 @@ from dataclasses import dataclass
 import re
 from typing import List, Literal, Optional, Sequence, Tuple
 
+from ..canonical_ast import canonical_dump
+
 __all__ = ["OpaqueType", "UnwritableCallable", "parse_revealed"]
 
 
@@ -148,7 +150,7 @@ def _widened(value: ast.expr) -> ast.expr:
         return _dotted("builtins.int")
     if isinstance(value, ast.Attribute):
         return value.value  # An enum member belongs to its enum.
-    raise _Unreadable(ast.dump(value))
+    raise _Unreadable(canonical_dump(value))
 
 
 class _Reader:
@@ -263,7 +265,7 @@ class _Reader:
                 widened: List[ast.expr] = []
                 for value in values:
                     kind = _widened(value)
-                    if ast.dump(kind) not in {ast.dump(seen) for seen in widened}:
+                    if canonical_dump(kind) not in {canonical_dump(seen) for seen in widened}:
                         widened.append(kind)
                 return _union(widened)
             return _subscript(head, values)

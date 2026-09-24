@@ -39,6 +39,7 @@ from pathlib import Path
 import re
 
 from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
+from ..canonical_ast import canonical_dump
 from .annotation_ladder import (
     Hearing,
     Judge,
@@ -929,7 +930,7 @@ class HelperAnnotationWiring(EngineState):
             self._helper_has_annotations(proposal) or proposal.wants_type_inference
         ):
             every_any = self._with_every_annotation_any(proposal)
-            if targeted is None or ast.dump(every_any.extracted_function) != ast.dump(
+            if targeted is None or canonical_dump(every_any.extracted_function) != canonical_dump(
                 targeted.extracted_function
             ):
                 TYPES.debug("ladder rung every-Any for %s", proposal.description)
@@ -1015,7 +1016,7 @@ class HelperAnnotationWiring(EngineState):
         required = used_imports(variant.required_imports, helper, declarations)
         checking = used_imports(variant.type_checking_imports, helper, declarations)
         if (
-            ast.dump(helper) == ast.dump(variant.extracted_function)
+            canonical_dump(helper) == canonical_dump(variant.extracted_function)
             and required == variant.required_imports
             and checking == variant.type_checking_imports
         ):

@@ -30,6 +30,7 @@ import copy
 from weakref import WeakKeyDictionary
 from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple, cast
 
+from ..canonical_ast import canonical_dump
 from .bounded_cache import BoundedCache
 from .semantic_safety import bound_names, walk_own_scope
 from .visitors import visit_as
@@ -71,7 +72,7 @@ def instantiation_mismatch(
     """
     key = (
         _helper_dump(helper),
-        ast.dump(call_statement, include_attributes=False),
+        canonical_dump(call_statement),
         structural_id(block),
         tuple(sorted(template_renames.items())),
         tuple(sorted(block_renames.items())),
@@ -119,7 +120,7 @@ _HELPER_DUMPS: "WeakKeyDictionary[ast.FunctionDef, str]" = WeakKeyDictionary()
 def _helper_dump(helper: ast.FunctionDef) -> str:
     known = _HELPER_DUMPS.get(helper)
     if known is None:
-        known = ast.dump(helper, include_attributes=False)
+        known = canonical_dump(helper)
         _HELPER_DUMPS[helper] = known
     return known
 
@@ -174,7 +175,7 @@ def _expected_form(block: Sequence[ast.stmt]) -> ast.Module:
 
 
 def _normalized_dump(module: ast.Module) -> str:
-    return ast.dump(module, include_attributes=False)
+    return canonical_dump(module)
 
 
 def _expected_dump(block: Sequence[ast.stmt]) -> str:

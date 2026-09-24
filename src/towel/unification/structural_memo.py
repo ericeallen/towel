@@ -34,7 +34,8 @@ from typing import Dict, List, Sequence, Tuple
 from weakref import WeakKeyDictionary
 
 from .statement_facts import memoized_per_node
-from .substitution import Substitution, dump_without_positions
+from ..canonical_ast import canonical_dump
+from .substitution import Substitution
 
 # A path names a node inside a block: the statement index, then (field, index)
 # steps; ``index`` is -1 for a single-valued field.
@@ -43,7 +44,7 @@ Path = Tuple[int, Tuple[Step, ...]]
 
 
 def _node_digest(node: ast.AST) -> bytes:
-    return hashlib.sha256(dump_without_positions(node).encode("utf-8")).digest()
+    return hashlib.sha256(canonical_dump(node).encode("utf-8")).digest()
 
 
 _NODE_DIGESTS: "WeakKeyDictionary[ast.AST, bytes]" = WeakKeyDictionary()
