@@ -580,6 +580,21 @@ its class and object, reads no cell and moves anywhere.
 Annotations are written only from evidence, and their limits follow from
 where the evidence comes from:
 
+- Every name bound for an annotation is private and spelled nowhere in its
+  module (`import typing as _typing`, `from pkg.models import Item as
+  _Item`, `if _typing.TYPE_CHECKING:`), so nothing the program already binds
+  changes meaning and no module that star-imports the helper's module takes
+  a new public name. The one assumption is the one the helpers' own names
+  rest on: a star import brings a private name only from a provider whose
+  `__all__` lists it. A binding the module already has is used instead only
+  when it is the name's single binding anywhere in the module; the module's
+  own `TYPE_CHECKING`, a flag of its own under that name, is never mistaken
+  for `typing`'s. A new guard carries `# pragma: no cover` where the
+  project's coverage.py exclusions match only with it, as coverage.py's
+  defaults do. A project whose exclusions match neither form, such as one
+  whose `exclude_lines` lists `if TYPE_CHECKING:` and not the pragma, counts
+  the guarded import as a missed line.
+
 - A helper is annotated only when some call site's enclosing function is
   itself annotated. An unannotated project stays unannotated.
 - What the sites declare is copied: a parameter whose every argument is an
@@ -660,7 +675,7 @@ where the evidence comes from:
   whose sites are in other modules, an annotation may name only builtins
   and the `typing` names Towel imports itself (`Any`, `Callable`), since a
   site's imports are not the host's. A class the module cannot reach is
-  imported under `TYPE_CHECKING` and named directly; only where no module of
+  imported under `TYPE_CHECKING` and named by a private alias; only where no module of
   the project owns it, or its short name is already taken, is the type left
   unwritten and the parameter completed with `Any`. Any subscripted
   annotation that would not evaluate at definition time (`memoryview[int]`

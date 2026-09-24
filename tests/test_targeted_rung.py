@@ -75,7 +75,8 @@ def test_the_parameter_whose_narrowing_the_call_dropped_alone_becomes_any(
     )
     assert outcome.error is None, outcome.error
     assert outcome.signature() == (
-        "(self, __param_0: bool, __param_1: Callable[[], bool], __param_2: Any) -> bool"
+        "(self, __param_0: bool, __param_1: _typing.Callable[[], bool], __param_2: _typing.Any)"
+        " -> bool"
     )
     _targeted_after_the_precise_rungs(outcome)
 
@@ -119,7 +120,7 @@ def test_a_helper_returning_notimplemented_returns_its_type_or_any(tmp_path: Pat
     returns = outcome.helper().returns
     assert returns is not None
     spelled = returns.value if isinstance(returns, ast.Constant) else ast.unparse(returns)
-    assert spelled == "bool | Any", outcome.signature()
+    assert spelled == "bool | _typing.Any", outcome.signature()
     _targeted_after_the_precise_rungs(outcome)
 
 
@@ -171,6 +172,6 @@ def test_a_later_rung_carries_the_comments_of_the_moved_code(tmp_path: Path) -> 
     helper = outcome.helper()
     written = outcome.module.splitlines()[helper.lineno - 1 : helper.end_lineno]
     text = "\n".join(written)
-    assert "__param_2: Any" in text, text
+    assert "__param_2: _typing.Any" in text, text
     assert "# Nothing parsed: the arbitrary-equality flag decides." in text, text
     assert "# the parsed bounds" in text, text
