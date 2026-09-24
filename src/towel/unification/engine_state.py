@@ -39,6 +39,7 @@ from typing import (
     FrozenSet,
     Iterable,
     List,
+    Mapping,
     MutableMapping,
     Optional,
     Sequence,
@@ -48,7 +49,8 @@ from typing import (
 from weakref import WeakKeyDictionary
 
 from ..diagnostics import Settings
-from ..type_inference import CheckResult, TypeOracle
+from ..type_baseline import CheckedChange, KnownErrors
+from ..type_inference import CheckResult, TypeDiagnostic, TypeOracle
 from .block_signature import BlockSignature
 from .bounded_cache import BoundedCache
 from .extractor import HygienicExtractor
@@ -235,6 +237,12 @@ class EngineState:
     """Per-run view of the caller's oracle, relocated when the driver copies its input."""
     _type_run_baseline: Optional[CheckResult]
     """Original complete-project result; None means the run has not checked its baseline."""
+    _type_known: KnownErrors
+    """What the project's check reports as it now stands, the original's errors to begin with."""
+    _type_checked: Optional[CheckedChange]
+    """The change the checker last accepted, until the driver writes it or checks another."""
+    _type_names_any: Mapping[str, Tuple[TypeDiagnostic, ...]]
+    """The files the original check names what it cannot type in, which no change may touch."""
     _analysis_paths: Tuple[str, ...]
     """Paths from the latest analysis, used to seed a direct application's initial check."""
     _output_origin: Optional[Tuple[Path, Path]]

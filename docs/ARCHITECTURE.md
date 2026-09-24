@@ -468,8 +468,9 @@ package lives.
 for `[tool.mypy]` or `mypy.ini`, pyright for `[tool.pyright]` or
 `pyrightconfig.json`, and for a project configuring both, mypy infers
 and both verify, so the project's own check stays green. Every configured
-checker must accept, so the first to reject settles the candidate and the
-others are not asked; only an accepted candidate is seen by all of them. When
+checker must accept, so the first to report an error the project did not
+already have settles the candidate and the others are not asked; only an
+accepted candidate is seen by all of them. When
 a run that was checked through a language server has applied something -- ever,
 not only if one is still warm -- the finished project is confirmed once more by
 a pyright started from nothing. A confirmation that cannot itself run has
@@ -501,15 +502,53 @@ flowchart LR
     towel -. "closing the oracle ends<br/>the processes and removes both" .-> disk
 ```
 
-Before using the oracle, the engine checks the complete original project.
-If that completed check reports type errors, it aborts with an instruction to
-fix the errors or explicitly rerun with `--no-types`. That option disables
-helper annotation generation, inference and verification while preserving
-existing source annotations. A checker crash, timeout or incomplete result is
-a distinct `CheckFailure` and does not permit unchecked application, and says
-the same thing about how to proceed. A clean baseline keeps verification
-enabled, so errors introduced by a transformation cannot subsequently be
-treated as pre-existing errors that disable checking.
+Before using the oracle, the engine checks the complete original project,
+and the errors that check reports are the reference every later check is
+compared with ([`type_baseline.py`](../src/towel/type_baseline.py)): a change
+is rejected only for an error the reference does not account for. It used to
+refuse any project whose check reported one, and in a study of 20 corpus
+projects that check was clean for 6, while all 17 that type-check pass their
+own check as their CI runs it; the errors lay in tests, benchmarks and docs
+the CI never checks, in checkers no CI step runs, or came from checking
+without the CI's flags. `KnownErrors.introduced` compares a file that no
+change has touched by file, line and message, since its lines cannot have
+moved. A file a change has touched is aligned with the text the reference was
+checked against (`unchanged_lines`, a line diff, so it holds whatever wrote the
+lines, formatter and import sorter included): an error on a line the change
+left alone must match the reference's on that line, wherever it now stands,
+and the errors on the lines the change wrote are compared by message, as a
+multiset, with the reference's on the lines it replaced, which is where a
+duplicated block's error moves into the helper from. However the diff pairs
+the lines, an error is new whenever its message appears more often than before
+in its file, so the alignment rejects more than a comparison by message would,
+never less. A message that embeds a line reappears as new when its line moves,
+so it fails closed. The reference follows the project. When a driver
+writes a change, `_follow_the_written_change` makes that change's own check
+the reference, once the files hold what was checked, so an error one change
+removed cannot be spent by the next; against the original's errors it could
+be. The checks come one checker at a time (`checks_in_turn`), and the caller
+stops at the first that reports a new error: `CombinedOracle.check_project`
+itself returns every checker's errors, since stopping at the first checker
+that reported anything would, against pre-existing errors, leave the others
+unasked about every candidate. The cold confirmation compares the same way,
+with the reference the run's last written change left, and an error only it
+reports is then looked for in a cold check of the original: a checker started
+from nothing need not agree with a warm one even there (pyright's command line
+resolved trio's modules differently from its language server, and disagreed
+about files no change touched), so only an error neither accounts for is loud.
+Where the original
+check reports an error after which a name is `Any` to the checker
+(`makes_names_any`: an unresolved or untyped import, an untyped decorator, a
+base class of type `Any`), no change to that file is attempted
+(`UnverifiableChangeError`), because `Any` accepts every use and the subtype
+questions that normalize a helper's annotations answer yes about it; the
+report before the run names those files. A checker crash, timeout or
+incomplete result is a distinct `CheckFailure`, does not permit unchecked
+application, and refuses the run with an instruction to fix what stops the
+checker or explicitly rerun with `--no-types`. That option disables helper
+annotation generation, inference and verification while preserving existing
+source annotations. Errors a transformation introduces never enter the
+reference, since a change that introduces one is never written.
 
 *What "complete" covers.* A checker config that names its own `files` settles
 it: the project has said what it checks. mypy takes its targets on the command
@@ -668,8 +707,9 @@ flowchart TD
 The first tier is the structural refusals of the `RejectReason` vocabulary
 together with an extraction that would separate a narrowing test from an
 expression it leaves at the call site (`unification/narrowing.py`). Within one
-check every configured checker must accept, so the first to reject settles the
-candidate and the others are not asked.
+check every configured checker must accept, so the first to report an error
+the project did not already have settles the candidate and the others are not
+asked.
 
 The signatures are tried in this order, and generation is lazy, so one that
 verifies costs nothing further:
@@ -954,9 +994,9 @@ a check costs a re-check of the changed modules and their import cycle rather
 than of the project; text identical to what a file already holds is withheld
 from mypy so its incremental cache applies; each mypy build runs in a forked
 child that exits when it has answered, so the thousandth request costs what the
-first did; the first checker to reject settles a candidate; and a declined
-proposal is remembered for the whole run rather than retried at every analysis.
-The measures below concern analysis.
+first did; the first checker to report a new error settles a candidate; and a
+declined proposal is remembered for the whole run rather than retried at every
+analysis. The measures below concern analysis.
 
 Pairing is quadratic in candidate blocks per file, and with N near-identical
 blocks in one file every pair proposes the same N-site extraction, so

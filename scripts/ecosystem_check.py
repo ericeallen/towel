@@ -48,13 +48,17 @@ modules by default. A manifest entry may turn it off only by giving its reason,
 and the report names each project that ran without it.
 
 Types stay enabled unless the caller explicitly requests ``--no-types``. A
-project whose own sources do not type-check is declined by Towel rather than
-refactored unverified, which is its documented behaviour and the answer it
+project whose own check, as Towel runs it, already reports errors is refactored
+with types all the same: Towel compares each change's check with those errors
+and rejects the change only for one it adds. For each such project the report
+records how many errors there were, and how many files and proposals Towel
+declined because an error there leaves a name the checker cannot type. Only a
+project whose checker cannot run at all is declined by Towel, and the answer it
 gives such a user is to rerun without types. The corpus does exactly that: it
-holds the refusal to its promised wording -- the count, a diagnostic naming its
-file, and the way forward -- and then reruns that project with ``--no-types``
-so its behaviour is still covered. The report says which projects that was, and
-their verdicts are evidence about the untyped path only.
+holds the refusal to its promised wording -- the reason and the way forward --
+and then reruns that project with ``--no-types`` so its behaviour is still
+covered. The report says which projects that was, and their verdicts are
+evidence about the untyped path only.
 
 Trust boundary: this script executes code it does not review. It clones
 public repositories, runs each manifest entry's ``prepare`` command, installs
@@ -280,6 +284,24 @@ class CrossModule:
     """The option passed, the default of a Towel without it, or the manifest's reason for off."""
 
 
+@dataclasses.dataclass(frozen=True)
+class PreExistingErrors:
+    """What a typed refactor said, before it began, about the errors the project's check reports.
+
+    Towel leaves them as they are and rejects a change only for an error they
+    do not account for; the counts come from its report on standard error.
+    """
+
+    errors: int
+    files: int
+    names_any: int = 0
+    """How many of them leave a name the checker cannot type (an unresolved import and the like)."""
+    declined_files: int = 0
+    """Files of the refactored code holding one, which Towel declined to change."""
+    declined_proposals: int = 0
+    """Proposals declined for touching such a file, from the run's closing count."""
+
+
 @dataclasses.dataclass
 class Result:
     name: str
@@ -294,6 +316,8 @@ class Result:
     typing_mode: TypingMode = "default"
     fallback: str = ""
     """Why the typed attempt was declined, when the verdict came from a retry without types."""
+    pre_existing: Optional[PreExistingErrors] = None
+    """The errors the project's check reported before the typed refactor, when it reported any."""
     environment: Optional[Environment] = None
     """What Towel ran with; absent only when the environment could not be built."""
     cross_module: Optional[CrossModule] = None
@@ -2474,8 +2498,13 @@ def check_project(
 
     log_name = f"{project.name}-refactor.log"
     result.refactor = refactor(no_types, log_name)
+    if not no_types:
+        # A project whose check already reports errors is refactored with
+        # types all the same, each change compared with those errors; what the
+        # run said about them is kept whatever the attempt's outcome.
+        result.pre_existing = _pre_existing_errors(logs / log_name)
     if result.refactor.returncode != 0 and result.refactor.returncode != -9 and not no_types:
-        # A project whose own sources do not check is one Towel declines to
+        # A project whose checker cannot run at all is one Towel declines to
         # verify, which is the documented behaviour and not a defect. The
         # answer it gives its user is to rerun without types, so that is what
         # the corpus does: the refusal is held to its promised wording, and the
@@ -2755,16 +2784,27 @@ def _retest_agrees(
 
 
 REFUSAL = re.compile(
+    # The first is a Towel from before its baseline became differential, which
+    # refused a project whose check reported errors; it is reported as such,
+    # not retried, since no Towel under test refuses for that any more.
     r"^Error: (Original project check reported [1-9]\d* type error\(s\):|"
     r"Original project type check failed: .*|"
     r"Unsupported build backend .*|.*cannot infer safe imports.*)$",
     re.M,
 )
 
-PRE_EXISTING_ERRORS = re.compile(r"^Original project check reported ([1-9]\d*) type error\(s\):$")
 CHECKER_FAILED = re.compile(r"^Original project type check failed: (.+)$")
-DIAGNOSTIC_LINE = re.compile(r"^  (?P<path>[^:]+.*?): (?P<message>.+)$", re.M)
 REMEDY = "rerun with --no-types"
+PRE_EXISTING = re.compile(
+    r"^The original project's type check reports (\d+) error\(s\) in (\d+) file\(s\)\.", re.M
+)
+NAMES_ANY = re.compile(
+    r"^warning: (\d+) of these error\(s\) leave a name the checker cannot type", re.M
+)
+NAMES_ANY_FILES = re.compile(r"^No change to these (\d+) file\(s\) is attempted", re.M)
+UNVERIFIABLE = re.compile(
+    r"not verifiable: its file holds a name the type checker cannot type (\d+)"
+)
 
 
 def _refusal(log_path: Path) -> str:
@@ -2786,10 +2826,11 @@ class BaselineRefusal:
 
 
 def _baseline_refusal(refused: str) -> Optional[BaselineRefusal]:
-    """Whether this refusal is about the project's own type baseline, and which kind."""
-    errors = PRE_EXISTING_ERRORS.match(refused)
-    if errors is not None:
-        return BaselineRefusal("pre-existing-errors", f"{errors.group(1)} pre-existing type errors")
+    """Whether this refusal is because the project's checker could not run, and why.
+
+    It is the only refusal about the type baseline there is: a project whose
+    check reports errors is refactored against them (``_pre_existing_errors``).
+    """
     failed = CHECKER_FAILED.match(refused)
     if failed is not None:
         return BaselineRefusal("checker-failed", failed.group(1)[:200])
@@ -2800,19 +2841,38 @@ def _malformed_refusal(declined: BaselineRefusal, log_path: Path) -> Optional[st
     """What the refusal failed to tell its reader, or ``None`` when it told them everything.
 
     A refusal is the only thing a user of an unchecked project ever sees, so the
-    corpus holds it to its promise: say how many errors there are, show some of
-    them with the file they are in, and name the way forward. Asserting it here
+    corpus holds it to its promise: name the way forward. Asserting it here
     means every project in the corpus that trips it is a test of the wording.
     """
     text = log_path.read_text(encoding="utf-8", errors="replace")
     if REMEDY not in text:
         return f"refusal did not name the way forward ({REMEDY!r} absent)"
-    if declined.kind != "pre-existing-errors":
-        return None
-    shown = DIAGNOSTIC_LINE.findall(text)
-    if not shown:
-        return "refusal reported a count but showed no diagnostic with its file"
     return None
+
+
+def _pre_existing_errors(log_path: Path) -> Optional[PreExistingErrors]:
+    """What a typed refactor reported about the errors the project's check already has.
+
+    ``None`` when it reported none: a clean check, or a run that never got as
+    far as checking.
+    """
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    reported = PRE_EXISTING.search(text)
+    if reported is None:
+        return None
+    names_any = NAMES_ANY.search(text)
+    declined_files = NAMES_ANY_FILES.search(text)
+    declined_proposals = UNVERIFIABLE.search(text)
+    return PreExistingErrors(
+        errors=int(reported.group(1)),
+        files=int(reported.group(2)),
+        names_any=int(names_any.group(1)) if names_any else 0,
+        declined_files=int(declined_files.group(1)) if declined_files else 0,
+        declined_proposals=int(declined_proposals.group(1)) if declined_proposals else 0,
+    )
 
 
 FAILED_LINE = re.compile(r"^(?:FAILED|ERROR) ([^(].*)$")
@@ -3125,6 +3185,8 @@ def main() -> int:
             seconds = result.refactor.seconds if result.refactor else 0.0
             detail_line = result.detail.splitlines()[0] if result.detail else ""
             mode = f"[{result.typing_mode}]" if result.fallback else ""
+            if result.pre_existing is not None:
+                mode += f"[{result.pre_existing.errors} pre-existing]"
             if result.cross_module is not None and not result.cross_module.enabled:
                 mode += "[no cross-module]"
             print(
@@ -3143,6 +3205,9 @@ def main() -> int:
     for result in results:
         if result.fallback:
             fallbacks[result.fallback] = fallbacks.get(result.fallback, 0) + 1
+    pre_existing = {
+        result.name: result.pre_existing for result in results if result.pre_existing is not None
+    }
     cross_module_off = {
         result.name: result.cross_module.reason
         for result in results
@@ -3173,10 +3238,12 @@ def main() -> int:
         "requirements the project declares for its own type check that were installed, "
         "of those it declares, and where it declares them; each result lists them all.",
         "",
-        f"Typing mode requested: `{typing_mode}`. A project whose own sources do not "
-        "check is declined by Towel and rerun here without types; its row says so, and "
-        "its verdict is evidence about the untyped path only. Runtime test outcomes do "
-        "not establish type-checking coverage either way.",
+        f"Typing mode requested: `{typing_mode}`. A project whose own check already "
+        "reports errors is refactored with types, each change rejected only for an error "
+        "it adds, and its row gives the count. One whose checker cannot run at all is "
+        "declined by Towel and rerun here without types; its row says so, and its verdict "
+        "is evidence about the untyped path only. Runtime test outcomes do not establish "
+        "type-checking coverage either way.",
         "",
         f"Every refactor extracts across modules ({CROSS_MODULE_FLAG}, or the default of a "
         "Towel without that option) unless its manifest entry turns that off with a "
@@ -3188,6 +3255,8 @@ def main() -> int:
     ]
     for result in results:
         typing = result.typing_mode + (f" (declined: {result.fallback})" if result.fallback else "")
+        if result.pre_existing is not None:
+            typing += f" ({result.pre_existing.errors} pre-existing)"
         environment = result.environment
         lines.append(
             f"| {result.name} | `{result.commit[:10]}` | {result.verdict} | {typing} | "
@@ -3205,6 +3274,17 @@ def main() -> int:
             "",
             "Declined the typed path and rerun without types: "
             + ", ".join(f"{key} {value}" for key, value in sorted(fallbacks.items())),
+        ]
+    if pre_existing:
+        lines += [
+            "",
+            "Typed against pre-existing errors (errors, of them leaving a name the checker "
+            "cannot type, files and proposals declined for it): "
+            + "; ".join(
+                f"{name} ({found.errors}, {found.names_any}, {found.declined_files}, "
+                f"{found.declined_proposals})"
+                for name, found in sorted(pre_existing.items())
+            ),
         ]
     lines += [
         "",
@@ -3233,6 +3313,9 @@ def main() -> int:
                 "typing_mode": typing_mode,
                 "counts": counts,
                 "declined_typed_path": fallbacks,
+                "pre_existing_errors": {
+                    name: dataclasses.asdict(found) for name, found in pre_existing.items()
+                },
                 "cross_module_off": cross_module_off,
                 "cross_module_opt_out_not_applied": opt_out_not_applied,
                 "results": [dataclasses.asdict(r) for r in results],
@@ -3245,7 +3328,9 @@ def main() -> int:
         "\n".join(
             line
             for line in lines
-            if line.startswith(("Totals:", "Declined", "Cross-module extraction off"))
+            if line.startswith(
+                ("Totals:", "Declined", "Typed against", "Cross-module extraction off")
+            )
         ),
         flush=True,
     )

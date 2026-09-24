@@ -1,4 +1,11 @@
-"""Refactoring requires a clean original project unless type checks are explicitly omitted."""
+"""A typed run starts from a check of the original project, and never switches it off.
+
+A checker that cannot run refuses the run before anything is inferred or
+written, and --no-types is the way on. Errors the check reports are not a
+refusal: they are what every later check is compared with
+(tests/test_differential_baseline.py), so errors a change introduces can never
+become original errors that disable checking.
+"""
 
 from __future__ import annotations
 
@@ -82,7 +89,7 @@ def _helper_signature(source: str) -> str:
     return ast.unparse(helper).splitlines()[0]
 
 
-def test_dirty_direct_run_refuses_before_inference_and_keeps_the_original(tmp_path: Path) -> None:
+def test_a_direct_run_over_original_errors_checks_once_then_infers(tmp_path: Path) -> None:
     path, consumer = tmp_path / "program.py", tmp_path / "consumer.py"
     original = _source()
     path.write_text(original)
@@ -90,18 +97,14 @@ def test_dirty_direct_run_refuses_before_inference_and_keeps_the_original(tmp_pa
     oracle = _Oracle(lambda _: CheckSuccess((TypeDiagnostic(str(consumer), "Existing error"),)))
     engine = UnificationRefactorEngine(reuse_existing_functions=False, type_oracle=oracle)
     proposal = engine.analyze_files([str(path), str(consumer)])[0]
-    for _ in range(2):
-        with pytest.raises(
-            RefactoringError, match=r"(?s)Original project.*1 type error.*--no-types"
-        ):
-            engine.apply_refactoring(str(path), proposal)
-    assert oracle.checks == [{str(path): original, str(consumer): consumer.read_text()}]
-    assert oracle.inferences == 0
+    assert "__extracted_func_0" in engine.apply_refactoring(str(path), proposal)
+    assert oracle.checks[0] == {str(path): original, str(consumer): consumer.read_text()}
+    assert oracle.inferences > 0, "the baseline's errors do not switch inference off"
     assert engine.type_oracle is oracle and not oracle.closed
     assert path.read_text() == original
 
 
-def test_dirty_baseline_reports_bounded_details_and_logs_all_errors(
+def test_original_errors_are_reported_bounded_and_logged_in_full(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     path = tmp_path / "program.py"
@@ -110,13 +113,9 @@ def test_dirty_baseline_reports_bounded_details_and_logs_all_errors(
     oracle = _Oracle(lambda _: CheckSuccess(errors))
     engine = UnificationRefactorEngine(type_oracle=oracle)
     caplog.set_level(logging.DEBUG, logger="towel.types")
-    with pytest.raises(RefactoringError) as raised:
-        engine.begin_refactoring_run([str(path)])
-    message = str(raised.value)
-    assert "reported 5 type error(s)" in message
-    assert f"{path}: baseline diagnostic 0" in message
-    assert "baseline diagnostic 2" in message and "baseline diagnostic 3" not in message
-    assert "and 2 more" in message and "TOWEL_DEBUG_TYPES=1" in message
+    engine.begin_refactoring_run([str(path)])
+    assert "reports 5 error(s) in 1 file(s)" in caplog.text
+    assert "  program.py: 5" in caplog.text and "TOWEL_DEBUG_TYPES=1" in caplog.text
     assert all(error.message in caplog.text for error in errors)
 
 
@@ -195,21 +194,17 @@ def test_clean_unannotated_run_never_disables_for_prospective_errors(
 def test_explicit_new_run_rechecks_but_local_analysis_does_not(tmp_path: Path) -> None:
     path = tmp_path / "program.py"
     path.write_text(_source())
-    dirty = True
+    broken = True
 
     def verdict(sources: Mapping[str, str]) -> CheckResult:
-        return (
-            CheckSuccess((TypeDiagnostic(str(path), "Existing error"),))
-            if dirty
-            else CheckSuccess()
-        )
+        return CheckFailure("checker timed out") if broken else CheckSuccess()
 
     oracle = _Oracle(verdict)
     engine = UnificationRefactorEngine(type_oracle=oracle, reuse_existing_functions=False)
     proposal = engine.analyze_file(str(path))[0]
     with pytest.raises(RefactoringError, match=r"(?s)Original project.*--no-types"):
         engine.apply_refactoring(str(path), proposal)
-    dirty = False
+    broken = False
     engine.analyze_file(str(path))
     with pytest.raises(RefactoringError, match=r"(?s)Original project.*--no-types"):
         engine.apply_refactoring(str(path), proposal)
@@ -240,14 +235,10 @@ def test_fixed_point_calls_start_fresh_runs_on_the_same_engine(tmp_path: Path) -
     first, second = tmp_path / "first.py", tmp_path / "second.py"
     for path in (first, second):
         path.write_text(_source())
-    dirty = True
+    broken = True
 
     def verdict(sources: Mapping[str, str]) -> CheckResult:
-        return (
-            CheckSuccess((TypeDiagnostic(str(first), "Existing error"),))
-            if dirty
-            else CheckSuccess()
-        )
+        return CheckFailure("checker worker crashed") if broken else CheckSuccess()
 
     oracle = _Oracle(verdict)
     engine = UnificationRefactorEngine(type_oracle=oracle)
@@ -255,13 +246,15 @@ def test_fixed_point_calls_start_fresh_runs_on_the_same_engine(tmp_path: Path) -
         engine.refactor_to_fixed_point(str(first), max_iterations=1, progress="none")
     assert first.read_text() == _source()
     assert len(oracle.checks) == 1
-    dirty = False
+    broken = False
     assert engine.refactor_to_fixed_point(str(second), max_iterations=1, progress="none")[1] == 1
     assert len(oracle.checks) == 3, "The second run must check its baseline and prospective project"
 
 
 @pytest.mark.parametrize("dirty", [False, True])
-def test_real_complete_baseline_includes_unchanged_consumer(tmp_path: Path, dirty: bool) -> None:
+def test_real_complete_baseline_includes_unchanged_consumer(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, dirty: bool
+) -> None:
     pytest.importorskip("mypy")
     (tmp_path / "mypy.ini").write_text("[mypy]\nstrict = true\nfiles = program.py, consumer.py\n")
     path, consumer = tmp_path / "program.py", tmp_path / "consumer.py"
@@ -275,13 +268,12 @@ def test_real_complete_baseline_includes_unchanged_consumer(tmp_path: Path, dirt
             patch.object(oracle, "check_project", wraps=oracle.check_project) as check,
             patch.object(oracle, "reveal", wraps=oracle.reveal) as reveal,
         ):
-            if dirty:
-                with pytest.raises(RefactoringError, match=r"(?s)Original project.*--no-types"):
-                    engine.apply_refactoring(str(path), proposal)
-            else:
-                assert "__extracted_func_0" in engine.apply_refactoring(str(path), proposal)
-        assert check.call_count == (1 if dirty else 2)
-        assert bool(reveal.call_count) is not dirty
+            assert "__extracted_func_0" in engine.apply_refactoring(str(path), proposal)
+        assert check.call_count == 2 and reveal.call_count
+        # Only the unchanged consumer holds an error, so only a baseline that
+        # checked it can have reported one.
+        assert ("reports 1 error(s) in 1 file(s)" in caplog.text) is dirty
+        assert ("consumer.py: 1" in caplog.text) is dirty
         assert consumer.read_text() == ('broken: int = "wrong"\n' if dirty else "valid: int = 1\n")
     finally:
         oracle.close()
@@ -311,7 +303,7 @@ def test_later_project_errors_cannot_become_original_errors(
 
 @pytest.mark.parametrize("dirty", [False, True])
 def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
-    tmp_path: Path, dirty: bool
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, dirty: bool
 ) -> None:
     pytest.importorskip("mypy")
     project = tmp_path / "project"
@@ -332,29 +324,23 @@ def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
     try:
         engine = UnificationRefactorEngine(type_oracle=oracle)
         with patch.object(oracle, "check_project", wraps=oracle.check_project) as check:
-            if dirty:
-                with pytest.raises(RefactoringError, match=r"(?s)Original project.*--no-types"):
-                    engine.refactor_directory_to_fixed_point(
-                        str(source), str(output), max_iterations=1, progress="none"
-                    )
-                assert not output.exists(), "A rejected run must not reserve the output path"
-            else:
-                results, _ = engine.refactor_directory_to_fixed_point(
-                    str(source), str(output), max_iterations=1, progress="none"
-                )
-                assert sum(count for count, _ in results.values()) == 1
-                assert "return __extracted_func_0(value)" in (output / "program.py").read_text()
-                # The checker reads the run's stage under the original's names,
-                # and the stage itself is excluded from the project it checks.
-                excluded = check.call_args_list[1].kwargs["excluded_paths"]
-                assert any("towel-stage-" in path for path in excluded)
-                assert not any(Path(path).exists() for path in excluded)
+            results, _ = engine.refactor_directory_to_fixed_point(
+                str(source), str(output), max_iterations=1, progress="none"
+            )
+            assert sum(count for count, _ in results.values()) == 1
+            assert "return __extracted_func_0(value)" in (output / "program.py").read_text()
+            # The checker reads the run's stage under the original's names,
+            # and the stage itself is excluded from the project it checks.
+            excluded = check.call_args_list[1].kwargs["excluded_paths"]
+            assert any("towel-stage-" in path for path in excluded)
+            assert not any(Path(path).exists() for path in excluded)
         # Baseline, the candidate, and the cold confirmation of the finished run.
-        assert check.call_count == (1 if dirty else 3)
-        if not dirty:
-            confirmed = check.call_args_list[2].kwargs["excluded_paths"]
-            assert any("towel-stage-" in path for path in confirmed)
+        assert check.call_count == 3
+        confirmed = check.call_args_list[2].kwargs["excluded_paths"]
+        assert any("towel-stage-" in path for path in confirmed)
         assert str(path) in check.call_args_list[0].args[0]
+        # The consumer's own error is the original's, left as it was.
+        assert ("consumer.py: 1" in caplog.text) is dirty
         assert path.read_text() == _source()
         assert engine.type_oracle is oracle
         assert not isinstance(oracle.check(str(path), path.read_text()), CheckFailure)
@@ -363,7 +349,7 @@ def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
 
 
 @pytest.mark.parametrize("directory", [False, True])
-def test_cli_refuses_before_copy_and_explicit_no_types_allows_the_same_output(
+def test_cli_refactors_over_original_errors_with_types_and_no_types_leaves_helpers_bare(
     tmp_path: Path, directory: bool
 ) -> None:
     pytest.importorskip("mypy")
@@ -374,41 +360,45 @@ def test_cli_refuses_before_copy_and_explicit_no_types_allows_the_same_output(
     original = "total = value + 2".join(_source().rsplit("total = value + 1", 1))
     source.write_text(original)
     (project / "consumer.py").write_text('broken: int = "wrong"\n')
-    output = tmp_path / ("refactored" if directory else "refactored.py")
     command = [
         sys.executable,
         "-c",
         "from towel.cli import main; main()",
         "dry",
         str(project if directory else source),
-        str(output),
         "--no-format",
         "--no-interactive",
         "--progress",
         "none",
     ]
+    typed_output = tmp_path / ("typed" if directory else "typed.py")
     run = subprocess.run(
-        command,
+        [*command[:5], str(typed_output), *command[5:]],
         cwd=project,
         env={**os.environ, "TOWEL_WORKERS": "1"},
         text=True,
         capture_output=True,
-        timeout=30,
+        timeout=60,
         check=False,
     )
-    assert run.returncode != 0, run.stdout + run.stderr
-    assert "Original project check reported" in run.stderr and "--no-types" in run.stderr
-    assert not output.exists(), "The suggested rerun must be able to use the same destination"
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "The original project's type check reports 1 error(s) in 1 file(s)." in run.stderr
+    assert "consumer.py: 1" in run.stderr
+    typed = (typed_output / "program.py" if directory else typed_output).read_text()
+    typed_signature = _helper_signature(typed)
+    assert ": int" in typed_signature and typed_signature.endswith(" -> int:"), typed_signature
+    output = tmp_path / ("refactored" if directory else "refactored.py")
     bypass = subprocess.run(
-        [*command, "--no-types"],
+        [*command[:5], str(output), *command[5:], "--no-types"],
         cwd=project,
         env={**os.environ, "TOWEL_WORKERS": "1"},
         text=True,
         capture_output=True,
-        timeout=30,
+        timeout=60,
         check=False,
     )
     assert bypass.returncode == 0, bypass.stdout + bypass.stderr
+    assert "original project's type check" not in bypass.stderr
     result = (output / "program.py" if directory else output).read_text()
     signature = _helper_signature(result)
     assert ": int" not in signature and " -> " not in signature

@@ -93,12 +93,18 @@ def test_a_clean_run_is_confirmed_and_says_nothing(tmp_path: Path) -> None:
     assert "_extracted_func" in path.read_text(encoding="utf-8")
 
 
+def _with_the_change(sources: Mapping[str, str]) -> bool:
+    return any("_extracted_func" in text for text in sources.values())
+
+
 class _AgreeableWhileWarm(PyrightOracle):
     """A checker with a blind spot: clean while it has a warm session, not once cold.
 
     This is the shape of the residue the confirmation exists for. A settle ends
     on silence once the change has been acknowledged, and silence at the wrong
     instant would read as a clean project; nothing else in the run would notice.
+    The error it misses is one the change brought: one the original has too,
+    cold, is the checker's mode and not the run's doing, and is excused.
     """
 
     def check_project(
@@ -107,6 +113,8 @@ class _AgreeableWhileWarm(PyrightOracle):
         real = super().check_project(sources, excluded_paths=excluded_paths)
         if self._warmed:
             return CheckSuccess()
+        if not _with_the_change(sources):
+            return real
         invented = TypeDiagnostic(next(iter(sources)), "pyright: invented: missed while warm", 1)
         return CheckSuccess((*getattr(real, "errors", ()), invented))
 
@@ -197,7 +205,7 @@ def test_forgetting_leaves_a_mypy_oracle_with_nothing_it_learned(tmp_path: Path)
 
 
 class _MypyAgreeableWhileWarm(MypyInferrer):
-    """mypy with a blind spot in its warm state: clean until it forgets."""
+    """mypy with a blind spot in its warm state: clean until it forgets, about the change."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -211,7 +219,7 @@ class _MypyAgreeableWhileWarm(MypyInferrer):
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
         real = super().check_project(sources, excluded_paths=excluded_paths)
-        if not self.forgotten:
+        if not self.forgotten or not _with_the_change(sources):
             return real
         invented = TypeDiagnostic(next(iter(sources)), "mypy: invented: missed while warm", 1)
         return CheckSuccess((*getattr(real, "errors", ()), invented))

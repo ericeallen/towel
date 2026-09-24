@@ -69,7 +69,11 @@ def _snapshot(root: Path) -> Dict[str, bytes]:
 
 
 class _BlindWhileWarm(MypyInferrer):
-    """mypy that waves every candidate through while warm and objects once started cold."""
+    """mypy that waves every candidate through while warm and objects once started cold.
+
+    What it objects to is the change: an error a cold check of the original
+    reports too is the checker's mode, not the run's doing, and is excused.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -83,7 +87,7 @@ class _BlindWhileWarm(MypyInferrer):
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
         real = super().check_project(sources, excluded_paths=excluded_paths)
-        if not self.cold:
+        if not self.cold or not any("_extracted_func" in text for text in sources.values()):
             return real
         invented = TypeDiagnostic(next(iter(sources)), "mypy: invented: missed while warm", 1)
         return CheckSuccess((*getattr(real, "errors", ()), invented))

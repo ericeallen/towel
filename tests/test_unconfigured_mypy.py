@@ -322,16 +322,24 @@ def test_an_unannotated_test_the_projects_mypy_never_checks_does_not_refuse_the_
     ).lstrip()
 
 
-def test_an_error_the_projects_mypy_reports_in_the_package_still_refuses_the_run(
+def test_an_error_the_projects_mypy_reports_in_the_package_is_left_as_it_was(
     tmp_path: Path,
 ) -> None:
+    """Reported first, then compared with: the package is refactored, and its error kept."""
     broken = textwrap.dedent(TWINS).lstrip() + "\n\nWRONG: str = first([1])\n"
     _write(tmp_path, {"pyproject.toml": PACKAGING, "pkg/__init__.py": "", "pkg/core.py": broken})
+    before = _plain_mypy(tmp_path, ("pkg",))
     run = _dry(tmp_path)
-    assert run.returncode != 0, run.stdout + run.stderr
-    assert "Original project check reported 1 type error(s)" in run.stderr, run.stderr
-    assert f"{tmp_path / 'pkg' / 'core.py'}: Incompatible types in assignment" in run.stderr
-    assert (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8") == broken
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "The original project's type check reports 1 error(s) in 1 file(s)." in run.stderr
+    assert "  pkg/core.py: 1" in run.stderr
+    written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
+    assert "def __extracted_func_0(values: list[int]) -> int:" in written, written
+    assert "WRONG: str = first([1])" in written
+    after = _plain_mypy(tmp_path, ("pkg",))
+    assert before[0] == after[0] == "checked"
+    assert [message for _, _, message in before[1]] == [message for _, _, message in after[1]]
+    assert len(after[1]) == 1
 
 
 UNTYPED_PROBES = """

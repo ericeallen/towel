@@ -181,14 +181,16 @@ describe belong to that version.
   future imports and non-import statements are barriers. Configured sorting
   of independent imports can still change import-time side-effect order; static
   binding checks do not establish that arbitrary module initializers commute.
-- **Annotations.** When the original project passes its type check, every generated
-  helper and its call sites are checked together in the prospective project,
-  including unchanged consumers. A change that introduces a type error has
-  its annotations replaced by `Any`, and then removed. Every variant must
-  pass; checker failure or a remaining error declines the change. If the
-  original project already has type errors, Towel aborts and asks the user to
-  fix them or explicitly rerun with `--no-types`. It never silently disables
-  verification. A helper is annotated only in code that
+- **Annotations.** Every generated helper and its call sites are checked
+  together in the prospective project, including unchanged consumers, and the
+  check is compared with the project's own as it stood: an error the project
+  already had is left as it is, and a change passes only when its check
+  reports nothing the project's did not (see *Type annotations on helpers*
+  below). A change that introduces a type error has its annotations replaced
+  by `Any`, and then removed. Every variant must pass; checker failure or a
+  new error declines the change. A checker that cannot run at all refuses the
+  typed run, and `--no-types` is the explicit way on. It never silently
+  disables verification. A helper is annotated only in code that
   already uses annotations, from what the sites declare and what the checker
   reveals; see *Type annotations on helpers* below.
 
@@ -686,8 +688,8 @@ where the evidence comes from:
   the checker gave; the limit is the checker's, not the transformation's.
 - The degradation on a type error is per proposal, not per parameter: one
   annotation the checker rejects costs the helper all of them.
-- Verification first requires a clean original project, then checks complete
-  prospective project graphs, overlaying all changed files together. A newly
+- Verification checks complete prospective project graphs, overlaying all
+  changed files together, and compares each with the project as it stood. A newly
   imported helper therefore exists in its host while its consumers are checked.
   Project checking rules are honored, and so are configured mypy plugins,
   which are loaded and run as in the project's own mypy run (a plugin module
@@ -697,6 +699,62 @@ where the evidence comes from:
   destinations are never used. Each mypy build imports the plugins afresh in a
   forked child, so a plugin that is slow to import (django-stubs sets Django
   up) costs that much on every check.
+- Errors the original check reports are compared with, not refused. A change
+  is rejected for an error its check reports that the project's check did not:
+  in a file no change has touched, the same message at the same line; in one a
+  change has touched, the same message on the same line wherever the change
+  moved it, found by a line diff of the two texts, and on the lines the change
+  wrote, no more often than on the lines it replaced. So an error that
+  disappears from a replaced line where another with the very same message
+  appears in the helper or at a call site is taken to have moved, as a
+  duplicated block's error does when the block moves into the helper, and is
+  not new; one that disappears from a line the change left alone accounts for
+  nothing. Where the diff pairs a helper with one copy of its block, an error
+  that came from the other copy is new, which costs a change. A message
+  that names a line (mypy's `Name "x" already defined on line 12`) reappears
+  as new when that line moves, which declines the change rather than hide an
+  error: a module with such an error below the place a helper would go keeps
+  its duplicates. Once a driver writes a change, that change's own check is the
+  reference for the next, so a later change cannot bring back an error an
+  earlier one removed; direct `apply_refactoring` calls, whose writes the
+  engine does not see, compare with the original's errors throughout.
+- The check Towel runs is not always the project's own. It covers the tests,
+  benchmarks and docs the project's configuration reaches, which a CI job may
+  never check, every checker the project configures, including one no CI step
+  runs, and it runs without flags the CI passes on its command line. In a
+  study of 20 corpus projects, all 17 that type-check pass their own check as
+  their CI runs it, and Towel's check was clean for 6; none of the errors it
+  reported was one the project's check reports. Those errors are compared with
+  like any other, so a change is checked there too, against what that check
+  already says. The difference cuts the other way as well: Towel's check can
+  accept what the project's rejects. Refactored with types in their own
+  environments, 15 of those 17 projects still passed their own check, and two
+  did not. idna configures no mypy, so Towel checked it with mypy's defaults,
+  which accept an unannotated helper, and its CI runs `mypy --strict idna`,
+  which rejects it (four errors); the same output comes from a project whose
+  baseline was clean, as idna's is without its two fuzz tests. trio's CI runs
+  mypy for linux, darwin and win32, and Towel's check runs for the platform it
+  runs on: a module that begins `assert sys.platform == "win32" or not
+  TYPE_CHECKING` is unreachable to mypy anywhere else, so nothing in it is
+  checked, and there Towel accepted a helper annotated with `Any`, which
+  trio's configuration forbids, and one that moved two classes' attribute
+  assignments out of their `__init__`, which hides the attributes from the
+  checker (13 errors for win32, one for darwin). Checking as the project's CI
+  does, flags and platforms included, is what would close this.
+- Where the original check leaves a name it cannot type -- an import it cannot
+  resolve or finds no types for (mypy's `import-not-found` and
+  `import-untyped`, pyright's `reportMissingImports` and
+  `reportMissingTypeStubs`), a decorator without types, a base class of type
+  `Any` -- no change to that file is attempted. Whatever such a name reaches is
+  `Any`, which accepts every use, and the subtype questions that normalize a
+  helper's annotations answer yes about it, so a misuse would pass Towel's
+  check while the project's own, which may see the real type, rejects it. The
+  run names these files before it starts, and counts the proposals declined
+  for them as `not verifiable`; installing the missing module or its stubs
+  where Towel runs has them refactored with types. A module that imports such
+  a name from one of these files (`from pkg.compat import wcwidth`) sees it as
+  `Any` too and is not declined. In the study's 20 projects, no module imports
+  any of the 22 names that such imports and decorators bind at module scope.
 - A project that configures no mypy is checked with mypy's defaults, as its
   own `mypy` would check the same files: the bodies of functions without
   annotations are not checked, an import mypy finds no types for (not
@@ -1021,9 +1079,9 @@ it tractable, all exact: they change no proposal.
   probe about 0.5 s, the same at the two-thousandth request as at the first.
   Pyright is one language server over a private copy that follows the project:
   about 0.5 s per check once warm, against 5 s for a fresh `pyright
-  --outputjson`, which remains the fallback. The first rejection settles a
-  candidate, so a project that configures both pays for both only when the
-  first accepts.
+  --outputjson`, which remains the fallback. The first checker to report a new
+  error settles a candidate, so a project that configures both pays for both
+  only when the first reports none.
   These figures were taken on macOS 26.5.1 with Python 3.12.13, against
   Sphinx 9.1.1 at `e44a40e`: 243 modules with mypy and Pyright both strict,
   checked through that project's own mypy 1.19.1 and pyright 1.1.407.

@@ -61,6 +61,7 @@ from typing import (
     Dict,
     Final,
     Iterable,
+    Iterator,
     List,
     Mapping,
     Optional,
@@ -102,6 +103,7 @@ __all__ = [
     "Subtyping",
     "TypeDiagnostic",
     "TypeOracle",
+    "checks_in_turn",
     "is_probe_file",
     "type_oracle_for_project",
     "relocate_oracle",
@@ -1426,6 +1428,38 @@ def start_cold(oracle: object) -> None:
         stop_language_servers(oracle)
 
 
+def checks_in_turn(
+    oracle: TypeOracle, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+) -> Iterator[CheckResult]:
+    """Each checker behind ``oracle`` checks the project in turn, when the caller asks for it.
+
+    Every configured checker must accept a candidate, so the first to reject
+    it settles the verdict, and asking the rest costs a whole-project check
+    each to learn nothing: a candidate nothing will accept is exactly where a
+    run spends its time. What counts as a rejection is not the checker's to
+    say, though. A project whose check already reports errors rejects a
+    candidate only for an error it adds (``towel.type_baseline``), which only
+    the caller knows; a checker that stopped at the first error would leave
+    the others unasked about every candidate of such a project, and accept
+    what they reject. So the checks come one at a time and the caller stops.
+    ``oracle.check_project`` asks every checker.
+    """
+    if isinstance(oracle, (CombinedOracle, _RelocatedOracle)):
+        yield from oracle.checks_in_turn(sources, excluded_paths=excluded_paths)
+    else:
+        yield oracle.check_project(sources, excluded_paths=excluded_paths)
+
+
+def _every_check(results: Iterable[CheckResult]) -> CheckResult:
+    """All the errors of ``results``, or the first that could not be completed."""
+    errors: List[TypeDiagnostic] = []
+    for result in results:
+        if isinstance(result, CheckFailure):
+            return result
+        errors.extend(result.errors)
+    return CheckSuccess(tuple(errors))
+
+
 class CombinedOracle:
     """Infers with one checker and verifies with every configured one."""
 
@@ -1454,19 +1488,15 @@ class CombinedOracle:
     def check_project(
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
-        errors: List[TypeDiagnostic] = []
+        """Every checker's errors; a caller that can stop early asks :func:`checks_in_turn`."""
+        return _every_check(self.checks_in_turn(sources, excluded_paths=excluded_paths))
+
+    def checks_in_turn(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> Iterator[CheckResult]:
+        """Each checker's verdict in turn, the inferring one first; see :func:`checks_in_turn`."""
         for oracle in self._all:
-            result = oracle.check_project(sources, excluded_paths=excluded_paths)
-            if isinstance(result, CheckFailure):
-                return result
-            errors.extend(result.errors)
-            if errors:
-                # Every configured checker must accept, so the first rejection
-                # settles it. Asking the rest costs a whole-project check each
-                # to reach a verdict already known, and a candidate nothing will
-                # accept is exactly where a run spends its time.
-                break
-        return CheckSuccess(tuple(errors))
+            yield from checks_in_turn(oracle, sources, excluded_paths=excluded_paths)
 
     def close(self) -> None:
         for oracle in self._all:
@@ -1530,6 +1560,31 @@ class _RelocatedOracle:
     def check_project(
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
+        return _every_check(self.checks_in_turn(sources, excluded_paths=excluded_paths))
+
+    def checks_in_turn(
+        self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
+    ) -> Iterator[CheckResult]:
+        """The copy, restated once at its original's locations, checked by each checker in turn."""
+        current = self._restated(sources)
+        if isinstance(current, CheckFailure):
+            yield current
+            return
+        for result in checks_in_turn(
+            self._oracle, current, excluded_paths=(*excluded_paths, str(self._destination))
+        ):
+            if isinstance(result, CheckFailure):
+                yield result
+                continue
+            yield CheckSuccess(
+                tuple(
+                    TypeDiagnostic(self._output(error.path), error.message, error.line)
+                    for error in result.errors
+                )
+            )
+
+    def _restated(self, sources: Mapping[str, str]) -> Dict[str, str] | CheckFailure:
+        """Every module of the copy, and ``sources`` over them, at the original's paths."""
         try:
             current: Dict[str, str] = {}
             if self._directory:
@@ -1562,17 +1617,7 @@ class _RelocatedOracle:
             current.update({self._original(path): source for path, source in sources.items()})
         except (OSError, ValueError, UnicodeError, SyntaxError) as error:
             return CheckFailure(f"Could not read the complete output copy: {error}")
-        result = self._oracle.check_project(
-            current, excluded_paths=(*excluded_paths, str(self._destination))
-        )
-        if isinstance(result, CheckFailure):
-            return result
-        return CheckSuccess(
-            tuple(
-                TypeDiagnostic(self._output(error.path), error.message, error.line)
-                for error in result.errors
-            )
-        )
+        return current
 
     def close(self) -> None:
         self._oracle.close()
