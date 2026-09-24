@@ -30,6 +30,45 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- Typed runs read every type spelling that mypy 1.x, mypy 2.x and pyright
+  print. A regular expression took the last `) -> ` as the end of a
+  parameter list, so `lambda: parse_extras` in packaging's `_parser` was
+  annotated as the function the lambda returns. Now read correctly:
+  - a function returning `None` (`def (builtins.int)`), a function
+    returning a function, and a generic function;
+  - a named tuple or typed dict, and its constructor;
+  - `Union` and `Optional` beside `|`, and a literal whose text holds `<`.
+
+  Only a literal type the checker inferred is widened, and a declared one is
+  kept. `Union`, `Optional` and `Literal` are imported where they are
+  written.
+- The type-variable rung recognises the program's own classes. It had
+  identified a class by where its import points or where it is defined,
+  which never matches the checker's `packaging.version.Version`. So the
+  row, and every type variable in it, was lost: rows formed in 13 of 81
+  attempts across packaging, rich, mistune and nox.
+
+  A class is now named by the absolute name the import model gives its
+  module. Where the program's imports name no module, the rung uses mypy's
+  `__init__` chain instead. Rows now form in 58 of 66 attempts. Along with
+  that:
+  - a type only a call site can name may stand inside a type variable;
+  - `Any` nested in a type is kept;
+  - the signature brings its typing imports;
+  - a parameter the body never reads is `object`;
+  - union members line up by structure;
+  - a class passed directly or through a thunk (`lambda: Row`) is
+    `type[Row]`, and a returned variable bound to a parameter takes that
+    argument's type.
+- Sites in different modules that agree on every type get their common
+  signature, naming the host's classes. Before, the ordinary signature wrote
+  only builtins and fell back to `Any`, and mistune's block quote and spoiler
+  helpers were declined.
+
+  With `--cross-module`, typed refactorings rise from 10 to 14 on packaging,
+  18 to 24 on rich and 15 to 19 on mistune; nox stays at 5. Every output
+  passes its project's own mypy and test suite exactly as the unchanged
+  project does.
 - Pyright's language server checks a project as `pyright` itself does. Towel
   sent it a `python.analysis` section without `autoSearchPaths`, which the
   server then leaves off and the command line always sets, so a src
