@@ -36,7 +36,7 @@ import tempfile
 from typing import Iterable, Iterator, List, Mapping, Tuple
 
 from .changes import ChangePlan, FileChange, StaleSource
-from .source_files import is_probe_file
+from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file
 
 
 def _case_collisions(relatives: Iterable[PurePath]) -> List[Tuple[PurePath, PurePath]]:
@@ -135,15 +135,12 @@ STAGE_SKIPPED_DIRECTORIES = frozenset(
         ".ruff_cache",
         ".tox",
         ".nox",
-        "__pycache__",
-        "venv",
-        "env",
-        "node_modules",
+        *TOOL_DIRECTORIES,
     }
 )
 """Directories outside the target that hold no input to the analysis; as the checker copy skips.
 
-A directory holding ``pyvenv.cfg`` is an environment and is skipped too.
+An environment, known by what it holds (``source_files.is_environment``), is skipped too.
 """
 
 _TRANSIENT_PREFIXES = ("towel-stage-", ".towel-copy-")
@@ -204,10 +201,6 @@ class StagedProject:
         return text.replace(str(self.root), str(self.origin_root))
 
 
-def _is_environment(directory: Path) -> bool:
-    return (directory / "pyvenv.cfg").is_file()
-
-
 def _stage_plan(
     root: Path, target: Path, skipped: Iterable[Path], limit: int, *, whole_target: bool
 ) -> Tuple[List[PurePath], int]:
@@ -239,7 +232,7 @@ def _stage_plan(
                 if not inside_target:
                     planned.append(path.relative_to(root))
                 continue
-            if _is_environment(path):
+            if is_environment(path):
                 continue
             kept.append(name)
         directories[:] = kept

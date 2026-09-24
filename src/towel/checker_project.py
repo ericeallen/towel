@@ -37,7 +37,7 @@ import shutil
 import tempfile
 from typing import Dict, Iterator, List, Literal, Mapping, Sequence, Tuple
 
-from .source_files import is_probe_file
+from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file
 from .source_text import encode_like
 
 ChangeKind = Literal["created", "changed", "deleted"]
@@ -306,24 +306,17 @@ def _inputs(
             continue
         destination = target / entry.name
         if entry.is_dir():
-            if (
-                entry.name
-                in {
-                    ".git",
-                    ".hg",
-                    ".svn",
-                    ".mypy_cache",
-                    ".pytest_cache",
-                    ".ruff_cache",
-                    ".tox",
-                    ".nox",
-                    "__pycache__",
-                    "venv",
-                    "env",
-                    "node_modules",
-                }
-                or (entry / "pyvenv.cfg").is_file()
-            ):
+            if entry.name in {
+                ".git",
+                ".hg",
+                ".svn",
+                ".mypy_cache",
+                ".pytest_cache",
+                ".ruff_cache",
+                ".tox",
+                ".nox",
+                *TOOL_DIRECTORIES,
+            } or is_environment(entry):
                 continue
             yield from _inputs(entry, destination, project, ancestry, excluded)
         elif entry.is_file() and (

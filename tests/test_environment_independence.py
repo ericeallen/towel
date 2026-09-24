@@ -143,6 +143,44 @@ def test_a_virtual_environment_is_recognized_by_its_marker(tmp_path: Path) -> No
     assert [Path(path).name for path in found] == ["real.py"]
 
 
+def test_a_package_named_like_an_environment_is_project_source(tmp_path: Path) -> None:
+    """``env`` and ``venv`` are names a project may give its own package; a marker makes an environment."""
+    for relative in (
+        "real.py",
+        "env/__init__.py",
+        "venv/mod.py",
+        "myvenv/lib/vendored.py",
+        "conda_env/lib/vendored.py",
+        "node_modules/tool.py",
+        "__pycache__/cached.py",
+    ):
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text("x = 1\n")
+    (tmp_path / "myvenv" / "pyvenv.cfg").write_text("home = /usr\n")
+    (tmp_path / "conda_env" / "conda-meta").mkdir()
+    found = UnificationRefactorEngine()._find_python_files(str(tmp_path), True)
+    assert sorted(str(Path(path).relative_to(tmp_path)) for path in found) == [
+        "env/__init__.py",
+        "real.py",
+        "venv/mod.py",
+    ]
+
+
+@pytest.mark.parametrize("in_place", [True, False], ids=["in-place", "to-an-output"])
+def test_a_package_named_env_is_refactored_like_any_other(tmp_path: Path, in_place: bool) -> None:
+    project = tmp_path / "project"
+    (project / "env").mkdir(parents=True)
+    (project / "pyproject.toml").write_text('[project]\nname = "p"\nversion = "0"\n')
+    (project / "env" / "__init__.py").write_text("")
+    (project / "env" / "m.py").write_text(TWO_ROUNDS)
+    output = project if in_place else tmp_path / "output"
+    results, _ = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
+        str(project), str(output), progress="none"
+    )
+    assert sum(applied for applied, _ in results.values()) > 0
+    assert (output / "env" / "m.py").read_text() != TWO_ROUNDS
+
+
 def test_the_session_grows_its_byte_budget_with_the_project(tmp_path: Path) -> None:
     session = AnalysisSession(max_entries=2, max_source_bytes=10)
     files = []

@@ -341,7 +341,9 @@ proposals = engine.analyze_directory("src/", recursive=False)
 The scanner automatically skips:
 - Hidden directories (starting with `.`)
 - `__pycache__`
-- `venv`, `env`, `node_modules`, and any directory holding a `pyvenv.cfg`
+- `node_modules`, and every environment: a directory holding a `pyvenv.cfg` or a
+  `conda-meta`, whatever its name (a package of your own called `env` or `venv`
+  is analyzed like any other)
 - The names in `excluded_directories` (`--exclude`)
 - Symlinked files, and Towel's own `_towel_probe_*.py` type-checker probes
 
