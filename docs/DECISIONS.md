@@ -57,7 +57,7 @@ Three consequences follow, each ruled on explicitly:
   helper. *Superseded the same day, before it was implemented; see "Methods
   keep method helpers" below.*
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-22: Methods keep method helpers
 
@@ -96,9 +96,9 @@ class exists; code using private names is then declined. A helper from
 methods that never read their receiver stays a module-level function, as
 ruled on 2026-09-21 for `A.a(None, 3)`, since that costs nothing.
 
-*Status: the receiver and metaclass conditions are being implemented on the
-`audit-1772` branch; the rest is implemented there. Not yet released. Where a
-helper may be hosted is narrowed the same day by the next entry.*
+*Status: implemented on the `audit-1772` branch, the receiver and metaclass
+conditions included; not yet released. Where a helper may be hosted is
+narrowed the same day by the next entry.*
 
 ## 2026-09-22: A method helper lives in the class that holds both duplicates
 
@@ -179,8 +179,8 @@ Each fact about Python and the checkers in this entry is asserted by
 `tests/test_hosting_rationale.py`. A release of either checker that changes
 one fails that file and returns the decision for review.
 
-*Status: decided; implementation follows the fix branches now in progress.
-Not yet released.*
+*Status: implemented on the `audit-1772` branch, zero-argument `super()` in
+same-class helpers included; not yet released.*
 
 ## 2026-09-22: Towel does not change externally visible class design
 
@@ -210,8 +210,8 @@ the duplicated code was. A block shared across classes stays a module
 function that takes the receiver. Towel leaves the design question it raises
 to the agent.
 
-*Status: the `towel-rename` skill will carry the agent's step once the
-hosting rule and class-private renaming are implemented.*
+*Status: implemented. The `towel-rename` skill carries the agent's step
+(its step 6), and renames class-private helpers under their class's key.*
 
 ## 2026-09-22: Import names come from the program
 
@@ -252,7 +252,7 @@ The costs, accepted:
   helpers;
 - a project whose imports are ambiguous must exclude the stray copy first.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-23: How the import model decides, and when a problem refuses
 
@@ -302,9 +302,9 @@ waitress, attrs or pytest. Most of it is test code borrowing across test
 directories inside a package. Relaxing the rule for test code would accept
 the risk that only part of a test tree ships, and the owner kept it strict.
 
-*Status: the model is implemented; wiring it into import naming, host
-choice, the cycle and import-effect checks, renaming and the CLI is in
-progress on the `audit-1772` branch. Not yet released.*
+*Status: implemented on the `audit-1772` branch, and refined by "An import
+problem refuses only when it leaves a name in doubt" (2026-09-24); not yet
+released.*
 
 ## 2026-09-23: Cross-module extraction stays on for the third audit
 
@@ -354,7 +354,7 @@ every such exception. The third from-scratch audit covers both modes. The
 stop rule applies to what it probes in each; what to do about a P1 found
 only with the flag on is for the owner to decide when it arises.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-23: A helper never takes a builtin as a parameter
 
@@ -432,7 +432,7 @@ builtin as a parameter, so behaviour is preserved. It never makes a builtin
 a parameter where reading it directly is already sound. The owner asked for
 it so that a user who wants those extractions can have them explicitly.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-23: A typed run compares against its baseline
 
@@ -492,7 +492,7 @@ the checker's own error and the remedies, rather than verifying with less
 than the project's check. A project that configures no checker keeps the
 documented untyped behaviour.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-22: Well-formed input
 
@@ -579,7 +579,7 @@ sphinx-autodoc-typehints, no longer does: version 3.13.7 has no such
 option. It runs a guarded block only after its module has imported, one
 statement at a time, and mocks whatever fails to import.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-24: How a typed run compares, as implemented
 
@@ -688,4 +688,4 @@ installed libraries, but only those the interpreter Towel runs in can see.
 The third audit tests this case. If it fails, the fix is to put that name
 in doubt, not to return to refusing whole runs.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*
