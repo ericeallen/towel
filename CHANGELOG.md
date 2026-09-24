@@ -30,6 +30,37 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A typed run no longer refuses a project whose type check already reports
+  errors. It reports them first, and rejects a change only for an error they
+  do not account for:
+  - In a file no change touched, an error must match one at the same line.
+  - In a file a change touched, the two texts are aligned by a line diff. An
+    error on a line the change left alone must match the original's error
+    on that line, and only errors on lines the change wrote are compared by
+    message.
+  - A message that names a line fails closed.
+  - Each written change's check becomes the reference for the next.
+  - The cold confirmation compares the same way.
+
+  In a study of 20 corpus projects in their own environments, the old rule
+  let 5 through. 19 are now refactored with types, for 125 refactorings, 77
+  of them in the 14 newly admitted projects.
+- With mypy and pyright both configured, the combined check stopped at the
+  first checker that reported anything. Against pre-existing mypy errors,
+  pyright was then never asked about any candidate. Every checker is now
+  asked until one reports a new error.
+- A file where the original check leaves a name the checker cannot type is
+  not changed. Such names come from an unresolved or untyped import, a
+  missing stub, an untyped decorator or an `Any` base class. A change there
+  would be checked against `Any`, and could not fail. The run names these
+  files up front and counts their proposals as not verifiable.
+- The cold confirmation checks the original cold before it treats as new an
+  error that only it reports. On trio, pyright's language server and command
+  line disagreed about files no change touched, so every typed run failed at
+  the end.
+- Only a checker that cannot run still refuses a typed run. The corpus
+  harness reruns a project without types only in that case, and records
+  every other project's pre-existing errors.
 - Typed runs read every type spelling that mypy 1.x, mypy 2.x and pyright
   print. A regular expression took the last `) -> ` as the end of a
   parameter list, so `lambda: parse_extras` in packaging's `_parser` was
