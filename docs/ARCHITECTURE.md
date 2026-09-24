@@ -865,10 +865,14 @@ may reach code of some site's, other than a name or a literal, that becomes
 an argument and so is written at the call site, where the directive does
 not reach (`directive_on_argument`: its line, the statement or clause a
 coverage pragma or pylint `disable` covers, the statement after a
-`noinspection`, a region's span); a coverage pragma or pylint `disable` on the
-header of a statement enclosing the block, or a `pylint: disable` earlier in
-an enclosing body, governs every site and would not reach the helper where
-placement writes it (`directive_around_block`, decided with the proposal);
+`noinspection`, the next line of code after an ignore on a line of its own,
+which ty, ruff, pyre, pyrefly, Semgrep and Fixit apply there, a region's
+span); an ignore on a line of its own above a block would stay above its
+call and govern that instead (`directive_around_block`); a coverage pragma
+or pylint `disable` on the header of a statement enclosing the block, or a
+`pylint: disable` earlier in an enclosing body, governs every site and
+would not reach the helper where placement writes it
+(`directive_around_block`, decided with the proposal);
 a block whose first statement coverage excludes would become a measured call
 (`excluded_block_start`), where what coverage excludes is every line the
 project's own coverage.py configuration's regexes match, read as coverage.py

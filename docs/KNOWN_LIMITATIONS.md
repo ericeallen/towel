@@ -997,9 +997,12 @@ the proposals it built and did not apply, by reason:
   not reproduce the block up to renamed binders.
 - Tool directives in the moved code. The comments of a block move into the
   helper with its code, and a directive (`# type: ignore`, `# pyright:
-  ignore`, `# noqa`, `# pragma: no cover`, `# nosec`, `# pylint: ...`,
-  `# fmt: ...`, `# isort: ...`, a type comment) changes what a tool reports
-  for its line, of which the helper has one where the sites had several.
+  ignore`, `# ty: ignore`, `# pyrefly: ignore`, `# zuban: ignore`,
+  `# pyre-ignore` and `# pyre-fixme`, `# noqa`, `# ruff: ...`, `# pragma: no
+  cover`, `# nosec`, `# nosemgrep`, `# pylint: ...`, Fixit's
+  `# lint-ignore`, `# fmt: ...`, `# isort: ...`, a type comment) changes
+  what a tool reports for its line, of which the helper has one where the
+  sites had several.
   `directives_differ`: the blocks do not carry the same directives, written
   alike up to spacing, at the same places, as when only one copy of a line
   needed its `# type: ignore` (mashumaro's `type_name`): the helper's line
@@ -1009,8 +1012,12 @@ the proposals it built and did not apply, by reason:
   the call site, where the directive does not reach: a `# type: ignore` or
   `# noqa` on its line, a `# nosec`, `# fmt: skip` or line-level
   `# pylint: disable`, a `# pragma: no cover` on the statement or the
-  clause it excludes, the statement after a `# noinspection`, or a
-  `# fmt: off` region. The directive is not copied onto the call line
+  clause it excludes, the statement after a `# noinspection`, the next
+  line of code after an ignore on a line of its own (ty and ruff read it
+  as the next logical line, or inside brackets the next physical one;
+  pyre, pyrefly, Semgrep and Fixit as the next line, and pyrefly reads
+  every checker's `<tool>: ignore` that way), or a `# fmt: off` or
+  `# ruff: disable` region. The directive is not copied onto the call line
   either, which would silence or exclude a line its tool never saw it on.
   Measured on September 24, 2026, extending the rule from a checker's
   ignore to every directive cost no refactoring: the `--no-types` fixed
@@ -1033,10 +1040,14 @@ the proposals it built and did not apply, by reason:
   helper might well have been covered; Towel cannot tell, and declines.
   `directive_outlives_block`:
   a region directive on a line of its own (`fmt: off`/`on`, `isort:
-  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`) is not
-  closed within the block, so its region reaches code that stays behind,
-  or a file-wide directive (`flake8: noqa`, `ruff: noqa`, `mypy:`, `pyright:
-  strict`) would move into another module. `directive_around_block`:
+  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`, `ruff:
+  disable`/`enable`) is not closed within the block, so its region reaches
+  code that stays behind, or a file-wide directive (`flake8: noqa`, `ruff:
+  noqa`, `ruff: file-ignore`, `mypy:`, `pyright: strict`, `pyrefly:
+  ignore-errors`, `pyre-strict`) would move into another module.
+  `directive_around_block`: an ignore on a line of its own above a site's
+  block governs the block's first statement, and would stay above the call
+  that takes its place, silencing the call and not the helper; or
   every site's block is reached by a directive outside it that would not
   reach the helper: `# pragma: no cover` or `# pylint: disable` at the end
   of the header of a statement enclosing the block (its function's `def`

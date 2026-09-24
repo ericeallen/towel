@@ -394,11 +394,16 @@ The helper carries the comments of the blocks it replaces, beside the code
 they were written for; `proposal.helper_comments` holds them, and each
 `replacement.comments` holds its own block's. Comments above or below a
 block stay at its call. An explanatory comment is kept from every site that
-has one. A tool directive (`# type: ignore`, `# noqa`, `# pragma: no
-cover`, `# nosec`, `# pylint: ...`, `# fmt: ...`, `# isort: ...`, a type
-comment) must be carried alike by every site, and must not reach code that
-becomes an argument of the call, anything but a name or a literal, since
-that code is written at the call site where the directive does not reach.
+has one. A tool directive (`# type: ignore`, `# pyright: ignore`, `# ty:
+ignore`, `# pyrefly: ignore`, `# zuban: ignore`, `# pyre-ignore`, `# noqa`,
+`# ruff: ...`, `# pragma: no cover`, `# nosec`, `# nosemgrep`, `# pylint:
+...`, `# lint-ignore`, `# fmt: ...`, `# isort: ...`, a type comment) must be
+carried alike by every site, and must not reach code that becomes an
+argument of the call, anything but a name or a literal, since that code is
+written at the call site where the directive does not reach. An ignore on a
+line of its own reaches the next line of code, as ty, ruff, pyre, pyrefly,
+Semgrep and Fixit read it, so one above a block's first statement, which
+would stay above the call, declines the pair too.
 Nor may a coverage pragma or pylint `disable` around the blocks (on an
 enclosing `def`, `if`, loop or `else:` line) govern every site where the
 helper would be written outside it, nor may coverage exclude a block's
