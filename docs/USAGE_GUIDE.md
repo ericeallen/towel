@@ -238,14 +238,18 @@ stderr): how many errors, in which files, and which files leave a name the
 checker cannot type. The errors are left as they are. Every later check is
 compared with them, and a change is rejected only for an error they do not
 account for. In a file no change has touched an error must match one at the
-same line; in a file a change has touched, lines move, so the errors of each
-message are counted instead. A message that names a line (mypy's `Name "x"
-already defined on line 12`) therefore reappears as new when its line moves,
-and rejects the change rather than hide an error. Once a driver writes a
+same line. In a file a change has touched, the texts before and after are
+aligned by a line diff: an error on a line the change left alone must match one
+on that line wherever it now stands, and the errors on the lines the change
+wrote (the helper, the call sites, an import) are counted by message against
+those on the lines it replaced, since that is where a duplicated block's error
+moves from. A message that names a line (mypy's `Name "x" already defined on
+line 12`) therefore reappears as new when its line moves, and rejects the
+change rather than hide an error. Once a driver writes a
 change, the change's own check is the reference for the next, so an error one
 change removed cannot be spent by another; direct `apply_refactoring` calls,
 whose results the engine does not see written, keep comparing with the
-original's errors, counting in every file they changed. The final cold check
+original's errors, aligning each file they changed with the original's text. The final cold check
 compares the same way; an error only it reports is then looked for in a cold
 check of the original, since a checker started from nothing can disagree with a
 warm one about files no change touched, and only one the original lacks too

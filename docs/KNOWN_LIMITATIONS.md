@@ -685,11 +685,15 @@ where the evidence comes from:
 - Errors the original check reports are compared with, not refused. A change
   is rejected for an error its check reports that the project's check did not:
   in a file no change has touched, the same message at the same line; in one a
-  change has touched, the same message as many times, since lines move there.
-  So in a changed file an error that disappears where another with the very
-  same message appears is taken to have moved, as a duplicated block's error
-  does when the block moves into the helper, and is not new; nothing but its
-  line, which the change has made meaningless, tells the two apart. A message
+  change has touched, the same message on the same line wherever the change
+  moved it, found by a line diff of the two texts, and on the lines the change
+  wrote, no more often than on the lines it replaced. So an error that
+  disappears from a replaced line where another with the very same message
+  appears in the helper or at a call site is taken to have moved, as a
+  duplicated block's error does when the block moves into the helper, and is
+  not new; one that disappears from a line the change left alone accounts for
+  nothing. Where the diff pairs a helper with one copy of its block, an error
+  that came from the other copy is new, which costs a change. A message
   that names a line (mypy's `Name "x" already defined on line 12`) reappears
   as new when that line moves, which declines the change rather than hide an
   error: a module with such an error below the place a helper would go keeps

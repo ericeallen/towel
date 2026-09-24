@@ -26,30 +26,38 @@ change's (:meth:`KnownErrors.introduced`).
 Whether an error after a change is one the reference had is a question about
 two checks of two different texts, and the line number is the obvious answer
 and the wrong one: a helper inserted above an error moves it, so a comparison
-by line would reject every change above any pre-existing error. Where lines
-cannot have moved they are the most exact evidence there is, and where they
-can they are none. So a file the change and the run have left alone is
-compared by file, line and message, and a file whose text may have changed by
-file and message alone, as a multiset: there an error is new when its message
-appears more often than before. The message includes the checker's error
-code, so two errors differ when their codes do.
+by line would reject every change above any pre-existing error. A line the
+change left alone keeps its text, though, only elsewhere. So a file the change
+and the run have left alone is compared by file, line and message. In a file
+whose text has changed, the two texts are aligned (:func:`unchanged_lines`),
+and an error on a line the change left alone must match the reference's error
+on that same line, wherever it now stands; only the errors on lines the change
+wrote (the helper, the call sites, an import) are compared by message, as a
+multiset, with the reference's errors on the lines it replaced. Where either
+text is unknown, the whole file is compared by message. The message includes
+the checker's error code, so two errors differ when their codes do.
 
 What this can mistake, and which way it errs:
 
 - A message that embeds a line (mypy's ``Name "x" already defined on line
   12``) changes when that line moves, so it reappears as new and the change is
   rejected. It fails closed: a shift can cost a change, never hide an error.
-- In a changed file, an error that disappears where another with the very
-  same message appears is taken to have moved, as a duplicated block's error
-  does when the block moves into the helper: it is the same error, and it was
-  already there. Only its line could tell the two apart, and the change has
-  made the line meaningless.
+- On the lines a change wrote, an error that disappears from a line it
+  replaced where another with the very same message appears is taken to have
+  moved, as a duplicated block's error does when the block moves into the
+  helper: it is the same error, and it was already there. An error that
+  disappears from a line the change left alone cannot have moved, since its
+  code did not, and accounts for nothing the change wrote.
 - An error of the reference accounts for one error after a change, never
   more: two identical errors where there was one is one new.
 - The reference follows the project. Once a change is written, its own check
   is what the next change is compared with, so an error one change removed
   cannot be spent by another that brings it back: against the original's
   errors, the second would pass.
+- The alignment is a line diff, so it holds whatever wrote the lines,
+  formatter and import sorter included. However it pairs the lines, an error
+  is new under it whenever its message appears more often than before in its
+  file, so it can reject more than a comparison by message would, never less.
 
 A name the checker cannot type -- an import it cannot resolve or finds no
 types for, a decorator without types -- is ``Any`` to it wherever it goes, and
@@ -62,10 +70,13 @@ decline changing them.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+import difflib
+import functools
 import os
 from pathlib import Path
 import re
+from types import MappingProxyType
 from typing import (
     Callable,
     Collection,
@@ -84,17 +95,53 @@ from .type_inference import TypeDiagnostic
 __all__ = [
     "CheckedChange",
     "KnownErrors",
+    "LineMap",
     "files_where_names_are_any",
     "makes_names_any",
     "names_any_warning",
     "pre_existing_summary",
     "resolved_path",
+    "unchanged_lines",
 ]
 
 
 def resolved_path(path: str) -> str:
     """``path`` as a comparison needs it: absolute, with every symbolic link resolved."""
     return os.path.realpath(path)
+
+
+def _no_text(path: str) -> Optional[str]:
+    return None
+
+
+@dataclass(frozen=True)
+class LineMap:
+    """Where each line a change left alone stands after it, by one-based line number."""
+
+    after_of: Mapping[int, int]
+    """Each unchanged line's number before the change to its number after."""
+    unchanged_after: FrozenSet[int]
+    """The lines after the change that it left alone; every other line it wrote."""
+
+
+@functools.lru_cache(maxsize=32)
+def unchanged_lines(before: str, after: str) -> LineMap:
+    """The lines of ``before`` that ``after`` keeps, as a line diff of the two texts pairs them.
+
+    Lines are split on LF alone, as the tokenizer counts them in decoded
+    source (``towel.source_text.source_lines``). The diff runs without its
+    junk heuristic, which would leave repeated lines -- blank ones, ``pass``
+    -- unpaired: about 20 ms for a 3,400-line module. Pure in its arguments,
+    so a check that is compared once per checker aligns each file once.
+    """
+    old, new = before.split("\n"), after.split("\n")
+    after_of: Dict[int, int] = {}
+    matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
+    for tag, start, end, target, _ in matcher.get_opcodes():
+        if tag == "equal":
+            for offset in range(end - start):
+                after_of[start + offset + 1] = target + offset + 1
+    return LineMap(MappingProxyType(after_of), frozenset(after_of.values()))
 
 
 @dataclass(frozen=True)
@@ -104,18 +151,31 @@ class KnownErrors:
     ``errors`` carry resolved paths in the project that check was made of.
     ``moved`` names, the same way, the files whose text a change accepted
     since then may have altered, so that a line in them no longer means what
-    it meant to that check.
+    it meant to that check. ``texts`` holds, for each file with an error that
+    a change may touch, the text the check saw, against which a changed file
+    is aligned (:func:`unchanged_lines`).
     """
 
     errors: Tuple[TypeDiagnostic, ...] = ()
     moved: FrozenSet[str] = frozenset()
+    texts: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod
     def of(
-        cls, errors: Iterable[TypeDiagnostic], where: Callable[[str], str] = resolved_path
+        cls,
+        errors: Iterable[TypeDiagnostic],
+        where: Callable[[str], str] = resolved_path,
+        texts: Mapping[str, str] = MappingProxyType({}),
     ) -> "KnownErrors":
-        """What a check reported, its paths as ``where`` places them in the reference's project."""
-        return cls(tuple(TypeDiagnostic(where(e.path), e.message, e.line) for e in errors))
+        """What a check reported, its paths as ``where`` places them in the reference's project.
+
+        ``texts`` are the checked texts by resolved path; only those of files
+        with an error are kept.
+        """
+        placed = tuple(TypeDiagnostic(where(e.path), e.message, e.line) for e in errors)
+        erring = {error.path for error in placed}
+        kept = {path: text for path, text in texts.items() if path in erring}
+        return cls(placed, texts=MappingProxyType(kept))
 
     def moving(self, paths: Iterable[str]) -> "KnownErrors":
         """These errors, with ``paths`` (resolved) among the files whose lines may have moved."""
@@ -127,18 +187,22 @@ class KnownErrors:
         changing: Collection[str] = (),
         *,
         where: Callable[[str], str] = resolved_path,
+        texts_after: Callable[[str], Optional[str]] = _no_text,
     ) -> Tuple[TypeDiagnostic, ...]:
         """The errors of ``after`` these do not account for, as ``after`` reported them.
 
         ``after`` is a check of the project with a change made to ``changing``
         (resolved paths); ``where`` places each of its paths in the
         reference's project, since a run that refactors a private copy is
-        checked there. In a file neither the change nor an earlier one has
-        touched, an error must match one of these at the same line; in any
-        other file, the errors of one message are new when there are more of
-        them than there were, and then every one of them is reported, since
-        nothing says which is the new one. Each error of the reference
-        accounts for one error after, never more.
+        checked there, and ``texts_after`` gives, by resolved path, the text
+        that check saw of a file whose lines may have moved. In a file neither
+        the change nor an earlier one has touched, an error must match one of
+        these at the same line. In any other, one on a line the change left
+        alone must match one on that line before it; the rest are compared by
+        message with these errors on the lines the change replaced, new when
+        there are more of a message than there were, and then every one of
+        them is reported, since nothing says which is the new one. Each error
+        of the reference accounts for one error after, never more.
         """
         shifted = self.moved | frozenset(changing)
         placed: Counter[Tuple[str, Optional[int], str]] = Counter(
@@ -146,25 +210,62 @@ class KnownErrors:
             for error in self.errors
             if error.path not in shifted
         )
-        counted: Counter[Tuple[str, str]] = Counter(
-            (error.path, error.message) for error in self.errors if error.path in shifted
-        )
         new: List[int] = []
-        loose: Dict[Tuple[str, str], List[int]] = {}
+        in_shifted: Dict[str, List[int]] = {}
         for index, error in enumerate(after):
             path = where(error.path)
             if path in shifted:
-                loose.setdefault((path, error.message), []).append(index)
+                in_shifted.setdefault(path, []).append(index)
                 continue
             place = (path, error.line, error.message)
             if placed[place]:
                 placed[place] -= 1
             else:
                 new.append(index)
-        for message, indices in loose.items():
-            if len(indices) > counted[message]:
-                new.extend(indices)
+        for path, indices in in_shifted.items():
+            new.extend(self._new_in_changed_file(path, indices, after, texts_after(path)))
         return tuple(after[index] for index in sorted(new))
+
+    def _new_in_changed_file(
+        self,
+        path: str,
+        indices: Sequence[int],
+        after: Sequence[TypeDiagnostic],
+        text_after: Optional[str],
+    ) -> List[int]:
+        """Which of ``after[indices]``, all in ``path``, these errors of ``path`` do not account for."""
+        text_before = self.texts.get(path)
+        lines = (
+            unchanged_lines(text_before, text_after)
+            if text_before is not None and text_after is not None
+            else LineMap(MappingProxyType({}), frozenset())
+        )
+        kept: Counter[Tuple[int, str]] = Counter()
+        replaced: Counter[str] = Counter()
+        for error in self.errors:
+            if error.path != path:
+                continue
+            moved_to = lines.after_of.get(error.line) if error.line is not None else None
+            if moved_to is None:
+                replaced[error.message] += 1
+            else:
+                kept[(moved_to, error.message)] += 1
+        new: List[int] = []
+        written: Dict[str, List[int]] = {}
+        for index in indices:
+            error = after[index]
+            if error.line is not None and error.line in lines.unchanged_after:
+                place = (error.line, error.message)
+                if kept[place]:
+                    kept[place] -= 1
+                else:
+                    new.append(index)
+            else:
+                written.setdefault(error.message, []).append(index)
+        for message, found in written.items():
+            if len(found) > replaced[message]:
+                new.extend(found)
+        return new
 
 
 @dataclass(frozen=True)

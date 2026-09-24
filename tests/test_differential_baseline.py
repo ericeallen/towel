@@ -46,6 +46,7 @@ from towel.type_baseline import (
     makes_names_any,
     names_any_warning,
     pre_existing_summary,
+    unchanged_lines,
 )
 from towel.type_inference import (
     CheckFailure,
@@ -163,6 +164,68 @@ def test_the_checked_copy_is_compared_at_the_original_it_stands_for() -> None:
 
     assert reference.introduced(after, where=original) == ()
     assert reference.introduced(after, where=_as_is) == tuple(after)
+
+
+BEFORE = "\n".join(["import os", "", "def f():", "    x = 1", "    return x", "", "BAD = f()", ""])
+AFTER = "\n".join(
+    [
+        "import os",
+        "",
+        "def helper():",
+        "    return 1",
+        "",
+        "def f():",
+        "    return helper()",
+        "",
+        "BAD = f()",
+        "",
+    ]
+)
+"""A change that replaces ``f``'s body with a call and inserts the helper above it.
+
+``BAD = f()`` is line 7 before and line 9 after, and untouched; lines 3-5
+after (the helper) and 7 (the call) are written by the change.
+"""
+
+
+def _aligned(
+    reference: Sequence[TypeDiagnostic], after: Sequence[TypeDiagnostic]
+) -> tuple[TypeDiagnostic, ...]:
+    known = KnownErrors(tuple(reference), texts={A: BEFORE})
+    return known.introduced(after, [A], where=_as_is, texts_after={A: AFTER}.get)
+
+
+def test_the_lines_a_change_left_alone_are_found_where_they_now_stand() -> None:
+    line_map = unchanged_lines(BEFORE, AFTER)
+    assert line_map.after_of[7] == 9 and line_map.after_of[1] == 1
+    assert 3 not in line_map.unchanged_after and 7 not in line_map.unchanged_after
+
+
+def test_an_error_on_a_line_the_change_left_alone_is_matched_where_that_line_went() -> None:
+    assert _aligned([_error(A, "Oops [misc]", 7)], [_error(A, "Oops [misc]", 9)]) == ()
+
+
+def test_an_error_on_a_line_left_alone_that_moves_to_another_such_line_is_new() -> None:
+    moved = _error(A, "Oops [misc]", 1)
+    assert _aligned([_error(A, "Oops [misc]", 7)], [moved]) == (moved,)
+
+
+def test_an_error_gone_from_a_line_left_alone_accounts_for_none_the_change_wrote() -> None:
+    """The gap a comparison by message leaves: one error gone, an identical one in the helper."""
+    in_the_helper = _error(A, "Oops [misc]", 4)
+    assert _new([_error(A, "Oops [misc]", 7)], [in_the_helper], changing=[A]) == ()
+    assert _aligned([_error(A, "Oops [misc]", 7)], [in_the_helper]) == (in_the_helper,)
+
+
+def test_an_error_on_a_line_the_change_replaced_may_move_into_what_it_wrote() -> None:
+    """``x = 1`` (line 4) is gone; its error in the helper (line 4 after) is the same one moved."""
+    assert _aligned([_error(A, "Oops [misc]", 4)], [_error(A, "Oops [misc]", 4)]) == ()
+    assert _aligned([_error(A, "Oops [misc]", 4)], [_error(A, "Oops [misc]", 7)]) == ()
+
+
+def test_without_the_texts_a_changed_file_is_compared_by_message() -> None:
+    known = KnownErrors((_error(A, "Oops [misc]", 7),))
+    assert known.introduced([_error(A, "Oops [misc]", 4)], [A], where=_as_is) == ()
 
 
 def test_a_change_that_is_accepted_leaves_its_files_compared_by_message() -> None:
@@ -325,16 +388,29 @@ def test_a_project_whose_check_reports_errors_is_refactored_with_types(tmp_path:
     assert program.read_text() == TWINS and consumer.read_text() == 'broken: int = "wrong"\n'
 
 
+def _line_of(text: str, fragment: str) -> int:
+    """The one-based line of ``text`` that holds ``fragment``."""
+    return next(number for number, line in enumerate(text.split("\n"), 1) if fragment in line)
+
+
+WRONG = '\n\nWRONG: int = "wrong"\n'
+"""A statement with an error of its own, which no extraction touches."""
+
+
 def test_a_change_that_adds_an_error_is_rejected_and_one_that_adds_none_is_accepted(
     tmp_path: Path,
 ) -> None:
     first, second = tmp_path / "first.py", tmp_path / "second.py"
-    first.write_text(TWINS)
+    first.write_text(TWINS + WRONG)
     second.write_text(LOOPS)
-    existing = TypeDiagnostic(_resolved(first), "Incompatible types [assignment]", 2)
 
     def verdict(sources: Mapping[str, str]) -> CheckResult:
-        errors = [existing]
+        text = _text_of(sources, "first.py")
+        errors = [
+            TypeDiagnostic(
+                _resolved(first), "Incompatible types [assignment]", _line_of(text, "WRONG")
+            )
+        ]
         if "_extracted_func" in _text_of(sources, "second.py"):
             errors.append(TypeDiagnostic(_resolved(second), "Unsupported operand [operator]", 1))
         return CheckSuccess(tuple(errors))
@@ -348,6 +424,71 @@ def test_a_change_that_adds_an_error_is_rejected_and_one_that_adds_none_is_accep
     assert "_extracted_func" in first.read_text()
     assert second.read_text() == LOOPS
     assert engine.run_report.declined_proposals == {"refused by the type checker": 1}
+
+
+PARTIAL = textwrap.dedent("""
+    def first(value: int) -> int:
+        print("first")
+        total = value + 1
+        doubled = total * 2
+        answer = doubled - 3
+        return answer
+
+
+    def second(value: int) -> int:
+        log = [value]
+        total = value + 1
+        doubled = total * 2
+        answer = doubled - 3
+        return answer + len(log)
+    """).lstrip() + WRONG
+"""Duplicated blocks that are not a whole body, and a statement of its own with an error."""
+
+
+@pytest.mark.parametrize("where_after", ["swapped into the helper", "kept", "moved with its block"])
+def test_an_error_only_its_message_matches_is_not_one_the_project_had(
+    tmp_path: Path, where_after: str
+) -> None:
+    """A real extraction, compared line by line where the change left the lines alone.
+
+    ``swapped``: the untouched ``WRONG`` line loses its error, as a line whose
+    inferred type the extraction changed would, and the helper gains one with
+    the very same message. By message alone nothing is new, which is a false
+    clean; the line the error left was not one the change wrote, so the
+    helper's error is new. ``kept`` and ``moved`` are what an unchanged error
+    looks like: the same line wherever it went, or the block's own statement,
+    now in the helper.
+    """
+    path = tmp_path / "m.py"
+    path.write_text(PARTIAL)
+    message = "Incompatible types [assignment]"
+
+    def verdict(sources: Mapping[str, str]) -> CheckResult:
+        text = _text_of(sources, "m.py")
+        checked = next(p for p in sources if Path(p).name == "m.py")
+        if "_extracted_func" not in text:
+            moved = where_after == "moved with its block"
+            line = _line_of(text, "total = value + 1" if moved else "WRONG")
+        elif where_after == "swapped into the helper":
+            line = _line_of(text, "def __extracted_func")
+        elif where_after == "kept":
+            line = _line_of(text, "WRONG")
+        else:
+            line = _line_of(text, "total = value + 1")
+        return CheckSuccess((TypeDiagnostic(checked, message, line),))
+
+    engine = UnificationRefactorEngine(type_oracle=_Oracle(verdict))
+    proposal = engine.analyze_file(str(path))[0]
+    assert proposal.reused_function is None
+    assert len(proposal.replacements) == 2 and "print" not in ast.unparse(
+        proposal.extracted_function
+    ), "a helper for part of each body"
+    if where_after == "swapped into the helper":
+        with pytest.raises(RefactoringError, match="introduces project type errors"):
+            engine.apply_refactoring(str(path), proposal)
+    else:
+        assert "__extracted_func_0" in engine.apply_refactoring(str(path), proposal)
+    assert path.read_text() == PARTIAL
 
 
 def test_what_the_original_check_reports_is_said_before_anything_is_changed(

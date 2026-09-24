@@ -500,12 +500,17 @@ own check as their CI runs it; the errors lay in tests, benchmarks and docs
 the CI never checks, in checkers no CI step runs, or came from checking
 without the CI's flags. `KnownErrors.introduced` compares a file that no
 change has touched by file, line and message, since its lines cannot have
-moved, and a file a change has touched by file and message as a multiset,
-since they can: there an error is new when its message appears more often
-than before, and an error that disappears where another with the very same
-message appears is taken to have moved, as a duplicated block's error does
-into the helper. A message that embeds a line reappears as new when its line
-moves, so it fails closed. The reference follows the project. When a driver
+moved. A file a change has touched is aligned with the text the reference was
+checked against (`unchanged_lines`, a line diff, so it holds whatever wrote the
+lines, formatter and import sorter included): an error on a line the change
+left alone must match the reference's on that line, wherever it now stands,
+and the errors on the lines the change wrote are compared by message, as a
+multiset, with the reference's on the lines it replaced, which is where a
+duplicated block's error moves into the helper from. However the diff pairs
+the lines, an error is new whenever its message appears more often than before
+in its file, so the alignment rejects more than a comparison by message would,
+never less. A message that embeds a line reappears as new when its line moves,
+so it fails closed. The reference follows the project. When a driver
 writes a change, `_follow_the_written_change` makes that change's own check
 the reference, once the files hold what was checked, so an error one change
 removed cannot be spent by the next; against the original's errors it could

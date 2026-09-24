@@ -250,7 +250,11 @@ class HelperAnnotationWiring(EngineState):
                 if not isinstance(baseline, CheckFailure):
                     for diagnostic in baseline.errors:
                         TYPES.debug("original error in %s: %s", diagnostic.path, diagnostic.message)
-                    self._type_known = KnownErrors.of(baseline.errors, self._where_checked)
+                    self._type_known = KnownErrors.of(
+                        baseline.errors,
+                        self._where_checked,
+                        texts={self._where_checked(path): text for path, text in originals.items()},
+                    )
                     self._type_names_any = files_where_names_are_any(self._type_known.errors)
                     self._report_pre_existing(list(originals))
         if isinstance(self._type_run_baseline, CheckFailure):
@@ -686,7 +690,10 @@ class HelperAnnotationWiring(EngineState):
         # apply; only the warm state goes.
         start_cold(oracle)
         reported = self._cold_errors(oracle, sources)
-        unseen = self._type_known.introduced(reported, where=self._where_checked)
+        finished = {self._where_checked(path): text for path, text in sources.items()}
+        unseen = self._type_known.introduced(
+            reported, where=self._where_checked, texts_after=finished.get
+        )
         if unseen:
             unseen = self._unseen_from_the_start(reported, unseen, sources)
         if unseen:
@@ -749,8 +756,16 @@ class HelperAnnotationWiring(EngineState):
             if isinstance(result, CheckFailure):
                 return unseen
             from_the_start.extend(result.errors)
-        known = KnownErrors.of(from_the_start).moving(changed)
-        brought = {id(error) for error in known.introduced(reported, where=self._where_checked)}
+        known = KnownErrors.of(
+            from_the_start, texts={resolved_path(path): text for path, text in originals.items()}
+        ).moving(changed)
+        texts = {self._where_checked(path): text for path, text in finished.items()}
+        brought = {
+            id(error)
+            for error in known.introduced(
+                reported, where=self._where_checked, texts_after=texts.get
+            )
+        }
         return tuple(error for error in unseen if id(error) in brought)
 
     def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:
@@ -769,7 +784,14 @@ class HelperAnnotationWiring(EngineState):
         oracle = self._active_type_oracle()
         if oracle is None:
             raise RefactoringError("Type checking was requested without a type oracle")
-        changing = frozenset(self._where_checked(path) for path in modified_files)
+        checked = {self._where_checked(path): text for path, text in modified_files.items()}
+        changing = frozenset(checked)
+
+        def seen(path: str) -> Optional[str]:
+            """The text of ``path`` (resolved, the original's) that this check sees."""
+            text = checked.get(path)
+            return text if text is not None else self._read_source(self._as_checked(path))
+
         reported: List[TypeDiagnostic] = []
         introduced: Tuple[TypeDiagnostic, ...] = ()
         for result in checks_in_turn(oracle, modified_files):
@@ -778,7 +800,9 @@ class HelperAnnotationWiring(EngineState):
                     f"Prospective project type check failed: {result.reason}"
                 )
             reported.extend(result.errors)
-            introduced = self._type_known.introduced(reported, changing, where=self._where_checked)
+            introduced = self._type_known.introduced(
+                reported, changing, where=self._where_checked, texts_after=seen
+            )
             if introduced:
                 break
         for diagnostic, count in Counter(introduced).items():
@@ -788,9 +812,20 @@ class HelperAnnotationWiring(EngineState):
             # the checker's refusal, not as something that could not be rendered.
             self._checker_refusals += 1
             return introduced
+        # What this check saw of each file: the change's texts, and those of
+        # files an earlier change may have altered as they now stand; the rest
+        # have kept the text the reference records.
+        texts = {**self._type_known.texts, **checked}
+        for path in self._type_known.moved - changing:
+            text = seen(path)
+            if text is None:
+                texts.pop(path, None)
+            else:
+                texts[path] = text
         self._type_known = self._type_known.moving(changing)
         self._type_checked = CheckedChange(
-            tuple(modified_files.items()), KnownErrors.of(reported, self._where_checked)
+            tuple(modified_files.items()),
+            KnownErrors.of(reported, self._where_checked, texts=texts),
         )
         return ()
 
@@ -816,6 +851,23 @@ class HelperAnnotationWiring(EngineState):
     def _where_checked(self, path: str) -> str:
         """``path`` in the project whose check the run compares with: the original, resolved."""
         return resolved_path(self._origin_of(path))
+
+    def _as_checked(self, original: str) -> str:
+        """``original`` (resolved) where the run checks it: in its private copy, when it has one.
+
+        The inverse of :meth:`_where_checked`, for reading what a check saw of
+        a file the change did not supply.
+        """
+        origin = self._output_origin
+        if origin is None:
+            return original
+        source, destination = (root.resolve() for root in origin)
+        absolute = Path(original)
+        if absolute == source:
+            return str(destination)
+        if absolute.is_relative_to(source):
+            return str(destination / absolute.relative_to(source))
+        return original
 
     def _decline_what_the_checker_cannot_see(self, paths: Sequence[str]) -> None:
         """Refuse a change to a file where the original check names what it cannot type.
