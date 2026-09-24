@@ -17,7 +17,17 @@ prints at import time, which the borrower's own import never ran; the four
 whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
 ``xf23_relative_import_in_another_package``, whose subpackages ``pkg.x`` and
 ``pkg.y`` never import each other, so neither may gain an import of the
-other (docs/DECISIONS.md, "Import names come from the program").
+other (docs/DECISIONS.md, "Import names come from the program"); and
+``xf7n_namesake_of_a_required_library``, whose ``zzlib/`` is a namesake of the
+distribution its ``pyproject.toml`` requires.
+
+Three ``xf7n_`` fixtures are projects whose ``run.py`` runs the program as
+it ships rather than from the tree, since only there does their defect
+show: the namesake imports ``zzapp`` beside the installed ``zzlib``;
+``xf7n_host_the_wheel_leaves_out`` and ``xf7n_subpackage_the_wheel_leaves_out``
+import ``shop`` without the module hatch, or the subpackage setuptools,
+leaves out of the wheel. Their modules left out may borrow from the ones
+that ship, never the reverse.
 """
 
 from __future__ import annotations
@@ -57,6 +67,8 @@ TRANSFORMED = {
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
     "xf29_type_checking_block_with_branches",
+    "xf7n_host_the_wheel_leaves_out",
+    "xf7n_subpackage_the_wheel_leaves_out",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -67,6 +79,7 @@ REJECTED = {
     "xf19_builtin_shadowed_by_borrower_local",
     "xf22_borrower_rebinds_builtins_namespace",
     "xf23_relative_import_in_another_package",
+    "xf7n_namesake_of_a_required_library",
 }
 
 
