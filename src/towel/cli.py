@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import (
     Callable,
     Dict,
+    Iterable,
     List,
     Literal,
     Mapping,
@@ -48,7 +49,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from towel.import_model import ImportModel, ImportProblem
+    from towel.import_model import ImportModel, ImportProblem, MissingModule
     from towel.type_inference import TypeOracle
     from towel.unification.fixed_point import RunReport
     from towel.unification.models import RefactoringProposal
@@ -1030,7 +1031,18 @@ IMPORT_PROBLEM_REMEDY = (
     "Leave out each directory holding a stray copy or a broken import with --exclude"
     " <directory name> (for example --exclude build), or fix the import."
 )
-"""What a user can do about an import problem: the one remedy every report names."""
+"""What a user can do about an import problem that leaves a name in doubt."""
+
+MISSING_MODULE_OUTSIDE_REMEDY = (
+    "Fix the import, or leave its directory out with --exclude <directory name>."
+)
+"""What a user can do about a file importing a module the tree lacks from outside its package."""
+
+MISSING_MODULE_INSIDE_REMEDY = (
+    "A module generated at build time, such as a _version.py, appears once the project is"
+    " installed (pip install -e .); fix any other."
+)
+"""What a user can do about a package importing a module of its own the tree lacks."""
 
 
 def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
@@ -1038,17 +1050,18 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
 
     A helper shared across modules is imported by the name the program's own
     imports give its host (docs/DECISIONS.md, "Import names come from the
-    program"), and the model those imports make already declines every name
-    whose location a problem leaves in doubt, and every file holding a
-    problem's import. So every problem is named before anything is written.
-    One because of which something in the package being refactored is
-    declined (:func:`_problems_involving`) refuses the run, since the helpers
-    shared across its modules are what ``--cross-module`` asks for; any other
-    is reported, and the run goes on. Only a run with ``--cross-module`` asks:
+    program"). So every problem is named before anything is written. One that
+    leaves a name of the package being refactored in doubt refuses the run
+    (:func:`_problems_involving`): Towel cannot tell which reading of the
+    program is the real one, and the helpers shared across its modules are
+    what ``--cross-module`` asks for. Any other is reported, and the run goes
+    on. An import of a module the tree lacks leaves no name in doubt,
+    wherever it lies; the run leaves the file making it unchanged and says so
+    (:func:`_missing_module_report`). Only a run with ``--cross-module`` asks:
     without it no import that runs is written, so nothing depends on them.
     """
     from towel.consumers import ScanLimitExceeded
-    from towel.import_model import build_import_model
+    from towel.import_model import RelativeImportMissing, UnresolvedImport, build_import_model
     from towel.project_layout import find_project_root
     from towel.unification.exceptions import AmbiguousImportsError, ProjectScanLimitError
 
@@ -1070,45 +1083,94 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
             f"Refusing to share helpers across the modules of {target}: the program's imports"
             " do not name them unambiguously, so no import of one could be shown to work:\n"
             + "".join(f"  {problem.describe(model.root)}\n" for problem in involved)
-            + (f"({others} other problem(s) involve only modules outside it.)\n" if others else "")
+            + (f"({others} other problem(s) alone would not stop the run.)\n" if others else "")
             + IMPORT_PROBLEM_REMEDY
         )
-    LOG.warning(
-        "The program's imports do not name every module unambiguously, so no helper is shared"
-        " across the modules these involve:\n%s%s",
-        "".join(f"  {problem.describe(model.root)}\n" for problem in model.problems),
-        IMPORT_PROBLEM_REMEDY,
-    )
+    missing = [
+        problem
+        for problem in model.problems
+        if isinstance(problem, (UnresolvedImport, RelativeImportMissing))
+    ]
+    in_doubt = [problem for problem in model.problems if problem not in missing]
+    if in_doubt:
+        LOG.warning(
+            "The program's imports do not name every module unambiguously, so no helper is shared"
+            " across the modules these involve:\n%s%s",
+            "".join(f"  {problem.describe(model.root)}\n" for problem in in_doubt),
+            IMPORT_PROBLEM_REMEDY,
+        )
+    if missing:
+        LOG.warning("%s", _missing_module_report(model, missing, target))
+
+
+def _missing_module_report(
+    model: "ImportModel", problems: Sequence["MissingModule"], target: Path
+) -> str:
+    """Each file importing a module the tree lacks, left unchanged, with the remedy that fits it.
+
+    A file outside the package whose module it names, test data or an
+    example, may be left out with ``--exclude``. One inside, a package's
+    import of its own generated ``_version.py``, needs the project
+    installed; its directory is the package, and leaving it out is no
+    remedy. When the file is a package's initializer, which importing any
+    module below it runs, those modules host a helper only for modules
+    imported through that package, and a line says so, naming the file.
+    """
+    root = model.root
+    resolved = target.resolve()
+    files = sorted({problem.site.file for problem in problems})
+
+    def inside(path: Path) -> bool:
+        return path.name == "__init__.py" or all(
+            problem.from_inside for problem in problems if problem.site.file == path
+        )
+
+    def shown(paths: Iterable[Path]) -> str:
+        return ", ".join(str(path.relative_to(root)) for path in paths)
+
+    lines = [
+        "These files import a module the tree lacks; the run leaves each one unchanged and goes on:",
+        *(f"  {problem.describe(root)}" for problem in problems),
+    ]
+    outside = [path for path in files if not inside(path)]
+    if outside:
+        lines.append(f"Left unchanged: {shown(outside)}. {MISSING_MODULE_OUTSIDE_REMEDY}")
+    within = [path for path in files if inside(path)]
+    if within:
+        lines.append(f"Left unchanged: {shown(within)}. {MISSING_MODULE_INSIDE_REMEDY}")
+    for path in files:
+        package = path.parent
+        if path.name == "__init__.py" and (
+            package.is_relative_to(resolved) or resolved.is_relative_to(package)
+        ):
+            lines.append(
+                f"Modules in {shown([package])} host a helper only for modules imported through"
+                f" it: importing one from anywhere else would run {shown([path])}, whose import"
+                " the tree lacks, where it has not run."
+            )
+    return "\n".join(lines)
 
 
 def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProblem"]:
-    """The problems because of which the model declines something in the package being refactored.
+    """The problems that leave a name of the package being refactored in doubt.
 
-    One does when it lies under ``target``, when it leaves in doubt a
-    top-level name one of whose locations lies under ``target`` or holds it,
-    or when it lies in the initializer of a package ``target`` is imported
-    as part of, which every import of its modules runs. anyio's stale
+    One does when it leaves in doubt a top-level name one of whose locations
+    lies under ``target`` or holds it, or when it lies under ``target`` and
+    leaves in doubt the name of the file it lies in, as a relative import
+    climbing out of a package no import names does. anyio's stale
     ``build/lib/anyio`` beside ``anyio`` is a problem of ``anyio``, wherever
-    the stray copy sits. An import of a module the tree lacks leaves no name
-    in doubt (:class:`~towel.import_model.UnresolvedImport`), so it is one
-    only from inside: sphinx's test data importing ``sphinx.missing_module4``
-    stops no run on ``sphinx``.
+    the stray copy sits. An import of a module the tree lacks
+    (:data:`~towel.import_model.MissingModule`) leaves no name in doubt,
+    wherever it lies: sphinx's test data importing ``sphinx.missing_module4``
+    stops no run, from the root or on ``sphinx``, and neither does a
+    package's import of the ``_version.py`` its build generates.
     """
+    from towel.import_model import RelativeImportMissing, UnresolvedImport
+
     resolved = target.resolve()
 
     def under(path: Path) -> bool:
         return path == resolved or path.is_relative_to(resolved)
-
-    def initializes(path: Path) -> bool:
-        if path.name != "__init__.py" or not resolved.is_relative_to(path.parent):
-            return False
-        # The initializer runs for the target's modules only when every
-        # directory between them is a package they are imported through.
-        return all(
-            (directory / "__init__.py").is_file()
-            for directory in (resolved, *resolved.parents)
-            if directory.is_relative_to(path.parent)
-        )
 
     own = {
         name
@@ -1118,8 +1180,8 @@ def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProbl
     return [
         problem
         for problem in model.problems
-        if problem.names_in_doubt & own
-        or any(under(path) or initializes(path) for path in problem.found_at)
+        if not isinstance(problem, (UnresolvedImport, RelativeImportMissing))
+        and (problem.names_in_doubt & own or any(under(path) for path in problem.found_at))
     ]
 
 

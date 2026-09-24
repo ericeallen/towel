@@ -37,7 +37,8 @@ The model is built once from a project's Python files:
   not hold; a location reachable under two names; a relative import that
   climbs out of its package or names a missing module. A name whose location
   a problem leaves in doubt is not trusted, and nothing is ever spelled into
-  it; a file holding a problem's import is never a provider.
+  it; a file holding a problem's import is never a provider and is given no
+  new import.
 - Each module belongs to a *context*: its top-level package, or itself when it
   is in none. A context attests the trusted names its runtime imports use.
 
@@ -64,7 +65,9 @@ end, and are refined where they do; each refinement is argued where it is made:
   name lives. sphinx's test data imports ``sphinx.missing_module4``, which its
   tests mock, and every other import of ``sphinx`` still places it; so only
   the file making that import is in doubt, and no file is the missing module
-  for any import to name (:class:`UnresolvedImport`).
+  for any import to name (:class:`UnresolvedImport`). An initializer making
+  one blocks the modules below it only for importers not already imported
+  through it (:meth:`ImportModel._blocked_provider`).
 - An import attests a name only when it runs, runs unguarded, and runs where
   ``sys.path`` is not being changed (:attr:`ImportSite.attests`).
 - A new import may enter a directory only where the importer's context or the
@@ -131,6 +134,7 @@ __all__ = [
     "ImportSite",
     "ImportSpelling",
     "InstalledProbe",
+    "MissingModule",
     "NameStatus",
     "OutsideProvider",
     "ProviderKind",
@@ -299,8 +303,9 @@ class UnresolvedImport:
     Either way it says nothing about where the name lives, which the name's
     imports that do resolve still attest; a name none of whose imports
     resolve is a namesake, and external (:func:`_checked`). So it leaves no
-    name in doubt. The file making it is never a provider, and no file is
-    the missing module, so no import is ever spelled into it.
+    name in doubt. The file making it is neither a provider nor given a new
+    import, and no file is the missing module, so no import is ever spelled
+    into it.
     """
 
     site: ImportSite
@@ -315,6 +320,11 @@ class UnresolvedImport:
     @property
     def found_at(self) -> Tuple[Path, ...]:
         return (self.site.file,)
+
+    @property
+    def from_inside(self) -> bool:
+        """Whether the file lies in the package it names a module of, as its own ``_version`` import does."""
+        return self.site.file.is_relative_to(self.location)
 
     def describe(self, root: Path) -> str:
         return (
@@ -411,12 +421,14 @@ class RelativeImportMissing:
 
     Like an :class:`UnresolvedImport`, it names a module and not a place: a
     package's ``from ._version import __version__`` names a module its build
-    generates. It leaves no name in doubt, and the file making it is never a
-    provider.
+    generates. It leaves no name in doubt, and the file making it is neither
+    a provider nor given a new import.
     """
 
     site: ImportSite
     missing: str
+    package: Optional[str] = None
+    """The attested name whose location holds the file, when one does."""
 
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
@@ -425,6 +437,11 @@ class RelativeImportMissing:
     @property
     def found_at(self) -> Tuple[Path, ...]:
         return (self.site.file,)
+
+    @property
+    def from_inside(self) -> bool:
+        """Whether the file lies in a package the program names, whose module it lacks."""
+        return self.package is not None
 
     def describe(self, root: Path) -> str:
         return f"{self.site.where(root)}: {self.site.statement()} names {self.missing}, which does not exist"
@@ -443,8 +460,11 @@ ImportProblem = Union[
 Each kind says which top-level names it leaves in doubt (``names_in_doubt``),
 which are never spelled into, and where in the tree it lies (``found_at``):
 the locations it concerns, or the file holding its import, which is never a
-provider.
+provider and never given a new import.
 """
+
+MissingModule = Union[UnresolvedImport, RelativeImportMissing]
+"""An import of a module the tree lacks: it leaves no name in doubt, only its own file."""
 
 
 # -- Spellings ----------------------------------------------------------------
@@ -529,7 +549,9 @@ class ImportModel:
         """The module ``importer`` can name ``provider`` by, or ``None`` when none is known to work.
 
         ``None`` is the answer whenever the program's own imports do not show
-        the spelling works: the caller declines rather than guess.
+        the spelling works: the caller declines rather than guess. A file
+        holding a problem's import is given no new import, since how it runs
+        is what the tree does not show.
         """
         importing, providing = importer.resolve(), provider.resolve()
         source, target = self._modules.get(importing), self._modules.get(providing)
@@ -539,7 +561,9 @@ class ImportModel:
             # A package's __main__ runs as the program, under the name __main__;
             # importing it by any other name runs the program a second time.
             return None
-        if source.sites is None or target.sites is None or self._blocked_provider(providing):
+        if source.sites is None or target.sites is None or importing in self._flagged_files:
+            return None
+        if self._blocked_provider(providing, importing):
             return None
         if not self._only_entered_directories(importing, providing):
             return None
@@ -554,6 +578,15 @@ class ImportModel:
         if evidence is None or module is None:
             return None
         return ImportSpelling(module, SpellingBasis.ATTESTED, evidence)
+
+    @property
+    def importers_of_missing_modules(self) -> FrozenSet[Path]:
+        """Every file making an import of a module the tree lacks (:data:`MissingModule`)."""
+        return frozenset(
+            problem.site.file
+            for problem in self.problems
+            if isinstance(problem, (UnresolvedImport, RelativeImportMissing))
+        )
 
     def context_of(self, module: Path) -> Optional[Path]:
         """The top-level package ``module`` belongs to, or ``module`` itself when it is in none."""
@@ -670,8 +703,15 @@ class ImportModel:
             directory = directory.parent
         return True
 
-    def _blocked_provider(self, provider: Path) -> bool:
-        """Whether importing ``provider`` could load the wrong file, or a file that cannot load."""
+    def _blocked_provider(self, provider: Path, importer: Optional[Path] = None) -> bool:
+        """Whether importing ``provider`` could load the wrong file, or a file that cannot load.
+
+        Importing a module through its package runs every initializer above
+        it, so an initializer holding a problem's import blocks the modules
+        below it, except for an ``importer`` that is itself imported through
+        that package: its own import has run the initializer already, and a
+        new import of its sibling runs it nowhere it did not run.
+        """
         if provider in self._flagged_files:
             return True
         for candidate in (provider, *provider.parents):
@@ -679,11 +719,22 @@ class ImportModel:
                 return True
             if candidate == self.root:
                 break
-        # Importing a module through its package runs every initializer above it.
-        for directory in _chain(provider.parent, self._packages, self.root):
-            if directory / "__init__.py" in self._flagged_files:
-                return True
-        return False
+        return any(
+            directory / "__init__.py" in self._flagged_files
+            and not self._imported_through(importer, directory)
+            for directory in _chain(provider.parent, self._packages, self.root)
+        )
+
+    def _imported_through(self, module: Optional[Path], directory: Path) -> bool:
+        """Whether importing ``module`` runs ``directory``'s initializer: it is below it in its package."""
+        if module is None:
+            return False
+        package = self._package_of.get(module)
+        return (
+            package is not None
+            and module.is_relative_to(directory)
+            and directory.is_relative_to(package)
+        )
 
     def _module_file(self, location: Path, inner: Sequence[str]) -> Optional[Path]:
         if location in self._modules:
@@ -1686,7 +1737,7 @@ def _relative_problems(
             index = listings.first_missing(base, parts)
             if index is not None:
                 missing = "." * site.level + ".".join(parts[: index + 1])
-                yield RelativeImportMissing(site, missing)
+                yield RelativeImportMissing(site, missing, name)
 
 
 def _flags(problems: Sequence[ImportProblem]) -> Tuple[FrozenSet[str], FrozenSet[Path]]:
