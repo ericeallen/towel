@@ -182,21 +182,58 @@ import those show to work wherever the program runs
 - across top-level packages, an absolute import only when the importing
   package already imports the other one, spelled as it already does;
 - into a directory only where the importing side already imports from it,
-  so a library never borrows from the test package inside it.
+  with an import that runs whenever its module is imported, not one inside a
+  function, so a library never borrows from the test package inside it;
+- never from a module the build configuration leaves out of what ships into
+  one it keeps: hatch's `exclude`, `include`, `only-include` and
+  `packages`, setuptools' `packages.find` excludes or an explicit
+  `packages` list, MANIFEST.in's `exclude`, `recursive-exclude`,
+  `global-exclude` and `prune` (a wheel built from the sdist lacks what the
+  sdist does), Poetry's `exclude`, PDM's `excludes`, uv's, flit's and
+  scikit-build-core's excludes, and what a `.gitignore` covers. The module
+  left out may still borrow from the one that ships. What a setup.py or a
+  build hook leaves out is not known.
 
 A host that no participating module can import that way is not taken, and a
 pair with no such host is declined (`unproven_import`). The costs: sibling
 packages that never import each other share nothing; a directory of scripts
-that import nothing local gets no cross-file helpers; and a name the tree
-makes ambiguous (a stale `build/lib/alpha` beside `src/alpha`, or an
-installed copy of the package that the interpreter running Towel can see)
-gets none until the stray copy is left out with `--exclude`. On the command
-line, a `--cross-module` run names each such problem before it starts, and
-refuses when one leaves a name of the package it refactors in doubt: an
-ambiguous name, a file reachable under two names, a relative import that
-climbs out of its package.
+that import nothing local gets no cross-file helpers; and a name in doubt
+gets none. Each kind of doubt has its own remedy:
 
-An import of a module the tree lacks refuses nothing, wherever it lies. The
+- a second copy in the tree, such as a stale `build/lib/alpha` beside
+  `src/alpha`, or an import that names a module two ways or climbs out of
+  its package: leave out the directory holding it with `--exclude`, or fix
+  the import;
+- a copy the interpreter running Towel can import from outside the project,
+  including one installed in the project's own `.venv`: `--exclude` cannot
+  reach it, so run Towel from an environment where that name is this tree,
+  such as one with the project installed editable (`pip install -e .`), or
+  from one without it; if the project's directory of that name is a
+  namesake, leaving it out with `--exclude` also resolves it;
+- a directory named like a distribution the project requires, such as a
+  `click/` beside `dependencies = ["click>=8"]`, which is what the installed
+  project imports as `click`: rename the directory or leave it out with
+  `--exclude`, or drop the requirement if the directory is what the program
+  means.
+
+The requirements read are PEP 621's dependencies and extras, PEP 735's
+dependency groups, Poetry's dependency tables and groups, setup.cfg's
+`install_requires` and `extras_require`, the lockfiles uv, Poetry, PDM and
+Pipenv write, and `requirements*.txt` at the project root. A distribution is
+matched to a name by its own normalized name, so one whose import name
+differs (`PyYAML` provides `yaml`) is recognized only where the interpreter
+running Towel can import it: run Towel in the project's own environment.
+
+On the command line, a `--cross-module` run names each such problem before
+it starts, with the remedy for its kind, and refuses when one leaves a name
+of the package it refactors in doubt: an ambiguous name, a file reachable
+under two names, a relative import that climbs out of its package, or a
+top-level name found only inside a package the program also imports as one,
+as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`.
+
+An import of a module the tree lacks refuses nothing, wherever it lies,
+however it is spelled: `from .gone import x`, `from . import gone` or
+`from pkg import gone`, where `pkg`'s initializer binds no `gone`. The
 run leaves the file making it exactly as it was, neither hosting nor
 borrowing a helper and getting none of its own, and says so, naming the
 file: test data such as sphinx's `need_mocks.py`, which imports a module its
@@ -663,13 +700,16 @@ adopted into its real location. If you still hit an import error:
   hand-built `RefactoringProposal` skips host selection, and its import is
   refused when no spelling is known.
 - Run Towel with the interpreter the project uses: an installed copy of the
-  package that only another interpreter holds is invisible to it.
+  package, or a library named like one of its directories, that only another
+  interpreter holds is invisible to it unless the project declares it.
 
 ### "No helper shared across modules"
 
 - Pass `--cross-module`: by default only duplicates within a module are paired.
-- If the run names import problems, leave out the directory holding the stray
-  copy or the broken import with `--exclude`.
+- If the run names import problems, follow the remedy it prints for each
+  kind (*How a cross-module import is spelled* above): `--exclude` for a
+  stray copy in the tree, another environment for an installed copy, and a
+  rename or `--exclude` for a directory named like a required distribution.
 - A file the run names as importing a module the tree lacks is left
   unchanged. If it is a package's `__init__.py` importing a generated
   `_version.py`, install the project (`pip install -e .`) so the module

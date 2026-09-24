@@ -346,9 +346,28 @@ between two modules of one package the relative import, or the absolute one
 where the importing module already spells its own package absolutely; across
 top-level packages an absolute import only where the importing package
 already imports the other; and into a directory only where the importing
-side already imports from it, so `bs4` never borrows from `bs4/tests`, which
-its wheel leaves out. A candidate host some borrower cannot import that way
-is never taken, and a pair none survives is declined (`unproven_import`).
+side already imports from it, with an import that runs whenever its module
+is imported, so `bs4` never borrows from `bs4/tests`, which its wheel leaves
+out. An import inside a function shows nothing: shop's `cli.main` imported
+`shop.devtools` only for a developer's command, setuptools' `find` excluded
+it from the wheel, and `shop/stats.py` was made to import it unconditionally
+(the third audit's D5). A module the build configuration declares left out
+of the wheel or the sdist, from which the wheel is usually built, is never a
+host for a module it keeps: hatch's `exclude = ["src/shop/_devtools.py"]`
+kept one module out of a package that ships, and the installed `shop.stats`
+could not import the helper hosted there. The declarations read, only to put
+a host in doubt and never to name a module, are hatch's `exclude`,
+`include`, `only-include` and `packages`; setuptools' `packages.find`
+`include` and `exclude` and an explicit `packages` list, in pyproject.toml
+or setup.cfg; MANIFEST.in's `exclude`, `recursive-exclude`, `global-exclude`
+and `prune`; Poetry's `exclude`, PDM's `excludes`, uv's `source-exclude` and
+`wheel-exclude`, flit's sdist `exclude` and scikit-build-core's excludes; and
+every `.gitignore` above a module. Each is read to leave out at least what
+the backend would, and an include that could put a file back is not read.
+What a setup.py, a build hook or a backend not listed leaves out is not
+known, and a module it leaves out can still host a helper. A candidate host
+some borrower cannot import that way is never taken, and a pair none
+survives is declined (`unproven_import`).
 Names are read from every Python file under the project root, but not from a
 directory `--exclude` names, which is how a stray copy is set aside, nor from
 the directories every scan skips or behind a symbolic link; what an import
@@ -356,16 +375,39 @@ that enters one runs is then unknown, and a host whose import would enter
 one is not taken. The costs, accepted by the owner: sibling packages that
 never import each other share nothing, and nor do subpackages that never
 import from each other (hostile fixture `xf23`); a directory of scripts that
-import nothing local gets no cross-file helpers; and a name the tree leaves
-ambiguous, such as a stale `build/lib/alpha` beside `src/alpha`, or a
-package this interpreter can import from elsewhere, gets none until the
-stray copy is excluded. Towel runs with the interpreter it was started with,
-which stands for the project's: run it in the project's own environment.
-Before it writes anything, a `--cross-module` run of `dry` or `preview`
-names every such problem with that remedy, and refuses the run when one
-leaves in doubt a top-level name located at or around the target, or lies
-under the target and leaves its own file's name in doubt. An import of a
-module the tree lacks leaves no name in doubt and refuses nothing, from the
+import nothing local gets no cross-file helpers; and a name in doubt gets
+none. A name is in doubt when the tree holds two copies of it, such as a
+stale `build/lib/alpha` beside `src/alpha`, which `--exclude` sets aside;
+when this interpreter can import it from outside the project, the project's
+own `.venv` included, which `--exclude` cannot reach, so Towel must run where
+that name is this tree (the project installed editable) or where nothing
+provides it; and when the project requires a distribution of that name, so
+that installed it imports the distribution and not the directory, which is
+resolved by renaming or excluding the directory, or by dropping the
+requirement. The third audit's P1-2 was such a namesake: `app` required
+`click>=8` and the tree held a `click/` sharing `utils.py` with the library;
+run from `uvx`, which lacks click, Towel hosted a helper in `click/utils.py`,
+and the installed `app` could not import it. A requirement is read from
+PEP 621's dependencies and extras, PEP 735's groups, Poetry's dependency
+tables, setup.cfg's `install_requires` and `extras_require`, the uv, Poetry,
+PDM and Pipenv lockfiles, and `requirements*.txt` at the root, and matched
+to a name by its own normalized name. So a distribution whose import name
+differs from its own (`PyYAML` provides `yaml`), a dependency's dependency
+where no lockfile records it, and whatever a setup.py, `tox.ini` or CI
+recipe installs are known only when this interpreter can import them: Towel
+runs with the interpreter it was started with, which stands for the
+project's, so run it in the project's own environment. A top-level name
+found only as a module inside a package the program imports as one, as
+`pkg/c.py`'s `import helpers_top` finds only `pkg/helpers_top.py`, is in
+doubt too, and the file making the import runs as a script, so it is given
+no new import (the third audit's P1-6). Before it writes anything, a
+`--cross-module` run of `dry` or `preview` names every such problem with the
+remedy for its kind, and refuses the run when one leaves in doubt a
+top-level name located at or around the target, or lies under the target and
+leaves its own file's name in doubt. An import of a module the tree lacks,
+however it is spelled (`from . import gone` and `from pkg import gone` as
+much as `from .gone import x`, where nothing binds `gone`), leaves no name in
+doubt and refuses nothing, from the
 root, on a package or on a subpackage; the file making it is left exactly as
 it was, with no helper hosted, borrowed or extracted within it. The cost is
 that file's own duplicates, and, when it is a package's `__init__.py`, every
