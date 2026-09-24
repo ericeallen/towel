@@ -1163,7 +1163,9 @@ formed pair:
   name, and is reached only by the relative imports of its own package.
 
 Set `DEBUG_PROPOSAL_REJECTIONS=1` to log the reason for each rejected pair
-(the `towel.rejections` logger, at DEBUG, on stderr).
+(the `towel.rejections` logger, at DEBUG, on stderr), one line per pair
+naming each block by file, function and lines:
+`REJECT[reason]: path::function@(start, end) <-> path::function@(start, end)`.
 
 ## Performance
 

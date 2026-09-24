@@ -275,6 +275,11 @@ class _PairingProgress:
             print(file=sys.stderr)
 
 
+def _traced_block(file_path: str, function: str, block_range: Optional[Tuple[int, int]]) -> str:
+    """A block as the rejection trace names it: ``path::function@(start, end)``."""
+    return f"{file_path}::{function}" + (f"@{block_range}" if block_range else "")
+
+
 def _size_or_zero(path: str) -> int:
     try:
         return os.path.getsize(path)
@@ -542,16 +547,17 @@ class UnificationRefactorEngine(ParallelEvaluation):
     ) -> None:
         """Note why the pair is declined, and trace it when DEBUG_PROPOSAL_REJECTIONS is set.
 
-        The reason is kept for ``_judge_pair``, which counts it; the trace
-        includes function names and block ranges to help triage pruning gates.
+        The reason is kept for ``_judge_pair``, which counts it. The trace
+        names each block by its file, function and line range
+        (``path::function@(start, end)``), so a trace over many files locates
+        every pair it declines.
         """
         self._pair_rejection = reason
         if not debugging(REJECTIONS):
             return
-        msg = (
-            f"REJECT[{reason}]: {pair.function1_name}{'@'+str(pair.block1_range) if pair.block1_range else ''} "
-            f"<-> {pair.function2_name}{'@'+str(pair.block2_range) if pair.block2_range else ''}"
-        )
+        first = _traced_block(pair.file_path, pair.function1_name, pair.block1_range)
+        second = _traced_block(pair.file_path2, pair.function2_name, pair.block2_range)
+        msg = f"REJECT[{reason}]: {first} <-> {second}"
         if detail:
             msg += f" :: {detail}"
         REJECTIONS.debug(msg)
