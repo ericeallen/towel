@@ -27,7 +27,10 @@ def test_recover_reports_an_invalid_journal_with_a_failure_status(tmp_path: Path
     missing = tmp_path / "missing"
     result = invoke(["recover", str(missing)])
     assert result.status == 1
-    assert result.stderr == f"Error: Invalid transaction directory: {missing}\n"
+    assert result.stderr == (
+        f"Error: Invalid transaction directory: {missing}: a journal's name begins with"
+        " .towel-transaction-\n"
+    )
     assert result.stdout == ""
 
 

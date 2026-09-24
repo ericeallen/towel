@@ -205,6 +205,65 @@ def test_recover_refuses_a_journal_owned_by_another_user(
     assert files[0].read_bytes() == b"value = 2\n" and journal.is_dir()
 
 
+def test_recover_resolves_a_symbolic_link_above_the_journal(tmp_path: Path) -> None:
+    """macOS's ``/tmp`` is a link to ``/private/tmp``; a journal named through it is the same one."""
+    real = tmp_path / "real"
+    real.mkdir()
+    files, journal = _interrupted_transaction(real)
+    (tmp_path / "alias").symlink_to(real)
+    recover(tmp_path / "alias" / journal.name)
+    assert all(path.read_bytes() == b"value = 1\n" for path in files)
+    assert not journal.exists()
+
+
+def test_recover_through_a_relative_path_with_parent_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "work").mkdir()
+    files, journal = _interrupted_transaction(tmp_path)
+    monkeypatch.chdir(tmp_path / "work")
+    recover(Path("..") / journal.name)
+    assert all(path.read_bytes() == b"value = 1\n" for path in files)
+
+
+@pytest.mark.parametrize(
+    "spell, reason",
+    [
+        (lambda journal: journal.with_name("missing-journal"), "a journal's name begins with"),
+        (lambda journal: journal.with_name(".towel-transaction-gone"), "does not exist"),
+    ],
+    ids=["not-a-journal-name", "missing"],
+)
+def test_recover_says_why_a_path_names_no_journal(
+    tmp_path: Path, spell: Callable[[Path], Path], reason: str
+) -> None:
+    _, journal = _interrupted_transaction(tmp_path)
+    with pytest.raises(ChangeConflict, match=reason):
+        recover(spell(journal))
+    assert journal.is_dir()
+
+
+def test_recover_refuses_a_link_named_like_a_journal_and_says_why(tmp_path: Path) -> None:
+    """Followed, the link would restore files beside it rather than beside the journal."""
+    (tmp_path / "elsewhere").mkdir()
+    files, journal = _interrupted_transaction(tmp_path / "elsewhere")
+    link = tmp_path / ".towel-transaction-link"
+    link.symlink_to(journal)
+    with pytest.raises(ChangeConflict, match="is a symbolic link, not a journal a run wrote"):
+        recover(link)
+    assert files[0].read_bytes() == b"value = 2\n" and journal.is_dir()
+
+
+def test_recover_names_the_remedy_for_a_journal_whose_mode_was_changed(tmp_path: Path) -> None:
+    files, journal = _interrupted_transaction(tmp_path)
+    journal.chmod(0o755)
+    with pytest.raises(ChangeConflict, match=f"chmod 700 {journal} and then run towel recover"):
+        recover(journal)
+    journal.chmod(0o700)
+    recover(journal)
+    assert all(path.read_bytes() == b"value = 1\n" for path in files)
+
+
 def test_recover_refuses_a_target_edited_during_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

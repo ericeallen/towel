@@ -31,7 +31,7 @@ from pathlib import Path
 from .source_text import encode_like
 import stat
 import tempfile
-from typing import Mapping, Set, TypedDict
+from typing import Mapping, Optional, Set, TypedDict
 
 from .diagnostics import LOG
 
@@ -46,6 +46,10 @@ class StaleSource(ChangeConflict):
 
 class RecoveryRequired(OSError):
     """Rollback could not finish; the journal must be retained for recovery."""
+
+
+JOURNAL_PREFIX = ".towel-transaction-"
+"""How the name of every journal begins; the rest is random, so concurrent runs never share one."""
 
 
 @dataclass(frozen=True)
@@ -223,14 +227,14 @@ def apply_changes(plan: ChangePlan) -> None:
     pending = sorted(
         path
         for parent in parents
-        for path in parent.glob(".towel-transaction-*")
+        for path in parent.glob(f"{JOURNAL_PREFIX}*")
         if _journal_covers(path, targets)
     )
     if pending:
         raise RecoveryRequired(f"Recover the existing transaction first: {pending[0]}")
     if any(change.path.stat().st_dev != root.stat().st_dev for change in plan.changes):
         raise ChangeConflict("A transaction cannot span filesystems")
-    journal = root / f".towel-transaction-{secrets.token_hex(4)}"
+    journal = root / f"{JOURNAL_PREFIX}{secrets.token_hex(4)}"
     try:
         journal.mkdir(mode=0o700)
     except FileExistsError as error:
@@ -281,18 +285,74 @@ def apply_changes(plan: ChangePlan) -> None:
         LOG.warning("Changes committed; journal cleanup requires attention: %s: %s", journal, error)
 
 
+def _journal_directory(journal: Path) -> Path:
+    """``journal`` spelled canonically, or a ChangeConflict saying why it names no journal.
+
+    A journal restores the files beside it, whose paths must be canonical, so
+    the directory it sits in is resolved: a path through a symbolic link, such
+    as macOS's ``/tmp``, names the same journal. The journal itself must be
+    the directory a run wrote, not a link to one, which would restore files
+    beside the link rather than beside the journal.
+    """
+    absolute = journal.absolute()
+    if not absolute.name.startswith(JOURNAL_PREFIX):
+        raise ChangeConflict(
+            f"Invalid transaction directory: {journal}: a journal's name begins with"
+            f" {JOURNAL_PREFIX}"
+        )
+    canonical = absolute.parent.resolve() / absolute.name
+    try:
+        info = canonical.lstat()
+    except FileNotFoundError:
+        raise ChangeConflict(f"Invalid transaction directory: {journal} does not exist") from None
+    if stat.S_ISLNK(info.st_mode):
+        raise ChangeConflict(
+            f"Invalid transaction directory: {journal} is a symbolic link, not a journal a run"
+            " wrote, and a journal restores the files beside it; recover the journal it points"
+            " to by that journal's own path, or remove the link"
+        )
+    if not stat.S_ISDIR(info.st_mode):
+        raise ChangeConflict(
+            f"Invalid transaction directory: {journal} is not a directory, so not a journal a"
+            " run wrote; rename or remove it"
+        )
+    return canonical
+
+
+def _distrust(journal: Path) -> Optional[str]:
+    """Why ``recover`` will not trust the journal directory ``journal``, and what would; None if it will.
+
+    Every journal a run writes is a directory only its owner can enter, so
+    one that another user owns, or whose mode differs, is not read.
+    """
+    info = journal.stat()
+    if info.st_uid != os.getuid():
+        return (
+            f"{journal} belongs to another user (uid {info.st_uid}); only its owner can recover"
+            f" it, with towel recover {journal}"
+        )
+    mode = stat.S_IMODE(info.st_mode)
+    if mode != 0o700:
+        return (
+            f"{journal} has mode {mode:04o}, and every journal Towel writes has mode 0700; if"
+            f" Towel wrote it, restore that with chmod 700 {journal} and then run towel recover"
+            f" {journal}, and if it did not, rename or remove it"
+        )
+    return None
+
+
 def recover(journal: Path) -> None:
     """Restore originals from a trusted local journal, refusing conflicting edits.
 
     Validate the entire journal and all targets before restoring its first file.
     Recovery is itself restartable after interruption.
     """
-    journal = journal.absolute()
-    if journal.resolve() != journal or not journal.name.startswith(".towel-transaction-"):
-        raise ChangeConflict(f"Invalid transaction directory: {journal}")
-    info = journal.stat()
-    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
-        raise ChangeConflict("Recovery requires an owner-only journal owned by the current user")
+    journal = _journal_directory(journal)
+    distrust = _distrust(journal)
+    if distrust is not None:
+        raise ChangeConflict(
+            f"Recovery requires an owner-only journal owned by the current user: {distrust}"
+        )
     if (journal / "complete").is_file():
         _cleanup(journal)
         return
