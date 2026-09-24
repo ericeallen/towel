@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import ast
 import textwrap
+from pathlib import Path
 
 from towel.unification.annotation_ladder import (
     narrowing_needed_in_thunk,
     partial_type_passed,
 )
+from towel.unification.annotation_wiring import _variant_key, mypy_ladder_flags
 from towel.unification.exceptions import Untypeable
 from towel.unification.placement import method_helper_position
 
@@ -169,3 +171,38 @@ def test_attributes_pulling_both_ways_leave_the_helper_where_it_was() -> None:
                 self.__extracted_func_0(value)
                 self.twice = value
             """) is None
+
+
+# -- What the ladder knows before checking -------------------------------------------
+
+
+def test_a_variant_is_known_by_its_text_apart_from_its_helpers_generated_name() -> None:
+    first = {"/p/m.py": "def __extracted_func_6():\n    pass\n\n__extracted_func_6()\n"}
+    again = {"/p/m.py": "def __extracted_func_9():\n    pass\n\n__extracted_func_9()\n"}
+    other = {"/p/m.py": "def __extracted_func_9():\n    return 1\n\n__extracted_func_9()\n"}
+    assert _variant_key(first, "__extracted_func_6") == _variant_key(again, "__extracted_func_9")
+    assert _variant_key(first, "__extracted_func_6") != _variant_key(other, "__extracted_func_9")
+
+
+def test_the_ladder_reads_strict_and_the_flags_it_sets_per_module(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.mypy]\nstrict = true\n\n"
+        "[[tool.mypy.overrides]]\nmodule = 'pkg.loose'\nwarn_return_any = false\n"
+    )
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "loose.py").write_text("")
+    (package / "tight.py").write_text("")
+    assert mypy_ladder_flags(package / "tight.py") == {
+        "disallow_untyped_defs": True,
+        "warn_return_any": True,
+        "check_untyped_defs": True,
+    }
+    assert mypy_ladder_flags(package / "loose.py")["warn_return_any"] is False
+    (tmp_path / "pyproject.toml").write_text("[tool.mypy]\ncheck_untyped_defs = true\n")
+    assert mypy_ladder_flags(package / "tight.py") == {
+        "disallow_untyped_defs": False,
+        "warn_return_any": False,
+        "check_untyped_defs": True,
+    }

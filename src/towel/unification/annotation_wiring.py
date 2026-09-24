@@ -983,11 +983,21 @@ class HelperAnnotationWiring(EngineState):
                     found.setdefault(parameter, set()).add(method.class_name)
         return {parameter: frozenset(classes) for parameter, classes in found.items()}
 
-    @staticmethod
-    def _helper_uses_any(proposal: RefactoringProposal) -> bool:
-        """Whether the ordinary signature has already lost part of its type information."""
+    @classmethod
+    def _helper_uses_any(cls, proposal: RefactoringProposal) -> bool:
+        """Whether the ordinary signature has already lost part of its type information.
+
+        A method helper's receiver is left bare on purpose (its class fixes
+        it), so it loses nothing; counted as lost, it sent every method helper
+        to the generic candidates before its own precise signature.
+        """
         helper = proposal.extracted_function
-        annotations = [arg.annotation for arg in helper.args.posonlyargs + helper.args.args]
+        receiver = cls._receiver_name(proposal)
+        annotations = [
+            arg.annotation
+            for arg in helper.args.posonlyargs + helper.args.args
+            if arg.arg != receiver
+        ]
         annotations.append(helper.returns)
         for annotation in annotations:
             if annotation is None:
