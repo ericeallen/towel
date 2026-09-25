@@ -30,6 +30,20 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A parallel run could hang for ever. Pair-evaluation workers were forked
+  while other threads ran:
+  - tqdm's monitor, in every run with the default progress bars;
+  - the progress heartbeat, from a directory run's second pass;
+  - each warm pyright session's reader.
+
+  A forked child keeps every lock as it stood. So a worker forked while one
+  of those threads was writing to stderr waited on stderr's lock when it
+  flushed at exit, and the run waited on the worker. Towel now ends its
+  threads for the moment of the fork and starts them again after, so
+  workers fork from a process with one thread. A thread Towel does not run,
+  or one that does not end within 2 s, keeps evaluation in the process, and
+  the run says so once, naming it. Python 3.12 and 3.13 no longer warn that
+  a multi-threaded process is forking.
 - A block that rebinds a name bound before it is now declined, whatever
   construct rebinds it: a `for` or `with` target, a `match` capture, a
   nested `def` or `class`, an import, or a walrus. So
