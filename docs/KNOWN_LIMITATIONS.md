@@ -300,9 +300,12 @@ addresses:
   binds by import or assignment, are rejected; rebinding through
   `globals()[...]`, `setattr`, another thread, or a callee is not detected.
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
-  usual descriptor protocol. Methods decorated with anything other than the
-  recognized receiver-preserving decorators receive a module-level helper with
-  the receiver passed explicitly. A class decorator is trusted to leave a
+  usual descriptor protocol. Only a method whose decorators are all known to
+  leave its body alone is refactored at all (*Decorators that compile or
+  instrument a body*), in a class whose machinery passes the test below; one
+  decorated with any of them but the recognized
+  receiver-preserving decorators receives a module-level helper with the
+  receiver passed explicitly. A class decorator is trusted to leave a
   helper in place only when it is one of `dataclasses.dataclass`,
   `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
   `enum.unique`, reached through the module's own absolute imports; a class
@@ -312,12 +315,14 @@ addresses:
   class holding both duplicates takes one only when all of that is known to
   leave a plain function alone: its metaclass is `type`, `abc.ABCMeta` or the
   enum metaclass, it defines no `__init_subclass__` itself, and each base is
-  a builtin class, `abc.ABC`, `typing.Generic[...]`, an enum, or a class of
-  the project that qualifies in turn, resolved through the module's imports.
+  a builtin class, `abc.ABC`, `typing.Generic[...]`, an enum, one of the
+  library classes read to build a subclass with Python's own machinery
+  (*Decorators that compile or instrument a body* below), or a class of the
+  project that qualifies in turn, resolved through the module's imports.
   Any other class (pygments' lexers, whose metaclass is the project's own; a
   base reached through a star import or built by a call such as
-  `with_metaclass(...)`; `NamedTuple`; a library's base class) gets the
-  module-level helper that takes the receiver as an argument. `__slots__`
+  `with_metaclass(...)`; `NamedTuple`; a library base class nobody read)
+  keeps its code: moving it out is refused as well. `__slots__`
   interactions with added methods are not modeled beyond compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
@@ -620,8 +625,9 @@ fails and nothing spells the helper's stored name: a class whose
 a subclass may lie outside the project: one that lets the class's own methods
 through but answers every other name from another object sends
 `self.__extracted_func_0` there too, and the call raises on its instances.
-Local classes, nested classes, duplicated class names, unknown decorators,
-functions nested inside methods, and class-body functions with no parameter or
+Local classes, nested classes, duplicated class names, decorators known to
+leave the body alone but not to preserve the receiver (`mock.patch`,
+`pytest.mark.*`), functions nested inside methods, and class-body functions with no parameter or
 a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join a
 method helper only when they are methods of the same class with the same
@@ -997,6 +1003,171 @@ where the evidence comes from:
   when the oracle is closed; a kill signal can leave one there, never in the
   project.
 
+## Decorators that compile or instrument a body
+
+Some decorators do more than wrap the function they decorate. typeguard's
+`@typechecked` recompiles it from its source with a check after every
+annotated assignment, and numba's `@njit` compiles it in nopython mode. Code
+moved out of such a function into a plain helper is no longer checked or
+compiled: the check stops raising, or the kernel calling a Python helper
+stops compiling. So Towel extracts a block, or places a call site, only where
+every decorator that can reach the code is known to leave the body alone, and
+places a helper inside a function or class only under the same condition.
+The decorators that can reach a function's code are its own, those of every
+function enclosing it, and those of every class enclosing it (typeguard
+instruments every method of a decorated class). Anything else is declined
+under `decorator_may_transform_body[...]`, which names the decorator
+(fixtures `r7d_*`).
+
+A decorator is known when it is one of these:
+
+- An entry of `KNOWN_DECORATORS` in `src/towel/unification/decorator_reach.py`,
+  each recording its canonical name and the library version whose source was
+  read to verify it: the builtins `property` (and its `setter`, `getter`,
+  `deleter`), `staticmethod` and `classmethod`; `functools.wraps`, `cache`,
+  `lru_cache`, `cached_property`, `singledispatch`, `singledispatchmethod`,
+  `partialmethod` and, on classes, `total_ordering`; `contextlib.contextmanager`
+  and `asynccontextmanager`; `abc.abstractmethod`; `typing` and
+  `typing_extensions` `overload`, `override`, `final`, `no_type_check`,
+  `runtime_checkable`, `dataclass_transform` and `deprecated` (with
+  `warnings.deprecated`); `dataclasses.dataclass` and `enum.unique` on classes;
+  `unittest.mock.patch` and its `object`, `dict` and `multiple`,
+  `unittest.skip`, `skipIf`, `skipUnless` and `expectedFailure`;
+  `pytest.fixture` and every `pytest.mark.*`; and click's `command` and `group`
+  (without a `cls` argument), `option`, `argument`, `confirmation_option`,
+  `password_option`, `version_option`, `help_option`, `pass_context` and
+  `pass_obj`.
+- A function of the project that Towel can show is a plain wrapper: it returns
+  the function unchanged, perhaps after storing it in a module-level `dict`,
+  `list` or `set` display (a registry) or setting a non-dunder attribute on it,
+  or it returns a wrapper that only calls the function with the wrapper's own
+  arguments, with or without `functools.wraps`. A factory of such a decorator
+  (`@retry(3)`) counts too. It must not read the function's `__code__`,
+  `__globals__`, `__closure__` or any attribute but `__name__`, `__qualname__`,
+  `__module__` and `__doc__`, nor hand it to any callable but `wraps`,
+  `update_wrapper` and a registry's own container methods; a decorator doing
+  anything the analysis cannot show harmless is declined, however harmless it
+  is.
+
+Names are resolved by binding, never by spelling. `from functools import wraps
+as w` makes `@w(f)` `functools.wraps`; a `property` the module or class binds
+itself is not the builtin; `@pytest.mark.parametrize(...)` and
+`@click.option(...)` resolve through the callee of the call, and
+`needs_db = pytest.mark.skipif(...)` makes `@needs_db` that call's decorator. A
+module-level name counts only when every binding the module could give it is
+known, so a compatibility import (`try: from typing import override` ...
+`except ImportError: from typing_extensions import override`) counts and a name
+rebound anywhere in the module to something unknown does not. A decorator
+named through a local of an enclosing function, a method of an object
+(`@app.route("/x")`, `@cli.command()`, `@f.register`), a class, or any other
+expression is declined.
+
+A decorator applied by hand counts as one written with `@`: every call in the
+value of an assignment at module or class level, in any module of the
+project, applies its callee to each definition an argument of it names, and
+is judged as that decorator would be. `fast = numba.njit(kernel)` and
+`fast = njit(cache=True)(kernel)` decline `kernel`, `f = typechecked(f)`
+declines `f`, `method = wrap(method)` in a class body declines `method`, and
+`C = typechecked(C)` declines every method of `C`, however the argument is
+spelled (`kernels.slow`, an alias, a name imported from another module). A
+call given the function among other arguments (`x = property(get, set)`,
+`T = TypeVar("T", bound=Model)`) is covered only where the entry's reading
+covers it. A name that cannot be followed to its definition (through a star
+import, a name bound by a loop) is taken to be every definition of its name.
+So `ORDER = sorted(items, key=rank)` at module level declines `rank`.
+
+The class that holds the code is judged by its machinery as well: a
+metaclass, or an `__init_subclass__` anywhere on its method resolution order,
+may wrap or recompile its methods while the class is built. Every class
+enclosing the code must pass the test a class taking a method helper passes
+(*Metaclasses and descriptors* below): a metaclass that is `type`,
+`abc.ABCMeta` or the enum metaclass, no `__init_subclass__` or
+`__getattribute__` of its own, and bases that are builtins, `abc.ABC`,
+`typing.Generic[...]`, enums, the library classes below, or classes of the
+project that pass in turn, whose decorators are known to add no machinery. A
+class not in a module's own body passes only when it has no bases and no
+keywords, and binds neither name. Anything else declines under
+`class_machinery_may_transform_methods[...]`, which names what fails the test:
+`metaclass LexerMeta`, `__init_subclass__ of Base`, `decorator mock.patch of
+Base`, or `base pydantic.BaseModel`, since the test reads no other class
+outside the project.
+
+The library classes are those of `KNOWN_BASES` in
+`src/towel/unification/known_bases.py`, each read in CPython 3.11.15, 3.12.13
+and 3.13.7 and checked of the running interpreter by the suite: `type` or
+`ABCMeta` builds a subclass, nothing on the order defines
+`__getattribute__`, and none defines `__init_subclass__` but
+`unittest.TestCase`, whose own only sets two attributes of the subclass. They
+are `unittest.TestCase`, `IsolatedAsyncioTestCase`, `TestResult` and
+`TextTestResult`; `asyncio.BaseProtocol`, `Protocol`, `BufferedProtocol`,
+`DatagramProtocol` and `SubprocessProtocol`; `ast.NodeVisitor` and
+`NodeTransformer`; `logging.Filterer`, `Filter`, `Formatter`, `Handler` and
+`StreamHandler`; `threading.Thread`; `html.parser.HTMLParser`;
+`json.JSONEncoder` and `JSONDecoder`; `argparse.Action`, `HelpFormatter`,
+`ArgumentParser` and `Namespace`; `http.server.BaseHTTPRequestHandler`;
+`socketserver.ThreadingMixIn`; `string.Formatter`; `textwrap.TextWrapper`;
+`contextlib.ContextDecorator`, `AbstractContextManager` and
+`AbstractAsyncContextManager`; `collections.UserDict`; the `collections.abc`
+classes (`Mapping`, `MutableMapping`, `Sequence`, `Set`, `Iterable` and the
+rest of the common ones, subscripted or not); and `importlib.abc.MetaPathFinder`
+and `Loader`. Classes implemented in C (`io.StringIO`, `datetime.datetime`,
+`threading.local`, `ctypes.Structure`) and third-party classes are not read and
+not listed. An ancestor of the project may carry, besides the decorators that
+keep a class's namespace, `unittest.skip`, `skipIf`, `skipUnless`,
+`expectedFailure`, `typing.no_type_check` and `typing.dataclass_transform`,
+each called or not. A module that binds a builtin by a compatibility import
+(`try: from builtins import object` ... `except ImportError: pass`) holds the
+builtin on every path, and the base resolves to it.
+
+A `TestCase` subclass can therefore take a class-private method helper,
+`_Case__extracted_func_0`. unittest's loader collects only names starting with
+its `testMethodPrefix`, `test`, and pytest collects a `TestCase`'s tests through
+that same loader, so neither collects it (fixture
+`r7d_method_helper_in_a_testcase`); a loader whose prefix starts with an
+underscore would.
+
+Under `--cross-module`, a block holding an `assert` is shared between two
+modules only when pytest rewrites both alike (`assert_rewriting_differs`). A
+rewritten assert that fails reports the values it compared; a plain one
+reports only its message. Following pytest 9.1.1's own rules, a module is
+rewritten when it is a `conftest.py`, matches `python_files` (`test_*.py`
+and `*_test.py` by default), is a file `testpaths` names, or is named, or
+lies in a package named, by a `-p` of `addopts`, a `pytest_plugins` or a
+`register_assert_rewrite` at the top of the root's `conftest.py`; never under
+`--assert=plain` and never with `PYTEST_DONT_REWRITE` in its docstring. The
+configuration is the first pytest reads from the project's root upward
+(`pytest.toml`, `pytest.ini`, `pyproject.toml`, `tox.ini`, `setup.cfg`).
+Where the project cannot say, the pair is declined: a pytest configuration
+below the root, `-o`, `-c` or `--rootdir` in `addopts`, a `pytest11` entry
+point of the project itself (its packages are rewritten once it is
+installed), a `pytest_plugins` or `register_assert_rewrite` anywhere else
+(for the modules it names), or a value that is not a literal. What the
+invocation adds (`PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, a module path given on
+the command line) is taken to be absent (fixtures `xf7d_*`).
+
+What this does not see:
+
+- **A function handed to a compiler or source reader only inside another
+  call.** Decoration by hand is read from assignments at module or class
+  level alone. An expression statement (`atexit.register(f)`,
+  `app.add_url_rule("/", view_func=f)`), a call in a function body
+  (`kernel = numba.njit(slow)` inside `setup()`, `Thread(target=f)`), a
+  default value, and a function reached through a container
+  (`njit(KERNELS["slow"])`) or through a name bound other than by a `def`, an
+  import or a plain alias (`g = f if fast else h`) are not seen, and code may
+  still move out of the function they hand over.
+- **Import hooks.** A hook that rewrites a whole module (typeguard's
+  `install_import_hook`) is neither a decorator nor class machinery. A helper
+  in the same module is rewritten with it; one shared across modules with
+  `--cross-module` is rewritten only if its host is, and only pytest's
+  assertion rewriting is modeled.
+- **Shadowed library names.** A module of the project named like a
+  third-party library in the list is read as the project's own code, but one
+  named like a standard-library module (`functools.py` at an import root) is
+  taken to be the standard library, as everywhere else in Towel. A class
+  whose metaclass's `__prepare__` fills the class namespace in advance could
+  bind a decorator's name before its body runs; that is not modeled.
+
 ## Conservative rejections
 
 Towel prefers to leave code unchanged rather than transform it under
@@ -1007,6 +1178,17 @@ nothing prints how many pairs its last analysis declined for each (a pair
 that only repeated another's proposal is not counted), and every run counts
 the proposals it built and did not apply, by reason:
 
+- Decorators and class machinery. `decorator_may_transform_body[...]`,
+  counted with the decorator it names
+  (`decorator_may_transform_body[typeguard.typechecked]`): a decorator,
+  written with `@` or applied by a call a module or class body assigns, that
+  can reach the code of a block, of a call site, or of the helper's host is
+  not known to leave the body alone. `class_machinery_may_transform_methods[...]`,
+  counted with what fails the test (`...[metaclass LexerMeta]`): a class
+  enclosing the code does not pass the method-host test of its machinery.
+  `assert_rewriting_differs`: under `--cross-module`, a block holding an
+  `assert` would join modules pytest does not rewrite alike. See *Decorators
+  that compile or instrument a body* above.
 - Frame use. `frame_sensitive_block`: the block contains a suspension,
   a namespace read, a frame or stack read, a warning, a loop transfer
   out of the block, a comprehension assignment expression, or a `super()`

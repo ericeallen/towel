@@ -50,6 +50,7 @@ from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import statement_shape
 from .substitution import Substitution
+from .decorator_reach import ModuleSource, decorator_refusal
 from .semantic_safety import (
     available_argument_names,
     builtins_passed,
@@ -373,13 +374,17 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             # a block elsewhere in the file cannot call it (prompt_toolkit).
             if dce_node is not None and not encloses(dce_node, fn):
                 continue
+            # A call site is code in its function, which a decorator reaching
+            # the function may compile or instrument (``decorator_reach``).
+            analyzed = entry.scope_analyzer.analyzed_tree
+            if not isinstance(analyzed, ast.Module) or decorator_refusal(
+                fn, ModuleSource(entry.file_path, entry.source, analyzed), self.import_graph
+            ):
+                continue
             # Where the candidate sits decides, once the helper's home is
             # known, whether it can share a method call.
             candidate_class = self._method_class(fn, entry.class_name, entry.scope_analyzer)
-            analyzed = entry.scope_analyzer.analyzed_tree
-            candidate_info = self._get_method_context(
-                fn, candidate_class, analyzed if isinstance(analyzed, ast.Module) else None
-            )
+            candidate_info = self._get_method_context(fn, candidate_class, analyzed)
             context = ClusterContext(candidate_class, candidate_info)
             for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
                 # The size gate and signature filter are constant-time and

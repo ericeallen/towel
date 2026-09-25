@@ -287,13 +287,18 @@ the bound receiver of a method helper."""
 class RejectReason(StrEnum):
     """Why a candidate pair was declined; the vocabulary of the rejection trace."""
 
+    ASSERT_REWRITING_DIFFERS = "assert_rewriting_differs"
     BARE_NAME_DIFFERS_BY_MODULE = "bare_name_differs_by_module"
     BUILTIN_ARGUMENT = "builtin_argument"
     BUILTIN_MAY_DIFFER_BY_MODULE = "builtin_may_differ_by_module"
+    # Counted with what builds the class: class_machinery_may_transform_methods[metaclass M].
+    CLASS_MACHINERY_MAY_TRANSFORM_METHODS = "class_machinery_may_transform_methods"
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
+    # Counted with the decorator it names: decorator_may_transform_body[numba.njit].
+    DECORATOR_MAY_TRANSFORM_BODY = "decorator_may_transform_body"
     EXISTING_HELPER_BECOMES_FORWARDER = "existing_helper_becomes_forwarder"
     FRAME_READ_IN_FUNCTION = "frame_read_in_function"
     FRAME_SENSITIVE_BLOCK = "frame_sensitive_block"

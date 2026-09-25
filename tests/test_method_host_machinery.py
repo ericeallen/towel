@@ -26,8 +26,11 @@ holds only for receivers the class machinery built with the helper in place:
 - a ``__getattribute__`` on that order intercepts the lookup of the helper
   itself, and a proxy answers it from another object.
 
-Such blocks get the module-level helper that takes the receiver as an
-argument. ``type``, ``abc.ABCMeta``, the enum metaclass, ``typing.Generic``
+A block under such an annotation gets the module-level helper that takes the
+receiver as an argument. A block in a class whose machinery fails the test
+is not moved at all: the metaclass or ``__init_subclass__`` that could wrap
+a helper could wrap or recompile the methods' own code as well
+(``decorator_reach``), so the class keeps its code. ``type``, ``abc.ABCMeta``, the enum metaclass, ``typing.Generic``
 and ``object`` are known to leave plain functions alone, every builtin class
 but ``type`` and ``super`` looks attributes up as ``object`` does, and these
 keep the method form; the last tests check that of the running interpreter.
@@ -53,6 +56,7 @@ import pytest
 
 from tests.test_helpers import refactor_to_fixed_point_silently
 from towel.unification.import_graph import _HOSTS_METHOD_HELPERS, _OWN_ATTRIBUTE_LOOKUP
+from towel.unification.known_bases import KNOWN_BASES
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 METHODS = """
@@ -92,18 +96,26 @@ def _run(directory: Path, driver: str) -> str:
     return completed.stdout + "|" + "".join(completed.stderr.strip().splitlines()[-1:])
 
 
-def _refactored(tmp_path: Path, source: str, driver: str = DRIVER) -> Tuple[str, str, str]:
-    """The driver's output before and after refactoring ``box.py`` to a fixed point, and the result."""
+def _refactored(
+    tmp_path: Path, source: str, driver: str = DRIVER, *, moves: bool = True
+) -> Tuple[str, str, str]:
+    """The driver's output before and after refactoring ``box.py`` to a fixed point, and the result.
+
+    ``moves`` says whether the run is to move code at all.
+    """
     path = tmp_path / "box.py"
     path.write_text(source)
     before = _run(tmp_path, driver)
     final, applied = refactor_to_fixed_point_silently(str(path), min_lines=3)
-    assert applied > 0
+    assert (applied > 0) == moves
+    assert moves or final == source
     path.write_text(final)
     return before, _run(tmp_path, driver), final
 
 
-def _refactored_project(tmp_path: Path, files: Dict[str, str], driver: str) -> Tuple[str, str, str]:
+def _refactored_project(
+    tmp_path: Path, files: Dict[str, str], driver: str, *, moves: bool = True
+) -> Tuple[str, str, str]:
     """As :func:`_refactored`, for a directory of modules; the result is ``box.py``'s."""
     for name, text in files.items():
         (tmp_path / name).write_text(textwrap.dedent(text).lstrip("\n"))
@@ -113,7 +125,7 @@ def _refactored_project(tmp_path: Path, files: Dict[str, str], driver: str) -> T
         results, _ = engine.refactor_directory_to_fixed_point(
             str(tmp_path), str(tmp_path), progress="none"
         )
-    assert sum(applied for applied, _ in results.values()) > 0
+    assert (sum(applied for applied, _ in results.values()) > 0) == moves
     return before, _run(tmp_path, driver), (tmp_path / "box.py").read_text()
 
 
@@ -265,10 +277,10 @@ class Registered:
     ],
     ids=["wrapping-metaclass", "registering-base", "own-init-subclass"],
 )
-def test_class_machinery_that_sees_the_namespace_gets_a_module_helper(
+def test_class_machinery_that_sees_the_namespace_keeps_the_methods_code(
     tmp_path: Path, prelude: str, header: str, driver: str
 ) -> None:
-    before, after, final = _refactored(tmp_path, _module(prelude, header), driver)
+    before, after, final = _refactored(tmp_path, _module(prelude, header), driver, moves=False)
     assert after == before
     assert "self.__extracted_func" not in final
 
@@ -303,15 +315,17 @@ class Proxy:
     ],
     ids=["own-getattribute", "inherited-getattribute"],
 )
-def test_a_class_that_intercepts_attribute_lookup_gets_a_module_helper(
+def test_a_class_that_intercepts_attribute_lookup_keeps_the_methods_code(
     tmp_path: Path, prelude: str, header: Optional[str]
 ) -> None:
     """``self.__extracted_func_0`` on a forwarding proxy asks the target, which has no such member.
 
     The methods read ``self.v``, which the proxy answers from its target, and
     work; a method helper would be looked up the same way and raise
-    ``AttributeError``. ``__getattr__`` is no reason to refuse, since it runs
-    only when normal lookup fails and nothing spells the helper's stored name.
+    ``AttributeError``. Such a class fails the method-host test, which every
+    class code moves out of must pass too, so its code stays. ``__getattr__``
+    is no reason to refuse, since it runs only when normal lookup fails and
+    nothing spells the helper's stored name.
     """
     if header is None:
         source = (
@@ -327,7 +341,7 @@ def test_a_class_that_intercepts_attribute_lookup_gets_a_module_helper(
             "from box import Box, Target\nbox = Box(Target())\n"
             "print(box.first(1), box.second(2))\n"
         )
-    before, after, final = _refactored(tmp_path, source, driver)
+    before, after, final = _refactored(tmp_path, source, driver, moves=False)
     assert "AttributeError" not in before
     assert after == before
     assert "self.__extracted_func" not in final
@@ -347,13 +361,13 @@ def test_a_class_whose_getattr_serves_missing_names_keeps_the_method_helper(tmp_
     assert "self.__extracted_func" in final
 
 
-def test_a_metaclass_gets_a_module_helper(tmp_path: Path) -> None:
+def test_a_metaclass_keeps_its_methods_code(tmp_path: Path) -> None:
     """A metaclass's instances are classes, and ``type`` looks their attributes up its own way."""
     source = _module("", "class Meta(type):\n    v = 1\n")
     driver = (
         "from box import Meta\nKind = Meta('Kind', (), {})\nprint(Kind.first(1), Kind.second(2))\n"
     )
-    before, after, final = _refactored(tmp_path, source, driver)
+    before, after, final = _refactored(tmp_path, source, driver, moves=False)
     assert after == before
     assert "self.__extracted_func" not in final
 
@@ -366,6 +380,7 @@ def test_a_base_imported_from_the_project_is_followed_to_its_metaclass(tmp_path:
             "box.py": _module("from meta import Base", "class Box(Base):\n    v = 1\n"),
         },
         DRIVER,
+        moves=False,
     )
     assert after == before
     assert "self.__extracted_func" not in final
@@ -421,10 +436,16 @@ def _resolve(dotted: str) -> object:
     return getattr(importlib.import_module(module), name)
 
 
+# The ``__init_subclass__`` of a library base read in its source (``known_bases``).
+_READ_INIT_SUBCLASS = frozenset(base.init_subclass for base in KNOWN_BASES if base.init_subclass)
+
+
 def _only_quiet_init_subclass(cls: type) -> bool:
-    """Whether every ``__init_subclass__`` a subclass of ``cls`` runs is ``Generic``'s or ``object``'s."""
+    """Whether every ``__init_subclass__`` a subclass of ``cls`` runs is ``Generic``'s, ``object``'s, or one read."""
     return all(
-        "__init_subclass__" not in vars(klass) or klass in {object, typing.Generic}
+        "__init_subclass__" not in vars(klass)
+        or klass in {object, typing.Generic}
+        or f"{klass.__module__}.{klass.__qualname__}" in _READ_INIT_SUBCLASS
         for klass in cls.__mro__
     )
 

@@ -540,6 +540,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None
+        self._pair_rejection_subject: Optional[str] = None
         self._pair_rejections: Dict[str, int] = {}
         self._checker_refusals = 0
         # Per-run record of what each applied extraction replaced: the original
@@ -555,16 +556,23 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
     # --- Debug helpers ---
     def _debug_reject(
-        self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
+        self,
+        reason: RejectReason,
+        pair: "CodeBlockPair",
+        detail: Optional[str] = None,
+        *,
+        subject: Optional[str] = None,
     ) -> None:
         """Note why the pair is declined, and trace it when DEBUG_PROPOSAL_REJECTIONS is set.
 
-        The reason is kept for ``_judge_pair``, which counts it. The trace
+        The reason is kept for ``_judge_pair``, which counts it, together with
+        ``subject``, what the reason names, when it names something. The trace
         names each block by its file, function and line range
         (``path::function@(start, end)``), so a trace over many files locates
         every pair it declines.
         """
         self._pair_rejection = reason
+        self._pair_rejection_subject = subject
         if not debugging(REJECTIONS):
             return
         first = _traced_block(pair.file_path, pair.function1_name, pair.block1_range)
@@ -840,14 +848,23 @@ class UnificationRefactorEngine(ParallelEvaluation):
         A pair declined only because another pair already proposed the same
         refactoring loses nothing, and forked evaluation deduplicates such
         pairs differently, so it is not counted. A pair declined without a
-        traced reason is counted as ``other``.
+        traced reason is counted as ``other``, and a reason naming something is
+        counted with it: ``decorator_may_transform_body[numba.njit]``.
         """
         self._pair_rejection = None
+        self._pair_rejection_subject = None
         proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
         if proposal is None and self._pair_rejection is not RejectReason.DUPLICATE_PROPOSAL:
-            key = "other" if self._pair_rejection is None else str(self._pair_rejection)
+            key = self._rejection_key()
             self._pair_rejections[key] = self._pair_rejections.get(key, 0) + 1
         return proposal
+
+    def _rejection_key(self) -> str:
+        """What the pair just declined counts under: its reason, with what the reason names."""
+        reason, subject = self._pair_rejection, self._pair_rejection_subject
+        if reason is None:
+            return "other"
+        return str(reason) if subject is None else f"{reason}[{subject}]"
 
     @property
     def declined_pairs(self) -> Mapping[str, int]:

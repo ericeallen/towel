@@ -244,17 +244,19 @@ def test_programs_that_rebind_a_base_between_its_subclasses_keep_their_output(
 
     These broke hoisting, which put the helper in the class statement named
     ``Base`` and left ``Beta`` without it; they stay as programs whose output
-    the module-level helper must keep.
+    must be kept. A base the module binds more than one way cannot be judged
+    by the method-host test, which every class code moves out of must pass,
+    so the code stays in both classes.
     """
     library = REBINDINGS[rebinding].format(alpha=_subclass("Alpha", 1), beta=_subclass("Beta", 2))
     root = _project(tmp_path, library)
     driver = "from pkg.lib import Alpha, Beta\nprint(Alpha().compute(3), Beta().compute(4))\n"
     before = _run(root, driver, root)
     assert before == "14 17\n|"
-    assert _refactor(root / "pkg") > 0
+    assert _refactor(root / "pkg") == 0
     assert _run(root, driver, root) == before
     module, classes = _helpers((root / "pkg" / "lib.py").read_text())
-    assert len(module) == 1 and not any(classes.values()), classes
+    assert not module and not any(classes.values()), classes
 
 
 def test_the_class_holding_both_duplicates_still_takes_the_helper(tmp_path: Path) -> None:

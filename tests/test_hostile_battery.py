@@ -152,16 +152,10 @@ TRANSFORMED = {
     "p06_static_helper_called_while_class_body_runs",
     "p07_static_methods_called_while_class_body_runs",
     "p08_classmethod_never_using_cls",
-    "p09_static_helper_metaclass_hides_attribute",
     # Classes that cannot take a helper into their body: it goes to module level.
     "p10_one_line_exception_base",
     "p11_one_line_base_docstring_and_assignment",
     "p12_one_line_body_after_a_split_header",
-    "p13_protocol_default_methods",
-    "p14_protocol_common_ancestor",
-    "p15_class_decorator_rebuilds_namespace",
-    "p16_class_decorator_wraps_every_function",
-    "p17_decorated_base_rebuilds_namespace",
     # The positive control: every decorator here keeps the helper a method.
     "p18_known_class_decorators_keep_the_helper",
     # The helper is placed before the assignment that calls it, its annotations
@@ -278,8 +272,6 @@ TRANSFORMED = {
     "r7fz_classhost_dunder_class_same_class",
     "r7fz_classhost_enum_methods",
     "r7fz_classhost_getattr_fallback",
-    "r7fz_classhost_init_subclass_wraps",
-    "r7fz_classhost_metaclass_registry",
     "r7fz_classhost_private_same_class",
     "r7fz_classhost_siblings_plain",
     "r7fz_classhost_underscore_class_names",
@@ -334,11 +326,34 @@ TRANSFORMED = {
     "r7fz_thunks_lambda_default_first",
     "r7fz_thunks_match_guard",
     "r7fz_thunks_short_circuit_and",
+    # A decorator the project defines that only wraps or registers the
+    # function leaves its body alone; the r7d_instrumenting_* fixtures, whose
+    # decorators recompile the body, are declined.
+    "r7d_plain_wrapper_decorator",
+    # The same applied by hand, with a known factory and a property built from
+    # its accessors; r7d_instrumenting_call_applied_by_hand, whose recompiler is
+    # applied by a call, and r7d_metaclass_recompiles_methods are declined.
+    "r7d_plain_wrapper_applied_by_hand",
+    # A TestCase, read to be built by type, takes the class-private helper, which
+    # neither unittest nor pytest collects as a test.
+    "r7d_method_helper_in_a_testcase",
 }
+# r7fz_classhost_init_subclass_wraps and r7fz_classhost_metaclass_registry,
+# which the round-3 audit found extracted soundly, are declined since code
+# stopped moving out of classes whose machinery the method-host test cannot
+# read: an __init_subclass__ that wraps methods, and a project metaclass.
 # r7sp_directive_on_a_shared_line is declined: each block starts after, or
 # ends before, a statement that stays on a line carrying a directive.
 # r7fz_grammar_u0217_read_before_bind, a P1-7 case, is declined since its fix:
 # its block reads v6 before binding it (incomplete_lifetime_block1).
+# p09, p13, p14 and p17 left it when the classes code moves out of began to be
+# held to the method-host test of their machinery: p09's metaclass is the
+# project's, p13 and p14 derive from Protocol, whose machinery the test does
+# not accept, and p17's base carries a decorator not known to keep it.
+# p15_class_decorator_rebuilds_namespace and p16_class_decorator_wraps_every_function
+# left the set when a class decorator not known to leave its methods alone began
+# to decline blocks in them: the one rebuilds the class from its namespace, the
+# other wraps every method, and either might as well have recompiled them.
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
 # their qualified names. Its reads are still what free_variables reports.

@@ -39,6 +39,10 @@ binding it; and ``xf7fz_late_toplevel_module_in_package``, whose ``pkg/c.py``
 imports a module of ``pkg`` as a top-level name, so runs as a top-level
 module itself.
 
+``xf7d_assert_moves_to_a_module_pytest_does_not_rewrite`` shares a block that
+holds an assert pytest rewrites in one module and not in the other; its
+``run.py`` runs pytest and prints each failing assert's message.
+
 A fixture that configures an import sorter is refactored with it, as the
 command line would: ``xf7t_import_order_is_registration_order`` holds a
 module the sorter's configuration excludes and one whose imports are not in
@@ -140,6 +144,8 @@ TRANSFORMED = {
     "xf7fz_modules_rel_import_in_block",
     "xf7fz_modules_script_main_guard",
     "xf7fz_modules_three_modules_cluster",
+    # Two modules pytest does not rewrite share an assert: either may host it.
+    "xf7d_asserts_shared_by_modules_rewritten_alike",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -160,6 +166,9 @@ REJECTED = {
     # import; towel dry refuses the run outright
     # (test_cli_refuses_a_top_level_module_inside_the_package).
     "xf7fz_late_toplevel_module_in_package",
+    # A test module's assert would move to a module pytest does not rewrite,
+    # and the AssertionError pytest reports would lose its explanation.
+    "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
 }
 
 TYPED = frozenset(

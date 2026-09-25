@@ -213,6 +213,8 @@ class EngineState:
     _seen_proposals: Set[Hashable]
     _pair_rejection: Optional[RejectReason]
     """The reason the pair being decided was last declined for, or None."""
+    _pair_rejection_subject: Optional[str]
+    """What that reason names, counted with it (``decorator_may_transform_body[numba.njit]``)."""
     _pair_rejections: Dict[str, int]
     """How many candidate pairs the latest analysis declined, by reason."""
     _checker_refusals: int
@@ -433,7 +435,12 @@ class EngineState:
         raise NotImplementedError
 
     def _debug_reject(
-        self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
+        self,
+        reason: RejectReason,
+        pair: "CodeBlockPair",
+        detail: Optional[str] = None,
+        *,
+        subject: Optional[str] = None,
     ) -> None:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
