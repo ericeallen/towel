@@ -40,7 +40,9 @@ imports a module of ``pkg`` as a top-level name, so runs as a top-level
 module itself.
 
 The ``r9dc_`` packages are the round-4 audit's decorator cases: a plain
-wrapper rebound by another module before its importer runs, declined.
+wrapper rebound by another module before its importer runs, declined; and
+star imports, one whose provider's ``__all__`` cannot bind the decorators,
+extracted, and two that do bind an instrumenting ``staticmethod``, declined.
 
 ``xf7d_assert_moves_to_a_module_pytest_does_not_rewrite`` shares a block that
 holds an assert pytest rewrites in one module and not in the other; its
@@ -149,6 +151,9 @@ TRANSFORMED = {
     "xf7fz_modules_three_modules_cluster",
     # Two modules pytest does not rewrite share an assert: either may host it.
     "xf7d_asserts_shared_by_modules_rewritten_alike",
+    # Round-4 audit P2-02: a star import whose provider's __all__ cannot bind
+    # staticmethod or property left both unknown.
+    "r9dc_star_import_that_cannot_bind_a_decorator",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -175,6 +180,11 @@ REJECTED = {
     # Round-4 audit P1-07: a plain wrapper that a setup module rebinds to an
     # instrumenting decorator before its importer runs.
     "r9dc_decorator_rebound_by_another_module",
+    # Star imports that do bind an instrumenting staticmethod: one from a
+    # provider with no __all__, one from a provider part way through an
+    # import cycle, before it binds the __all__ that leaves it out.
+    "r9dc_star_import_binds_an_instrumenting_decorator",
+    "r9dc_star_import_of_a_module_part_way_through_a_cycle",
 }
 
 TYPED = frozenset(

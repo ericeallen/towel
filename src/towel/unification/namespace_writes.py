@@ -710,7 +710,8 @@ def _module_scope_statements(body: Sequence[ast.stmt]) -> Iterable[ast.stmt]:
                     yield from _module_scope_statements(child.body)
 
 
-def _star_imports(tree: ast.Module) -> List[ast.ImportFrom]:
+def star_imports(tree: ast.Module) -> List[ast.ImportFrom]:
+    """Every ``from ... import *`` of the module's own scope, however conditional."""
     return [
         statement
         for statement in _module_scope_statements(tree.body)
@@ -798,7 +799,12 @@ def _string_literals(node: ast.expr) -> Optional[FrozenSet[str]]:
     return frozenset(str(value) for value in values)
 
 
-def _exports(module: Path, root: Path, reading: FrozenSet[Path]) -> Optional[FrozenSet[str]]:
+def _exports(
+    module: Path,
+    root: Path,
+    reading: FrozenSet[Path],
+    at_run_time: Optional[ProjectWrites] = None,
+) -> Optional[FrozenSet[str]]:
     """The names ``from module import *`` binds; None when any name may be among them.
 
     A literal ``__all__`` says; without one, every name of the module's own
@@ -806,6 +812,12 @@ def _exports(module: Path, root: Path, reading: FrozenSet[Path]) -> Optional[Fro
     ``global``, and what its own star imports bind. A module that does not
     parse, builds ``__all__``, writes its namespace at run time, or takes
     part in a star-import cycle may bind anything.
+
+    ``at_run_time`` asks what the import may bind whenever it runs, with the
+    project's writes: every name they write into the module counts as its
+    own, and a literal ``__all__`` adds to the module's names rather than
+    replacing them, since a module imported part way through an import cycle
+    may not have bound it yet, and then exports what it has bound so far.
     """
     source = _read(module)
     tree = _parsed(source) if source is not None else None
@@ -813,36 +825,46 @@ def _exports(module: Path, root: Path, reading: FrozenSet[Path]) -> Optional[Fro
     if tree is None or table is None or module in reading:
         return None
     declared = _declared_all(tree)
-    if declared is not _NO_ALL:
+    if declared is None or (declared is not _NO_ALL and at_run_time is None):
         return declared
     scanner = _WriteScanner(module, tree, str(module))
     scanner.visit(tree)
-    written = {write.name for write in scanner.by_path.get(module, ())}
+    writes = [*scanner.by_path.get(module, ()), *(at_run_time.into(module) if at_run_time else ())]
+    written = {write.name for write in writes}
     if ANY_NAME in written:
         return None
     names = {name for name in table.bindings if not name.startswith("_")}
     names |= table.rebound_by_global | written
-    for statement in _star_imports(tree):
-        reached = _star_bindings(module, statement, root, reading | {module})
+    if declared is not _NO_ALL:
+        names |= declared
+    for statement in star_imports(tree):
+        reached = star_bindings(module, statement, root, reading | {module}, at_run_time)
         if reached is None:
             return None
         names |= reached
     return frozenset(names)
 
 
-def _star_bindings(
-    importer: Path, statement: ast.ImportFrom, root: Path, reading: FrozenSet[Path]
+def star_bindings(
+    importer: Path,
+    statement: ast.ImportFrom,
+    root: Path,
+    reading: FrozenSet[Path] = frozenset(),
+    at_run_time: Optional[ProjectWrites] = None,
 ) -> Optional[FrozenSet[str]]:
     """The names a star import binds in ``importer``; None when it may bind any name.
 
     A source outside the project, or one not found, may bind anything.
+    ``reading`` holds the modules whose exports are being read, so a star
+    import reaching one of them closes a cycle; ``at_run_time`` is
+    :func:`_exports`'s.
     """
     sources = _star_sources(importer, statement, root)
     if not sources:
         return None
     names: Set[str] = set()
     for source in sources:
-        exported = _exports(source, root, reading)
+        exported = _exports(source, root, reading, at_run_time)
         if exported is None:
             return None
         names |= exported
@@ -884,8 +906,8 @@ def builtin_rebinding(
             note([name], f"{name}: {shown} binds it")
         if name in table.rebound_by_global:
             note([name], f"{name}: a function of {shown} declares it global")
-    for statement in _star_imports(tree):
-        reached = _star_bindings(module, statement, project.root, frozenset())
+    for statement in star_imports(tree):
+        reached = star_bindings(module, statement, project.root)
         hit = sorted(names) if reached is None else sorted(names & reached)
         for name in hit:
             note([name], f"{name}: {shown} imports * from {_spelled(statement)}, which may bind it")

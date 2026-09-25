@@ -43,8 +43,10 @@ from anywhere in the project (``namespace_writes``: an attribute store,
 ``setattr``, its ``__dict__``, its own ``globals()``, a patch) makes the
 name unknown, unless it is an attribute store at the top
 level of its module, ``mod.name = value``, whose ``value`` is known there;
-the same holds of a library's name, ``functools.cache = ...``. A name bound
-in an enclosing function is not followed. A decorator factory such as
+the same holds of a library's name, ``functools.cache = ...``. A star import
+makes unknown only the names it may bind: what a module of the project
+exports, or any name for one from anywhere else. A name bound in an
+enclosing function is not followed. A decorator factory such as
 ``@pytest.mark.parametrize(...)`` resolves through the callee of its call.
 A project module that takes the name of a third-party library in the list is
 read as the project's code; one that takes a standard-library module's name
@@ -108,6 +110,8 @@ from .namespace_writes import (
     NamespaceWrite,
     ProjectWrites,
     scan_project_writes,
+    star_bindings,
+    star_imports,
 )
 from .statement_facts import bindings_of
 
@@ -373,9 +377,14 @@ _HAND_INDEXES: "WeakKeyDictionary[ImportGraphCache, Dict[str, _HandIndex]]" = We
 _CODES: "WeakKeyDictionary[ast.Module, Tuple[int, Optional[ImportTimeCode]]]" = WeakKeyDictionary()
 _MACHINERY: "WeakKeyDictionary[ast.AST, Tuple[int, Optional[str]]]" = WeakKeyDictionary()
 # The writes into module namespaces each project's files make, every file read,
-# per engine and project root. Towel moves only code in function bodies, so a
-# write that has no value read stays one while the engine rewrites the project.
+# per engine and project root; and the names each module's star imports may
+# bind, per engine and module. Towel moves only code in function bodies and
+# adds only private names, so a write that has no value read stays one, and no
+# module's exports change, while the engine rewrites the project.
 _PROJECT_WRITES: "WeakKeyDictionary[ImportGraphCache, Dict[str, ProjectWrites]]" = (
+    WeakKeyDictionary()
+)
+_STAR_NAMES: "WeakKeyDictionary[ImportGraphCache, Dict[str, Optional[FrozenSet[str]]]]" = (
     WeakKeyDictionary()
 )
 
@@ -693,11 +702,11 @@ class _Resolver:
         decorator.
 
         What the rest of the program may bind the name to counts as well, so
-        that which binding holds when a decorator runs never matters. A write
-        into the module's namespace from anywhere in the project
-        (``namespace_writes``) makes it unknown, unless it is an attribute
-        store at the top level of its module, ``mod.name = value``, whose
-        value is then
+        that which binding holds when a decorator runs never matters. A star
+        import that may bind the name makes it unknown (:meth:`_star_names`).
+        So does a write into the module's namespace from anywhere in the
+        project (``namespace_writes``), unless it is an attribute store at
+        the top level of its module, ``mod.name = value``, whose value is then
         one more possibility, read there: ``setattr``, ``mod.__dict__[...]``
         and ``globals()`` are not read.
         """
@@ -706,10 +715,10 @@ class _Resolver:
         bindings = module.bindings
         head, _, rest = dotted.partition(".")
         if (
-            bindings.star_imports
-            or "__builtins__" in bindings.bindings
+            "__builtins__" in bindings.bindings
             or "__builtins__" in bindings.rebound_by_global
             or head in bindings.rebound_by_global
+            or self._star_may_bind(module, head)
         ):
             return None
         events = bindings.bindings.get(head, ())
@@ -876,9 +885,46 @@ class _Resolver:
 
     def rebound_at_run_time(self, module: _Module, name: str) -> bool:
         """Whether anything but ``module``'s own statements may bind ``name`` there: a star import, a write."""
-        if module.bindings.star_imports:
+        if self._star_may_bind(module, name):
             return True
         return any(write.name in (name, ANY_NAME) for write in self._writes_into(module))
+
+    def _star_may_bind(self, module: _Module, name: str) -> bool:
+        """Whether a star import of ``module`` may bind ``name``."""
+        if not module.bindings.star_imports:
+            return False
+        names = _STAR_NAMES.setdefault(self._cache, {})
+        key = module.key
+        if key not in names:
+            names[key] = self._star_names(module)
+        star = names[key]
+        return star is None or name in star
+
+    def _star_names(self, module: _Module) -> Optional[FrozenSet[str]]:
+        """Every name the star imports of ``module`` may bind as they run; None when one may bind any.
+
+        One from a module of the project binds what that module exports
+        (``namespace_writes.star_bindings``, at run time): the names a
+        literal ``__all__`` lists, together with its public names, since an
+        import cycle may run the star import before the module binds
+        ``__all__``; or else its public names; either way with every name
+        the project writes into it, and what its own star imports bind. One
+        from the standard library, from outside the project, or from a
+        module not found may bind any name, and so may a cycle of star
+        imports or an ``__all__`` built at run time.
+        """
+        project = self._project_writes(module)
+        found: Set[str] = set()
+        for statement in star_imports(module.tree):
+            if not statement.level:
+                top = (statement.module or "").partition(".")[0]
+                if top in _STANDARD_MODULES or self._is_external(module, top) is not False:
+                    return None
+            bound = star_bindings(Path(module.key), statement, project.root, at_run_time=project)
+            if bound is None:
+                return None
+            found |= bound
+        return frozenset(found)
 
     def _project_sites(
         self, module: _Module, spelled: str

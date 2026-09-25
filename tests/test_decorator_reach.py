@@ -1026,8 +1026,135 @@ REBINDINGS: Tuple[Spelling, ...] = (
 )
 
 
-@pytest.mark.parametrize("case", REBINDINGS, ids=[case.name for case in REBINDINGS])
-def test_r9dc_rebinding_verdict(tmp_path: Path, case: Spelling) -> None:
+# Round-4 audit P2-02: any star import made every decorator of the module
+# unknown, though the provider's ``__all__ = ["scale"]`` cannot bind
+# ``staticmethod``. A star import makes unknown only a name it may bind.
+
+_SHAPES = "{star}\nclass Shapes:\n    @staticmethod\n    def square(k):\n        return scale(k)\n"
+_SCALE = "def scale(v):\n    return v * 3\n"
+
+
+def _starred(
+    name: str,
+    common: str,
+    refused: Optional[str],
+    *,
+    star: str = "from .common import *",
+    others: Optional[Dict[str, str]] = None,
+) -> Spelling:
+    """``@staticmethod`` in ``pkg/shapes.py``, which star-imports ``pkg/common.py``."""
+    return Spelling(
+        name,
+        _SHAPES.format(star=star),
+        "Shapes.square",
+        refused,
+        others={"pkg/__init__.py": "", "pkg/common.py": common, **(others or {})},
+        module="pkg/shapes.py",
+    )
+
+
+_STATICMETHOD = "def staticmethod(fn):\n    return fn\n"
+
+STAR_IMPORTS: Tuple[Spelling, ...] = (
+    _starred("a literal __all__", "__all__ = ['scale']\n" + _SCALE, None),
+    _starred("a literal __all__ as a tuple", "__all__ = ('scale',)\n" + _SCALE, None),
+    _starred(
+        "a literal __all__ naming it",
+        "__all__ = ['scale', 'staticmethod']\n" + _SCALE + _STATICMETHOD,
+        "staticmethod",
+    ),
+    # A module imported part way through an import cycle exports what it has
+    # bound so far, whatever its __all__ will say.
+    _starred(
+        "a literal __all__ leaving out a public name",
+        "__all__ = ['scale']\n" + _SCALE + _STATICMETHOD,
+        "staticmethod",
+    ),
+    _starred("no __all__", _SCALE + "_cache = {}\n", None),
+    _starred("no __all__, a public name", _SCALE + _STATICMETHOD, "staticmethod"),
+    _starred(
+        "no __all__, a name a function declares global",
+        _SCALE + "def setup():\n    global staticmethod\n    staticmethod = print\n",
+        "staticmethod",
+    ),
+    _starred(
+        "no __all__, a name the project writes into it",
+        _SCALE,
+        "staticmethod",
+        others={"enable.py": "import pkg.common\npkg.common.staticmethod = print\n"},
+    ),
+    _starred(
+        "a dynamic __all__",
+        "__all__ = ['scale']\n__all__ += ['extra']\nextra = 1\n" + _SCALE,
+        "staticmethod",
+    ),
+    _starred(
+        "an __all__ built by a call",
+        "__all__ = list(['scale'])\n" + _SCALE,
+        "staticmethod",
+    ),
+    _starred(
+        "a nested star import",
+        "from .base import *\n",
+        None,
+        others={"pkg/base.py": "__all__ = ['scale']\n" + _SCALE},
+    ),
+    _starred(
+        "a nested star import binding it",
+        "from .base import *\n",
+        "staticmethod",
+        others={"pkg/base.py": _SCALE + _STATICMETHOD},
+    ),
+    _starred("a cycle of star imports", "from .shapes import *\n" + _SCALE, "staticmethod"),
+    _starred(
+        "an absolute star import of the project",
+        "__all__ = ['scale']\n" + _SCALE,
+        None,
+        star="from pkg.common import *",
+    ),
+    _starred(
+        "a star import from outside the project",
+        _SCALE,
+        "staticmethod",
+        star="from requests import *",
+    ),
+    _starred(
+        "a star import of the standard library",
+        _SCALE,
+        "staticmethod",
+        star="from os.path import *",
+    ),
+    _starred(
+        "a star import of a module not found",
+        _SCALE,
+        "staticmethod",
+        star="from .missing import *",
+    ),
+    Spelling(
+        "a registry beside a star import that cannot bind it",
+        "from .common import *\nHANDLERS = {}\ndef register(fn):\n"
+        "    HANDLERS[fn.__name__] = fn\n    return fn\n@register\ndef f():\n    return scale(1)\n",
+        "f",
+        None,
+        others={"pkg/__init__.py": "", "pkg/common.py": "__all__ = ['scale']\n" + _SCALE},
+        module="pkg/m.py",
+    ),
+    Spelling(
+        "a registry a star import may bind",
+        "from .common import *\nHANDLERS = {}\ndef register(fn):\n"
+        "    HANDLERS[fn.__name__] = fn\n    return fn\n@register\ndef f():\n    return scale(1)\n",
+        "f",
+        "register",
+        others={"pkg/__init__.py": "", "pkg/common.py": _SCALE + "HANDLERS = None\n"},
+        module="pkg/m.py",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case", REBINDINGS + STAR_IMPORTS, ids=[case.name for case in REBINDINGS + STAR_IMPORTS]
+)
+def test_r9dc_rebinding_and_star_import_verdict(tmp_path: Path, case: Spelling) -> None:
     assert _verdict(tmp_path, case) == case.refused
 
 

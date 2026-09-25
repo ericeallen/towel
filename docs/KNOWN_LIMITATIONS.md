@@ -1069,9 +1069,16 @@ definition, `mock.patch` and `monkeypatch.setattr`. An attribute store at the to
 `value` as one more possibility, read there, so `functools.cache =
 functools.lru_cache(maxsize=None)` keeps `@functools.cache` known; any other
 write makes the name unknown. A library's name counts the writes into its
-module by name (`functools.cache = ...`, `builtins.property = ...`)
-(fixture `r9dc_decorator_rebound_by_another_module`). A star import makes
-every name of the module unknown. A decorator
+module by name (`functools.cache = ...`, `builtins.property = ...`). A star
+import makes unknown only the names it may bind (fixtures `r9dc_*`): from a
+module of the project with a literal `__all__`, the names it lists together
+with the module's public names, since an import cycle may run the star import
+before the module binds `__all__`, and it then exports what it has bound so
+far; from one without, its public names, the names a function of it declares
+`global`, and what its own star imports bind; either way with every name the
+project writes into it. From the standard library, from outside the project,
+from a module not found, through a cycle of star imports, or from a module
+whose `__all__` is built at run time, any name. A decorator
 named through a local of an enclosing function, a method of an object
 (`@app.route("/x")`, `@cli.command()`, `@f.register`), a class, or any other
 expression is declined.
@@ -1188,7 +1195,9 @@ What this does not see:
   reaches the submodule), an attribute store as the target of a `for`, a
   `with` or a comprehension, a module object reached other than by an import,
   `importlib.import_module`, `getattr` with a spelled name or `sys.modules`,
-  and what code outside the project does. Any call whose first argument spells a dotted name
+  and what code outside the project does. A star import nested in a provider
+  is read from the project's file even where that file is named like a
+  standard-library module. Any call whose first argument spells a dotted name
   (`logging.getLogger("app.checks")`) counts as a write of its last part, as
   it does for the builtins, and may decline code that is safe.
 
