@@ -927,3 +927,36 @@ refuse where it had written wrong code, and none widens what it accepts.
   would change a file its manifest names.
 
 *Status: implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-25: Round-4 rules for substitution, scope and hosting
+
+These came out of the fourth audit's fixes, and each only declines or
+corrects what Towel wrote wrongly.
+
+- **The instantiation check compares by binding.** A binder matches only
+  its own occurrences, a free name of the helper is its module's, and a
+  substituted argument that a scope of the helper would capture declines
+  the call site rather than being renamed around it.
+- **Moving a function's only binding of a name is declined** when the
+  function's other code reads that name through the function's scope,
+  unless the call assigns the name. One helper's `global` and `nonlocal`
+  declarations must be the same at every site.
+- **A host must import on every platform and supported Python.** What
+  CPython's Availability notes place on some platforms or versions only is
+  a requirement (`known_platforms.py`). A `try` that catches `ImportError`
+  keeps its imports optional. A module the program imports only under a
+  condition hosts only for a borrower that already loads it.
+- **A borrower borrows only within its own distribution**: the nearest
+  directory with `setup.py`, a `setup.cfg` with `[metadata]` or
+  `[options]`, or a `pyproject.toml` with `[project]`, `[build-system]` or
+  `[tool.poetry]`. A module in no distribution is exempt.
+- **Each distribution's build selection is read for every setting of each
+  listed backend.** It still only puts a host in doubt, and never names a
+  module.
+- **A new import goes after what must stay first and what runs first**:
+  below a shebang, an encoding line and the leading comments, and after the
+  borrower's leading statements that run code. That moving the host's own
+  first import earlier can reorder its import-time reads of state another
+  module patches is the documented dynamic-rebinding limitation.
+
+*Status: implemented on the `audit-1772` branch; not yet released.*

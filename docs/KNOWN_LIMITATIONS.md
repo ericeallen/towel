@@ -411,6 +411,35 @@ addresses:
   file refactored in place is refused before the run, with the remedy of
   writing to a new file. Out of place, such files are refactored as any other.
 
+### Reflection over a namespace, and stack depth
+
+A program that asks what a namespace holds can see a helper appear there.
+This is reflection, and the owner ruled it a documented limitation rather
+than a defect to fix (DECISIONS, 2026-09-25). Towel does not detect:
+
+- a loop over `vars(C)`, `dir(C)` or `C.__dict__`, or a call such as
+  `instrument(C)` or typeguard's `typechecked(C)` on a class, that wraps or
+  rewrites every function it finds: a class-private helper hosted in `C`
+  is wrapped too;
+- a descriptor whose `__set_name__` wraps its owner's functions, which then
+  wraps the helper, or instruments methods that code has moved out of;
+- a package `__init__` that wraps every function of a submodule, including
+  a new module-level helper;
+- a star import without `__all__`, `hasattr`, `dir()` or a module
+  `__getattr__` meeting a submodule that a new `--cross-module` import has
+  bound on its package;
+- a callee that reads its caller's frame or source, such as
+  inline-snapshot's `snapshot()`, which reads the literal at its call site;
+- a callee that rebinds a name between two reads in the block, including a
+  builtin passed under `--parameterize-builtins`, which is read at the call.
+
+Decoration by hand is not reflection: `f = deco(f)` is judged like the
+decorator it applies.
+
+Each helper call adds a stack frame. Recursive functions are refactored like
+any other, so a deeply recursive function uses more stack after extraction
+and may reach Python's recursion limit sooner.
+
 ### A cross-file helper adds an import of its host module
 
 Sharing a helper across modules is opt-in (`--cross-module`,

@@ -30,6 +30,47 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A lambda, comprehension or nested function whose parameter is spelled
+  like a name that becomes a helper parameter read the helper's parameter
+  instead of its own, and silently computed the wrong result:
+  `max(orders, key=lambda order: order["total"])` beside a parameter
+  `order`. A name in an f-string's format spec (`f"{v:>{width}}"`), and the
+  attribute and subscript loads in a `for`, `with` or comprehension target
+  (`for box.v in items`), kept the template's spelling and raised NameError.
+  Substitution now follows Python's scopes, and the instantiation check,
+  which passed all three because it compared names by spelling, compares by
+  binding.
+- A call is declined where its thunk would read a closure variable that an
+  inlined comprehension in the same function rebinds; Python 3.12 and later
+  raise NameError there.
+- A block holding its function's only binding of a name that the function
+  reads elsewhere is declined (`moves_only_binding`), unless the call binds
+  the name again. Moving it made the name stop being local, so the other
+  reads found a module name or builtin where the original raised
+  UnboundLocalError. A helper now declares `global` or `nonlocal` every name
+  its blocks bind by any construct, and sites whose functions declare a name
+  differently share no helper (`scope_declarations_differ`).
+- A new import was written above a `#!` line or an encoding declaration, so
+  a script lost its shebang or a Latin-1 module was read as UTF-8, and it
+  could land ahead of a borrower's statement that runs at import. Imports
+  now go below the shebang, the encoding line, a file-wide `# type: ignore`
+  and the leading comments, and after the borrower's leading statements that
+  run code. A write that would change how Python decodes a file is refused.
+- `--cross-module` hosted a helper in a module some platform cannot import,
+  such as one that imports `msvcrt`, or in one the program imports only
+  under a condition. It now requires what CPython's documentation marks as
+  platform-only, what a supported Python removed, and what a marker limits,
+  and hosts in a conditionally imported module only for a borrower that
+  already loads it.
+- Build selections are read for every setting of each listed backend, in
+  each distribution's own configuration: Poetry `packages` and `include`,
+  PDM `includes`, `source-includes` and `package-dir`, hatch `only-packages`
+  and its default, setuptools `py-modules`, uv `module-name` and
+  `module-root`, flit's module and scikit-build-core `wheel.packages`. A
+  helper was hosted in a module the wheel left out.
+- `--cross-module` no longer makes a module of one distribution import a
+  helper from another (`other_distribution`), which failed when the borrower
+  was installed against the other's released version.
 - A typed run checked a change to a member with its own pyright
   configuration only from that member's root, so a consumer in the outer
   project was judged against the original text, and a helper that broke it
