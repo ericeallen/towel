@@ -1250,11 +1250,14 @@ lines, 45 applied, fixed point, one core), the per-function-facts commit
 difference being the type check of each applied refactoring; Sphinx in the
 ecosystem check at `938d351` went from 2513 s to 2058 s, and function calls
 on Towel's source fell from 464 million to 246 million (September 18,
-2026). The current figure is at `5ff2458`, September 19, 2026 (Apple M5
-Max, `TOWEL_WORKERS=1`, Python 3.12, one other single-core job running):
-`towel dry src/towel` on that day's source (22,690 lines, 15 applied) takes
-8.4 s with a peak resident size of 174 MB under `--no-types --no-format`,
-and 11.9 s and 894 MB with the defaults. The tables in
+2026). At `5ff2458`, September 19, 2026 (Apple M5 Max, `TOWEL_WORKERS=1`,
+Python 3.12, one other single-core job running), `towel dry src/towel` on
+that day's source (22,690 lines, 15 applied) took 8.4 s with a peak
+resident size of 174 MB under `--no-types --no-format`, and 11.9 s and
+894 MB with the defaults. The current figure is at `8cb8b8c`, September 24,
+2026 (the same machine and settings, other work loading it to a load
+average of 11 to 13): on 46,165 lines it takes 35 s under `--no-types
+--no-format` (22 applied) and 138 s with the defaults (21 applied). The tables in
 [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance) give the
 per-project figures.
 

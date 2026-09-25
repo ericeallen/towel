@@ -1198,10 +1198,13 @@ it tractable, all exact: they change no proposal.
   once per distinct helper template, not once per pair (every pair of N
   near-identical blocks renders the same template; 50 identical functions
   took 17 s and 100 took 134 s under 1.618, before this pass and the reuse
-  index below; at `5ff2458` on September 19, 2026,
-  `scripts/bench_similar_blocks.py` on one core of an Apple M5 Max with one
-  other single-core job running takes 4.0 s for 50 and 15.9 s for 100, a
-  factor of 4.0 for twice the functions), memoizes its per-candidate
+  index below; at `8cb8b8c` on September 24, 2026, the module and command
+  of `scripts/bench_similar_blocks.py` on one core of an Apple M5 Max, with
+  other work loading the machine to a load average of 15 to 19, take 6.4 to
+  7.9 s for 50 and 27 to 29 s for 100, in CPU time as in wall time, a
+  factor of about 4 for twice the functions; at `5ff2458`, with one other
+  single-core job running and before 1.772's per-call-site safety checks,
+  they took 4.0 s and 15.9 s), memoizes its per-candidate
   pipeline on the template, the candidate, and the pair's helper, and
   applies its constant-time filters before the semantic guards. The
   remaining growth is cubic: every one of the N²/2 pairs legitimately
@@ -1347,7 +1350,12 @@ times depend on the input as much as on the engine: at `5ff2458`
 other single-core job running), that day's Towel source, 22,690 lines
 after the later audits' removals, has 15 duplicates to apply and `towel
 dry src/towel` runs in 8.4 s without the type checker and formatter and
-11.9 s with them.
+11.9 s with them. At `8cb8b8c` (September 24, 2026, the same machine and
+settings, other work loading it to a load average of 11 to 13) the source
+is 46,165 lines (`wc -l` over the 80 modules of `src/towel`), and the same
+command applies 22 refactorings in 35 s without the type checker and
+formatter, and 21 in 138 s with them, mypy being the one checker the
+project configures.
 
 The remaining cost is the pairwise evaluation of structurally distinct
 candidates, which no cache can share; large test modules with hundreds of
