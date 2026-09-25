@@ -347,6 +347,12 @@ TRANSFORMED = {
     # The controls: the call assigns the name back, and a comprehension's own
     # target of the same spelling reads nothing of the function's.
     "r9bd_only_binding_kept_local",
+    # A helper declares global every name its sites' functions declare and
+    # the block binds, by any construct; sites whose functions declare
+    # differently share no helper for code touching the name, and only what
+    # follows the binding moves.
+    "r9bd_global_bound_by_every_binder",
+    "r9bd_global_declared_at_one_site",
 }
 # r7fz_classhost_init_subclass_wraps and r7fz_classhost_metaclass_registry,
 # which the round-3 audit found extracted soundly, are declined since code

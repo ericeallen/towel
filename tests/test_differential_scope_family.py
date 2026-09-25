@@ -33,9 +33,13 @@ from tests.differential.runner import DEFAULT, run_case
 from tests.differential.scope_grammar import generate_scope_case
 
 SEEDS = range(40)
+REGRESSION_SEEDS = (1054, 1108, 1204, 1566)
+"""Seeds a fuzz run found after the only-binding fix, all fixed since: each function declares
+its name global and binds it in the block by an import, a tuple target, a match capture or a
+walrus, which the helper did not declare global."""
 
 
-@pytest.mark.parametrize("seed", SEEDS, ids=lambda seed: f"seed{seed}")
+@pytest.mark.parametrize("seed", [*SEEDS, *REGRESSION_SEEDS], ids=lambda seed: f"seed{seed}")
 def test_r9bd_generated_only_bindings_keep_their_behaviour(seed: int, tmp_path: Path) -> None:
     outcome = run_case(generate_scope_case(seed), DEFAULT, tmp_path)
     if outcome.status == "unsupported":

@@ -329,6 +329,7 @@ class RejectReason(StrEnum):
     RETURN_VARIABLES_NOT_ALIGNED = "return_variables_not_aligned"
     RETURN_VERSUS_VARIABLES = "return_versus_variables"
     RUN_BY_PATH_IMPORT = "run_by_path_import"
+    SCOPE_DECLARATIONS_DIFFER = "scope_declarations_differ"
     SUPER_IN_CALL = "super_in_call"
     TRIVIAL_FORWARDING_HELPER = "trivial_forwarding_helper"
     TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"
@@ -402,6 +403,9 @@ class HelperTemplate:
     # Shared free names the helper reads as bare module references; an
     # occurrence may join only where every read of them resolves the same way.
     module_names: FrozenSet[str]
+    # What the template block's function declares ``global`` and ``nonlocal``:
+    # an occurrence may join only where its function declares alike.
+    declared: Tuple[FrozenSet[str], FrozenSet[str]] = (frozenset(), frozenset())
 
 
 def span_contains(node: ast.stmt, line_range: Tuple[int, int]) -> bool:

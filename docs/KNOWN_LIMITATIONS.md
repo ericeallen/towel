@@ -62,7 +62,11 @@ describe belong to that version.
   (before the block, in a nested function, lambda, comprehension or class
   body, a nested `nonlocal`) would find a module name, a builtin or an
   enclosing function's variable where they raised `UnboundLocalError` or
-  saw the block's value. Names bound in the
+  saw the block's value. A name the block binds that its function declares
+  `global` is declared `global` in the helper too, whatever construct binds
+  it, and two sites whose functions declare a name the blocks spell
+  differently share no helper, nor does a clustered occurrence whose
+  function declares differently from the pair's. Names bound in the
   block and read afterwards are returned, where `count += 1` and `del count`
   read `count` as a load does, including targets of annotated assignments
   and assignment expressions, as is a name bound to a class instantiation or
@@ -1289,7 +1293,10 @@ the proposals it built and did not apply, by reason:
   of it (`scale = scale(n)`, which raises `UnboundLocalError`) where the call
   site may not have the name bound: with the block gone the name may not be
   local to the caller, and the argument would find a module name or raise
-  `NameError`. `module_data_lookup`: the helper would receive module data
+  `NameError`. `scope_declarations_differ`: one site's function declares
+  `global` or `nonlocal` a name the blocks spell and the other's does not,
+  so no one set of declarations in the helper serves both.
+  `module_data_lookup`: the helper would receive module data
   (a module-level assignment) as an argument, snapshotting it. `rebound_external_binding`: the helper would receive a
   name another function rebinds through `global` or `nonlocal`, or a name
   the module's reflection makes unreliable. The names both sites resolve

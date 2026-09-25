@@ -44,7 +44,7 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from towel.unification.function_scope import scope_moving_names
+from towel.unification.function_scope import identifiers, scope_moving_names
 from towel.unification.models import FunctionNode
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
@@ -207,3 +207,39 @@ def test_r9bd_a_builtin_spelling_any_construct_binds_stays_free(binding: str) ->
     function = tree.body[0]
     assert isinstance(function, ast.FunctionDef)
     assert analyzer.free_variables(function.body[-1:]) == {"id"}
+
+
+def test_r9bd_identifiers_are_every_name_a_statement_spells() -> None:
+    """What a declaration must agree on: binders that are no ``Name`` node count too."""
+    source = textwrap.dedent("""
+        import os.path as joined, sys
+        from os import sep
+        global declared
+        try:
+            pass
+        except OSError as caught:
+            pass
+        match subject:
+            case [captured, *starred] | {"k": captured, **starred}:
+                pass
+        def defined(parameter):
+            nonlocal outer
+        class Made:
+            pass
+        """)
+    found = identifiers(ast.parse(source).body)
+    assert found == {
+        "joined",
+        "sys",
+        "sep",
+        "declared",
+        "caught",
+        "subject",
+        "captured",
+        "starred",
+        "defined",
+        "parameter",
+        "outer",
+        "Made",
+        "OSError",
+    }

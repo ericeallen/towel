@@ -55,7 +55,7 @@ from .assignment_analyzer import (
 )
 from .block_signature import BlockSignature, extract_block_signature
 from .extractor import has_complete_return_coverage, is_value_producing
-from .function_scope import scope_moving_names
+from .function_scope import code_names, function_names, identifiers, scope_moving_names
 from .models import (
     BlockBindingSnapshot,
     CodeBlockPair,
@@ -78,7 +78,6 @@ from .structural_memo import load_substitution, store_substitution
 from .typing_forms import ModuleText, typing_forms_of
 from .substitution import Substitution
 from .visitors import (
-    AssignTargetVisitor,
     AugAssignFinder,
     NameCollector,
     body_without_docstring,
@@ -692,57 +691,40 @@ class BlockAnalysis(EngineState):
     def _global_nonlocal_declarations(
         self,
         pair: CodeBlockPair,
-        scope_analyzer: ScopeAnalyzer,
+        functions: Tuple[FunctionNode, FunctionNode],
         free_vars: Set[str],
-    ) -> Tuple[Set[str], Set[str], Set[str]]:
+    ) -> Optional[Tuple[Set[str], Set[str], Set[str]]]:
         """Names the helper must declare global/nonlocal, and free_vars pruned of them.
 
-        A free variable declared global or nonlocal in the enclosing function
+        A name the block binds that its function declares ``global`` or
+        ``nonlocal`` is bound there, not locally, so the helper must declare
+        it too, whatever construct binds it: an assignment, a tuple target,
+        an import, a walrus, a ``match`` capture. A free variable declared so
         cannot also be a parameter (``SyntaxError: name 'x' is parameter and
-        global``), so it is dropped from free_vars and left as a free reference.
-        A name assigned inside the block that is global/nonlocal but not declared
-        there must be re-declared in the helper to preserve assignment semantics.
+        global``) and is left a free reference. Both sites' functions are
+        read, and one helper serves both only where they declare alike every
+        name the blocks mention: a declaration in the helper makes the name
+        global at every site. None where they differ.
         Returns (globals_to_declare, nonlocals_to_declare, pruned_free_vars).
         """
-        func1_scope_id = None
-        for node, scope in scope_analyzer.node_scopes.items():
-            if isinstance(node, ast.FunctionDef) and node.name == pair.function1_name:
-                func1_scope_id = scope.scope_id
-                break
-
-        globals_to_declare: Set[str] = set()
-        nonlocals_to_declare: Set[str] = set()
-
-        if func1_scope_id is not None:
-            global_vars = scope_analyzer.global_vars.get(func1_scope_id, set())
-            nonlocal_vars = scope_analyzer.nonlocal_vars.get(func1_scope_id, set())
-
-            # A free variable that is global/nonlocal here cannot be parameterized.
-            problematic = free_vars & (global_vars | nonlocal_vars)
-
-            # Assignment targets and explicit declarations inside the template blocks.
-            v = AssignTargetVisitor()
-            for n in pair.block1_nodes:
-                v.visit(n)
-            for n in pair.block2_nodes:
-                v.visit(n)
-            assigned_names = v.assigned_names
-            declared_global_in_block = v.declared_global_in_block
-            declared_nonlocal_in_block = v.declared_nonlocal_in_block
-
-            # Names assigned in the block that are global/nonlocal in the enclosing
-            # function must be declared in the helper to preserve assignment semantics.
-            assigned_problematic_any = assigned_names & (global_vars | nonlocal_vars)
-            globals_to_declare = (assigned_problematic_any & global_vars) - declared_global_in_block
-            nonlocals_to_declare = (
-                assigned_problematic_any & nonlocal_vars
-            ) - declared_nonlocal_in_block
-
-            # Leave problematic free variables free so the helper references the
-            # outer binding rather than shadowing it with a parameter.
-            free_vars = free_vars - problematic
-
-        return globals_to_declare, nonlocals_to_declare, free_vars
+        blocks = (pair.block1_nodes, pair.block2_nodes)
+        mentioned = identifiers((*blocks[0], *blocks[1]))
+        declared = [
+            (names.declared_global & mentioned, names.declared_nonlocal & mentioned)
+            for names in map(function_names, functions)
+        ]
+        if declared[0] != declared[1]:
+            return None
+        global_vars, nonlocal_vars = declared[0]
+        if not global_vars and not nonlocal_vars:
+            return set(), set(), free_vars
+        in_blocks = code_names([*blocks[0], *blocks[1]])
+        bound = set(in_blocks.bound)
+        globals_to_declare = (bound & global_vars) - in_blocks.declared_global
+        nonlocals_to_declare = (bound & nonlocal_vars) - in_blocks.declared_nonlocal
+        # Leave the declared free variables free, so the helper references the
+        # outer binding rather than shadowing it with a parameter.
+        return globals_to_declare, nonlocals_to_declare, free_vars - (global_vars | nonlocal_vars)
 
     @staticmethod
     def _reserve_augassign_params(pair: CodeBlockPair, substitution: Substitution) -> Set[str]:

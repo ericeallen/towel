@@ -79,6 +79,7 @@ from .insertion import InsertionPoints
 from .placement import HelperPlacement
 from .block_analysis import BlockAnalysis
 from .function_index import FunctionIndex
+from .function_scope import function_names, identifiers
 from .models import BlockBindingSnapshot, ClusterContext, HelperTemplate, encloses
 
 
@@ -128,6 +129,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         memoizes it on exactly those.
         """
         pair = template.pair
+        if not self._declares_alike(template, candidate):
+            return None
         cluster_renames: List[Dict[str, str]] = [{}, {}]
         # Clustering scans the pair's own file, so both blocks are in its module.
         module = ModuleText(pair.file_path, pair.source1)
@@ -290,6 +293,20 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             return None
         return call_node2, call_argument_lines(subst2, 1)
+
+    @staticmethod
+    def _declares_alike(template: "HelperTemplate", candidate: "_ClusterCandidate") -> bool:
+        """Whether the candidate's function declares ``global`` and ``nonlocal`` as the template's does.
+
+        Only the names either block mentions count: the helper's declarations
+        hold for every call, so an occurrence whose function binds a declared
+        name locally, or declares one the template's binds locally, would
+        read or write another variable through it.
+        """
+        mentioned = identifiers((*template.pair.block1_nodes, *candidate.nodes))
+        names = function_names(candidate.function)
+        own = (names.declared_global & mentioned, names.declared_nonlocal & mentioned)
+        return own == (template.declared[0] & mentioned, template.declared[1] & mentioned)
 
     def _add_clustered_replacements(
         self,
@@ -513,6 +530,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             template.return_variables,
             template.module_names,
             template.bound_in_block,
+            template.declared,
         )
 
     def _are_structurally_similar(

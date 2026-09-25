@@ -60,6 +60,7 @@ from .decorator_reach import (
     decorator_refusal,
 )
 from .definite_assignment import definitely_bound_after
+from .function_scope import function_names
 from .statement_facts import bindings_of, loaded_names
 from .assignment_analyzer import (
     has_reassignments_without_bindings,
@@ -1060,10 +1061,13 @@ class PairEvaluation(
         free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1) - (
             spellings.read_bare - passed
         )
-        # A parameter cannot also be declared global or nonlocal in the helper.
-        globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
-            pair, scope_analyzer, free_vars
-        )
+        # A parameter cannot also be declared global or nonlocal in the helper,
+        # and what the helper declares, it declares for every site.
+        declarations = self._global_nonlocal_declarations(pair, (ctx.func1, ctx.func2), free_vars)
+        if declarations is None:
+            self._debug_reject(RejectReason.SCOPE_DECLARATIONS_DIFFER, pair)
+            return None
+        globals_to_declare, nonlocals_to_declare, free_vars = declarations
         module_names = self._names_kept_free(pair, ctx, free_vars - forced_parameters)
         free_vars -= module_names
         if in_class_body:
@@ -1300,6 +1304,10 @@ class PairEvaluation(
                     return_variables=tuple(unified.ordered_return_variables[0]),
                     bound_in_block=frozenset(analysis.snapshot1.bound_in_block),
                     module_names=free.module_names,
+                    declared=(
+                        function_names(setup.ctx.func1).declared_global,
+                        function_names(setup.ctx.func1).declared_nonlocal,
+                    ),
                 ),
                 scope.dce_node,
                 functions,

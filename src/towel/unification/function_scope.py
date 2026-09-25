@@ -379,6 +379,43 @@ def code_names(statements: Iterable[ast.AST]) -> ScopeNames:
     return total
 
 
+def _compute_identifiers(statement: ast.AST) -> FrozenSet[str]:
+    found: Set[str] = set()
+    for node in ast.walk(statement):
+        if isinstance(node, ast.Name):
+            found.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            found.add(node.name)
+        elif isinstance(node, ast.arg):
+            found.add(node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            found.update(node.names)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            found.update(import_binding_names(node))
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            found.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            found.add(node.rest)
+    return frozenset(found)
+
+
+_IDENTIFIERS: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def identifiers(statements: Iterable[ast.AST]) -> FrozenSet[str]:
+    """Every name these statements spell, as a use, a binding or a declaration, nested scopes included.
+
+    ``statement_facts.mentioned_names`` sees only ``Name`` nodes, not the
+    names an import, a ``match`` capture, an ``except`` clause, a definition
+    or a declaration binds.
+    """
+    found: Set[str] = set()
+    for statement in statements:
+        spelled: FrozenSet[str] = memoized_per_node(_IDENTIFIERS, statement, _compute_identifiers)
+        found |= spelled
+    return frozenset(found)
+
+
 def _compute_function_names(function: ast.AST) -> ScopeNames:
     assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
     parameters = ScopeNames(
