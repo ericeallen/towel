@@ -411,22 +411,31 @@ def unanswered_files(answer: Mapping[RevealKey, str]) -> Mapping[str, str]:
     return answer.unanswered if isinstance(answer, Revealed) else {}
 
 
+_CHECKER_ROOT_MARKERS: Final = (
+    "mypy.ini",
+    ".mypy.ini",
+    "pyrightconfig.json",
+    "pyproject.toml",
+    "setup.cfg",
+    "setup.py",
+)
+"""Files whose directory a checker is run from when nothing configures one nearer."""
+
+
+def _is_checker_root(directory: Path) -> bool:
+    return any((directory / name).is_file() for name in _CHECKER_ROOT_MARKERS)
+
+
+def _is_repository_root(directory: Path) -> bool:
+    return (directory / ".git").exists() or (directory / ".hg").exists()
+
+
 def _checker_root(path: Path) -> Path:
     """Nearest checker or packaging root, independently of import-layout inference."""
     path = path.resolve()
     directory = path.parent if path.is_file() or path.suffix in {".py", ".pyi"} else path
     for root in (directory, *directory.parents):
-        if any(
-            (root / name).is_file()
-            for name in (
-                "mypy.ini",
-                ".mypy.ini",
-                "pyrightconfig.json",
-                "pyproject.toml",
-                "setup.cfg",
-                "setup.py",
-            )
-        ):
+        if _is_checker_root(root):
             return root
     return find_project_root(directory)
 
@@ -451,7 +460,7 @@ def _configured_root(path: Path, checker: str) -> Optional[Path]:
     for root in (directory, *directory.parents):
         if configured(root):
             return root
-        if (root / ".git").exists() or (root / ".hg").exists():
+        if _is_repository_root(root):
             break
     return None
 
@@ -464,6 +473,69 @@ def _source_groups(sources: Mapping[str, str], checker: str) -> Dict[Path, Dict[
             _configured_root(Path(absolute), checker) or _checker_root(Path(absolute)), {}
         )[absolute] = source
     return groups
+
+
+def _pyright_roots(path: Path) -> List[Path]:
+    """Every directory pyright checks ``path`` from: its nearest root, and each enclosing it.
+
+    A project's pyright run at a directory checks everything beneath it,
+    including a member with a configuration of its own; that configuration
+    applies only when pyright is run from the member. A consumer in the outer
+    project imports the member (through ``extraPaths`` or an editable install)
+    and is checked by the outer run alone. Checking the member's files only
+    from the member judged that consumer against the member as it was: a
+    helper that changed what an unannotated function returns broke it, and
+    the outer project's own check failed once the change was written.
+
+    The enclosing roots are those pyright is configured at, found as the
+    nearest is, within the repository. Where nothing configures pyright the
+    roots are checker and packaging roots, and they enclose one another only
+    within a repository: outside one, nothing bounds the walk up but the
+    filesystem's root.
+    """
+    nearest = _configured_root(path, "pyright")
+    if nearest is not None:
+        roots = [nearest]
+        while not _is_repository_root(roots[-1]) and roots[-1].parent != roots[-1]:
+            outer = _configured_root(roots[-1].parent, "pyright")
+            if outer is None:
+                break
+            roots.append(outer)
+        return roots
+    roots = [_checker_root(path)]
+    within = next(
+        (
+            directory
+            for directory in (roots[0], *roots[0].parents)
+            if _is_repository_root(directory)
+        ),
+        None,
+    )
+    if within is not None:
+        roots += [
+            directory
+            for directory in roots[0].parents
+            if directory.is_relative_to(within) and _is_checker_root(directory)
+        ]
+    return roots
+
+
+def _pyright_groups(sources: Mapping[str, str]) -> Dict[Path, Dict[str, str]]:
+    """Each root pyright checks ``sources`` from, with every one of them that lies beneath it.
+
+    A root's copy holds the whole directory, so each of its checks shows every
+    change inside it, not only those whose nearest root it is: a nested
+    configuration's files, in the outer copy, used to stand as they were on
+    disk while the nested copy showed the change.
+    """
+    resolved = {str(Path(path).resolve()): text for path, text in sources.items()}
+    roots: Dict[Path, None] = {}
+    for path in resolved:
+        roots.update(dict.fromkeys(_pyright_roots(Path(path))))
+    return {
+        root: {path: text for path, text in resolved.items() if Path(path).is_relative_to(root)}
+        for root in roots
+    }
 
 
 _MYPY_WORKER = Path(__file__).with_name("_mypy_worker.py")
@@ -1315,7 +1387,7 @@ class PyrightOracle:
         if self._forked():
             return CheckFailure(_AFTER_FORK)
         errors: List[TypeDiagnostic] = []
-        for root, replacements in _source_groups(sources, "pyright").items():
+        for root, replacements in _pyright_groups(sources).items():
             try:
                 served = self._check_with_session(root, replacements, excluded_paths)
             except (OSError, ValueError, UnicodeError) as error:

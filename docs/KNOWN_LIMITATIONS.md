@@ -995,6 +995,16 @@ where the evidence comes from:
   configured source or stub search roots outside the project cannot be
   represented safely and cause verification to decline the proposal.
   Project include/exclude settings still determine the checker's coverage.
+  A change is checked from the root of its nearest pyright configuration and
+  from every configured root enclosing that one within the repository, and
+  each root's copy shows every change beneath it: pyright run at the outer
+  root checks a member with a configuration of its own as well, and a
+  consumer there was judged against the member's original text. Where nothing
+  configures pyright, the roots are checker and packaging roots, which enclose
+  one another only inside a repository (a `.git` or `.hg` directory); outside
+  one, a change to a member is checked from the member and from the roots of
+  the run's other files, so a consumer in an enclosing directory that the
+  run's target leaves out is not checked.
 - Mypy runs in an owned worker process, each build in a forked child of it that exits once it has answered, and never freezes the caller's garbage
   collector. Library users should call the oracle's `close()` when finished;
   `CombinedOracle.close()` closes both checkers. The CLI closes its oracle on
