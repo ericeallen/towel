@@ -343,6 +343,7 @@ class RejectReason(StrEnum):
     DIRECTIVE_AROUND_BLOCK = "directive_around_block"
     EXCLUDED_BLOCK_START = "excluded_block_start"
     DIRECTIVE_ON_SHARED_LINE = "directive_on_shared_line"
+    LAYOUT_NOT_KEPT = "layout_not_kept"
     FORWARDED_CALLEE = "forwarded_callee"
     THUNK_OF_POSSIBLY_UNBOUND_LOCAL = "thunk_of_possibly_unbound_local"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"

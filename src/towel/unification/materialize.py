@@ -165,7 +165,7 @@ class Materialization(
         not used: the helper is then inserted as rendered, where each
         directive stands beside the code it was written for.
         """
-        if not proposal.helper_comments.comments:
+        if not proposal.helper_comments.carried:
             return self._render(node)
         woven = weave_comments(node, proposal.extracted_function, proposal.helper_comments)
         if self.snippet_formatter is None:

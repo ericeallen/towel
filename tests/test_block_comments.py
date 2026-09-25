@@ -155,6 +155,7 @@ DIRECTIVE_FORMS = [
     ("# nosec", False, False),
     ("# nosec B101", False, False),
     ("# pylint: disable=invalid-name", False, False),
+    ("# pylint: disable-next=invalid-name", False, True),
     ("# pylint: skip-file", True, False),
     ("# noinspection PyProtectedMember", False, True),
     ("# nosemgrep", False, True),
@@ -168,6 +169,9 @@ DIRECTIVE_FORMS = [
     ("# autopep8: off", False, False),
     ("# isort: skip", False, False),
     ("# isort: skip_file", True, False),
+    # isort's code-sorting comments sort the statement after them.
+    ("# isort: list", False, True),
+    ("# isort: unique-tuple", False, True),
     ("# pycln: skip", False, False),
     ("# nopycln: import", False, False),
     ("# codespell:ignore", False, False),

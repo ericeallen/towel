@@ -126,7 +126,7 @@ flowchart TD
       moved code or its call would leave (`directives_differ`,
       `directive_on_argument`, `directive_outlives_block`,
       `directive_around_block`, `excluded_block_start`,
-      `directive_on_shared_line`; see *Comments of
+      `directive_on_shared_line`, `layout_not_kept`; see *Comments of
       moved code*), and a further site that differs from them in its
       directives does not join;
    10. placement: function, class, or module, and a host module that closes
@@ -891,10 +891,12 @@ coverage pragma or pylint `disable` covers, the statement after a
 which ty, ruff, pyre, pyrefly, Semgrep and Fixit apply there, a region's
 span); an ignore on a line of its own above a block would stay above its
 call and govern that instead (`directive_around_block`); a coverage pragma
-or pylint `disable` on the header of a statement enclosing the block, or a
-`pylint: disable` earlier in an enclosing body, governs every site and
-would not reach the helper where placement writes it
-(`directive_around_block`, decided with the proposal);
+or pylint `disable` on the header of a statement enclosing the block, a
+region directive of any tool opened before the block and not closed before
+it, or a coverage exclusion matching from before it, governs every site and
+would not reach the helper where placement writes it, or, for a formatter's
+region, governs any site (`directive_around_block`, decided with the
+proposal);
 a block whose first statement coverage excludes would become a measured call
 (`excluded_block_start`), where what coverage excludes is every line the
 project's own coverage.py configuration's regexes match, read as coverage.py
@@ -902,8 +904,10 @@ reads it (`coverage_config.py`); a directive, or a coverage exclusion, on a
 line the block shares with a statement that stays at the call site governs
 that statement too, and the splice would part them
 (`directive_on_shared_line`); and a region directive (`fmt: off`, `isort:
-off`, a `pylint: disable` on a line of its own) must close within the block,
-and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
+off`, a `pylint: disable` on a line of its own, ruff's `ruff: disable[...]`)
+must close within the block, by a closer its tool reads at the level its
+tool requires, no coverage exclusion may match across the block's edge, and
+a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is
 left out of the cluster.
 
@@ -917,7 +921,14 @@ rendering's tree, and a comment that cannot stand where it was written goes
 to its statement's line. A formatting that moves a directive off the line
 of the code it covered, as ruff does with a comment after a split line's
 closing parenthesis, is not used for that helper (`keeps_directives`); it is
-inserted as rendered.
+inserted as rendered. Statements whose layout a formatter directive keeps
+(a formatter's region, `fmt: skip`, or a formatter's region around the
+blocks that still covers the helper) are written into the helper from the
+first site's own text, uniformly re-indented, in place of their rendering
+(`_spliced`); the sites must keep the same statements alike, with no
+parameter standing in them, and a formatting that changes those lines is not
+used either. A pair where that cannot be done is declined, and the trial
+weave that decides it runs when the comments are merged (`layout_not_kept`).
 
 ## Cross-file behavior
 

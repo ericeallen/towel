@@ -1369,6 +1369,21 @@ installed), a `pytest_plugins` or `register_assert_rewrite` anywhere else
 invocation adds (`PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, a module path given on
 the command line) is taken to be absent (fixtures `xf7d_*`).
 
+Three of pytest's rules are not modeled, and a file they concern is taken
+to be rewritten or not by the rules above. pytest keeps only the
+`testpaths` entries no earlier one holds (`normalize_collection_arguments`
+in `_pytest/main.py`, unless `--keep-duplicates`), so `testpaths =
+["tests/helpers.py", "tests"]` does not make `tests/helpers.py` an initial
+path, and pytest does not rewrite it, while Towel takes it to be rewritten
+(round 4, P1-11). pytest consults its initial paths only once the session
+is set, so a file a `conftest.py` imports while pytest configures itself is
+not rewritten as one. And its early bail-out passes over a package's
+`__init__.py` that `python_files` matches unless the package's own name
+matches too. In each case an `assert` may move, under `--cross-module`,
+between a module pytest rewrites and one it does not. What changes is the
+failure report: a failing assert loses, or gains, pytest's account of the
+values it compared. Whether a test passes or fails does not change.
+
 What this does not see:
 
 - **A function handed to a compiler or source reader only inside another
@@ -1425,7 +1440,17 @@ the proposals it built and did not apply, by reason:
   enclosing the code does not pass the method-host test of its machinery.
   `assert_rewriting_differs`: under `--cross-module`, a block holding an
   `assert` would join modules pytest does not rewrite alike. See *Decorators
-  that compile or instrument a body* above.
+  that compile or instrument a body* above. Which files coverage.py
+  measures is not read: under `--cross-module`, code can move between files
+  that coverage measures differently, as the project's `[run]` `omit`,
+  `include`, `source` or `source_pkgs`, or its `[report]` `omit` and
+  `include`, decide. Code of a file coverage.py omits then becomes measured
+  in the helper's module, or measured code leaves the report and what
+  counts toward `fail_under` (round 4: a block of a module the
+  `.coveragerc` omits, moved into one it measures, raised that module's
+  missed lines from 4 to 5). Reading it would decline pairs between a
+  project's tests and the package its `source` names, a cost measured on
+  attrs and h2.
 - Frame use. `frame_sensitive_block`: the block contains a suspension,
   a namespace read, a frame or stack read, a warning, a loop transfer
   out of the block, a comprehension assignment expression, or a `super()`
@@ -1623,26 +1648,54 @@ the proposals it built and did not apply, by reason:
   its `def` line, where one of them runs on any given Python and the
   helper might well have been covered; Towel cannot tell, and declines.
   `directive_outlives_block`:
-  a region directive on a line of its own (`fmt: off`/`on`, `isort:
-  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`, `ruff:
-  disable`/`enable`) is not closed within the block, so its region reaches
-  code that stays behind, or a file-wide directive (`flake8: noqa`, `ruff:
+  a region directive on a line of its own is not closed within the block,
+  so its region reaches code that stays behind; or a match of coverage.py's
+  exclusion regexes spans the block's edge, so the code outside it would
+  stop being excluded; or a file-wide directive (`flake8: noqa`, `ruff:
   noqa`, `ruff: file-ignore`, `mypy:`, `pyright: strict`, `pyrefly:
-  ignore-errors`, `pyre-strict`) would move into another module.
+  ignore-errors`, `pyre-strict`) would move into another module. The
+  region directives are those of every tool the comment table knows that
+  has one: Black's and ruff format's `fmt: off`/`on` (and `yapf:
+  disable`/`enable`, which both read the same way), yapf's, autopep8's
+  `autopep8: off`/`on`, isort's `isort: off`/`on`, pylint's and pytype's
+  `disable`/`enable`, and ruff 0.16's range suppression `ruff:
+  disable[...]`/`enable[...]`; flake8, mypy, pyright, ty, pyrefly, pyre,
+  Bandit, Semgrep, Fixit, pycln and codespell have none. A closer counts
+  as its tool reads it, from its source or its measured behaviour (Black
+  26.5.1, ruff 0.16.9, yapf 0.43.0, autopep8 2.3.2, isort 9.0.1). An
+  opener is what any of them reads as one: yapf reads `fmt: off` anywhere
+  in a comment line, prose included, and autopep8 anywhere in the text, so
+  a comment explaining `# fmt: off` opens their regions. A closer counts
+  only where every reader of that family accepts it: Black's at the
+  opener's level and spelled `# fmt: on`, `# fmt:on` or `# yapf: enable`
+  (`# FMT: ON` closes nothing); ruff's with the same codes in the same
+  order; pylint's and pytype's `enable` naming every message the `disable`
+  did; isort's the whole line `# isort: on`. pytype's reading was not
+  verified, so its region is taken to reach as far as either a
+  line-by-line or a block-scoped reading would carry it. A `fmt: off`
+  written inside a string, which autopep8 also reads, is not seen.
   `directive_around_block`: an ignore on a line of its own above a site's
   block governs the block's first statement, and would stay above the call
-  that takes its place, silencing the call and not the helper; or
-  every site's block is reached by a directive outside it that would not
-  reach the helper: `# pragma: no cover` or `# pylint: disable` at the end
-  of the header of a statement enclosing the block (its function's `def`
-  line, a class, an `if`, loop, `else:` or `except` line), or a `# pylint:
-  disable` on a line of its own earlier in a body enclosing it and not
-  enabled again before it. A helper written inside that class, as a method
-  at the class's end, or inside that function, from a directive on its
-  `def` line, is still reached; one on a line of its own at module level
-  reaches every helper of its module and is not counted. While one site is
-  measured or linted, the helper is that site's code and its tool reports
-  nothing new, so a single site outside is enough. pygments' builtins
+  that takes its place, silencing the call and not the helper (pylint's
+  `disable-next` and isort's `# isort: list` and the like included); or
+  a directive outside a site's block reaches it and would not reach the
+  helper: `# pragma: no cover` or `# pylint: disable` at the end of the
+  header of a statement enclosing the block (its function's `def` line, a
+  class, an `if`, loop, `else:` or `except` line), a region directive
+  opened before the block and not closed before it (pylint's in an earlier
+  clause of the same statement too), or a match of coverage.py's regexes
+  that begins before the block and excludes its lines. A helper is still
+  reached where the region covers it: a module helper when the region
+  opens before the module's first definition and is not closed before its
+  last statement; a method helper when it opens before the method holding
+  the block (before the class's first statement, for a formatter's) and is
+  not closed before the class's end; a nested helper when it opens before
+  its function's first statement; and one inside the class or function
+  whose header carries the directive. A formatter's region declines at any
+  site, since that site's layout would be formatted in the helper. For a
+  coverage exclusion or a linter's directive, while one site is measured
+  or linted, the helper is that site's code and its tool reports nothing
+  new, so every site must be reached for the pair to decline. pygments' builtins
   scripts define functions under `if __name__ == '__main__':  # pragma: no
   cover`; a module helper for two of them took `_lua_builtins.py` from 100%
   to 40% line coverage, and a loop body excluded by its header's pragma
@@ -1659,7 +1712,21 @@ the proposals it built and did not apply, by reason:
   directive governs the whole line: moved into the helper it would leave
   `a = 1` unsilenced, and left on the call's line it would also reach the
   call while the helper took a copy. A plain comment there moves as any
-  other. A further site whose directives
+  other. `layout_not_kept`: a formatter directive keeps lines of a block
+  as written (a formatter's region inside it, a `# fmt: skip`, ruff's
+  trailing `# fmt: off` or yapf's trailing `# yapf: disable`, or a
+  formatter's region around the blocks that still covers the helper, which
+  keeps the whole block), and the helper cannot hold them byte for byte,
+  apart from a uniform re-indentation. Such lines are written into the
+  helper from the first site's own text, in place of their rendering, and a
+  formatting of the helper that changes them is not used. The pair is
+  declined when the sites keep different statements or write them
+  differently, when a parameter would stand in them, or when they cannot be
+  re-indented unchanged: a string running across their lines, a tab in
+  their indentation, a line indented less than their first, a statement
+  sharing their first or last line, a `# fmt: skip` on a clause's header,
+  or, in a method helper, a line indented other than by whole levels of
+  four spaces, which the class's indentation would change. A further site whose directives
   differ from the pair's is left out of the cluster rather than declining it.
   What coverage.py excludes is read from the project's own configuration,
   as coverage.py reads it (`src/towel/coverage_config.py`, following

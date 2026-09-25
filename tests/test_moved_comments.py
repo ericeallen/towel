@@ -876,7 +876,7 @@ def test_a_directive_over_code_that_becomes_an_argument_declines_the_pair(
 
 
 @pytest.mark.parametrize("argument", ["name", "literal"])
-@pytest.mark.parametrize("directive", _TOOL_DIRECTIVES)
+@pytest.mark.parametrize("directive", [text for text in _TOOL_DIRECTIVES if "fmt" not in text])
 def test_a_directive_over_a_name_or_literal_argument_moves(
     tmp_path: Path, directive: str, argument: str
 ) -> None:
@@ -889,6 +889,18 @@ def test_a_directive_over_a_name_or_literal_argument_moves(
     assert _line_holding(_helper_source(result), "total += len(").endswith("  " + directive)
     assert result.count(directive) == 1
     _assert_same_refactoring_without_comments(path, result)
+
+
+@pytest.mark.parametrize("argument", ["name", "literal"])
+def test_a_line_the_formatter_is_kept_off_is_not_rewritten_around_a_parameter(
+    tmp_path: Path, argument: str
+) -> None:
+    """``fmt: skip`` keeps its line as written, which a parameter standing in it would not be."""
+    first, second = ("alpha", "beta") if argument == "name" else ("'alpha'", "'beta'")
+    path = _write(
+        tmp_path, _OVER_ARGUMENT.format(first=first, second=second, comment="  # fmt: skip")
+    )
+    assert "layout_not_kept" in _declined(path)
 
 
 def test_a_pragma_on_a_clause_reaches_the_arguments_inside_it(tmp_path: Path) -> None:
