@@ -582,20 +582,26 @@ annotation generation, inference and verification while preserving existing
 source annotations. Errors a transformation introduces never enter the
 reference, since a change that introduces one is never written.
 
-*What "complete" covers.* A checker config that names its own `files` settles
-it: the project has said what it checks. mypy takes its targets on the command
-line, so most configs name none, and the check then covers the packages the
+*What "complete" covers.* A checker config that names its own `files`,
+`packages` or `modules` settles it: the project has said what it checks. mypy
+takes its targets on the command line, so most configs name none, and the
+project's run is then taken to be mypy over what Towel was pointed at, less what
+`--exclude` names (`MypyInferrer.begin_run`). The check covers the packages the
 analyzed files belong to, everything mypy reaches by following imports out of
-them, and the modules that import *into* them. That last set is found by
-`towel.consumers`, one `ast` pass over the project per run, because following
-imports forward never reaches a consumer and a change can break one: a subclass
-in another package, unchanged and never imported by the package it extends, is
-broken by a helper whose name it already uses. The project root is deliberately
-not walked in place of this. Repositories hold files no checker can build —
-test data written to be invalid, two demo scripts sharing a module name, a stub
-directory beside the package it describes — and one of them fails the build and
-refuses the project. None of them imports the package, so none is a consumer,
-and none is selected.
+them, and the modules of that run that import *into* them. That last set is
+found by `towel.consumers`, one `ast` pass over the project per run, because
+following imports forward never reaches a consumer and a change can break one:
+a subclass in another package, unchanged and never imported by the package it
+extends, is broken by a helper whose name it already uses. A consumer outside
+the run, and an unchanged file the run leaves out (a directory `--exclude`
+names, a file the configuration's `exclude` matches), is not built: every check
+of a run, the baseline and each candidate's, is built from the same run, and
+the project's own run never reads such a file except where an import reaches
+it. The project root is deliberately not walked in place of this. Repositories
+hold files no checker can build — test data written to be invalid, two demo
+scripts sharing a module name, a stub directory beside the package it describes
+— and one of them fails the build and refuses the project. None of them imports
+the package, so none is a consumer, and none is selected.
 
 *Stubs beside their modules.* Every file Towel changes, and every consumer it
 scanned for, is named to mypy one by one, and mypy checks a named `a.py` even

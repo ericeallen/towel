@@ -956,7 +956,11 @@ where the evidence comes from:
   verified by mypy, exactly as the project's own mypy run never checks it;
   Pyright, when configured, still checks the implementation as a file.
 - Which files' errors count, and what each module is called, is mypy's own
-  rule under the project's configuration. A file the configuration does not
+  rule under the project's configuration. Where the configuration names no
+  `files`, `packages` or `modules`, the project's run is taken to be mypy
+  over what Towel is pointed at, less what `--exclude` names, so a consumer
+  outside that target (the tests of `towel dry src/pkg`) is not checked; a
+  run that includes it checks it. A file the configuration does not
   name counts where a module it names imports it and the imported module's
   own `follow_imports` (its `[[tool.mypy.overrides]]` section, else the
   global setting) reports what it finds there; a changed file the

@@ -120,6 +120,7 @@ from ..type_inference import (
     _module_name_and_root,
     _mypy_config,
     _RelocatedOracle,
+    begin_checked_run,
     checker_module_name,
     checks_in_turn,
     holds_warm_state,
@@ -524,6 +525,7 @@ class HelperAnnotationWiring(EngineState):
             if not originals:
                 self._type_run_baseline = CheckSuccess(())
             else:
+                begin_checked_run(self._type_run_oracle, list(originals))
                 baseline = self._type_run_oracle.check_project(originals)
                 self._type_run_baseline = baseline
                 if not isinstance(baseline, CheckFailure):

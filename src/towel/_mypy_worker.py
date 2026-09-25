@@ -45,7 +45,17 @@ import signal
 import sys
 import threading
 import time
-from typing import Callable, List, Mapping, NamedTuple, Optional, Protocol, Sequence, Tuple
+from typing import (
+    AbstractSet,
+    Callable,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+)
 
 from mypy import build
 from mypy.build import BuildSource
@@ -58,7 +68,9 @@ from mypy.modulefinder import (
     ModuleNotFoundReason,
     SearchPaths,
     compute_search_paths,
+    get_search_dirs,
     matches_exclude,
+    mypy_path,
 )
 from mypy.options import BuildType, Options
 from mypy.util import decode_python_encoding
@@ -404,7 +416,13 @@ def _walked_for(path: Path) -> Path:
 
 
 def _complete_targets(
-    replacements: Mapping[str, str], options: Options, root: Path, consumers: Sequence[str]
+    replacements: Mapping[str, str],
+    options: Options,
+    root: Path,
+    consumers: Sequence[str],
+    *,
+    run: Sequence[BuildSource] = (),
+    judged: Optional[Callable[[str], bool]] = None,
 ) -> list[str]:
     """What a complete build walks beyond the files being changed.
 
@@ -423,15 +441,35 @@ def _complete_targets(
     Seventeen of the first fifty-two projects of the release corpus were refused
     for such a file, none of which any project's own mypy run looks at, and none
     of which can be affected by a change Towel makes. A config that names its
-    own ``files`` is still obeyed: there the project has said what it checks.
+    own ``files``, ``packages`` or ``modules`` is still obeyed: there the
+    project has said what it checks, and ``run`` is what it names
+    (:func:`_sources_of_the_projects_run`).
+
+    A consumer the project's own run does not check (``judged``) is not
+    walked. The consumer scan reads the whole tree, the directories
+    ``--exclude`` names included, and two such files sharing a module name
+    (``docs/one/example.py`` and ``docs/two/example.py``) failed every check
+    whose change they import, while the project's ``mypy`` never looks at
+    either.
     """
-    if options.files:
-        return list(options.files)
+    if _names_its_targets(options):
+        if options.files:
+            return list(options.files)
+        return sorted({source.path for source in run if source.path is not None})
     walked = {str(_walked_for(Path(path))) for path in replacements}
     # The caller scans once per project for what imports into those packages,
     # which following imports out of them cannot reach. See ``towel.consumers``.
-    walked.update(consumer for consumer in consumers if os.path.exists(consumer))
+    walked.update(
+        consumer
+        for consumer in consumers
+        if os.path.exists(consumer) and (judged is None or judged(consumer))
+    )
     return sorted(walked) or [str(root)]
+
+
+def _names_its_targets(options: Options) -> bool:
+    """Whether the configuration says what the project's run checks: ``files``, ``packages``, ``modules``."""
+    return bool(options.files or options.packages or options.modules)
 
 
 def _named_by_the_project(options: Options) -> set[str]:
@@ -521,6 +559,9 @@ def _build_sources(
     complete: bool,
     placeholders: Mapping[str, Tuple[str, str]],
     consumers: Sequence[str],
+    *,
+    run: Sequence[BuildSource] = (),
+    judged: Callable[[str], bool] = lambda path: True,
 ) -> list[BuildSource]:
     # Text is given for the replacements and for every path an earlier request
     # once overlaid, whose cache entry would otherwise answer for its file. The
@@ -548,9 +589,22 @@ def _build_sources(
             )
             if resolved.path is not None and resolved.path not in replacements
         ]
-    selected = create_source_list(list(replacements) + restored, options)
-    targets = _complete_targets(replacements, options, root, consumers)
-    selected = create_source_list(targets, options, allow_empty_dir=True) + selected
+    # A file the project's own run does not check is built only where its
+    # text is given: a change to it, which whatever imports it must see, or an
+    # entry of the record. Unchanged, it is read, or not, as that run reads it.
+    # The checked copy of an output restates every module of the target, and
+    # the baseline is given every analyzed one; a stray one of either, from a
+    # directory ``--exclude`` names or the configuration excludes, was built as
+    # a module of its own and failed the build ("found twice", or a Jinja hook
+    # script that does not parse), where the project's ``mypy`` never reads it.
+    supplied = [path for path in replacements if path in given or judged(path)]
+    selected = create_source_list(supplied + restored, options)
+    targets = _complete_targets(replacements, options, root, consumers, run=run, judged=judged)
+    selected = [
+        source
+        for source in create_source_list(targets, options, allow_empty_dir=True)
+        if source.path is None or judged(source.path) or source.path in given
+    ] + selected
     by_path = {
         os.path.realpath(source.path): source
         for source in _one_source_per_module(
@@ -588,6 +642,8 @@ def _sources_of_the_projects_run(options: Options, root: Path) -> list[BuildSour
     """
     if options.files:
         return create_source_list(list(options.files), options, allow_empty_dir=True)
+    if options.packages or options.modules:
+        return _named_modules(options, root)
     try:
         return create_source_list([str(root)], options, allow_empty_dir=True)
     except InvalidSourceList:
@@ -603,6 +659,43 @@ def _sources_of_the_projects_run(options: Options, root: Path) -> list[BuildSour
             except InvalidSourceList:
                 continue
     return found
+
+
+def _named_modules(options: Options, root: Path) -> list[BuildSource]:
+    """What a configuration's ``packages`` and ``modules`` name, found as mypy's own run finds them.
+
+    mypy's ``main`` searches the working directory, ``MYPYPATH`` and
+    ``mypy_path``, then the interpreter's installed code, and walks each
+    package recursively under the configuration's ``exclude``. A name it
+    cannot find names no file here; mypy's own run stops there with its own
+    message, and the build that follows says so too.
+    """
+    sys_path, _ = get_search_dirs(options.python_executable)
+    search = SearchPaths((str(root),), tuple(mypy_path() + options.mypy_path), tuple(sys_path), ())
+    finder = FindModuleCache(search, FileSystemCache(), options)
+    found: list[BuildSource] = []
+    for package in options.packages or ():
+        found.extend(finder.find_modules_recursive(package))
+    for module in options.modules or ():
+        path = finder.find_module(module)
+        if isinstance(path, str):
+            found.append(BuildSource(path, module, None))
+    # A file of the tree is named as mypy's walk names it, with the directory
+    # it is found from, which is what finding the project's own code needs
+    # (:func:`_where_installed_code_hides_the_project`).
+    in_tree = sorted(
+        {
+            source.path
+            for source in found
+            if source.path is not None and _within(source.path, str(root))
+        }
+    )
+    try:
+        named = create_source_list(in_tree, options) if in_tree else []
+    except InvalidSourceList:
+        named = []
+    by_path = {source.path: source for source in named if source.path is not None}
+    return [by_path.get(source.path or "", source) for source in found]
 
 
 def _within(path: str, directory: str) -> bool:
@@ -763,24 +856,33 @@ def _build_as_the_project_reaches(
 
 
 def _judged_by_the_project(
-    options: Options, root: Path, run: Sequence[BuildSource]
+    options: Options,
+    root: Path,
+    run: Sequence[BuildSource],
+    targets: Optional[AbstractSet[str]] = None,
 ) -> Callable[[str], bool]:
     """Whether the project's own mypy run would take a file as one of its targets.
 
-    With ``files`` configured, the files of ``run``, what those name found as
-    mypy finds them (:func:`_sources_of_the_projects_run`); otherwise every
-    file under ``root`` that no ``exclude`` pattern matches, tested as mypy's
-    own walk tests it, on the file and on each directory above it.
+    With ``files``, ``packages`` or ``modules`` configured, the files of
+    ``run``, what those name found as mypy finds them
+    (:func:`_sources_of_the_projects_run`). Otherwise the run is mypy over
+    what Towel was pointed at, as its command line names it: ``targets``, the
+    resolved files the run analyzes (its target, less what ``--exclude``
+    names), where the caller gives them, and every file under ``root``
+    otherwise; in either case less what an ``exclude`` pattern matches, tested
+    as mypy's own walk tests it, on the file and on each directory above it.
     ``options.exclude`` must still be the project's, before Towel adds to it.
     """
-    if options.files:
-        targets = {os.path.realpath(source.path) for source in run if source.path is not None}
-        return lambda path: os.path.realpath(path) in targets
+    if _names_its_targets(options):
+        named = {os.path.realpath(source.path) for source in run if source.path is not None}
+        return lambda path: os.path.realpath(path) in named
     excludes = list(options.exclude)
     cache = FileSystemCache()
 
     def judged(path: str) -> bool:
         candidate = Path(path)
+        if targets is not None and os.path.realpath(path) not in targets:
+            return False
         if not excludes or not candidate.is_relative_to(root):
             return True
         walked = [candidate, *candidate.parents]
@@ -913,7 +1015,10 @@ def _request(request: object, cache: str) -> _Answered:
     # The project's own run, read before Towel's exclusions, which name what
     # Towel writes (a relocated output), never the project's own files.
     run = _sources_of_the_projects_run(options, root)
-    judged = _judged_by_the_project(options, root, run)
+    targets = request.get("targets")
+    judged = _judged_by_the_project(
+        options, root, run, None if targets is None else set(_strings(targets))
+    )
     excluded_paths = _strings(request.get("excluded_paths"))
     for excluded in excluded_paths:
         path = Path(excluded)
@@ -932,6 +1037,8 @@ def _request(request: object, cache: str) -> _Answered:
         complete,
         _placeholders(request.get("modules")),
         _strings(request.get("consumers") or []),
+        run=run,
+        judged=judged,
     )
     # Every source is named by now, and SourceFinder reads ``mypy_path`` as the
     # explicit package bases; from here on it is only where modules are found.

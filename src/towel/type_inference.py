@@ -113,6 +113,7 @@ __all__ = [
     "Subtyping",
     "TypeDiagnostic",
     "TypeOracle",
+    "begin_checked_run",
     "checks_in_turn",
     "is_probe_file",
     "reports_by_each",
@@ -510,9 +511,27 @@ class MypyInferrer:
         self.answered_from_warm_state = False
         # What mypy has said about a configuration, each said once per oracle.
         self._warned: set[str] = set()
+        # The resolved files the current run analyzes (``begin_run``), or None.
+        self._run_targets: Optional[FrozenSet[str]] = None
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
+
+    def begin_run(self, analyzed: Sequence[str]) -> None:
+        """Check, from now on, as the project's own mypy checks what a run is pointed at.
+
+        ``analyzed`` is every file the run analyzes: its target, less what
+        ``--exclude`` names. Where the configuration names no ``files``,
+        ``packages`` or ``modules``, the project's run is mypy over that
+        target, so a complete check counts the errors of these files and of
+        what their imports follow to, and builds no consumer outside them
+        (``_judged_by_the_project`` in ``_mypy_worker.py``). The baseline and
+        every later check of the run are then built alike: a candidate's check
+        used to walk back in the directories ``--exclude`` had left out of the
+        baseline, and failed there for every candidate.
+        """
+        with self._lock:
+            self._run_targets = frozenset(os.path.realpath(path) for path in analyzed)
 
     def close(self) -> None:
         """Reap the owned worker and remove its cache; safe after partial construction."""
@@ -628,6 +647,8 @@ class MypyInferrer:
                     for source in sources
                 },
             }
+            if complete and self._run_targets is not None:
+                request["targets"] = sorted(self._run_targets)
             try:
                 process = self._running_worker()
             except OSError as error:
@@ -1544,6 +1565,22 @@ def start_cold(oracle: object) -> None:
         stop_language_servers(oracle)
 
 
+def begin_checked_run(oracle: TypeOracle, analyzed: Sequence[str]) -> None:
+    """Tell each checker behind ``oracle`` which files a run analyzes, before its first check.
+
+    A configuration that names no targets of its own has the project's check
+    run over what it is pointed at (:meth:`MypyInferrer.begin_run`). pyright's
+    configuration always says what it covers, so pyright is not told.
+    """
+    if isinstance(oracle, CombinedOracle):
+        for one in oracle.checkers:
+            begin_checked_run(one, analyzed)
+    elif isinstance(oracle, _RelocatedOracle):
+        oracle.begin_checked_run(analyzed)
+    elif isinstance(oracle, MypyInferrer):
+        oracle.begin_run(analyzed)
+
+
 def checks_in_turn(
     oracle: TypeOracle, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
 ) -> Iterator[CheckResult]:
@@ -1699,6 +1736,10 @@ class _RelocatedOracle:
         """Each checker's revelations, at the copy's paths; see :func:`reveal_by_each`."""
         answers = reveal_by_each(self._oracle, self._originals(requests))
         return tuple(self._outputs(answer, requests) for answer in answers)
+
+    def begin_checked_run(self, analyzed: Sequence[str]) -> None:
+        """:func:`begin_checked_run` for the originals of ``analyzed``."""
+        begin_checked_run(self._oracle, [self._original(path) for path in analyzed])
 
     def reports_by_each(self, paths: Sequence[str]) -> Tuple[FrozenSet[str], ...]:
         """Each checker's :func:`reports_by_each`, asked of the originals, at the copy's paths."""
