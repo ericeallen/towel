@@ -906,6 +906,13 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   output is adopted into the place it was written for.
 
 ### Changed
+- The default suite now runs the round-3 semantic auditor's generator of
+  near-duplicate code, seeded: 406 cases in about 45 s. The hostile
+  batteries hold every case that audit reported as a P1, each pinned in the
+  state its fix leaves it, and a sample of the cases it found sound.
+  `just fuzz` runs the generator over thousands of fresh seeds as a
+  release-candidate step, and writes each failure as a hostile fixture
+  ready to commit.
 - A coverage configuration that coverage.py could not read is reported once
   per project root, and coverage.py's defaults are used in its place.
 - A pair whose tool directives cannot move soundly is declined:
