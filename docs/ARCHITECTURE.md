@@ -1153,17 +1153,27 @@ measure is exact and changes no proposal.
   where the parser sets them empty, and `ast.dump` spells the two
   differently. Every comparison, hash and key built from a tree's structure
   goes through it, so a helper, an annotation or a reduced body Towel built
-  compares as the tree the parser would build. All the engine's id-keyed
-  caches — guard verdicts, unification results, the clustering pipeline, per-block
-  analyses — are keyed by structural id, so a fixed-point iteration that
-  re-parses a file still reuses results for the blocks it did not change.
-  Those id-keyed caches are `BoundedCache` instances (`bounded_cache.py`,
+  compares as the tree the parser would build. Unification results, and
+  the memos of analyses that read nothing but the code they are given
+  (orphans, the instantiation check, the class-private-name scan), are
+  keyed by structural id, so a fixed-point iteration that re-parses a file
+  still reuses them for the blocks it did not change. Block guards and
+  per-block analyses read more than the block: the scopes around its
+  function and the module's hazards and aliases, what is bound before and
+  after it, whether a loop holds it. They are keyed by the block's site
+  (`BlockSite`: the digest of its module's source, the positions of its
+  function and first statement, and its length), which a block of the same
+  code elsewhere does not share; keyed by structure, a benign copy's
+  verdict answered for a hazardous one (the round-3 audit's P1-1). A
+  clustering scan is keyed by the file's digest and the template.
+  These caches are `BoundedCache` instances (`bounded_cache.py`,
   an LRU mapping; `STRUCTURAL_CACHE_LIMIT`, 250,000 entries); every cache keyed by a node
   (structural ids, signed blocks, value-producing verdicts, used names,
   assignment analyses, and the per-statement memos below) is a
   `WeakKeyDictionary` whose entries vanish with their tree, so a file the
-  analysis session has dropped is not pinned. A pair's four ids are
-  resolved once, in its `_PairContext`, and passed to every guard.
+  analysis session has dropped is not pinned. A pair's two sites are
+  resolved once, in its `_PairContext`, and passed to every guard and
+  per-block analysis.
   `structural_memo.py` stores a unification result as positions and
   rehydrates it onto the matching re-parsed block.
 - **Shared analysis graphs.** Each engine owns an `AnalysisSession`

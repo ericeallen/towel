@@ -177,6 +177,15 @@ TRANSFORMED = {
     "r160_host_binds_any_before_its_last_import",
     "r161_module_with_all_gains_no_public_name",
     "r162_host_star_imports_callable",
+    # Round-3 audit: a memoized verdict answers only for its block's site. The
+    # benign twins of a rebinding hazard, and the top-level twin of a copy in
+    # a loop, still share helpers; the hazard and the loop copy
+    # keep their code.
+    "r7c_rebinding_enclosing_function_beside_a_benign_twin",
+    "r7c_top_level_copy_beside_a_loop_copy",
+    # The control for the mangled parameters and import names, which a class
+    # body rewrites and a helper elsewhere would not.
+    "r7c_unmangled_parameter_passed_by_keyword",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in

@@ -64,6 +64,9 @@ TRANSFORMED = {
     "xf30_star_importer_takes_a_typing_name",
     "xf31_package_init_star_imports_a_matcher_named_any",
     "xf32_star_importer_outside_the_target",
+    # Only the benign module's twins; the rebinding hazard in the other keeps
+    # its code (round-3 audit, P1-1).
+    "xf7c_rebinding_enclosing_function_beside_a_twin_in_another_module",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.

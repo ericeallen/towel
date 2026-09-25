@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from typing import Callable, FrozenSet, List, Optional, Sequence, Set, TypeVar, Union
 from weakref import WeakKeyDictionary
 
+from .bounded_cache import memoizing
+
 _SIGNATURE_SKIPS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 """Nested scopes the block signature does not look into."""
 
@@ -49,7 +51,10 @@ def memoized_per_node(
 
     The memo is weak, so an entry vanishes with its node; the result must
     depend on the node's structure alone, which analysis never mutates.
+    Under ``memoization_disabled`` it is computed every time.
     """
+    if not memoizing():
+        return compute(node)
     cached = memo.get(node)
     if cached is None:
         cached = compute(node)

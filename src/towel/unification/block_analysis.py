@@ -22,8 +22,9 @@ must be declared
 global or nonlocal in a helper; and the one filter (``_trivial_helper_reason``)
 that declines helpers which compute nothing, only forward, only rename, or
 only call helpers this tool generated. Every
-answer is memoized per block structure or per function, since the pair
-stages ask the same questions of the same blocks many times.
+answer is memoized per block site (``BlockSite``) or per function, since the
+pair stages ask the same questions of the same blocks many times; a site,
+not the block's structure, because the answers read the block's context.
 """
 
 from __future__ import annotations
@@ -82,7 +83,7 @@ from .visitors import (
 )
 from ..diagnostics import VALIDATION, debugging
 
-from .engine_state import EngineState, GuardKey, UnifyKey
+from .engine_state import BlockSite, EngineState, GuardKey, PerBlockKey, UnifyKey
 from .function_index import FunctionIndex
 
 T = TypeVar("T")
@@ -292,38 +293,28 @@ class BlockAnalysis(EngineState):
         self,
         guard: Callable[..., bool],
         nodes: Sequence[ast.stmt],
-        func: Optional[FunctionNode] = None,
+        func: FunctionNode,
         analyzer: Optional[ScopeAnalyzer] = None,
-        path: Optional[str] = None,
         *,
-        function_id: Optional[str] = None,
-        block_id: Optional[str] = None,
+        site: Optional[BlockSite],
     ) -> bool:
-        """Evaluate a pure block guard once per (guard, function, block).
+        """Evaluate a block guard once per (guard, block site).
 
-        A caller that evaluates several guards of one pair passes the
-        structural ids it computed once; otherwise they are computed here.
+        ``site`` is ``_block_site(func, nodes)``, which a caller evaluating
+        several guards of one block computes once; a block without one is
+        judged afresh. The guard is called with ``analyzer`` when given.
         """
-        if function_id is None and func is not None:
-            function_id = self._sid([func])
-        if block_id is None:
-            block_id = self._sid(nodes)
-        key = GuardKey(
-            guard,
-            function_id,
-            block_id,
-            self._module_digest(func) if analyzer is not None else None,
-        )
-        cached = self._block_guard_cache.get(key)
-        if cached is not None:
-            return cached
+        key = None if site is None else GuardKey(guard, site)
+        if key is not None:
+            cached = self._block_guard_cache.get(key)
+            if cached is not None:
+                return cached
         if analyzer is not None:
             verdict = bool(guard(analyzer, func, list(nodes)))
-        elif func is not None:
-            verdict = bool(guard(func, list(nodes)))
         else:
-            verdict = bool(guard(list(nodes)))
-        self._block_guard_cache[key] = verdict
+            verdict = bool(guard(func, list(nodes)))
+        if key is not None:
+            self._block_guard_cache[key] = verdict
         return verdict
 
     def _is_value_producing(self, block: Sequence[ast.stmt]) -> bool:
@@ -523,29 +514,21 @@ class BlockAnalysis(EngineState):
                 break
         return dce
 
-    def _per_block(
-        self,
-        name: str,
-        func: FunctionNode,
-        block_nodes: Sequence[ast.stmt],
-        compute: Callable[[], T],
-        *,
-        function_id: Optional[str] = None,
-        block_id: Optional[str] = None,
-    ) -> T:
-        """Compute an immutable per-(function, block) result once per analysis.
+    def _per_block(self, name: str, compute: Callable[[], T], *, site: Optional[BlockSite]) -> T:
+        """Compute an immutable result about the block at ``site`` once per analysis.
 
-        The cache holds results of every analysis under one name each; the
-        result type follows the ``compute`` of the name asked for.
+        ``compute`` must be a function of the site alone: of the block's
+        module, function and position (see ``BlockSite``). The cache holds
+        results of every analysis under one name each; the result type
+        follows the ``compute`` of the name asked for. A block without a
+        site is computed afresh.
         """
-        if function_id is None:
-            function_id = self._sid([func])
-        if block_id is None:
-            block_id = self._sid(block_nodes)
-        key = (name, function_id, block_id)
-        if key not in self._per_block_cache:
-            self._per_block_cache[key] = compute()
-        return cast(T, self._per_block_cache[key])
+        if site is None:
+            return compute()
+        key = PerBlockKey(name, site)
+        if key in self._per_block_cache:
+            return cast(T, self._per_block_cache[key])
+        return cast(T, self._per_block_cache.put(key, compute()))
 
     def _build_block_binding_snapshot(
         self,
@@ -554,19 +537,19 @@ class BlockAnalysis(EngineState):
         block_range: Tuple[int, int],
         reassignments: Dict[int, bool],
         *,
-        function_id: Optional[str] = None,
-        block_id: Optional[str] = None,
+        site: Optional[BlockSite],
     ) -> BlockBindingSnapshot:
-        """Binding statistics for a block, computed once per (function, block)."""
+        """Binding statistics for a block, computed once per block site.
+
+        What is bound before and after the block depends on where it stands
+        in the function, so the snapshot is its site's, not its structure's.
+        """
         snapshot: BlockBindingSnapshot = self._per_block(
             "snapshot",
-            func,
-            block_nodes,
             lambda: self._compute_block_binding_snapshot(
                 func, block_nodes, block_range, reassignments
             ),
-            function_id=function_id,
-            block_id=block_id,
+            site=site,
         )
         return snapshot
 
@@ -793,17 +776,18 @@ class BlockAnalysis(EngineState):
         func: FunctionNode,
         nodes: Sequence[ast.stmt],
         analyzer: ScopeAnalyzer,
-        function_id: Optional[str] = None,
-        block_id: Optional[str] = None,
+        site: Optional[BlockSite],
     ) -> FrozenSet[str]:
-        """``rebound_external_names`` of the block, computed once per (function, block)."""
+        """``rebound_external_names`` of the block, computed once per block site.
+
+        The answer reads the scopes enclosing the function and the module's
+        hazards: the same nested function under an enclosing function that
+        rebinds the name it reads, or in a module that reflects, has another.
+        """
         return self._per_block(
             "rebound_external_names",
-            func,
-            nodes,
             lambda: rebound_external_names(analyzer, func, nodes),
-            function_id=function_id,
-            block_id=block_id,
+            site=site,
         )
 
     def _rejects_module_data_lookup(
