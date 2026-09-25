@@ -334,6 +334,8 @@ TRANSFORMED = {
     # its accessors; r7d_instrumenting_call_applied_by_hand, whose recompiler is
     # applied by a call, and r7d_metaclass_recompiles_methods are declined.
     "r7d_plain_wrapper_applied_by_hand",
+    # r9dc_stacked_decoration_by_hand, whose recompiler is applied by hand around
+    # a plain decorator and through a factory, is declined (round-4 audit P1-06).
     # A TestCase, read to be built by type, takes the class-private helper, which
     # neither unittest nor pytest collects as a test.
     "r7d_method_helper_in_a_testcase",

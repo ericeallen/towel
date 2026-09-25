@@ -57,7 +57,9 @@ A decorator applied by hand reaches the body as surely as one written with
 wrap(method)`` in a class body, or ``njit(cache=True)(kernel)``. So every call
 in the value of an assignment at module or class level, in any module of the
 project, counts as applying its callee to each definition an argument of it
-names, and is judged as that decorator would be. And a class's machinery
+names, or hands a call made in that argument, at any depth: ``f =
+typechecked(register(f))`` applies both. Each is judged as that decorator
+would be. And a class's machinery
 reaches every method: a metaclass or an ``__init_subclass__`` may wrap or
 recompile them as the class is built. So every class enclosing the code must
 pass the test a class that takes a method helper passes
@@ -1356,10 +1358,12 @@ def _identity(definition: Definition, module: _Module) -> Optional[_Target]:
 def _hand_calls(module: _Module) -> Tuple[Tuple[_Application, str], ...]:
     """Every call in the value of an assignment at module or class level, with each name given it.
 
-    Each argument, positional or keyword, spelled as a name or an attribute
-    chain, is paired with the application the call makes of its callee:
+    Each name an argument hands the call (:func:`_names_handed`), positional
+    or keyword, is paired with the application the call makes of its callee:
     ``f(x)`` applies ``f`` bare, ``f(a)(x)`` applies the factory call
     ``f(a)``, and ``f(x, y)`` applies ``f`` to ``x`` among other arguments.
+    So ``g = typechecked(register(g))`` applies ``typechecked`` to ``g`` as
+    well as ``register``: whatever ``register`` returns may be ``g`` itself.
     Remembered per module tree.
     """
     known = _HAND_CALLS.get(module.tree)
@@ -1382,17 +1386,31 @@ def _hand_calls(module: _Module) -> Tuple[Tuple[_Application, str], ...]:
                 for call in ast.walk(held.value):
                     if not isinstance(call, ast.Call):
                         continue
-                    arguments = (*call.args, *(keyword.value for keyword in call.keywords))
-                    for argument in arguments:
-                        given = argument.value if isinstance(argument, ast.Starred) else argument
-                        spelled = dotted_name(given)
-                        if spelled is not None:
-                            site = f"{name}:{call.lineno}"
-                            found.append(
-                                (_hand_application(call, argument, module, slot, site), spelled)
-                            )
+                    site = f"{name}:{call.lineno}"
+                    for argument in (*call.args, *(keyword.value for keyword in call.keywords)):
+                        application = _hand_application(call, argument, module, slot, site)
+                        found.extend((application, spelled) for spelled in _names_handed(argument))
     _HAND_CALLS[module.tree] = tuple(found)
     return _HAND_CALLS[module.tree]
+
+
+def _names_handed(argument: ast.expr) -> Iterator[str]:
+    """The names an argument hands its call: its own, or those it hands a call it makes, at any depth.
+
+    ``register(f)`` hands ``f``, and so does ``click.argument("v")(f)``:
+    the function object may be what the call returns. A name reached any
+    other way, through a container or a conditional expression, is not
+    followed.
+    """
+    given = argument.value if isinstance(argument, ast.Starred) else argument
+    spelled = dotted_name(given)
+    if spelled is not None:
+        yield spelled
+    elif isinstance(given, ast.Call):
+        if isinstance(given.func, ast.Call):
+            yield from _names_handed(given.func)
+        for inner in (*given.args, *(keyword.value for keyword in given.keywords)):
+            yield from _names_handed(inner)
 
 
 def _hand_application(

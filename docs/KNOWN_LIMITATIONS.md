@@ -1101,8 +1101,12 @@ expression is declined.
 
 A decorator applied by hand counts as one written with `@`: every call in the
 value of an assignment at module or class level, in any module of the
-project, applies its callee to each definition an argument of it names, and
-is judged as that decorator would be. `fast = numba.njit(kernel)` and
+project, applies its callee to each definition an argument of it names, or
+that a call made in the argument is handed, at any depth, and is judged as
+that decorator would be. So `parse_a = typechecked(register(parse_a))` and
+`cmd = click.command(cls=Checked)(click.argument("v")(show_a))` apply every
+callable of the chain to the function (fixture
+`r9dc_stacked_decoration_by_hand`). `fast = numba.njit(kernel)` and
 `fast = njit(cache=True)(kernel)` decline `kernel`, `f = typechecked(f)`
 declines `f`, `method = wrap(method)` in a class body declines `method`, and
 `C = typechecked(C)` declines every method of `C`, however the argument is
@@ -1189,7 +1193,8 @@ What this does not see:
   level alone. An expression statement (`atexit.register(f)`,
   `app.add_url_rule("/", view_func=f)`), a call in a function body
   (`kernel = numba.njit(slow)` inside `setup()`, `Thread(target=f)`), a
-  default value, and a function reached through a container
+  bare call statement on a class (`typechecked(A)`), a default value, and a
+  function reached through a container
   (`njit(KERNELS["slow"])`) or through a name bound other than by a `def`, an
   import or a plain alias (`g = f if fast else h`) are not seen, and code may
   still move out of the function they hand over.

@@ -1158,6 +1158,86 @@ def test_r9dc_rebinding_and_star_import_verdict(tmp_path: Path, case: Spelling) 
     assert _verdict(tmp_path, case) == case.refused
 
 
+# Round-4 audit P1-06: ``parse_a = typechecked(register(parse_a))`` paired
+# only ``register`` with ``parse_a``, since a call's argument counted only when
+# spelled as a name. Every callable applied along the chain is judged.
+
+_REGISTER = "REGISTRY = []\ndef register(fn):\n    REGISTRY.append(fn.__name__)\n    return fn\n"
+
+STACKED_BY_HAND: Tuple[Spelling, ...] = (
+    Spelling(
+        "an instrumenting decorator around a plain one",
+        "from typeguard import typechecked\n" + _REGISTER + "def parse_a(v):\n    return v\n"
+        "parse_a = typechecked(register(parse_a))\n",
+        "parse_a",
+        "typeguard.typechecked",
+    ),
+    Spelling(
+        "a plain decorator around an instrumenting one",
+        "from typeguard import typechecked\n" + _REGISTER + "def parse_a(v):\n    return v\n"
+        "parse_a = register(typechecked(parse_a))\n",
+        "parse_a",
+        "typeguard.typechecked",
+    ),
+    Spelling(
+        "three deep",
+        "from typeguard import typechecked\n" + _REGISTER + "def parse_a(v):\n    return v\n"
+        "parse_a = typechecked(register(register(parse_a)))\n",
+        "parse_a",
+        "typeguard.typechecked",
+    ),
+    Spelling(
+        "a keyword argument of the inner call",
+        "from typeguard import typechecked\ndef register(fn=None):\n    return fn\n"
+        "def parse_a(v):\n    return v\nparse_a = typechecked(register(fn=parse_a))\n",
+        "parse_a",
+        "typeguard.typechecked",
+    ),
+    Spelling(
+        "a click command with a class around a known decorator",
+        "import click\nclass Checked(click.Command):\n    pass\ndef show_a(v):\n    return v\n"
+        "cmd = click.command(cls=Checked)(click.argument('v')(show_a))\n",
+        "show_a",
+        "click.command",
+    ),
+    Spelling(
+        "a compiler around a call whose callee is made by a call",
+        "from numba import njit\ndef make(fn):\n    return lambda x: fn\ndef kernel(x):\n"
+        "    return x\nfast = njit(make(kernel)(1))\n",
+        "kernel",
+        "numba.njit",
+    ),
+    Spelling(
+        "known decorators stacked",
+        "import functools\n" + _REGISTER + "def f(x):\n    return x\n"
+        "f = functools.cache(register(f))\n",
+        "f",
+        None,
+    ),
+    Spelling(
+        "known decorators stacked, one a factory",
+        "import click\ndef show_a(v):\n    return v\n"
+        "cmd = click.command()(click.argument('v')(show_a))\n",
+        "show_a",
+        None,
+    ),
+    # A bare call statement on a class is reflection over its namespace, which
+    # the owner leaves a documented limitation (docs/DECISIONS.md).
+    Spelling(
+        "a bare call statement on a class (not seen)",
+        "from typeguard import typechecked\nclass A:\n    def m(self):\n        return 1\n"
+        "typechecked(A)\n",
+        "A.m",
+        None,
+    ),
+)
+
+
+@pytest.mark.parametrize("case", STACKED_BY_HAND, ids=[case.name for case in STACKED_BY_HAND])
+def test_r9dc_stacked_decoration_by_hand_verdict(tmp_path: Path, case: Spelling) -> None:
+    assert _verdict(tmp_path, case) == case.refused
+
+
 # -- The engine declines, and names the decorator --------------------------------
 
 _DUPLICATED = """
