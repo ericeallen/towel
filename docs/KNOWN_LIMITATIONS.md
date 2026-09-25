@@ -258,7 +258,10 @@ describe belong to that version.
   below). A change that introduces a type error has its annotations replaced
   by `Any`, and then removed. Every variant must pass; checker failure or a
   new error declines the change. A checker that cannot run at all refuses the
-  typed run, and `--no-types` is the explicit way on. It never silently
+  typed run, and `--no-types` is the explicit way on. So does a candidate's
+  check that fails where the same check of the project as it stands, with no
+  change applied, fails too: no candidate could be judged, and the run stops
+  at the first rather than declining each as not judged. It never silently
   disables verification. A helper is annotated only in code that
   already uses annotations, from what the sites declare and what the checker
   reveals; see *Type annotations on helpers* below.
@@ -1061,7 +1064,13 @@ where the evidence comes from:
   `include = ["src"]` had its marker written in `src` under the resolved
   `/private/var` spelling of a copy made in `/var`, and waited out the minute
   all the same), and, for an `include` that names no directory outright, in
-  the first directory whose files it matches. A file no configured checker reports on is changed as the
+  the first directory whose files it matches.
+  mypy reports on what the project's own mypy run checks --
+  its `files`, `packages` or `modules`, else what Towel is pointed at, less
+  what `exclude` matches -- and on what those follow their imports to, but
+  not on a module whose options set `ignore_errors`, which suppresses its
+  `reveal_type` notes with its errors, nor on an implementation behind its own
+  stub. A file no configured checker reports on is changed as the
   body of an unannotated function is, since the project's own check says
   nothing there on any platform, and its helper takes only the annotations
   its sites declare, completed with `Any`: nothing would check an inferred
@@ -1116,9 +1125,22 @@ where the evidence comes from:
   implementation itself is not checked by mypy unless the configuration's
   `files` names it. A change inside such an implementation is therefore not
   verified by mypy, exactly as the project's own mypy run never checks it;
-  Pyright, when configured, still checks the implementation as a file.
+  Pyright, when configured, still checks the implementation as a file. With
+  mypy alone the implementation is a file no configured checker reports on,
+  and its helper takes only the annotations its sites declare, completed with
+  `Any`, as a file outside `files`, or one whose options set `ignore_errors`,
+  does: mypy's probe of such a file still answers, because the probe makes
+  it a source, and an inferred annotation there was accepted that no check
+  of the project looks at. The stub cannot come to disagree with the code:
+  every name and signature it declares is kept, and the helper, which it does
+  not declare, is private to the module (a stubbed module never hosts a
+  helper another module imports).
 - Which files' errors count, and what each module is called, is mypy's own
-  rule under the project's configuration. A file the configuration does not
+  rule under the project's configuration. Where the configuration names no
+  `files`, `packages` or `modules`, the project's run is taken to be mypy
+  over what Towel is pointed at, less what `--exclude` names, so a consumer
+  outside that target (the tests of `towel dry src/pkg`) is not checked; a
+  run that includes it checks it. A file the configuration does not
   name counts where a module it names imports it and the imported module's
   own `follow_imports` (its `[[tool.mypy.overrides]]` section, else the
   global setting) reports what it finds there; a changed file the
@@ -1135,6 +1157,20 @@ where the evidence comes from:
   is not taken for it. A configuration mypy only warns about (an option it
   does not know, a global option in a per-module section, a Python version
   it has dropped) is checked as mypy checks it, and the warning is passed on.
+- A project with more than one mypy configuration (a `pyproject.toml` with
+  `[tool.mypy]` in a sub-project as well as at the root) is checked once per
+  configuration, each in a cache of its own, as `mypy` run from that
+  configuration's directory checks it: the root's covers the sub-project's
+  files too, under the root's options, unless its own `files` or `exclude`
+  says otherwise, and the sub-project's covers them under its own. A change
+  must pass both, and a check reads a file of the other configuration's with
+  the change's text wherever it imports one. Where that run could not build
+  at all, two sub-projects each with a `tests/conftest.py` outside any
+  package, say, the typed run over the root is refused as that `mypy` run is;
+  run Towel on each sub-project, or have the root's configuration `exclude`
+  them. Directories that no mypy configuration covers, grouped by their
+  packaging files instead, are projects of their own, and no check spans
+  two of them.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration, made once per run, kept in step with the
   project as it is refactored, and watched by one long-lived language server.

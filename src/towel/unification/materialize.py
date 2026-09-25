@@ -62,7 +62,7 @@ from .models import (
     Replacement,
     is_generated_helper_name,
 )
-from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
+from ..consumers import MAXIMUM_FILES, scanned_directories
 from ..coverage_config import CoverageExclusion
 from ..project_layout import find_project_root
 from towel.changes import StaleSource, ChangePlan
@@ -976,7 +976,7 @@ def _claimed_helper_names(root: Path) -> HelperNameClaims:
     members: Set[str] = set()
     count = 0
     for parent, directories, files in os.walk(root, onerror=lambda _: None):
-        directories[:] = [name for name in directories if name not in SKIPPED_DIRECTORIES]
+        directories[:] = scanned_directories(parent, directories)
         for name in files:
             if not name.endswith((".py", ".pyi")):
                 continue

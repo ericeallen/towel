@@ -101,6 +101,7 @@ from .consumers import (
 )
 
 from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_probe_file
+from .source_files import TOOL_DIRECTORIES, is_environment
 
 __all__ = [
     "CheckFailure",
@@ -117,6 +118,7 @@ __all__ = [
     "Subtyping",
     "TypeDiagnostic",
     "TypeOracle",
+    "begin_checked_run",
     "checks_in_turn",
     "is_probe_file",
     "reports_by_each",
@@ -380,10 +382,15 @@ class _BuildSource:
 
 @dataclass(frozen=True)
 class _BuildMessages:
-    """What a build reported, and what mypy said about the configuration while reading it."""
+    """What a build reported, and what mypy said about the configuration while reading it.
+
+    ``reported`` is, of a complete build's sources, those the project's own
+    mypy run reports errors in.
+    """
 
     messages: Tuple[str, ...]
     warnings: Tuple[str, ...] = ()
+    reported: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, eq=False)
@@ -586,9 +593,72 @@ class MypyInferrer:
         self.answered_from_warm_state = False
         # What mypy has said about a configuration, each said once per oracle.
         self._warned: set[str] = set()
+        # The resolved files the current run analyzes (``begin_run``), or None.
+        self._run_targets: Optional[FrozenSet[str]] = None
+        # Whether the project's own run reports on each resolved file, as the
+        # first complete check to be given it found (``reports_on``).
+        self._reporting: Dict[str, bool] = {}
+        # Every configuration group's root a check of this run has had.
+        self._group_roots: set[Path] = set()
+        # The cache each group builds in, by root: the first met keeps the
+        # owned directory (``None``), each other one a directory of its own.
+        self._group_caches: Dict[Path, Optional[str]] = {}
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
+
+    def begin_run(self, analyzed: Sequence[str]) -> None:
+        """Check, from now on, as the project's own mypy checks what a run is pointed at.
+
+        ``analyzed`` is every file the run analyzes: its target, less what
+        ``--exclude`` names. Where the configuration names no ``files``,
+        ``packages`` or ``modules``, the project's run is mypy over that
+        target, so a complete check counts the errors of these files and of
+        what their imports follow to, and builds no consumer outside them
+        (``_judged_by_the_project`` in ``_mypy_worker.py``). The baseline and
+        every later check of the run are then built alike: a candidate's check
+        used to walk back in the directories ``--exclude`` had left out of the
+        baseline, and failed there for every candidate.
+        """
+        with self._lock:
+            self._run_targets = frozenset(os.path.realpath(path) for path in analyzed)
+            self._reporting = {}
+            self._group_roots = set()
+
+    def reports_on(self, paths: Sequence[str]) -> FrozenSet[str]:
+        """Those of ``paths`` the project's own mypy run reports errors in: mypy's jurisdiction.
+
+        That run checks what its configuration names (``files``, ``packages``,
+        ``modules``), or else what the run is pointed at (:meth:`begin_run`),
+        less what ``exclude`` matches, and reports on what those follow their
+        imports to, as each module's own options say. A module that ships its
+        own stub is the stub to it, so the implementation beside the stub is
+        outside it, unless ``files`` names the implementation itself; a module
+        whose options set ``ignore_errors`` is checked but reported on
+        nowhere. Outside mypy's jurisdiction a probe build that names the file
+        still answers, since it makes the file a source, and so it verified
+        nothing: tests outside ``files = ["pkg"]`` got helpers annotated with
+        inferred types no check of the project looks at. Now such a file is
+        what pyright's ``exclude`` makes of one, outside that checker's check.
+
+        Each file's answer comes from the first complete check it was given
+        to, which in a run is the baseline; a file no check has seen yet is
+        checked, as it stands, to find out. A file that cannot be read, or
+        whose check fails, is taken to be reported on, as every file was.
+        """
+        unseen: Dict[str, str] = {}
+        for path in paths:
+            if os.path.realpath(path) in self._reporting:
+                continue
+            try:
+                unseen[path] = read_source(Path(path))
+            except (OSError, ValueError, UnicodeError, SyntaxError):
+                continue
+        if unseen:
+            self.check_project(unseen)
+        return frozenset(
+            path for path in paths if self._reporting.get(os.path.realpath(path), True)
+        )
 
     def close(self) -> None:
         """Reap the owned worker and remove its cache; safe after partial construction."""
@@ -620,6 +690,7 @@ class MypyInferrer:
                 self._cache.cleanup()
             self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
             self._cache_dir = Path(self._cache.name).resolve()
+            self._group_caches = {}
             self._import_scans = {}
             self.answered_from_warm_state = False
 
@@ -677,6 +748,9 @@ class MypyInferrer:
         complete: bool = False,
         excluded_paths: Sequence[str] = (),
         consumers: Sequence[str] = (),
+        root: Optional[Path] = None,
+        foreign: Optional[Mapping[str, str]] = None,
+        nested: Sequence[Path] = (),
     ) -> _BuildMessages | CheckFailure:
         if self._owner_pid != os.getpid():
             return CheckFailure("Create a new mypy oracle after fork")
@@ -685,8 +759,17 @@ class MypyInferrer:
                 return CheckFailure("mypy oracle is closed")
             if not sources:
                 return _BuildMessages(())
-            root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
-                Path(sources[0].path)
+            if root is None:
+                root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
+                    Path(sources[0].path)
+                )
+            group = self._group_caches.setdefault(
+                root.resolve(),
+                (
+                    None
+                    if not self._group_caches
+                    else hashlib.sha256(os.fsencode(root.resolve())).hexdigest()[:16]
+                ),
             )
             # Every path goes to the worker resolved, one spelling per file:
             # mypy prints a file by the path it was given, and a file under a
@@ -699,11 +782,20 @@ class MypyInferrer:
                 "complete": complete,
                 "excluded_paths": [os.path.realpath(path) for path in excluded_paths],
                 "consumers": [os.path.realpath(path) for path in consumers],
+                # Which of the owned cache's group caches this build uses.
+                "group": group,
                 "modules": {
                     os.path.realpath(source.path): [source.module, source.root]
                     for source in sources
                 },
             }
+            if complete and self._run_targets is not None:
+                request["targets"] = sorted(self._run_targets)
+            if complete:
+                request["foreign"] = {
+                    os.path.realpath(path): text for path, text in (foreign or {}).items()
+                }
+                request["nested_roots"] = [os.path.realpath(path) for path in nested]
             try:
                 process = self._running_worker()
             except OSError as error:
@@ -810,6 +902,7 @@ class MypyInferrer:
             return CheckFailure("mypy worker returned an invalid response")
         failure, messages = payload.get("failure"), payload.get("messages")
         warnings = payload.get("warnings", [])
+        reported = payload.get("reported", [])
         if isinstance(failure, str):
             return CheckFailure(failure)
         if failure is not None:
@@ -818,9 +911,12 @@ class MypyInferrer:
             return CheckFailure("mypy worker returned invalid diagnostics")
         if not isinstance(warnings, list) or not all(isinstance(w, str) for w in warnings):
             return CheckFailure("mypy worker returned invalid configuration warnings")
+        if not isinstance(reported, list) or not all(isinstance(r, str) for r in reported):
+            return CheckFailure("mypy worker returned an invalid account of what it reports on")
         return _BuildMessages(
             tuple(m for m in messages if isinstance(m, str)),
             tuple(w for w in warnings if isinstance(w, str)),
+            tuple(r for r in reported if isinstance(r, str)),
         )
 
     def is_subtype(
@@ -852,8 +948,43 @@ class MypyInferrer:
     def check_project(
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
+        """The errors of every configuration group's check of the project with ``sources`` over it.
+
+        A group is the directory of a mypy configuration, or where there is
+        none a project's root (``_source_groups``), and each is checked as mypy
+        run there would check it, under its own configuration and in a cache
+        of its own. Every group that holds any file of ``sources`` is checked,
+        including one an earlier check of the run found and this one holds
+        only nested files of: a configuration covers the directories below
+        it, a nested configuration's included, just as ``mypy`` run from it
+        covers them. Where no configuration covers a group's directory, the
+        groups below it are projects of their own and it leaves them to them.
+        Each group is also given the rest of ``sources`` (``foreign``), so a
+        file of another group that its build reads is read with the
+        candidate's text: a group had seen only its own replacements, and
+        judged its files against the original of another group's change.
+        """
         errors: List[TypeDiagnostic] = []
-        for root, replacements in _source_groups(sources, "mypy").items():
+        reported: set[str] = set()
+        groups = _source_groups(sources, "mypy")
+        every = {path: text for grouped in groups.values() for path, text in grouped.items()}
+        with self._lock:
+            self._group_roots.update(groups)
+            known = sorted(self._group_roots)
+        for root in known:
+            nested = (
+                [other for other in known if other != root and other.is_relative_to(root)]
+                if _mypy_config(root) is None
+                else []
+            )
+            replacements = {
+                path: text
+                for path, text in every.items()
+                if Path(path).is_relative_to(root)
+                and not any(Path(path).is_relative_to(other) for other in nested)
+            }
+            if not replacements:
+                continue
             builds = [_build_source(path, source) for path, source in replacements.items()]
             try:
                 consumers = self._consumers(root, replacements)
@@ -864,6 +995,9 @@ class MypyInferrer:
                 complete=True,
                 excluded_paths=excluded_paths,
                 consumers=consumers,
+                root=root,
+                foreign={path: text for path, text in every.items() if path not in replacements},
+                nested=nested,
             )
             if isinstance(result, CheckFailure):
                 return result
@@ -872,6 +1006,11 @@ class MypyInferrer:
                 for diagnostic in (_mypy_error(message, root) for message in result.messages)
                 if diagnostic is not None
             )
+            reported.update(os.path.realpath(path) for path in result.reported)
+        with self._lock:
+            for path in every:
+                resolved = os.path.realpath(path)
+                self._reporting.setdefault(resolved, resolved in reported)
         return CheckSuccess(tuple(errors))
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
@@ -1688,6 +1827,22 @@ def start_cold(oracle: object) -> None:
         stop_language_servers(oracle)
 
 
+def begin_checked_run(oracle: TypeOracle, analyzed: Sequence[str]) -> None:
+    """Tell each checker behind ``oracle`` which files a run analyzes, before its first check.
+
+    A configuration that names no targets of its own has the project's check
+    run over what it is pointed at (:meth:`MypyInferrer.begin_run`). pyright's
+    configuration always says what it covers, so pyright is not told.
+    """
+    if isinstance(oracle, CombinedOracle):
+        for one in oracle.checkers:
+            begin_checked_run(one, analyzed)
+    elif isinstance(oracle, _RelocatedOracle):
+        oracle.begin_checked_run(analyzed)
+    elif isinstance(oracle, MypyInferrer):
+        oracle.begin_run(analyzed)
+
+
 def checks_in_turn(
     oracle: TypeOracle, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
 ) -> Iterator[CheckResult]:
@@ -1733,8 +1888,9 @@ def reports_by_each(oracle: TypeOracle, paths: Sequence[str]) -> Tuple[FrozenSet
     A file a checker's configuration leaves out of what it reports on
     (pyright's ``exclude`` and ``ignore``) is outside that checker's check, so
     its silence there is no sign it takes the code to be unreachable: the
-    project's own run of it says nothing there either. mypy reports on every
-    module it is given or follows to.
+    project's own run of it says nothing there either. mypy reports on what
+    the project's own mypy run checks and follows to, less what
+    ``ignore_errors`` silences (:meth:`MypyInferrer.reports_on`).
     """
     if isinstance(oracle, CombinedOracle):
         return tuple(answer for one in oracle.checkers for answer in reports_by_each(one, paths))
@@ -1742,6 +1898,8 @@ def reports_by_each(oracle: TypeOracle, paths: Sequence[str]) -> Tuple[FrozenSet
         return oracle.reports_by_each(paths)
     if isinstance(oracle, PyrightOracle):
         return (frozenset(path for path in paths if oracle.reports_on(path)),)
+    if isinstance(oracle, MypyInferrer):
+        return (oracle.reports_on(paths),)
     return (frozenset(paths),)
 
 
@@ -1798,6 +1956,12 @@ class CombinedOracle:
             oracle.close()
 
 
+_NO_SOURCE_DIRECTORIES: Final = frozenset(
+    {".git", ".hg", ".svn", ".mypy_cache", ".pytest_cache", ".ruff_cache", *TOOL_DIRECTORIES}
+)
+"""What the checked copy of an output holds no module in: version control, caches, tool output."""
+
+
 class _RelocatedOracle:
     """An output copy checked at its original project's logical module locations."""
 
@@ -1837,6 +2001,10 @@ class _RelocatedOracle:
         """Each checker's revelations, at the copy's paths; see :func:`reveal_by_each`."""
         answers = reveal_by_each(self._oracle, self._originals(requests))
         return tuple(self._outputs(answer, requests) for answer in answers)
+
+    def begin_checked_run(self, analyzed: Sequence[str]) -> None:
+        """:func:`begin_checked_run` for the originals of ``analyzed``."""
+        begin_checked_run(self._oracle, [self._original(path) for path in analyzed])
 
     def reports_by_each(self, paths: Sequence[str]) -> Tuple[FrozenSet[str], ...]:
         """Each checker's :func:`reports_by_each`, asked of the originals, at the copy's paths."""
@@ -1920,6 +2088,13 @@ class _RelocatedOracle:
         A module that does not decode is left out, and the checker reads the
         original's, which is the same bytes: Towel changes no file it cannot
         read. One such file (Latin-1 test data) had failed every check.
+
+        An environment is left out by what it holds, never by its name
+        (``source_files.is_environment``). Directories named ``env`` and
+        ``venv`` used to be left out whatever they held, so once a change to a
+        project package called ``env`` was written, every later check read the
+        original's ``env`` instead, and the cold confirmation, which read the
+        real one, refused the run.
         """
         try:
             current: Dict[str, str] = {}
@@ -1929,20 +2104,8 @@ class _RelocatedOracle:
                     directories[:] = [
                         name
                         for name in directories
-                        if name
-                        not in {
-                            ".git",
-                            ".hg",
-                            ".svn",
-                            ".mypy_cache",
-                            ".pytest_cache",
-                            ".ruff_cache",
-                            "__pycache__",
-                            "venv",
-                            "env",
-                            "node_modules",
-                        }
-                        and not (directory / name / "pyvenv.cfg").is_file()
+                        if name not in _NO_SOURCE_DIRECTORIES
+                        and not is_environment(directory / name)
                     ]
                     for name in files:
                         path = directory / name

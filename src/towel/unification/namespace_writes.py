@@ -69,7 +69,7 @@ from pathlib import Path
 from typing import AbstractSet, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 from typing import Tuple, Union
 
-from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
+from ..consumers import MAXIMUM_FILES, scanned_directories
 from .bounded_cache import BoundedCache
 from .builtins import BUILTIN_NAMES
 from .module_bindings import global_bindings
@@ -187,7 +187,7 @@ def scan_project_writes(root: Path, *, every_file: bool = False) -> ProjectWrite
     by_name: Dict[str, List[NamespaceWrite]] = {}
     count = 0
     for parent, directories, files in os.walk(project, onerror=lambda _: None):
-        directories[:] = sorted(name for name in directories if name not in SKIPPED_DIRECTORIES)
+        directories[:] = scanned_directories(parent, directories)
         for name in sorted(files):
             if not name.endswith(".py"):
                 continue

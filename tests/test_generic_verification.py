@@ -159,8 +159,12 @@ def test_generic_checker_timeout_aborts_without_trying_an_unchecked_fallback(
     proposal = engine.analyze_file(str(path))[0]
     with pytest.raises(RefactoringError, match="Prospective project type check failed.*timed out"):
         engine.apply_refactoring(str(path), proposal)
-    assert _declarations(oracle.checks[-1][str(path)])
+    candidates = [sources for sources in oracle.checks if sources[str(path)] != original]
+    assert _declarations(candidates[-1][str(path)])
     assert sum(bool(_declarations(sources[str(path)])) for sources in oracle.checks) == 1
+    # The failure is then checked against the file as it stands, which passes,
+    # so it is the candidate's own and the run goes on.
+    assert oracle.checks[-1][str(path)] == original
     assert path.read_text() == original and engine.change_log == ()
     assert proposal.helper_type_declarations == ()
 

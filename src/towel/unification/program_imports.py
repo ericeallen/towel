@@ -46,7 +46,7 @@ from .exceptions import ProjectScanLimitError
 _UNSEEN_EVERYWHERE = frozenset(
     name for name in SKIPPED_DIRECTORIES - {"build", "dist"} if name.isidentifier()
 )
-"""Directories the model never reads that an import could still name: ``venv``, ``node_modules``."""
+"""Directories the model never reads that an import could still name: ``node_modules``."""
 
 
 @dataclass(frozen=True)

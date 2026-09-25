@@ -65,7 +65,7 @@ from typing import (
     Union,
 )
 
-from ..consumers import SKIPPED_DIRECTORIES
+from ..consumers import scanned_directories
 from ..project_layout import find_project_root
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
@@ -313,7 +313,7 @@ def _read_options(options: Sequence[str]) -> Tuple[bool, Optional[List[str]]]:
 
 def _project_files(root: Path) -> Iterable[Path]:
     for parent, directories, files in os.walk(root, onerror=lambda _: None):
-        directories[:] = sorted(name for name in directories if name not in SKIPPED_DIRECTORIES)
+        directories[:] = scanned_directories(parent, directories)
         for name in sorted(files):
             yield Path(parent, name)
 

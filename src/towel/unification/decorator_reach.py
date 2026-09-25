@@ -89,7 +89,7 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
-from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
+from ..consumers import MAXIMUM_FILES, scanned_directories
 from ..import_model import NameStatus
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
@@ -1000,7 +1000,7 @@ class _Resolver:
         by_name: Dict[str, List[_Application]] = {}
         count = 0
         for parent, directories, files in os.walk(root, onerror=lambda _: None):
-            directories[:] = sorted(name for name in directories if name not in SKIPPED_DIRECTORIES)
+            directories[:] = scanned_directories(parent, directories)
             for name in sorted(files):
                 if not name.endswith(".py"):
                     continue

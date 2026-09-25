@@ -40,7 +40,7 @@ from towel.type_inference import (
     RevealRequest,
     Subtyping,
 )
-from towel.unification.exceptions import RefactoringError
+from towel.unification.exceptions import CheckerCannotCheckTheProject
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes
 
@@ -91,12 +91,14 @@ def _project(tmp_path: Path) -> Path:
     return project
 
 
-def _engine(verdict: Callable[[Mapping[str, str]], CheckResult]) -> UnificationRefactorEngine:
+def _engine(
+    verdict: Callable[[Mapping[str, str]], CheckResult], oracle: _Oracle | None = None
+) -> UnificationRefactorEngine:
     return UnificationRefactorEngine(
         min_lines=3,
         reuse_existing_functions=False,
         annotate_helpers=False,
-        type_oracle=_Oracle(verdict),
+        type_oracle=oracle or _Oracle(verdict),
     )
 
 
@@ -104,14 +106,18 @@ def _engine(verdict: Callable[[Mapping[str, str]], CheckResult]) -> UnificationR
 def test_a_run_the_checker_never_answered_raises_and_publishes_nothing(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, in_place: bool
 ) -> None:
+    """The unchanged project's check fails as the candidate's did, so the run stops at once."""
     project = _project(tmp_path)
     output = project if in_place else tmp_path / "out"
-    with pytest.raises(RefactoringError, match=r"(?s)checker could not run.*timed out.*--no-types"):
+    oracle = _Oracle(_timed_out)
+    with pytest.raises(
+        CheckerCannotCheckTheProject, match=r"(?s)checker could not run.*timed out.*--no-types"
+    ):
         with contextlib.redirect_stdout(io.StringIO()):
-            _engine(_timed_out).refactor_directory_to_fixed_point(
+            _engine(_timed_out, oracle).refactor_directory_to_fixed_point(
                 str(project), str(output), progress="none"
             )
-    assert "type checker could not check" in caplog.text
+    assert oracle.checks == 3, "the original, one candidate, and its files as they stand"
     assert "could not be rendered" not in caplog.text
     assert (project / "a.py").read_text() == PAIR
     assert in_place or not output.exists()
@@ -119,7 +125,7 @@ def test_a_run_the_checker_never_answered_raises_and_publishes_nothing(
 
 def test_a_single_file_the_checker_never_answered_raises(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    with pytest.raises(RefactoringError, match="checker could not run"):
+    with pytest.raises(CheckerCannotCheckTheProject, match="checker could not run"):
         with contextlib.redirect_stdout(io.StringIO()):
             _engine(_timed_out).refactor_to_fixed_point(str(project / "a.py"), progress="none")
 

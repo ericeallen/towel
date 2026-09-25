@@ -45,7 +45,17 @@ import signal
 import sys
 import threading
 import time
-from typing import Callable, List, Mapping, NamedTuple, Optional, Protocol, Sequence, Tuple
+from typing import (
+    AbstractSet,
+    Callable,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+)
 
 from mypy import build
 from mypy.build import BuildSource
@@ -58,7 +68,9 @@ from mypy.modulefinder import (
     ModuleNotFoundReason,
     SearchPaths,
     compute_search_paths,
+    get_search_dirs,
     matches_exclude,
+    mypy_path,
 )
 from mypy.options import BuildType, Options
 from mypy.util import decode_python_encoding
@@ -404,7 +416,13 @@ def _walked_for(path: Path) -> Path:
 
 
 def _complete_targets(
-    replacements: Mapping[str, str], options: Options, root: Path, consumers: Sequence[str]
+    replacements: Mapping[str, str],
+    options: Options,
+    root: Path,
+    consumers: Sequence[str],
+    *,
+    run: Sequence[BuildSource] = (),
+    judged: Optional[Callable[[str], bool]] = None,
 ) -> list[str]:
     """What a complete build walks beyond the files being changed.
 
@@ -423,15 +441,35 @@ def _complete_targets(
     Seventeen of the first fifty-two projects of the release corpus were refused
     for such a file, none of which any project's own mypy run looks at, and none
     of which can be affected by a change Towel makes. A config that names its
-    own ``files`` is still obeyed: there the project has said what it checks.
+    own ``files``, ``packages`` or ``modules`` is still obeyed: there the
+    project has said what it checks, and ``run`` is what it names
+    (:func:`_sources_of_the_projects_run`).
+
+    A consumer the project's own run does not check (``judged``) is not
+    walked. The consumer scan reads the whole tree, the directories
+    ``--exclude`` names included, and two such files sharing a module name
+    (``docs/one/example.py`` and ``docs/two/example.py``) failed every check
+    whose change they import, while the project's ``mypy`` never looks at
+    either.
     """
-    if options.files:
-        return list(options.files)
+    if _names_its_targets(options):
+        if options.files:
+            return list(options.files)
+        return sorted({source.path for source in run if source.path is not None})
     walked = {str(_walked_for(Path(path))) for path in replacements}
     # The caller scans once per project for what imports into those packages,
     # which following imports out of them cannot reach. See ``towel.consumers``.
-    walked.update(consumer for consumer in consumers if os.path.exists(consumer))
+    walked.update(
+        consumer
+        for consumer in consumers
+        if os.path.exists(consumer) and (judged is None or judged(consumer))
+    )
     return sorted(walked) or [str(root)]
+
+
+def _names_its_targets(options: Options) -> bool:
+    """Whether the configuration says what the project's run checks: ``files``, ``packages``, ``modules``."""
+    return bool(options.files or options.packages or options.modules)
 
 
 def _named_by_the_project(options: Options) -> set[str]:
@@ -521,6 +559,9 @@ def _build_sources(
     complete: bool,
     placeholders: Mapping[str, Tuple[str, str]],
     consumers: Sequence[str],
+    *,
+    run: Sequence[BuildSource] = (),
+    judged: Callable[[str], bool] = lambda path: True,
 ) -> list[BuildSource]:
     # Text is given for the replacements and for every path an earlier request
     # once overlaid, whose cache entry would otherwise answer for its file. The
@@ -548,9 +589,22 @@ def _build_sources(
             )
             if resolved.path is not None and resolved.path not in replacements
         ]
-    selected = create_source_list(list(replacements) + restored, options)
-    targets = _complete_targets(replacements, options, root, consumers)
-    selected = create_source_list(targets, options, allow_empty_dir=True) + selected
+    # A file the project's own run does not check is built only where its
+    # text is given: a change to it, which whatever imports it must see, or an
+    # entry of the record. Unchanged, it is read, or not, as that run reads it.
+    # The checked copy of an output restates every module of the target, and
+    # the baseline is given every analyzed one; a stray one of either, from a
+    # directory ``--exclude`` names or the configuration excludes, was built as
+    # a module of its own and failed the build ("found twice", or a Jinja hook
+    # script that does not parse), where the project's ``mypy`` never reads it.
+    supplied = [path for path in replacements if path in given or judged(path)]
+    selected = create_source_list(supplied + restored, options)
+    targets = _complete_targets(replacements, options, root, consumers, run=run, judged=judged)
+    selected = [
+        source
+        for source in create_source_list(targets, options, allow_empty_dir=True)
+        if source.path is None or judged(source.path) or source.path in given
+    ] + selected
     by_path = {
         os.path.realpath(source.path): source
         for source in _one_source_per_module(
@@ -588,6 +642,8 @@ def _sources_of_the_projects_run(options: Options, root: Path) -> list[BuildSour
     """
     if options.files:
         return create_source_list(list(options.files), options, allow_empty_dir=True)
+    if options.packages or options.modules:
+        return _named_modules(options, root)
     try:
         return create_source_list([str(root)], options, allow_empty_dir=True)
     except InvalidSourceList:
@@ -603,6 +659,43 @@ def _sources_of_the_projects_run(options: Options, root: Path) -> list[BuildSour
             except InvalidSourceList:
                 continue
     return found
+
+
+def _named_modules(options: Options, root: Path) -> list[BuildSource]:
+    """What a configuration's ``packages`` and ``modules`` name, found as mypy's own run finds them.
+
+    mypy's ``main`` searches the working directory, ``MYPYPATH`` and
+    ``mypy_path``, then the interpreter's installed code, and walks each
+    package recursively under the configuration's ``exclude``. A name it
+    cannot find names no file here; mypy's own run stops there with its own
+    message, and the build that follows says so too.
+    """
+    sys_path, _ = get_search_dirs(options.python_executable)
+    search = SearchPaths((str(root),), tuple(mypy_path() + options.mypy_path), tuple(sys_path), ())
+    finder = FindModuleCache(search, FileSystemCache(), options)
+    found: list[BuildSource] = []
+    for package in options.packages or ():
+        found.extend(finder.find_modules_recursive(package))
+    for module in options.modules or ():
+        path = finder.find_module(module)
+        if isinstance(path, str):
+            found.append(BuildSource(path, module, None))
+    # A file of the tree is named as mypy's walk names it, with the directory
+    # it is found from, which is what finding the project's own code needs
+    # (:func:`_where_installed_code_hides_the_project`).
+    in_tree = sorted(
+        {
+            source.path
+            for source in found
+            if source.path is not None and _within(source.path, str(root))
+        }
+    )
+    try:
+        named = create_source_list(in_tree, options) if in_tree else []
+    except InvalidSourceList:
+        named = []
+    by_path = {source.path: source for source in named if source.path is not None}
+    return [by_path.get(source.path or "", source) for source in found]
 
 
 def _within(path: str, directory: str) -> bool:
@@ -763,25 +856,45 @@ def _build_as_the_project_reaches(
 
 
 def _judged_by_the_project(
-    options: Options, root: Path, run: Sequence[BuildSource]
+    options: Options,
+    root: Path,
+    run: Sequence[BuildSource],
+    targets: Optional[AbstractSet[str]] = None,
+    nested: Sequence[Path] = (),
 ) -> Callable[[str], bool]:
     """Whether the project's own mypy run would take a file as one of its targets.
 
-    With ``files`` configured, the files of ``run``, what those name found as
-    mypy finds them (:func:`_sources_of_the_projects_run`); otherwise every
-    file under ``root`` that no ``exclude`` pattern matches, tested as mypy's
-    own walk tests it, on the file and on each directory above it.
+    With ``files``, ``packages`` or ``modules`` configured, the files of
+    ``run``, what those name found as mypy finds them
+    (:func:`_sources_of_the_projects_run`). Otherwise the run is mypy over
+    what Towel was pointed at, as its command line names it: ``targets``, the
+    resolved files the run analyzes (its target, less what ``--exclude``
+    names), where the caller gives them, and every file under ``root``
+    otherwise; in either case less what an ``exclude`` pattern matches, tested
+    as mypy's own walk tests it, on the file and on each directory above it.
     ``options.exclude`` must still be the project's, before Towel adds to it.
+
+    A file outside ``root`` is not one: that run is made from ``root``, and
+    reaches such a file only by an import, which :func:`_reporting_modules`
+    follows. Nor is one below a ``nested`` root, another group's, which the
+    caller names only where no mypy configuration covers ``root``: the
+    directories are then separate projects that no run spans.
     """
-    if options.files:
-        targets = {os.path.realpath(source.path) for source in run if source.path is not None}
-        return lambda path: os.path.realpath(path) in targets
+    if _names_its_targets(options):
+        named = {os.path.realpath(source.path) for source in run if source.path is not None}
+        return lambda path: os.path.realpath(path) in named
     excludes = list(options.exclude)
     cache = FileSystemCache()
 
     def judged(path: str) -> bool:
         candidate = Path(path)
-        if not excludes or not candidate.is_relative_to(root):
+        if targets is not None and not _among(os.path.realpath(path), targets):
+            return False
+        if not candidate.is_relative_to(root) or any(
+            candidate.is_relative_to(other) for other in nested
+        ):
+            return False
+        if not excludes:
             return True
         walked = [candidate, *candidate.parents]
         return not any(
@@ -790,6 +903,15 @@ def _judged_by_the_project(
         )
 
     return judged
+
+
+def _among(path: str, targets: AbstractSet[str]) -> bool:
+    """Whether a resolved ``path`` is one of the run's ``targets``, or the stub of one.
+
+    mypy's walk of a target directory keeps the stub beside a module, and the
+    build puts that stub in the module's place (:func:`_as_the_project_resolves`).
+    """
+    return path in targets or (path.endswith(".pyi") and path[:-1] in targets)
 
 
 class _Followed(enum.Enum):
@@ -863,9 +985,33 @@ def _as_the_project_judges(
     }
     if not unjudged:
         return list(messages)
-    checked = [source.module for source in sources if source.module not in unjudged]
+    reported = _reporting_modules(graph, sources, judged, options)
+    unchecked = {path for module, path in unjudged.items() if module not in reported}
+
+    def about_unchecked(message: str) -> bool:
+        match = _MESSAGE_PATH.match(message)
+        return match is not None and os.path.realpath(match.group("path")) in unchecked
+
+    return [message for message in messages if not about_unchecked(message)]
+
+
+def _reporting_modules(
+    graph: Mapping[str, _Imports],
+    sources: Sequence[BuildSource],
+    judged: Callable[[str], bool],
+    options: Options,
+) -> set[str]:
+    """The modules of a finished build whose errors the project's own run reports.
+
+    Those it checks (the sources it would take as targets, ``judged``), and
+    those their imports follow to, where that module's own options report what
+    they find (:func:`_followed`).
+    """
+    checked = {
+        source.module for source in sources if source.path is not None and judged(source.path)
+    }
+    reported = set(checked)
     seen = set(checked)
-    reported: set[str] = set()
     pending = list(checked)
     while pending:
         state = graph.get(pending.pop())
@@ -882,20 +1028,47 @@ def _as_the_project_judges(
             if how is _Followed.REPORTED:
                 reported.add(dependency)
             pending.append(dependency)
-    unchecked = {path for module, path in unjudged.items() if module not in reported}
+    return reported
 
-    def about_unchecked(message: str) -> bool:
-        match = _MESSAGE_PATH.match(message)
-        return match is not None and os.path.realpath(match.group("path")) in unchecked
 
-    return [message for message in messages if not about_unchecked(message)]
+def _files_reported_on(
+    graph: Mapping[str, _Imports],
+    sources: Sequence[BuildSource],
+    judged: Callable[[str], bool],
+    options: Options,
+) -> set[str]:
+    """The resolved files the project's own run reports errors in: its jurisdiction, in this build.
+
+    A module of :func:`_reporting_modules`, by the file mypy read for it,
+    unless its options have mypy report nothing there (``ignore_errors``,
+    globally or in its own section). Such a module is still checked, but its
+    errors, and every ``reveal_type`` note, are suppressed: Towel read that
+    silence as code the checker takes to be unreachable and declined every
+    change in it (graphene, referencing and numbagg: none applied typed).
+    A module that ships its own stub is the stub here, as it is to the
+    project's run, so the implementation beside it is never among these.
+    """
+    reported: set[str] = set()
+    for module in _reporting_modules(graph, sources, judged, options):
+        state = graph.get(module)
+        if state is None or state.path is None:
+            continue
+        if options.clone_for_module(module).ignore_errors:
+            continue
+        reported.add(os.path.realpath(state.path))
+    return reported
 
 
 class _Answered(NamedTuple):
-    """A build's diagnostics, and what mypy said about the configuration on the way."""
+    """A build's diagnostics, and what mypy said about the configuration on the way.
+
+    ``reported`` is, of a complete build's request paths, those the project's
+    own run reports errors in (:func:`_files_reported_on`).
+    """
 
     messages: List[str]
     said: Tuple[str, ...]
+    reported: Tuple[str, ...] = ()
 
 
 def _request(request: object, cache: str) -> _Answered:
@@ -908,12 +1081,21 @@ def _request(request: object, cache: str) -> _Answered:
     root = Path(root_value)
     os.chdir(root)
     complete = request.get("complete") is True
-    configured = _options(root, config, cache, probe=not complete)
+    configured = _options(
+        root, config, _group_cache(cache, request.get("group")), probe=not complete
+    )
     options = configured.options
     # The project's own run, read before Towel's exclusions, which name what
     # Towel writes (a relocated output), never the project's own files.
     run = _sources_of_the_projects_run(options, root)
-    judged = _judged_by_the_project(options, root, run)
+    targets = request.get("targets")
+    judged = _judged_by_the_project(
+        options,
+        root,
+        run,
+        None if targets is None else set(_strings(targets)),
+        [Path(nested) for nested in _strings(request.get("nested_roots") or [])],
+    )
     excluded_paths = _strings(request.get("excluded_paths"))
     for excluded in excluded_paths:
         path = Path(excluded)
@@ -923,15 +1105,18 @@ def _request(request: object, cache: str) -> _Answered:
         options.exclude += ["^" + re.escape(spelling) + r"(?:/|$)" for spelling in spellings]
     _load_configured_plugins(options)
     replacements = _sources(request.get("sources"))
+    # The record describes the entries of the cache this build uses.
+    given = _text_mypy_must_be_given(replacements, options.cache_dir)
     sources = _build_sources(
         replacements,
-        # The record describes the entries of the cache this build uses.
-        _text_mypy_must_be_given(replacements, options.cache_dir),
+        given,
         options,
         root,
         complete,
         _placeholders(request.get("modules")),
         _strings(request.get("consumers") or []),
+        run=run,
+        judged=judged,
     )
     # Every source is named by now, and SourceFinder reads ``mypy_path`` as the
     # explicit package bases; from here on it is only where modules are found.
@@ -952,9 +1137,29 @@ def _request(request: object, cache: str) -> _Answered:
     result, sources = _build_as_the_project_reaches(sources, options, judged, complete=complete)
     if not complete:
         return _Answered(list(result.errors), configured.said)
+    foreign = _sources(request.get("foreign") or {})
+    read = _changes_read_from_disk(result.graph, sources, foreign)
+    if read:
+        # Only a source can be given text, and a source is named by mypy's
+        # walk, so each is named as the import that read it named it.
+        _text_mypy_must_be_given(
+            {**replacements, **{path: foreign[path] for path in read}}, options.cache_dir
+        )
+        sources = [
+            *sources,
+            *(
+                BuildSource(path, module, foreign[path], _base_for(path, module))
+                for path, module in read.items()
+            ),
+        ]
+        result, sources = _build_as_the_project_reaches(sources, options, judged, complete=True)
+    reported = _files_reported_on(result.graph, sources, judged, options)
     return _Answered(
         _as_the_project_judges(result.errors, result.graph, sources, judged, options),
         configured.said,
+        tuple(
+            sorted(path for path in [*replacements, *foreign] if os.path.realpath(path) in reported)
+        ),
     )
 
 
@@ -990,6 +1195,52 @@ def _described_failure(error: BaseException, printed: str) -> str:
     return f"{described}; mypy printed:\n{shown}"
 
 
+def _group_cache(cache: str, group: object) -> str:
+    """The cache, inside the owned one, of the configuration group a request names.
+
+    Each group builds under its own configuration and from its own sources,
+    and a cache entry written from text one group supplied answers for the
+    file in any build that reads it without text. The record of supplied text
+    (``_SUPPLIED_TEXT_RECORD``) was one per cache and the cache one per
+    oracle, so a sub-project's candidate texts were restored into the root's
+    builds, where the baseline had never put them: an unrelated
+    root-configuration error then declined every change there, and a
+    cross-group import that did not resolve at the baseline resolved later and
+    refused the cold confirmation. A cache per group keeps each group's builds
+    to its own entries and record. The first group an oracle meets names none
+    and keeps the owned directory itself, so a project of one group is laid
+    out as it always was.
+    """
+    if group is None:
+        return cache
+    if not isinstance(group, str) or not group.isalnum():
+        raise ValueError("Expected a configuration group's cache name")
+    return os.path.join(cache, "groups", group)
+
+
+def _changes_read_from_disk(
+    graph: Mapping[str, _Imports], sources: Sequence[BuildSource], foreign: Mapping[str, str]
+) -> dict[str, str]:
+    """The changed files of ``foreign`` that a build read from disk, by the module each was read as.
+
+    ``foreign`` is the rest of a check's files, another group's, with the
+    text the check has for each. A build reads such a file where an import
+    reaches it, and reads what the file holds, not what the candidate made
+    of it: a group must see the candidate's whole change wherever it looks.
+    """
+    given = {os.path.realpath(source.path) for source in sources if source.path is not None}
+    by_file = {os.path.realpath(path): path for path in foreign}
+    read: dict[str, str] = {}
+    for module, state in graph.items():
+        if state.path is None:
+            continue
+        resolved = os.path.realpath(state.path)
+        path = by_file.get(resolved)
+        if path is not None and resolved not in given and not _holds(path, foreign[path]):
+            read[path] = module
+    return read
+
+
 def _answer(line: str, cache: str) -> str:
     answered = _Answered([], ())
     failure: str | None = None
@@ -1003,7 +1254,12 @@ def _answer(line: str, cache: str) -> str:
         failure = _described_failure(error, captured.getvalue())
     return (
         json.dumps(
-            {"messages": answered.messages, "failure": failure, "warnings": list(answered.said)}
+            {
+                "messages": answered.messages,
+                "failure": failure,
+                "warnings": list(answered.said),
+                "reported": list(answered.reported),
+            }
         )
         + "\n"
     )

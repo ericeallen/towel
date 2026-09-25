@@ -59,6 +59,8 @@ from pathlib import Path
 from typing import Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 from typing import Tuple
 
+from .source_files import is_environment
+
 ModuleNamer = Callable[[Path], str]
 """What names a file's module; supplied by the caller that owns the convention."""
 
@@ -70,7 +72,6 @@ SKIPPED_DIRECTORIES = frozenset(
         ".tox",
         ".nox",
         ".venv",
-        "venv",
         ".mypy_cache",
         ".pytest_cache",
         ".ruff_cache",
@@ -81,7 +82,30 @@ SKIPPED_DIRECTORIES = frozenset(
         ".eggs",
     }
 )
-"""Directories that hold no project source, or hold a second copy of it."""
+"""Directories that hold no project source, or hold a second copy of it.
+
+Every name here is one no import can spell (it starts with a dot) or one a
+tool chooses for what it keeps (``__pycache__``, ``node_modules``) or writes
+(``build``, ``dist``). ``env`` and ``venv`` are not among them: a project may
+call its own package that, and an environment is known by what it holds
+(:func:`scanned_directories`).
+"""
+
+
+def scanned_directories(parent: str | Path, names: Iterable[str]) -> List[str]:
+    """Which of ``parent``'s subdirectories ``names`` a scan of the project enters, sorted.
+
+    Not those in ``SKIPPED_DIRECTORIES``, and not an environment packages are
+    installed into, whatever it is called (``source_files.is_environment``).
+    A package of the project's own named ``venv`` used to be skipped by its
+    name, so no scan saw what it imports or defines.
+    """
+    return sorted(
+        name
+        for name in names
+        if name not in SKIPPED_DIRECTORIES and not is_environment(Path(parent) / name)
+    )
+
 
 MAXIMUM_FILES = 20_000
 """Beyond this the tree is not a project, and the scan stops rather than crawl."""
@@ -176,7 +200,7 @@ def _imported_modules(
 def _python_files(root: Path) -> List[Path]:
     found: List[Path] = []
     for parent, directories, files in os.walk(root, onerror=lambda _: None):
-        directories[:] = [name for name in directories if name not in SKIPPED_DIRECTORIES]
+        directories[:] = scanned_directories(parent, directories)
         for name in files:
             if name.endswith((".py", ".pyi")):
                 found.append(Path(parent) / name)
