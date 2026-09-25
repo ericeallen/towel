@@ -16,9 +16,30 @@ project's own rather than Towel's: the Sphinx measurements run mypy 1.19.1
 and pyright 1.1.407 from Sphinx 9.1.1 at `e44a40e`, and the mypy costs they
 describe belong to that version.
 
-## 2026-09-19 (1.772)
+## 2026-09-25 (1.772)
 
-- Version: 1.772, beta; release tag: `v1.772`.
+- Version: 1.772; release tag `v1.772`, moved from the September 19
+  candidate to this commit. The tag's annotation records the wheel and sdist
+  hashes.
+- Scope: the fixes of audit rounds three and four, merged on `audit-1772`;
+  the [changelog](../CHANGELOG.md#1772---2026-09-25) lists them.
+- Tests: the full suite at `2b399ef` passed 7,751 on 3.11, 7,882 on 3.12 and
+  7,899 on 3.13, with `just check` passing. `src/towel` is unchanged from
+  there to the release.
+- Distributions: the wheel, the sdist and `src/towel` agree file for file.
+  `twine check --strict` passes, and the wheel imports on 3.11, 3.12 and
+  3.13, bare and with extras.
+- Corpus: 141 projects, typed and with `--cross-module`, gave 90 PASS,
+  45 NO_CHANGE and 6 import-problem refusals. The
+  [readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-25-2026)
+  gives the details.
+- Not run: a fifth audit round. The owner released without it; see DECISIONS,
+  "1.772 ships without a clean audit round".
+
+## 2026-09-19 (1.772 candidate)
+
+- Version: 1.772, beta candidate. The `v1.772` tag was first placed here and
+  moved to the release on 2026-09-25.
 - Runtime: `src/towel` is **not** unchanged from `ba539d4`. That claim was
   written for an earlier candidate and is withdrawn. The type-checking path was
   rewritten for this release; dependencies and build configuration are

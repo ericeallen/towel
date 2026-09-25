@@ -1,25 +1,18 @@
 # Production readiness
 
-**1.772 adds type anti-unification to helper extraction.** An extracted
-helper can keep the relationships among its argument and return types instead
-of widening each column independently. Dependency pins and the build
-configuration are unchanged from 1.732.
+**1.772 is released on September 25, 2026, from `audit-1772`.** It repays
+the defects that four audit rounds found in 1.732's design. Helpers are shared
+within one module unless `--cross-module` is given. Import names come only
+from the program's own imports. A typed run is judged against the project's
+own check, error by error, where the original's errors stood. Code under a
+decorator that rewrites bodies stays where it is. Type anti-unification, the
+change the September 19 candidate carried, is part of it. The
+[changelog](../CHANGELOG.md#1772---2026-09-25) lists every change.
 
-`src/towel` is **not** unchanged from `ba539d4`; the claim that it was belonged
-to an earlier candidate and is withdrawn. The type-checking path was rewritten
-for this release — the checker runs in forked builds and a persistent language
-server, the project copy tracks the project, an extraction that would separate a
-narrowing test from its use is refused, and a complete check reaches the
-modules that import the change. Every figure and verdict in this report names
-the runtime it was measured against. Evidence for 1.732 and 1.414 is retained
-later and belongs to those runtimes, not to this one.
-
-Release evidence is valid only for the exact source it was taken from. Before
-publishing, rebuild both distributions from the frozen release commit, compare
-their contents against each other and against `src/towel`, and record the
-resulting hashes here: an earlier candidate's wheel and sdist disagreed with the
-checkout and with each other. Passing the sampled tests does not establish
-equivalence for arbitrary Python programs; review generated changes and the
+Release evidence is valid only for the exact source it was taken from. The
+validation below names its commits; `src/towel` is identical at each of them.
+Passing the sampled tests does not establish equivalence for arbitrary Python
+programs; review generated changes and the
 [known limitations](KNOWN_LIMITATIONS.md).
 
 ## Measurement environment
@@ -35,7 +28,80 @@ project's own rather than Towel's: the Sphinx measurements run mypy 1.19.1
 and pyright 1.1.407 from Sphinx 9.1.1 at `e44a40e`, and the mypy costs they
 describe belong to that version.
 
-## Current 1.772 validation (September 19, 2026)
+## 1.772 release validation (September 25, 2026)
+
+`src/towel` is the same at every commit named here, from `2b399ef` to the
+release; later commits touch only documentation and the corpus manifest.
+
+**Tests**, the full suite on each interpreter at `2b399ef`, with
+`just check` (lint, types, security, licence headers) passing:
+
+| Python | Passed | Skipped | Subtests passed |
+|---|---:|---:|---:|
+| 3.11 | 7,751 | 74 | 24 |
+| 3.12 | 7,882 | 13 | 24 |
+| 3.13 | 7,899 | 3 | 24 |
+
+The 3.11 skips are fixtures in syntax 3.11 does not parse (PEP 695, PEP 701),
+stored as `.pynew`.
+
+**Distributions.** The wheel and sdist, built from a clean clone, agree with
+each other and with `src/towel` file for file (96 files). Both pass
+`twine check --strict`, and the wheel installs and imports on 3.11, 3.12 and
+3.13, bare and with both extras. Their hashes are recorded in the release
+tag's annotation, since recording them here would change the sdist.
+
+**The 141-project corpus**, run in a disposable container on Python 3.12,
+typed by default and with `--cross-module` for every project:
+
+| Verdict | Projects |
+|---|---:|
+| PASS | 90 |
+| NO_CHANGE | 45 |
+| Refused, import problem | 6 |
+
+- **PASS** means the project's suite gave the same outcome for every test
+  before and after, with 384 files changed across the 89 projects of the
+  full run. sphinx, whose typed run took 94 minutes, ran again alone with a
+  three-hour budget and passed, with 55 files changed.
+- **The six refusals** are the import-problem rule at work, each naming its
+  remedy:
+  - anyio: a stale `build/lib` copy;
+  - invoke: test configuration files named `invoke.py`;
+  - isort: a vendored `stdlibs` that is also a declared dependency;
+  - Towel's own 1.414, 1.618 and `main`: the candidate installed beside them.
+- **Four projects took the untyped path** because their checker could not
+  run as configured: blinker, cheroot, trio and typing_extensions.
+- **rsa's `test_sign_different_key` failed once** in an earlier run of the
+  same code. It fails 2 of 40 times on the original tree and 2 of 40 on the
+  refactored one, because it generates random keys.
+- **Wheels:** `b599053a…` for the full run at `2b399ef`, and `ee3f7db6…` for
+  sphinx at `29454ab`. Both were built from the same `src/towel`.
+
+**Performance.** The corpus found yapf and sphinx over their time budgets.
+Resolving which typing form a name denotes grew exponentially with the
+functions that alias a name to itself. yapf's `--cross-module` fixed point
+took 2,083 s; with the resolution kept per name and depth it takes 5 s, with
+byte-identical output (one worker, `--no-types --no-format`; the slow run
+shared the machine with one other).
+
+**Audits.** Round three found 22 P1s and round four about 26, across the
+real-code, semantic, verification and reading dimensions. All are fixed and
+pinned by tests, except those the owner ruled out of scope. Those are
+reflection over a namespace, a callee rebinding a name between two reads,
+and pytest's overlapping `testpaths`, and each is documented in
+KNOWN_LIMITATIONS (DECISIONS, 2026-09-25). A fifth round was not run before this
+release; DECISIONS records why ("1.772 ships without a clean audit round").
+Its semantic P1s were checked against 1.618, which shows them too.
+
+**Not covered:**
+- no fifth audit round;
+- macOS only, and the corpus on Python 3.12 only;
+- `placement._dispatches_on` still re-walks each method per candidate pair,
+  about a quarter of sphinx's untyped analysis. It is deferred because
+  memoizing it needs the analysed trees shown to be immutable during a run.
+
+## Earlier 1.772 candidate validation (September 19, 2026)
 
 The completed source matrix on the release candidate recorded (`src/towel`
 unchanged from `ba539d4`; the added tests cover the release harness):

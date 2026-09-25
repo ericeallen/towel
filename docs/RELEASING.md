@@ -16,12 +16,12 @@ controls, and that release's audit fixes. The candidate commit and the evidence
 behind each claim are recorded in the
 [readiness report](PRODUCTION_READINESS.md).
 
-The `347d62b` report of 118 PASS, 19 NO_CHANGE and 4 BROKEN_KNOWN among
-141 projects is historical. Current coverage combines the complete r6 run
-with corrected-environment runs for Cheroot, PLY, and SimPy: 119 `PASS`,
-19 `NO_CHANGE`, and three `BROKEN_KNOWN`. Its explicit `--no-types` mode and
-composite scope must accompany every summary; matching upstream failures are
-retained in the evidence. Preparing artifacts does not authorize uploading
+The 1.772 corpus, typed and with `--cross-module`, gave 90 `PASS`,
+45 `NO_CHANGE` and six import-problem refusals among 141 projects; the
+[readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-25-2026)
+gives the commits, the refusals' causes and the four projects that took the
+untyped path. Earlier corpus reports belong to their own commits. Preparing
+artifacts does not authorize uploading
 them, changing repository visibility, creating remote tags, or contacting users.
 Publication is a separate maintainer decision.
 
