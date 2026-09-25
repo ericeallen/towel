@@ -118,6 +118,7 @@ from ..type_inference import (
     holds_warm_state,
     reveal_by_each,
     start_cold,
+    unanswered_files,
 )
 
 from .engine_state import EngineState
@@ -516,13 +517,19 @@ class HelperAnnotationWiring(EngineState):
                     )
                     self._type_names_any = files_where_names_are_any(self._type_known.errors)
                     self._report_pre_existing(list(originals))
-                    self._map_what_the_checker_does_not_look_at(originals)
+                    try:
+                        self._map_what_the_checker_does_not_look_at(originals)
+                    except CheckerUnavailableError as error:
+                        # The original check ran, but what the checker looks at
+                        # is unknown, and no change can be verified without it.
+                        self._type_run_baseline = CheckFailure(str(error))
         if isinstance(self._type_run_baseline, CheckFailure):
-            # A checker that cannot run at all -- a config naming a Python
-            # version it has dropped, a tree it cannot build -- leaves the same
-            # user in the same place as one reporting errors, and said nothing
-            # about how to get out of it. Voluptuous and Lark, whose configs
-            # ask mypy 1.19 for Python 3.9 and 3.8, are both this.
+            # A checker that cannot run at all -- a plugin it cannot load, a
+            # tree it cannot build -- leaves the same user in the same place as
+            # one reporting errors, and said nothing about how to get out of it.
+            # A configuration mypy only warns about is not this: one naming a
+            # Python version mypy has dropped (Voluptuous and Lark ask for 3.9
+            # and 3.8) is checked with mypy's oldest, as mypy checks it.
             raise RefactoringError(
                 f"Original project type check failed: {self._type_run_baseline.reason}\n"
                 f"{UNTYPED_REMEDY}"
@@ -1649,6 +1656,14 @@ class HelperAnnotationWiring(EngineState):
         name regions before a run. A module no probe can be placed in, or a
         checker that answers nothing a mapping can hold, is taken to look at
         none of it.
+
+        Silence is read only from a build that completed. A checker whose probe
+        build failed looked at nothing, so it says nothing about what it looks
+        at, and that is a checker failure (``CheckerUnavailableError``). Read
+        as silence, one such failure -- every probe of a namespace-package
+        project, named as mypy did not name it -- called every block of the
+        project unreachable, declined every proposal, and ended the run at a
+        fixed point, exit status 0.
         """
         requests: List[RevealRequest] = []
         unseen: Dict[str, Set[Place]] = {}
@@ -1666,6 +1681,14 @@ class HelperAnnotationWiring(EngineState):
             answers = (
                 reveal_by_each(oracle, requests) if every_checker else (oracle.reveal(requests),)
             )
+        for answer in answers:
+            failed = unanswered_files(answer) if isinstance(answer, Mapping) else {}
+            for path in planned:
+                if path in failed:
+                    raise CheckerUnavailableError(
+                        f"The type checker could not build the probes that find the code it "
+                        f"looks at in {path}: {failed[path]}"
+                    )
         for path, plan in planned.items():
             unseen[path] = set()
             for place in wanted[path]:

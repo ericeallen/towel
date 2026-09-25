@@ -848,7 +848,9 @@ where the evidence comes from:
   mypy looks at, and only the question put to every checker settles a change.
   A body that shares its header's line (`if x: return`) is probed on a line of
   its own in the text the checker is given; a module in which no probe can be
-  placed is taken to be looked at nowhere. The body of a function without
+  placed is taken to be looked at nowhere. A probe build that fails is not
+  silence: before the run it refuses the run, and for a change it leaves the
+  change not judged. The body of a function without
   annotations, which mypy does not check unless configured to, counts as
   looked at, since mypy answers there (with `Any`): the project's own mypy
   leaves it unchecked on every platform too.
@@ -883,6 +885,24 @@ where the evidence comes from:
   `files` names it. A change inside such an implementation is therefore not
   verified by mypy, exactly as the project's own mypy run never checks it;
   Pyright, when configured, still checks the implementation as a file.
+- Which files' errors count, and what each module is called, is mypy's own
+  rule under the project's configuration. A file the configuration does not
+  name counts where a module it names imports it and the imported module's
+  own `follow_imports` (its `[[tool.mypy.overrides]]` section, else the
+  global setting) reports what it finds there; a changed file the
+  configuration does not follow at all (`skip`, `error`) is left out of the
+  check, so its importers see what the project's run sees. Modules are named
+  as mypy's walk names them (`explicit_package_bases`, `mypy_path`,
+  namespace packages), and a changed file the configuration does not name is
+  named as the import reaching it names it. A check of a target that leaves
+  the project's own package out (`towel dry tests tests`) finds that package
+  in the tree where an installed copy, typed or not, would answer for it, as
+  the project's run over the tree finds it; where the configuration names
+  `files`, that run is those files, and what they find installed is what the
+  check finds. A lone module named like installed code (`examples/json5.py`)
+  is not taken for it. A configuration mypy only warns about (an option it
+  does not know, a global option in a per-module section, a Python version
+  it has dropped) is checked as mypy checks it, and the warning is passed on.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration, made once per run, kept in step with the
   project as it is refactored, and watched by one long-lived language server.
