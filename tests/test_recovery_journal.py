@@ -29,7 +29,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import stat
+import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple
 from unittest.mock import patch
@@ -44,6 +47,7 @@ from towel.changes import (
     FileChange,
     RecoveryRequired,
     apply_changes,
+    journals_covering,
     recover,
 )
 
@@ -207,6 +211,32 @@ def test_recover_refuses_a_damaged_journal_and_touches_nothing(
         recover(journal)
     assert {p: (p.read_bytes(), stat.S_IMODE(p.stat().st_mode)) for p in files} == snapshot
     assert journal.is_dir(), "a refused journal is retained for the operator"
+
+
+UNRESTORABLE = [case for case in CORRUPTIONS if case[0] not in ("directory-name", "directory-mode")]
+
+
+@pytest.mark.parametrize(
+    "corrupt", [case[1] for case in UNRESTORABLE], ids=[case[0] for case in UNRESTORABLE]
+)
+def test_r9p2_a_refusal_to_restore_names_a_step_that_works(
+    tmp_path: Path, corrupt: Callable[[Path, List[Path]], Path]
+) -> None:
+    """Round 4's D6: ``recover`` refused a damaged journal and said nothing more.
+
+    Every refusal to restore from a journal Towel trusts now ends in a
+    command that succeeds: moving the journal aside, after which no run
+    finds a journal over its files.
+    """
+    files, journal = _interrupted_transaction(tmp_path)
+    journal = corrupt(journal, files)
+    with pytest.raises(ChangeConflict) as refused:
+        recover(journal)
+    named = re.search(r"aside: (mv .+)$", str(refused.value))
+    assert named is not None, refused.value
+    subprocess.run(shlex.split(named.group(1)), check=True)
+    assert not journal.exists()
+    assert journals_covering({path.resolve() for path in files}) == []
 
 
 def test_recover_refuses_a_journal_owned_by_another_user(

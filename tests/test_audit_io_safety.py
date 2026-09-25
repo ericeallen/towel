@@ -271,13 +271,30 @@ def test_import_finisher_keeps_merging_and_sorting_within_nested_groups() -> Non
     assert finisher("source.py", original) == finished
 
 
-def test_directory_hardlink_conflict_terminates(tmp_path: Path) -> None:
+def test_r9p2_a_hard_linked_file_is_left_alone_and_the_rest_refactored_in_place(
+    tmp_path: Path,
+) -> None:
+    """Round 4's D4: one hard-linked file failed the whole in-place run when it was published.
+
+    Every other file's refactoring was lost with it. Replacing the file would
+    leave its other links holding the old text, so it is named before the run
+    starts and every proposal that would write it is declined; the rest of
+    the run is written, and the links still share one text.
+    """
     target = tmp_path / "project"
     target.mkdir()
     source = target / "program.py"
     source.write_text(DUPLICATES)
+    other = target / "other.py"
+    other.write_text(DUPLICATES)
     outside = tmp_path / "outside-link.py"
     os.link(source, outside)
+    # Files the run never writes are not reported: data, and an excluded module.
+    (target / "data.json").write_text("{}")
+    os.link(target / "data.json", tmp_path / "data-link.json")
+    (target / "vendor").mkdir()
+    (target / "vendor" / "kept.py").write_text(DUPLICATES)
+    os.link(target / "vendor" / "kept.py", tmp_path / "kept-link.py")
     run = _cli(
         [
             "dry",
@@ -286,15 +303,36 @@ def test_directory_hardlink_conflict_terminates(tmp_path: Path) -> None:
             "--no-format",
             "--no-types",
             "--no-interactive",
-            "--max-refactorings",
-            "1",
+            "--exclude",
+            "vendor",
             "--progress",
             "none",
         ]
     )
-    assert run.returncode != 0, (run.stdout, run.stderr)
-    assert "regular file with one link" in run.stderr
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    assert f"{source.resolve()} has 2 hard links" in run.stderr
+    assert run.stderr.count("hard links") == 1, run.stderr
+    assert "not writable in place: its file is hard-linked 1" in run.stdout + run.stderr
     assert source.read_text() == outside.read_text() == DUPLICATES
+    assert source.stat().st_ino == outside.stat().st_ino
+    assert "__extracted_func" in other.read_text()
+
+
+def test_r9p2_a_hard_linked_file_refactored_in_place_is_refused_before_the_run(
+    tmp_path: Path,
+) -> None:
+    """Refused up front with a remedy, which then works, rather than after the whole run."""
+    source = tmp_path / "program.py"
+    source.write_text(DUPLICATES)
+    os.link(source, tmp_path / "link.py")
+    refused = _cli(["dry", str(source), str(source), "--no-types", "--no-interactive"])
+    assert refused.returncode == 1
+    assert "has 2 hard links" in refused.stderr and "OUTPUT.py" in refused.stderr
+    assert source.read_text() == DUPLICATES
+    written = tmp_path / "OUTPUT.py"
+    remedy = _cli(["dry", str(source), str(written), "--no-types", "--no-interactive"])
+    assert remedy.returncode == 0, remedy.stderr
+    assert "__extracted_func" in written.read_text()
 
 
 def test_directory_does_not_retry_a_permanent_change_conflict(

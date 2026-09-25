@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import logging
 import multiprocessing
 from pathlib import Path
 import re
@@ -43,6 +44,7 @@ from towel.type_inference import (
     Subtyping,
     TypeDiagnostic,
 )
+from towel.diagnostics import REJECTIONS
 from towel.unification.parallel import ParallelEvaluation
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes
@@ -212,4 +214,56 @@ def test_forked_evaluation_counts_what_serial_evaluation_counts(
     parallel = _declined(UnificationRefactorEngine(min_lines=2), path)
     assert forked, "the second analysis forked"
     assert sum(serial.values()) > 0
+    assert parallel == serial
+
+
+def _traced(engine: UnificationRefactorEngine, path: Path, trace: Path) -> List[str]:
+    """The rejection trace of one analysis of ``path``, as a file the forked workers share."""
+    handler = logging.FileHandler(trace, mode="a", encoding="utf-8")
+    level = REJECTIONS.level
+    REJECTIONS.addHandler(handler)
+    REJECTIONS.setLevel(logging.DEBUG)
+    try:
+        _declined(engine, path)
+    finally:
+        REJECTIONS.removeHandler(handler)
+        REJECTIONS.setLevel(level)
+        handler.close()
+    return trace.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(), reason="needs the fork start method"
+)
+def test_r9p2_forked_evaluation_traces_what_serial_evaluation_traces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 4: each judgement is traced once, and duplicates are the serial run's.
+
+    Workers judged again the pairs the parent's probe had judged, and traced
+    them a second time: on rich, four workers wrote 7,776 REJECT lines to a
+    serial run's 7,380, and pricing a decline by counting lines overcounted.
+    Which pair repeats another's proposal also depended on how the pairs
+    were split. The verdicts are now settled in pair order, so the trace is
+    the serial trace, line for line.
+    """
+    path = _similar_functions(tmp_path / "r9p2_project", 12)
+    serial = _traced(UnificationRefactorEngine(min_lines=2), path, tmp_path / "serial.log")
+    monkeypatch.setattr(ParallelEvaluation, "PARALLEL_PAIR_THRESHOLD", 1)
+    monkeypatch.setattr(ParallelEvaluation, "PARALLEL_PROBE_PAIRS", 8)
+    monkeypatch.setattr(ParallelEvaluation, "PARALLEL_MIN_PROJECTED_SECONDS", 0.0)
+    monkeypatch.setattr(ParallelEvaluation, "_parallel_workers", lambda self: 2)
+    forked: List[bool] = []
+    original = ParallelEvaluation._evaluate_pairs_parallel
+
+    def recording(self: ParallelEvaluation, *args: object, **kwargs: object) -> object:
+        forked.append(True)
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ParallelEvaluation, "_evaluate_pairs_parallel", recording)
+    parallel = _traced(UnificationRefactorEngine(min_lines=2), path, tmp_path / "forked.log")
+    assert forked, "the second analysis forked"
+    assert any("REJECT[duplicate_proposal]" in line for line in serial)
+    assert any("REJECT[" in line and "duplicate_proposal" not in line for line in serial)
+    assert len(parallel) == len(serial), "each judgement is traced once"
     assert parallel == serial

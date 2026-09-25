@@ -135,9 +135,10 @@ flowchart TD
        placement* and *Cross-file behavior*);
    11. the proposal: one whose helper, home and sites repeat an earlier
        pair's is declined (`duplicate_proposal`, the engine's
-       `_seen_proposals`) before anything further is computed for it; the
-       rest is redirected to an existing function when a site is one (see
-       *Reusing an existing function*), declined when it would reduce a
+       `_seen_proposals`) before anything further is computed for it; a
+       site that is the whole body of an existing function is extracted like
+       any other and never redirected to another function (see *Reusing an
+       existing function*); the rest is declined when it would reduce a
        helper from an earlier pass to a forwarder, then annotated. A proposal that survives those stages is declined once more if it would
    separate a narrowing test from an expression it leaves at the call site
    (`unification/narrowing.py`), which is a property of the transformation
@@ -832,7 +833,9 @@ section of `setup.cfg`, `tox.ini`, or `.flake8`). Only the generated helper
 and the rewritten call statements are formatted, never the surrounding
 file, and every formatter is wrapped by `checked`, which compares each
 snippet's syntax tree before and after and raises if formatting changed
-it. A `FileFinisher` sorts the imports of each modified file the way the
+it. The proposal is then declined, under "the formatter changed its code or
+failed", and the run goes on: Black normalizing a moved string that becomes
+the helper's docstring is enough. A `FileFinisher` sorts the imports of each modified file the way the
 project does, with ruff's `I` rules when selected or isort when configured.
 An import runs its module where it stands, so the order of a file's own
 imports is the order of their import-time effects, which no binding check
@@ -1177,7 +1180,7 @@ measure is exact and changes no proposal.
   on the helper's dump, the call, and the block's structure, since the same
   helper meets the same block through every pair the block forms
   (`_VERDICTS` in `instantiation.py`); the function lookup every clustered
-  site and the reuse redirect make, `FunctionIndex.innermost_at`, is
+  site and the forwarder rule make, `FunctionIndex.innermost_at`, is
   memoized per file and span.
 - **Structural identity.** `_sid` is the SHA-256 over each statement's
   digest of `canonical_dump(statement)`; the per-statement digests are
@@ -1275,8 +1278,11 @@ measure is exact and changes no proposal.
   functions are collected.
 - **Fork-based parallelism.** A large cold analysis forks worker processes
   after parsing; each worker inherits the ASTs and caches copy-on-write and
-  returns only accepted proposals, so nothing is pickled in and only results
-  travel back. Forking is decided by a timed serial probe over a strided sample
+  returns only its verdicts (`PairVerdict`: the proposal, what it would count
+  and trace), so nothing is pickled in and only results travel back. The
+  parent settles every verdict in pair order, the probe's included, so a pair
+  repeating an earlier pair's proposal is the same duplicate it is serially,
+  and the rejection trace and counts are the serial run's, line for line. Forking is decided by a timed serial probe over a strided sample
   of all pairs — never by pair count alone, since a worker pool per fixed-point
   iteration can cost more than a small iteration saves. Each worker runs a
   watchdog thread that ends it within a second of its parent's death, so a
@@ -1376,7 +1382,10 @@ the project, at the same relative layout: its Python sources, stubs and
 configuration files, skipping what the checker copy skips (VCS metadata,
 caches, virtual environments, `node_modules`), with symlinks kept as links as
 `copytree` keeps them, and for an output elsewhere the target whole, as the
-output will be. A root holding more than `consumers.MAXIMUM_FILES` Python files
+output will be. Towel's own transient directories are left out of both, a
+pending journal among them: copied, it named the stage's copies of its files,
+and the run's own write there refused as though the project had a change
+pending. A root holding more than `consumers.MAXIMUM_FILES` Python files
 is refused with a message rather than copied. The run refactors the target's
 counterpart in the stage, and the cold confirmation checks it there; only when
 both succeed is anything published: the counterpart to `OUT` with

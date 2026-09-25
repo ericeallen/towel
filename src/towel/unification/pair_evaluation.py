@@ -1731,6 +1731,8 @@ class PairEvaluation(
             self._debug_reject(RejectReason.NARROWING_LOST_AT_CALL_SITE, pair, detail=separated)
             return None
         identity = proposal_identity(proposal)
+        self._pair_identity = identity
+        self._trace_at_identity = len(self._captured_trace or ())
         if identity in self._seen_proposals:
             # The same helper over the same sites, found through another pair:
             # nothing the rest of this stage computes would differ.

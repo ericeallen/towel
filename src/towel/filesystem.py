@@ -35,7 +35,7 @@ import stat
 import tempfile
 from typing import Iterable, Iterator, List, Mapping, Tuple
 
-from .changes import ChangePlan, FileChange, StaleSource
+from .changes import JOURNAL_PREFIX, SET_ASIDE_PREFIX, ChangePlan, FileChange, StaleSource
 from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file
 
 
@@ -143,8 +143,15 @@ STAGE_SKIPPED_DIRECTORIES = frozenset(
 An environment, known by what it holds (``source_files.is_environment``), is skipped too.
 """
 
-_TRANSIENT_PREFIXES = ("towel-stage-", ".towel-copy-")
-"""Another run's stage or half-published output, should the project contain either."""
+_TRANSIENT_PREFIXES = ("towel-stage-", ".towel-copy-", JOURNAL_PREFIX, SET_ASIDE_PREFIX)
+"""Another run's stage or half-published output, or a journal, should the project contain one.
+
+None is an input to the analysis, and a journal copied into the stage
+names the stage's copies of its files: the run's own write there then
+refused as though the project had an interrupted change pending, and named
+the stage in its remedy. A journal belongs to the files it sits beside, so
+none is copied into an output either.
+"""
 
 STAGED_SUFFIXES = frozenset({".py", ".pyi", ".toml", ".json", ".ini", ".cfg"})
 STAGED_NAMES = frozenset({"py.typed", ".gitignore"})
@@ -178,6 +185,17 @@ class StagedProject:
     target: Path
     output: Path
     staged: Mapping[Path, str] = field(default_factory=dict)
+    hard_linked: Mapping[Path, int] = field(default_factory=dict)
+    """Of an in-place stage's target files, those with more than one link, and how many.
+
+    Publishing replaces a file by renaming a new one over it, which would
+    leave its other links holding the old text, so the run writes none of
+    these (``changes._safe_target`` refuses them, but only at publication).
+    """
+
+    def staged_copy(self, original: Path) -> Path:
+        """Where the stage holds the target file ``original``."""
+        return self.target / original.relative_to(self.origin_target)
 
     @property
     def in_place(self) -> bool:
@@ -323,16 +341,26 @@ def staged_project(
                 staged_target,
                 target,
                 _staged_digests(root, target, staged_root, planned),
+                _hard_linked(root, target, planned),
             )
             return
         if target.is_dir():
             if staged_target.exists():
                 # The target is the root itself; the loop above copied nothing.
                 staged_target.rmdir()
-            shutil.copytree(target, staged_target, symlinks=True)
+            shutil.copytree(target, staged_target, symlinks=True, ignore=_transient_entries)
         else:
             shutil.copy2(target, staged_target)
         yield StagedProject(root, target, staged_root, staged_target, output)
+
+
+def _transient_entries(directory: str, names: List[str]) -> List[str]:
+    """The ``copytree`` ignore that leaves Towel's own transient directories out of a target."""
+    return [
+        name
+        for name in names
+        if name.startswith(_TRANSIENT_PREFIXES) and os.path.isdir(os.path.join(directory, name))
+    ]
 
 
 def _staged_digests(
@@ -352,6 +380,19 @@ def _staged_digests(
         if copy.is_file() and not copy.is_symlink():
             digests[original] = _digest(copy.read_bytes())
     return digests
+
+
+def _hard_linked(root: Path, target: Path, planned: Iterable[PurePath]) -> Mapping[Path, int]:
+    """The regular files staged from the target that have more than one link, with the count."""
+    linked = {}
+    for relative in planned:
+        original = root / relative
+        if not (original == target or original.is_relative_to(target)):
+            continue
+        info = original.lstat()
+        if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+            linked[original] = info.st_nlink
+    return linked
 
 
 def staged_changes(stage: StagedProject) -> ChangePlan:

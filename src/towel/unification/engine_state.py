@@ -63,6 +63,7 @@ from .models import (
     CodeBlockPair,
     FunctionArtifact,
     FunctionNode,
+    PairVerdict,
     RefactoringProposal,
     RejectReason,
     Replacement,
@@ -217,6 +218,12 @@ class EngineState:
     """What that reason names, counted with it (``decorator_may_transform_body[numba.njit]``)."""
     _pair_rejections: Dict[str, int]
     """How many candidate pairs the latest analysis declined, by reason."""
+    _pair_identity: Optional[Hashable]
+    """What the pair being decided proposed, once it reached the duplicate check; else None."""
+    _trace_at_identity: int
+    """How many of its trace lines the pair being decided had written when it got there."""
+    _captured_trace: Optional[List[str]]
+    """Rejection-trace lines held back for a verdict settled later, or None to write them."""
     _checker_refusals: int
     """Rendered variants the checker refused since the driver last started a proposal."""
 
@@ -462,6 +469,19 @@ class EngineState:
         all_functions: Sequence[FunctionArtifact],
         class_infos: List[ClassInfo],
     ) -> Optional[RefactoringProposal]:
+        """Provided by UnificationRefactorEngine."""
+        raise NotImplementedError
+
+    def _pair_verdict(
+        self,
+        pair: "CodeBlockPair",
+        all_functions: Sequence[FunctionArtifact],
+        class_infos: List[ClassInfo],
+    ) -> PairVerdict:
+        """Provided by UnificationRefactorEngine."""
+        raise NotImplementedError
+
+    def _settle(self, pair: "CodeBlockPair", verdict: PairVerdict) -> Optional[RefactoringProposal]:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 

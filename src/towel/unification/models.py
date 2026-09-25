@@ -15,8 +15,7 @@
 """Data models for the anti-unification refactoring system: parsed and
 analyzed modules, functions and classes with their context, candidate block
 pairs, the helper template and clustered-site records, replacements and
-proposals (including a redirect to an existing function), applied changes,
-and the typed reasons a pair is declined.
+proposals, applied changes, and the typed reasons a pair is declined.
 """
 
 from __future__ import annotations
@@ -438,3 +437,34 @@ def proposal_identity(proposal: RefactoringProposal) -> Hashable:
             )
         ),
     )
+
+
+def identity_digest(identity: Hashable) -> str:
+    """``proposal_identity`` as a short digest, the same in every process that computes it."""
+    return hashlib.sha256(repr(identity).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class PairVerdict:
+    """One candidate pair judged, with what its judgement would trace and count held back.
+
+    A pair whose proposal repeats an earlier pair's is declined as a duplicate
+    (``duplicate_proposal``), and which pair is earlier depends on the order
+    the pairs are judged in. Forked workers each judge a slice of the pairs,
+    so the verdicts are settled afterwards in the pairs' own order, which
+    decides the duplicates exactly as one process judging them all would, and
+    writes each judgement's trace once.
+
+    ``identity`` is the digest of what the pair proposed, once it got that
+    far; ``counted`` is the reason the pair is counted under when it is
+    declined for anything but a duplicate; ``before_identity`` and
+    ``after_identity`` are its rejection-trace lines, split where the
+    duplicate check stands, since a pair found to be a duplicate traces only
+    the first and the duplicate's line.
+    """
+
+    proposal: Optional[RefactoringProposal]
+    identity: Optional[str]
+    counted: Optional[str]
+    before_identity: Tuple[str, ...] = ()
+    after_identity: Tuple[str, ...] = ()

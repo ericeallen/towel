@@ -15,6 +15,7 @@
 """Fault injection tests assert target bytes, modes and recovery state."""
 
 import ast
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -24,6 +25,7 @@ from unittest.mock import patch
 
 import pytest
 
+from towel import changes
 from towel.changes import ChangeConflict, ChangePlan, RecoveryRequired, apply_changes, recover
 from towel.cli import _apply_rename_mappings
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -266,3 +268,54 @@ def test_crlf_fixed_point_uses_original_bytes_for_stale_check(tmp_path):
     scope: dict[str, Any] = {}
     exec(result, scope)
     assert scope["a"](3) == scope["b"](3) == 8
+
+
+# --- The error branches of apply_changes (round 4 found them untested) -------
+
+
+def test_r9p2_a_journal_name_taken_since_the_check_is_another_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent run that made the same journal after the pending check: nothing is written."""
+    files, plan = make_plan(tmp_path)
+    monkeypatch.setattr("towel.changes.secrets.token_hex", lambda size: "0badf00d")
+    monkeypatch.setattr("towel.changes.journals_covering", lambda targets: [])
+    (tmp_path / ".towel-transaction-0badf00d").mkdir(mode=0o700)
+    with pytest.raises(RecoveryRequired, match="Another transaction is in progress: .*0badf00d"):
+        apply_changes(plan)
+    assert all(p.read_bytes() == b"value = 1\n" for p in files)
+
+
+def test_r9p2_a_journal_that_cannot_be_cleaned_after_an_early_failure_names_both(
+    tmp_path: Path,
+) -> None:
+    """Failing before the manifest is durable cleans the journal; one it cannot clean is kept."""
+    files, plan = make_plan(tmp_path)
+    original = changes._write_new
+
+    def fail_at_the_manifest(path: Path, content: bytes, mode: int = 0o600) -> None:
+        if path.name == "manifest.pending":
+            (path.parent / "stray").write_text("not a journal entry")
+            raise OSError("disk full")
+        original(path, content, mode)
+
+    with patch("towel.changes._write_new", side_effect=fail_at_the_manifest):
+        with pytest.raises(
+            RecoveryRequired, match=r"Unexpected journal entry.*\(after: disk full\)"
+        ):
+            apply_changes(plan)
+    assert all(p.read_bytes() == b"value = 1\n" for p in files)
+    assert len(list(tmp_path.glob(".towel-transaction-*"))) == 1
+
+
+def test_r9p2_a_committed_batch_whose_journal_cannot_be_removed_says_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The change stands once committed; a journal left behind is reported, not raised."""
+    files, plan = make_plan(tmp_path)
+    with patch("towel.changes._cleanup", side_effect=OSError("busy")):
+        with caplog.at_level(logging.WARNING, logger="towel"):
+            apply_changes(plan)
+    assert all(p.read_bytes() == b"value = 2\n" for p in files)
+    assert "Changes committed; journal cleanup requires attention" in caplog.text
+    assert "busy" in caplog.text

@@ -84,6 +84,7 @@ from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
 from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
+from ..formatting import FormattingChangedCode
 from ..filesystem import (
     StagedProject,
     copy_project,
@@ -122,6 +123,8 @@ DeclineReason = Union[
         "not verifiable: its file holds a name the type checker cannot type",
         "not verifiable: the type checker does not look at the code it changes",
         "not representable in its file's encoding",
+        "not writable in place: its file is hard-linked",
+        "the formatter changed its code or failed",
         "could not be rendered",
         "changed nothing",
     ],
@@ -167,6 +170,9 @@ class FixedPointDrivers(Materialization):
     # the latest reason; and what its last whole analysis declined.
     _declined: Dict[str, DeclineReason] = {}
     _last_declined_pairs: Dict[str, int] = {}
+    # The stage copies of the files an in-place run must not write, since
+    # the project holds them under more than one link.
+    _unwritable_in_place: FrozenSet[Path] = frozenset()
 
     @property
     def run_report(self) -> RunReport:
@@ -286,6 +292,14 @@ class FixedPointDrivers(Materialization):
         in_place = output_path is None or Path(output_path).resolve() == Path(file_path).resolve()
         if not in_place:
             refuse_unusable_output(Path(file_path), Path(str(output_path)))
+        elif (links := os.lstat(file_path).st_nlink) > 1:
+            # Refused now: publishing would refuse it only after the whole run.
+            raise ValueError(
+                f"{file_path} has {links} hard links, and an in-place run replaces a file by"
+                " renaming a new one over it, which would leave the other links holding the old"
+                " text; write the result to a new file instead (towel dry"
+                f" {file_path} OUTPUT.py), or give it a single link first"
+            )
         self.begin_refactoring_run([file_path])
         destination = Path(file_path) if in_place else Path(str(output_path))
         with self._staged_output(Path(file_path), destination) as stage:
@@ -425,7 +439,9 @@ class FixedPointDrivers(Materialization):
         file imports was not asked; a refusal no signature of the helper could
         answer (``UntypeableExtraction``) says the extraction itself cannot be
         typed; one that refused a rendered variant judged the proposal
-        (``_checker_refusals`` counts those since the driver started it); text
+        (``_checker_refusals`` counts those since the driver started it); a
+        formatter that would change the code it was given, or that failed on
+        it, is never written through, so its file keeps the proposal out; text
         its file's encoding cannot hold is a limit of that file; anything else
         is a rendering Towel could not produce.
         """
@@ -453,6 +469,11 @@ class FixedPointDrivers(Materialization):
                 "no annotated helper signature types"
                 if reason is Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE
                 else "no helper signature can type"
+            )
+        elif isinstance(error, FormattingChangedCode):
+            reason, said = (
+                "the formatter changed its code or failed",
+                "the formatter could not format faithfully",
             )
         elif isinstance(error, RefactoringError) and self._checker_refusals:
             reason, said = "refused by the type checker", "the type checker refused"
@@ -648,6 +669,30 @@ class FixedPointDrivers(Materialization):
                 )
             self._output_origin = (stage.origin_root, stage.root)
             self._analysis_paths = (str(stage.target),)
+            # Only the sources the run may rewrite matter: a hard-linked data
+            # file, or a module under an excluded directory, it never writes.
+            analyzed = (
+                {Path(path).resolve() for path in self._find_python_files(str(stage.target))}
+                if stage.hard_linked and stage.target.is_dir()
+                else set()
+            )
+            unwritable = {
+                original: links
+                for original, links in stage.hard_linked.items()
+                if stage.staged_copy(original).resolve() in analyzed
+            }
+            self._unwritable_in_place = frozenset(
+                stage.staged_copy(original).resolve() for original in unwritable
+            )
+            for original, links in sorted(unwritable.items()):
+                LOG.warning(
+                    "%s has %d hard links, and an in-place run replaces a file by renaming a new"
+                    " one over it, which would leave the other links holding the old text; no"
+                    " refactoring will change it. Run out of place to refactor it, or give it a"
+                    " single link first.",
+                    original,
+                    links,
+                )
             rewrite = _StagePathsInLogs(stage.public_text)
             loggers = (LOG, REJECTIONS, VALIDATION, OVERLAP, TYPES, UNIFIER)
             for logger in loggers:
@@ -667,6 +712,7 @@ class FixedPointDrivers(Materialization):
                 # The stage is about to go; nothing may keep checking against it.
                 self._type_run_oracle = inner_oracle
                 self._output_origin = None
+                self._unwritable_in_place = frozenset()
                 self._forget_run_lookups()
                 self.import_graph.begin_run()
 
@@ -729,7 +775,10 @@ class FixedPointDrivers(Materialization):
                     # would earn a rehearing the project has not changed for.
                     continue
                 proposal_queue = refreshed
-            except (RefactoringError, SyntaxError, UnencodableText) as error:
+            except (RefactoringError, SyntaxError, UnencodableText, FormattingChangedCode) as error:
+                # A formatter that would change the code it was given is
+                # never written through; that declines this proposal, not the
+                # run, as the single-file loop has always treated it.
                 run.deferred_paths.update(
                     os.path.abspath(path)
                     for path in {
@@ -838,6 +887,13 @@ class FixedPointDrivers(Materialization):
                 *(rep.file_path or proposal.file_path for rep in proposal.replacements),
             }
         }
+        if any(Path(path).resolve() in self._unwritable_in_place for path in before):
+            # Declined before it is rendered: the run could not publish it,
+            # and one such file used to fail the whole in-place run there.
+            self._decline(proposal, "not writable in place: its file is hard-linked")
+            run.rejected.add(proposal)
+            reporter.detail(f"Proposal writes a hard-linked file: {proposal.description}")
+            return None
         recorded = len(self._change_log)
         self._checker_refusals = 0
         try:
@@ -906,13 +962,17 @@ class _StagePathsInLogs(logging.Filter):
 
 
 def _name_public_paths(error: BaseException, rewrite: Callable[[str], str]) -> None:
-    """Point a failure's message at the paths the user knows; the stage it names is gone."""
+    """Point a failure's message at the paths the user knows; the stage it names is gone.
+
+    An ``OSError`` names paths in its ``filename`` attributes, or, raised
+    with a message alone as ``RecoveryRequired`` is, in that message.
+    """
     if isinstance(error, OSError):
         for attribute in ("filename", "filename2"):
             value = getattr(error, attribute)
             if isinstance(value, str):
                 setattr(error, attribute, rewrite(value))
-    elif len(error.args) == 1 and isinstance(error.args[0], str):
+    if len(error.args) == 1 and isinstance(error.args[0], str):
         error.args = (rewrite(error.args[0]),)
 
 

@@ -958,6 +958,38 @@ def _request(request: object, cache: str) -> _Answered:
     )
 
 
+_PRINTED_LINES_KEPT = 12
+"""How many of the last lines mypy printed before failing a failure carries; it says why there."""
+
+_CAUSES_KEPT = 3
+"""How many exceptions of a failure's chain it names: mypy's own exit, and what it was handling."""
+
+
+def _described_failure(error: BaseException, printed: str) -> str:
+    """Why a build failed: the exception, what it was raised from, and mypy's last printed lines.
+
+    mypy reports an internal error, a crash in itself or in a plugin, by
+    printing ``file:line: error: INTERNAL ERROR`` and raising ``SystemExit(2)``
+    while it handles the original exception. "SystemExit: 2" alone left the
+    user nothing to fix; the file and line mypy was checking, and the
+    exception it was handling, are what "fix what stops the checker" needs.
+    """
+    chain: List[str] = []
+    current: Optional[BaseException] = error
+    while current is not None and len(chain) < _CAUSES_KEPT:
+        name = type(current).__name__
+        chain.append(f"{name}: {current}" if str(current) else name)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    described = ", raised while handling ".join(chain)
+    last_lines = [text for text in printed.strip().splitlines() if text.strip()]
+    if not last_lines:
+        return described
+    shown = "\n".join(f"  {text}" for text in last_lines[-_PRINTED_LINES_KEPT:])
+    return f"{described}; mypy printed:\n{shown}"
+
+
 def _answer(line: str, cache: str) -> str:
     answered = _Answered([], ())
     failure: str | None = None
@@ -968,7 +1000,7 @@ def _answer(line: str, cache: str) -> str:
     except _PluginUnavailable as error:
         failure = str(error)
     except (Exception, SystemExit) as error:
-        failure = f"{type(error).__name__}: {error}"
+        failure = _described_failure(error, captured.getvalue())
     return (
         json.dumps(
             {"messages": answered.messages, "failure": failure, "warnings": list(answered.said)}

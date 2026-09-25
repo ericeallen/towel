@@ -70,18 +70,37 @@ def _compute_named_expr_targets(statement: ast.AST) -> Tuple[ast.AST, ...]:
     return tuple(found)
 
 
+def _stands_alone(expr: ast.expr) -> bool:
+    """Whether ``expr`` is Python outside the subscript it may come from.
+
+    A slice is written only as a subscript's index, or as an element of the
+    tuple that is one: ``a[0, :50]`` holds ``(0, :50)``, which is not an
+    expression anywhere else, so neither an argument nor ``lambda: (0, :50)``
+    can carry it. Every slice in ``expr`` must be one of its own subscripts'.
+    """
+    owned: Set[int] = set()
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Subscript):
+            owned.add(id(node.slice))
+            if isinstance(node.slice, ast.Tuple):
+                owned.update(id(element) for element in node.slice.elts)
+    return all(id(node) in owned for node in ast.walk(expr) if isinstance(node, ast.Slice))
+
+
 def _parameterizable(exprs: Sequence[ast.AST]) -> bool:
     """Whether the differing nodes are values a parameter can stand for.
 
     Only expressions qualify, and not a whole f-string (its literal parts
-    must stay), a slice or starred item (fragments of their container), or
-    anything holding an assignment expression (which would bind inside a
-    thunk instead of the caller). A statement, import alias, argument,
-    keyword or with-item that differs is a different binding or signature.
+    must stay), a slice or starred item (fragments of their container), an
+    expression holding a slice outside its own subscript (the tuple index
+    ``0, :50``), or anything holding an assignment expression (which would
+    bind inside a thunk instead of the caller). A statement, import alias,
+    argument, keyword or with-item that differs is a different binding or
+    signature.
     """
     if any(isinstance(expr, (ast.JoinedStr, ast.stmt, ast.Slice, ast.Starred)) for expr in exprs):
         return False
-    if any(not isinstance(expr, ast.expr) for expr in exprs):
+    if any(not isinstance(expr, ast.expr) or not _stands_alone(expr) for expr in exprs):
         return False
     return not any(isinstance(node, ast.NamedExpr) for expr in exprs for node in ast.walk(expr))
 
