@@ -55,6 +55,8 @@ from .semantic_safety import (
     available_argument_names,
     builtins_passed,
     free_variable_positions,
+    function_scope_names,
+    thunk_meets_an_inlined_comprehension,
     thunk_reads_possibly_unbound_local,
     module_resolved_names,
     defer_impure_parameters,
@@ -250,6 +252,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             call_node2,
             self._own_scope_locals(candidate.function, candidate.site),
             available[1],
+        ) or thunk_meets_an_inlined_comprehension(
+            call_node2, candidate.function, candidate.analyzer
         ):
             return None
         # Validate candidate call-site does not reference undefined names
@@ -264,6 +268,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 candidate.nodes,
                 cluster_renames[0],
                 cluster_renames[1],
+                site_function_names=function_scope_names(
+                    candidate.function, candidate.analyzer, candidate.nodes
+                ),
                 preamble_length=template.preamble_length,
                 returns_variables=bool(template.return_variables),
             )

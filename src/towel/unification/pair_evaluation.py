@@ -78,9 +78,11 @@ from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
     available_argument_names,
     builtins_passed,
+    function_scope_names,
     module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
+    thunk_meets_an_inlined_comprehension,
     thunk_reads_possibly_unbound_local,
 )
 from .clustering import Clustering
@@ -1369,12 +1371,23 @@ class PairEvaluation(
             return None
         function = setup.ctx.func1 if block_idx == 0 else setup.ctx.func2
         site = setup.ctx.site1 if block_idx == 0 else setup.ctx.site2
+        analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
         if thunk_reads_possibly_unbound_local(
             call_node, self._own_scope_locals(function, site), free.available_names[block_idx]
         ):
             # See :func:`thunk_reads_possibly_unbound_local`.
             self._debug_reject(
                 RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL, pair, detail=f"block{block_idx+1}"
+            )
+            return None
+        emptied = thunk_meets_an_inlined_comprehension(call_node, function, analyzer)
+        if emptied:
+            # See :func:`thunk_meets_an_inlined_comprehension`: the thunk's
+            # cell is empty on Python 3.12 and later.
+            self._debug_reject(
+                RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL,
+                pair,
+                detail=f"block{block_idx+1}: {sorted(emptied)} rebound by an inlined comprehension",
             )
             return None
         allowed_before = set(snapshot.bound_before_block) | set(free_here)
@@ -1400,6 +1413,7 @@ class PairEvaluation(
             nodes,
             unified.hygienic_renames[0],
             unified.hygienic_renames[block_idx],
+            site_function_names=function_scope_names(function, analyzer, nodes),
             preamble_length=rendered.preamble_length,
             returns_variables=bool(unified.ordered_return_variables[0]),
         )
@@ -1408,7 +1422,6 @@ class PairEvaluation(
                 RejectReason.INSTANTIATION_MISMATCH, pair, detail=f"block{block_idx+1}: {mismatch}"
             )
             return None
-        analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
         handed = builtins_passed(
             call_node,
             func_def.name,

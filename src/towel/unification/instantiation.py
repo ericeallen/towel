@@ -23,11 +23,22 @@ subsumes all of those rules: instantiating the helper body with a block's
 actual arguments must reproduce that block exactly, up to the spelling of
 the names the block binds, and only where that spelling cannot be seen
 while the program runs (``observable_renamings``).
+
+The comparison is by binding, not by spelling. Every identifier of both
+fragments is rewritten as what it denotes (``_BindingSpeller``): a binder
+by its scope and its order there, so each renamed binder matches only its
+own occurrences; a free name by where the site reads it, a function scope
+around the block or the module and the builtins, where every free name the
+helper's own code reads is the module's. The arguments are substituted
+scope by scope and marked as the site's, so a lambda, comprehension or
+function of the helper that binds a name an argument uses captures it, and
+the check reports the capture instead of comparing it equal.
 """
 
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
 import copy
 from weakref import WeakKeyDictionary
 from functools import reduce
@@ -36,6 +47,7 @@ from typing import (
     Dict,
     FrozenSet,
     Iterable,
+    Iterator,
     List,
     Mapping,
     NamedTuple,
@@ -49,26 +61,28 @@ from typing import (
 
 from ..canonical_ast import canonical_dump
 from .bounded_cache import BoundedCache
-from .parameters import parameter_names
+from .lexical_scopes import (
+    Comprehension,
+    NestedScope,
+    ScopeNames,
+    comprehension_results,
+    free_reads,
+    innermost_mentioning,
+    nested_scope_names,
+    statement_list_scope,
+)
+from .models import FunctionNode
+from .parameters import parameter_names, parameter_nodes
 from .scope_analyzer import pattern_expressions
-from .semantic_safety import bound_names, walk_own_scope
+from .semantic_safety import walk_own_scope
 from .statement_facts import bindings_of, import_binding_names, pattern_capture_names
 from .visitors import (
+    ScopeVisitor,
     annotation_expressions,
     evaluated_before_definition,
     visit_as,
-    visit_comprehension_result,
 )
 from .structural_memo import structural_id
-
-_EXPECTED_DUMPS: BoundedCache[str, str] = BoundedCache(16_384)
-"""The alpha-normalized dump of a block, by structural id.
-
-A block is checked against every call that reproduces it, once per pair it
-forms, and its normalized form is a function of its structure alone: the
-same code re-parsed after a rewrite hits too. Per process; the workers fork
-after parsing and each keeps its own copy.
-"""
 
 
 class InstantiationError(Exception):
@@ -82,25 +96,35 @@ def instantiation_mismatch(
     template_renames: Mapping[str, str],
     block_renames: Mapping[str, str],
     *,
+    site_function_names: AbstractSet[str],
     preamble_length: int,
     returns_variables: bool,
 ) -> Optional[str]:
     """Return why ``helper`` applied to ``call_statement`` differs from ``block``.
 
     The helper body is built from the template block, so it may spell a bound
-    variable by the template's name or by the canonical alpha-renamed name.
-    ``template_renames`` and ``block_renames`` each map a block's original
-    names to those canonical names; together they translate both spellings to
-    this block's own names. ``preamble_length`` counts injected global/nonlocal
+    variable by the template's name or by the canonical alpha-renamed name;
+    the comparison is by binding, so either spelling of a binder matches the
+    block's (``_BindingSpeller``). ``template_renames`` and ``block_renames``
+    each map a block's original names to those canonical names; together they
+    translate the variables the helper returns to the names the call assigns.
+    ``site_function_names`` holds the names the block's site reads from a
+    function scope around it, its own locals and parameters or an enclosing
+    function's, rather than from the module or the builtins
+    (``semantic_safety.function_scope_names``): the helper's own code reads
+    every free name from its module, so such a name can only reach it as an
+    argument. ``preamble_length`` counts injected global/nonlocal
     declarations at the start of the body and ``returns_variables`` states
     whether the extractor appended a return of the block's live variables.
     """
+    site_names = frozenset(site_function_names)
     key = (
         _helper_dump(helper),
         canonical_dump(call_statement),
         structural_id(block),
         tuple(sorted(template_renames.items())),
         tuple(sorted(block_renames.items())),
+        tuple(sorted(site_names)),
         preamble_length,
         returns_variables,
     )
@@ -113,6 +137,7 @@ def instantiation_mismatch(
         block,
         template_renames,
         block_renames,
+        site_names,
         preamble_length=preamble_length,
         returns_variables=returns_variables,
     )
@@ -127,7 +152,16 @@ class _Verdict(NamedTuple):
 
 
 _VERDICTS: BoundedCache[
-    Tuple[str, str, str, Tuple[Tuple[str, str], ...], Tuple[Tuple[str, str], ...], int, bool],
+    Tuple[
+        str,
+        str,
+        str,
+        Tuple[Tuple[str, str], ...],
+        Tuple[Tuple[str, str], ...],
+        Tuple[str, ...],
+        int,
+        bool,
+    ],
     _Verdict,
 ] = BoundedCache(65_536)
 """Verdicts by everything the check depends on.
@@ -156,6 +190,7 @@ def _instantiation_mismatch(
     block: Sequence[ast.stmt],
     template_renames: Mapping[str, str],
     block_renames: Mapping[str, str],
+    site_function_names: FrozenSet[str],
     *,
     preamble_length: int,
     returns_variables: bool,
@@ -180,94 +215,92 @@ def _instantiation_mismatch(
     shape = _statement_shape_mismatch(helper, call_statement, body, inverse, returns_variables)
     if shape is not None:
         return shape
-    arguments = dict(zip(parameters, call.args))
+    reducer = _Reducer(
+        dict(zip(parameters, call.args)),
+        arguments_are_site=True,
+        body_names=statement_list_scope(body).local - frozenset(parameters),
+    )
     try:
-        reduced = [visit_as(_Reducer(arguments), statement) for statement in body]
+        reduced = [visit_as(reducer, statement) for statement in body]
+        actual = _binding_form(reduced, site_function_names, fragment_is_site=False)
     except InstantiationError as error:
         return str(error)
-    # The binders as the helper spells them when it runs this block.
-    helper_binders = _binder_sequence(reduced)
-    restored = [_IdentifierRenamer(inverse).visit(statement) for statement in reduced]
-    actual = _alpha_normalize(ast.Module(body=restored, type_ignores=[]))
-    if _normalized_dump(actual) != _expected_dump(block):
-        return f"body: {ast.unparse(actual)!r} != {ast.unparse(_expected_form(block))!r}"
-    block_binders = _binder_sequence(block)
-    if len(helper_binders) != len(block_binders):
+    expected = _expected_binding_form(block, site_function_names)
+    if actual.dump != expected.dump:
+        return f"body: {ast.unparse(actual.module)!r} != {ast.unparse(expected.module)!r}"
+    if actual.binders.keys() != expected.binders.keys():
         return "binder correspondence"
-    renamed = {own for spelled, own in zip(helper_binders, block_binders) if spelled != own}
+    renamed = {own for token, own in expected.binders.items() if actual.binders[token] != own}
     observable = observable_renamings(block, renamed)
     if observable:
         return f"renamed binder observable: {', '.join(sorted(observable))}"
     return None
 
 
-def _expected_form(block: Sequence[ast.stmt]) -> ast.Module:
-    """The block as the reduced helper body must read, on a copy."""
-    return _alpha_normalize(
-        ast.Module(body=[copy.deepcopy(node) for node in block], type_ignores=[])
-    )
+class _BindingForm(NamedTuple):
+    """A fragment with every identifier spelled by its binding, and what its binders were spelled.
+
+    ``binders`` maps each binder's token to the name it had, lambda
+    parameters and names imported without ``as`` aside.
+    """
+
+    module: ast.Module
+    dump: str
+    binders: Mapping[str, str]
 
 
-def _normalized_dump(module: ast.Module) -> str:
-    return canonical_dump(module)
+_EXPECTED_FORMS: "BoundedCache[Tuple[str, Tuple[str, ...]], _BindingForm]" = BoundedCache(16_384)
+"""The binding form of a block, by structural id and its site's function-scope names.
+
+A block is checked against every call that reproduces it, once per pair it
+forms, and its binding form is a function of its structure and of where its
+site reads its free names: the same code re-parsed after a rewrite hits too.
+The cached form is never modified. Per process; the workers fork after
+parsing and each keeps its own copy.
+"""
 
 
-def _expected_dump(block: Sequence[ast.stmt]) -> str:
-    """``_normalized_dump(_expected_form(block))``, memoized on the block's structure."""
-    key = structural_id(block)
-    cached = _EXPECTED_DUMPS.get(key)
+def _expected_binding_form(
+    block: Sequence[ast.stmt], site_function_names: FrozenSet[str]
+) -> _BindingForm:
+    """``_binding_form`` of a copy of ``block``, memoized on its structure and its site's names."""
+    key = (structural_id(block), tuple(sorted(site_function_names)))
+    cached = _EXPECTED_FORMS.get(key)
     if cached is None:
-        cached = _EXPECTED_DUMPS.put(key, _normalized_dump(_expected_form(block)))
+        copied = [copy.deepcopy(statement) for statement in block]
+        cached = _EXPECTED_FORMS.put(
+            key, _binding_form(copied, site_function_names, fragment_is_site=True)
+        )
     return cached
 
 
+def _binding_form(
+    statements: List[ast.stmt], site_function_names: FrozenSet[str], *, fragment_is_site: bool
+) -> _BindingForm:
+    """``statements``, which it rewrites in place, as the body of a function, spelled by binding.
+
+    ``fragment_is_site`` says the statements are the block itself; otherwise
+    they are a reduced helper body, whose nodes copied from the call's
+    arguments are the site's (``_Reducer``). Raises ``InstantiationError``
+    where a name is captured by a scope of the other origin.
+    """
+    speller = _BindingSpeller(site_function_names, fragment_is_site=fragment_is_site)
+    speller.fragment(statements)
+    module = ast.Module(body=statements, type_ignores=[])
+    return _BindingForm(module, canonical_dump(module), dict(speller.binders))
+
+
 def _alpha_normalize(module: ast.Module) -> ast.Module:
-    """Rename block-bound names in first-occurrence order; free names stay.
+    """A copy of ``module`` spelled by binding, as the block it would be; every free name global.
 
-    Loop targets, comprehension variables and other binders may be spelled
-    differently in the helper and in a block without changing the value
-    computed; whether the difference can be seen by other means is
-    ``observable_renamings``'s question. Names the block never binds are
-    left alone, so a helper binder that captures a block's free name still
-    compares unequal.
+    Binders are numbered per scope in visiting order, so two fragments that
+    differ only in how they spell the names they bind come out alike, and a
+    free name keeps its spelling. Names imported without ``as`` name what
+    they import and keep theirs. Annotations in a function body are never
+    evaluated and take no part.
     """
-    module, order = _alpha_order(module)
-    return visit_as(_IdentifierRenamer(order), module)
-
-
-def _alpha_order(module: ast.Module) -> Tuple[ast.Module, Dict[str, str]]:
-    """The module prepared for comparison, and its binders' canonical names in first-occurrence order.
-
-    Mutates ``module``: annotations are blanked and lambda parameters renamed.
-    """
-    # Annotations inside a function body are never evaluated; the helper
-    # keeps the template's, so they take no part in the comparison.
-    for node in ast.walk(module):
-        if isinstance(node, ast.AnnAssign):
-            node.annotation = ast.Name(id="__annotation__", ctx=ast.Load())
-    # A lambda's parameters are visible only inside it; they are renamed
-    # there, by position, before the block-level binders are.
-    module = visit_as(_LambdaBinderRenamer(), module)
-    bound = bound_names(module.body) - _fixed_import_names(module.body)
-    order: Dict[str, str] = {}
-    for node in ast.walk(module):
-        for name in _identifiers(node):
-            if name in bound and name not in order:
-                order[name] = f"__alpha_{len(order)}"
-    return module, order
-
-
-def _binder_sequence(statements: Sequence[ast.stmt]) -> List[str]:
-    """The binders of ``statements`` in the order ``_alpha_normalize`` numbers them, on a copy.
-
-    Two bodies whose normalized forms agree bind their ``i``-th names at the
-    same places, so pairing the sequences by position pairs each helper
-    spelling with the block's own.
-    """
-    copied = ast.Module(
-        body=[copy.deepcopy(statement) for statement in statements], type_ignores=[]
-    )
-    return list(_alpha_order(copied)[1])
+    copied = [copy.deepcopy(statement) for statement in module.body]
+    return _binding_form(copied, frozenset(), fragment_is_site=True).module
 
 
 def observable_renamings(block: Sequence[ast.stmt], renamed: AbstractSet[str]) -> FrozenSet[str]:
@@ -391,7 +424,7 @@ class _UnboundReads:
     ) -> None:
         """Reads by code of a scope of its own, which binds ``own``: they may run later, or often."""
         for part in parts:
-            for name in _free_reads(part, frozenset(own)) & self.names:
+            for name in free_reads(part, frozenset(own)) & self.names:
                 if name not in state or name in self.unbound_anywhere:
                     self.found.add(name)
 
@@ -647,100 +680,8 @@ class _UnboundReads:
             *(generator.iter for generator in node.generators[1:]),
             *(condition for generator in node.generators for condition in generator.ifs),
         ]
-        collected = _Collected()
-        visit_comprehension_result(collected, node)
-        self._nested([*inner, *collected.nodes], targets, state)
+        self._nested([*inner, *comprehension_results(node)], targets, state)
         return state
-
-
-def _free_reads(node: ast.AST, own: FrozenSet[str]) -> Set[str]:
-    """The names ``node`` reads that neither ``own`` nor a scope inside ``node`` binds.
-
-    A comprehension's targets, a lambda's parameters and a function's
-    parameters and locals are theirs; a class body binds nothing its reads
-    are counted against.
-    """
-    if isinstance(node, ast.Name):
-        return (
-            {node.id} if isinstance(node.ctx, (ast.Load, ast.Del)) and node.id not in own else set()
-        )
-    found: Set[str] = set()
-    if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
-        if node.target.id not in own:
-            found.add(node.target.id)
-    if isinstance(node, ast.Lambda):
-        for default in evaluated_before_definition(node):
-            found |= _free_reads(default, own)
-        return found | _free_reads(node.body, own | frozenset(parameter_names(node.args)))
-    if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-        found |= _free_reads(node.generators[0].iter, own)
-        inside = own | frozenset(
-            name.id
-            for generator in node.generators
-            for name in ast.walk(generator.target)
-            if isinstance(name, ast.Name)
-        )
-        parts: List[ast.AST] = [
-            *(generator.iter for generator in node.generators[1:]),
-            *(condition for generator in node.generators for condition in generator.ifs),
-        ]
-        collected = _Collected()
-        visit_comprehension_result(collected, node)
-        for part in [*parts, *collected.nodes]:
-            found |= _free_reads(part, inside)
-        return found
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        for expression in [*evaluated_before_definition(node), *annotation_expressions(node)]:
-            found |= _free_reads(expression, own)
-        inside = own | frozenset(parameter_names(node.args)).union(
-            *(bindings_of(statement, into_nested_scopes=False) for statement in node.body)
-        )
-        for statement in node.body:
-            found |= _free_reads(statement, inside)
-        return found
-    for child in ast.iter_child_nodes(node):
-        found |= _free_reads(child, own)
-    return found
-
-
-class _Collected(ast.NodeVisitor):
-    """The nodes a visit is handed, unvisited: the parts ``visit_comprehension_result`` names."""
-
-    def __init__(self) -> None:
-        self.nodes: List[ast.AST] = []
-
-    def visit(self, node: ast.AST) -> None:
-        self.nodes.append(node)
-
-
-def _fixed_import_names(statements: Sequence[ast.stmt]) -> Set[str]:
-    """Names an import binds without ``as``: they name what is imported and cannot be renamed."""
-    names: Set[str] = set()
-    for statement in statements:
-        for node in ast.walk(statement):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                for alias in node.names:
-                    if alias.asname is None and alias.name != "*":
-                        names.add(alias.name.split(".")[0])
-    return names
-
-
-def _identifiers(node: ast.AST) -> List[str]:
-    if isinstance(node, ast.Name):
-        return [node.id]
-    if isinstance(node, ast.arg):
-        return [node.arg]
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return [node.name]
-    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
-        return [node.name] if node.name else []
-    if isinstance(node, ast.MatchMapping):
-        return [node.rest] if node.rest else []
-    if isinstance(node, (ast.Global, ast.Nonlocal)):
-        return list(node.names)
-    if isinstance(node, ast.alias):
-        return [node.asname] if node.asname is not None else []
-    return []
 
 
 def _spellings_to_block_names(
@@ -812,26 +753,151 @@ def _extract_call(statement: ast.stmt, helper_name: str) -> Optional[ast.Call]:
     return None
 
 
-class _Reducer(ast.NodeTransformer):
-    """Replace parameter names by arguments, beta-reducing thunk calls."""
+_FROM_CALL_ARGUMENT = "_towel_from_call_argument"
+"""The attribute that marks a node of a reduced helper body as copied from the call's arguments.
 
-    def __init__(self, arguments: Mapping[str, ast.expr]) -> None:
+An attribute rather than a set of node ids: ``copy.deepcopy`` carries it to
+every copy, so a thunk's argument substituted twice is the site's in both
+places, and a discarded node's id being reused cannot mislabel another.
+"""
+
+
+def _from_call_argument(node: ast.AST) -> bool:
+    return bool(getattr(node, _FROM_CALL_ARGUMENT, False))
+
+
+class _Reducer(ast.NodeTransformer):
+    """Replace parameter names by arguments, beta-reducing thunk calls, scope by scope.
+
+    A parameter's name inside a lambda, comprehension, function or class of
+    the body that binds the same spelling is that scope's own name, not the
+    parameter, and stays. The substitution is capture-checked: an argument
+    was evaluated where the call stands (a thunk's argument, where the
+    helper calls it), so a name it reads that ``body_names`` or a scope
+    around the parameter's position binds would denote another variable
+    there, and ``InstantiationError`` names it. With ``arguments_are_site``
+    the substituted copies are marked as the site's (``_FROM_CALL_ARGUMENT``),
+    so the binding form resolves their names where the call stands; a
+    thunk's arguments are the helper's own expressions and keep their marks.
+    """
+
+    def __init__(
+        self,
+        arguments: Mapping[str, ast.expr],
+        *,
+        arguments_are_site: bool,
+        body_names: AbstractSet[str],
+    ) -> None:
         self._arguments = arguments
+        self._arguments_are_site = arguments_are_site
+        self._body_names = body_names
+        self._scopes: List[ScopeNames] = []
+
+    def _argument_for(self, name: str) -> Optional[ast.expr]:
+        if name not in self._arguments or innermost_mentioning(self._scopes, name) is not None:
+            return None
+        argument = self._arguments[name]
+        for read in sorted(free_reads(argument)):
+            if read in self._body_names or innermost_mentioning(self._scopes, read) is not None:
+                raise InstantiationError(f"argument captured: {read!r} where {name} stands")
+        return argument
+
+    def _copied(self, argument: ast.expr) -> ast.expr:
+        copied = copy.deepcopy(argument)
+        if self._arguments_are_site:
+            for node in ast.walk(copied):
+                setattr(node, _FROM_CALL_ARGUMENT, True)
+        return copied
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        argument = self._argument_for(node.id)
+        return node if argument is None else self._copied(argument)
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         function = node.func
-        if isinstance(function, ast.Name) and function.id in self._arguments:
-            argument = self._arguments[function.id]
+        if isinstance(function, ast.Name):
+            argument = self._argument_for(function.id)
             if isinstance(argument, ast.Lambda):
-                actual_args = [self.visit(item) for item in node.args]
-                actual_keywords = [self.visit(item) for item in node.keywords]
-                return _beta_reduce(argument, actual_args, actual_keywords)
+                actual_args = [visit_as(self, item) for item in node.args]
+                actual_keywords = [visit_as(self, item) for item in node.keywords]
+                thunk = self._copied(argument)
+                assert isinstance(thunk, ast.Lambda)
+                return _beta_reduce(thunk, actual_args, actual_keywords)
         return self.generic_visit(node)
 
-    def visit_Name(self, node: ast.Name) -> ast.AST:
-        if node.id in self._arguments:
-            return copy.deepcopy(self._arguments[node.id])
+    @contextmanager
+    def _inside(self, node: NestedScope) -> Iterator[None]:
+        self._scopes.append(nested_scope_names(node))
+        try:
+            yield
+        finally:
+            self._scopes.pop()
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        _visit_definition_parts(self, node)
+        with self._inside(node):
+            node.body = visit_as(self, node.body)
         return node
+
+    def _definition(self, node: Union[FunctionNode, ast.ClassDef]) -> ast.AST:
+        _visit_definition_parts(self, node)
+        with self._inside(node):
+            node.body = [visit_as(self, statement) for statement in node.body]
+        return node
+
+    visit_FunctionDef = _definition
+    visit_AsyncFunctionDef = _definition
+    visit_ClassDef = _definition
+
+    def _comprehension(self, node: Comprehension) -> ast.AST:
+        first = node.generators[0]
+        first.iter = visit_as(self, first.iter)
+        with self._inside(node):
+            for index, generator in enumerate(node.generators):
+                generator.target = visit_as(self, generator.target)
+                if index:
+                    generator.iter = visit_as(self, generator.iter)
+                generator.ifs = [visit_as(self, condition) for condition in generator.ifs]
+            if isinstance(node, ast.DictComp):
+                node.key = visit_as(self, node.key)
+                node.value = visit_as(self, node.value)
+            else:
+                node.elt = visit_as(self, node.elt)
+        return node
+
+    visit_ListComp = _comprehension
+    visit_SetComp = _comprehension
+    visit_DictComp = _comprehension
+    visit_GeneratorExp = _comprehension
+
+
+def _visit_definition_parts(
+    transformer: ast.NodeTransformer,
+    node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda],
+) -> None:
+    """Transform, in the enclosing scope, what a definition evaluates where it stands.
+
+    Decorators, defaults, parameter and return annotations, bases and
+    keywords; the body is the caller's to transform in the new scope.
+    """
+    if not isinstance(node, ast.Lambda):
+        node.decorator_list = [visit_as(transformer, item) for item in node.decorator_list]
+    if isinstance(node, ast.ClassDef):
+        node.bases = [visit_as(transformer, item) for item in node.bases]
+        node.keywords = [visit_as(transformer, item) for item in node.keywords]
+        return
+    arguments = node.args
+    arguments.defaults = [visit_as(transformer, item) for item in arguments.defaults]
+    arguments.kw_defaults = [
+        visit_as(transformer, item) if item is not None else None for item in arguments.kw_defaults
+    ]
+    if isinstance(node, ast.Lambda):
+        return
+    for parameter in parameter_nodes(arguments):
+        if parameter.annotation is not None:
+            parameter.annotation = visit_as(transformer, parameter.annotation)
+    if node.returns is not None:
+        node.returns = visit_as(transformer, node.returns)
 
 
 def _beta_reduce(
@@ -845,7 +911,9 @@ def _beta_reduce(
     soundly. A plain thunk has its parameters bound to the actual arguments,
     after an arity check, and the substituted body is returned. This is the
     beta-reduction step that lets instantiation compare a helper call against the
-    original block up to the thunks the extractor introduced.
+    original block up to the thunks the extractor introduced. ``thunk`` is the
+    reducer's own copy, marked as the site's; the actual arguments are the
+    helper's expressions and keep their marks wherever they are substituted.
     """
     signature = thunk.args
     forwarding = (
@@ -871,7 +939,7 @@ def _beta_reduce(
             and body.keywords[0].value.id == signature.kwarg.arg
         ):
             raise InstantiationError("forwarding thunk shape")
-        return ast.Call(func=copy.deepcopy(body.func), args=actual_args, keywords=actual_keywords)
+        return ast.Call(func=body.func, args=actual_args, keywords=actual_keywords)
     if (
         actual_keywords
         or signature.posonlyargs
@@ -885,110 +953,231 @@ def _beta_reduce(
     bindings: Dict[str, ast.expr] = {
         parameter.arg: actual for parameter, actual in zip(signature.args, actual_args)
     }
-    return visit_as(_Reducer(bindings), copy.deepcopy(thunk.body))
+    reducer = _Reducer(
+        bindings,
+        arguments_are_site=False,
+        body_names=nested_scope_names(thunk).local - frozenset(bindings),
+    )
+    return visit_as(reducer, thunk.body)
 
 
-class _LambdaBinderRenamer(ast.NodeTransformer):
-    """Rename each lambda's parameters to positional names, scoped to that lambda.
+_BOUND = "bound:"
+_IMPORTED = "import:"
+_MODULE = "module:"
+_FUNCTION = "local:"
+"""Token prefixes. None can begin an identifier, so no token spells a name of the program.
 
-    ``lambda value: value * 2`` and ``lambda other: other * 2`` are the same
-    function. A parameter is renamed inside its own lambda and nowhere else,
-    so a free name spelled the same outside the lambda is untouched, and an
-    inner lambda that rebinds a name shadows the outer renaming. Lambdas are
-    numbered in visiting order, so a helper and a block of the same shape
-    receive the same names. Defaults evaluate in the enclosing scope and are
-    visited under it.
+A binder is ``bound:<scope>:<n>``, numbered per scope in visiting order; a
+name imported without ``as`` is ``import:<name>``, since it names what is
+imported; a free name is ``local:<name>`` where the site reads it from a
+function scope around the block and ``module:<name>`` where it reads the
+module's namespace or the builtins, as every free name of the helper does.
+"""
+
+
+class _OpenScope:
+    """A scope of the fragment being spelled: its names, its origin, and its binders' tokens."""
+
+    def __init__(
+        self, names: ScopeNames, fixed: FrozenSet[str], site: bool, index: int, is_lambda: bool
+    ) -> None:
+        self.names = names
+        self.fixed = fixed
+        self.site = site
+        self.index = index
+        self.is_lambda = is_lambda
+        self.tokens: Dict[str, str] = {}
+
+    def token(self, name: str) -> str:
+        if name in self.fixed:
+            return _IMPORTED + name
+        known = self.tokens.get(name)
+        if known is None:
+            known = self.tokens[name] = f"{_BOUND}{self.index}:{len(self.tokens)}"
+        return known
+
+
+class _BindingSpeller(ScopeVisitor):
+    """Rewrite a fragment's identifiers in place as the bindings they denote.
+
+    The fragment is a function body: the block, or the reduced helper body.
+    A name resolves in the innermost scope that binds it (a class body only
+    from its own code), following Python's static scoping. In the helper, a
+    name copied from a call argument belongs to the site, and a scope the
+    helper's own code opens cannot bind it, nor can a scope an argument
+    opened bind the helper's names; either is a capture and raises
+    ``InstantiationError``. A free name is ``local:`` or ``module:`` by where
+    the site reads it (``site_function_names``); a free name of the helper's
+    own code is always ``module:``, since the helper reads it from its
+    module. So a name the extractor left spelled as the template's, where
+    the site reads a local of its function, never compares equal to the
+    site's read, whatever renaming relates their spellings.
     """
 
-    def __init__(self) -> None:
-        self._scopes: List[Dict[str, str]] = []
-        self._count = 0
+    def __init__(self, site_function_names: FrozenSet[str], *, fragment_is_site: bool) -> None:
+        self._site_function_names = site_function_names
+        self._fragment_is_site = fragment_is_site
+        self._scopes: List[_OpenScope] = []
+        self._opened = 0
+        self._in_lambda_parameters = False
+        self.binders: Dict[str, str] = {}
 
-    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
-        index = self._count
-        self._count += 1
-        arguments = node.args
-        arguments.defaults = [visit_as(self, default) for default in arguments.defaults]
-        arguments.kw_defaults = [
-            visit_as(self, default) if default is not None else None
-            for default in arguments.kw_defaults
-        ]
-        parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
-        if arguments.vararg is not None:
-            parameters.append(arguments.vararg)
-        if arguments.kwarg is not None:
-            parameters.append(arguments.kwarg)
-        mapping = dict(self._scopes[-1]) if self._scopes else {}
-        for position, parameter in enumerate(parameters):
-            mapping[parameter.arg] = f"__lambda_{index}_{position}"
-            parameter.arg = mapping[parameter.arg]
-        self._scopes.append(mapping)
-        node.body = visit_as(self, node.body)
+    # -- the fragment and its scopes -------------------------------------------
+
+    def fragment(self, statements: Sequence[ast.stmt]) -> None:
+        self._open(statement_list_scope(statements), _imported_as_themselves(statements), None)
+        for statement in statements:
+            self.visit(statement)
         self._scopes.pop()
-        return node
 
-    def visit_Name(self, node: ast.Name) -> ast.AST:
-        if self._scopes:
-            node.id = self._scopes[-1].get(node.id, node.id)
-        return node
+    def _is_site(self, node: Optional[ast.AST]) -> bool:
+        if self._fragment_is_site:
+            return True
+        return node is not None and _from_call_argument(node)
 
+    def _open(self, names: ScopeNames, fixed: FrozenSet[str], node: Optional[ast.AST]) -> None:
+        self._scopes.append(
+            _OpenScope(
+                names, fixed, self._is_site(node), self._opened, isinstance(node, ast.Lambda)
+            )
+        )
+        self._opened += 1
 
-class _IdentifierRenamer(ast.NodeTransformer):
-    """Rename every identifier position that hygienic renaming can touch."""
+    def _enter_scope(self, node: ast.AST) -> object:
+        scope_node = cast(NestedScope, node)
+        fixed = (
+            _imported_as_themselves(scope_node.body)
+            if isinstance(scope_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            else frozenset()
+        )
+        self._open(nested_scope_names(scope_node), fixed, node)
+        return None
 
-    def __init__(self, mapping: Mapping[str, str]) -> None:
-        self._mapping = mapping
+    def _leave_scope(self, node: ast.AST) -> None:
+        self._scopes.pop()
 
-    def _rename(self, name: Optional[str]) -> Optional[str]:
-        return self._mapping.get(name, name) if name is not None else None
+    # -- resolution ----------------------------------------------------------------
 
-    def visit_Name(self, node: ast.Name) -> ast.AST:
-        node.id = self._mapping.get(node.id, node.id)
-        return node
+    def _resolve(self, name: str, node: ast.AST, scopes: Optional[List[_OpenScope]] = None) -> str:
+        chain = self._scopes if scopes is None else scopes
+        site = self._is_site(node)
+        innermost = len(chain) - 1
+        for index in range(innermost, -1, -1):
+            scope = chain[index]
+            if scope.names.is_class and index != innermost:
+                continue
+            if not scope.names.mentions(name):
+                continue
+            if scope.site != site:
+                whose = "an argument's" if site else "the helper's"
+                raise InstantiationError(f"captured: {whose} {name!r}")
+            if name in scope.names.local:
+                return scope.token(name)
+            if name in scope.names.declared_global:
+                return _MODULE + name
+        if site and name in self._site_function_names:
+            return _FUNCTION + name
+        return _MODULE + name
 
-    def visit_arg(self, node: ast.arg) -> ast.AST:
-        node.arg = self._mapping.get(node.arg, node.arg)
-        return self.generic_visit(node)
+    def _bind(self, name: str, node: ast.AST) -> str:
+        token = self._resolve(name, node)
+        if token.startswith(_BOUND) and not self._in_lambda_parameters:
+            self.binders[token] = name
+        return token
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        node.name = self._mapping.get(node.name, node.name)
-        return self.generic_visit(node)
+    # -- identifier positions ----------------------------------------------------------
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
-        node.name = self._mapping.get(node.name, node.name)
-        return self.generic_visit(node)
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            node.id = self._resolve(node.id, node)
+        else:
+            node.id = self._bind(node.id, node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        node.name = self._mapping.get(node.name, node.name)
-        return self.generic_visit(node)
+    def _bind_parameters(self, args: ast.arguments) -> None:
+        # A lambda's parameters are its signature, compared by position.
+        self._in_lambda_parameters = self._scopes[-1].is_lambda
+        try:
+            for parameter in parameter_nodes(args):
+                parameter.arg = self._bind(parameter.arg, parameter)
+        finally:
+            self._in_lambda_parameters = False
 
-    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> ast.AST:
-        node.name = self._rename(node.name)
-        return self.generic_visit(node)
+    def _bind_definition_name(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
+    ) -> None:
+        node.name = self._bind(node.name, node)
 
-    def visit_Global(self, node: ast.Global) -> ast.AST:
-        node.names = [self._mapping.get(name, name) for name in node.names]
-        return node
+    def _bind_target(self, target: ast.AST) -> None:
+        self.visit(target)
 
-    def visit_Nonlocal(self, node: ast.Nonlocal) -> ast.AST:
-        node.names = [self._mapping.get(name, name) for name in node.names]
-        return node
+    def _visit_definition_head(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda]
+    ) -> None:
+        for expression in evaluated_before_definition(node):
+            self.visit(expression)
+        if isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                self.visit(base)
+            for keyword in node.keywords:
+                self.visit(keyword.value)
+        elif not isinstance(node, ast.Lambda):
+            for annotation in annotation_expressions(node):
+                self.visit(annotation)
 
-    def visit_MatchAs(self, node: ast.MatchAs) -> ast.AST:
-        node.name = self._rename(node.name)
-        return self.generic_visit(node)
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.type is not None:
+            self.visit(node.type)
+        if node.name:
+            node.name = self._bind(node.name, node)
+        for statement in node.body:
+            self.visit(statement)
 
-    def visit_MatchStar(self, node: ast.MatchStar) -> ast.AST:
-        node.name = self._rename(node.name)
-        return node
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.pattern is not None:
+            self.visit(node.pattern)
+        if node.name:
+            node.name = self._bind(node.name, node)
 
-    def visit_MatchMapping(self, node: ast.MatchMapping) -> ast.AST:
-        node.rest = self._rename(node.rest)
-        return self.generic_visit(node)
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if node.name:
+            node.name = self._bind(node.name, node)
 
-    def visit_alias(self, node: ast.alias) -> ast.AST:
-        # ``import a as b`` binds a free name b; ``from m import x`` binds the
-        # name of what it imports, which no renaming may touch.
+    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        for key in node.keys:
+            self.visit(key)
+        for pattern in node.patterns:
+            self.visit(pattern)
+        if node.rest:
+            node.rest = self._bind(node.rest, node)
+
+    def visit_alias(self, node: ast.alias) -> None:
+        # ``import a as b`` binds b, which may be spelled otherwise; ``from m
+        # import x`` binds the name of what it imports.
         if node.asname is not None:
-            node.asname = self._mapping.get(node.asname, node.asname)
-        return node
+            node.asname = self._bind(node.asname, node)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        node.names = [_MODULE + name for name in node.names]
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        outer = self._scopes[:-1]
+        node.names = [self._resolve(name, node, outer) for name in node.names]
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # A function body never evaluates the annotation of a variable; a
+        # class body stores it, so there it is part of what runs.
+        if not self._scopes[-1].names.is_class:
+            node.annotation = ast.Constant(value="annotation")
+        self.generic_visit(node)
+
+
+def _imported_as_themselves(statements: Sequence[ast.stmt]) -> FrozenSet[str]:
+    """Names the scope's own imports bind without ``as``: they name what is imported."""
+    names: Set[str] = set()
+    for statement in statements:
+        for node in walk_own_scope(statement):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    if alias.asname is None and alias.name != "*":
+                        names.add(alias.name.split(".")[0])
+    return frozenset(names)

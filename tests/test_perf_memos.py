@@ -170,7 +170,14 @@ def test_instantiation_verdict_agrees_on_a_reparsed_block() -> None:
     call = ast.parse("__extracted_func(a)").body[0]
     block = ast.parse("y = a + 1\nprint(y)\n").body
     verdict = instantiation_mismatch(
-        helper, call, block, {}, {}, preamble_length=0, returns_variables=False
+        helper,
+        call,
+        block,
+        {},
+        {},
+        site_function_names=frozenset(),
+        preamble_length=0,
+        returns_variables=False,
     )
     assert verdict is None
     again = instantiation_mismatch(
@@ -179,13 +186,21 @@ def test_instantiation_verdict_agrees_on_a_reparsed_block() -> None:
         ast.parse("y = a + 1\nprint(y)\n").body,
         {},
         {},
+        site_function_names=frozenset(),
         preamble_length=0,
         returns_variables=False,
     )
     assert again is None
     other = ast.parse("y = a + 2\nprint(y)\n").body
     mismatch = instantiation_mismatch(
-        helper, call, other, {}, {}, preamble_length=0, returns_variables=False
+        helper,
+        call,
+        other,
+        {},
+        {},
+        site_function_names=frozenset(),
+        preamble_length=0,
+        returns_variables=False,
     )
     assert mismatch is not None and mismatch.startswith("body: ")
 

@@ -152,6 +152,8 @@ TRANSFORMED = {
     # A type-only import of a module the tree lacks never runs, so its file
     # still shares helpers (round-4 audit, p2_typechecking_missing).
     "xf9xi_type_only_import_of_a_missing_module",
+    # Round-4 P1-03 across modules: the lambda keeps its own parameter.
+    "r9sb_lambda_capture_across_modules",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.

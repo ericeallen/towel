@@ -73,6 +73,7 @@ class Case:
     ``modules`` lists ``(alias, module name)`` in the order the observer
     imports them; the probes refer to the modules by alias. ``checker`` is
     set on a typed case only, whose project configures that checker.
+    ``bindings`` says the grammar drew its binding forms too.
     """
 
     name: str
@@ -84,6 +85,7 @@ class Case:
     modules: Tuple[Tuple[str, str], ...]
     probes: Tuple[Probe, ...]
     checker: Optional[Checker] = None
+    bindings: bool = False
 
     @property
     def file_map(self) -> Mapping[str, str]:

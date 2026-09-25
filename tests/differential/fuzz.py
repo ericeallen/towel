@@ -17,14 +17,17 @@
 Usage::
 
     python -m tests.differential.fuzz [--count N] [--seed START] [--modes default,cross]
-        [--typed-every K] [--jobs J] [--out DIR]
+        [--forms grammar,bindings] [--typed-every K] [--jobs J] [--out DIR]
 
 Seeds ``START`` to ``START + N - 1`` are generated (:mod:`tests.differential.grammar`)
 and each case is refactored and compared (:mod:`tests.differential.runner`):
 in the default mode, and, unless it is a single file, with ``--cross-module``
-too. Every ``K``-th seed is also generated typed and run in the typed mode,
-with the checker its project configures. With no ``--seed`` the start is
-drawn at random and printed, so any run can be repeated exactly.
+too. Each seed is drawn in each of ``--forms``: ``grammar``, the round-3
+grammar as its audit drew it, and ``bindings``, the same draws with the forms
+that bind or read names where substitution must follow Python's scopes. Every
+``K``-th seed is also generated typed and run in the typed mode, with the
+checker its project configures. With no ``--seed`` the start is drawn at
+random and printed, so any run can be repeated exactly.
 
 Each failure is written under ``DIR`` as a hostile fixture ready to commit,
 named with ``--prefix``, with a note saying where it goes and what the
@@ -55,6 +58,10 @@ MODES: Dict[str, Mode] = {"default": DEFAULT, "cross": CROSS_MODULE}
 TYPED = Mode(types=True)
 
 
+FORMS: Dict[str, bool] = {"grammar": False, "bindings": True}
+"""The grammar's families, by name: whether each draws the binding forms."""
+
+
 @dataclass(frozen=True)
 class Job:
     """One case in one mode."""
@@ -62,20 +69,27 @@ class Job:
     seed: int
     typed: bool
     mode: Mode
+    bindings: bool = False
 
 
-def jobs_for(seeds: Sequence[int], modes: Sequence[Mode], typed_every: int) -> List[Job]:
-    """Every case the run covers: each seed in each mode, and every ``typed_every``-th seed typed."""
+def jobs_for(
+    seeds: Sequence[int],
+    modes: Sequence[Mode],
+    typed_every: int,
+    forms: Sequence[bool] = (False,),
+) -> List[Job]:
+    """Every case the run covers: each seed in each mode and form, and every ``typed_every``-th typed."""
     jobs: List[Job] = []
     for seed in seeds:
         layout = generate_case(seed).layout
-        jobs += [
-            Job(seed, False, mode)
-            for mode in modes
-            if not (mode.cross_module and layout == "single")
-        ]
-        if typed_every > 0 and seed % typed_every == 0:
-            jobs.append(Job(seed, True, TYPED))
+        for bindings in forms:
+            jobs += [
+                Job(seed, False, mode, bindings)
+                for mode in modes
+                if not (mode.cross_module and layout == "single")
+            ]
+            if typed_every > 0 and seed % typed_every == 0:
+                jobs.append(Job(seed, True, TYPED, bindings))
     return jobs
 
 
@@ -83,7 +97,7 @@ def run_job(job: Job, call_seconds: float) -> Outcome:
     """Run ``job`` in a fresh temporary directory; the unit of work a worker process does."""
     with tempfile.TemporaryDirectory(prefix="towel-fuzz-") as directory:
         return run_case(
-            generate_case(job.seed, typed=job.typed),
+            generate_case(job.seed, typed=job.typed, bindings=job.bindings),
             job.mode,
             Path(directory),
             call_seconds=call_seconds,
@@ -92,6 +106,14 @@ def run_job(job: Job, call_seconds: float) -> Outcome:
 
 def _seed(text: str) -> Optional[int]:
     return None if text == "" else int(text)
+
+
+def _forms(text: str) -> List[bool]:
+    names = text.split(",")
+    unknown = [name for name in names if name not in FORMS]
+    if unknown:
+        raise argparse.ArgumentTypeError(f"unknown form(s) {unknown}; choose from {list(FORMS)}")
+    return [FORMS[name] for name in names]
 
 
 def _modes(text: str) -> List[Mode]:
@@ -113,6 +135,12 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
         type=_modes,
         default="default,cross",
         help="comma-separated: default, cross (default both)",
+    )
+    parser.add_argument(
+        "--forms",
+        type=_forms,
+        default="grammar,bindings",
+        help="comma-separated: grammar, bindings (default both)",
     )
     parser.add_argument(
         "--typed-every",
@@ -146,9 +174,9 @@ def main(argv: Sequence[str]) -> int:
         arguments.out or Path(tempfile.gettempdir()) / f"towel-fuzz-{start}-{arguments.count}"
     )
     if arguments.typed:
-        jobs = [Job(seed, True, TYPED) for seed in seeds]
+        jobs = [Job(seed, True, TYPED, bindings) for seed in seeds for bindings in arguments.forms]
     else:
-        jobs = jobs_for(seeds, arguments.modes, arguments.typed_every)
+        jobs = jobs_for(seeds, arguments.modes, arguments.typed_every, arguments.forms)
     print(
         f"Fuzzing seeds {start}..{start + arguments.count - 1}: {len(jobs)} runs"
         f" on {arguments.jobs} worker(s); failures go to {out}",
@@ -167,7 +195,11 @@ def main(argv: Sequence[str]) -> int:
             try:
                 outcome = future.result()
             except Exception as error:  # noqa: BLE001 - a harness fault ends the run loudly
-                print(f"harness error on seed {job.seed} ({job.mode.label}): {error!r}", flush=True)
+                print(
+                    f"harness error on seed {job.seed} ({job.mode.label}"
+                    f"{', bindings' if job.bindings else ''}): {error!r}",
+                    flush=True,
+                )
                 pool.shutdown(cancel_futures=True)
                 return 2
             counts[outcome.status] += 1

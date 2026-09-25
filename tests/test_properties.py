@@ -869,6 +869,7 @@ def test_engine_proposals_pass_the_instantiation_check(
                 block,
                 {},
                 {},
+                site_function_names=frozenset(),
                 preamble_length=0,
                 returns_variables=bool(proposal.return_variables),
             )

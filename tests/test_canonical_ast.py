@@ -284,6 +284,7 @@ def test_a_built_helper_instantiates_to_the_parsed_block() -> None:
         [_statement("print(value)")],
         {},
         {},
+        site_function_names=frozenset(),
         preamble_length=0,
         returns_variables=False,
     )
