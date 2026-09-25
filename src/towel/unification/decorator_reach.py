@@ -250,8 +250,8 @@ KNOWN_DECORATORS: Tuple[KnownDecorator, ...] = (
         ["typing.override", "typing_extensions.override"],
         FUNCTION,
         BARE,
-        f"{_CPYTHON} typing.py from 3.12, and {_TYPING_EXTENSIONS}: sets __override__ = True"
-        " and returns the argument.",
+        "CPython 3.12.13 and 3.13.7 typing.py (3.11 has none), and typing_extensions 4.16.0"
+        f" on {_CPYTHON}: sets __override__ = True and returns the argument.",
     ),
     *_known(
         ["typing.final", "typing_extensions.final"],
