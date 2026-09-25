@@ -40,8 +40,8 @@ only when every binding the module could give it is known, so which one is
 in effect when the decorator runs never matters, and so does every binding
 the rest of the program could give it. A write into the module's namespace
 from anywhere in the project (``namespace_writes``: an attribute store,
-``setattr``, its ``__dict__``, its own ``globals()``, ``importlib.reload``,
-a patch) makes the name unknown, unless it is an attribute store at the top
+``setattr``, its ``__dict__``, its own ``globals()``, a patch) makes the
+name unknown, unless it is an attribute store at the top
 level of its module, ``mod.name = value``, whose ``value`` is known there;
 the same holds of a library's name, ``functools.cache = ...``. A star import
 makes unknown only the names it may bind: what a module of the project
@@ -107,7 +107,6 @@ from .known_decorators import (
 from .module_bindings import ModuleBindings, dotted_name, global_bindings
 from .namespace_writes import (
     ANY_NAME,
-    RELOADED,
     NamespaceWrite,
     ProjectWrites,
     scan_project_writes,
@@ -708,8 +707,8 @@ class _Resolver:
         So does a write into the module's namespace from anywhere in the
         project (``namespace_writes``), unless it is an attribute store at
         the top level of its module, ``mod.name = value``, whose value is then
-        one more possibility, read there: ``setattr``, ``mod.__dict__[...]``,
-        ``globals()`` and ``importlib.reload`` are not read.
+        one more possibility, read there: ``setattr``, ``mod.__dict__[...]``
+        and ``globals()`` are not read.
         """
         if depth > _MOST_HOPS:
             return None
@@ -846,7 +845,7 @@ class _Resolver:
         """
         found: Set[_Denotation] = set()
         for write in writes:
-            if write.name not in (name, ANY_NAME, RELOADED):
+            if write.name not in (name, ANY_NAME):
                 continue
             if write.name != name or write.value is None or write.writer is None:
                 return None
@@ -888,7 +887,7 @@ class _Resolver:
         """Whether anything but ``module``'s own statements may bind ``name`` there: a star import, a write."""
         if self._star_may_bind(module, name):
             return True
-        return any(write.name in (name, ANY_NAME, RELOADED) for write in self._writes_into(module))
+        return any(write.name in (name, ANY_NAME) for write in self._writes_into(module))
 
     def _star_may_bind(self, module: _Module, name: str) -> bool:
         """Whether a star import of ``module`` may bind ``name``."""

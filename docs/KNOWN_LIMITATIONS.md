@@ -1065,12 +1065,14 @@ the code under it. Every write the builtins' question counts (above) counts
 here for a decorator's name, from anywhere in the project, tests included:
 an attribute store, `setattr` with that name or a computed one, a store into
 the module's `__dict__`, the module's own `globals()` before or after the
-definition, `mock.patch` and `monkeypatch.setattr`, and also
-`importlib.reload` of the module (or of a module that cannot be told). An
-attribute store at the top level of its module, `mod.name = value`, adds its
-`value` as one more possibility, read there, so `functools.cache =
+definition, `mock.patch` and `monkeypatch.setattr`. An attribute store at
+the top level of its module, `mod.name = value`, adds its `value` as one more
+possibility, read there, so `functools.cache =
 functools.lru_cache(maxsize=None)` keeps `@functools.cache` known; any other
-write makes the name unknown. A library's name counts the writes into its
+write makes the name unknown. `importlib.reload` needs no rule of its own: it
+runs the module's own statements again, whose every binding the name is
+already held to, and a rebinding it could bring into effect is itself one of
+the writes above. A library's name counts the writes into its
 module by name (`functools.cache = ...`, `builtins.property = ...`). A star
 import makes unknown only the names it may bind (fixtures `r9dc_*`): from a
 module of the project with a literal `__all__`, the names it lists together
