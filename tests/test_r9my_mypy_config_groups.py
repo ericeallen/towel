@@ -41,7 +41,7 @@ from typing import Mapping
 
 import pytest
 
-from towel.type_inference import MypyInferrer
+from towel.type_inference import CheckFailure, MypyInferrer
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
@@ -172,3 +172,38 @@ def test_r9my_a_cross_group_import_leaves_the_cold_confirmation_nothing_to_refus
     # The root's own ``mypy .`` checks the test against the change and rejects
     # it (``h.data`` would be ``Any``); the run's checks now see that too.
     assert engine.run_report.declined_proposals == {"refused by the type checker": 1}
+
+
+@requires_mypy
+def test_r9my_a_group_reads_another_groups_change_with_the_candidates_text(
+    tmp_path: Path,
+) -> None:
+    """The sub-project reaches the root's ``app`` through its ``mypy_path``; the root leaves ``sub`` out.
+
+    Only the sub-project's check can see its module broken, and only by reading
+    ``app/core.py`` as the candidate writes it: its own build read the file on
+    disk, and called a change that breaks ``TOTAL`` clean.
+    """
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[tool.mypy]\nexclude = ["^sub/"]\n',
+            "app/__init__.py": "",
+            "app/core.py": "def size() -> int:\n    return 1\n",
+            "sub/pyproject.toml": '[tool.mypy]\nmypy_path = ".."\n',
+            "sub/subpkg/__init__.py": "",
+            "sub/subpkg/mod.py": "from app.core import size\n\nTOTAL: int = size()\n",
+        },
+    )
+    core, mod = tmp_path / "app" / "core.py", tmp_path / "sub" / "subpkg" / "mod.py"
+    oracle = MypyInferrer()
+    try:
+        before = oracle.check_project({str(core): core.read_text(), str(mod): mod.read_text()})
+        after = oracle.check_project(
+            {str(core): "def size() -> str:\n    return 'x'\n", str(mod): mod.read_text()}
+        )
+    finally:
+        oracle.close()
+    assert not isinstance(before, CheckFailure) and before.errors == (), before
+    assert not isinstance(after, CheckFailure), after
+    assert [(Path(error.path).name, error.line) for error in after.errors] == [("mod.py", 3)]
