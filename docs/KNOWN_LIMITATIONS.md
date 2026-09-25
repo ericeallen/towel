@@ -22,7 +22,13 @@ describe belong to that version.
 
 - **Instantiation.** The helper body, with each call site's actual arguments
   substituted for its parameters (thunks beta-reduced), must reproduce the
-  block it replaces up to the renaming of names the block itself binds. A
+  block it replaces up to the renaming of names the block itself binds, and
+  a name may be renamed only where the running program cannot see its
+  spelling: `UnboundLocalError` and `NameError` name a variable read,
+  augmented or deleted while unbound, so a renamed binder that some read may
+  find unbound (after a `del`, an empty loop, an unmatched case, the end of
+  its `except ... as` clause, or in a closure), or that a `global` or
+  `nonlocal` declaration names, declines the call site. A
   proposal whose unification, substitution, or renaming disagree is rejected
   before it is offered. (`src/towel/unification/instantiation.py`)
 - **Argument evaluation.** Only names, literals, a unary operator on a
@@ -42,12 +48,17 @@ describe belong to that version.
   dict inserting anything but a constant, `*` and `**`, and unpacking a
   target list are effects, so a thunk after them stays a thunk.
 - **Binding discipline.** The block may not rebind, delete, or `except ... as`
-  a name bound before it; may not carry a `global`/`nonlocal` declaration the
-  caller still uses; may not rebind a name a closure outside the block reads;
-  and may not define a closure over a name the caller rebinds after the block.
-  Names bound in the block and read afterwards are returned, including targets
-  of annotated assignments and assignment expressions, as is a name bound to
-  a class instantiation or to a known resource factory (`open`, `connect`,
+  a name bound before it, by whatever construct binds it (an assignment, a
+  `for` or `with` target, a `match` capture, a nested `def` or `class`, an
+  import, a walrus); may not read a local before it binds it (`scale =
+  scale(n)`) unless the call site has the name bound on every path; may not
+  carry a `global`/`nonlocal` declaration the caller still uses; may not
+  rebind a name a closure outside the block reads; and may not define a
+  closure over a name the caller rebinds after the block. Names bound in the
+  block and read afterwards are returned, where `count += 1` and `del count`
+  read `count` as a load does, including targets of annotated assignments
+  and assignment expressions, as is a name bound to a class instantiation or
+  to a known resource factory (`open`, `connect`,
   `socket`, `mkdtemp`, `Popen`, `urlopen`, ...), whose lifetime a later
   statement could observe; a factory outside that list is not detected. A
   returned name must be definitely bound where the block ends or have
@@ -80,7 +91,10 @@ describe belong to that version.
   unbound, because only a correlation between paths shows it
   (`r85_conditionally_bound_parameter`). Definite assignment is computed conservatively:
   loops, `contextlib.suppress`, and non-exhaustive `match` statements never
-  bind definitely.
+  bind definitely, and a name a statement may delete (`del`, or the end of
+  an `except ... as` clause) is unbound for whatever may follow it: the rest
+  of its list, the next iteration of a loop that holds it, and the handlers,
+  `else` and `finally` of a `try` that holds it.
 - **Module names stay module names.** A free name that both sites resolve at
   module scope (or nowhere: a builtin, or a name the module never binds) is
   not passed to a same-module helper at all; the helper reads it bare, where
@@ -1038,9 +1052,12 @@ the proposals it built and did not apply, by reason:
   declined here is declined by the checker.
 - Reassignment and deletion. `unsafe_reassignment_block1`/`_block2`: the
   block reassigns a name it did not bind (`result = result + 10` with
-  `result` bound before it). `unbinds_external_name`: the block deletes,
-  explicitly or through `except ... as`, a name bound before it or
-  declared `global`/`nonlocal`.
+  `result` bound before it), whatever construct rebinds it: a `for` or
+  `with` target, a `match` capture, a nested `def` or `class`, an import, a
+  walrus. `i = -1; for i in xs: ...` is declined: with `xs` empty the
+  helper's `i` would be unbound where the caller's was `-1`.
+  `unbinds_external_name`: the block deletes, explicitly or through
+  `except ... as`, a name bound before it or declared `global`/`nonlocal`.
 - Shape. `value_producing_mismatch`: one block returns a value and the
   other does not. `incomplete_return_coverage_block1`/`_block2`: a
   value-producing block does not leave by `return`, `raise`, `break` or
@@ -1072,9 +1089,12 @@ the proposals it built and did not apply, by reason:
 - Free variables and lifetimes. `conditionally_bound_return`: a returned
   variable is not definitely bound at the block's exit and did not enter
   as a parameter. `incomplete_lifetime_block1`/`_block2`: the block reads a
-  name that is bound only after it. `module_data_lookup`: the helper would
-  receive module data (a module-level assignment) as an argument,
-  snapshotting it. `rebound_external_binding`: the helper would receive a
+  name that is bound only after it, or reads a local before its own binding
+  of it (`scale = scale(n)`, which raises `UnboundLocalError`) where the call
+  site may not have the name bound: with the block gone the name may not be
+  local to the caller, and the argument would find a module name or raise
+  `NameError`. `module_data_lookup`: the helper would receive module data
+  (a module-level assignment) as an argument, snapshotting it. `rebound_external_binding`: the helper would receive a
   name another function rebinds through `global` or `nonlocal`, or a name
   the module's reflection makes unreliable. The names both sites resolve
   at module scope are read bare by a same-module helper and are exempt
@@ -1099,8 +1119,9 @@ the proposals it built and did not apply, by reason:
   reason whatever the setting.
 - Orphans. `orphaned_variables`: a name the block binds is read afterwards
   on a path that does not rebind it first, and the helper does not return
-  it. A read after only a *conditional* rebinding is treated as orphaned
-  even where the helper would return it (the annotated-assignment fixture
+  it; an augmented assignment and a `del` read the name as a load does. A
+  read after only a *conditional* rebinding is treated as orphaned even where
+  the helper would return it (the annotated-assignment fixture
   r86 is rejected for this reason); returning such names was found unsafe
   in three fixtures, and a path-aware return analysis would recover the
   case. A match capture, `with` target, or exception name that would have

@@ -199,6 +199,21 @@ TRANSFORMED = {
     "r7sp_thunk_after_an_unbound_global_read",
     # A thunk in dead code after a ``raise``, which the original never evaluated.
     "r7sp_thunk_after_a_raise",
+    # Bindings audit of 1.772. A block that rebinds a name bound before it
+    # (a for target, a capture, a def) is declined; the code around it moves.
+    "r7bi_loop_capture_def_rebind_prebound",
+    # The helper returns what a later += or del of it needs.
+    "r7bi_augassign_and_del_after_block",
+    # (r7bi_read_before_own_binding is declined: its block reads a local
+    # before binding it, which only the original's UnboundLocalError shows.
+    # r7bi_loop_del_before_eager_read is declined: a del later in the loop
+    # leaves the name unbound on the next iteration.)
+    # A binder that may be read unbound keeps its spelling: the deletion and
+    # the handler stay with each site, and only what follows them moves.
+    "r7bi_renamed_binder_named_by_unbound_error",
+    # An except clause deletes its name as it ends: a try nested in an if
+    # leaves nothing bound for the block to lose, and moves.
+    "r7bi_except_name_in_nested_block",
 }
 # r7sp_directive_on_a_shared_line is declined: each block starts after, or
 # ends before, a statement that stays on a line carrying a directive.
