@@ -641,18 +641,22 @@ def _write_change_sidecar(engine: "UnificationRefactorEngine", output: str) -> N
     Grouped by helper name so the rename-helpers inventory can show a
     before/after per call site, which helps a naming assistant finish names,
     docstrings, and types. Written next to the refactored output; delete it
-    once naming is done.
+    once naming is done. Each ``file`` is relative to the output, both
+    resolved: the engine records resolved paths, and an output reached
+    through a link (macOS's ``/tmp``) once gave every record a path climbing
+    out of the link's spelling into the resolved one, which the inventory,
+    matching ``file`` against paths relative to its target, never found.
     """
 
     records = engine.change_log
     if not records:
         return
     out = Path(output)
-    base = out if out.is_dir() else out.parent
+    base = (out if out.is_dir() else out.parent).resolve()
     helpers: Dict[str, List[ChangeRecord]] = {}
     for record in records:
         try:
-            rel = os.path.relpath(record.path, str(base))
+            rel = os.path.relpath(Path(record.path).resolve(), base)
         except ValueError:
             rel = record.path
         helpers.setdefault(record.helper, []).append(

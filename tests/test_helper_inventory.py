@@ -198,3 +198,33 @@ def test_read_change_sidecar_accepts_only_its_own_shape(tmp_path: Path, caplog) 
         sidecar.write_text(json.dumps({"helpers": {"h": [{**record, "line": "3"}]}}))
         assert _read_change_sidecar(sidecar) == {}
     assert "malformed change records" in caplog.text
+
+
+def test_the_sidecar_spells_each_file_relative_to_an_output_reached_through_a_link(
+    tmp_path: Path,
+) -> None:
+    """Round-4 p2_sidecar_symlink_path: through macOS's ``/tmp`` link, every path climbed out of it."""
+    import contextlib
+    import io
+
+    from towel.cli import _change_sidecar_path, _write_change_sidecar
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    real = tmp_path.resolve() / "real"
+    (real / "src").mkdir(parents=True)
+    (real / "src" / "m.py").write_text(
+        "def f(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n"
+        "def g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n"
+        "def compute(v):\n    return v\n"
+    )
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        engine.refactor_directory_to_fixed_point(
+            str(linked / "src"), str(linked / "src"), progress="none"
+        )
+        _write_change_sidecar(engine, str(linked / "src"))
+    recorded = json.loads(_change_sidecar_path(real / "src").read_text())["helpers"]
+    files = {change["file"] for changes in recorded.values() for change in changes}
+    assert files == {"m.py"}, files
